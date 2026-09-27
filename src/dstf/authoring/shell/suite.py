@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...reporting.rows import TestRow
 from ..capabilities import Placement
 from ..session import Selection
 from ..suite_rows import suite_rows
@@ -22,7 +23,6 @@ from .suite_grid import GRID_CSS, STORAGE, SuiteGrid, scripts_html
 from .tabstate import TabState, tab_state
 
 if TYPE_CHECKING:
-    from ...reporting.rows import TestRow
     from .shell import Shell
 
 
@@ -94,6 +94,10 @@ class SuitePage:
         return str(self.shell.config_path.resolve())
 
     def _rows(self, ids: list[str]) -> list[TestRow]:
+        if self.shell.known:
+            # An open is under way: the Session's comparisons are the
+            # previous project's, or none. Its names wait for its verdicts.
+            return [TestRow(model_id=m, waiting=True) for m in ids]
         return suite_rows(
             self.shell.session, ids, failed=set(self.shell.load.failed_models)
         )
@@ -130,10 +134,11 @@ class SuitePage:
             kind == "loading" and event.get("phase") == "done"
         ):
             self.actions.refresh()
-        if kind == "spec":
-            # The event names only the CHANGED models (an open's names all,
-            # before the CLI's filter; a close's none): what to add and drop
-            # is the visible tests against the grid's.
+        if kind in ("spec", "known"):
+            # A `spec` event names only the CHANGED models (an open's names
+            # all, before the CLI's filter; a close's none), and `known` the
+            # models an open named before its scan: what to add and drop is
+            # the visible tests against the grid's.
             now = self.shell.visible_tests()
             have, keep = set(self.ids), set(now)
             self._add += [m for m in now if m not in have]
@@ -147,7 +152,7 @@ class SuitePage:
     def _touched(self, event: dict[str, Any]) -> set[str]:
         """The models whose row an event may have changed."""
         kind = event["event"]
-        if kind in ("spec", "results"):
+        if kind in ("spec", "results", "known"):
             return {str(m) for m in event.get("models", ())}
         if kind == "loading" and event.get("phase") == "results":
             return {str(event["model"])}

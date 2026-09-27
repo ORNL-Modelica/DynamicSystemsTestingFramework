@@ -105,7 +105,11 @@ class Shell:
         # Every Session event, from whichever thread emitted it, crosses here
         # and is fanned out to the pages on the UI loop by `tick`.
         self._events: queue.Queue[dict[str, Any]] = queue.Queue()
-        for event in ("spec", "results", "job", "loading"):
+        #: The models an open named before its scan finished (its `known`
+        #: event), until the merge's `spec` event: the tests while an open
+        #: is under way.
+        self.known: list[str] = []
+        for event in ("spec", "results", "job", "loading", "known"):
             self.session.on(event, self._events.put)
         self.pages: list[Page] = []
         self.load = LoadState()
@@ -199,6 +203,13 @@ class Shell:
         """`LoadState` from the events (decision 9)."""
         kind = event["event"]
         load = self.load
+        if kind == "known":
+            self.known = [str(m) for m in event.get("models", ())]
+            return
+        if kind == "spec":
+            # The merge (the project's tests now), or a close: either way
+            # the open's names are done with.
+            self.known = []
         if kind == "loading":
             phase = event.get("phase")
             if phase == "scan":
@@ -280,13 +291,17 @@ class Shell:
         return SessionView(self.session, selection)
 
     def visible_tests(self) -> list[str]:
-        """The project's tests after the CLI's `--filter` / `--package`."""
+        """The project's tests after the CLI's `--filter` / `--package` —
+        while an open is under way, the models it named, filtered the same
+        way (`_filter_tests` reads nothing but the model id)."""
         project = self.session.project
-        if project is None:
+        if self.known:
+            tests: list[Any] = [_Named(m) for m in self.known]
+        elif project is not None:
+            tests = list(project.tests)
+        else:
             return []
-        return [
-            t.model_id for t in _filter_tests(project.tests, self.filter, self.package)
-        ]
+        return [t.model_id for t in _filter_tests(tests, self.filter, self.package)]
 
     def busy_reason(self) -> str | None:
         """Why a Save, a Discard or a backend change is refused now, or None:
@@ -409,6 +424,13 @@ class Shell:
         self.mount()
         self.start()
         await SuitePage(self).build()
+
+
+@dataclass(frozen=True)
+class _Named:
+    """A model id where `_filter_tests` wants a test."""
+
+    model_id: str
 
 
 def _free_port() -> int:

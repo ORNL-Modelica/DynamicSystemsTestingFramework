@@ -9,6 +9,7 @@ it applies (the store, a job's work dir). Nothing here imports a UI.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import threading
 import time
@@ -68,7 +69,7 @@ if TYPE_CHECKING:
 
     from ..figures.plotly import Visibility
 
-Event = Literal["spec", "results", "job", "loading"]
+Event = Literal["spec", "results", "job", "loading", "known"]
 Listener = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
@@ -270,81 +271,90 @@ class Session:
         backend_obj.quiet = True
         store = ReferenceStore(config)
         spec = SpecDocument.load(config.spec_path)
-        started = time.monotonic()
-        # "scanning library…" before the first file — and the only scan
-        # event for a source type that scans nothing (Python, FMU, Julia).
-        self._emit("loading", phase="scan", done=0, total=0)
-        cached = load_scan(config)
-        if cached is not None:
-            scanned = cached
-            self._emit("loading", phase="scan", cached=True, total=len(cached))
-        else:
-            scanned = scan_source_tests(
-                config,
-                progress=lambda done, total: self._emit(
-                    "loading", phase="scan", done=done, total=total
-                ),
-            )
-            store_scan(config, scanned)
-        tests = self._merge(config, scanned, spec.effective())
-        self.project = Project(
-            config=config,
-            store=store,
-            backend=backend_obj,
-            scanned=scanned,
-            tests=tests,
-            results={},
-            dataset_kind=dataset_kind_for(backend_obj),
-        )
-        self.spec = spec
-        self.comparisons = {}
-        self._reads = {}
-        # A notice is project-scoped text ("stored 2 baselines for LibA.X"), and
-        # so is an artifact's path; a swap calls open, never close, and must not
-        # carry either into LibB's panel. Assigned here, at the commit point,
-        # and not on entry: an open that fails leaves the live project's panel
-        # as it was. The recorded-backend warning is this project's first
-        # notice, so the job panel shows it.
-        self.notices = [warning] if warning else []
-        self.artifacts = []
-        self.last_job = None
-        # Started at the commit point, not after the reload: the warm reads the
-        # SIBLING backends' reference trees and the reload reads this one's, so
-        # neither waits on the other and the warm gets its head start inside
-        # the reload's window (15.6 s over TRANSFORM) instead of after it. How
-        # much of that window it converts is NOT measured and is less than all
-        # of it — both sides are json.loads, whose C scanner holds the GIL, so
-        # they overlap on file IO and contend on parsing. Not earlier than this:
-        # everything above can still raise, and an open that fails must leave
-        # the live session's state — this Event included — as it was.
-        ready = threading.Event()
-        self.overlay_index_ready = ready
-        threading.Thread(
-            target=self._warm_overlay_index,
-            args=(self.project.config, ready),
-            name="dstf-overlay-index",
-            daemon=True,
-        ).start()
-        self._emit("spec", models={t.model_id for t in tests})
-        done_event = threading.Event()
-        self.rescan_done = done_event
+        # The models this open can name before the scan — the spec's and the
+        # last run's — so a page draws their rows while a cold scan runs.
+        self._emit("known", models=_known_models(config, spec.effective()))
         try:
-            self._reload_results()
-        finally:
-            # Whether or not one model's scoring raised: the project is open
-            # and its results complete (`_reload_results`), so `done` fires
-            # and the rescan starts — a shell waiting on either must not wait
-            # forever. The failure still propagates to the caller, after both.
-            self._emit("loading", phase="done", seconds=time.monotonic() - started)
+            started = time.monotonic()
+            # "scanning library…" before the first file — and the only scan
+            # event for a source type that scans nothing (Python, FMU, Julia).
+            self._emit("loading", phase="scan", done=0, total=0)
+            cached = load_scan(config)
             if cached is not None:
-                threading.Thread(
-                    target=self._rescan,
-                    args=(self.project, cached, done_event),
-                    name="dstf-rescan",
-                    daemon=True,
-                ).start()
+                scanned = cached
+                self._emit("loading", phase="scan", cached=True, total=len(cached))
             else:
-                done_event.set()
+                scanned = scan_source_tests(
+                    config,
+                    progress=lambda done, total: self._emit(
+                        "loading", phase="scan", done=done, total=total
+                    ),
+                )
+                store_scan(config, scanned)
+            tests = self._merge(config, scanned, spec.effective())
+            self.project = Project(
+                config=config,
+                store=store,
+                backend=backend_obj,
+                scanned=scanned,
+                tests=tests,
+                results={},
+                dataset_kind=dataset_kind_for(backend_obj),
+            )
+            self.spec = spec
+            self.comparisons = {}
+            self._reads = {}
+            # A notice is project-scoped text ("stored 2 baselines for LibA.X"), and
+            # so is an artifact's path; a swap calls open, never close, and must not
+            # carry either into LibB's panel. Assigned here, at the commit point,
+            # and not on entry: an open that fails leaves the live project's panel
+            # as it was. The recorded-backend warning is this project's first
+            # notice, so the job panel shows it.
+            self.notices = [warning] if warning else []
+            self.artifacts = []
+            self.last_job = None
+            # Started at the commit point, not after the reload: the warm reads the
+            # SIBLING backends' reference trees and the reload reads this one's, so
+            # neither waits on the other and the warm gets its head start inside
+            # the reload's window (15.6 s over TRANSFORM) instead of after it. How
+            # much of that window it converts is NOT measured and is less than all
+            # of it — both sides are json.loads, whose C scanner holds the GIL, so
+            # they overlap on file IO and contend on parsing. Not earlier than this:
+            # everything above can still raise, and an open that fails must leave
+            # the live session's state — this Event included — as it was.
+            ready = threading.Event()
+            self.overlay_index_ready = ready
+            threading.Thread(
+                target=self._warm_overlay_index,
+                args=(self.project.config, ready),
+                name="dstf-overlay-index",
+                daemon=True,
+            ).start()
+            self._emit("spec", models={t.model_id for t in tests})
+            done_event = threading.Event()
+            self.rescan_done = done_event
+            try:
+                self._reload_results()
+            finally:
+                # Whether or not one model's scoring raised: the project is open
+                # and its results complete (`_reload_results`), so `done` fires
+                # and the rescan starts — a shell waiting on either must not wait
+                # forever. The failure still propagates to the caller, after both.
+                self._emit("loading", phase="done", seconds=time.monotonic() - started)
+                if cached is not None:
+                    threading.Thread(
+                        target=self._rescan,
+                        args=(self.project, cached, done_event),
+                        name="dstf-rescan",
+                        daemon=True,
+                    ).start()
+                else:
+                    done_event.set()
+        except BaseException:
+            # An open that fails takes back what it named: a page draws the
+            # open project's rows (or none) again.
+            self._emit("known", models=[])
+            raise
 
     def _warm_overlay_index(self, config: Config, ready: threading.Event) -> None:
         from ..reporting.overlay_loader import warm_sibling_backend_index
@@ -1334,6 +1344,30 @@ class SessionView:
 
     def tree(self, model_id: str) -> dict | None:
         return self._session.tree(model_id)
+
+
+def _known_models(config: Config, document: object) -> list[str]:
+    """The model ids the spec document and the work dir's batch manifest
+    name — spec first, each once — read without the scan and without the
+    spec parser, which validates trees and can raise: a bad one is the
+    merge's to raise. Both files are data; what is not an entry is
+    skipped."""
+    ids: list[str] = []
+    tests = document.get("tests") if isinstance(document, dict) else None
+    for entry in tests if isinstance(tests, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("model"), str):
+            ids.append(entry["model"])
+    work_dir = config.work_dir
+    manifest = work_dir / "batch_manifest.json" if work_dir is not None else None
+    if manifest is not None and manifest.is_file():
+        try:
+            entries = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            entries = {}
+        for entry in entries.values() if isinstance(entries, dict) else ():
+            if isinstance(entry, dict) and isinstance(entry.get("model_id"), str):
+                ids.append(entry["model_id"])
+    return list(dict.fromkeys(ids))
 
 
 def _in_order(ids: Iterable[str]) -> list[str]:
