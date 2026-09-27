@@ -25,6 +25,7 @@ import numpy as np
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import RECORDED_RUN_STATUSES, BatchManifest
+from .common.result_variables import merge_timing_stats, run_timing
 from .types import Capability, DatasetType, TestResult, TestRunResult
 
 if TYPE_CHECKING:
@@ -189,6 +190,22 @@ def _force_failed(result: "TestResult | None", status: str) -> None:
     if result is not None and result.success:
         result.success = False
         result.error_message = result.error_message or f"Run recorded {status}"
+
+
+def _with_run_timing(stats: dict | None, rr: TestRunResult) -> dict | None:
+    """*stats* with the run's wall-clock block (:func:`run_timing`) merged
+    into its ``timing``, or *stats* as it was when the run measured no wall.
+
+    Built on a copy: ``merge_timing_stats`` updates ``stats["timing"]`` in
+    place, and a backend's ``stats`` may share that dict with the run
+    result's own statistics (a shallow ``dict(run_result.statistics)``).
+    """
+    timing = run_timing(rr)
+    if not timing:
+        return stats
+    out = dict(stats or {})
+    out["timing"] = dict(out.get("timing") or {})
+    return merge_timing_stats(out, timing)
 
 
 def run_verdicts(work_dir: Path, manifests: list[BatchManifest]) -> dict[str, str]:
@@ -660,7 +677,7 @@ class Backend(ABC):
                             model_id=model_id,
                             success=False,
                             error_message=rr.error_message or "Simulation failed",
-                            statistics=rr.statistics if rr else None,
+                            statistics=_with_run_timing(rr.statistics, rr),
                         ),
                     )
                     continue
@@ -693,6 +710,9 @@ class Backend(ABC):
             test_key, model_id, test_model, rr = item
             t0 = time.monotonic()
             res = self.read_result(test_model, test_key, rr)
+            if rr is not None:
+                # The one timing block, for every backend (run_timing).
+                res.statistics = _with_run_timing(res.statistics, rr)
             return test_key, model_id, res, time.monotonic() - t0
 
         # Parallelize reads with thread pool

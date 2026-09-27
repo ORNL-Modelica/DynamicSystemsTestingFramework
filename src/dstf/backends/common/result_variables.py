@@ -16,7 +16,7 @@ import numpy as np
 
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
-from ..types import VariableResult, resolve_variable_patterns
+from ..types import TestRunResult, VariableResult, resolve_variable_patterns
 from .mat_reader import list_result_mat_variables
 
 logger = logging.getLogger(__name__)
@@ -161,9 +161,38 @@ def merge_timing_stats(stats: dict | None, timing: dict[str, float]) -> dict:
     return stats
 
 
+def run_timing(rr: TestRunResult) -> dict[str, float]:
+    """The run's wall-clock phase summary — the ``statistics["timing"]`` keys
+    every backend's result carries (``translation_wall``, ``sim_wall``,
+    ``other_wall``, ``total_wall``): seconds, rounded to 2, only the keys the
+    run measured.
+
+    All are wall-clock seconds measured on the Python side, distinct from a
+    tool's own CPU-time statistics. ``{}`` when the run measured neither a
+    translation nor a simulation wall (Dymola batch: its ``elapsed`` is a
+    batch average, and a block built from it would show a time no test took).
+    ``other_wall`` — what the run spent outside translation and simulation —
+    only when both walls are known: a missing wall is not a 0.
+    """
+    if rr.translation_wall is None and rr.sim_wall is None:
+        return {}
+    timing: dict[str, float] = {}
+    if rr.translation_wall is not None:
+        timing["translation_wall"] = round(rr.translation_wall, 2)
+    if rr.sim_wall is not None:
+        timing["sim_wall"] = round(rr.sim_wall, 2)
+    if rr.elapsed:
+        if rr.translation_wall is not None and rr.sim_wall is not None:
+            other = rr.elapsed - rr.translation_wall - rr.sim_wall
+            timing["other_wall"] = round(max(0.0, other), 2)
+        timing["total_wall"] = round(rr.elapsed, 2)
+    return timing
+
+
 __all__ = [
     "compute_needed_variables",
     "extract_variables",
     "fold_diagnostics_into_statistics",
     "merge_timing_stats",
+    "run_timing",
 ]

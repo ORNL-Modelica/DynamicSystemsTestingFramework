@@ -36,7 +36,6 @@ from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
-    merge_timing_stats,
 )
 from ..types import (
     Capability,
@@ -302,23 +301,6 @@ class OpenModelicaBackend(Backend):
         )
         test_dir = self.config.work_dir / test_key
         mat_path = test_dir / self.RESULT_MAT_FILENAME
-
-        # Enrich stats with wall-clock timing summary (mirrors DymolaBackend).
-        if run_result and (
-            run_result.translation_wall is not None or run_result.sim_wall is not None
-        ):
-            timing: dict[str, float] = {}
-            if run_result.translation_wall is not None:
-                timing["translation_wall"] = round(run_result.translation_wall, 2)
-            if run_result.sim_wall is not None:
-                timing["sim_wall"] = round(run_result.sim_wall, 2)
-            if run_result.elapsed:
-                acct = (run_result.translation_wall or 0.0) + (
-                    run_result.sim_wall or 0.0
-                )
-                timing["other_wall"] = round(max(0.0, run_result.elapsed - acct), 2)
-                timing["total_wall"] = round(run_result.elapsed, 2)
-            stats = merge_timing_stats(stats, timing)
 
         if not mat_path.exists():
             msg = (

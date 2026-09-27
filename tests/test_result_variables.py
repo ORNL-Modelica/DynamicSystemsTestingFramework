@@ -16,8 +16,9 @@ from dstf.backends.common.result_variables import (
     extract_variables,
     fold_diagnostics_into_statistics,
     merge_timing_stats,
+    run_timing,
 )
-from dstf.backends.types import VariableResult
+from dstf.backends.types import TestRunResult, VariableResult
 from dstf.discovery.test_registry import TestModel
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -253,3 +254,43 @@ class TestMergeTimingStats:
         stats = merge_timing_stats({"simulation": {"steps": 3}}, {"sim_wall": 2.0})
         assert stats["simulation"] == {"steps": 3}
         assert stats["timing"] == {"sim_wall": 2.0}
+
+
+def _run(**kw) -> TestRunResult:
+    return TestRunResult(
+        **{"model_id": "Lib.A", "test_key": "test_0001", "success": True, **kw}
+    )
+
+
+class TestRunTiming:
+    def test_all_walls_known(self):
+        rr = _run(elapsed=10.004, translation_wall=3.333, sim_wall=5.555)
+        assert run_timing(rr) == {
+            "translation_wall": 3.33,
+            "sim_wall": 5.55,
+            "other_wall": 1.12,
+            "total_wall": 10.0,
+        }
+
+    def test_a_sim_wall_only_has_no_other_wall(self):
+        """FMPy / Julia / the Python backend measure the simulate call only."""
+        assert run_timing(_run(elapsed=1.5, sim_wall=1.25)) == {
+            "sim_wall": 1.25,
+            "total_wall": 1.5,
+        }
+
+    def test_a_translation_wall_only_has_no_other_wall(self):
+        """A translation failure: the missing sim wall is not counted as 0."""
+        rr = _run(success=False, elapsed=2.0, translation_wall=1.5)
+        assert run_timing(rr) == {"translation_wall": 1.5, "total_wall": 2.0}
+
+    def test_no_wall_is_no_block(self):
+        """Dymola batch: its elapsed is a batch average, not this test's."""
+        assert run_timing(_run(elapsed=4.0)) == {}
+
+    def test_other_wall_is_never_negative(self):
+        rr = _run(elapsed=1.0, translation_wall=0.7, sim_wall=0.6)
+        assert run_timing(rr)["other_wall"] == 0.0
+
+    def test_no_elapsed_no_total(self):
+        assert run_timing(_run(sim_wall=0.5)) == {"sim_wall": 0.5}

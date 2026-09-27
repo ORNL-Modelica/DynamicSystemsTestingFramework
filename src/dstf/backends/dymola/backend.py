@@ -19,7 +19,6 @@ from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
-    merge_timing_stats,
 )
 from ..types import (
     Capability,
@@ -533,29 +532,6 @@ class DymolaBackend(Backend):
             if run_result and run_result.statistics
             else None
         )
-        # Surface phase-timing breakdown so it appears in reports.
-        # All values are wall-clock seconds captured on the Python side —
-        # distinct from Dymola's own CPU-time stats (which cover just
-        # integration work, not our full test pipeline).
-        if run_result and (
-            run_result.translation_wall is not None or run_result.sim_wall is not None
-        ):
-            # Ordered: translation → simulation → other → total (rough
-            # operation order). Rounded to 2 decimals at storage time so
-            # the on-disk reference JSON stays clean.
-            timing: dict[str, float] = {}
-            if run_result.translation_wall is not None:
-                timing["translation_wall"] = round(run_result.translation_wall, 2)
-            if run_result.sim_wall is not None:
-                timing["sim_wall"] = round(run_result.sim_wall, 2)
-            if run_result.elapsed:
-                t_acct = (run_result.translation_wall or 0.0) + (
-                    run_result.sim_wall or 0.0
-                )
-                other = max(0.0, run_result.elapsed - t_acct)
-                timing["other_wall"] = round(other, 2)
-                timing["total_wall"] = round(run_result.elapsed, 2)
-            stats = merge_timing_stats(stats, timing)
         test_dir = self.config.work_dir / test_key
         mat_path = test_dir / "dsres.mat"
 
