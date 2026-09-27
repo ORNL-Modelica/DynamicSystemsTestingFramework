@@ -34,6 +34,23 @@ queue. Between those, the visible work follows the brief's own sequence
 | 6 | Live results | to write | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
 | 7 | Themes | to write | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
 
+**Reordered after the owner's first hands-on look (2026-09-26).** The owner
+used 3b and 3c over TRANSFORM and ruled, on a two-round board, what comes
+before 3d. The new order, each step its own plan, executing review and
+TRANSFORM gate:
+
+| Step | What | Rulings it builds | Status |
+|---|---|---|---|
+| B | The bug batch: a windowed criterion drags; a new criterion is seeded from its data; errors read as their reason; the spectrum is ranged to its peaks | "fixed whatever you choose" | BUILT (`2026-09-26-feedback-bug-batch.md`; D135; 127088e..6c5bd46) |
+| S | The Suite table: one row model shared with the dashboard (same columns and words; the dashboard stays static); a sortable table with group rows (collapsible), typed column filters (status by the count pills, numbers by `>1e-4` / `1..10`, text by glob with `.*` / `Aa` once in the toolbar), no separate filter box; "2 selected · Clear" with Rerun / Accept as icon buttons with tooltips (their confirm dialogs stay); no "(Dymola)" in Rerun; an EDITED count pill and an Edits column; rows shown before the library scan finishes; one control set (filter, sort, group, names) on the Suite table, the Tests drawer and the Variables drawer, with the Variables drawer's name format (expression / result-file name / both) and grouping (by component / flat / tracked first) | Q1 A, Q1a B, Q1b A, Q7; icons for view controls | to plan |
+| T | The Test page: a status strip under the test's row, in the sticky part, colouring the one next action (Accept into the ⋮ when there is nothing to accept); every `+` opens one inline row where it was clicked (no dialog), a new criterion lands right after the clicked one, a combinator's kind is an inline dropdown; the pending-edits drawer becomes a `difflib` preview of the entry as `test_spec.json` writes it | Q2 A, Q3 A, Q6 A | to plan |
+| E | On-plot editing and tolerance: arm a field then click the plot, and Ctrl+click adds a row, on every metric; drags update the fields live; new rows seeded from the data; dragged values snapped to a readable precision; lower/upper tolerance with a link toggle for every metric with a tolerance (a scoring change: additive `test_spec.json` fields, a coordinated change for TRANSFORM-UnitTests) | Q4 C, Q5 A; live drag | to plan |
+
+Then 3d (the slice field, save-time expansion, the folded criteria row), 5
+(the queue), 6 (live results) and 7 (themes), as below. Sub-project 4's
+brief §3.5 items are re-scoped into T and E when those are planned.
+
+
 ---
 
 ## Shared conventions (every sub-project's plan repeats them)
