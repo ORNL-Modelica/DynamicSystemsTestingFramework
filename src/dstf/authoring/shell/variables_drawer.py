@@ -1,7 +1,8 @@
 """The Variables drawer (the roadmap's 3c; DESIGN.md "The Variables drawer";
 the owner's rulings Q5-Q7, 2026-09-25): every variable of the last result
 in `variable_rows`' groups, folded and filtered, each row checked against
-the selected plot. It does every layout edit (Q6 A): a check adds a row's
+the selected plot. Its filter and its sort, group and names menus are the
+tab's (`TabState`), drawn by `drawer_controls` as the Tests drawer's are. It does every layout edit (Q6 A): a check adds a row's
 members to the selected plot or takes them off, "+ new plot" puts them on a
 plot of their own below it. The rules are not here: the rows are data
 (`authoring.variable_rows`), the edits pure functions (`authoring.layout`),
@@ -36,7 +37,7 @@ from ..layout import (
 )
 from ..needle import matcher
 from ..variable_rows import VarGroup, VarRow, cap, variable_groups
-from .drawer_controls import filter_box
+from .drawer_controls import filter_box, menu_button
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -119,6 +120,39 @@ class VariablesDrawer:
                 "filter: substring, or a glob with * ?",
                 "var-",
             )
+            with ui.row().classes("items-center no-wrap gap-0 w-full"):
+                menu_button(
+                    "sort",
+                    "Sort",
+                    (("file", "Result-file order"), ("name", "A→Z")),
+                    state.vars_sort,
+                    partial(self._set, "vars_sort"),
+                    "var-sort",
+                )
+                menu_button(
+                    "account_tree",
+                    "Group",
+                    (
+                        ("component", "By component"),
+                        ("flat", "Flat"),
+                        ("tracked", "Tracked first"),
+                    ),
+                    state.vars_group,
+                    partial(self._set, "vars_group"),
+                    "var-group-by",
+                )
+                menu_button(
+                    "label",
+                    "Names",
+                    (
+                        ("expression", "Expression"),
+                        ("file", "Result-file name"),
+                        ("both", "Both"),
+                    ),
+                    state.vars_names,
+                    partial(self._set, "vars_names"),
+                    "var-names",
+                )
             # The plot the checks act on, with the ring its card wears; a
             # click brings that card into view.
             with (
@@ -134,6 +168,11 @@ class VariablesDrawer:
     def _on_filter(self, needle: str, regex: bool, case: bool) -> None:
         state = self.state
         state.vars_needle, state.vars_regex, state.vars_case = needle, regex, case
+        self.rebuild()
+
+    def _set(self, key: str, value: str) -> None:
+        """A menu's choice, the tab's (`TabState`)."""
+        setattr(self.state, key, value)
         self.rebuild()
 
     def _reveal(self) -> None:
@@ -180,8 +219,8 @@ class VariablesDrawer:
 
     def _signature(self, reads: _Reads | None) -> object:
         """Everything a build draws from: the reads, the selected plot and
-        the number of plots, the filter, the families opened, and the
-        reason an empty result gives."""
+        the number of plots, the filter and the menus, the families opened,
+        and the reason an empty result gives."""
         page = self.page
         head = (
             page.selected,
@@ -189,6 +228,9 @@ class VariablesDrawer:
             self.state.vars_needle,
             self.state.vars_regex,
             self.state.vars_case,
+            self.state.vars_group,
+            self.state.vars_names,
+            self.state.vars_sort,
             frozenset(self.opened),
         )
         if reads is None:
@@ -259,6 +301,9 @@ class VariablesDrawer:
                 layout=reads.layout,
                 selected=page.selected if n else None,
                 scored=reads.scored,
+                group=self.state.vars_group,
+                order=self.state.vars_sort,
+                read=self.state.vars_names,
             )
             # `keep` is only ever asked here: a typed regex that ran out of
             # its budget has drawn nothing yet, and draws nothing
@@ -352,11 +397,15 @@ class VariablesDrawer:
             # A real library's names outrun 320 px and are cut with an
             # ellipsis: the text carries all of it, and the name, as its
             # title (on the props dict: a name can hold a `"`).
-            text = ui.label(row.text).classes("dstf-var-text dstf-mono text-xs")
+            # The names menu: the expression alone, the result-file name
+            # alone, or both — the expression with the name muted beside it.
+            names = self.state.vars_names
+            shown = row.file_text if names == "file" else row.text
+            text = ui.label(shown).classes("dstf-var-text dstf-mono text-xs")
             text.props["title"] = (
                 row.text if row.name is None else f"{row.text} ({row.name})"
             )
-            if row.name is not None:
+            if names == "both" and row.name is not None:
                 ui.label(row.name).classes("dstf-varname")
             ui.space()
             # These two never wrap (the stylesheet's `.dstf-var-where` rule

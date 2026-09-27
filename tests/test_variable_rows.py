@@ -313,3 +313,101 @@ def test_a_derivative_is_grouped_under_the_component_it_differentiates(name, gro
 def test_a_tracked_derivative_is_tracked_by_its_full_name():
     assert variable_rows._group("der(x.v)", {"der(x.v)"}, set()) == (0, "Tracked")
     assert variable_rows._group("der(x.v)", {"x.v"}, set()) == (1, "x")
+
+
+# -- the drawer's group, sort and names menus (step T, Q7) --------------------
+
+
+def _titles(groups) -> list[tuple[int, str]]:
+    return [(g.rank, g.title) for g in groups]
+
+
+def _members(group) -> list[tuple[str, ...]]:
+    return [r.members for r in group.rows]
+
+
+def test_flat_is_one_group_over_every_name_families_still_folded():
+    (group,) = _groups(group="flat")
+    assert (group.rank, group.title) == (1, "All variables")
+    assert _members(group) == [
+        ("x",),
+        ("y",),
+        ("a0",),
+        ("z",),
+        ("pipe.T[1]", "pipe.T[2]", "pipe.T[3]"),
+        ("port[2, 1].C[1]", "port[2, 1].C[2]"),
+        ("CPUtime",),
+    ]
+
+
+def test_tracked_first_is_tracked_then_everything_else_diagnostics_too():
+    tracked, other = _groups(group="tracked")
+    assert _titles([tracked, other]) == [(0, "Tracked"), (1, "Other variables")]
+    assert _members(tracked) == [("x",), ("y",)]
+    assert ("CPUtime",) in _members(other)
+    assert ("pipe.T[1]", "pipe.T[2]", "pipe.T[3]") in _members(other)
+    assert ("a0",) in _members(other)
+
+
+def test_the_name_order_sorts_each_group_by_what_it_reads():
+    (group,) = _groups(group="flat", order="name")
+    assert [r.text for r in group.rows] == [
+        "a0",
+        "CPUtime",
+        "pipe.T[1:3]",
+        "port[2, 1].C[1:2]",
+        "x",
+        "y",
+        "z",
+    ]
+    # the file order is the result's first appearance
+    (group,) = _groups(group="flat")
+    assert [r.text for r in group.rows][:4] == ["x", "y", "a0", "z"]
+
+
+def test_a_folded_familys_file_text_folds_the_names():
+    """``x={pipe.T[3], pipe.T[5]}``: the rows fold over the expressions
+    (`pipe.T[3:2:5]`), and read by result-file name the same row is
+    ``unitTests.x[1:2]`` — folded over the NAMES, never the expressions'
+    fold read with the names' indices."""
+    names = ["unitTests.x[1]", "unitTests.x[2]", "z"]
+    texts = {"unitTests.x[1]": "pipe.T[3]", "unitTests.x[2]": "pipe.T[5]"}
+    (group,) = _groups(
+        names=names,
+        tracked=names[:2],
+        labels=texts,
+        texts=texts,
+        layout=(),
+        selected=None,
+        scored={},
+        group="flat",
+    )
+    family, lone = group.rows
+    assert family.members == ("unitTests.x[1]", "unitTests.x[2]")
+    assert family.text == "pipe.T[3:2:5]"
+    assert family.file_text == "unitTests.x[1:2]"
+    assert (lone.text, lone.file_text) == ("z", "z")
+
+
+def test_the_name_order_sorts_by_what_the_names_menu_shows():
+    """``unitTests.x[1]`` reads ``a.Q``: A→Z puts it first by expression,
+    after ``b`` and ``m`` by result-file name — the order follows what is
+    shown."""
+    names = ["b", "unitTests.x[1]", "m"]
+    labels = {"unitTests.x[1]": "a.Q"}
+    args = dict(
+        names=names,
+        tracked=[],
+        labels=labels,
+        texts=labels,
+        layout=(),
+        selected=None,
+        scored={},
+        group="flat",
+        order="name",
+    )
+    for read in ("expression", "both"):
+        (group,) = _groups(**args, read=read)
+        assert [r.members[0] for r in group.rows] == ["unitTests.x[1]", "b", "m"]
+    (group,) = _groups(**args, read="file")
+    assert [r.members[0] for r in group.rows] == ["b", "m", "unitTests.x[1]"]

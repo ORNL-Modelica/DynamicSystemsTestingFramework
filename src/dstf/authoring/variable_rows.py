@@ -16,6 +16,8 @@ from ..discovery.plots import PlotSpec
 from ..figures.families import family_label, group_families, mask_quoted
 
 TOP_LEVEL = "(top level)"
+#: The one group of the flat grouping, and the second of "tracked first".
+ALL, OTHER = "All variables", "Other variables"
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,9 @@ class VarRow:
     id: str
     members: tuple[str, ...]  #: names, by index; one for a lone variable
     text: str  #: what it reads as: the family label, or the label
+    #: what it reads as by result-file names: the family label folded over
+    #: the NAMES (``unitTests.x[1:2]``), or the name
+    file_text: str
     name: str | None  #: the muted name beside ``text``, when they differ
     on_selected: int  #: members the selected plot shows
     elsewhere: tuple[int, ...]  #: other plots showing any member, 0-based
@@ -81,6 +86,9 @@ def variable_groups(
     selected: int | None,
     scored: Mapping[str, int],
     keep: Callable[[str], bool],
+    group: str = "component",
+    order: str = "file",
+    read: str = "both",
 ) -> list[VarGroup]:
     """``names`` in the drawer's groups. ``scored`` maps a scored name to
     its number of criteria; ``keep`` is the filter, asked of the name AND
@@ -91,12 +99,27 @@ def variable_groups(
     disambiguated texts, ``pipe.T[1] (u1)``), so two variables whose labels
     collide belong to no family — ``x={pipe.T[1], pipe.T[1]}`` is two rows,
     never one reading ``pipe.T[1,1]``; a row READS ``labels`` (the plain
-    label), with the name muted beside it where they differ."""
+    label), with the name muted beside it where they differ.
+
+    ``group`` (the drawer's group menu): ``component`` — tracked, then by
+    component, top level, diagnostics; ``flat`` — one group, "All
+    variables"; ``tracked`` — "Tracked", then "Other variables" with
+    everything else, diagnostics included. Families fold in every one.
+    ``order``: ``file`` keeps a group's rows in first-appearance
+    (result-file) order; ``name`` sorts them by what they are shown as —
+    ``file_text`` when ``read`` (the names menu) is ``file``, else
+    ``text``."""
     tracked_set, diag = set(tracked), set(diagnostics)
     kept = [n for n in names if keep(n) or (n in labels and keep(labels[n]))]
     by_group: dict[tuple[int, str], list[str]] = {}
     for name in kept:
-        by_group.setdefault(_group(name, tracked_set, diag), []).append(name)
+        if group == "flat":
+            where = (1, ALL)
+        elif group == "tracked":
+            where = (0, "Tracked") if name in tracked_set else (1, OTHER)
+        else:
+            where = _group(name, tracked_set, diag)
+        by_group.setdefault(where, []).append(name)
     # the layout indexed once: scanning every plot per name cost 395 ms over
     # 6,093 names and 300 plots
     index: dict[str, list[int]] = {}
@@ -111,6 +134,12 @@ def variable_groups(
         rows = []
         for key, members in group_families(by_group[rank, title], texts):
             text = family_label(key, members, labels)
+            # Folded again, over the NAMES: `key` is the fold over the texts
+            # (`pipe.T[]` for x={pipe.T[3], pipe.T[5]}), and read with the
+            # names' indices it said `pipe.T[1:2]` for `unitTests.x[1:2]`.
+            file_text = ", ".join(
+                family_label(k, m) for k, m in group_families(members)
+            )
             lone = members[0] if len(members) == 1 else None
             on = [m for m in members if selected is not None and selected in showing[m]]
             elsewhere = sorted(
@@ -129,6 +158,7 @@ def variable_groups(
                     id=f"{rank}/{title}/{key}",
                     members=tuple(members),
                     text=text,
+                    file_text=file_text,
                     name=lone if lone is not None and text != lone else None,
                     on_selected=len(on),
                     elsewhere=tuple(elsewhere),
@@ -136,6 +166,9 @@ def variable_groups(
                     criteria=sum(scored[m] for m in stuck),
                 )
             )
+        if order == "name":
+            shown = (lambda r: r.file_text) if read == "file" else (lambda r: r.text)
+            rows.sort(key=lambda r: (shown(r).casefold(), shown(r)))
         out.append(VarGroup(rank, title, tuple(rows)))
     return out
 

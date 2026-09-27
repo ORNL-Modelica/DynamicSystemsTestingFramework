@@ -6180,3 +6180,84 @@ def test_the_drawers_controls_are_the_tabs():
     assert (t.vars_needle, t.vars_regex, t.vars_case) == ("", False, False)
     assert (t.vars_group, t.vars_names, t.vars_sort) == ("component", "both", "file")
     assert TabState().tests_pills is not t.tests_pills
+
+
+def _var_rows(user) -> list[list[str]]:
+    """The labels of each of the Variables drawer's rows, in order."""
+    drawer = _one(user, "drawer:variables")
+    return [
+        _labels_in(_one(user, m)) for m in _marks(drawer) if m.startswith("var-row:")
+    ]
+
+
+class TestVariablesDrawerControls:
+    """The Variables drawer's sort, group and names menus (the owner's
+    ruling Q7), each the tab's."""
+
+    async def test_group_and_sort(self, drawer_shell):
+        async with user_simulation(root=drawer_shell.index) as user:
+            page = await _drawer(drawer_shell, user)
+            await _pick(user, "var-group-by", "flat")
+            await _settled(lambda: _groups_shown(user) == ["var-group:1-All-variables"])
+            assert page.state.vars_group == "flat"
+            flat = [labels[0] for labels in _var_rows(user)]
+            assert flat[:2] == ["x", "y"]  # result-file order
+            await _pick(user, "var-sort", "name")
+            await _settled(
+                lambda: (
+                    [labels[0] for labels in _var_rows(user)]
+                    == sorted(flat, key=lambda t: (t.casefold(), t))
+                )
+            )
+            assert page.state.vars_sort == "name"
+            await _pick(user, "var-group-by", "tracked")
+            await _settled(
+                lambda: (
+                    _groups_shown(user)
+                    == ["var-group:0-Tracked", "var-group:1-Other-variables"]
+                )
+            )
+            item = _one(user, "var-group-by:tracked")
+            assert item.props["role"] == "menuitemradio"
+            assert item.props["aria-checked"] == "true"
+
+    async def test_the_names_menu_reads_expression_file_name_or_both(
+        self, awkward_expression_shell
+    ):
+        from test_session import AWKWARD_EXPRESSION, UT1
+
+        shell = awkward_expression_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+
+            def ut1_row() -> list[str]:
+                (labels,) = [
+                    labels
+                    for labels in _var_rows(user)
+                    if AWKWARD_EXPRESSION in labels or UT1 in labels
+                ]
+                return labels
+
+            assert ut1_row() == [AWKWARD_EXPRESSION, UT1]  # both: today's row
+            await _pick(user, "var-names", "file")
+            await _settled(lambda: ut1_row() == [UT1])
+            assert page.state.vars_names == "file"
+            await _pick(user, "var-names", "expression")
+            await _settled(lambda: ut1_row() == [AWKWARD_EXPRESSION])
+            # The filter still asks the name and the label whatever is shown.
+            user.find(marker="var-needle").type("unitTests")
+            await _settled(lambda: ut1_row() == [AWKWARD_EXPRESSION])
+
+    async def test_the_menus_survive_a_switch_of_test(self, drawer_shell):
+        async with user_simulation(root=drawer_shell.index) as user:
+            page = await _drawer(drawer_shell, user)
+            await _pick(user, "var-group-by", "flat")
+            await _pick(user, "var-sort", "name")
+            await _pick(user, "var-names", "file")
+            await _settled(lambda: page.state.vars_names == "file")
+            await _test_page(drawer_shell, user, B)
+            assert _page(drawer_shell, user) is not page
+            assert _one(user, "var-group-by:flat").props["aria-checked"] == "true"
+            assert _one(user, "var-sort:name").props["aria-checked"] == "true"
+            assert _one(user, "var-names:file").props["aria-checked"] == "true"
+            assert _groups_shown(user) == ["var-group:1-All-variables"]

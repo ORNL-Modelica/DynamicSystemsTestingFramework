@@ -2518,3 +2518,34 @@ def test_the_tests_drawers_menus_answer_a_mouse_and_the_keyboard(
         )
         expect(items.nth(0)).to_have_attribute("aria-checked", "false")
         page.keyboard.press("Escape")
+
+
+def test_the_variables_drawers_menus_answer_a_real_mouse(tmp_path, playwright_browser):
+    """The Variables drawer's group, sort and names menus, each chosen with
+    a real click: Flat puts every row under one "All variables" group, A→Z
+    sorts it by what it reads, and the choice is checked when the menu
+    opens again."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        page.locator(".dstf-rail").get_by_text("Vars", exact=True).click()
+        drawer = page.locator(".dstf-drawer-panel").filter(has_text="Variables")
+        group = drawer.get_by_role("button", name="Group", exact=True)
+        expect(group).to_be_visible(timeout=EXPECT_TIMEOUT)
+        group.click()
+        items = page.get_by_role("menuitemradio")
+        expect(items).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "var-group-open")
+        page.get_by_role("menuitemradio", name="Flat", exact=True).click()
+        expect(drawer.locator(".dstf-group")).to_have_text(
+            ["All variables"], timeout=EXPECT_TIMEOUT
+        )
+        drawer.get_by_role("button", name="Sort", exact=True).click()
+        page.get_by_role("menuitemradio", name="A→Z", exact=True).click()
+        page.wait_for_timeout(300)
+        texts = drawer.locator(".dstf-var-text").all_inner_texts()
+        assert texts == sorted(texts, key=lambda t: (t.casefold(), t)), texts
+        group.click()
+        expect(
+            page.get_by_role("menuitemradio", name="Flat", exact=True)
+        ).to_have_attribute("aria-checked", "true", timeout=EXPECT_TIMEOUT)
+        page.keyboard.press("Escape")
