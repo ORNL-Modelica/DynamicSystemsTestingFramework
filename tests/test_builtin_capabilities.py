@@ -1685,7 +1685,34 @@ async def test_accept_reports_the_row_reason_the_empty_selection_and_a_selection
     )
 
 
+def test_accept_is_the_next_action_where_the_result_differs_or_has_no_baseline():
+    """The Test page's strip (Q2 A): filled for a failing test and one with
+    no baseline; in the ⋮ where there is nothing new to accept."""
+    from dstf.authoring.capabilities import Emphasis
+    from dstf.authoring.situation import Situation as S
+
+    assert Accept.emphasis == {
+        S.FAIL: Emphasis.NEXT,
+        S.NO_REF: Emphasis.NEXT,
+        S.PASS: Emphasis.MENU,
+        S.EDITS: Emphasis.MENU,
+        S.SIM_FAIL: Emphasis.MENU,
+        S.NO_RESULT: Emphasis.MENU,
+    }
+
+
 # -- Rerun (§4.6 table, §4.7) ---------------------------------------------
+
+
+def test_rerun_is_the_next_action_where_there_is_no_result_to_read():
+    from dstf.authoring.capabilities import Emphasis
+    from dstf.authoring.situation import Situation as S
+
+    assert Rerun.emphasis == {
+        S.SIM_FAIL: Emphasis.NEXT,
+        S.NO_RESULT: Emphasis.NEXT,
+        S.EDITS: Emphasis.MENU,
+    }
 
 
 def test_the_builtins_register_in_order():

@@ -28,12 +28,12 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
-from ..capabilities import Capability, Placement
+from ..capabilities import Capability, Emphasis, Placement
 from ..capabilities import FigureHook as FigureHookProtocol
 from ..errors import USER_ERRORS, user_text
 from ..session import Selection
 from .figure_hook import FigureHook
-from .widgets import Action, IconAction
+from .widgets import Action, IconAction, MenuAction
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -133,16 +133,24 @@ class ActionBar:
         marker: str,
         figure: FigureHook | None = None,
         icons: bool = False,
+        emphasis: Callable[[Capability], Emphasis | None] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.marker, self.figure = marker, figure
         #: Draw each capability that declares an ``icon`` (a Material icon
         #: name) as an icon button; one that declares none keeps its text.
         self.icons = icons
+        #: How the page's situation draws each capability: NEXT filled,
+        #: MENU in the ⋮ menu, None quiet. Without it every button is
+        #: today's outlined one.
+        self.emphasis = emphasis
         self.errors: dict[
             str, str
         ] = {}  # capability name -> the error its dialog shows
-        self.actions: dict[str, Action | IconAction] = {}
+        self.actions: dict[str, Action | IconAction | MenuAction] = {}
+        #: What the buttons were built from: each placed capability's name
+        #: and its emphasis. A move in either rebuilds them.
+        self.built: list[tuple[str, Emphasis | None]] = []
         self._owner: str | None = None  # the open panel's key on the hook
         self.dialog = ui.dialog()  # one element, rebuilt per open
         # Esc and a backdrop click close the dialog without reaching `close`.
@@ -152,30 +160,27 @@ class ActionBar:
         )
         self.refresh()
 
+    def clear(self) -> None:
+        """No buttons, and none built from: the next `refresh` draws them
+        afresh (a page whose test has gone)."""
+        self.dialog.close()
+        self.container.clear()
+        self.actions, self.built = {}, []
+
     def refresh(self) -> None:
         """Captions and availability from the current selection; the buttons
-        are rebuilt only when the set of capabilities placed here changed."""
+        are rebuilt only when the capabilities placed here, or the emphasis
+        the page's situation gives them, changed."""
         view = self.shell.view_for(self.selection_of())
         placed = self.shell.placed(self.placement, view)
-        if [cap.name for cap, _ in placed] != list(self.actions):
-            self.container.clear()
-            self.actions = {}
-            with self.container:
-                for cap, _ in placed:
-                    icon = getattr(cap, "icon", None) if self.icons else None
-                    self.actions[cap.name] = (
-                        IconAction(
-                            partial(self.open, cap),
-                            icon=icon,
-                            marker=f"action:{cap.name}",
-                        )
-                        if icon is not None
-                        else Action(
-                            partial(self.open, cap),
-                            props="outline dense no-caps",
-                            marker=f"action:{cap.name}",
-                        )
-                    )
+        emphasis = self.emphasis
+        built = [
+            (cap.name, emphasis(cap) if emphasis is not None else None)
+            for cap, _ in placed
+        ]
+        if built != self.built or (placed and not self.actions):
+            self._build([cap for cap, _ in placed], [e for _, e in built])
+            self.built = built
         loading = self.shell.load.in_progress
         for cap, avail in placed:
             if loading:
@@ -190,6 +195,46 @@ class ActionBar:
                 caption = cap.label
                 self.shell.report_once(cap.name, "caption", e)
             self.actions[cap.name].set(caption, reason)
+
+    def _build(self, caps: list[Capability], emphases: list[Emphasis | None]) -> None:
+        self.container.clear()
+        self.actions = {}
+        menu = [cap for cap, e in zip(caps, emphases) if e is Emphasis.MENU]
+        with self.container:
+            for cap, e in zip(caps, emphases):
+                if e is Emphasis.MENU:
+                    continue
+                marker = f"action:{cap.name}"
+                icon = getattr(cap, "icon", None) if self.icons else None
+                if icon is not None:
+                    self.actions[cap.name] = IconAction(
+                        partial(self.open, cap), icon=icon, marker=marker
+                    )
+                    continue
+                if self.emphasis is None:
+                    props = "outline dense no-caps"
+                elif e is Emphasis.NEXT:
+                    props = "unelevated dense no-caps color=primary"
+                else:
+                    props = "flat dense no-caps"
+                self.actions[cap.name] = Action(
+                    partial(self.open, cap), props=props, marker=marker
+                )
+            if menu:
+                # Named, with no tooltip: a tooltip covered the open menu's
+                # first item (as the header's ⋮).
+                more = (
+                    ui.button(icon="more_vert")
+                    .props('flat dense round aria-label="More actions"')
+                    .props('aria-haspopup="menu"')
+                    .mark("action-more")
+                )
+                with more, ui.menu():
+                    for cap in menu:
+                        self.actions[cap.name] = MenuAction(
+                            partial(self.open, cap),
+                            marker=f"menu-action:{cap.name}",
+                        )
 
     def _release(self) -> None:
         """Take the figure back from the panel that had it: its handlers go

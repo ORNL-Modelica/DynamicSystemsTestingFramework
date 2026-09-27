@@ -67,6 +67,30 @@ class IconAction:
             self.button.disable()
 
 
+class MenuAction:
+    """An Action drawn as an item of a bar's ⋮ menu: its caption the item's
+    text (in a label: a menu item has no text of its own to set);
+    disabled, the sentence that says why is its tooltip."""
+
+    def __init__(self, on_click: Callable[[], None], *, marker: str) -> None:
+        self.button = (
+            ui.menu_item(on_click=on_click).props('role="menuitem"').mark(marker)
+        )
+        with self.button, ui.item_section():
+            self.text = ui.label()
+            self.tip = ui.tooltip("").mark(f"{marker}:tip")
+        self.tip.set_visibility(False)
+
+    def set(self, caption: str, reason: str | None) -> None:
+        self.text.set_text(caption)
+        self.tip.set_text(reason or "")
+        self.tip.set_visibility(reason is not None)
+        if reason is None:
+            self.button.enable()
+        else:
+            self.button.disable()
+
+
 class Pill:
     """The tinted status pill of a criterion or a tree node (DESIGN.md
     "Status badges": tinted inside a page, filled only in the header). It

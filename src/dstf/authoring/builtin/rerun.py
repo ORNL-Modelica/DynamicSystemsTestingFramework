@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 from ...backends import select_backend
 from ...pipeline import run_pipeline
 from ...reporting.dashboard_render import render_final
-from ..capabilities import Job, JobContext, Panel, Placement, plural
+from ..capabilities import Emphasis, Job, JobContext, Panel, Placement, plural
+from ..situation import Situation
 
 if TYPE_CHECKING:
     from ...comparison.types import TestComparison
@@ -43,6 +44,13 @@ class Rerun:
     placements = frozenset({Placement.SUITE, Placement.TEST})
     #: drawn as this icon where a bar draws icons (the Suite toolbar)
     icon = "replay"
+    #: the Test page's strip: the next action when there is no result to
+    #: read; in the ⋮ while edits are pending (their next action is Save)
+    emphasis = {
+        Situation.SIM_FAIL: Emphasis.NEXT,
+        Situation.NO_RESULT: Emphasis.NEXT,
+        Situation.EDITS: Emphasis.MENU,
+    }
 
     def available(self, s: SessionView) -> bool | str:
         if s.project is None:

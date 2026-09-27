@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any
 from ...reporting.status import classify
 from ...storage.accept import accept_run_results
 from ...storage.batch_manifest import unfinished_run_models
-from ..capabilities import Panel, Placement, StoreWrite, plural
+from ..capabilities import Emphasis, Panel, Placement, StoreWrite, plural
+from ..situation import Situation
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,6 +99,16 @@ class Accept:
     placements = frozenset({Placement.SUITE, Placement.TEST})
     #: drawn as this icon where a bar draws icons (the Suite toolbar)
     icon = "done_all"
+    #: the Test page's strip: the next action for a result that differs
+    #: from its baseline or has none; nothing new to accept otherwise
+    emphasis = {
+        Situation.FAIL: Emphasis.NEXT,
+        Situation.NO_REF: Emphasis.NEXT,
+        Situation.PASS: Emphasis.MENU,
+        Situation.EDITS: Emphasis.MENU,
+        Situation.SIM_FAIL: Emphasis.MENU,
+        Situation.NO_RESULT: Emphasis.MENU,
+    }
 
     def available(self, s: SessionView) -> bool | str:
         project = s.project

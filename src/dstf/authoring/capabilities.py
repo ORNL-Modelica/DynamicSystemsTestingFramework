@@ -47,6 +47,16 @@ class Placement(Enum):
     NODE = "node"
 
 
+class Emphasis(Enum):
+    """How a bar that is told the page's situation draws a capability
+    (``Capability.emphasis``): NEXT is the one next action, drawn filled;
+    MENU goes into the bar's ⋮ menu. A situation a capability does not
+    name draws it quiet."""
+
+    NEXT = "next"
+    MENU = "menu"
+
+
 def plural(count: int, noun: str, many: str | None = None) -> str:
     """``"2 tests"``, ``"1 test"``: the count and its noun for a caption. A
     regular plural adds ``s``; ``many`` spells one that does not
@@ -206,7 +216,14 @@ class Capability(Protocol):
     toolbar) draws it as that icon, its caption the tooltip; one without
     keeps its text button. Not a protocol member — a runtime-checkable
     protocol requires every member, and most capabilities have no icon —
-    so the shell reads it with ``getattr``."""
+    so the shell reads it with ``getattr``.
+
+    It MAY also declare ``emphasis``, read the same way: a mapping from a
+    :class:`~dstf.authoring.situation.Situation` to :attr:`Emphasis.NEXT`
+    — drawn filled, the page's one next action — or :attr:`Emphasis.MENU`
+    — drawn in the bar's ⋮ menu; a situation it does not name draws it
+    quiet. Only a bar the page tells its situation reads it (the Test
+    page's status strip); every other bar draws today's outlined button."""
 
     name: str
     label: str
