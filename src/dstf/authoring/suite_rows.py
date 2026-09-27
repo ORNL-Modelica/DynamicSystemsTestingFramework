@@ -68,6 +68,7 @@ def suite_row(
             n_warnings=s["n_warnings"],
             translation_wall=s["translation_wall"],
             sim_wall=s["sim_wall"],
+            sim_cpu=s["sim_cpu"],
             total_wall=s["total_wall"],
             message=comp.error_message,
         )

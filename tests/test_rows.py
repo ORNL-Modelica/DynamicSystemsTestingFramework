@@ -384,3 +384,75 @@ def test_an_empty_provenance_does_not_erase_the_live_rows():
         start_wall=None,
     )
     assert rich.resolution == "test_spec"
+
+
+# ---------------------------------------------------------------------------
+# Sim (s): the wall a run kept, else the result file's CPU time, marked.
+# ---------------------------------------------------------------------------
+
+
+def test_a_kept_wall_time_wins_over_the_cpu_time():
+    from dstf.reporting.rows import SIM_CPU_TIP  # noqa: F401 — the tip exists
+
+    row = TestRow(model_id="Lib.A", sim_wall=1.5, sim_cpu=0.046)
+    sim = {c.key: c for c in COLUMNS}["sim"]
+    assert row.sim_source == "wall"
+    assert sim.text(row) == "1.50" and sim.sort(row) == 1.5
+    assert sim.tag(row) is None and sim.tip(row) is None
+
+
+def test_the_cpu_time_fills_sim_marked_where_no_wall_was_kept():
+    from dstf.reporting.rows import SIM_CPU_TIP
+
+    row = TestRow(model_id="Lib.A", sim_cpu=0.046)
+    sim = {c.key: c for c in COLUMNS}["sim"]
+    assert row.sim_source == "cpu"
+    assert sim.text(row) == "0.05" and sim.sort(row) == 0.046
+    assert sim.tag(row) == "cpu"
+    assert sim.tip(row) == SIM_CPU_TIP
+    assert SIM_CPU_TIP == "CPU time from the result file (no wall time was kept)"
+
+
+def test_sim_without_a_wall_or_a_cpu_time_is_empty():
+    row = TestRow(model_id="Lib.A")
+    sim = {c.key: c for c in COLUMNS}["sim"]
+    assert row.sim_source is None
+    assert sim.text(row) == "—" and sim.sort(row) is None
+    assert sim.tag(row) is None and sim.tip(row) is None
+
+
+def test_the_sort_reads_the_number_whichever_its_source():
+    sim = {c.key: c for c in COLUMNS}["sim"]
+    rows = [
+        TestRow(model_id="w", sim_wall=0.5),
+        TestRow(model_id="c", sim_cpu=0.1),
+        TestRow(model_id="n"),
+        TestRow(model_id="c2", sim_cpu=2.0, sim_wall=None),
+    ]
+    keyed = sorted(
+        (r for r in rows if sim.sort(r) is not None), key=lambda r: sim.sort(r)
+    )
+    assert [r.model_id for r in keyed] == ["c", "w", "c2"]
+
+
+def test_summary_fields_carry_the_results_cpu_time(sample_comparison):
+    s = summary_fields(sample_comparison, stats={"CPUtime": 0.046})
+    assert (s["sim_wall"], s["sim_cpu"]) == (None, 0.046)
+    s = summary_fields(
+        sample_comparison, stats={"CPUtime": 0.046, "timing": {"sim_wall": 1.5}}
+    )
+    assert (s["sim_wall"], s["sim_cpu"]) == (1.5, 0.046)
+    # A statistics block without one (every backend but Dymola), or a value
+    # that is no number, is no CPU time.
+    assert summary_fields(sample_comparison, stats={})["sim_cpu"] is None
+    assert summary_fields(sample_comparison, stats={"CPUtime": "x"})["sim_cpu"] is None
+    assert summary_fields(sample_comparison, stats={"CPUtime": True})["sim_cpu"] is None
+
+
+def test_a_sidecars_cpu_time_enriches_the_row():
+    row = enrich_row(
+        TestRow(model_id="Lib.A"),
+        {"model_id": "Lib.A", "sim_wall": None, "sim_cpu": 0.046},
+        start_wall=None,
+    )
+    assert (row.sim_cpu, row.sim_source) == (0.046, "cpu")

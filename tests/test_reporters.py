@@ -303,7 +303,7 @@ class TestReportFormatRouting:
         out = tmp_path / "nested" / "r.html"
         args = types.SimpleNamespace(report_format="html", output=str(out))
 
-        code = _output_report([_passing()], args, _fake_config(work_dir))
+        code = _output_report([_passing()], args, _fake_config(work_dir), {})
 
         assert code == 0
         assert out.exists()
@@ -323,7 +323,8 @@ class TestReportFormatRouting:
         out = tmp_path / "r.html"
         args = types.SimpleNamespace(report_format="html", output=str(out))
         assert (
-            _output_report([_passing(), _failing()], args, _fake_config(work_dir)) == 1
+            _output_report([_passing(), _failing()], args, _fake_config(work_dir), {})
+            == 1
         )
 
     def test_junit_route_unchanged(self, tmp_path):
@@ -331,14 +332,14 @@ class TestReportFormatRouting:
 
         out = tmp_path / "r.xml"
         args = types.SimpleNamespace(report_format="junit", output=str(out))
-        assert _output_report([_passing()], args, _fake_config(tmp_path)) == 0
+        assert _output_report([_passing()], args, _fake_config(tmp_path), {}) == 0
         assert ET.parse(out).getroot().tag == "testsuites"
 
     def test_console_route_is_default(self, tmp_path, capsys):
         from dstf.cli.run_cmds import _output_report
 
         args = types.SimpleNamespace(report_format="console", output=None)
-        assert _output_report([_passing()], args, _fake_config(tmp_path)) == 0
+        assert _output_report([_passing()], args, _fake_config(tmp_path), {}) == 0
         assert "Results: 1/1 passed" in capsys.readouterr().out
 
 

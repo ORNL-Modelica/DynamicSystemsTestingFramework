@@ -103,6 +103,10 @@ tr.pending td   { background: var(--dstf-pending-tint); }
 .status-badge.pending   { background: var(--dstf-pending-fill); }
 .warn { color: var(--dstf-warn-dark); font-weight: 600; }
 .unscored { color: var(--dstf-text-muted); font-style: italic; }
+/* A word after a cell's number that says what kind of number it is
+   (Sim (s)'s "cpu"): smaller and muted, the number stays the eye's. */
+.cell-tag { font-size: 0.78em; color: var(--dstf-text-muted); }
+td.tagged { white-space: nowrap; }  /* the tag stays on its number's line */
 .detail-cell {
   max-width: var(--col-w-detail, 30em);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -223,7 +227,7 @@ body.has-selection { padding-bottom: 5em; }
 {% elif c.key == 'nrmse' %}  <td>{% if t.worst_score is none and t.n_unscored %}<span class="unscored" title="No leaf on this test produced a score — every one is a sentinel (metric config that would not build, or no data to compare)">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'warnings' %}  <td>{% if t.n_warnings %}<span class="warn">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'detail' %}  <td class="detail-cell" title="{{ t.message or '' }}">{{ t.message or '' }}</td>
-{% else %}  <td>{{ text }}</td>
+{% else %}{% set tag = c.tag(t) if c.tag else none %}{% set tip = c.tip(t) if c.tip else none %}  <td{% if tag %} class="tagged"{% endif %}{% if tip %} title="{{ tip }}"{% endif %}>{{ text }}{% if tag %} <span class="cell-tag">{{ tag }}</span>{% endif %}</td>
 {% endif %}{% endfor %}</tr>
 {% endfor %}
 </tbody>

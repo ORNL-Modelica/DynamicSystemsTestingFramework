@@ -63,6 +63,9 @@ class TestRow:
     n_warnings: int | None = None
     translation_wall: float | None = None
     sim_wall: float | None = None
+    #: the result file's final ``CPUtime`` (Dymola's diagnostic): what Sim
+    #: (s) shows, marked, where the run kept no wall time
+    sim_cpu: float | None = None
     total_wall: float | None = None
     message: str | None = None
     #: the tool's staged edits on this test; 0 in a report
@@ -82,6 +85,19 @@ class TestRow:
         if self.status:
             return STATUS_CLASSES[self.status]
         return WAITING_CLASS if self.waiting else PENDING_CLASS
+
+    @property
+    def sim_source(self) -> Literal["wall", "cpu"] | None:
+        """Where Sim (s) comes from: the wall the run kept, which always
+        wins; else the result file's CPU time; else nothing."""
+        if self.sim_wall is not None:
+            return "wall"
+        return "cpu" if self.sim_cpu is not None else None
+
+    @property
+    def sim_time(self) -> float | None:
+        """The number Sim (s) shows and sorts on, from ``sim_source``."""
+        return self.sim_wall if self.sim_wall is not None else self.sim_cpu
 
     @property
     def resolution(self) -> str | None:
@@ -107,6 +123,11 @@ class Column:
     sort: Callable[[TestRow], float | str | None]
     #: the header's tooltip
     title: str | None = None
+    #: a small word after a row's text ("cpu") and the cell's tooltip, for
+    #: a column whose number may be of more than one kind; None when the
+    #: row's needs neither
+    tag: Callable[[TestRow], str | None] | None = None
+    tip: Callable[[TestRow], str | None] | None = None
 
     def filter_text(self, row: TestRow) -> str:
         """What a column filter reads: the cell's text, or "" when the row
@@ -158,6 +179,10 @@ def _num_col(key: str, label: str, get: Callable[[TestRow], Any], spec: str) -> 
         text=lambda r: _DASH if get(r) is None else format(get(r), spec),
         sort=get,
     )
+
+
+#: Sim (s)'s tooltip where the number is the result file's CPU time.
+SIM_CPU_TIP = "CPU time from the result file (no wall time was kept)"
 
 
 def _nrmse_text(row: TestRow) -> str:
@@ -214,7 +239,14 @@ COLUMNS: tuple[Column, ...] = (
     ),
     _num_col("warnings", "Warnings", lambda r: r.n_warnings, "d"),
     _num_col("translate", "Translate (s)", lambda r: r.translation_wall, ".2f"),
-    _num_col("sim", "Sim (s)", lambda r: r.sim_wall, ".2f"),
+    # The wall the run kept; else the result file's CPU time, marked: a
+    # CPU time is not a wall (it leaves out what the solver waited on), so
+    # a number of either kind says which it is.
+    replace(
+        _num_col("sim", "Sim (s)", lambda r: r.sim_time, ".2f"),
+        tag=lambda r: "cpu" if r.sim_source == "cpu" else None,
+        tip=lambda r: SIM_CPU_TIP if r.sim_source == "cpu" else None,
+    ),
     _num_col("total", "Total (s)", lambda r: r.total_wall, ".2f"),
     # Keyed "detail": the column-resize follow reads --col-w-detail.
     _text_col("detail", "Message", lambda r: r.message),
@@ -232,6 +264,17 @@ EDITS = Column(
 )
 
 
+def cpu_time(stats: Mapping[str, Any] | None) -> float | None:
+    """The final value of the result's ``CPUtime`` diagnostic, as Dymola's
+    ``read_result`` folds it into the statistics (DSTF sets
+    ``OutputCPUtime := true``); None where the result has none — every
+    other backend."""
+    value = stats.get("CPUtime") if isinstance(stats, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
 def summary_fields(
     comp: TestComparison,
     *,
@@ -245,7 +288,8 @@ def summary_fields(
     ``summary`` carries them (bar its ``model_id`` / ``written_at``).
 
     *warnings* defaults to the comparison's own; *stats* is the result's
-    statistics, whose ``timing`` block holds the phase walls.
+    statistics, whose ``timing`` block holds the phase walls and whose
+    ``CPUtime`` is the result file's CPU time.
     """
     status, status_class = classify_with_class(comp)
     variables = comp.variables
@@ -273,6 +317,7 @@ def summary_fields(
         "n_warnings": len(warns) if warns else 0,
         "translation_wall": timing.get("translation_wall"),
         "sim_wall": timing.get("sim_wall"),
+        "sim_cpu": cpu_time(stats),
         "total_wall": timing.get("total_wall"),
         "field_sources": dict(field_sources or {}),
     }
@@ -318,6 +363,7 @@ _SUMMARY_TO_ROW = (
     ("n_warnings", "n_warnings"),
     ("translation_wall", "translation_wall"),
     ("sim_wall", "sim_wall"),
+    ("sim_cpu", "sim_cpu"),
     ("total_wall", "total_wall"),
     ("ref_id", "ref_id"),
     ("ref_file", "ref_file"),

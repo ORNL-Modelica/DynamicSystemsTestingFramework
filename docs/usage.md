@@ -530,7 +530,7 @@ The **Translate (s) / Sim (s) / Total (s)** columns — on the dashboard and on 
 - **FMPy, Python, Julia `--batch`**: the whole test's wall, as Sim — there is no translation step to time — so Sim equals Total.
 - **Dymola `--batch`**: none — a `.mos` batch times the batch, not each test, and a per-test average would show a time no test took.
 
-A run keeps these, and its other statistics, beside each result in `test_NNNN/run_stats.json`, so a later `compare`, a `--merge`d test and a reload in `dstf author` show them too. A test last run before that file existed reads "—" until it is re-run.
+A run keeps these, and its other statistics, beside each result in `test_NNNN/run_stats.json`, so a later `compare`, a `--merge`d test and a reload in `dstf author` show them too. Where no wall time was kept — a test last run before that file existed, or a Dymola `--batch` run — Sim (s) shows the result file's own CPU time instead, marked: the number is followed by a small **cpu** tag and its tooltip reads "CPU time from the result file (no wall time was kept)". That is the final value of Dymola's `CPUtime` (DSTF sets `OutputCPUtime := true`), so only Dymola results carry one; on any other backend such a row reads "—" until it is re-run. A kept wall time always wins, and Sim (s) sorts and filters on the number whichever it is.
 
 A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), an aborted run, or a rerun from `dstf author`. SIMULATED is not a status: it is in no count pill.
 

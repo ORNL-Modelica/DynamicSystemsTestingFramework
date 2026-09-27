@@ -112,6 +112,10 @@ class Rerun:
             # them).
             work_dir = project.config.work_dir
             assert work_dir is not None  # resolved in Config.__post_init__
-            render_final(work_dir, comparisons=list(comparisons.values()))
+            render_final(
+                work_dir,
+                comparisons=list(comparisons.values()),
+                results=project.results,
+            )
 
         return Job(label="rerun", models=selection, run=run, after_reload=scored)

@@ -246,6 +246,12 @@
         + `${esc(name)}</a>`;
     },
     edits: (p) => (p.value ? `<span class="dstf-edits">${esc(p.value)}</span>` : ''),
+    // A number of another kind (Sim (s)'s CPU time) says so after it; the
+    // column's tooltip says what it is.
+    tagged: (p) => {
+      const tag = p.data && p.data[p.colDef.field + '__tag'];
+      return esc(p.value) + (tag ? `<span class="dstf-cell-tag">${esc(tag)}</span>` : '');
+    },
   };
   D.rowClass = (p) => (p.data && !p.data._g ? 'dstf-tint-' + p.data.status_class : '');
 

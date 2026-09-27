@@ -1796,3 +1796,78 @@ def test_the_short_tool_version_is_otherwise_the_backends_name():
     assert short_tool_version("FMPy 0.3.20", "FMPy") == "FMPy"
     assert short_tool_version(None, "Dymola") == "Dymola"
     assert short_tool_version("", "Dymola") == "Dymola"
+
+
+# ---------------------------------------------------------------------------
+# Sim (s) falls back to the result file's CPU time, marked, where no wall
+# time was kept (no run_stats.json, no sidecar walls): a Dymola result.
+# ---------------------------------------------------------------------------
+
+
+def _cpu_only(tmp_path):
+    """status.json lists Lib.A; no run_stats.json, no sidecar."""
+    _write_status_json(
+        tmp_path,
+        {
+            "total": 1,
+            "counts": {"passed": 1},
+            "tests": [
+                {
+                    "test_key": "test_0001",
+                    "model_id": "Lib.A",
+                    "status": "passed",
+                    "report_dir": "test_0001",
+                }
+            ],
+            "updated_at": 0.0,
+        },
+    )
+    from dstf.backends.types import TestResult
+    from dstf.comparison.types import TestComparison
+
+    comp = TestComparison(model_id="Lib.A", passed=True)
+    # As Dymola's read_result folds its diagnostics into the statistics.
+    result = TestResult(
+        model_id="Lib.A",
+        success=True,
+        statistics={"CPUtime": 0.046, "EventCounter": 0.0},
+    )
+    return comp, result
+
+
+def test_a_dymola_result_without_run_stats_shows_its_cpu_time(tmp_path):
+    from dstf.reporting.rows import SIM_CPU_TIP
+
+    comp, result = _cpu_only(tmp_path)
+    render_final(tmp_path, comparisons=[comp], results={"Lib.A": result})
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert (
+        f'<td class="tagged" title="{SIM_CPU_TIP}">0.05 <span class="cell-tag">cpu</span></td>'
+        in html
+    )
+    assert 'data-sort-sim="0.046"' in html
+
+
+def test_a_kept_wall_wins_over_the_results_cpu_time(tmp_path):
+    comp, result = _cpu_only(tmp_path)
+    kept = tmp_path / "test_0001"
+    kept.mkdir()
+    (kept / "run_stats.json").write_text(
+        json.dumps(
+            {
+                "model_id": "Lib.A",
+                "translation_wall": None,
+                "sim_wall": 5.555,
+                "elapsed": 6.0,
+                "statistics": None,
+            }
+        )
+    )
+    ctx = build_dashboard_context(
+        tmp_path, mode="final", comparisons=[comp], results={"Lib.A": result}
+    )
+    (row,) = ctx["tests"]
+    assert (row.sim_wall, row.sim_cpu, row.sim_source) == (5.55, 0.046, "wall")
+    render_final(tmp_path, comparisons=[comp], results={"Lib.A": result})
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "<td>5.55</td>" in html and 'class="cell-tag"' not in html

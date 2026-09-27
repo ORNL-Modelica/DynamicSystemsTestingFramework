@@ -109,3 +109,59 @@ def test_the_suite_table_shows_sim_after_a_reload(tmp_path):
     rows = suite_rows(s, [t.model_id for t in tests], failed=set())
     assert len(rows) == len(tests)
     assert all(r.sim_wall is not None and r.total_wall is not None for r in rows)
+
+
+def test_a_dymola_row_after_a_reload_shows_the_result_files_cpu_time(tmp_path):
+    """A Session reopened over a Dymola work dir whose run kept no
+    run_stats.json (a run from before the file, or a batch run): Sim (s)
+    is the dsres.mat's final CPUtime, marked as such."""
+    import json
+    import shutil
+    from pathlib import Path
+
+    from dstf.reporting.rows import COLUMNS
+
+    here = Path(__file__).parent
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    shutil.copytree(
+        here.parent / "examples" / "modelica" / "ModelicaTestingLib",
+        config_dir / "ModelicaTestingLib",
+    )
+    (config_dir / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_path": "ModelicaTestingLib",
+                "backend": "Dymola",
+                "backends": {},
+                "dependencies": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = "ModelicaTestingLib.Examples.ConstantTest"
+    work = tmp_path / "work"
+    (work / "test_0001").mkdir(parents=True)
+    # The fixture's dsres.mat is ConstantTest's; its CPUtime ends at 0.002.
+    shutil.copy(
+        here / "fixtures" / "results" / "Dymola" / "dsres.mat",
+        work / "test_0001" / "dsres.mat",
+    )
+    (work / "batch_manifest.json").write_text(
+        json.dumps(
+            {
+                "test_0001": {
+                    "model_id": model,
+                    "ref_id": None,
+                    "last_run_status": "passed",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    s = Session()
+    s.open(config_dir / "testing.json", work_dir=work)
+    (row,) = suite_rows(s, [model], failed=set())
+    sim = {c.key: c for c in COLUMNS}["sim"]
+    assert (row.sim_wall, row.sim_cpu, row.sim_source) == (None, 0.002, "cpu")
+    assert (sim.text(row), sim.tag(row)) == ("0.00", "cpu")

@@ -65,6 +65,11 @@ def row_json(row: TestRow) -> dict[str, Any]:
     for c in TOOL_COLUMNS:
         data[c.key] = c.text(row)
         data[f"{c.key}__sort"] = c.sort(row)
+        # A number of another kind (Sim (s)'s CPU time): its tag and tooltip.
+        for part, get in (("tag", c.tag), ("tip", c.tip)):
+            value = get(row) if get is not None else None
+            if value is not None:
+                data[f"{c.key}__{part}"] = value
     return data
 
 
@@ -109,6 +114,11 @@ def _column_defs() -> list[dict[str, Any]]:
         if c.kind == "number":
             d["type"] = "rightAligned"
             d["cellClass"] = "dstf-num"
+        if c.tag is not None:
+            d[":cellRenderer"] = "DstfSuite.cell.tagged"
+            d[":tooltipValueGetter"] = (
+                f"(p) => p.data && p.data[{json.dumps(c.key + '__tip')}]"
+            )
         if key == "status":
             d[":cellRenderer"] = "DstfSuite.cell.status"
             d["width"] = 100  # "SIM_FAIL" in its badge and the sort arrow
@@ -276,6 +286,7 @@ GRID_CSS = """
   border-radius: 2px; padding: 1px 4px; }
 .dstf-ff.bad { border-color: var(--dstf-fail-fill); outline: 1px solid var(--dstf-fail-fill); }
 .dstf-ff-status { font-size: 11px; color: var(--dstf-text-muted); }
+.dstf-cell-tag { font-size: 11px; color: var(--dstf-text-muted); margin-left: 3px; }
 /* The pills and the view icons wrap at a narrow width; the selection and
    the actions at the right keep their line. */
 #dstf-suite-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;

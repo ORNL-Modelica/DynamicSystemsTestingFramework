@@ -123,6 +123,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 config.work_dir,
                 rerun_prefix=build_rerun_prefix(config),
                 comparisons=prior_comps,
+                results=prior_results,
             )
             if args.report:
                 scope_tests = [t for t in all_tests if t.model_id in prior_results]
@@ -164,6 +165,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # with whatever comparisons exist and lets the exception propagate.
     final_rendered = False
     comparisons = None
+    results = None
     try:
         open_in_browser(config.work_dir / "dashboard.html")
 
@@ -212,6 +214,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 config.work_dir,
                 rerun_prefix=build_rerun_prefix(config),
                 comparisons=comparisons,
+                results=results,
             )
             final_rendered = True
             return _interactive_review(
@@ -237,12 +240,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             # Always refresh the unified dashboard before any --report work.
             # Without --report the per-test sidecars don't exist: each row's
             # verdict, Worst NRMSE, Variables and Warnings come from its
-            # comparison; the Translate / Sim / Total walls and the Reference
-            # link are the sidecar's, and stay empty.
+            # comparison, the walls from the run's run_stats.json, a CPU
+            # time where it kept none from its result; the Reference link
+            # is the sidecar's, and stays empty.
             render_final(
                 config.work_dir,
                 rerun_prefix=build_rerun_prefix(config),
                 comparisons=comparisons,
+                results=results,
             )
             final_rendered = True
 
@@ -251,7 +256,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     comparisons, results, scope_tests, store, config
                 )
 
-            return _output_report(comparisons, args, config)
+            return _output_report(comparisons, args, config, results)
     finally:
         if not final_rendered:
             # A page is not worth the run's own exception: a failing render
@@ -261,6 +266,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     config.work_dir,
                     rerun_prefix=build_rerun_prefix(config),
                     comparisons=comparisons or (),
+                    results=results,
                 )
             except Exception as e:
                 print(
@@ -361,21 +367,22 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     # Always refresh the unified dashboard, even without --report. Without
     # per-test sidecars (no --report run yet), each row's verdict, Worst
-    # NRMSE, Variables and Warnings come from its comparison; the Translate
-    # / Sim / Total walls and the Reference link are the sidecar's, and stay
-    # empty.
+    # NRMSE, Variables and Warnings come from its comparison, the walls
+    # from the run's run_stats.json, a CPU time where it kept none from its
+    # result; the Reference link is the sidecar's, and stays empty.
     from ..reporting.dashboard_render import build_rerun_prefix, render_final
 
     render_final(
         config.work_dir,
         rerun_prefix=build_rerun_prefix(config),
         comparisons=comparisons,
+        results=results,
     )
 
     if getattr(args, "report", False):
         return _generate_report_suite(comparisons, results, tests, store, config)
 
-    return _output_report(comparisons, args, config)
+    return _output_report(comparisons, args, config, results)
 
 
 def _generate_report_suite(comparisons, results, tests, store, config) -> int:
@@ -394,6 +401,7 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
         config.work_dir,
         rerun_prefix=build_rerun_prefix(config),
         comparisons=comparisons,
+        results=results,
     )
     dashboard_path = config.work_dir / "dashboard.html"
     print(f"Report: {dashboard_path}")
@@ -403,8 +411,11 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     return 1 if n_failed else 0
 
 
-def _output_report(comparisons: list, args: argparse.Namespace, config) -> int:
-    """Route comparisons to the selected report format."""
+def _output_report(
+    comparisons: list, args: argparse.Namespace, config, results: dict
+) -> int:
+    """Route comparisons to the selected report format; ``results`` give
+    the HTML page its CPU times, as they gave ``render_final``."""
     fmt = getattr(args, "report_format", "console")
     if fmt == "junit":
         from ..reporting.junit_report import generate_junit_report
@@ -426,6 +437,7 @@ def _output_report(comparisons: list, args: argparse.Namespace, config) -> int:
             out,
             rerun_prefix=build_rerun_prefix(config),
             comparisons=comparisons,
+            results=results,
         )
         print(f"HTML report written to {out}")
         if out.resolve().parent != config.work_dir.resolve():

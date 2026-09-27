@@ -27,7 +27,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -36,11 +36,13 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from ..backends.base import kept_run_result
 from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
+from ..backends.types import TestResult
 from ..comparison.types import TestComparison
 from .rows import (
     COLUMNS,
     FILTER_HINTS,
     TestRow,
+    cpu_time,
     enrich_row,
     row_from_status,
     summary_fields,
@@ -259,6 +261,7 @@ def build_dashboard_context(
     mode: str,
     rerun_prefix: str | None = None,
     comparisons: Iterable[TestComparison] = (),
+    results: Mapping[str, TestResult] | None = None,
 ) -> dict:
     """Build the Jinja context for dashboard.html.
 
@@ -272,6 +275,9 @@ def build_dashboard_context(
     then by model id (D136's amendment: ``compare`` after a ``--filter``
     run, a ``--merge`` and the tool's Rerun list every test they
     scored). Such a row takes its key and baseline from the manifest.
+    A row whose result the caller holds (``results``, by model id) takes
+    its CPU time from it: Sim (s) shows that, marked, where no wall time
+    was kept (``TestRow.sim_source``).
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
@@ -340,6 +346,10 @@ def build_dashboard_context(
         comp = by_model.get(row.model_id)
         if comp is not None:
             row = _with_verdict(row, comp)
+        result = (results or {}).get(row.model_id) if mode == "final" else None
+        cpu = cpu_time(result.statistics) if result is not None else None
+        if cpu is not None:
+            row = replace(row, sim_cpu=cpu)
         rows.append(row)
 
     # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf"
@@ -424,9 +434,14 @@ def _render(
     rerun_prefix: str | None = None,
     output_path: Path | None = None,
     comparisons: Iterable[TestComparison] = (),
+    results: Mapping[str, TestResult] | None = None,
 ) -> None:
     ctx = build_dashboard_context(
-        work_dir, mode=mode, rerun_prefix=rerun_prefix, comparisons=comparisons
+        work_dir,
+        mode=mode,
+        rerun_prefix=rerun_prefix,
+        comparisons=comparisons,
+        results=results,
     )
     template = _env.get_template("dashboard.html")
     html = template.render(**ctx)
@@ -444,10 +459,18 @@ def render_final(
     work_dir: Path,
     rerun_prefix: str | None = None,
     comparisons: Iterable[TestComparison] = (),
+    results: Mapping[str, TestResult] | None = None,
 ) -> None:
     """Render dashboard.html in final mode (refresh stripped, the
-    comparisons' verdicts and the sidecars merged)."""
-    _render(work_dir, mode="final", rerun_prefix=rerun_prefix, comparisons=comparisons)
+    comparisons' verdicts and the sidecars merged; the results' CPU
+    times where no wall time was kept)."""
+    _render(
+        work_dir,
+        mode="final",
+        rerun_prefix=rerun_prefix,
+        comparisons=comparisons,
+        results=results,
+    )
 
 
 def render_final_to(
@@ -455,6 +478,7 @@ def render_final_to(
     output_path: Path,
     rerun_prefix: str | None = None,
     comparisons: Iterable[TestComparison] = (),
+    results: Mapping[str, TestResult] | None = None,
 ) -> None:
     """Render the final-mode dashboard page to a caller-chosen path.
 
@@ -469,4 +493,5 @@ def render_final_to(
         rerun_prefix=rerun_prefix,
         output_path=output_path,
         comparisons=comparisons,
+        results=results,
     )

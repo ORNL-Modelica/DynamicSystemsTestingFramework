@@ -1394,3 +1394,52 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
         if proc.poll() is None:
             proc.terminate()
             proc.wait(10)
+
+
+def _cpu_time_only(cfg: Path) -> None:
+    """A's run kept no wall time and a result whose statistics carry a CPU
+    time, as a Dymola result's do (a run_stats.json from a batch run: its
+    walls null)."""
+    (cfg.parent.parent.parent / "work" / "test_0001" / "run_stats.json").write_text(
+        json.dumps(
+            {
+                "model_id": A,
+                "translation_wall": None,
+                "sim_wall": None,
+                "elapsed": None,
+                "statistics": {"CPUtime": 0.046},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_cpu_time_in_sim_reads_its_tag_and_says_what_it_is(
+    tmp_path, playwright_browser
+):
+    """Where no wall time was kept, Sim (s) shows the result file's CPU
+    time with a small "cpu" after it, and its tooltip says so; a row with
+    neither reads "—", no tag and no tooltip."""
+    from dstf.reporting.rows import SIM_CPU_TIP
+
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, setup=_cpu_time_only
+    )
+    try:
+        cell = page.locator(f".ag-row[row-id='{A}'] .ag-cell[col-id='sim']")
+        expect(cell.locator(".dstf-cell-tag")).to_have_text(
+            "cpu", timeout=EXPECT_TIMEOUT
+        )
+        expect(cell).to_have_text("0.05cpu")
+        assert _tooltip(page, A, "sim") == SIM_CPU_TIP
+        other = page.locator(f".ag-row[row-id='{D}'] .ag-cell[col-id='sim']")
+        expect(other).to_have_text("—")
+        expect(other.locator(".dstf-cell-tag")).to_have_count(0)
+        page.mouse.move(0, 0)
+        _keep(page, tmp_path, "suite-sim-cpu-1280")
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)

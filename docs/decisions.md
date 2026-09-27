@@ -5227,8 +5227,16 @@ a re-accept shows them in `git diff` (327 of TRANSFORM's 331 baselines
 already carry timing); the four stored without `translation` / `simulation`
 / `timing` (ref_0195–0197, ref_0307) gain them on their next
 `compare --accept`. Stored TRANSFORM results were written before this
-change: their rows read "—" until those tests are re-run. Nothing in the
-pre-release seams moves: the CLI, `testing.json`, `test_spec.json` and the
+change: their rows read "—" until those tests are re-run. *Amended
+2026-09-27 (the owner: "Fill Sim (s), marked"):* where no wall was kept,
+Sim (s) shows the result file's final `CPUtime` (Dymola's diagnostic, which
+`read_result` folds into the statistics; every stored Dymola `dsres.mat`
+carries it, 329 of TRANSFORM's 331 rows fill), tagged "cpu" with a tooltip
+naming it: a CPU time is not a wall — it leaves out what the process waited
+on — so a column that holds either says which. A kept wall always wins
+(`TestRow.sim_source`); the final page takes the CPU time from the results
+the command holds (`render_final(..., results=)`), the Suite from the
+Session's. Nothing in the pre-release seams moves: the CLI, `testing.json`, `test_spec.json` and the
 reference-JSON layout are unchanged; the work dir gains a file per test.
 
 **Scalar leaves on a statistics path.** A `scalar` leaf whose `quantity` is
