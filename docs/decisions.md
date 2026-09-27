@@ -5108,3 +5108,76 @@ may declare an `icon`; a bar that draws icons draws it, and the shell still
 names no capability. `TestList` is the Tests drawer's alone. Nothing in the
 pre-release seams moves. Not measured here: TRANSFORM's time to first row
 through the grid, cold and warm — the plan's gate over a copy measures it.
+
+## D138 — A run's statistics and timing are kept beside its result (2026-09-27)
+
+**Context.** The TRANSFORM gate of the Suite table (D137) read "—" in Sim (s)
+on every row of both surfaces, and the owner named sim time as one of the
+things a row must show (feedback 2026-09-26). The walls a run measures
+(translation, simulation, elapsed) and the statistics its backend parses
+lived only on the in-process `TestRunResult`. `BatchManifest.save` writes
+the entries, not the results, so every reader without the run in hand — a
+`compare`, a reload in `dstf author`, a test `--merge` did not re-run —
+called `read_result(test, key, None)` and got no timing; for Dymola, not the
+dslog `translation` / `simulation` statistics either. And only Dymola's and
+OpenModelica's `read_result` built a `statistics["timing"]` block at all:
+FMPy, Julia and the Python backend measured a `sim_wall` and showed none.
+
+**Decision.**
+
+1. *One timing block for every backend.* `run_timing(run_result)`
+   (`backends/common/result_variables.py`) builds `translation_wall`,
+   `sim_wall`, `other_wall`, `total_wall` (seconds, rounded to 2, only the
+   keys the run measured), and `Backend.read_run_result` — the read every
+   result goes through in `read_results` — merges it into the result's
+   statistics, a failed run's included, on a copy. The two copies in
+   Dymola's and OpenModelica's `read_result` are gone; OpenModelica's own
+   omc-reported `timing` keys are updated, not replaced. `other_wall` is
+   written only when both walls are known: the old block counted a missing
+   wall as 0 (OpenModelica without an omc simulation time, a Dymola
+   translation failure).
+2. *Dymola batch shows no timing.* A `.mos` batch measures no per-test wall;
+   its `elapsed` is the batch's average. A block built from it would show a
+   time no test took, so `run_timing` builds none, as before.
+3. *The file.* `BatchManifest.record_result` — which every backend lane
+   calls as a test's verdict lands — writes `<work_dir>/<test_key>/run_stats.json`
+   (`storage/run_stats.py`): `{"model_id", "translation_wall", "sim_wall",
+   "elapsed", "statistics"}`, absent walls as null, a value JSON cannot hold
+   as its `str`. It is written after the manifest is saved and never raises:
+   `record_result` is the abort-proof verdict record, and a failed write is
+   one `# WARN:` line. A run wipes a test's directory exactly when it re-runs
+   the test, so the file is as fresh as the result beside it, under
+   `--merge` and `--rerun` too. `status.json` could not hold it: each run
+   rewrites it with its own scope only.
+4. *Read back as a run result.* With no run result in hand,
+   `read_run_result` rebuilds one from the file (`kept_run_result`,
+   `success=True`), so `read_result` and `run_timing` run unchanged. The
+   verdict stays the manifest's (`run_verdicts`), applied after the read as
+   on any reload. Only a test that reaches the read opens its file. No file
+   (a run from before this) reads back with no timing and no word; a
+   corrupt file, or one written for another model, with no timing and one
+   warning. The review loop's `[a]` after `[v]` re-reads through the same
+   path, so the accepted baseline keeps the run's statistics.
+5. *The dashboard.* A final page's row with no fresh sidecar (no
+   `--report`, or a sidecar the stale guard refused) takes Translate / Sim /
+   Total from the file, through `run_timing`. A fresh sidecar's walls still
+   win; a live page reads no file. The Suite table needed no change: its row
+   reads the Session's results, which a reload now reads with their timing.
+
+**Consequences.** Restored Dymola `translation` statistics make the
+structural-change warnings appear on `compare`, on a reload in the tool and
+on a `--merge`d test, as they already did on an in-process `run`: the
+verdict is unchanged, `n_warnings` and the `warnings` category change.
+`compare --accept` stores the restored statistics into the reference JSON,
+as `run --accept` in process always did — wall times are nondeterministic, so
+a re-accept shows them in `git diff` (327 of TRANSFORM's 331 baselines
+already carry timing); the four stored without `translation` / `simulation`
+/ `timing` (ref_0195–0197, ref_0307) gain them on their next
+`compare --accept`. Stored TRANSFORM results were written before this
+change: their rows read "—" until those tests are re-run. Nothing in the
+pre-release seams moves: the CLI, `testing.json`, `test_spec.json` and the
+reference-JSON layout are unchanged; the work dir gains a file per test.
+
+**Not built here**, so nobody looks for it: a no-`--report` dashboard of a
+`--filter` run shows only that run's rows, even with `--merge` — a gap from
+before this change, fixed as its own follow-up.

@@ -519,7 +519,17 @@ it against.
 DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the live progress page during a run and the final report after comparison.
 
 - **During a run**: the page is re-written on every state change and reloads itself every 5s (a meta refresh — a script fetch is blocked on `file://`). It stays live until the command that started the run has finished with it.
-- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings). The Translate / Sim / Total wall times and the Reference link come from the per-test report, so they are filled only with `--report`, which also writes the per-test interactive deep dives at `reports/test_NNNN/interactive.html`, linked from the Model column.
+- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/test_NNNN/interactive.html`, linked from the Model column.
+
+The **Translate (s) / Sim (s) / Total (s)** columns — on the dashboard and on the Suite page of `dstf author` — are wall-clock seconds. Total is always the whole test; what Translate and Sim time depends on the backend:
+
+- **Dymola** (persistent, the default): DSTF's own clock around the translate call and around the simulate call.
+- **OpenModelica**: omc's own record — Translate sums its frontend, backend, code-generation and compile phases, Sim is its simulation phase.
+- **Julia** (persistent, the default): the Julia worker's own time for the simulate call, as Sim.
+- **FMPy, Python, Julia `--batch`**: the whole test's wall, as Sim — there is no translation step to time — so Sim equals Total.
+- **Dymola `--batch`**: none — a `.mos` batch times the batch, not each test, and a per-test average would show a time no test took.
+
+A run keeps these, and its other statistics, beside each result in `test_NNNN/run_stats.json`, so a later `compare`, a `--merge`d test and a reload in `dstf author` show them too. A test last run before that file existed reads "—" until it is re-run.
 
 A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), an aborted run, or a rerun from `dstf author`. SIMULATED is not a status: it is in no count pill.
 
