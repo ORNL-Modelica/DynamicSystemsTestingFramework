@@ -112,6 +112,15 @@ Edits: `sum(1 for op in session.spec.pending if op.model_id == model_id)` (count
 - [ ] **Step 1: Failing tests.** With the scan made slow (monkeypatch `scan_source_tests` / `load_scan` to block on an Event), `Session.open` emits a new event `known` with the model ids it can name BEFORE the scan: the spec document's models (`spec_models_from_document`) ∪ the work dir's `batch_manifest.json` model ids, filtered by the config's `--filter` / `--package` the way `visible_tests` filters; the Suite page draws those rows as waiting ("…") while the scan runs; when the scan merges, the `spec` event's set replaces them (rows the scan found added, rows it did not removed). On a scan-cache HIT nothing changes (the cache is one JSON parse). Run: FAIL.
 - [ ] **Step 2: Implement.** Emit `known` right after the spec document loads (`session.py` ~L272); the shell keeps the known ids until `session.project` is set. Run: PASS; commit "suite: rows appear before a cold library scan finishes".
 
+### Task 6b: A tool Rerun ends on a scored dashboard
+
+**Files:** `src/dstf/authoring/session.py` (where a finished job's results are reloaded on the UI loop), `src/dstf/authoring/builtin/rerun.py`; Test `tests/test_accept_and_rerun.py`.
+
+S1's review batch (2780dc4) made every run end on a static page; the tool's Rerun renders `render_final(work_dir)` in a `finally` with NO comparisons, so after a tool rerun `work_dir/dashboard.html` reads SIMULATED on its rows (the Session scores them later, on the UI loop). An aborted run stays SIMULATED (nothing was scored).
+
+- [ ] **Step 1: Failing test:** after a tool Rerun finishes and the Session has reloaded and rescored its results, `work_dir/dashboard.html` is static and reads the Session's verdicts (a failing rerun test reads `fail`, the others `pass`), not `pending`.
+- [ ] **Step 2: Implement:** once the job's results are reloaded (the place the Session emits `results` for the job's models), render `render_final(work_dir, comparisons=list(self.comparisons.values()))` — off the UI loop if it is slow (measure it over the FakeLib fixture and say). Keep the `finally` render in `rerun.py` for a job that fails before it reloads. Commit "rerun: a tool rerun ends on a dashboard with the Session's verdicts".
+
 ### Task 7: Record it; the gate
 
 - [ ] `docs/decisions.md` D137 — "The Suite page is an AG Grid table over the row model (2026-09-27)": the rulings, why AG Grid Community (the spike's numbers; Enterprise-only grouping emulated), the no-update rule and its guard, where client state lives (browser, `dstf-suite-v1`) and where the selection lives (per tab, Python), the known-before-scan rows. `docs/usage.md` (the author section): the Suite table's controls. `CLAUDE.md`: the shell line gains `suite_grid.py` / `suite_grid.js` and `authoring/suite_rows.py`. Full gates; commit.
