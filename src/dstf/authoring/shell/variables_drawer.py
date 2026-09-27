@@ -19,7 +19,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import regex
 from nicegui import ui
@@ -36,6 +36,7 @@ from ..layout import (
 )
 from ..needle import matcher
 from ..variable_rows import VarGroup, VarRow, cap, variable_groups
+from .drawer_controls import filter_box
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -109,23 +110,15 @@ class VariablesDrawer:
         self.drawn: object = None
         with panel:
             ui.label("Variables").classes("text-subtitle2")
-            with ui.row().classes("items-center no-wrap gap-1 w-full"):
-                self.needle = (
-                    ui.input(
-                        placeholder="filter: substring, or a glob with * ?",
-                        value=self.state.vars_needle,
-                        on_change=self._on_needle,
-                    )
-                    .props("dense outlined clearable debounce=250")
-                    .classes("col")
-                    .mark("var-needle")
-                )
-                self.regex_button = self._toggle(
-                    ".*", "var-regex", "Regular expression"
-                )
-                self.case_button = self._toggle("Aa", "var-case", "Match case")
-            self.why = ui.label().classes("dstf-why").mark("var-filter:why")
-            self.why.set_visibility(False)
+            state = self.state
+            self.box = filter_box(
+                state.vars_needle,
+                state.vars_regex,
+                state.vars_case,
+                self._on_filter,
+                "filter: substring, or a glob with * ?",
+                "var-",
+            )
             # The plot the checks act on, with the ring its card wears; a
             # click brings that card into view.
             with (
@@ -138,30 +131,9 @@ class VariablesDrawer:
             self.body = ui.column().classes("w-full gap-0")
         self.rebuild()
 
-    def _toggle(self, text: str, marker: str, tip: str) -> ui.button:
-        on = self.state.vars_regex if marker == "var-regex" else self.state.vars_case
-        button = (
-            ui.button(text, on_click=partial(self._flip, marker))
-            .props(f'flat dense no-caps aria-pressed="{str(on).lower()}"')
-            .classes("dstf-mono")
-            .mark(marker)
-        )
-        with button:
-            ui.tooltip(tip)
-        return button
-
-    def _on_needle(self, e: Any) -> None:
-        self.state.vars_needle = e.value or ""
-        self.rebuild()
-
-    def _flip(self, marker: str) -> None:
+    def _on_filter(self, needle: str, regex: bool, case: bool) -> None:
         state = self.state
-        if marker == "var-regex":
-            state.vars_regex = not state.vars_regex
-            self.regex_button.props(f'aria-pressed="{str(state.vars_regex).lower()}"')
-        else:
-            state.vars_case = not state.vars_case
-            self.case_button.props(f'aria-pressed="{str(state.vars_case).lower()}"')
+        state.vars_needle, state.vars_regex, state.vars_case = needle, regex, case
         self.rebuild()
 
     def _reveal(self) -> None:
@@ -259,9 +231,9 @@ class VariablesDrawer:
                 state.vars_needle, regex=state.vars_regex, case=state.vars_case
             )
         except regex.error as e:
-            self._say(f"not a regular expression: {e}")
+            self.box.say(f"not a regular expression: {e}")
             return
-        self.why.set_visibility(False)
+        self.box.say(None)
         names = reads.names
         project = page.shell.session.project
         with self.body:
@@ -293,7 +265,7 @@ class VariablesDrawer:
             try:
                 found = groups_of(names=names, keep=keep)
             except TimeoutError:
-                self._say("the pattern took too long; simplify it")
+                self.box.say("the pattern took too long; simplify it")
                 return
             groups, shown, total = cap(found, ROWS)
             for group in groups:
@@ -308,11 +280,6 @@ class VariablesDrawer:
                 ui.label(
                     f"Showing {shown} of {total:,} rows — narrow the filter"
                 ).classes("dstf-why").mark("var-cap")
-
-    def _say(self, why: str) -> None:
-        """Why the filter drew no rows, in place of them."""
-        self.why.set_text(why)
-        self.why.set_visibility(True)
 
     def _members(self, row: VarRow, groups_of: Callable[..., list[VarGroup]]) -> None:
         """An opened family's members, each a row of its own under it. Each

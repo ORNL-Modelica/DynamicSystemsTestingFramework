@@ -252,13 +252,20 @@ COLUMNS: tuple[Column, ...] = (
     _text_col("detail", "Message", lambda r: r.message),
 )
 
+
+def unsaved_text(edits: int) -> str:
+    """A test's staged edits as the Suite's Edits column and the Tests
+    drawer's row pill read them; "" for none."""
+    return f"{edits} unsaved" if edits else ""
+
+
 #: The tool's staged edits: a Suite column, in no report (a report has no
 #: staged edits).
 EDITS = Column(
     key="edits",
     label="Edits",
     kind="number",
-    text=lambda r: f"{r.edits} unsaved" if r.edits else "",
+    text=lambda r: unsaved_text(r.edits),
     sort=lambda r: r.edits or None,
     title="Staged edits not yet saved to test_spec.json",
 )

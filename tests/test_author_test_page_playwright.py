@@ -2441,3 +2441,80 @@ def test_a_lower_plots_plus_opens_the_editor_on_that_plot_in_view(
         assert _editor_card(page) == 1
         _editor_in_view(page)
         expect(page.locator(".dstf-header-row")).to_contain_text("2 pending edits")
+
+
+# -- the Tests drawer's control set (Q7) -------------------------------------
+
+#: The Tests drawer's row names, in drawing order, the hidden ones left out.
+DRAWER_NAMES = """() => [...document.querySelectorAll('.dstf-drawer-panel .dstf-row')]
+  .filter(r => r.offsetParent !== null)
+  .map(r => r.querySelector('.dstf-name').innerText.trim())"""
+
+#: The focused menu choice's text, its check icon's ligature left out.
+ACTIVE_TEXT = """() => { const a = document.activeElement;
+  const l = a && a.querySelector('.q-item__label');
+  return l ? l.innerText.trim() : null; }"""
+
+
+def test_the_tests_drawers_menus_answer_a_mouse_and_the_keyboard(
+    tmp_path, playwright_browser
+):
+    """The Tests drawer's sort menu chooses with a real click and reorders
+    the rows; its names menu opens from the keyboard, the arrow keys, Home
+    and End move among its choices (Quasar's QMenu has no keyboard of its
+    own), and Enter chooses one. Each choice is a `menuitemradio`, the
+    current one checked."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.locator(".dstf-rail").get_by_text("Tests", exact=True).click()
+        drawer = page.locator(".dstf-drawer-panel").filter(has_text="Tests")
+        sort = drawer.get_by_role("button", name="Sort", exact=True)
+        expect(sort).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(drawer.locator(".dstf-row")).to_have_count(5)
+        assert page.evaluate(DRAWER_NAMES) == ["A", "B", "C", "D", "G"]
+
+        sort.click()
+        items = page.get_by_role("menuitemradio")
+        expect(items).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        assert [
+            t.strip() for t in items.locator(".q-item__label").all_inner_texts()
+        ] == ["Package order", "Name A→Z", "Status, failures first"]
+        # Named by its text alone: the check icon is hidden from the
+        # accessibility tree, or every choice read "check …".
+        checked = page.get_by_role("menuitemradio", name="Package order", exact=True)
+        expect(checked).to_have_attribute("aria-checked", "true")
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "tests-drawer-sort-open")
+        items.nth(2).click()
+        expect(items).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        # A FAIL, C SIM_FAIL, B NO_REF, then the passes in package order.
+        assert page.evaluate(DRAWER_NAMES) == ["A", "C", "B", "D", "G"]
+
+        names = drawer.get_by_role("button", name="Names", exact=True)
+        names.focus()
+        page.keyboard.press("Enter")
+        expect(items).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        page.keyboard.press("ArrowDown")
+        assert page.evaluate(ACTIVE_TEXT) == "Short"
+        page.keyboard.press("ArrowDown")
+        assert page.evaluate(ACTIVE_TEXT) == "Full"
+        page.keyboard.press("ArrowDown")  # wraps
+        assert page.evaluate(ACTIVE_TEXT) == "Short"
+        page.keyboard.press("End")
+        assert page.evaluate(ACTIVE_TEXT) == "Full"
+        page.keyboard.press("Home")
+        assert page.evaluate(ACTIVE_TEXT) == "Short"
+        page.keyboard.press("ArrowUp")  # wraps
+        assert page.evaluate(ACTIVE_TEXT) == "Full"
+        page.keyboard.press("Enter")
+        expect(items).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(drawer.locator(".dstf-name").first).to_have_text(
+            "FakeLib.A", timeout=EXPECT_TIMEOUT
+        )
+        names.click()
+        expect(items.nth(1)).to_have_attribute(
+            "aria-checked", "true", timeout=EXPECT_TIMEOUT
+        )
+        expect(items.nth(0)).to_have_attribute("aria-checked", "false")
+        page.keyboard.press("Escape")

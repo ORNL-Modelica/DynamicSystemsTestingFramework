@@ -1,7 +1,8 @@
-"""The tests as rows grouped by package (brief §3.2; DESIGN.md "Tables"):
-the Tests drawer's list (the Suite page's is a table, `suite_grid.py`). A
-row's verdict repaints in place; the list is rebuilt only when the test
-set or the layout moves."""
+"""The tests as rows, grouped by package or flat (brief §3.2; DESIGN.md
+"Tables"): the Tests drawer's list (the Suite page's is a table,
+`suite_grid.py`). A row's verdict and its unsaved edits repaint in place;
+the list is rebuilt only when the test set, the order or the layout
+moves."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
+from ...reporting.rows import unsaved_text
 from ...reporting.status import classify_with_class
 from ...reporting.theme import STATUS
 
@@ -28,7 +30,10 @@ class Row:
     container: ui.row
     name: ui.button
     badge: ui.badge
+    #: ``N unsaved`` while the test has staged edits, hidden otherwise
+    edits: ui.label
     verdict: str = ""  # the classifier's word, "" while unscored
+    pending: int = 0  # the test's staged edits
 
 
 def _package(model_id: str) -> str:
@@ -99,16 +104,24 @@ class TestList:
                     # status fill and paints every verdict blue (the review
                     # of Task 4 of the 2026-09-20 Test page plan, in
                     # Chromium).
+                    edits = (
+                        ui.label()
+                        .classes("dstf-pill dstf-pill-warn dstf-pill-named")
+                        .mark(f"{self.marker}edits:{model_id}")
+                    )
                     badge = ui.badge("", color=None).classes("dstf-badge")
                 if model_id == self.current:
                     container.classes(add="dstf-row-current")
-                self.rows[model_id] = Row(model_id, group, container, name, badge)
+                self.rows[model_id] = Row(
+                    model_id, group, container, name, badge, edits
+                )
                 self.paint(model_id)
 
     def paint(self, model_id: str) -> None:
         """One row's verdict: the badge's word and fill, the row's tint.
         `…` while unscored; `scoring failed` for a model the open announced
-        with `error=True` (Task 1 of the 2026-09-16 Suite page plan)."""
+        with `error=True` (Task 1 of the 2026-09-16 Suite page plan). And
+        its staged edits: ``N unsaved``, as the Suite's Edits column."""
         row = self.rows.get(model_id)
         if row is None:
             return
@@ -120,6 +133,11 @@ class TestList:
         else:
             verdict, css = "", "queued"
         row.verdict = verdict
+        row.pending = sum(
+            1 for op in self.shell.session.spec.pending if op.model_id == model_id
+        )
+        row.edits.set_text(unsaved_text(row.pending))
+        row.edits.set_visibility(row.pending > 0)
         row.badge.set_text(verdict or "…")
         row.badge.style(f"background-color: var(--dstf-{css}-fill)")
         # Add and remove, never replace: NiceGUI hides an element by appending
@@ -130,13 +148,12 @@ class TestList:
             remove=" ".join(f"dstf-tint-{s}" for s in STATUS), add=f"dstf-tint-{css}"
         )
 
-    def filter(self, needle: str) -> None:
+    def filter(self, keep: Callable[[Row], bool]) -> None:
         """Visibility only — the rows stay. A group's label shows while any
         of its rows does."""
-        needle = needle.lower()
         shown_by_group: dict[str, bool] = {}
         for row in self.rows.values():
-            shown = not needle or needle in row.model_id.lower()
+            shown = keep(row)
             row.container.set_visibility(shown)
             shown_by_group[row.group] = shown_by_group.get(row.group, False) or shown
         for group, label in self.groups.items():

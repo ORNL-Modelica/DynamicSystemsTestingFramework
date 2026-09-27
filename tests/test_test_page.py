@@ -30,7 +30,7 @@ from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: 
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.authoring.tree_text import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
-from test_session import LOOSEN, A, B, C, D, _Gate, _two_var_project  # noqa: E402
+from test_session import LOOSEN, A, B, C, D, G, _Gate, _two_var_project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -4192,7 +4192,8 @@ class TestRail:
         """A `results` event reaches the Tests drawer through the rail and
         repaints the model's pill and tint on the rows already there. A
         comparison tolerance staged on D (nrmse 6e-4) fails it: the stage
-        emits `spec`, which paints nothing, then `results` for D."""
+        emits `spec`, which repaints D's unsaved edits, then `results` for
+        D."""
         async with user_simulation(root=shell.index) as user:
             page = await _test_page(shell, user)
             user.find(marker="rail:tests").click()
@@ -4211,6 +4212,209 @@ class TestRail:
             assert "dstf-tint-pass" not in row.container.classes
             assert all(drawer.list.rows[m] is r for m, r in rows.items())
             assert rebuilds == []
+
+
+def _shown(shell, user) -> list[str]:
+    """The Tests drawer's visible rows, in drawing order."""
+    drawer = _page(shell, user).rail.tests
+    assert drawer is not None
+    return [m for m in drawer.list.rows if not _none(user, "tests-drawer:" + m)]
+
+
+async def _tests_drawer(shell, user, model=A) -> TestPage:
+    page = await _test_page(shell, user, model)
+    user.find(marker="rail:tests").click()
+    await user.should_see(marker="tests-drawer:sort")
+    return page
+
+
+async def _pick(user, menu: str, value: str) -> None:
+    """Open ``menu``'s menu and choose ``value``."""
+    user.find(marker=menu).click()
+    await user.should_see(marker=f"{menu}:{value}")
+    user.find(marker=f"{menu}:{value}").click()
+
+
+class TestTestsDrawerControls:
+    """The Tests drawer's control set (the owner's ruling Q7): the filter
+    with `.*` / `Aa`, sort, group, names and status pills with EDITED, each
+    the tab's. The fixture's verdicts: A FAIL, B NO_REF, C SIM_FAIL, D PASS,
+    G PASS."""
+
+    async def test_sort_by_name_and_by_status_failures_first(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            assert _shown(shell, user) == [A, B, C, D, G]
+            await _pick(user, "tests-drawer:sort", "status")
+            await _settled(lambda: _shown(shell, user) == [A, C, B, D, G])
+            assert page.state.tests_sort == "status"
+            item = _one(user, "tests-drawer:sort:status")
+            assert item.props["role"] == "menuitemradio"
+            assert item.props["aria-checked"] == "true"
+            assert _one(user, "tests-drawer:sort:package").props["aria-checked"] == (
+                "false"
+            )
+            await _pick(user, "tests-drawer:sort", "name")
+            await _settled(lambda: page.state.tests_sort == "name")
+            assert _shown(shell, user) == [A, B, C, D, G]
+
+    async def test_scoring_failed_sorts_after_sim_fail_and_unscored_last(self, shell):
+        """FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, then a test with no
+        verdict yet — not `STATUS_ORDER`, which lists PASS first."""
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            shell.load.failed_models.append(G)
+            del shell.session.comparisons[G]
+            shell.session.comparisons.pop(D)
+            await _pick(user, "tests-drawer:sort", "status")
+            await _settled(lambda: _shown(shell, user) == [A, C, G, B, D])
+
+    async def test_the_status_sort_follows_a_rescore(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            await _pick(user, "tests-drawer:sort", "status")
+            await _settled(lambda: _shown(shell, user) == [A, C, B, D, G])
+            # D's nrmse 6e-4 fails at 1e-5: D moves up among the failures
+            shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+            drawer = page.rail.tests
+            await _settled(lambda: drawer.list.rows[D].verdict == "FAIL")
+            await _settled(lambda: _shown(shell, user) == [A, D, C, B, G])
+
+    async def test_flat_and_full_names(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            group = _one(user, "tests-drawer:group")
+            assert group.props["aria-pressed"] == "true"
+            assert _plus_tips(group) == ["Show flat"]
+            assert not _none(user, "tests-drawer:group:FakeLib")
+            assert _one(user, "tests-drawer:" + A).text == "A"
+            user.find(marker="tests-drawer:group").click()
+            await _settled(lambda: _none(user, "tests-drawer:group:FakeLib"))
+            assert page.state.tests_grouped is False
+            assert group.props["aria-pressed"] == "false"
+            assert _plus_tips(group) == ["Group by package"]
+            await _pick(user, "tests-drawer:names", "full")
+            await _settled(lambda: _one(user, "tests-drawer:" + A).text == A)
+            assert page.state.tests_short is False
+
+    async def test_the_pills_count_every_test_whatever_the_filter(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            assert _one(user, "tests-drawer:pill:PASS").text == "PASS 2"
+            user.find(marker="tests-drawer:needle").type(".A")
+            await _settled(lambda: _shown(shell, user) == [A])
+            assert _one(user, "tests-drawer:pill:PASS").text == "PASS 2"
+            assert _one(user, "tests-drawer:pill:FAIL").text == "FAIL 1"
+            assert _one(user, "tests-drawer:pill:SIM_FAIL").text == "SIM_FAIL 1"
+            assert _one(user, "tests-drawer:pill:NO_REF").text == "NO_REF 1"
+            edited = _one(user, "tests-drawer:pill:EDITED")
+            assert edited.text == "EDITED 0" and not edited.enabled
+            assert "dstf-pill-pass" in _one(user, "tests-drawer:pill:PASS").classes
+            # a second pass over rows the first one hid: still every test
+            user.find(marker="tests-drawer:case").click()
+            await _settled(lambda: _shown(shell, user) == [A])
+            assert _one(user, "tests-drawer:pill:PASS").text == "PASS 2"
+
+    async def test_edited_ors_with_the_statuses_and_rows_say_unsaved(self, shell):
+        from dstf.reporting.rows import unsaved_text
+
+        assert (unsaved_text(0), unsaved_text(2)) == ("", "2 unsaved")
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+            await _settled(
+                lambda: _one(user, "tests-drawer:pill:EDITED").text == "EDITED 1"
+            )
+            assert _one(user, "tests-drawer:edits:" + D).text == "1 unsaved"
+            assert _none(user, "tests-drawer:edits:" + A)
+            user.find(marker="tests-drawer:pill:EDITED").click()
+            await _settled(lambda: _shown(shell, user) == [D])
+            assert page.state.tests_pills == {"EDITED"}
+            user.find(marker="tests-drawer:pill:FAIL").click()
+            await _settled(lambda: _shown(shell, user) == [A, D])
+            assert _one(user, "tests-drawer:pill:FAIL").props["aria-pressed"] == "true"
+
+    async def test_a_regex_and_a_bad_one(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:regex").click()
+            user.find(marker="tests-drawer:needle").type(r"^FakeLib\.A$")
+            await _settled(lambda: _shown(shell, user) == [A])
+            user.find(marker="tests-drawer:needle").clear()
+            user.find(marker="tests-drawer:needle").type("(")
+            await _settled(lambda: not _none(user, "tests-drawer:filter:why"))
+            assert _one(user, "tests-drawer:filter:why").text.startswith(
+                "not a regular expression: "
+            )
+            assert _shown(shell, user) == [A, B, C, D, G]
+
+    async def test_a_regex_that_takes_too_long_says_so_and_hides_nothing(
+        self, shell, monkeypatch
+    ):
+        from dstf.authoring import needle as needle_module
+
+        monkeypatch.setattr(needle_module, "REGEX_BUDGET", 0.0)
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:regex").click()
+            user.find(marker="tests-drawer:needle").type("A")
+            await _settled(lambda: not _none(user, "tests-drawer:filter:why"))
+            assert (
+                _one(user, "tests-drawer:filter:why").text
+                == "the pattern took too long; simplify it"
+            )
+            assert _shown(shell, user) == [A, B, C, D, G]
+
+    async def test_an_event_reapplies_the_filter_without_searching_again(
+        self, shell, monkeypatch
+    ):
+        """The kept set is cached on the needle, its toggles and the ids: a
+        pathological pattern cost 0.79 s of CPU per pass over 331 ids, and
+        a job's poll repainted the rows every second."""
+        from dstf.authoring.shell import rail as rail_module
+
+        asked: list[str] = []
+        real = rail_module.matcher
+
+        def counting(*args, **kwargs):
+            keep = real(*args, **kwargs)
+            return lambda text: (asked.append(text), keep(text))[1]
+
+        monkeypatch.setattr(rail_module, "matcher", counting)
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:needle").type("D")
+            await _settled(lambda: _shown(shell, user) == [D])
+            asked.clear()
+            shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+            await _settled(
+                lambda: _page(shell, user).rail.tests.list.rows[D].verdict == "FAIL"
+            )
+            assert _shown(shell, user) == [D]
+            assert asked == []
+
+    async def test_every_setting_survives_a_switch_of_test(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            await _pick(user, "tests-drawer:sort", "name")
+            user.find(marker="tests-drawer:group").click()
+            await _pick(user, "tests-drawer:names", "full")
+            user.find(marker="tests-drawer:regex").click()
+            user.find(marker="tests-drawer:case").click()
+            user.find(marker="tests-drawer:pill:PASS").click()
+            await _settled(lambda: page.state.tests_pills == {"PASS"})
+            user.find(marker="tests-drawer:" + D).click()
+            await _settled(lambda: _page(shell, user).model_id == D)
+            other = _page(shell, user)
+            assert other is not page and other.state is page.state
+            assert _one(user, "tests-drawer:sort:name").props["aria-checked"] == "true"
+            assert _one(user, "tests-drawer:names:full").props["aria-checked"] == "true"
+            assert _one(user, "tests-drawer:group").props["aria-pressed"] == "false"
+            assert _one(user, "tests-drawer:regex").props["aria-pressed"] == "true"
+            assert _one(user, "tests-drawer:case").props["aria-pressed"] == "true"
+            assert _one(user, "tests-drawer:pill:PASS").props["aria-pressed"] == "true"
+            assert _shown(shell, user) == [D, G]
+            assert _none(user, "tests-drawer:group:FakeLib")
 
 
 def test_the_current_row_is_emitted_after_the_row_hover():

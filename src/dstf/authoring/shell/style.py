@@ -13,7 +13,7 @@ from ...reporting.theme import STATUS
 _PILLS = "".join(
     f".dstf-pill-{status} {{ background: var(--dstf-{status}-pill); "
     f"color: var(--dstf-{status}-dark); border-color: var(--dstf-{status}-border); }}\n"
-    for status in ("pass", "fail", "warn", "queued")
+    for status in ("pass", "fail", "sim-fail", "no-ref", "warn", "queued")
 )
 
 #: A criterion's swatch (legend b) in the colour its pill's border uses:
@@ -265,6 +265,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   width: 12px; height: 9px; border-radius: 2px; flex: none;
   border: 2px solid var(--dstf-accent); box-sizing: content-box;
 }
+/* The drawers' one control set (Q7): a menu's current choice carries its
+   check; a count pill is a status pill that is a button, ringed while it
+   filters. */
+.dstf-menu-check { visibility: hidden; }
+.dstf-menu-checked .dstf-menu-check { visibility: visible; }
+.dstf-count-pill.q-btn { min-height: 20px; padding: 0 6px; font-size: 10.5px; }
+.dstf-count-pill-on.q-btn { box-shadow: 0 0 0 2px var(--dstf-accent); }
 .dstf-card {
   border: 1px solid var(--dstf-border); border-radius: 4px; box-shadow: none;
   background: var(--dstf-surface); padding: 16px;
