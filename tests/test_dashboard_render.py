@@ -1466,3 +1466,212 @@ def test_a_final_page_without_comparisons_lists_status_rows(tmp_path):
     _scoped_run(tmp_path)
     rows = build_dashboard_context(tmp_path, mode="final")["tests"]
     assert [r.model_id for r in rows] == ["Lib.B"]
+
+
+def test_manifest_rows_order_status_then_manifest_then_model_id(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)
+    comparisons = [
+        TestComparison(model_id=m, passed=True)
+        for m in ("Lib.Z", "Lib.D", "Lib.Y", "Lib.A", "Lib.B")
+    ]
+    ctx = build_dashboard_context(tmp_path, mode="final", comparisons=comparisons)
+    assert [r.model_id for r in ctx["tests"]] == [
+        "Lib.B",  # status.json's
+        "Lib.A",  # the manifest's order: A before D
+        "Lib.D",
+        "Lib.Y",  # keyed by no manifest: by model id
+        "Lib.Z",
+    ]
+
+
+def _manifest_only(tmp_path, manifest_text: str, comparisons) -> list:
+    """The final rows over a work dir with no status.json and this
+    ``batch_manifest.json`` text."""
+    (tmp_path / "batch_manifest.json").write_text(manifest_text, encoding="utf-8")
+    ctx = build_dashboard_context(tmp_path, mode="final", comparisons=comparisons)
+    return ctx["tests"]
+
+
+def test_a_model_under_two_manifest_keys_takes_the_last(tmp_path):
+    """As ``last_test_keys`` does: the later key is the directory the last
+    run wrote."""
+    from dstf.comparison.types import TestComparison
+
+    manifest = {
+        "test_0001": {"model_id": "Lib.A", "ref_id": None},
+        "test_0002": {"model_id": "Lib.B", "ref_id": None},
+        "test_0003": {"model_id": "Lib.A", "ref_id": "ref_0009"},
+    }
+    comps = [TestComparison(model_id=m, passed=True) for m in ("Lib.A", "Lib.B")]
+    rows = _manifest_only(tmp_path, json.dumps(manifest), comps)
+    a = next(r for r in rows if r.model_id == "Lib.A")
+    assert (a.test_key, a.ref_id, a.report_dir) == ("test_0003", "ref_0009", "ref_0009")
+    assert [r.model_id for r in rows].count("Lib.A") == 1
+
+
+def test_manifest_rows_read_a_malformed_manifest_as_data(tmp_path):
+    """A non-string ref_id, an entry that is not an object, one without a
+    model id: each such entry is read for what it holds or skipped — never a
+    crash, and the manifest file is not moved."""
+    from dstf.comparison.types import TestComparison
+
+    manifest = {
+        "test_0001": {"model_id": "Lib.A", "ref_id": 7},
+        "test_0002": "Lib.B",
+        "test_0003": {"ref_id": "ref_0001"},
+        "test_0004": {"model_id": 12},
+        "test_0005": {"model_id": "Lib.C", "ref_id": "ref_0005"},
+    }
+    comps = [
+        TestComparison(model_id=m, passed=True) for m in ("Lib.A", "Lib.B", "Lib.C")
+    ]
+    rows = {
+        r.model_id: r for r in _manifest_only(tmp_path, json.dumps(manifest), comps)
+    }
+    assert list(rows) == ["Lib.A", "Lib.C", "Lib.B"]
+    a = rows["Lib.A"]
+    assert (a.test_key, a.ref_id, a.report_dir) == ("test_0001", None, "test_0001")
+    b = rows["Lib.B"]  # not an object: listed by model id, keyed by nothing
+    assert (b.test_key, b.report_dir) == (None, None)
+    c = rows["Lib.C"]
+    assert (c.test_key, c.ref_id) == ("test_0005", "ref_0005")
+    assert (tmp_path / "batch_manifest.json").exists()
+
+
+def test_a_corrupt_manifest_lists_the_scored_tests_by_model_id(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    comps = [TestComparison(model_id=m, passed=True) for m in ("Lib.B", "Lib.A")]
+    for text in ('{"test_0001": {"model_id": "Lib.A"', '["Lib.A"]', "null"):
+        rows = _manifest_only(tmp_path, text, comps)
+        assert [(r.model_id, r.test_key) for r in rows] == [
+            ("Lib.A", None),
+            ("Lib.B", None),
+        ]
+        assert (tmp_path / "batch_manifest.json").read_text(encoding="utf-8") == text
+
+
+# ---------------------------------------------------------------------------
+# A row the final page adds beyond status.json is judged against its OWN
+# run: its sidecar is stale when written before that test's last run ended
+# (its run_stats.json), not before the last run's start — which every
+# sidecar outside the last run's scope was.
+# ---------------------------------------------------------------------------
+
+
+def _sidecar_at(work_dir: Path, report_dir: str, model_id: str, written_at: float):
+    d = work_dir / "reports" / report_dir
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "comparison_data.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "model_id": model_id,
+                    "written_at": written_at,
+                    "status": "PASS",
+                    "ref_file": "../../refs/ref_0007.json",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_an_added_rows_sidecar_is_judged_against_its_own_run(tmp_path, capsys):
+    import os
+
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)  # status.json: B alone, started at 100.0
+    # A's own run ended at 50.0 (its run_stats.json); its sidecar at 60.0.
+    os.utime(tmp_path / "test_0001" / "run_stats.json", (50.0, 50.0))
+    _sidecar_at(tmp_path, "ref_0007", "Lib.A", 60.0)
+    comps = [TestComparison(model_id="Lib.A", passed=True)]
+    (a,) = [
+        r
+        for r in build_dashboard_context(tmp_path, mode="final", comparisons=comps)[
+            "tests"
+        ]
+        if r.model_id == "Lib.A"
+    ]
+    assert a.ref_file == "../../refs/ref_0007.json"  # fresh against its own run
+    assert "stale sidecar" not in capsys.readouterr().err
+    # A ran again at 70.0: the sidecar written at 60.0 is its earlier run's.
+    os.utime(tmp_path / "test_0001" / "run_stats.json", (70.0, 70.0))
+    (a,) = [
+        r
+        for r in build_dashboard_context(tmp_path, mode="final", comparisons=comps)[
+            "tests"
+        ]
+        if r.model_id == "Lib.A"
+    ]
+    assert a.ref_file is None
+    assert "stale sidecar for 'Lib.A'" in capsys.readouterr().err
+
+
+def test_a_merge_run_keeps_the_other_tests_reference_links(
+    tmp_path, monkeypatch, capsys
+):
+    """`run --report`, then `run --filter <one> --merge`: status.json holds
+    the one; the others' sidecars are from their own (earlier) run and
+    still fresh — their Reference links stay, and no stale warning."""
+    from conftest import python_example_copy
+    from dstf.cli import main
+
+    config, tests = python_example_copy(tmp_path)
+    work = config.work_dir
+    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
+    argv = ["--config", str(config.config_file), "run", "--work-dir", str(work)]
+    main([*argv, "--report"])
+
+    def links(html: str) -> dict[str, bool]:
+        return {
+            _attrs(tr)["data-model"]: 'title="Open reference JSON"' in tr
+            for tr in _body_rows(html)
+        }
+
+    first = links((work / "dashboard.html").read_text(encoding="utf-8"))
+    assert len(first) == len(tests) and sum(first.values()) >= 2
+    capsys.readouterr()
+    one = tests[0].model_id
+    main([*argv, "--filter", one, "--merge"])
+    err = capsys.readouterr().err
+    after = links((work / "dashboard.html").read_text(encoding="utf-8"))
+    others = {m: v for m, v in first.items() if m != one}
+    assert {m: after[m] for m in others} == others
+    assert not [
+        line for line in err.splitlines() if "stale sidecar" in line and one not in line
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The status bar of a final page that lists more tests than the last run ran.
+# ---------------------------------------------------------------------------
+
+
+def _status_bar(html: str) -> str:
+    m = re.search(r'<div class="status-bar">(.*?)</div>', html, re.S)
+    assert m is not None
+    return " ".join(m.group(1).split())
+
+
+def test_a_final_page_beyond_the_last_run_says_what_the_run_ran(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)  # status.json: B alone, elapsed 1.0
+    comps = [TestComparison(model_id=m, passed=True) for m in ("Lib.A", "Lib.B")]
+    render_final(tmp_path, comparisons=comps)
+    bar = _status_bar((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert bar.startswith("Final report · 2 tests · last run: 1 test in 1.0s")
+    assert "ran for" not in bar
+
+
+def test_a_final_page_of_the_last_run_alone_says_ran_for(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)
+    render_final(tmp_path, comparisons=[TestComparison(model_id="Lib.B", passed=True)])
+    bar = _status_bar((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert bar.startswith("Final report · 1 tests · ran for 1s")

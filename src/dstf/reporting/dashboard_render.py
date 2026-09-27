@@ -36,6 +36,7 @@ from ..backends.base import kept_run_result
 from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..comparison.types import TestComparison
+from ..storage.run_stats import RUN_STATS_FILENAME
 from .rows import COLUMNS, TestRow, enrich_row, row_from_status, summary_fields
 from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER
 from .theme import css_variables
@@ -212,6 +213,23 @@ def _manifest_rows(work_dir: Path) -> dict[str, TestRow]:
     return rows
 
 
+def _own_run_end(work_dir: Path, row: TestRow) -> float | None:
+    """When *row*'s test last finished running: its ``run_stats.json``'s
+    mtime, written as that run recorded the test's verdict
+    (``BatchManifest.record_result``), in the test's own directory that a
+    run wipes when it re-runs the test. A sidecar written before it is an
+    earlier run's; one written after it is this result's (the compare that
+    writes it follows the run). ``None`` — no guard, as for a status.json
+    without ``start_wall`` — when the run kept no file (one from before
+    it existed)."""
+    if not row.test_key:
+        return None
+    try:
+        return (work_dir / row.test_key / RUN_STATS_FILENAME).stat().st_mtime
+    except OSError:
+        return None
+
+
 def build_dashboard_context(
     work_dir: Path,
     mode: str,
@@ -253,15 +271,25 @@ def build_dashboard_context(
     # `dstf run` / `compare` without --report write no sidecars; the
     # comparisons they hold are what gives such a page its verdicts.
     by_model = {c.model_id: c for c in comparisons} if mode == "final" else {}
-    base = [row_from_status(t) for t in snapshot.get("tests", [])]
-    listed = {r.model_id for r in base}
+    # (row, the wall clock its sidecar must postdate)
+    base = [
+        (row_from_status(t), snapshot_start_wall) for t in snapshot.get("tests", [])
+    ]
+    listed = {r.model_id for r, _ in base}
     rest = set(by_model) - listed
     if rest:
+        # A row the last run did not run is judged against ITS OWN last run:
+        # against the last run's start, every sidecar outside its scope read
+        # stale (638 warnings and no Reference link on a 331-test page).
         manifest = _manifest_rows(work_dir)
-        base += [row for m, row in manifest.items() if m in rest]
-        base += [TestRow(model_id=m) for m in sorted(rest - set(manifest))]
+        base += [
+            (row, _own_run_end(work_dir, row))
+            for m, row in manifest.items()
+            if m in rest
+        ]
+        base += [(TestRow(model_id=m), None) for m in sorted(rest - set(manifest))]
     rows = []
-    for row in base:
+    for row, start_wall in base:
         before = row
         if mode == "final" and row.report_dir:
             sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
@@ -269,7 +297,7 @@ def build_dashboard_context(
                 # Sidecars written before the summary block carry the
                 # fields at the top level.
                 row = enrich_row(
-                    row, sidecar.get("summary", sidecar), start_wall=snapshot_start_wall
+                    row, sidecar.get("summary", sidecar), start_wall=start_wall
                 )
         # enrich_row hands back the same row when a guard refuses the
         # sidecar. With no fresh sidecar (a run without --report, or a stale
@@ -295,6 +323,9 @@ def build_dashboard_context(
         # A final page counts the rows it lists (status.json's scope and
         # every test scored); a live one, the run's.
         "total": len(rows) if mode == "final" else snapshot.get("total", 0),
+        # What the last run ran, for a final page that lists more: its
+        # status bar says so rather than "N tests · ran for 0s".
+        "run_total": len(snapshot.get("tests", [])),
         "elapsed": snapshot.get("elapsed", 0.0),
         "eta_seconds": snapshot.get("eta_seconds"),
         "counts": snapshot.get("counts", {}),

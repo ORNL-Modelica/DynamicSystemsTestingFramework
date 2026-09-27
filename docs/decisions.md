@@ -5032,7 +5032,13 @@ by model id for a test the manifest does not key. Such a row takes its
 work-dir key and baseline from the manifest (its report dir, as a run's
 row does: `ref_NNNN`, else the key), then goes the way every final row
 goes — a fresh sidecar, else the timing its run kept, then its comparison's
-verdict. The page's test count is its rows. A LIVE page is unchanged: the
+verdict. "Fresh" is against the test's OWN last run — its `run_stats.json`
+mtime, written as that run recorded its verdict — not the last run's
+`start_wall`, which every sidecar outside the last run's scope predates (a
+first cut did that: 638 stale warnings and no Reference link over a
+331-test tool session). No `run_stats.json`, no guard, as for a
+`status.json` without `start_wall`. The page's test count is its rows; its
+status bar names the last run's count beside it when they differ. A LIVE page is unchanged: the
 running run's scope. So `compare`, a `--merge` and the tool's Rerun list
 every test (its Save, Discard and Reload write no page: D137 §6); a plain `--filter` run without
 `--merge` still lists only its own, because the comparisons it holds are

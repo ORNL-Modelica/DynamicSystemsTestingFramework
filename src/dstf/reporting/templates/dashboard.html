@@ -171,6 +171,8 @@ body.has-selection { padding-bottom: 5em; }
   {% if auto_refresh %}Auto-refreshing every 5s ·
     elapsed <span id="header-elapsed">{{ "%.0f"|format(elapsed) }}s</span> ·
     <span id="header-wall">…</span>
+  {% elif total > run_total %}Final report · {{ total }} tests · last run: {{ run_total }} test{{ "" if run_total == 1 else "s" }} in {{ "%.1f"|format(elapsed) }}s · finished
+    <span id="header-wall-final">…</span>
   {% else %}Final report · {{ total }} tests · ran for {{ "%.0f"|format(elapsed) }}s · finished
     <span id="header-wall-final">…</span>
   {% endif %}
