@@ -34,18 +34,19 @@ h1 { margin-bottom: 0.2em; font-size: 1.4em; }
 .counter .value { font-size: 1.3em; font-weight: 600; }
 .counter.queued     { border-left-color: var(--dstf-queued-fill); } .counter.queued .value     { color: var(--dstf-text-secondary); }
 .counter.running    { border-left-color: var(--dstf-running-fill); } .counter.running .value    { color: var(--dstf-running-dark); }
-.counter.passed     { border-left-color: var(--dstf-pass-fill); } .counter.passed .value     { color: var(--dstf-pass-dark); }
-.counter.failed     { border-left-color: var(--dstf-fail-fill); } .counter.failed .value     { color: var(--dstf-fail-dark); }
-.counter.sim_failed { border-left-color: var(--dstf-sim-fail-fill); } .counter.sim_failed .value { color: var(--dstf-sim-fail-dark); }
-.counter.no_ref     { border-left-color: var(--dstf-no-ref-fill); } .counter.no_ref .value     { color: var(--dstf-no-ref-dark); }
+.counter.pass       { border-left-color: var(--dstf-pass-fill); } .counter.pass .value       { color: var(--dstf-pass-dark); }
+.counter.fail       { border-left-color: var(--dstf-fail-fill); } .counter.fail .value       { color: var(--dstf-fail-dark); }
+.counter.sim-fail   { border-left-color: var(--dstf-sim-fail-fill); } .counter.sim-fail .value { color: var(--dstf-sim-fail-dark); }
+.counter.no-ref     { border-left-color: var(--dstf-no-ref-fill); } .counter.no-ref .value     { color: var(--dstf-no-ref-dark); }
 .counter.warnings   { border-left-color: var(--dstf-warn-fill); } .counter.warnings .value   { color: var(--dstf-warn-dark); }
-.counter.timed_out  { border-left-color: var(--dstf-timed-out-fill); } .counter.timed_out .value  { color: var(--dstf-timed-out-dark); }
+.counter.timed-out  { border-left-color: var(--dstf-timed-out-fill); } .counter.timed-out .value  { color: var(--dstf-timed-out-dark); }
 .counter.total      { border-left-color: var(--dstf-text-secondary); }
 .bar { height: 14px; background: var(--dstf-border-hairline); border-radius: 7px; overflow: hidden; margin-bottom: 1em; display: flex; }
 .bar span { display: block; height: 100%; }
-.bar .b-passed { background: var(--dstf-pass-fill); }
-.bar .b-failed { background: var(--dstf-fail-fill); }
-.bar .b-timed_out { background: var(--dstf-timed-out-fill); }
+.bar .b-pass { background: var(--dstf-pass-fill); }
+.bar .b-fail { background: var(--dstf-fail-fill); }
+.bar .b-timed-out { background: var(--dstf-timed-out-fill); }
+.bar .b-pending { background: var(--dstf-pending-fill); }
 .bar .b-running { background: var(--dstf-running-fill); }
 table { border-collapse: collapse; width: 100%; background: var(--dstf-surface); font-size: 0.85em; }
 th, td { border: 1px solid var(--dstf-border); padding: 4px 8px; text-align: left; }
@@ -86,6 +87,7 @@ tr.fail td      { background: var(--dstf-fail-tint); }
 tr.sim-fail td  { background: var(--dstf-fail-tint); }
 tr.no-ref td    { background: var(--dstf-no-ref-tint); }
 tr.timed-out td { background: var(--dstf-timed-out-tint); }
+tr.pending td   { background: var(--dstf-pending-tint); }
 .status-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; letter-spacing: 0.03em; color: white; white-space: nowrap; }
 .status-badge.pass      { background: var(--dstf-pass-fill); }
 .status-badge.fail      { background: var(--dstf-fail-fill); }
@@ -94,6 +96,7 @@ tr.timed-out td { background: var(--dstf-timed-out-tint); }
 .status-badge.timed-out { background: var(--dstf-timed-out-fill); }
 .status-badge.queued    { background: var(--dstf-queued-fill); }
 .status-badge.running   { background: var(--dstf-running-fill); }
+.status-badge.pending   { background: var(--dstf-pending-fill); }
 .warn { color: var(--dstf-warn-dark); font-weight: 600; }
 .unscored { color: var(--dstf-text-muted); font-style: italic; }
 .detail-cell {
@@ -177,82 +180,38 @@ body.has-selection { padding-bottom: 5em; }
 <thead>
 <tr>
   <th class="sel-col" title="Select all visible / clear"><input type="checkbox" id="sel-all" onclick="toggleAllVisible(this.checked)"></th>
-  <th data-sort="text" data-key="test">Test<span class="col-resize-handle"></span></th>
-  <th data-sort="text" data-key="ref">Reference<span class="col-resize-handle"></span></th>
-  <th data-sort="text" data-key="model">Model<span class="col-resize-handle"></span></th>
-  <th data-sort="text" data-key="status">Status<span class="col-resize-handle"></span></th>
-  <th data-sort="text" data-key="resolution" title="Provenance of stop_time / tolerance / method / number_of_intervals / output_interval — annotation, test_spec, or default">Resolution<span class="col-resize-handle"></span></th>
-  <th data-sort="text" data-key="worker">Worker<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="elapsed">Elapsed (s)<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="nrmse">Worst NRMSE<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="vars">Variables<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="warnings">Warnings<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="translate">Translate (s)<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="sim">Sim (s)<span class="col-resize-handle"></span></th>
-  <th data-sort="num" data-key="total">Total (s)<span class="col-resize-handle"></span></th>
-  <th data-sort="text" data-key="detail">Message<span class="col-resize-handle"></span></th>
-</tr>
+{% for c in columns %}  <th data-sort="{{ 'num' if c.kind == 'number' else 'text' }}" data-key="{{ c.key }}"{% if c.title %} title="{{ c.title }}"{% endif %}>{{ c.label }}<span class="col-resize-handle"></span></th>
+{% endfor %}</tr>
 <tr class="filter-row">
   <th class="sel-col"></th>
-  <th><input class="col-filter" data-col-filter="test" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-  <th><input class="col-filter" data-col-filter="ref" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-  <th><input class="col-filter" data-col-filter="model" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-  <th><input class="col-filter" data-col-filter="status" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-  <th><input class="col-filter" data-col-filter="resolution" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-  <th><input class="col-filter" data-col-filter="worker" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-  <th></th><th></th><th></th><th></th><th></th><th></th><th></th>
-  <th><input class="col-filter" data-col-filter="detail" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
-</tr>
+{#- The status column has no text filter: the pills filter it. #}
+{% for c in columns %}  <th>{% if c.kind == 'text' %}<input class="col-filter" data-col-filter="{{ c.key }}" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)">{% endif %}</th>
+{% endfor %}</tr>
 </thead>
 <tbody id="results-tbody">
+{#- One attribute per column, from reporting.rows: data-<key> is what a
+    column filter reads, data-sort-<key> what a sort reads ("" = no value,
+    sorted last). data-status stays the status CLASS: the pills', the
+    counts' and the live tick's key. #}
 {% for t in tests %}
 <tr class="{{ t.status_class }}"
     data-status="{{ t.status_class }}"
-    data-test="{{ t.test_key or '' }}"
-    data-ref="{{ t.ref_id or '' }}"
-    data-model="{{ t.model_id }}"
-    data-worker="{% if t.worker_id is not none %}W{{ t.worker_id }}{% endif %}"
-    data-detail="{{ t.detail or '' }}"
-    data-sort-test="{{ t.test_key or '' }}"
-    data-sort-ref="{{ t.ref_id or '' }}"
-    data-sort-model="{{ t.model_id }}"
-    data-sort-status="{{ t.status_text }}"
-    data-sort-resolution="{% if t.field_sources %}{{ t.field_sources.values()|list|unique|join(',') }}{% endif %}"
-    data-sort-worker="{{ t.worker_id if t.worker_id is not none else -1 }}"
-    data-sort-elapsed="{{ t.elapsed if t.elapsed is not none else -1 }}"
-    data-sort-nrmse="{{ t.worst_nrmse if t.worst_nrmse is not none else -1 }}"
-    data-sort-vars="{{ t.n_vars_passed if t.n_vars else -1 }}"
-    data-sort-warnings="{{ t.n_warnings if t.n_warnings is not none else -1 }}"
-    data-sort-translate="{{ t.translation_wall if t.translation_wall is not none else -1 }}"
-    data-sort-sim="{{ t.sim_wall if t.sim_wall is not none else -1 }}"
-    data-sort-total="{{ t.total_wall if t.total_wall is not none else -1 }}"
-    data-sort-detail="{{ t.detail or '' }}"
-    data-started-wall="{{ t.started_wall or '' }}">
+{% for c in columns %}{% if c.key != 'status' %}    data-{{ c.key }}="{{ c.text(t) }}"
+{% endif %}    data-sort-{{ c.key }}="{{ c.sort(t) | sortval }}"
+{% endfor %}    data-started-wall="{{ t.started_wall or '' }}">
   <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
-  <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ t.test_key }}</a>{% else %}—{% endif %}</td>
-  <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ t.ref_id }}</a>{% elif t.ref_id %}{{ t.ref_id }}{% else %}—{% endif %}</td>
-  <td class="model-cell" title="{{ t.model_id }}">{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
-  <td><span class="status-badge {{ t.status_class }}">{{ t.status_text }}</span></td>
-  <td>
-    {% if t.field_sources %}
-      {% set src_set = t.field_sources.values()|list|unique|list %}
-      {% if src_set|length == 1 %}
-        <span title="all fields from {{ src_set[0] }}">{{ src_set[0] }}</span>
-      {% else %}
-        <span title="{% for k, v in t.field_sources.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}">mixed</span>
-      {% endif %}
-    {% else %}—{% endif %}
-  </td>
-  <td>{% if t.worker_id is not none %}W{{ t.worker_id }}{% else %}—{% endif %}</td>
-  <td class="elapsed-cell">{% if t.elapsed is not none %}{{ "%.1f"|format(t.elapsed) }}{% else %}—{% endif %}</td>
-  <td>{% if t.worst_nrmse is not none %}{{ "%.4e"|format(t.worst_nrmse) }}{% elif t.n_unscored %}<span class="unscored" title="No leaf on this test produced a score — every one is a sentinel (metric config that would not build, or no data to compare)">n/a ({{ t.n_unscored }} unscored)</span>{% else %}—{% endif %}</td>
-  <td>{% if t.n_vars is not none %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
-  <td>{% if t.n_warnings is not none and t.n_warnings > 0 %}<span class="warn">{{ t.n_warnings }}</span>{% elif t.n_warnings is not none %}0{% else %}—{% endif %}</td>
-  <td>{% if t.translation_wall is not none %}{{ "%.2f"|format(t.translation_wall) }}{% else %}—{% endif %}</td>
-  <td>{% if t.sim_wall is not none %}{{ "%.2f"|format(t.sim_wall) }}{% else %}—{% endif %}</td>
-  <td>{% if t.total_wall is not none %}{{ "%.2f"|format(t.total_wall) }}{% else %}—{% endif %}</td>
-  <td class="detail-cell" title="{{ t.detail or '' }}">{{ t.detail or "" }}</td>
-</tr>
+{% for c in columns %}{% set text = c.text(t) %}
+{%- if c.key == 'test' %}  <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'ref' %}  <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'model' %}  <td class="model-cell" title="{{ t.model_id }}">{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'status' %}  <td><span class="status-badge {{ t.status_class }}">{{ text }}</span></td>
+{% elif c.key == 'resolution' %}  <td>{% if t.resolution == 'mixed' %}<span title="{% for k, v in t.field_sources.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}">{{ text }}</span>{% elif t.resolution %}<span title="all fields from {{ text }}">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'elapsed' %}  <td class="elapsed-cell">{{ text }}</td>
+{% elif c.key == 'nrmse' %}  <td>{% if t.worst_score is none and t.n_unscored %}<span class="unscored" title="No leaf on this test produced a score — every one is a sentinel (metric config that would not build, or no data to compare)">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'warnings' %}  <td>{% if t.n_warnings %}<span class="warn">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'detail' %}  <td class="detail-cell" title="{{ t.message or '' }}">{{ t.message or '' }}</td>
+{% else %}  <td>{{ text }}</td>
+{% endif %}{% endfor %}</tr>
 {% endfor %}
 </tbody>
 </table>
@@ -296,6 +255,8 @@ const REPORT_KEY = {{ report_key | tojson }};
 // state changes, so quiet stretches would otherwise look frozen).
 const SNAPSHOT_WALL = {{ updated_at }};
 const SNAPSHOT_ELAPSED = {{ elapsed }};
+// The count pills, in STATUS_ORDER: [status class, the word a person reads].
+const STATUSES = {{ statuses | tojson }};
 {% include 'dashboard.js' %}
 </script>
 </body>

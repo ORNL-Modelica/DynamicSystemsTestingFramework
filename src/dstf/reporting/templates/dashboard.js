@@ -1,7 +1,8 @@
 // Unified dashboard JS: filter / sort / fetch loop / refresh button.
 // Loaded inline via a Jinja include directive in dashboard.html.
-// Reads two top-level Jinja-injected constants: DASHBOARD_MODE
-// ('live' or 'final') and DASHBOARD_TOTAL (int).
+// Reads the top-level Jinja-injected constants: DASHBOARD_MODE
+// ('live' or 'final'), DASHBOARD_TOTAL (int) and STATUSES (the count
+// pills, [status class, word] in STATUS_ORDER).
 
 (function() {
   const tbody = document.getElementById('results-tbody');
@@ -102,20 +103,6 @@
   const activeStatuses = new Set();
   const colFilterValues = {};
 
-  // Maps the pill key (counter category) to the row data-status value(s)
-  // it should match. Most are direct; warnings is a cross-cut that
-  // checks any row with sortWarnings>0 regardless of pass/fail outcome.
-  const PILL_TO_STATUSES = {
-    queued:     ['queued'],
-    running:    ['running'],
-    passed:     ['pass'],
-    failed:     ['fail'],
-    sim_failed: ['sim-fail'],
-    no_ref:     ['no-ref'],
-    timed_out:  ['timed-out'],
-    warnings:   ['__warnings__'],   // sentinel handled below
-  };
-
   // Convert a per-column filter string to a matcher. If the input contains
   // glob metacharacters (* or ?), build a case-insensitive regex from the
   // glob; otherwise fall back to plain case-insensitive substring match.
@@ -134,12 +121,11 @@
 
   function statusMatches(rowStatus, sortWarnings) {
     if (activeStatuses.size === 0) return true;
+    // A pill carries its status class, the row's data-status; "warnings"
+    // is the cross-cut: any row with a warning, whatever its status.
     for (const pill of activeStatuses) {
-      const targets = PILL_TO_STATUSES[pill] || [pill];
-      for (const t of targets) {
-        if (t === '__warnings__' && sortWarnings > 0) return true;
-        if (t === rowStatus) return true;
-      }
+      if (pill === 'warnings' && sortWarnings > 0) return true;
+      if (pill === rowStatus) return true;
     }
     return false;
   }
@@ -233,10 +219,12 @@
       rows.sort((a, b) => {
         const ak = 'sort' + key[0].toUpperCase() + key.slice(1);
         let av = a.dataset[ak], bv = b.dataset[ak];
+        // An empty sort value (the row has no value there) sorts last in
+        // both directions.
+        const ae = av === undefined || av === '', be = bv === undefined || bv === '';
+        if (ae || be) return ae === be ? 0 : (ae ? 1 : -1);
         if (kind === 'num') {
           av = parseFloat(av); bv = parseFloat(bv);
-          if (isNaN(av)) av = -Infinity;
-          if (isNaN(bv)) bv = -Infinity;
         } else {
           av = (av || '').toLowerCase();
           bv = (bv || '').toLowerCase();
@@ -277,16 +265,7 @@
   // an outcome appears. Total acts as the clear-all button.
   function renderCounters(counts, total) {
     const cn = document.getElementById('counters');
-    const order = [
-      ['queued',     'queued'],
-      ['running',    'running'],
-      ['passed',     'passed'],
-      ['failed',     'failed'],
-      ['sim_failed', 'sim failed'],
-      ['no_ref',     'no baseline'],
-      ['timed_out',  'timed out'],
-      ['warnings',   'warnings'],
-    ];
+    const order = STATUSES.concat([['warnings', 'warnings']]);
     let html = '';
     for (const [k, label] of order) {
       const n = counts[k] || 0;
@@ -305,33 +284,27 @@
 
     const bar = document.getElementById('progress-bar');
     const pct = (n) => total ? (n / total * 100).toFixed(2) : 0;
+    // A simulated row with no verdict yet is "pending": its segment moves
+    // the live bar while tests finish.
     bar.innerHTML =
-      `<span class="b-passed" style="width:${pct(counts.passed || 0)}%"></span>` +
-      `<span class="b-failed" style="width:${pct(counts.failed || 0)}%"></span>` +
-      `<span class="b-timed_out" style="width:${pct(counts.timed_out || 0)}%"></span>` +
+      `<span class="b-pass" style="width:${pct(counts.pass || 0)}%"></span>` +
+      `<span class="b-fail" style="width:${pct((counts.fail || 0) + (counts['sim-fail'] || 0))}%"></span>` +
+      `<span class="b-timed-out" style="width:${pct(counts['timed-out'] || 0)}%"></span>` +
+      `<span class="b-pending" style="width:${pct(counts.pending || 0)}%"></span>` +
       `<span class="b-running" style="width:${pct(counts.running || 0)}%"></span>`;
   }
 
   // Initial render from inline data (read from data-* on tbody rows).
-  // Rows use the filter-vocab status_class (pass/fail/sim-fail/no-ref/
-  // timed-out/queued/running). The counter keys use underscored variants
-  // so the JS class names + CSS rules stay sane. Warnings cross-cuts
-  // status — any row with sortWarnings>0 contributes regardless of its
-  // pass/fail outcome.
+  // Counts are keyed by status class — the row's data-status and the
+  // pill's key — plus "pending" (simulated, no verdict yet: in no pill,
+  // only in the bar). Warnings cross-cuts status — any row with
+  // sortWarnings>0 contributes regardless of its outcome.
   function initialCountsFromRows() {
-    const counts = {
-      queued: 0, running: 0, passed: 0, failed: 0,
-      sim_failed: 0, no_ref: 0, timed_out: 0, warnings: 0,
-    };
+    const counts = { pending: 0, warnings: 0 };
+    for (const [cls] of STATUSES) counts[cls] = 0;
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       const s = row.dataset.status;
-      if      (s === 'pass')      counts.passed++;
-      else if (s === 'fail')      counts.failed++;
-      else if (s === 'sim-fail')  counts.sim_failed++;
-      else if (s === 'no-ref')    counts.no_ref++;
-      else if (s === 'timed-out') counts.timed_out++;
-      else if (s === 'queued')    counts.queued++;
-      else if (s === 'running')   counts.running++;
+      if (s in counts && s !== 'warnings') counts[s]++;
       if (parseInt(row.dataset.sortWarnings || '0') > 0) counts.warnings++;
     });
     return counts;
@@ -459,7 +432,10 @@
   // its own scope. Failures (private mode, quota, blocked) fall through
   // silently — the dashboard still works without persistence, just resets
   // each tick.
-  const STATE_KEY = 'dstf-dashboard-v1:' + location.pathname;
+  // v2: the pills and counts are keyed by status class; a v1 state named
+  // pill keys ("passed", "failed", ...) no pill carries, and restoring one
+  // hid every row.
+  const STATE_KEY = 'dstf-dashboard-v2:' + location.pathname;
 
   function loadState() {
     try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; }

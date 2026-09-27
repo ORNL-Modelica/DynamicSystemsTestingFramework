@@ -25,7 +25,7 @@ from dstf.cli.common import (
 )
 from dstf.cli.main import build_arg_parser
 from dstf.cli.review import _interactive_review
-from dstf.cli.run_cmds import cmd_run
+from dstf.cli.run_cmds import cmd_compare, cmd_run
 from dstf.config import Config, detect_os
 from dstf.discovery.test_registry import TestModel
 from dstf.pipeline import write_id_mapping
@@ -565,6 +565,47 @@ class TestRerunEmptySetIsSuccess:
         rc = cmd_run(_run_args(run_env, "--filter", "Nope.*"))
         assert rc == 1
         assert "No tests matched the filter." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# A final dashboard without sidecars shows verdicts: `run` / `compare`
+# without --report hand the page the comparisons they hold
+# ---------------------------------------------------------------------------
+
+
+class TestTheDashboardGetsTheComparisons:
+    def _record(self, monkeypatch) -> dict:
+        seen: dict = {}
+
+        def final(work_dir, rerun_prefix=None, comparisons=()):
+            seen["final"] = [c.model_id for c in comparisons]
+
+        def final_to(work_dir, output_path, rerun_prefix=None, comparisons=()):
+            seen["final_to"] = [c.model_id for c in comparisons]
+
+        monkeypatch.setattr("dstf.reporting.dashboard_render.render_final", final)
+        monkeypatch.setattr("dstf.reporting.dashboard_render.render_final_to", final_to)
+        return seen
+
+    @pytest.mark.parametrize("command", ["run", "compare"])
+    def test_the_page_is_rendered_with_the_comparisons(
+        self, run_env, monkeypatch, tmp_path, command
+    ):
+        seen = self._record(monkeypatch)
+        t1 = _mk_test("Lib.T1")
+        run_env.make(
+            [t1],
+            results={"Lib.T1": _mk_result("Lib.T1")},
+            prior_results={"Lib.T1": _mk_result("Lib.T1")},
+        )
+        out = tmp_path / "page.html"
+        args = build_arg_parser().parse_args(
+            ["--config", str(run_env.config_dir), command]
+            + ["--work-dir", str(run_env.work_dir)]
+            + ["--report-format", "html", "--output", str(out)]
+        )
+        (cmd_run if command == "run" else cmd_compare)(args)
+        assert seen == {"final": ["Lib.T1"], "final_to": ["Lib.T1"]}
 
 
 # ---------------------------------------------------------------------------

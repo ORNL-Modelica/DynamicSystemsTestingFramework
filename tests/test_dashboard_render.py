@@ -1,6 +1,7 @@
 """Tests for the unified dashboard renderer."""
 
 import json
+import re
 from pathlib import Path
 
 from dstf.reporting.dashboard_render import (
@@ -47,15 +48,16 @@ def test_build_context_live_only(tmp_path):
     assert ctx["mode"] == "live"
     assert ctx["auto_refresh"] is True
     assert len(ctx["tests"]) == 2
-    row_a = next(r for r in ctx["tests"] if r["model_id"] == "Lib.A")
-    # Live-mode normalization: passed → ("PASS", "pass"); running → ("RUNNING", "running")
-    assert row_a["status_text"] == "PASS"
-    assert row_a["status_class"] == "pass"
-    assert row_a["worst_nrmse"] is None
-    assert row_a["n_vars"] is None
-    row_b = next(r for r in ctx["tests"] if r["model_id"] == "Lib.B")
-    assert row_b["status_text"] == "RUNNING"
-    assert row_b["status_class"] == "running"
+    row_a = next(r for r in ctx["tests"] if r.model_id == "Lib.A")
+    # A live "passed" is a simulation that ran, not a verdict: SIMULATED,
+    # styled as "no verdict yet"; running → ("RUNNING", "running")
+    assert row_a.status_text == "SIMULATED"
+    assert row_a.status_class == "pending"
+    assert row_a.worst_score is None
+    assert row_a.n_vars is None
+    row_b = next(r for r in ctx["tests"] if r.model_id == "Lib.B")
+    assert row_b.status_text == "RUNNING"
+    assert row_b.status_class == "running"
 
 
 def test_build_context_final_with_comparisons(tmp_path):
@@ -99,9 +101,10 @@ def test_build_context_final_with_comparisons(tmp_path):
     assert ctx["mode"] == "final"
     assert ctx["auto_refresh"] is False
     row = ctx["tests"][0]
-    assert row["worst_nrmse"] == 1.2e-5
-    assert row["n_vars"] == 3
-    assert row["translation_wall"] == 0.5
+    # The sidecar's key is worst_nrmse; the row's is worst_score.
+    assert row.worst_score == 1.2e-5
+    assert row.n_vars == 3
+    assert row.translation_wall == 0.5
 
 
 def test_render_live_writes_dashboard_html(tmp_path):
@@ -349,7 +352,7 @@ def test_dashboard_has_selection_ui(tmp_path):
 
 def test_dashboard_template_has_pill_toggles(tmp_path):
     """Counter pills are clickable filter toggles. The pill-click handler
-    name + the PILL_TO_STATUSES map must both be in the rendered JS."""
+    and the statuses the pills are drawn from must both be in the page."""
     snapshot = {
         "total": 0,
         "elapsed": 0.0,
@@ -362,7 +365,7 @@ def test_dashboard_template_has_pill_toggles(tmp_path):
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "togglePill" in out  # click handler defined + wired on each pill
-    assert "PILL_TO_STATUSES" in out  # pill key → row status_class map
+    assert "const STATUSES = " in out  # the pills, keyed by status class
     # The "filter-bar" row of buttons no longer exists — pills handle it
     assert 'class="filter-bar"' not in out
 
@@ -486,10 +489,10 @@ def test_render_final_picks_up_real_sidecar_shape(tmp_path):
     )
     ctx = build_dashboard_context(tmp_path, mode="final")
     row = ctx["tests"][0]
-    assert row["worst_nrmse"] == 1.2e-5
-    assert row["n_vars_passed"] == 3
-    assert row["n_warnings"] == 1
-    assert row["ref_id"] == "ref_0042"
+    assert row.worst_score == 1.2e-5
+    assert row.n_vars_passed == 3
+    assert row.n_warnings == 1
+    assert row.ref_id == "ref_0042"
 
 
 def test_stale_sidecar_ignored_by_timestamp(tmp_path):
@@ -497,7 +500,7 @@ def test_stale_sidecar_ignored_by_timestamp(tmp_path):
 
     Repro of the user-reported bug: cmd_run wrote sidecars with FAIL last
     week; this run shows passed in status.json. Without the timestamp
-    guard, _enrich_row_from_comparison would override 'pass' with 'fail'.
+    guard, rows.enrich_row would override the live row with 'fail'.
     """
     snapshot = {
         "total": 1,
@@ -536,11 +539,11 @@ def test_stale_sidecar_ignored_by_timestamp(tmp_path):
     )
     ctx = build_dashboard_context(tmp_path, mode="final")
     row = ctx["tests"][0]
-    # Live-mode 'passed' must win — the stale sidecar is ignored
-    assert row["status_text"] == "PASS"
-    assert row["status_class"] == "pass"
+    # The live row stands — the stale sidecar is ignored
+    assert row.status_text == "SIMULATED"
+    assert row.status_class == "pending"
     # Sidecar's worst_nrmse must NOT have been copied
-    assert row["worst_nrmse"] is None
+    assert row.worst_score is None
 
 
 def test_fresh_sidecar_overrides_status(tmp_path):
@@ -588,9 +591,9 @@ def test_fresh_sidecar_overrides_status(tmp_path):
     ctx = build_dashboard_context(tmp_path, mode="final")
     row = ctx["tests"][0]
     # Fresh sidecar's compare verdict wins over live-mode's 'passed'
-    assert row["status_text"] == "FAIL"
-    assert row["status_class"] == "fail"
-    assert row["worst_nrmse"] == 0.05
+    assert row.status_text == "FAIL"
+    assert row.status_class == "fail"
+    assert row.worst_score == 0.05
 
 
 def test_model_id_mismatch_sidecar_ignored(tmp_path):
@@ -637,8 +640,8 @@ def test_model_id_mismatch_sidecar_ignored(tmp_path):
     )
     ctx = build_dashboard_context(tmp_path, mode="final")
     row = ctx["tests"][0]
-    assert row["status_text"] == "PASS"  # Mismatched sidecar ignored
-    assert row["worst_nrmse"] is None
+    assert row.status_text == "SIMULATED"  # Mismatched sidecar ignored
+    assert row.worst_score is None
 
 
 def test_sidecar_without_written_at_passes_guard(tmp_path):
@@ -682,8 +685,8 @@ def test_sidecar_without_written_at_passes_guard(tmp_path):
     )
     ctx = build_dashboard_context(tmp_path, mode="final")
     row = ctx["tests"][0]
-    assert row["worst_nrmse"] == 0.05  # Legacy sidecar enriched normally
-    assert row["n_vars"] == 3
+    assert row.worst_score == 0.05  # Legacy sidecar enriched normally
+    assert row.n_vars == 3
 
 
 def test_column_resize_handles_present(tmp_path):
@@ -837,8 +840,8 @@ class TestWorstNrmseColumn:
             tmp_path, {"model_id": "Lib.A", "worst_nrmse": None, "n_unscored": 1}
         )
         row = build_dashboard_context(tmp_path, mode="final")["tests"][0]
-        assert row["worst_nrmse"] is None
-        assert row["n_unscored"] == 1
+        assert row.worst_score is None
+        assert row.n_unscored == 1
 
     def test_cell_says_n_a_with_the_count(self, tmp_path):
         _write_status_json(tmp_path, _one_test_snapshot())
@@ -867,3 +870,182 @@ class TestWorstNrmseColumn:
         render_final(tmp_path)
         html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
         assert "n/a (" not in html
+
+
+# ---- The row model (reporting.rows) is what the page renders ----------------
+
+
+def _two_row_final_page(tmp_path: Path) -> str:
+    """A final page over two rows: one with a fresh sidecar, one live only."""
+    snapshot = {
+        "total": 2,
+        "elapsed": 5.0,
+        "eta_seconds": None,
+        "counts": {"passed": 2},
+        "start_wall": 1.0,
+        "tests": [
+            {
+                "test_key": "test_0001",
+                "model_id": "Lib.A",
+                "status": "passed",
+                "elapsed": 2.0,
+                "worker_id": 0,
+                "report_dir": "test_0001",
+                "field_sources": {"stop_time": "annotation"},
+                "detail": "a message",
+            },
+            {
+                "test_key": "test_0002",
+                "model_id": "Lib.B",
+                "status": "passed",
+                "elapsed": 1.0,
+                "worker_id": 1,
+                "report_dir": "test_0002",
+            },
+        ],
+        "updated_at": 6.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    _write_sidecar(
+        tmp_path,
+        {
+            "model_id": "Lib.A",
+            "written_at": 2.0,
+            "status": "FAIL",
+            "worst_nrmse": 0.5,
+            "n_vars": 2,
+            "n_vars_passed": 1,
+            "n_warnings": 3,
+            "n_unscored": 0,
+        },
+    )
+    render_final(tmp_path)
+    return (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+
+
+def _body_rows(html: str) -> list[str]:
+    body = html.split('<tbody id="results-tbody">', 1)[1].split("</tbody>", 1)[0]
+    return re.findall(r"<tr\b.*?</tr>", body, flags=re.S)
+
+
+def _attrs(tr: str) -> dict[str, str]:
+    opening = tr.split(">", 1)[0]
+    return dict(re.findall(r'([\w-]+)="([^"]*)"', opening))
+
+
+def test_the_header_is_the_column_list(tmp_path):
+    from dstf.reporting.rows import COLUMNS
+
+    html = _two_row_final_page(tmp_path)
+    head = html.split("<thead>", 1)[1].split("</tr>", 1)[0]
+    ths = re.findall(r"<th\b([^>]*)>(.*?)</th>", head, flags=re.S)
+    assert 'class="sel-col"' in ths[0][0]
+    keys = [re.search(r'data-key="([^"]*)"', a).group(1) for a, _ in ths[1:]]
+    labels = [re.sub(r"<[^>]*>.*", "", inner, flags=re.S) for _, inner in ths[1:]]
+    assert keys == [c.key for c in COLUMNS]
+    assert labels == [c.label for c in COLUMNS]
+    assert 'data-key="vars" title="Variables passed / scored.' in head
+
+
+def test_every_row_carries_every_columns_attributes(tmp_path):
+    from dstf.reporting.rows import COLUMNS
+
+    rows = _body_rows(_two_row_final_page(tmp_path))
+    assert len(rows) == 2
+    for tr in rows:
+        attrs = _attrs(tr)
+        for c in COLUMNS:
+            assert f"data-sort-{c.key}" in attrs, c.key
+            if c.key != "status":
+                assert f"data-{c.key}" in attrs, c.key
+    a, b = (_attrs(tr) for tr in rows)
+    # The Resolution filter had no attribute to read and hid every row.
+    assert a["data-resolution"] == "annotation"
+    # data-status is the status CLASS: the pills', the counts' and the live
+    # tick's key.
+    assert (a["data-status"], b["data-status"]) == ("fail", "pending")
+    assert a["data-sort-status"] == "3"  # FAIL's place in STATUS_ORDER
+    assert a["data-nrmse"] == "5.0000e-01" and a["data-sort-nrmse"] == "0.5"
+    # No value: the text reads "—", the sort value is empty (sorted last).
+    assert b["data-nrmse"] == "—" and b["data-sort-nrmse"] == ""
+    assert a["data-detail"] == "a message"
+
+
+def test_the_cells_keep_their_markup(tmp_path):
+    a, b = _body_rows(_two_row_final_page(tmp_path))
+    assert '<span class="status-badge fail">FAIL</span>' in a
+    assert '<span class="status-badge pending">SIMULATED</span>' in b
+    assert '<a href="test_0001/">test_0001</a>' in a
+    assert (
+        '<td class="model-cell" title="Lib.A">'
+        '<a href="reports/test_0001/interactive.html">Lib.A</a></td>'
+    ) in a
+    assert '<span title="all fields from annotation">annotation</span>' in a
+    assert '<td class="elapsed-cell">2.0</td>' in a
+    assert '<span class="warn">3</span>' in a
+    assert '<td class="detail-cell" title="a message">a message</td>' in a
+
+
+def test_number_columns_have_no_filter_yet(tmp_path):
+    html = _two_row_final_page(tmp_path)
+    keys = re.findall(r'data-col-filter="([^"]*)"', html)
+    assert keys == ["test", "ref", "model", "resolution", "worker", "detail"]
+
+
+def test_the_pills_are_the_statuses(tmp_path):
+    html = _two_row_final_page(tmp_path)
+    m = re.search(r"const STATUSES = (\[.*?\]);\n", html)
+    assert m, "the page injects the statuses the pills are drawn from"
+    assert json.loads(m.group(1)) == [
+        ["queued", "QUEUED"],
+        ["running", "RUNNING"],
+        ["pass", "PASS"],
+        ["fail", "FAIL"],
+        ["sim-fail", "SIM_FAIL"],
+        ["no-ref", "NO_REF"],
+        ["timed-out", "TIMED OUT"],
+    ]
+    assert "['warnings', 'warnings']" in html  # the cross-cut pill
+
+
+def test_the_saved_state_key_moved_with_the_pill_keys(tmp_path):
+    html = _two_row_final_page(tmp_path)
+    assert "'dstf-dashboard-v2:'" in html
+    assert "dstf-dashboard-v1:" not in html
+
+
+def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
+    """`dstf run` / `compare` without --report write no sidecars; the page
+    they render still shows each test's verdict, from its comparison."""
+    from dstf.comparison.types import TestComparison
+
+    snapshot = {
+        "total": 3,
+        "elapsed": 5.0,
+        "counts": {"passed": 3},
+        "tests": [
+            {
+                "test_key": f"test_000{i}",
+                "model_id": m,
+                "status": "passed",
+                "report_dir": f"test_000{i}",
+            }
+            for i, m in enumerate(("Lib.A", "Lib.B", "Lib.C"), 1)
+        ],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    comparisons = [
+        TestComparison(model_id="Lib.A", passed=True, test_id="0001"),
+        TestComparison(model_id="Lib.B", passed=False),
+        TestComparison(model_id="Lib.C", passed=True),
+    ]
+    rows = build_dashboard_context(tmp_path, mode="final", comparisons=comparisons)[
+        "tests"
+    ]
+    assert [r.status for r in rows] == ["PASS", "FAIL", "PASS"]
+    assert rows[0].ref_id == "ref_0001"
+    render_final(tmp_path, comparisons=comparisons)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    statuses = [_attrs(tr)["data-status"] for tr in _body_rows(html)]
+    assert statuses == ["pass", "fail", "pass"]

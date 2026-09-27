@@ -119,7 +119,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             config.work_dir.mkdir(parents=True, exist_ok=True)
             from ..reporting.dashboard_render import build_rerun_prefix, render_final
 
-            render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+            render_final(
+                config.work_dir,
+                rerun_prefix=build_rerun_prefix(config),
+                comparisons=prior_comps,
+            )
             if args.report:
                 scope_tests = [t for t in all_tests if t.model_id in prior_results]
                 # Exit code stays 0 regardless of prior-result verdicts:
@@ -208,12 +212,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
 
         # Always refresh the unified dashboard before any --report work.
-        # Without --report the per-test sidecars don't exist, so the
-        # post-comparison columns stay dashed; the live snapshot is
-        # frozen at the moment compare_all finished.
+        # Without --report the per-test sidecars don't exist: each row's
+        # verdict comes from its comparison, and the other post-comparison
+        # columns stay dashed.
         from ..reporting.dashboard_render import build_rerun_prefix, render_final
 
-        render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+        render_final(
+            config.work_dir,
+            rerun_prefix=build_rerun_prefix(config),
+            comparisons=comparisons,
+        )
 
         if args.report:
             return _generate_report_suite(
@@ -315,12 +323,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
     )
 
     # Always refresh the unified dashboard, even without --report. Without
-    # per-test sidecars (no --report run yet), the post-run columns stay
-    # dashed and the page reads as a "live" snapshot frozen at the moment
-    # comparison finished.
+    # per-test sidecars (no --report run yet), each row's verdict comes from
+    # its comparison and the other post-run columns stay dashed.
     from ..reporting.dashboard_render import build_rerun_prefix, render_final
 
-    render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+    render_final(
+        config.work_dir,
+        rerun_prefix=build_rerun_prefix(config),
+        comparisons=comparisons,
+    )
 
     if getattr(args, "report", False):
         return _generate_report_suite(comparisons, results, tests, store, config)
@@ -340,7 +351,11 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     from ..reporting.report_suite import generate_report_suite, open_in_browser
 
     generate_report_suite(comparisons, results, tests, store, config)
-    render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+    render_final(
+        config.work_dir,
+        rerun_prefix=build_rerun_prefix(config),
+        comparisons=comparisons,
+    )
     dashboard_path = config.work_dir / "dashboard.html"
     print(f"Report: {dashboard_path}")
     open_in_browser(dashboard_path)
@@ -367,7 +382,12 @@ def _output_report(comparisons: list, args: argparse.Namespace, config) -> int:
         from ..reporting.dashboard_render import build_rerun_prefix, render_final_to
 
         out = Path(getattr(args, "output", None) or "test-report.html")
-        render_final_to(config.work_dir, out, rerun_prefix=build_rerun_prefix(config))
+        render_final_to(
+            config.work_dir,
+            out,
+            rerun_prefix=build_rerun_prefix(config),
+            comparisons=comparisons,
+        )
         print(f"HTML report written to {out}")
         if out.resolve().parent != config.work_dir.resolve():
             # The page's per-test rows link reports/<dir>/interactive.html

@@ -212,8 +212,8 @@ def run_pipeline(
 
     # Clean each in-scope test's prior footprint before running. Without
     # this, a prior run's stale `comparison_data.json` sidecar could bleed
-    # through `_enrich_row_from_comparison` and override a fresh sim's
-    # verdict in the dashboard. Out-of-scope tests are untouched so
+    # through `rows.enrich_row` and override a fresh sim's verdict in the
+    # dashboard. Out-of-scope tests are untouched so
     # `merge` keeps working.
     work_dir.mkdir(parents=True, exist_ok=True)
     wipe_stale_state_for_scope(config, tests, backend.ref_id_map, wipe_sim_dirs=True)

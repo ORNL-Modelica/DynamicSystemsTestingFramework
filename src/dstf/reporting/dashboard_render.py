@@ -14,22 +14,26 @@ ticks the elapsed counters so they don't look frozen.
 
 Final mode is triggered after comparison from cli.cmd_run /
 cmd_compare; it drops the refresh meta tag (the page becomes static)
-and adds per-test report links + post-run columns (worst_nrmse,
-warnings, translate/sim/total wall times).
+and adds each test's verdict (from the comparisons the caller holds),
+per-test report links + post-run columns (worst score, warnings,
+translate/sim/total wall times) from the sidecars.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sys
 import time
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..backends.progress import read_status
+from ..comparison.types import TestComparison
+from .rows import COLUMNS, TestRow, enrich_row, row_from_status, summary_fields
+from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER
 from .theme import css_variables
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -38,6 +42,9 @@ _env = Environment(
     autoescape=select_autoescape(["html"]),
 )
 _env.globals["dstf_css"] = css_variables()
+# A sort value as a data-sort-* attribute: None is the empty string, which
+# dashboard.js sorts last in both directions.
+_env.filters["sortval"] = lambda v: "" if v is None else v
 
 
 def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
@@ -53,96 +60,6 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
         return json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
-
-
-def _enrich_row_from_comparison(
-    row: dict,
-    comp: dict,
-    snapshot_start_wall: float | None,
-) -> bool:
-    """Copy post-run fields from a per-test comparison_data.json into a row.
-
-    The sidecar puts row-summary fields under a `summary` block alongside
-    the per-variable context. Fall back to top-level for backward compat
-    with sidecars written before the summary block was added.
-
-    Two defensive guards prevent stale sidecars from overriding fresh
-    verdicts (D91 — see ``pipeline.wipe_stale_state_for_scope``):
-
-    1. **model_id mismatch.** If the sidecar's ``summary.model_id`` doesn't
-       match the row's ``model_id``, the sidecar belongs to a different
-       test (bookkeeping drift between batch_manifest and reports/) — skip
-       enrichment entirely.
-    2. **Stale timestamp.** If the sidecar's ``summary.written_at`` is
-       older than the snapshot's ``start_wall`` (i.e., written before this
-       run started), the sidecar is from a prior run that the wipe failed
-       to clear (or from a code path that bypasses the wipe). Skip
-       enrichment so the live-mode verdict (from the fresh sim) wins.
-
-    Returns True when enrichment was applied; False when guarded off.
-    Both guards print a one-line warning to stderr so silent overrides
-    are visible.
-    """
-    summary = comp.get("summary", comp)
-
-    sidecar_model_id = summary.get("model_id")
-    expected_model_id = row.get("model_id")
-    if sidecar_model_id and expected_model_id and sidecar_model_id != expected_model_id:
-        print(
-            f"# WARN: sidecar model_id mismatch (expected {expected_model_id!r}, "
-            f"sidecar has {sidecar_model_id!r}); ignoring enrichment.",
-            file=sys.stderr,
-        )
-        return False
-
-    written_at = summary.get("written_at")
-    if (
-        snapshot_start_wall is not None
-        and written_at is not None
-        and written_at < snapshot_start_wall
-    ):
-        print(
-            f"# WARN: stale sidecar for {expected_model_id!r} "
-            f"(written_at={written_at} < start_wall={snapshot_start_wall}); "
-            f"ignoring enrichment.",
-            file=sys.stderr,
-        )
-        return False
-
-    for key in (
-        "worst_nrmse",
-        "n_unscored",
-        "n_vars",
-        "n_vars_passed",
-        "n_warnings",
-        "translation_wall",
-        "sim_wall",
-        "total_wall",
-        "ref_id",
-        "ref_file",
-        "field_sources",
-        # Comparison-derived status overrides live-mode status when present.
-        # The compare phase distinguishes pass / fail / sim-fail / no-ref;
-        # live mode only knows passed / failed / timed_out.
-        "status_text",
-        "status_class",
-    ):
-        if key in summary:
-            row[key] = summary[key]
-    return True
-
-
-# Live-mode TestStatus.status (queued/running/passed/failed/timed_out) →
-# (uppercase pretty status_text, filter-vocab status_class). Filter-vocab
-# matches the buttons in dashboard.html (pass/fail/sim-fail/no-ref/queued/
-# running/timed-out) so a single filter applies live and final.
-_LIVE_STATUS_MAP = {
-    "queued": ("QUEUED", "queued"),
-    "running": ("RUNNING", "running"),
-    "passed": ("PASS", "pass"),
-    "failed": ("FAIL", "fail"),
-    "timed_out": ("TIMED OUT", "timed-out"),
-}
 
 
 def build_rerun_prefix(config) -> str:
@@ -209,13 +126,31 @@ def format_run_metadata(meta: dict | None) -> dict | None:
     }
 
 
+def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
+    """*row* with *comp*'s verdict and numbers, through ``summary_fields`` —
+    the computation the sidecar is written with. The live row keeps what
+    only it knows: its provenance, and its ref_id when the comparison has
+    no stored baseline to name."""
+    summary = summary_fields(
+        comp,
+        ref_id=f"ref_{comp.test_id}" if comp.test_id else row.ref_id,
+        field_sources=row.field_sources,
+    )
+    return enrich_row(row, {"model_id": comp.model_id, **summary}, start_wall=None)
+
+
 def build_dashboard_context(
-    work_dir: Path, mode: str, rerun_prefix: str | None = None
+    work_dir: Path,
+    mode: str,
+    rerun_prefix: str | None = None,
+    comparisons: Iterable[TestComparison] = (),
 ) -> dict:
     """Build the Jinja context for dashboard.html.
 
     mode='live' — auto_refresh=True, post-run fields stay None
-    mode='final' — auto_refresh=False, fields enriched from sidecars
+    mode='final' — auto_refresh=False, each row with a comparison gets its
+    verdict from it, then a fresh sidecar (when --report wrote one)
+    enriches it
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
@@ -230,59 +165,29 @@ def build_dashboard_context(
     }
 
     # Wall-clock anchor for the stale-sidecar guard. Sidecars written
-    # before this run's start are ignored by `_enrich_row_from_comparison`
-    # so a prior run's verdict can't override the current run's sim result.
+    # before this run's start are ignored by `rows.enrich_row` so a prior
+    # run's verdict can't override the current run's sim result.
     # Falls back to None when status.json predates the field — guard
     # silently passes through (legacy sidecars never get filtered).
     snapshot_start_wall = snapshot.get("start_wall")
 
+    # `dstf run` / `compare` without --report write no sidecars; the
+    # comparisons they hold are what gives such a page its verdicts.
+    by_model = {c.model_id: c for c in comparisons} if mode == "final" else {}
     rows = []
     for t in snapshot.get("tests", []):
-        raw_status = t.get("status", "queued")
-        status_text, status_class = _LIVE_STATUS_MAP.get(
-            raw_status,
-            (raw_status.upper(), raw_status.replace("_", "-")),
-        )
-        # Live-mode ref_id can be derived from report_dir when it follows
-        # the "ref_NNNN" naming (set by cmd_run pre-populating
-        # backend.ref_id_map). For tests without a baseline yet, report_dir
-        # is the live test_key and ref_id stays None.
-        live_ref_id = None
-        rd = t.get("report_dir") or ""
-        if rd.startswith("ref_"):
-            live_ref_id = rd
-        row = {
-            "test_key": t.get("test_key"),
-            "model_id": t.get("model_id"),
-            "status_text": status_text,
-            "status_class": status_class,
-            "elapsed": t.get("elapsed"),
-            "started_wall": t.get(
-                "started_wall"
-            ),  # epoch — JS uses for live "running for Ns"
-            "worker_id": t.get("worker_id"),
-            "report_dir": t.get("report_dir") or t.get("test_key"),
-            "phase": t.get("phase"),
-            "detail": t.get("detail"),
-            "ref_id": live_ref_id,
-            "ref_file": None,  # Populated from sidecar in final mode
-            # Post-run fields default to None; populated below in final mode
-            "worst_nrmse": None,
-            # Leaves with no score at all (sentinels). Used by the
-            # Worst-NRMSE cell to say "n/a (N unscored)" instead of "—".
-            "n_unscored": None,
-            "n_vars": None,
-            "n_vars_passed": None,
-            "n_warnings": None,
-            "translation_wall": None,
-            "sim_wall": None,
-            "total_wall": None,
-            "field_sources": t.get("field_sources") or {},
-        }
-        if mode == "final" and row["report_dir"]:
-            comp = _read_comparison_sidecar(work_dir, row["report_dir"])
-            if comp:
-                _enrich_row_from_comparison(row, comp, snapshot_start_wall)
+        row = row_from_status(t)
+        comp = by_model.get(row.model_id)
+        if comp is not None:
+            row = _with_verdict(row, comp)
+        if mode == "final" and row.report_dir:
+            sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
+            if sidecar:
+                # Sidecars written before the summary block carry the
+                # fields at the top level.
+                row = enrich_row(
+                    row, sidecar.get("summary", sidecar), start_wall=snapshot_start_wall
+                )
         rows.append(row)
 
     # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf"
@@ -300,6 +205,11 @@ def build_dashboard_context(
         "eta_seconds": snapshot.get("eta_seconds"),
         "counts": snapshot.get("counts", {}),
         "tests": rows,
+        "columns": COLUMNS,
+        # The count pills, in STATUS_ORDER: [status class, the word a
+        # person reads]. The class is the pill's key and the row's
+        # data-status.
+        "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in STATUS_ORDER],
         "rerun_prefix": prefix,
         "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
@@ -356,8 +266,11 @@ def _render(
     mode: str,
     rerun_prefix: str | None = None,
     output_path: Path | None = None,
+    comparisons: Iterable[TestComparison] = (),
 ) -> None:
-    ctx = build_dashboard_context(work_dir, mode=mode, rerun_prefix=rerun_prefix)
+    ctx = build_dashboard_context(
+        work_dir, mode=mode, rerun_prefix=rerun_prefix, comparisons=comparisons
+    )
     template = _env.get_template("dashboard.html")
     html = template.render(**ctx)
     dest = output_path or (work_dir / "dashboard.html")
@@ -370,13 +283,21 @@ def render_live(work_dir: Path, rerun_prefix: str | None = None) -> None:
     _render(work_dir, mode="live", rerun_prefix=rerun_prefix)
 
 
-def render_final(work_dir: Path, rerun_prefix: str | None = None) -> None:
-    """Render dashboard.html in final mode (refresh stripped, sidecars merged)."""
-    _render(work_dir, mode="final", rerun_prefix=rerun_prefix)
+def render_final(
+    work_dir: Path,
+    rerun_prefix: str | None = None,
+    comparisons: Iterable[TestComparison] = (),
+) -> None:
+    """Render dashboard.html in final mode (refresh stripped, the
+    comparisons' verdicts and the sidecars merged)."""
+    _render(work_dir, mode="final", rerun_prefix=rerun_prefix, comparisons=comparisons)
 
 
 def render_final_to(
-    work_dir: Path, output_path: Path, rerun_prefix: str | None = None
+    work_dir: Path,
+    output_path: Path,
+    rerun_prefix: str | None = None,
+    comparisons: Iterable[TestComparison] = (),
 ) -> None:
     """Render the final-mode dashboard page to a caller-chosen path.
 
@@ -385,4 +306,10 @@ def render_final_to(
     ``{% include %}``d), but its per-test links are relative to ``work_dir``
     — they only resolve when the output lands inside the work dir.
     """
-    _render(work_dir, mode="final", rerun_prefix=rerun_prefix, output_path=output_path)
+    _render(
+        work_dir,
+        mode="final",
+        rerun_prefix=rerun_prefix,
+        output_path=output_path,
+        comparisons=comparisons,
+    )

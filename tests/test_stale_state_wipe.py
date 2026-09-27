@@ -2,9 +2,9 @@
 that prevents prior runs' artifacts from bleeding into a fresh run.
 
 D91 — root cause was that `cmd_run` never wiped a test's prior
-`reports/<report_dir>/comparison_data.json` sidecar, so
-`_enrich_row_from_comparison` would override a fresh sim's PASS verdict
-with the stale FAIL from the prior run. This module locks down the wipe
+`reports/<report_dir>/comparison_data.json` sidecar, so the dashboard's
+sidecar enrichment (today `rows.enrich_row`) would override a fresh sim's
+PASS verdict with the stale FAIL from the prior run. This module locks down the wipe
 contract: only in-scope tests are touched; out-of-scope dirs are
 preserved (so `--merge` and `--rerun` keep working); both layers (sim
 work dir + report dir) get cleared by `cmd_run`; only the report dir
