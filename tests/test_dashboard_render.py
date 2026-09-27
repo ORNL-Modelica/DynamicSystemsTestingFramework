@@ -944,6 +944,9 @@ def test_the_header_is_the_column_list(tmp_path):
     labels = [re.sub(r"<[^>]*>.*", "", inner, flags=re.S) for _, inner in ths[1:]]
     assert keys == [c.key for c in COLUMNS]
     assert labels == [c.label for c in COLUMNS]
+    # The model id is the test a person reads; the work-dir key is a key.
+    assert labels[keys.index("model")] == "Test"
+    assert labels[keys.index("test")] == "Key"
     assert 'data-key="vars" title="Variables passed / scored.' in head
 
 

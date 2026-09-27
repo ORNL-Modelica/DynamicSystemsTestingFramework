@@ -289,7 +289,7 @@ def test_typed_filters_on_the_dashboard(tmp_path, playwright_browser):
     assert _visible(page) == ["Lib.B"]
     _type(page, "nrmse", "")
 
-    # .* on: the Model filter is a regex.
+    # .* on: the Test (model) filter is a regex.
     page.click("#toggle-regex")
     assert page.get_attribute("#toggle-regex", "aria-pressed") == "true"
     _type(page, "model", r"^Lib\.A$")

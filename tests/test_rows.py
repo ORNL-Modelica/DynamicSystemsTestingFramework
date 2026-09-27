@@ -14,6 +14,7 @@ from dstf.comparison.types import TestComparison, VariableComparison
 from dstf.reporting.report_suite import generate_comparison_plots
 from dstf.reporting.rows import (
     COLUMNS,
+    EDITS,
     TestRow,
     enrich_row,
     row_from_status,
@@ -80,6 +81,32 @@ def test_the_columns_both_surfaces_show():
     assert col["detail"].label == "Message"
     assert "passed" in (col["vars"].title or "")
     assert (col["resolution"].title or "").startswith("Provenance of stop_time")
+
+
+def test_the_test_column_names_the_test_a_person_reads():
+    # The model id is the test a person reads ("GenericPipe_Test"); the
+    # work-dir key ``test_0001`` is a key. The keys stay: the dashboard's
+    # saved state, its data-* attributes and the tests key on them.
+    labels = {c.key: c.label for c in COLUMNS}
+    assert labels["model"] == "Test"
+    assert labels["test"] == "Key"
+
+
+def test_the_edits_column_is_the_tools_alone():
+    assert EDITS.key == "edits" and EDITS.kind == "number"
+    assert EDITS.text(TestRow(model_id="A", edits=2)) == "2 unsaved"
+    assert EDITS.text(TestRow(model_id="A")) == ""
+    assert EDITS.sort(TestRow(model_id="A", edits=2)) == 2
+    assert EDITS.sort(TestRow(model_id="A")) is None
+    # A report has no staged edits.
+    assert EDITS not in COLUMNS
+
+
+def test_a_row_waiting_for_the_tools_verdict():
+    row = TestRow(model_id="A", waiting=True)
+    assert row.status_text == "…" and row.status_class == "queued"
+    # SIMULATED stays the dashboard's word for a simulated, unscored live row.
+    assert TestRow(model_id="A").status_text == "SIMULATED"
 
 
 def test_a_live_row_before_any_comparison():

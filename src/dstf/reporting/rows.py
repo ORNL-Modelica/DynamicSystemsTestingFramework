@@ -35,6 +35,10 @@ SIMULATED = "SIMULATED"
 #: The class that row is styled with: the theme's "no verdict yet" token.
 PENDING_CLASS = "pending"
 
+#: The word and class of a tool row the Session has not scored yet.
+WAITING = "…"
+WAITING_CLASS = "queued"
+
 
 @dataclass(frozen=True)
 class TestRow:
@@ -63,14 +67,21 @@ class TestRow:
     message: str | None = None
     #: the tool's staged edits on this test; 0 in a report
     edits: int = 0
+    #: the tool's "not scored yet": no verdict, and no live run giving one —
+    #: the Session has not scored this test (yet)
+    waiting: bool = False
 
     @property
     def status_text(self) -> str:
-        return STATUS_LABELS[self.status] if self.status else SIMULATED
+        if self.status:
+            return STATUS_LABELS[self.status]
+        return WAITING if self.waiting else SIMULATED
 
     @property
     def status_class(self) -> str:
-        return STATUS_CLASSES[self.status] if self.status else PENDING_CLASS
+        if self.status:
+            return STATUS_CLASSES[self.status]
+        return WAITING_CLASS if self.waiting else PENDING_CLASS
 
     @property
     def resolution(self) -> str | None:
@@ -141,9 +152,9 @@ def _nrmse_text(row: TestRow) -> str:
 
 
 COLUMNS: tuple[Column, ...] = (
-    _text_col("test", "Test", lambda r: r.test_key),
+    _text_col("test", "Key", lambda r: r.test_key),
     _text_col("ref", "Reference", lambda r: r.ref_id),
-    _text_col("model", "Model", lambda r: r.model_id),
+    _text_col("model", "Test", lambda r: r.model_id),
     Column(
         key="status",
         label="Status",
@@ -190,6 +201,17 @@ COLUMNS: tuple[Column, ...] = (
     _num_col("total", "Total (s)", lambda r: r.total_wall, ".2f"),
     # Keyed "detail": the column-resize follow reads --col-w-detail.
     _text_col("detail", "Message", lambda r: r.message),
+)
+
+#: The tool's staged edits: a Suite column, in no report (a report has no
+#: staged edits).
+EDITS = Column(
+    key="edits",
+    label="Edits",
+    kind="number",
+    text=lambda r: f"{r.edits} unsaved" if r.edits else "",
+    sort=lambda r: r.edits or None,
+    title="Staged edits not yet saved to test_spec.json",
 )
 
 
