@@ -353,14 +353,23 @@ class Shell:
         ui.add_css(css_variables() + STYLE)
 
     def mount(self) -> None:
-        """The routes beside the index: the dashboard's files, resolved
-        against the OPEN project's work dir per request so a reopen follows,
-        and the Test page. Once per process; `index` calls it too, so a
+        """The routes beside the index: the Suite table's two scripts, the
+        dashboard's files, resolved against the OPEN project's work dir per
+        request so a reopen follows, and the Test page. Once per process; `index` calls it too, so a
         simulation that mounted only the root page gets them on its first
         build."""
         if self._mounted:
             return
         self._mounted = True
+
+        # The Suite table's scripts: its own and the typed filters the
+        # dashboard inlines (one module, two surfaces).
+        from .suite_grid import ASSETS, FILTERS_JS, HERE
+
+        app.add_static_file(
+            local_file=HERE / "suite_grid.js", url_path=f"{ASSETS}/suite_grid.js"
+        )
+        app.add_static_file(local_file=FILTERS_JS, url_path=f"{ASSETS}/filters.js")
 
         @app.get("/dashboard/{path:path}")
         def _dashboard(path: str) -> Any:

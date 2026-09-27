@@ -4221,8 +4221,6 @@ class TestRail:
                 m for m in shell.visible_tests() if not _none(user, "tests-drawer:" + m)
             ]
             assert shown == [D]
-            # The drawer's own filter: the Suite page's stays as it was.
-            assert _page(shell, user).state.needle == ""
 
     async def test_a_click_in_the_tests_drawer_opens_that_test_and_the_drawer_stays(
         self, shell

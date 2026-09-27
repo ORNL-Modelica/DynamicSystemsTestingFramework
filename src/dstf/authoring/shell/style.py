@@ -220,7 +220,6 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   width: 12px; height: 9px; border-radius: 2px; flex: none;
   border: 2px solid var(--dstf-accent); box-sizing: content-box;
 }
-.dstf-chip-active { outline: 2px solid var(--dstf-accent); }
 .dstf-card {
   border: 1px solid var(--dstf-border); border-radius: 4px; box-shadow: none;
   background: var(--dstf-surface); padding: 16px;

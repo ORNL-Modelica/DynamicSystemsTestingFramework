@@ -241,8 +241,12 @@ def _changed(before: dict, after: dict) -> list[str]:
     return [key for key in before if before[key] != after[key]]
 
 
-async def _check(user, model_id: str) -> None:
-    user.find(marker=f"check:{model_id}").click()
+async def _check(shell, user, model_id: str) -> None:
+    """A row selected in the Suite table: the browser's `selectionChanged`
+    reaches the page as the grid's selection (NiceGUI's simulation draws no
+    AG Grid rows)."""
+    page = _suite(shell, user)
+    page._on_selection(sorted(page.state.checked | {model_id}))
 
 
 async def _submit(user, cap: _Dummy) -> None:
@@ -277,7 +281,7 @@ async def test_the_suite_page_draws_a_suite_capability_with_its_caption(shell):
         button = _one(user, "action:suite")
         assert button.text == "Dummy suite on 0 tests" and button.enabled
         await user.should_not_see(marker="action:test")  # not this page's
-        await _check(user, A)
+        await _check(shell, user, A)
         await _settled(lambda: button.text == "Dummy suite on 1 tests")
 
 
@@ -384,7 +388,7 @@ async def test_patch_reaches_the_pending_ops_and_nothing_else(shell, tmp_path):
     only(cap)
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        await _check(user, A)
+        await _check(shell, user, A)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
         await _settled(lambda: _one(user, "pending").text == "2 pending edits")
@@ -404,7 +408,7 @@ async def test_store_write_runs_against_the_store_and_nothing_else(shell, tmp_pa
     only(cap)
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        await _check(user, B)
+        await _check(shell, user, B)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
         await _settled(lambda: seen)
@@ -427,7 +431,7 @@ async def test_job_runs_on_a_thread_and_the_runs_card_says_so(shell, tmp_path):
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         await user.should_see("no job running")
-        await _check(user, A)
+        await _check(shell, user, A)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
         await user.should_see("running: conformance rerun", retries=20)
@@ -531,7 +535,7 @@ async def test_a_capability_registered_through_the_plugin_hook_attaches(
 
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        await _check(user, A)
+        await _check(shell, user, A)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
         await _settled(lambda: _one(user, "pending").text == "2 pending edits")

@@ -1,7 +1,7 @@
 """The tests as rows grouped by package (brief §3.2; DESIGN.md "Tables"):
-the Suite page's list, with checkboxes, and the Tests drawer's, without
-(the owner's ruling, 2026-09-25). A row's verdict repaints in place; the
-list is rebuilt only when the test set or the layout moves."""
+the Tests drawer's list (the Suite page's is a table, `suite_grid.py`). A
+row's verdict repaints in place; the list is rebuilt only when the test
+set or the layout moves."""
 
 from __future__ import annotations
 
@@ -20,13 +20,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class Row:
-    """One test's row: the elements a check, a click or a rescore updates in
-    place — the whole list is never resent (roadmap §2 "the row model")."""
+    """One test's row: the elements a click or a rescore updates in place —
+    the whole list is never resent (roadmap §2 "the row model")."""
 
     model_id: str
     group: str
     container: ui.row
-    checkbox: ui.checkbox | None  # None in a list without checkboxes
     name: ui.button
     badge: ui.badge
     verdict: str = ""  # the classifier's word, "" while unscored
@@ -41,25 +40,20 @@ def _name(model_id: str, short: bool) -> str:
 
 
 class TestList:
-    """The list's rows and group labels. ``checked is None`` builds no
-    checkbox (the drawer); ``current`` gets ``dstf-row-current`` on its row;
-    ``marker`` prefixes every marker the list sets — ``""`` keeps the Suite
-    page's: ``tests``, ``group:<g>``, ``check:<id>``, ``<id>``."""
+    """The list's rows and group labels. ``current`` gets
+    ``dstf-row-current`` on its row; ``marker`` prefixes every marker the
+    list sets: ``tests``, ``group:<g>``, ``<id>``."""
 
     def __init__(
         self,
         shell: Shell,
         *,
         on_open: Callable[[str], None],
-        checked: set[str] | None = None,
-        on_check: Callable[[str, bool], None] | None = None,
         current: str | None = None,
-        marker: str = "",
+        marker: str,
     ) -> None:
         self.shell = shell
         self.on_open = on_open
-        self.checked = checked
-        self.on_check = on_check
         self.current = current
         self.marker = marker
         self.rows: dict[str, Row] = {}
@@ -91,18 +85,6 @@ class TestList:
                 with ui.row().classes(
                     "dstf-row items-center no-wrap gap-2 w-full"
                 ) as container:
-                    checkbox = None
-                    if self.checked is not None:
-                        checkbox = (
-                            ui.checkbox(
-                                value=model_id in self.checked,
-                                on_change=lambda e, m=model_id: self._check(
-                                    m, bool(e.value)
-                                ),
-                            )
-                            .props("dense")
-                            .mark(f"{self.marker}check:{model_id}")
-                        )
                     name = (
                         ui.button(
                             _name(model_id, short),
@@ -120,14 +102,8 @@ class TestList:
                     badge = ui.badge("", color=None).classes("dstf-badge")
                 if model_id == self.current:
                     container.classes(add="dstf-row-current")
-                self.rows[model_id] = Row(
-                    model_id, group, container, checkbox, name, badge
-                )
+                self.rows[model_id] = Row(model_id, group, container, name, badge)
                 self.paint(model_id)
-
-    def _check(self, model_id: str, on: bool) -> None:
-        if self.on_check is not None:
-            self.on_check(model_id, on)
 
     def paint(self, model_id: str) -> None:
         """One row's verdict: the badge's word and fill, the row's tint.
@@ -154,19 +130,14 @@ class TestList:
             remove=" ".join(f"dstf-tint-{s}" for s in STATUS), add=f"dstf-tint-{css}"
         )
 
-    def filter(self, needle: str, statuses: set[str]) -> None:
+    def filter(self, needle: str) -> None:
         """Visibility only — the rows stay. A group's label shows while any
         of its rows does."""
         needle = needle.lower()
         shown_by_group: dict[str, bool] = {}
         for row in self.rows.values():
-            shown = (not needle or needle in row.model_id.lower()) and (
-                not statuses or row.verdict in statuses
-            )
+            shown = not needle or needle in row.model_id.lower()
             row.container.set_visibility(shown)
             shown_by_group[row.group] = shown_by_group.get(row.group, False) or shown
         for group, label in self.groups.items():
             label.set_visibility(shown_by_group.get(group, False))
-
-    def shown(self) -> list[str]:
-        return [m for m, row in self.rows.items() if row.container.visible]

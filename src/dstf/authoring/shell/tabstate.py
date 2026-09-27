@@ -1,5 +1,6 @@
-"""Selection state per browser tab (brief §3.2; D129): what the Suite page
-has checked, its filter and its layout. Kept in NiceGUI's tab storage, so
+"""Selection state per browser tab (brief §3.2; D129): what the Suite table
+has selected (its filters, sort and layout are the viewer's, in the
+browser's localStorage — `suite_grid.js`). Kept in NiceGUI's tab storage, so
 it is there after navigating to a Test page and back within the tab, and a
 second tab on the same server starts with its own. Volatile: gone when the
 tab closes. Never the Session's — that is the decision."""
@@ -16,10 +17,6 @@ KEY = "dstf"
 @dataclass
 class TabState:
     checked: set[str] = field(default_factory=set)
-    needle: str = ""
-    status_filter: set[str] = field(default_factory=set)
-    grouped: bool = True
-    short: bool = True
     #: The Test page's open drawer — "tests", "variables" or None — and the
     #: Tests drawer's filter (3c): the tab's, so a switch of test keeps them.
     drawer: str | None = None

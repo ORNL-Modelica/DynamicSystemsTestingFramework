@@ -1,16 +1,20 @@
-"""The Suite page and the Test page stub in Chromium, served by `dstf author`
-(brief §3.2, §3.3, §3.8; roadmap §2's gate predicates over FakeLib). NiceGUI's
-user simulation renders nothing, so this says the page a user opens works
-end to end: the process serves on 127.0.0.1 within seconds, the rows fill in
-with verdicts, a check survives a click into a test and back within the tab,
-the buttons say their counts, the font token reaches the body, nothing
-scrolls sideways, and Stop server ends the process.
+"""The Suite page and the Test page in Chromium, served by `dstf author`
+(brief §3.2, §3.3, §3.8; roadmap §2's gate predicates over FakeLib; the
+Suite table, S2a). NiceGUI's user simulation renders nothing — and the Suite
+table's rows live in the browser (AG Grid) — so this says the page a user
+opens works end to end: the process serves on 127.0.0.1 within seconds, the
+rows fill in with verdicts, the table's pills, typed filters, group rows,
+sort, names, column chooser and selection work and persist, a selection
+survives a click into a test and back within the tab, the icon actions say
+their counts, the font token reaches the body, nothing scrolls sideways, and
+Stop server ends the process.
 
 Selectors: NiceGUI's `.mark()` is server-side only, so elements are located
-by the `dstf-*` classes and by role and name."""
+by the `dstf-*` classes, AG Grid's `row-id` / `col-id` and by role and name."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -30,7 +34,7 @@ pytestmark = pytest.mark.playwright
 from playwright.sync_api import expect  # noqa: E402
 
 from dstf.reporting.theme import FONT_STACK  # noqa: E402
-from test_session import A, D, G, _project  # noqa: E402
+from test_session import A, D, G, _project, _two_package_project  # noqa: E402
 
 READY_TIMEOUT = 30.0  # seconds to wait for the server's first 200
 EXPECT_TIMEOUT = 15_000  # ms; a refresh is a websocket round trip
@@ -42,18 +46,29 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-def _start(cfg: Path, work: Path, log: Path) -> tuple[subprocess.Popen, str]:
+#: The routes `author_hooks.py` adds, run before the CLI in the server.
+HOOKS = Path(__file__).with_name("author_hooks.py")
+_WITH_HOOKS = (
+    "import sys; exec(open(sys.argv[1]).read()); from dstf.cli.main import "
+    "main_entry; sys.argv = ['dstf'] + sys.argv[2:]; main_entry()"
+)
+
+
+def _start(
+    cfg: Path, work: Path, log: Path, *, hooks: bool = False
+) -> tuple[subprocess.Popen, str]:
     """`dstf author` as a plain process: NiceGUI's `ui.run` treats an
     inherited PYTEST_CURRENT_TEST as "I am a screen test" and demands
-    NICEGUI_SCREEN_TEST_PORT, ignoring --port."""
+    NICEGUI_SCREEN_TEST_PORT, ignoring --port. ``hooks`` adds
+    `author_hooks.py`'s routes."""
     port = _free_port()
     env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
     sink = log.open("wb")
+    launcher = ["-c", _WITH_HOOKS, str(HOOKS)] if hooks else ["-m", "dstf"]
     proc = subprocess.Popen(
         [
             sys.executable,
-            "-m",
-            "dstf",
+            *launcher,
             "--config",
             str(cfg),
             "author",
@@ -88,14 +103,50 @@ def _wait_until_serving(url: str, proc: subprocess.Popen, log: Path) -> float:
     pytest.fail(f"no 200 from {url} within {READY_TIMEOUT}s\n{log.read_text()}")
 
 
-def _row(page, short_name: str):
-    """The row whose name button reads `short_name` exactly."""
-    return page.locator("div.dstf-tests .dstf-row").filter(
-        has=page.get_by_role("button", name=short_name, exact=True)
+#: A test's row in the Suite table (a group row is a full-width row, not
+#: in the centre container).
+ROWS = ".ag-center-cols-container .ag-row"
+
+
+def _box(page, model_id: str):
+    """The row's selection checkbox."""
+    return page.locator(f".ag-row[row-id='{model_id}'] .ag-selection-checkbox input")
+
+
+#: The table as the grid shows it now, top to bottom: `G:<package>` for a
+#: group row, a test's short name for its row.
+SHOWN = """() => {
+  const out = [];
+  DstfSuite.api.forEachNodeAfterFilterAndSort(n => out.push(
+    n.data._g ? 'G:' + n.data._pkg : n.data._name_short));
+  return out.join(' ');
+}"""
+
+
+def _shown(page, want: str) -> None:
+    """The table reads `want` (it repaints on the next frame, so wait)."""
+    try:
+        page.wait_for_function(
+            f"() => ({SHOWN})() === {json.dumps(want)}", timeout=EXPECT_TIMEOUT
+        )
+    except Exception:
+        assert page.evaluate(SHOWN) == want
+        raise
+
+
+def _filter(page, key: str):
+    return page.locator(f"input.dstf-ff[data-col='{key}']")
+
+
+def _no_sideways_scroll(page) -> None:
+    layout = page.evaluate(
+        "() => ({scroll: document.documentElement.scrollWidth,"
+        " client: document.documentElement.clientWidth, x: window.scrollX})"
     )
+    assert layout["scroll"] <= layout["client"] and layout["x"] == 0, layout
 
 
-def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
+def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
     tmp_path, playwright_browser
 ):
     cfg, work = _project(tmp_path)
@@ -120,28 +171,28 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         expect(page.locator(".dstf-header")).to_contain_text(
             "FakeLib", timeout=EXPECT_TIMEOUT
         )
-        rows = page.locator("div.dstf-tests .dstf-row")
-        expect(rows).to_have_count(5, timeout=EXPECT_TIMEOUT)
-        badges = page.locator("div.dstf-tests .dstf-badge")
+        # The table's scripts ran: they are in the page's first HTML (after
+        # the handshake NiceGUI inserts head HTML that never runs a script).
+        assert page.evaluate("typeof DstfSuite") == "object"
+        expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
+        badges = page.locator(".dstf-badge-cell")
         expect(badges.filter(has_text="PASS")).to_have_count(2, timeout=EXPECT_TIMEOUT)
         for word, n in (("^FAIL$", 1), ("SIM_FAIL", 1), ("NO_REF", 1)):
             expect(badges.filter(has_text=re.compile(word))).to_have_count(
                 n, timeout=EXPECT_TIMEOUT
             )
         # Each badge carries its verdict's fill (`theme.STATUS`: fail
-        # #f44336, pass #4CAF50). A Quasar badge is `bg-primary` unless it
-        # is built with `color=None`, and that `!important` beats the inline
-        # background: every verdict came out Quasar blue (the Task 4 review).
+        # #f44336, pass #4CAF50).
         fill = "e => getComputedStyle(e).backgroundColor"
         assert (
             badges.filter(has_text=re.compile("^FAIL$")).first.evaluate(fill)
             == "rgb(244, 67, 54)"
         )
         assert badges.filter(has_text="PASS").first.evaluate(fill) == "rgb(76, 175, 80)"
-        # The chips carry the classifier's counts.
-        chips = page.locator(".dstf-chip")
-        expect(chips.filter(has_text="PASS 2")).to_have_count(1, timeout=EXPECT_TIMEOUT)
-        expect(chips.filter(has_text=re.compile(r"^FAIL 1$"))).to_have_count(
+        # The pills carry the classifier's counts.
+        pills = page.locator("#dstf-suite-tools button[data-pill]")
+        expect(pills.filter(has_text="PASS 2")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(pills.filter(has_text=re.compile(r"^FAIL 1$"))).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )  # not SIM_FAIL 1
 
@@ -152,17 +203,13 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         font = page.evaluate("() => getComputedStyle(document.body).fontFamily")
         assert font.strip().startswith(FONT_STACK.split(",")[0]), font
         # Nothing scrolls sideways (the old shell's tab strip did).
-        layout = page.evaluate(
-            "() => ({scroll: document.documentElement.scrollWidth,"
-            " client: document.documentElement.clientWidth, x: window.scrollX})"
-        )
-        assert layout["scroll"] <= layout["client"] and layout["x"] == 0, layout
+        _no_sideways_scroll(page)
 
-        # Check D and G; the batch buttons say their object and count. Two,
+        # Select D and G; the icon actions say their object and count. Two,
         # so the Test page's "1 selected test" below cannot be the Suite's
         # selection leaking through (the Task 9 review).
-        _row(page, D.rsplit(".", 1)[-1]).get_by_role("checkbox").click()
-        _row(page, G.rsplit(".", 1)[-1]).get_by_role("checkbox").click()
+        _box(page, D).click()
+        _box(page, G).click()
         accept = page.get_by_role(
             "button", name=re.compile(r"^Accept 2 results as baselines")
         )
@@ -171,7 +218,7 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         expect(rerun).to_be_enabled(timeout=EXPECT_TIMEOUT)
 
         # A click on A's name views A: the Test page, in this tab.
-        page.get_by_role("button", name=A.rsplit(".", 1)[-1], exact=True).click()
+        page.locator(".ag-row[row-id='FakeLib.A'] a.dstf-name-link").click()
         expect(page).to_have_url(
             re.compile(r"/test/FakeLib\.A$"), timeout=EXPECT_TIMEOUT
         )
@@ -192,19 +239,14 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
             page.get_by_role("button", name=re.compile(r"^Rerun 1 selected test$"))
         ).to_be_visible(timeout=EXPECT_TIMEOUT)
 
-        # Back to the Suite: D and G are still checked, A is not (viewing ≠
+        # Back to the Suite: D and G are still selected, A is not (viewing ≠
         # selecting).
         page.get_by_role("link", name="← Suite").click()
-        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
-            5, timeout=EXPECT_TIMEOUT
-        )
+        expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
         for checked in (D, G):
-            expect(
-                _row(page, checked.rsplit(".", 1)[-1]).get_by_role("checkbox")
-            ).to_have_attribute("aria-checked", "true", timeout=EXPECT_TIMEOUT)
-        expect(
-            _row(page, A.rsplit(".", 1)[-1]).get_by_role("checkbox")
-        ).to_have_attribute("aria-checked", "false", timeout=EXPECT_TIMEOUT)
+            expect(_box(page, checked)).to_be_checked(timeout=EXPECT_TIMEOUT)
+        expect(_box(page, A)).not_to_be_checked()
+        expect(page.locator("#dstf-suite-selection")).to_contain_text("2 selected")
         assert errors == []
 
         # Stop server ends the process (no confirm: nothing pending, no job).
@@ -221,6 +263,320 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
             proc.wait(10)
 
     assert spec_file.read_bytes() == before  # nothing was saved
+
+
+def _served(tmp_path, playwright_browser, *, hooks: bool = False, width: int = 1280):
+    """`dstf author` over the two-package FakeLib and a page on its Suite
+    table, drawn: (proc, url, page, context, errors). The caller stops
+    the process."""
+    cfg, work = _two_package_project(tmp_path)
+    log = tmp_path / "author.log"
+    proc, url = _start(cfg, work, log, hooks=hooks)
+    _wait_until_serving(url, proc, log)
+    context = playwright_browser.new_context(viewport={"width": width, "height": 900})
+    page = context.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.on(
+        "console",
+        lambda m: errors.append(m.text) if m.type in ("error", "warning") else None,
+    )
+    page.goto(url)
+    expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
+    expect(page.locator(".dstf-badge-cell", has_text="NO_REF")).to_have_count(
+        1, timeout=EXPECT_TIMEOUT
+    )
+    return proc, url, page, context, errors, work
+
+
+ALL = "G:FakeLib A B C D G G:FakeLib.Cases X"
+
+
+def test_the_suite_table_groups_filters_sorts_and_names(tmp_path, playwright_browser):
+    """The board's Q1 A / Q1b A: group rows inside the table that collapse
+    by mouse and by keyboard; the count pills; typed column filters with
+    `.*` and `Aa` once in the toolbar; a sort that keeps each package's rows
+    under its header, empties last both ways; the names icon; the column
+    chooser. No AG Grid warning: no Enterprise feature is asked for."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        _shown(page, ALL)
+        # One group row per package, a chevron click collapses it.
+        group = page.locator(".dstf-grp", has_text="FakeLib.Cases")
+        expect(page.locator(".dstf-grp")).to_have_count(2)
+        group.click()
+        _shown(page, "G:FakeLib A B C D G G:FakeLib.Cases")
+        expect(page.locator(".ag-row[row-id='FakeLib.Cases.X']")).to_have_count(0)
+        expect(group).to_have_attribute("aria-expanded", "false")
+        group.click()
+        _shown(page, ALL)
+        # The keyboard: focus A's name cell, up to its group row, Enter
+        # collapses it and Space opens it again.
+        page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='status']").click()
+        page.keyboard.press("ArrowUp")
+        page.keyboard.press("Enter")
+        _shown(page, "G:FakeLib G:FakeLib.Cases X")
+        page.keyboard.press(" ")
+        _shown(page, ALL)
+
+        # The pills: FAIL alone; its count is over every row.
+        fail = page.locator("button[data-pill='fail']")
+        fail.click()
+        expect(fail).to_have_attribute("aria-pressed", "true")
+        _shown(page, "G:FakeLib A")
+        expect(page.locator(".dstf-ff-status")).to_have_text("FAIL")
+        expect(page.locator("button[data-pill='pass']")).to_have_text("PASS 2")
+        fail.click()
+        _shown(page, ALL)
+        # EDITED has nothing to count: shown, disabled.
+        expect(page.locator("button[data-pill='edited']")).to_be_disabled()
+
+        # Typed filters: a number reads the value, not its text.
+        _filter(page, "nrmse").fill(">1e-5")
+        _shown(page, "G:FakeLib A D G")
+        # A's is 0.153094…, its text "1.5309e-01": only the value passes.
+        _filter(page, "nrmse").fill(">0.15309")
+        _shown(page, "G:FakeLib A")
+        _filter(page, "nrmse").fill("")
+        # Text by glob over the FULL test name.
+        _filter(page, "model").fill("*.B")
+        _shown(page, "G:FakeLib B")
+        _filter(page, "model").fill("")
+        # `.*` makes every column filter a regex; a bad one marks its input,
+        # says why, and hides nothing.
+        regex = page.get_by_role("button", name="Regex in every column filter")
+        regex.click()
+        expect(regex).to_have_attribute("aria-pressed", "true")
+        _filter(page, "model").fill(r"^FakeLib\.A$")
+        _shown(page, "G:FakeLib A")
+        _filter(page, "model").fill("((")
+        _shown(page, ALL)
+        expect(_filter(page, "model")).to_have_class(re.compile(r"\bbad\b"))
+        assert _filter(page, "model").get_attribute("title")
+        _filter(page, "model").fill("")
+        regex.click()
+        # `Aa`: a case-sensitive text filter.
+        case = page.get_by_role("button", name="Match case in every column filter")
+        _filter(page, "model").fill("fakelib.a")
+        _shown(page, "G:FakeLib A")
+        case.click()
+        _shown(page, "")
+        case.click()
+        _filter(page, "model").fill("")
+
+        # A sort on Worst NRMSE keeps each package's rows under its header;
+        # the unscored sort last, ascending and descending.
+        header = page.locator(".ag-header-cell[col-id='nrmse'] .ag-header-cell-label")
+        header.click()
+        _shown(page, "G:FakeLib D G A B C G:FakeLib.Cases X")
+        header.click()
+        _shown(page, "G:FakeLib A D G B C G:FakeLib.Cases X")
+        header.click()
+        _shown(page, ALL)
+
+        # Short names by default; the names icon switches to full ones.
+        name = page.locator(".ag-row[row-id='FakeLib.A'] a.dstf-name-link")
+        expect(name).to_have_text("A")
+        page.get_by_role("button", name="Full names").click()
+        expect(name).to_have_text("FakeLib.A")
+        page.get_by_role("button", name="Short names").click()
+        expect(name).to_have_text("A")
+        # Flat: one sort over every row, no group rows.
+        page.get_by_role("button", name="Show flat").click()
+        _shown(page, "A B C X D G")
+        page.get_by_role("button", name="Group by package").click()
+        _shown(page, ALL)
+
+        # The column chooser offers Key (hidden) and hides Message.
+        page.get_by_role("button", name="Choose columns").click()
+        menu = page.locator("#dstf-colmenu")
+        expect(menu.locator("label", has_text="Key")).to_have_count(1)
+        expect(
+            menu.locator("label", has_text="Key").locator("input")
+        ).not_to_be_checked()
+        menu.locator("label", has_text="Message").locator("input").uncheck()
+        expect(page.locator(".ag-header-cell[col-id='detail']")).to_have_count(0)
+        page.keyboard.press("Escape")
+        page.mouse.click(5, 890)
+        expect(menu).to_have_count(0)
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browser):
+    """Q1a B: "2 selected · Clear", counting the selected rows a filter
+    hides; Rerun and Accept as icons whose tooltips are their captions, a
+    click opening the same dialog; Clear empties the selection; a name
+    opens its Test page."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        selection = page.locator("#dstf-suite-selection")
+        expect(selection).to_have_text("")
+        _box(page, A).click()
+        _box(page, D).click()
+        expect(selection).to_contain_text("2 selected", timeout=EXPECT_TIMEOUT)
+        rerun = page.get_by_role("button", name="Rerun 2 selected tests", exact=True)
+        accept = page.get_by_role(
+            "button", name="Accept 2 results as baselines", exact=True
+        )
+        expect(rerun).to_be_enabled(timeout=EXPECT_TIMEOUT)
+        expect(accept).to_be_enabled()
+        rerun.hover()
+        expect(page.locator(".q-tooltip")).to_have_text(
+            "Rerun 2 selected tests", timeout=EXPECT_TIMEOUT
+        )
+        # A filter that hides one selected row says so; the actions still
+        # count both.
+        _filter(page, "model").fill("*.A")
+        expect(selection).to_contain_text("2 selected (1 hidden)")
+        expect(rerun).to_be_enabled()
+        _filter(page, "model").fill("")
+        expect(selection).not_to_contain_text("hidden")
+        accept.click()
+        expect(page.locator(".q-dialog")).to_contain_text(
+            "Accept", timeout=EXPECT_TIMEOUT
+        )
+        page.keyboard.press("Escape")
+        expect(page.locator(".q-dialog")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.get_by_role("button", name="Clear selection").click()
+        expect(selection).to_have_text("", timeout=EXPECT_TIMEOUT)
+        expect(_box(page, A)).not_to_be_checked()
+        expect(
+            page.get_by_role("button", name="Rerun needs a selection", exact=True)
+        ).to_be_disabled(timeout=EXPECT_TIMEOUT)
+        page.locator(".ag-row[row-id='FakeLib.A'] a.dstf-name-link").click()
+        expect(page).to_have_url(
+            re.compile(r"/test/FakeLib\.A$"), timeout=EXPECT_TIMEOUT
+        )
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
+    """The view is the viewer's, kept in localStorage under a key per
+    project (its work dir): a filter, a pill, a collapsed group, grouping,
+    a sort and a hidden column come back; the selection is the tab's."""
+    proc, url, page, context, errors, work = _served(tmp_path, playwright_browser)
+    try:
+        _box(page, D).click()
+        # C and FakeLib.Cases.X: the SIM_FAIL pill and "C" in Test; FakeLib
+        # collapsed, so C is under a closed header.
+        page.locator("button[data-pill='sim-fail']").click()
+        _filter(page, "model").fill("C")
+        page.locator(".ag-row[row-id='g:FakeLib'] .dstf-grp").click()
+        page.locator(".ag-header-cell[col-id='nrmse'] .ag-header-cell-label").click()
+        page.get_by_role("button", name="Choose columns").click()
+        page.locator("#dstf-colmenu label", has_text="Message").locator(
+            "input"
+        ).uncheck()
+        page.mouse.click(5, 890)
+        _shown(page, "G:FakeLib G:FakeLib.Cases X")
+        selection = page.locator("#dstf-suite-selection")
+        expect(selection).to_contain_text("1 selected (1 hidden)")
+        keys = page.evaluate("() => Object.keys(localStorage)")
+        assert keys == [f"dstf-suite-v1:{work.resolve()}"], keys
+        page.reload()
+        expect(page.locator(ROWS).first).to_be_attached(timeout=EXPECT_TIMEOUT)
+        _shown(page, "G:FakeLib G:FakeLib.Cases X")
+        expect(_filter(page, "model")).to_have_value("C")
+        expect(page.locator("button[data-pill='sim-fail']")).to_have_attribute(
+            "aria-pressed", "true"
+        )
+        expect(page.locator(".ag-header-cell[col-id='detail']")).to_have_count(0)
+        expect(
+            page.locator(".ag-header-cell[col-id='nrmse'][role='columnheader']")
+        ).to_have_attribute("aria-sort", "ascending")
+        # The selection is the tab's, selected again once the grid is ready.
+        expect(selection).to_contain_text("1 selected (1 hidden)")
+        assert page.evaluate(
+            "() => DstfSuite.api.getSelectedRows().map(r => r.id)"
+        ) == [D]
+        # Grouping off survives too.
+        page.get_by_role("button", name="Show flat").click()
+        _shown(page, "C X")
+        page.reload()
+        expect(page.locator(ROWS).first).to_be_attached(timeout=EXPECT_TIMEOUT)
+        _shown(page, "C X")
+        expect(page.get_by_role("button", name="Group by package")).to_be_visible()
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
+    """An edit staged before the page is drawn: the EDITED pill counts it
+    and filters to it; its Edits cell says how many are unsaved."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, hooks=True
+    )
+    try:
+        with urllib.request.urlopen(url + "__stage?model=FakeLib.A") as r:
+            assert json.loads(r.read())["pending"] == 2
+        page.reload()
+        edited = page.locator("button[data-pill='edited']")
+        expect(edited).to_have_text("EDITED 1", timeout=EXPECT_TIMEOUT)
+        cell = page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='edits']")
+        expect(cell).to_have_text("2 unsaved")
+        edited.click()
+        _shown(page, "G:FakeLib A")
+        # EDITED is OR'd with the status pills.
+        page.locator("button[data-pill='no-ref']").click()
+        _shown(page, "G:FakeLib A B")
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_browser):
+    """NiceGUI's aggrid re-creates the grid on ANY element update: the
+    selection, the sort and every row patched since the build would be
+    lost. The grid refuses the update: a touch from Python leaves a
+    selection made after the build and a row patched after it."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, hooks=True
+    )
+    try:
+        page.evaluate(
+            "() => { window.__readies = 0; const r = DstfSuite.ready;"
+            " DstfSuite.ready = (...a) => { window.__readies++; return r(...a); }; }"
+        )
+        _box(page, G).click()
+        expect(page.locator("#dstf-suite-selection")).to_contain_text("1 selected")
+        # A row patched after the build, as a transaction from Python does.
+        page.evaluate(
+            "() => { const r = {...DstfSuite.api.getRowNode('FakeLib.B').data,"
+            " detail: 'patched'}; DstfSuite.apply({update: [r]}); }"
+        )
+        with urllib.request.urlopen(url + "__touch") as r:
+            assert json.loads(r.read())  # a grid was touched
+        page.wait_for_timeout(1500)  # a rebuild would have landed by now
+        assert page.evaluate(
+            "() => DstfSuite.api.getSelectedRows().map(r => r.id)"
+        ) == [G]
+        assert (
+            page.evaluate("() => DstfSuite.api.getRowNode('FakeLib.B').data.detail")
+            == "patched"
+        )
+        assert page.evaluate("() => window.__readies") == 0  # never rebuilt
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
 
 
 #: Every child of the header's row whose right edge passes the viewport.
@@ -345,9 +701,7 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
         )
         page = context.new_page()
         page.goto(url)
-        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
-            5, timeout=EXPECT_TIMEOUT
-        )
+        expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
         for width in (1280, 900):
             _fits(page, width)
             _keep(page, tmp_path, f"suite-{width}")
@@ -393,10 +747,8 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
 
         # The busiest header: a rerun of D running as well.
         page.goto(url)
-        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
-            5, timeout=EXPECT_TIMEOUT
-        )
-        _row(page, D.rsplit(".", 1)[-1]).get_by_role("checkbox").click()
+        expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
+        _box(page, D).click()
         rerun = re.compile(r"^Rerun 1 selected test$")
         page.get_by_role("button", name=rerun).first.click()
         page.locator(".q-dialog").get_by_role("button", name=rerun).click()
@@ -438,9 +790,7 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
         )
         page = context.new_page()
         page.goto(url)
-        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
-            5, timeout=EXPECT_TIMEOUT
-        )
+        expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
         more = page.locator(".dstf-header-menu")
         expect(more).to_have_attribute("aria-label", "More actions")
         expect(more).to_have_attribute("aria-haspopup", "menu")

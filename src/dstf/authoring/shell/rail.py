@@ -61,7 +61,7 @@ class TestsDrawer:
         self._filter()
 
     def _filter(self) -> None:
-        self.list.filter(self.page.state.tests_needle, set())
+        self.list.filter(self.page.state.tests_needle)
 
     def handle(self, event: dict[str, Any]) -> None:
         """The Suite page's rules for its rows (`SuitePage.handle`): a `spec`
