@@ -4703,9 +4703,9 @@ class TestVariablesDrawer:
         the drawer says so where it says a bad regex, and draws no row —
         never a traceback, never a half-built list. A budget of 0 runs out
         at the first name."""
-        from dstf.authoring import variable_rows
+        from dstf.authoring import needle as needle_module
 
-        monkeypatch.setattr(variable_rows, "REGEX_BUDGET", 0.0)
+        monkeypatch.setattr(needle_module, "REGEX_BUDGET", 0.0)
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
             assert _groups_shown(user) != []

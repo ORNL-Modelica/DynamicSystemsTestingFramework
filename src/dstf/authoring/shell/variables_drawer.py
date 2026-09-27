@@ -34,7 +34,8 @@ from ..layout import (
     stranded,
     stranded_sentence,
 )
-from ..variable_rows import VarGroup, VarRow, cap, matcher, variable_groups
+from ..needle import matcher
+from ..variable_rows import VarGroup, VarRow, cap, variable_groups
 
 if TYPE_CHECKING:
     from .test_page import TestPage
