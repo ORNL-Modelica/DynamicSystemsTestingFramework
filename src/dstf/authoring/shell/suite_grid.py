@@ -105,14 +105,27 @@ def _column_defs() -> list[dict[str, Any]]:
             d["width"] = 100  # "SIM_FAIL" in its badge and the sort arrow
         elif key == "model":
             d[":cellRenderer"] = "DstfSuite.cell.model"
-            d.update(flex=1, minWidth=140)
+            # Twice Message's share: 3 of TRANSFORM's 5 longest short names
+            # were cut at 1280 px with an equal share; at twice it the
+            # longest (47 characters) reads whole in 359 px. The minimum
+            # holds Edits in view at 900 px: every column before it is at
+            # its width there, and 180 put Edits 21 px past the viewport.
+            d.update(flex=2, minWidth=150)
             del d["width"]
+            # A name cut at the cell's edge reads in full on hover — the
+            # whole cell's tooltip, not only its link's.
+            d[":tooltipValueGetter"] = "(p) => p.data && p.data.id"
         elif key == "nrmse":
             # "1.5309e-01" and its header: 110 px cut both at 1280.
             d["width"] = 135
         elif key == "detail":
             d.update(flex=1, minWidth=160)
             del d["width"]
+            # A message cut at the cell's edge reads in full on hover; a
+            # row with none ("—") has no tooltip.
+            d[":tooltipValueGetter"] = (
+                "(p) => p.data && p.data.detail__sort != null ? p.value : null"
+            )
         elif key == "edits":
             d[":cellRenderer"] = "DstfSuite.cell.edits"
             d["width"] = 120  # "1 unsaved" in its tag: 100 cut it

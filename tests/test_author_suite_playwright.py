@@ -34,7 +34,7 @@ pytestmark = pytest.mark.playwright
 from playwright.sync_api import expect  # noqa: E402
 
 from dstf.reporting.theme import FONT_STACK  # noqa: E402
-from test_session import A, D, G, _project, _two_package_project  # noqa: E402
+from test_session import A, C, D, G, _project, _two_package_project  # noqa: E402
 
 READY_TIMEOUT = 30.0  # seconds to wait for the server's first 200
 EXPECT_TIMEOUT = 15_000  # ms; a refresh is a websocket round trip
@@ -273,12 +273,13 @@ def _served(
     width: int = 1280,
     setup=None,
     init_script: str | None = None,
+    rows: int = 6,
 ):
     """`dstf author` over the two-package FakeLib and a page on its Suite
     table, drawn: (proc, url, page, context, errors, cfg). ``setup(cfg)``
-    runs before the server starts, ``init_script`` in the page before its
-    own scripts. The caller stops the process — this does when the table
-    never draws."""
+    runs before the server starts (``rows``: the test rows it leaves),
+    ``init_script`` in the page before its own scripts. The caller stops the
+    process — this does when the table never draws."""
     cfg, work = _two_package_project(tmp_path)
     if setup is not None:
         setup(cfg)
@@ -299,7 +300,7 @@ def _served(
             lambda m: errors.append(m.text) if m.type in ("error", "warning") else None,
         )
         page.goto(url)
-        expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(ROWS)).to_have_count(rows, timeout=EXPECT_TIMEOUT)
         expect(page.locator(".dstf-badge-cell", has_text="NO_REF")).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )
@@ -741,6 +742,31 @@ def test_enter_on_a_test_cell_opens_its_page(tmp_path, playwright_browser):
             proc.wait(10)
 
 
+def test_enter_on_any_other_cell_stays_on_the_suite(tmp_path, playwright_browser):
+    """Only the Test cell opens a page: Enter on a focused Status or Message
+    cell does nothing, as a click on it does."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        for col in ("status", "detail"):
+            page.locator(
+                f".ag-row[row-id='FakeLib.B'] .ag-cell[col-id='{col}']"
+            ).click()
+            assert (
+                page.evaluate("() => document.activeElement.getAttribute('col-id')")
+                == col
+            )
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)  # a navigation would have started
+            assert page.url == url, col
+        expect(page.locator(ROWS)).to_have_count(6)
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_the_header_checkbox_selects_only_the_rows_shown(tmp_path, playwright_browser):
     """ "Select all" is the rows the filters show: never a row a filter or a
     closed group hides — Accept would store baselines for tests nobody saw
@@ -858,15 +884,67 @@ GRID_SIDEWAYS = """() => {
 }"""
 
 
+#: The longest short name of TRANSFORM's 331 tests, in its package.
+LONG_NAME = (
+    "TRANSFORM.HeatAndMassTransfer.ClosureRelations.HeatTransfer.Examples."
+    "check_Alphas_TwoPhase_3Region_CHFtransition_F1D"
+)
+
+
+def _with_long_name(cfg: Path) -> None:
+    """One more test, named as long as TRANSFORM's longest (no result:
+    SIM_FAIL, with a message)."""
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"].append(
+        {
+            "model": LONG_NAME,
+            "source": "../Examples/A.py",
+            "variables": ["x"],
+            "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+        }
+    )
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+
+
+#: Whether a row's Test name is cut at its cell's edge.
+NAME_CUT = """(id) => {
+  const cell = document.querySelector(`.ag-row[row-id='${id}'] .ag-cell[col-id='model']`);
+  const a = cell.querySelector('a');
+  return a.scrollWidth > a.clientWidth
+    || a.getBoundingClientRect().right > cell.getBoundingClientRect().right;
+}"""
+
+
+def _tooltip(page, model_id: str, col: str) -> str:
+    """What AG Grid's tooltip reads over a cell, hovered with the mouse
+    near the cell's right edge (a cut text's end)."""
+    page.mouse.move(0, 0)
+    expect(page.locator(".ag-tooltip")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+    box = page.locator(
+        f".ag-row[row-id='{model_id}'] .ag-cell[col-id='{col}']"
+    ).bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] / 2)
+    tip = page.locator(".ag-tooltip")
+    expect(tip).to_have_count(1, timeout=EXPECT_TIMEOUT)
+    return tip.inner_text()
+
+
 def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser):
     """Edits comes before Message, which takes the width left over: at 1280
-    the grid does not scroll sideways, and at 900 the Edits column is in
-    view without scrolling it (Message may be cut)."""
-    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    the grid does not scroll sideways and a name as long as TRANSFORM's
+    longest reads whole, and at 900 the Edits column is in view without
+    scrolling it (the name and Message may be cut: their tooltips read
+    them whole)."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, setup=_with_long_name, rows=7
+    )
     try:
         page.wait_for_function(
             f"() => ({GRID_SIDEWAYS})() <= 0", timeout=EXPECT_TIMEOUT
         )
+        assert page.evaluate(NAME_CUT, LONG_NAME) is False
         page.set_viewport_size({"width": 900, "height": 900})
         page.wait_for_function(
             f"() => {{ const [r, v] = ({COLUMN_RIGHT})('edits'); return r <= v; }}",
@@ -874,12 +952,92 @@ def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser
         )
         _no_sideways_scroll(page)
         _keep(page, tmp_path, "suite-table-900")
+        assert page.evaluate(NAME_CUT, LONG_NAME) is True
+        assert _tooltip(page, LONG_NAME, "model") == LONG_NAME
         page.set_viewport_size({"width": 1280, "height": 900})
         page.wait_for_function(
             f"() => ({GRID_SIDEWAYS})() <= 0", timeout=EXPECT_TIMEOUT
         )
         _keep(page, tmp_path, "suite-table-1280")
+        # A message cut at 1280 reads whole on hover; "—" has no tooltip.
+        message = _tooltip(page, C, "detail")
+        assert message.startswith("No Python result at "), message
+        assert message.endswith("(did execution run?)"), message
+        page.mouse.move(0, 0)
+        box = page.locator(f".ag-row[row-id='{A}'] .ag-cell[col-id='detail']")
+        box.hover()
+        page.wait_for_timeout(1000)  # past the 300 ms show delay
+        expect(page.locator(".ag-tooltip")).to_have_count(0)
         assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+#: The rows AG Grid drew and where the last one ends, against its viewport.
+ROWS_DRAWN = """() => {
+  const vp = document.querySelector('.ag-body-viewport').getBoundingClientRect();
+  const rows = [...document.querySelectorAll('.ag-center-cols-container .ag-row')];
+  const bottom = rows.reduce((m, r) => Math.max(m, r.getBoundingClientRect().bottom), 0);
+  return {drawn: rows.length, gap: vp.bottom - bottom, height: vp.height};
+}"""
+#: Every test row scored: the table is complete.
+ALL_SCORED = """(n) => window.DstfSuite && DstfSuite.api && (() => {
+  let k = 0;
+  DstfSuite.api.forEachNode(x => { if (!x.data._g && x.data.status !== '\u2026') k++; });
+  return k === n;
+})()"""
+
+
+def test_the_rows_fill_the_table_on_a_second_load(tmp_path, playwright_browser):
+    """A second load in one browser context drew the first 15 rows of a
+    710 px table and left the rest blank until a scroll or a resize: the
+    scripts came from the cache, so the grid was ready at NiceGUI's default
+    256 px before the page's CSS (added after the handshake) gave it its
+    height. Over as many tests as TRANSFORM's, whose load it took."""
+    many = 326
+
+    def setup(cfg: Path) -> None:
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        spec["tests"] += [
+            {
+                "model": f"FakeLib.Many.{LONG_NAME.rsplit('.', 1)[1]}_{i:03d}",
+                "source": "../Examples/A.py",
+                "variables": ["x"],
+                "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+            }
+            for i in range(many)
+        ]
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+
+    cfg, work = _two_package_project(tmp_path)
+    setup(cfg)
+    log = tmp_path / "author.log"
+    proc, url = _start(cfg, work, log)
+    try:
+        _wait_until_serving(url, proc, log)
+        # The cause, whatever the race does: the grid's height is in the
+        # page's FIRST HTML, there before the grid is built.
+        with urllib.request.urlopen(url, timeout=10) as response:
+            assert ".dstf-suite-grid { height:" in response.read().decode("utf-8")
+        context = playwright_browser.new_context(
+            viewport={"width": 1280, "height": 900}
+        )
+        page = context.new_page()
+        # Its symptom: TRANSFORM-length names (a larger first message) make
+        # the race go the wrong way on every cached load here.
+        for load in range(2):
+            page.goto(url)
+            page.wait_for_function(ALL_SCORED, arg=6 + many, timeout=60_000)
+            page.wait_for_timeout(1000)  # what a scroll or resize would repaint
+            drawn = page.evaluate(ROWS_DRAWN)
+            # Rows reach the viewport's bottom (within the row buffer's
+            # partial row), and there are as many as fit its height.
+            assert drawn["gap"] < 30, (load, drawn)
+            assert drawn["drawn"] >= drawn["height"] // 30, (load, drawn)
         context.close()
     finally:
         if proc.poll() is None:

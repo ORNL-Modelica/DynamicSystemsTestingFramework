@@ -307,9 +307,10 @@ class TestReportFormatRouting:
 
         assert code == 0
         assert out.exists()
-        # Byte-identical to what render_final writes for the same work_dir:
-        # same renderer, different destination.
-        render_final(work_dir)
+        # Byte-identical to what render_final writes for the same work_dir
+        # and comparisons: same renderer, different destination. (A final
+        # page lists every test scored, so without them it has no row.)
+        render_final(work_dir, comparisons=[_passing()])
         assert out.read_text(encoding="utf-8") == (
             work_dir / "dashboard.html"
         ).read_text(encoding="utf-8")

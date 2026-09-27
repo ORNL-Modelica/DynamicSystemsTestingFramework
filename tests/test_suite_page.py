@@ -461,3 +461,29 @@ def test_the_views_storage_key_is_the_same_before_and_after_the_open(
     before = page._project_key()
     shell.session.open(cfg)
     assert page._project_key() == before == str(cfg.resolve())
+
+
+async def test_a_transaction_that_fails_is_sent_again_next_tick(shell, monkeypatch):
+    """The grid holds what the last flush SENT: a transaction that raised
+    (the client gone mid-send, a row that failed to build) is retried on
+    the next tick, not dropped as though the grid had it."""
+    from dstf.authoring.shell.suite_grid import SuiteGrid
+
+    sent: list[list[str]] = []
+
+    def once_failing(self, *, add=(), update=(), remove=(), select=()):
+        if not sent:
+            sent.append([])
+            raise RuntimeError("the client went away")
+        sent.append([r.model_id for r in (*add, *update)] + list(remove))
+
+    monkeypatch.setattr(SuiteGrid, "transaction", once_failing)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell._events.put(_loaded(D))
+        shell.session.close()  # D's row and every other row leave
+        shell.tick()  # the transaction raises (logged by the tick)
+        shell.tick()  # nothing new: the same transaction, again
+        assert sent == [[], [A, B, C, D, G]]
+        shell.tick()
+        assert len(sent) == 2

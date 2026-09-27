@@ -778,7 +778,8 @@ sorts, within each package while the table is grouped; empty cells sort last
 both ways. Grouped, each package is a row of its own that a click, Enter or
 Space collapses. The checkbox column selects (its header checkbox selects every
 test the filters show); the test's name — or Enter on its Test cell — opens its
-page.
+page. A name or a message cut at its cell's edge reads whole in the cell's
+tooltip.
 
 The table's view — pills, filters, `.*` / `Aa`, grouping, names, sort, columns
 and closed groups — is the viewer's: the browser keeps it (per project, by

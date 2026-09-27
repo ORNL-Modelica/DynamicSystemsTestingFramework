@@ -46,10 +46,15 @@ class SuitePage:
         # never runs a <script> — the grid drew no rows, "DstfSuite is not
         # defined".
         ui.add_head_html(scripts_html(f"{STORAGE}:{self._project_key()}"))
+        # The grid's height too: added after the handshake, it arrived after
+        # the grid was built whenever the scripts came from the browser's
+        # cache — every second load — and AG Grid, ready at NiceGUI's
+        # default 256 px, drew the first 15 rows of a 710 px table and left
+        # the rest blank until a scroll or a resize.
+        ui.add_css(GRID_CSS)
         await self.client.connected()
         self.state: TabState = tab_state()
         self.shell.page_setup()
-        ui.add_css(GRID_CSS)
         ui.page_title("DSTF")
         self.header = Header(self.shell)
         with ui.column().classes("dstf-suite w-full q-pa-md gap-3"):
@@ -164,18 +169,19 @@ class SuitePage:
         grid's — a model named and dropped within the tick is sent neither,
         so the grid is never told to drop a row it never had, and one
         dropped and named again stays (repainted if an event touched it).
-        An added row is sent once, with the tab's selection."""
+        An added row is sent once, with the tab's selection. What the grid
+        holds moves only once the transaction is sent: one that raises
+        (building a row, or the send) is sent again on the next tick."""
         held, sent = set(self.ids), set(self._sent)
         add = [m for m in self.ids if m not in sent]
         remove = [m for m in self._sent if m not in held]
         update = [m for m in self.ids if m in sent and m in self._update]
+        if add or update or remove:
+            self.grid.transaction(
+                add=self._rows(add),
+                update=self._rows(update),
+                remove=remove,
+                select=[m for m in add if m in self.state.checked],
+            )
         self._sent = list(self.ids)
         self._update = set()
-        if not (add or update or remove):
-            return
-        self.grid.transaction(
-            add=self._rows(add),
-            update=self._rows(update),
-            remove=remove,
-            select=[m for m in add if m in self.state.checked],
-        )

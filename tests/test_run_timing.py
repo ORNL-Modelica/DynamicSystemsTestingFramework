@@ -289,6 +289,30 @@ def test_a_corrupt_file_reads_back_without_timing_and_one_warning(ran, capsys):
     assert len(warns) == 1 and "run_stats.json" in warns[0]
 
 
+def test_a_wall_that_is_not_a_number_reads_back_as_none(tmp_path):
+    """The file is data: a JSON ``true`` is an ``int`` to Python, and must
+    not read back as a 1.0 s wall."""
+    from dstf.storage.run_stats import read_run_stats
+
+    (tmp_path / "run_stats.json").write_text(
+        json.dumps(
+            {
+                "model_id": "Lib.A",
+                "translation_wall": True,
+                "sim_wall": "2.0",
+                "elapsed": False,
+                "statistics": None,
+            }
+        )
+    )
+    assert read_run_stats(tmp_path, "Lib.A") == {
+        "translation_wall": None,
+        "sim_wall": None,
+        "elapsed": 0.0,
+        "statistics": None,
+    }
+
+
 def test_another_models_file_is_ignored_with_one_warning(ran, capsys):
     config, tests, backend, _, _ = ran
     keys = _keys(config)

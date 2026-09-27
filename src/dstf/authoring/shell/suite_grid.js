@@ -237,10 +237,12 @@
   D.cell = {
     status: (p) => `<span class="dstf-badge-cell" `
       + `style="background: var(--dstf-${p.data.status_class}-fill)">${esc(p.value)}</span>`,
+    // No `title`: the column's tooltip names the test over the whole cell,
+    // and a title on the link would show a second one over it.
     model: (p) => {
       const name = S.short ? p.data._name_short : p.data._name_full;
-      return `<a class="dstf-name-link" href="/test/${encodeURIComponent(p.data.id)}" `
-        + `title="${esc(p.data.id)}">${esc(name)}</a>`;
+      return `<a class="dstf-name-link" href="/test/${encodeURIComponent(p.data.id)}">`
+        + `${esc(name)}</a>`;
     },
     edits: (p) => (p.value ? `<span class="dstf-edits">${esc(p.value)}</span>` : ''),
   };
