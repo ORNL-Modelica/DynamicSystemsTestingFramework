@@ -578,11 +578,17 @@ class TestTheDashboardGetsTheComparisons:
     def _record(self, monkeypatch) -> dict:
         seen: dict = {}
 
-        def final(work_dir, rerun_prefix=None, comparisons=()):
+        # The results ride along: the page's Sim (s) takes a CPU time
+        # from them where no wall time was kept.
+        def final(work_dir, rerun_prefix=None, comparisons=(), results=None):
             seen["final"] = [c.model_id for c in comparisons]
+            seen["final_results"] = sorted(results or {})
 
-        def final_to(work_dir, output_path, rerun_prefix=None, comparisons=()):
+        def final_to(
+            work_dir, output_path, rerun_prefix=None, comparisons=(), results=None
+        ):
             seen["final_to"] = [c.model_id for c in comparisons]
+            seen["final_to_results"] = sorted(results or {})
 
         monkeypatch.setattr("dstf.reporting.dashboard_render.render_final", final)
         monkeypatch.setattr("dstf.reporting.dashboard_render.render_final_to", final_to)
@@ -606,7 +612,12 @@ class TestTheDashboardGetsTheComparisons:
             + ["--report-format", "html", "--output", str(out)]
         )
         (cmd_run if command == "run" else cmd_compare)(args)
-        assert seen == {"final": ["Lib.T1"], "final_to": ["Lib.T1"]}
+        assert seen == {
+            "final": ["Lib.T1"],
+            "final_results": ["Lib.T1"],
+            "final_to": ["Lib.T1"],
+            "final_to_results": ["Lib.T1"],
+        }
 
     def test_an_empty_rerun_renders_the_prior_comparisons(self, run_env, monkeypatch):
         """`--rerun` with nothing to rerun still refreshes the page, with
@@ -615,7 +626,7 @@ class TestTheDashboardGetsTheComparisons:
         t1 = _mk_test("Lib.T1")
         run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
         assert cmd_run(_run_args(run_env, "--rerun", "failed")) == 0
-        assert seen == {"final": ["Lib.T1"]}
+        assert seen == {"final": ["Lib.T1"], "final_results": ["Lib.T1"]}
 
     def test_the_report_suite_renders_with_the_comparisons(self, run_env, monkeypatch):
         """`run --report` writes the sidecars, then the page — with the
