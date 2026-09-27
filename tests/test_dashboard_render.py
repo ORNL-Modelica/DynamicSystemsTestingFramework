@@ -1365,3 +1365,104 @@ def test_a_live_page_reads_no_kept_timing(tmp_path):
     _timing_snapshot(tmp_path)
     row = build_dashboard_context(tmp_path, mode="live")["tests"][0]
     assert row.sim_wall is None
+
+
+# ---------------------------------------------------------------------------
+# A final page lists status.json's rows and every test with a comparison in
+# hand (D136 amendment): each run rewrites status.json with only its own
+# scope, so `compare` after a `--filter` run listed only that run's tests.
+# ---------------------------------------------------------------------------
+
+
+def _scoped_run(tmp_path):
+    """status.json names B alone (a `--filter` run); the manifest keys A, B,
+    C and D; A kept its timing."""
+    _write_status_json(
+        tmp_path,
+        {
+            "total": 1,
+            "elapsed": 1.0,
+            "counts": {"passed": 1},
+            "start_wall": 100.0,
+            "tests": [
+                {
+                    "test_key": "test_0002",
+                    "model_id": "Lib.B",
+                    "status": "passed",
+                    "report_dir": "test_0002",
+                }
+            ],
+            "updated_at": 101.0,
+        },
+    )
+    manifest = {
+        "test_0003": {"model_id": "Lib.C", "ref_id": None},
+        "test_0001": {"model_id": "Lib.A", "ref_id": "ref_0007"},
+        "test_0002": {"model_id": "Lib.B", "ref_id": None},
+        "test_0004": {"model_id": "Lib.D", "ref_id": None},
+    }
+    (tmp_path / "batch_manifest.json").write_text(json.dumps(manifest))
+    kept = tmp_path / "test_0001"
+    kept.mkdir()
+    (kept / "run_stats.json").write_text(
+        json.dumps(
+            {
+                "model_id": "Lib.A",
+                "translation_wall": None,
+                "sim_wall": 2.5,
+                "elapsed": 3.0,
+                "statistics": None,
+            }
+        )
+    )
+
+
+def test_a_final_page_lists_every_test_with_a_comparison(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)
+    comparisons = [
+        TestComparison(model_id="Lib.A", passed=False),
+        TestComparison(model_id="Lib.Z", passed=True),  # in no manifest
+        TestComparison(model_id="Lib.C", passed=True),
+        TestComparison(model_id="Lib.B", passed=True),
+    ]
+    ctx = build_dashboard_context(tmp_path, mode="final", comparisons=comparisons)
+    rows = ctx["tests"]
+    # status.json's order, then the manifest's, then the rest by model id;
+    # D has neither a status row nor a comparison.
+    assert [r.model_id for r in rows] == ["Lib.B", "Lib.C", "Lib.A", "Lib.Z"]
+    assert [r.status for r in rows] == ["PASS", "PASS", "FAIL", "PASS"]
+    assert ctx["total"] == 4
+    a = rows[2]
+    assert (a.test_key, a.ref_id, a.report_dir) == ("test_0001", "ref_0007", "ref_0007")
+    assert (a.sim_wall, a.total_wall) == (2.5, 3.0)  # its kept timing
+    z = rows[3]
+    assert (z.test_key, z.ref_id, z.report_dir) == (None, None, None)
+    render_final(tmp_path, comparisons=comparisons)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert [_attrs(tr)["data-status"] for tr in _body_rows(html)] == [
+        "pass",
+        "pass",
+        "fail",
+        "pass",
+    ]
+    assert "4 tests" in html
+
+
+def test_a_live_page_lists_only_status_rows(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)
+    comparisons = [TestComparison(model_id="Lib.A", passed=False)]
+    ctx = build_dashboard_context(tmp_path, mode="live", comparisons=comparisons)
+    assert [r.model_id for r in ctx["tests"]] == ["Lib.B"]
+    assert ctx["total"] == 1
+
+
+def test_a_final_page_without_comparisons_lists_status_rows(tmp_path):
+    """A run that scored nothing (`run --accept`, an abort, the tool's
+    Rerun before its reload) lists its own rows, reading SIMULATED."""
+    _scoped_run(tmp_path)
+    rows = build_dashboard_context(tmp_path, mode="final")["tests"]
+    assert [r.model_id for r in rows] == ["Lib.B"]

@@ -186,6 +186,32 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     )
 
 
+def _manifest_rows(work_dir: Path) -> dict[str, TestRow]:
+    """``{model_id: row}`` for every test ``batch_manifest.json`` keys, in
+    its order: the work-dir key and the baseline the run named, and the
+    report dir a run gives such a row (``ref_NNNN``, else the key). Read as
+    data — never quarantined, as ``BatchManifest.load`` does a corrupt one:
+    a renderer moves no file. A model under two keys takes the last, as
+    ``last_test_keys`` does."""
+    try:
+        entries = json.loads(
+            (work_dir / "batch_manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return {}
+    rows: dict[str, TestRow] = {}
+    for key, entry in entries.items() if isinstance(entries, dict) else ():
+        model_id = entry.get("model_id") if isinstance(entry, dict) else None
+        if not isinstance(model_id, str):
+            continue
+        ref_id = entry.get("ref_id")
+        ref_id = ref_id if isinstance(ref_id, str) else None
+        rows[model_id] = TestRow(
+            model_id=model_id, test_key=key, ref_id=ref_id, report_dir=ref_id or key
+        )
+    return rows
+
+
 def build_dashboard_context(
     work_dir: Path,
     mode: str,
@@ -198,7 +224,12 @@ def build_dashboard_context(
     mode='final' — auto_refresh=False, a fresh sidecar (when --report wrote
     one) enriches each row — a row without one takes the phase walls its
     run kept (``run_stats.json``) — then its comparison (when the caller
-    holds one) sets its verdict and numbers
+    holds one) sets its verdict and numbers. The rows are status.json's —
+    the last run's scope, which each run rewrites — then every other test
+    the caller holds a comparison for, in ``batch_manifest.json``'s order,
+    then by model id (D136's amendment: ``compare`` after a ``--filter``
+    run, a ``--merge``, the tool's Rerun and Save list every test they
+    scored). Such a row takes its key and baseline from the manifest.
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
@@ -222,9 +253,16 @@ def build_dashboard_context(
     # `dstf run` / `compare` without --report write no sidecars; the
     # comparisons they hold are what gives such a page its verdicts.
     by_model = {c.model_id: c for c in comparisons} if mode == "final" else {}
+    base = [row_from_status(t) for t in snapshot.get("tests", [])]
+    listed = {r.model_id for r in base}
+    rest = set(by_model) - listed
+    if rest:
+        manifest = _manifest_rows(work_dir)
+        base += [row for m, row in manifest.items() if m in rest]
+        base += [TestRow(model_id=m) for m in sorted(rest - set(manifest))]
     rows = []
-    for t in snapshot.get("tests", []):
-        row = before = row_from_status(t)
+    for row in base:
+        before = row
         if mode == "final" and row.report_dir:
             sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
             if sidecar:
@@ -254,7 +292,9 @@ def build_dashboard_context(
         "mode": mode,
         "auto_refresh": mode == "live",
         "title": "Test progress" if mode == "live" else "Test report",
-        "total": snapshot.get("total", 0),
+        # A final page counts the rows it lists (status.json's scope and
+        # every test scored); a live one, the run's.
+        "total": len(rows) if mode == "final" else snapshot.get("total", 0),
         "elapsed": snapshot.get("elapsed", 0.0),
         "eta_seconds": snapshot.get("eta_seconds"),
         "counts": snapshot.get("counts", {}),

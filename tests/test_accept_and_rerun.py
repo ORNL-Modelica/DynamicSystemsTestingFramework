@@ -276,6 +276,35 @@ def test_a_save_leaves_a_later_cli_runs_page_alone(tmp_path, monkeypatch):
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
 
 
+def _dashboard_models(work_dir) -> list[str]:
+    page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
+    return re.findall(r'<tr[^>]*data-model="([^"]*)"', page)
+
+
+def test_the_tools_dashboards_list_every_test(tmp_path):
+    """A rerun of one test rewrites status.json with that test alone; the
+    pages the tool renders after it — the rerun's and a Discard's — list
+    every test the Session scored, not the rerun's one row."""
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = tmp_path / "work"
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    session.apply(
+        Rerun().act(SessionView(session, Selection(tests=frozenset({CONSTANT_CSV}))))
+    )
+    job = session.running
+    assert job is not None and job.done.wait(60) and job.error is None
+    assert session.wait_background(10)
+    assert [t["model_id"] for t in read_status(work_dir)["tests"]] == [CONSTANT_CSV]
+    every = {CONSTANT_CSV, SIMPLE_RAMP, POINTS_CHECK}
+    assert sorted(_dashboard_models(work_dir)) == sorted(every)
+    assert _dashboard_models(work_dir)[0] == CONSTANT_CSV  # status.json's first
+    session.stage([TIGHTEN])
+    session.discard()
+    assert session.wait_background(10)
+    assert sorted(_dashboard_models(work_dir)) == sorted(every)
+
+
 def test_save_and_discard_write_no_dashboard_where_no_run_left_one(tmp_path):
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"

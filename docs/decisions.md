@@ -5020,6 +5020,24 @@ build `TestRow`s from its Session and give the same `COLUMNS` and
 `filters.js` to its grid in S2, whose gate renders the dashboard over a copy
 of TRANSFORM's work dir.
 
+**Amendment (2026-09-27): a final page lists every test scored.** The S2
+gate over TRANSFORM found the final rows narrowed to the last run's scope:
+rows came from `status.json`, which each run rewrites with its own tests
+only, so `compare --report-format html --output` over 331 comparisons
+showed 5 rows after a 5-test `--filter` run, and a tool Rerun of one test —
+and every Save / Discard re-render after it — wrote a 1-row dashboard. A
+FINAL page now lists `status.json`'s rows and, after them, every other test
+the caller holds a comparison for: in `batch_manifest.json`'s order, then
+by model id for a test the manifest does not key. Such a row takes its
+work-dir key and baseline from the manifest (its report dir, as a run's
+row does: `ref_NNNN`, else the key), then goes the way every final row
+goes — a fresh sidecar, else the timing its run kept, then its comparison's
+verdict. The page's test count is its rows. A LIVE page is unchanged: the
+running run's scope. So `compare`, a `--merge` and the tool's Rerun, Save,
+Discard and Reload list every test; a plain `--filter` run without
+`--merge` still lists only its own, because the comparisons it holds are
+only its own.
+
 ## D137 — The Suite page is an AG Grid table over the row model (2026-09-27)
 
 **Context.** The owner ruled on the feedback board (2026-09-26, v2): the
@@ -5190,6 +5208,19 @@ change: their rows read "—" until those tests are re-run. Nothing in the
 pre-release seams moves: the CLI, `testing.json`, `test_spec.json` and the
 reference-JSON layout are unchanged; the work dir gains a file per test.
 
-**Not built here**, so nobody looks for it: a no-`--report` dashboard of a
-`--filter` run shows only that run's rows, even with `--merge` — a gap from
-before this change, fixed as its own follow-up.
+**Scalar leaves on a statistics path.** A `scalar` leaf whose `quantity` is
+a dotted statistics path (`simulation.wall_time`) now scores on `compare`,
+on a reload in the tool and on a `--merge`d test, as it did only in an
+in-process `run`: the statistics are read back from the file. The review proved it on the Python
+example: `simulation.wall_time` scored FAIL "not found" on `compare` before
+and PASS after, matching `run`. `compare --accept` stores that path's value
+into the baseline, as `run --accept` always did.
+
+**Cost.** A final render reads each row's `run_stats.json` once, whether or
+not its walls are shown: ~135 ms over TRANSFORM's 331 files on `/tmp`,
+per render (the tool renders after every Save, Discard and Reload, off its
+UI loop). Not cached: the file is as fresh as the result beside it.
+
+**Not built here**, so nobody looks for it: nothing. The gap this entry
+first named here — a no-`--report` dashboard of a `--filter` run showing
+only that run's rows, even with `--merge` — is D136's amendment.

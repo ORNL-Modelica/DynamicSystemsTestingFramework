@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -783,6 +784,64 @@ class TestEveryRunEndsOnAStaticPage:
 # ---------------------------------------------------------------------------
 # Finding 30 — --accept exit code + this-run-only scope
 # ---------------------------------------------------------------------------
+
+
+class TestAFinalPageListsEveryScoredTest:
+    """Each run rewrites status.json with its own scope: a final page lists
+    those rows and every test the command scored (D136's amendment)."""
+
+    CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
+    ALL = {
+        "PythonTestingLib.Examples.ConstantCsv",
+        "PythonTestingLib.Examples.PointsCheck",
+        "PythonTestingLib.Examples.SimpleRamp",
+    }
+
+    @pytest.fixture
+    def filtered(self, tmp_path, monkeypatch):
+        """A full run, then a `--filter` run of one test; returns a runner
+        of further commands and the work dir."""
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path)
+        monkeypatch.setattr(
+            "dstf.reporting.report_suite.open_in_browser", lambda p: None
+        )
+        head = ["--config", str(config.config_file)]
+        wd = ["--work-dir", str(config.work_dir)]
+
+        def dstf(cmd: str, *extra: str) -> int:
+            return main([*head, cmd, *wd, *extra])
+
+        assert dstf("run") == 0
+        assert dstf("run", "--filter", self.CONSTANT_CSV) == 0
+        return dstf, config.work_dir
+
+    @staticmethod
+    def _rows(page: Path) -> dict[str, str]:
+        html = page.read_text(encoding="utf-8")
+        body = html.split('<tbody id="results-tbody">', 1)[1].split("</tbody>", 1)[0]
+        rows = {}
+        for tr in re.findall(r"<tr\b[^>]*>", body):
+            attrs = dict(re.findall(r'([\w-]+)="([^"]*)"', tr))
+            rows[attrs["data-model"]] = attrs["data-status"]
+        return rows
+
+    def test_a_plain_filter_run_lists_its_own_tests(self, filtered):
+        _dstf, work = filtered
+        assert self._rows(work / "dashboard.html") == {self.CONSTANT_CSV: "pass"}
+
+    def test_compare_lists_every_test_with_its_verdict(self, filtered, tmp_path):
+        dstf, work = filtered
+        out = work / "report.html"
+        assert dstf("compare", "--report-format", "html", "--output", str(out)) == 0
+        for page in (out, work / "dashboard.html"):
+            assert self._rows(page) == dict.fromkeys(self.ALL, "pass"), page
+
+    def test_a_merged_filter_run_lists_every_test(self, filtered):
+        dstf, work = filtered
+        assert dstf("run", "--filter", self.CONSTANT_CSV, "--merge") == 0
+        assert self._rows(work / "dashboard.html") == dict.fromkeys(self.ALL, "pass")
 
 
 class TestAcceptExitCodeAndScope:
