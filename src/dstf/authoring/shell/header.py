@@ -22,6 +22,7 @@ strip, the test's situation and its next action."""
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -29,16 +30,21 @@ from nicegui import ui
 
 from ...backends.progress import read_status
 from ...reporting.dashboard_render import format_run_metadata, short_tool_version
+from ...reporting.status import classify
 from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..errors import user_text
 from ..session import StaleSpecError
+from ..situation import verdict_phrase
 from ..spec_document import PatchOp
+from ..spec_preview import entry_lines, spans
 from .actions import log_unless_users
 from .widgets import Action
 
 if TYPE_CHECKING:
     from .shell import Shell
+
+logger = logging.getLogger(__name__)
 
 
 def save_caption(pending: Sequence[PatchOp], loaded: dict, file_name: str) -> str:
@@ -105,7 +111,7 @@ class Header:
         strip: Callable[[], None] | None = None,
     ) -> None:
         self.shell = shell
-        self.drawer = PendingDrawer(shell)
+        self.drawer = PendingDrawer(shell, save=self._save, discard=self._discard)
         self.dialog = ui.dialog()  # the header's dialogs, one element rebuilt per use
         # The backend's own dialog, built once: `refresh` keeps its select's
         # options and value as the row's text, open or closed.
@@ -426,37 +432,207 @@ class Header:
         self.dialog.open()
 
 
-class PendingDrawer:
-    """The pending-edit drawer (§4.7; brief §3.3 "the drawer listing them by
-    test"): staged ops in readable form, grouped by model. Toggled by the
-    header's pending button."""
+#: A diff line's prefix, as `git diff` and the board print it.
+_PREFIX = {"same": "  ", "add": "+ ", "del": "- ", "gap": "  "}
 
-    def __init__(self, shell: Shell) -> None:
+
+def materialized_note(leaves: int, new_entry: bool) -> str:
+    """The note over a test whose edits begin with its implicit tree written
+    out (`PatchOp.materializes`): the diff is against that tree, and Save
+    writes it too."""
+    they = "it scores" if leaves == 1 else "they score"
+    note = (
+        f"Save also writes this test's {plural(leaves, 'criterion', 'criteria')} "
+        f"out as a tree; {they} the same."
+    )
+    return f"A new entry for this test. {note}" if new_entry else note
+
+
+def _leaves(node: Any) -> int:
+    """How many criteria a raw tree node holds."""
+    if isinstance(node, dict) and isinstance(node.get("children"), list):
+        return sum(_leaves(child) for child in node["children"])
+    return 1
+
+
+class PendingDrawer:
+    """The pending-edit drawer is the preview (the owner's ruling Q6 A): per
+    test, in staging order, its entry before and after its staged edits as
+    `test_spec.json` will hold it — added lines green, removed lines red,
+    each variable read by its label with its result-file name muted beside
+    it — with how many edits it has and what they do to its verdict. The
+    `before` is the tree as scoring sees it (`SpecDocument.preview_base`):
+    a flat entry's first per-leaf edit writes its implicit tree out, and
+    the diff shows the edit, with a note that Save writes the tree too.
+    "Save these" and "Discard these" are the header's own Save and Discard
+    (the stale-file dialog included). Toggled by the header's pending
+    button; `show(model)` opens it on one test's section (the strip's
+    Preview and save).
+
+    Built only while open: the header refreshes on every event (the 1 s
+    poll during a job included), and a drawer rebuilt there scored every
+    edited test's saved spec each time and put every diff back at its left
+    edge. Opening it builds it; while open it builds again only when what
+    it shows moved (`_key`)."""
+
+    WIDTH = 520
+
+    def __init__(
+        self,
+        shell: Shell,
+        save: Callable[[], None],
+        discard: Callable[[], None],
+    ) -> None:
         self.shell = shell
-        self.element = ui.right_drawer(value=False).props("bordered")
-        with self.element:
-            self.body = ui.column().classes("w-full gap-1")
+        self.element = (
+            ui.right_drawer(value=False)
+            .props(f"bordered width={self.WIDTH}")
+            .classes("dstf-pending-drawer")
+        )
+        with self.element, ui.column().classes("w-full min-w-0 gap-3"):
+            self.summary = ui.label().classes("text-bold").mark("drawer-summary")
+            self.body = ui.column().classes("w-full min-w-0 gap-4")
+            with ui.row().classes("gap-2") as self.buttons:
+                ui.button("Save these", on_click=save).props(
+                    "unelevated dense no-caps color=primary"
+                ).mark("drawer-save")
+                ui.button("Discard these", on_click=discard).props(
+                    "flat dense no-caps"
+                ).mark("drawer-discard")
+        self.sections: dict[str, ui.element] = {}
+        #: What the drawn preview was built from (`_key`); None: not built.
+        self.drawn: object = None
+        self.element.on_value_change(lambda e: self.refresh() if e.value else None)
 
     def toggle(self) -> None:
         self.element.toggle()
 
     def show(self, model_id: str) -> None:
-        """Open the drawer on ``model_id``'s edits (the strip's Preview and
-        save). The drawer lists every test's; scrolling to this one's comes
-        with the preview."""
+        """Open the drawer with ``model_id``'s section scrolled into view
+        (the strip's Preview and save)."""
         self.element.set_value(True)
+        self.refresh()
+        section = self.sections.get(model_id)
+        if section is not None:
+            ui.run_javascript(
+                f'document.getElementById("{section.html_id}")'
+                '?.scrollIntoView({block: "start"})'
+            )
+
+    def _key(self) -> object:
+        """What the preview shows moves with: the pending ops, the file, and
+        each edited test's verdict (a rescore replaces the comparison)."""
+        session = self.shell.session
+        spec = session.spec
+        edited = dict.fromkeys(op.model_id for op in spec.pending)
+        return (
+            tuple(spec.pending),
+            spec.content_hash,
+            tuple((m, id(session.comparisons.get(m))) for m in edited),
+        )
 
     def refresh(self) -> None:
+        """Build the preview again — only while the drawer is open, and only
+        when what it shows moved."""
+        if not self.element.value:
+            return
+        key = self._key()
+        if key == self.drawn:
+            return
+        self.drawn = None  # a raise below leaves it to be built again
+        self._build()
+        self.drawn = key
+
+    def _saved_statuses(self, models: list[str]) -> dict[str, str | None]:
+        """The classifier's word for each test as SAVED, the saved spec
+        merged once for all of them. A saved spec whose scoring raises for
+        one test says ``scoring failed`` for that test alone (as the strip
+        does), the others scored one by one."""
+        session = self.shell.session
+
+        def word(comp: Any) -> str | None:
+            return classify(comp) if comp is not None else None
+
+        try:
+            saved = session.saved_comparisons(models)
+        except Exception:
+            logger.exception("the saved verdicts of the edited tests")
+        else:
+            return {m: word(saved[m]) for m in models}
+        out: dict[str, str | None] = {}
+        for m in models:
+            try:
+                out[m] = word(session.saved_comparison(m))
+            except Exception:
+                out[m] = "scoring failed"
+        return out
+
+    def _build(self) -> None:
+        session = self.shell.session
+        spec = session.spec
+        groups = spec.grouped()
         self.body.clear()
+        self.sections = {}
+        self.summary.set_text(
+            f"{plural(len(spec.pending), 'pending edit')} · "
+            f"{plural(len(groups), 'test')}"
+        )
+        self.summary.set_visibility(bool(groups))
+        self.buttons.set_visibility(bool(groups))
         with self.body:
-            groups = self.shell.session.spec.grouped()
             if not groups:
                 ui.label("nothing staged").classes("text-secondary")
                 return
+            saved = self._saved_statuses([m for m, _ in groups])
             for model_id, ops in groups:
-                ui.label(model_id).classes("text-bold dstf-mono").mark("drawer-model")
-                for op in ops:
-                    value = json.dumps(op.get("value")) if "value" in op else ""
-                    ui.label(f"{op['op']} {op['path']} {value}"[:200]).classes(
-                        "text-xs dstf-mono"
-                    ).mark("drawer-op")
+                comp = session.comparisons.get(model_id)
+                with (
+                    ui.column()
+                    .classes("w-full min-w-0 gap-1")
+                    .mark(f"drawer-test:{model_id}") as section
+                ):
+                    self.sections[model_id] = section
+                    self._section(model_id, len(ops), comp, saved[model_id])
+
+    def _section(
+        self, model_id: str, n: int, comp: Any, saved_status: str | None
+    ) -> None:
+        session = self.shell.session
+        spec = session.spec
+        ui.label(model_id).classes("text-bold dstf-mono").mark("drawer-model")
+        with ui.row().classes("gap-2 text-xs text-secondary"):
+            ui.label(plural(n, "edit")).mark("drawer-count")
+            ui.label(
+                verdict_phrase(
+                    classify(comp) if comp is not None else None, saved_status
+                )
+            ).mark("drawer-verdict")
+        trees = [
+            op.value
+            for op in spec.pending
+            if op.model_id == model_id and op.materializes
+        ]
+        if trees:
+            ui.label(
+                materialized_note(
+                    sum(_leaves(t) for t in trees),
+                    spec.saved_entry(model_id) is None,
+                )
+            ).classes("text-xs text-secondary").mark("drawer-note")
+        texts = session.variable_texts(model_id)
+        with (
+            ui.element("div").classes("dstf-diff").mark("drawer-diff"),
+            ui.element("div").classes("dstf-diff-lines"),
+        ):
+            for line in entry_lines(spec.preview_base(model_id), spec.entry(model_id)):
+                with (
+                    ui.element("div")
+                    .classes(f"dstf-diff-line dstf-diff-{line.kind}")
+                    .mark(f"diff-{line.kind}")
+                ):
+                    ui.label(_PREFIX[line.kind]).classes("dstf-diff-text")
+                    for text, muted in spans(line.text, texts):
+                        if muted:
+                            ui.label(text).classes("dstf-diff-muted").mark("diff-muted")
+                        else:
+                            ui.label(text).classes("dstf-diff-text")

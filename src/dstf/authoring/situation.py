@@ -44,8 +44,9 @@ class Strip:
 _ACCEPT_IT = "If the new behaviour is right, accept it as the baseline."
 
 
-def _verdict(status: str | None, saved_status: str | None) -> str:
-    """The EDITS clause after the count: what the edits do to the verdict."""
+def verdict_phrase(status: str | None, saved_status: str | None) -> str:
+    """What the edits do to the verdict: the EDITS clause after the count,
+    and the pending drawer's verdict line."""
     if saved_status is None:
         return f"a new entry, scored {status or '…'}"
     if status == saved_status:
@@ -84,7 +85,7 @@ def strip_for(
         return Strip(
             S.EDITS,
             "amber",
-            f"{plural(edits, 'unsaved edit')} · {_verdict(status, saved_status)}",
+            f"{plural(edits, 'unsaved edit')} · {verdict_phrase(status, saved_status)}",
         )
     if scoring_failed:
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")

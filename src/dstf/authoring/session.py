@@ -867,11 +867,20 @@ class Session:
                         "a tree could be built from (or one of the flat/tree "
                         "differences applies) — author the tree explicitly"
                     )
-                full = [tree_op, *raw]
-            else:
-                full = raw
+                # Marked: the drawer diffs against the saved entry with this
+                # tree in it (`SpecDocument.preview_base`) — it scores what
+                # the flat path scored.
+                staged.append(
+                    PatchOp(
+                        model_id,
+                        tree_op["op"],
+                        tree_op["path"],
+                        tree_op.get("value"),
+                        materializes=True,
+                    )
+                )
             staged += [
-                PatchOp(model_id, r["op"], r["path"], r.get("value")) for r in full
+                PatchOp(model_id, r["op"], r["path"], r.get("value")) for r in raw
             ]
         # Convention 8: an edit that lands on the path the last pending op
         # wrote supersedes it, so the drawer and the envelope read "value ->
@@ -881,7 +890,9 @@ class Session:
         # kept as two: when the member existed, the add replaced it, and
         # dropping both would leave it. A batch is never collapsed: its ops
         # belong together. A replace at an append path (``/-``) names no
-        # member and is left for `effective` to refuse, never folded in.
+        # member and is left for `effective` to refuse, never folded in. A
+        # fold onto the op that materialized the tree is no longer that
+        # tree: the folded op is not marked (`PatchOp.materializes`).
         pending = list(self.spec.pending)
         if len(staged) == 1 and pending:
             new, last = staged[0], pending[-1]
@@ -938,12 +949,29 @@ class Session:
         not ``comparisons``, not ``project.tests``. ``None`` for a model the
         saved spec does not make a test (an entry a pending op creates).
         Uncached: the strip asks for its one test, per paint."""
-        if not any(op.model_id == model_id for op in self.spec.pending):
-            return self.comparisons.get(model_id)
-        project = self._require_project()
-        tests = self._merge(project.config, project.scanned, self.spec.loaded)
-        test = next((t for t in tests if t.model_id == model_id), None)
-        return None if test is None else self._compare(test)
+        return self.saved_comparisons({model_id})[model_id]
+
+    def saved_comparisons(
+        self, models: Collection[str]
+    ) -> dict[str, TestComparison | None]:
+        """`saved_comparison` of each of ``models``, the loaded spec merged
+        ONCE for all of them (the pending drawer asks for every edited
+        test's; a merge of TRANSFORM's spec is most of a call's cost)."""
+        edited = {op.model_id for op in self.spec.pending}
+        out: dict[str, TestComparison | None] = {
+            m: self.comparisons.get(m) for m in models if m not in edited
+        }
+        rest = [m for m in models if m in edited]
+        if rest:
+            project = self._require_project()
+            tests = {
+                t.model_id: t
+                for t in self._merge(project.config, project.scanned, self.spec.loaded)
+            }
+            for m in rest:
+                test = tests.get(m)
+                out[m] = None if test is None else self._compare(test)
+        return out
 
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s

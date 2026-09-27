@@ -22,6 +22,7 @@ import math
 import os
 import re
 import shutil
+import urllib.request
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -77,19 +78,20 @@ def _served(
     playwright_browser,
     x_error: Callable[[float], float] | None = None,
     project: Callable[[Path], tuple[Path, Path]] = _page_project,
+    hooks: bool = False,
 ):
     """`dstf author` over ``project`` (`_page_project` unless said), with
     `/test/FakeLib.A` open. On the way out: assertion 7 — no page error, no
     console error, and the spec file byte-for-byte as it was (nothing is
     saved by looking). ``x_error`` replaces x's error against its baseline
-    (`_set_x_error`)."""
+    (`_set_x_error`); ``hooks`` serves `author_hooks.py`'s routes."""
     cfg, work = project(tmp_path)
     if x_error is not None:
         _set_x_error(work, x_error)
     spec_file = cfg.parent / "test_spec.json"
     before = spec_file.read_bytes()
     log = tmp_path / "author.log"
-    proc, url = _start(cfg, work, log)
+    proc, url = _start(cfg, work, log, hooks=hooks)
     context = None
     try:
         _wait_until_serving(url, proc, log)
@@ -357,6 +359,44 @@ def test_the_strips_menu_says_it_is_open_and_why_an_item_is_grey(
         )
         page.keyboard.press("Escape")
         expect(more).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
+
+
+def test_the_strips_preview_opens_the_drawer_on_this_tests_section(
+    tmp_path, playwright_browser
+):
+    """Q6 A: Preview and save opens the pending drawer — the preview — with
+    this test's section scrolled into view. D's edits are staged first, so
+    A's section is the second, below the fold of a 600 px window until the
+    drawer scrolls to it."""
+    with _served(
+        tmp_path, playwright_browser, project=_two_var_project, hooks=True
+    ) as page:
+        page.set_viewport_size({"width": 1280, "height": 600})
+        base = page.url.split("test/")[0]
+        for model in ("FakeLib.D", A):
+            with urllib.request.urlopen(f"{base}__stage?model={model}") as r:
+                json.loads(r.read())
+        expect(page.locator(".dstf-strip-text")).to_contain_text(
+            "unsaved", timeout=EXPECT_TIMEOUT
+        )
+        page.get_by_role("button", name="Preview and save").click()
+        drawer = page.locator(".dstf-pending-drawer")
+        expect(drawer).to_contain_text("4 pending edits · 2 tests")
+        sections = drawer.locator(".dstf-diff")
+        expect(sections).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        content = page.locator(".q-drawer--right .q-drawer__content")
+        page.wait_for_function(
+            "document.querySelector('.q-drawer--right .q-drawer__content')"
+            ".scrollTop > 0",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(400)  # the drawer's slide
+        header = page.locator(".q-header").bounding_box()
+        box = sections.nth(1).bounding_box()
+        assert header is not None and box is not None
+        assert box["y"] >= header["y"] + header["height"] - 1, (header, box)
+        assert box["y"] + box["height"] <= 600, box
+        assert content.evaluate("e => e.scrollHeight > e.clientHeight")
 
 
 # -- the page's frame, its plots on scroll, and the tree -------------------

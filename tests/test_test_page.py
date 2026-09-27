@@ -5263,6 +5263,10 @@ async def test_the_strip_with_an_edit_offers_preview_and_its_discard(shell):
         assert page.strip.situation.value == "edits"
         user.find(marker="strip-preview").click()
         assert page.header.drawer.element.value is True
+        # The drawer is the preview, built on opening: this test's section
+        # and the other test's.
+        await user.should_see(marker=f"drawer-test:{D}", retries=20)
+        assert set(page.header.drawer.sections) == {A, D}
         user.find(marker="strip-discard").click()
         await _settled(lambda: "dstf-strip-grey" in _one(user, "strip").classes)
         assert shell.session.spec.pending == [other]  # A's edit stays

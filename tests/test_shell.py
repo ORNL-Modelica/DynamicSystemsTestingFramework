@@ -300,22 +300,295 @@ async def test_stop_server_stops_at_once_with_nothing_to_lose(shell, monkeypatch
         await user.should_not_see("Stop the server?")
 
 
-async def test_the_pending_drawer_lists_staged_ops_by_model(shell):
+def _lines(user, kind: str) -> list[str]:
+    """The drawer's diff lines of one kind, in drawing order (ascending id),
+    each as its text reads, spaces collapsed."""
+    try:
+        found = user.find(marker=f"diff-{kind}").elements
+    except AssertionError:
+        return []
+    return [
+        " ".join("".join(c.text for c in e.default_slot.children).split())
+        for e in sorted(found, key=lambda e: e.id)
+    ]
+
+
+def _saved_tree(shell) -> None:
+    """A's entry holds a tree with a tolerance ON DISK: LOOSEN (0.5) saved."""
+    shell.session.stage([LOOSEN])
+    shell.session.save()
+    assert shell.session.spec.pending == []
+
+
+#: On the saved tree: 0.5 → 0.1 tightens A past its nrmse of 0.153.
+TIGHTEN = PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.1)
+
+
+def _open_drawer(user) -> None:
+    """The preview is built on opening, and while open."""
+    user.find(marker="pending").click()
+
+
+async def test_the_pending_drawer_previews_each_tests_entry(shell):
+    """Q6 A: per test, the entry before and after as `json.dumps(indent=2)`
+    writes it, removed lines and added lines, how many edits and what Save
+    does to its verdict. The raw op lines are gone."""
+    _saved_tree(shell)
     async with user_simulation(root=shell.index) as user:
         await _open(user)
+        _open_drawer(user)
         await user.should_see("nothing staged")
-        shell.session.stage([LOOSEN])
-        await user.should_see(
-            marker="drawer-op", retries=20
-        )  # `find` raises on absence
-        await _settled(lambda: len(user.find(marker="drawer-op").elements) == 2)
-        # `find` hands back a SET; the drawer draws the ops in staging order,
-        # which is ascending element id.
-        ops = sorted(user.find(marker="drawer-op").elements, key=lambda e: e.id)
-        texts = [e.text for e in ops]
-        assert texts[0].startswith("add /metrics ")
-        assert texts[1].startswith("add /metrics/children/0/tolerance 0.5")
+        shell.session.stage([TIGHTEN])
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
         assert _one(user, "drawer-model").text == A
+        assert _one(user, "drawer-summary").text == "1 pending edit · 1 test"
+        assert _one(user, "drawer-count").text == "1 edit"
+        assert _one(user, "drawer-verdict").text == "verdict would change PASS → FAIL"
+        assert _lines(user, "del") == ['- "tolerance": 0.5']
+        assert _lines(user, "add") == ['+ "tolerance": 0.1']
+        assert 0 < len(_lines(user, "same")) <= 6
+        # The tree was saved: nothing is written out besides the edit.
+        with pytest.raises(AssertionError):
+            user.find(marker="drawer-note")
+        with pytest.raises(AssertionError):
+            user.find(marker="drawer-op")
+
+
+async def test_a_first_edit_on_a_flat_test_diffs_against_its_tree_as_scored(shell):
+    """A's entry is flat: its first per-leaf edit stages the implicit tree
+    written out, then the edit. The diff is against that tree — it scores
+    the same — so it shows the edit, not the whole tree added; a note says
+    Save writes the tree too. The count is the ops', as the header's."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([LOOSEN])
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        assert _one(user, "drawer-count").text == "2 edits"
+        assert _one(user, "drawer-verdict").text == "verdict would change FAIL → PASS"
+        assert _one(user, "drawer-note").text == (
+            "Save also writes this test's 1 criterion out as a tree; it scores "
+            "the same."
+        )
+        # difflib reads the leaf's last line gaining its comma as a changed
+        # line, then the tolerance added after it.
+        assert _lines(user, "del") == ['- "variable": "x"']
+        assert _lines(user, "add") == ['+ "variable": "x",', '+ "tolerance": 0.5']
+
+
+async def test_the_note_counts_the_criteria_the_tree_writes_out(tmp_path):
+    """`_two_var_project`'s A tracks x and y: its tree has two criteria."""
+    from test_session import _two_var_project
+
+    cfg, work = _two_var_project(tmp_path)
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([LOOSEN])
+        await user.should_see(marker="drawer-note", retries=20)
+        assert _one(user, "drawer-note").text == (
+            "Save also writes this test's 2 criteria out as a tree; they score "
+            "the same."
+        )
+
+
+async def test_a_new_entrys_note_says_it_is_new(tmp_path):
+    """D is scanned but the spec file has no entry for it: its first
+    per-leaf edit creates the entry with its tree written out, and the diff
+    is against that tree, as for a flat entry."""
+    from dstf.authoring.session import Session
+
+    cfg, work = _project(tmp_path)
+    first = Session()
+    first.open(cfg, work_dir=work)
+    d_model = first.project.test(D)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"] = [e for e in spec["tests"] if e["model"] != D]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    # Scanned: a recognizer would find it; FakeLib's Python source has none.
+    # Re-read: the open read no result for a model that was no test.
+    shell.session.project.scanned[D] = d_model
+    shell.session._rebuild_tests({D}, reread=True)
+    assert shell.session.spec.saved_entry(D) is None
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([PatchOp(D, "add", "/metrics/children/0/tolerance", 0.5)])
+        await user.should_see(marker="drawer-note", retries=20)
+        assert _one(user, "drawer-note").text == (
+            "A new entry for this test. Save also writes this test's 1 "
+            "criterion out as a tree; it scores the same."
+        )
+        assert _lines(user, "add") == ['+ "variable": "x",', '+ "tolerance": 0.5']
+
+
+def test_the_note_counts_its_criteria_and_says_a_new_entry():
+    from dstf.authoring.shell.header import materialized_note
+
+    assert materialized_note(3, new_entry=False) == (
+        "Save also writes this test's 3 criteria out as a tree; they score the same."
+    )
+    assert materialized_note(1, new_entry=True) == (
+        "A new entry for this test. Save also writes this test's 1 criterion "
+        "out as a tree; it scores the same."
+    )
+
+
+async def test_the_drawer_shows_every_edited_test_in_staging_order(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        shell.session.stage([LOOSEN])
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        await user.should_see(marker=f"drawer-test:{D}", retries=20)
+        models = sorted(user.find(marker="drawer-model").elements, key=lambda e: e.id)
+        assert [e.text for e in models] == [D, A]
+        # LOOSEN materializes A's tree: 2 ops, and D's 1, over 2 tests.
+        assert _one(user, "drawer-summary").text == "3 pending edits · 2 tests"
+
+
+async def test_save_these_writes_the_effective_entry_and_empties_the_drawer(shell):
+    _saved_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([TIGHTEN])
+        await user.should_see(marker="drawer-save", retries=20)
+        expected = json.dumps(shell.session.spec.effective(), indent=2) + "\n"
+        user.find(marker="drawer-save").click()
+        await user.should_see("nothing staged", retries=20)
+        assert shell.session.spec.path.read_text(encoding="utf-8") == expected
+
+
+async def test_save_these_refuses_a_file_changed_on_disk(shell):
+    """The drawer's Save is the header's: the stale-file dialog, nothing
+    written."""
+    _saved_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([TIGHTEN])
+        await user.should_see(marker="drawer-save", retries=20)
+        path = shell.session.spec.path
+        path.write_text(path.read_text(encoding="utf-8") + " ", encoding="utf-8")
+        on_disk = path.read_bytes()
+        user.find(marker="drawer-save").click()
+        await user.should_see("changed on disk since it was loaded", retries=20)
+        assert path.read_bytes() == on_disk
+        assert shell.session.spec.pending == [TIGHTEN]
+
+
+async def test_discard_these_empties_the_drawer(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([LOOSEN])
+        await user.should_see(marker="drawer-discard", retries=20)
+        user.find(marker="drawer-discard").click()
+        await user.should_see("nothing staged", retries=20)
+        assert shell.session.spec.pending == []
+
+
+async def test_the_preview_is_built_only_while_the_drawer_is_open(shell, monkeypatch):
+    """A closed drawer scores nothing; an event that moved nothing it shows
+    — the 1 s poll during a job — builds nothing again."""
+    calls: list[set] = []
+    real = type(shell.session).saved_comparisons
+
+    def counting(self, models):
+        calls.append(set(models))
+        return real(self, models)
+
+    monkeypatch.setattr(type(shell.session), "saved_comparisons", counting)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        await asyncio.sleep(0.3)
+        assert calls == []
+        _open_drawer(user)
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        assert calls == [{A}]  # one call for every edited test
+        diff = _one(user, "drawer-diff")
+        shell._events.put({"event": "poll"})
+        await asyncio.sleep(0.3)
+        assert calls == [{A}]
+        assert _one(user, "drawer-diff") is diff  # not rebuilt
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        await user.should_see(marker=f"drawer-test:{D}", retries=20)
+        assert calls[-1] == {A, D}
+
+
+async def test_a_saved_verdict_that_raises_says_so_for_its_test_alone(
+    shell, monkeypatch, caplog
+):
+    """Scoring D's SAVED spec raises (its edit fixes it): D's section says
+    the saved verdict failed, A's reads as ever."""
+    import dstf.authoring.session as session_mod
+
+    real = session_mod.compare_one
+
+    def failing(test, *args, **kwargs):
+        if test.model_id == D and test.comparison_tolerance is None:
+            raise ValueError("boom")
+        return real(test, *args, **kwargs)
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        shell.session.stage([LOOSEN])
+        _open_drawer(user)
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        verdicts = sorted(
+            user.find(marker="drawer-verdict").elements, key=lambda e: e.id
+        )
+        assert [e.text for e in verdicts] == [
+            "verdict would change scoring failed → PASS",
+            "verdict would change FAIL → PASS",
+        ]
+        assert "a page failed" not in caplog.text
+
+
+@pytest.fixture
+def expression_shell(tmp_path):
+    """A's x is a UnitTests variable whose model wrote an expression."""
+    from test_session import (
+        AWKWARD_EXPRESSION,
+        UT1,
+        _awkward_expression_project,
+        with_expressions,
+    )
+
+    cfg, work = _awkward_expression_project(tmp_path)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    with_expressions(s.session, A, {UT1: AWKWARD_EXPRESSION})
+    s.session._score(A)
+    s.load.phase = "done"
+    return s
+
+
+async def test_a_variable_in_the_diff_reads_its_label_and_its_muted_name(
+    expression_shell,
+):
+    from test_session import AWKWARD_EXPRESSION, UT1
+
+    shell = expression_shell
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 0.5)])
+        await user.should_see(marker="diff-muted", retries=20)
+        assert {e.text for e in user.find(marker="diff-muted").elements} == {f" {UT1}"}
+        assert f'+ "variable": {AWKWARD_EXPRESSION} {UT1},' in _lines(user, "add")
 
 
 async def test_the_dashboard_route_serves_the_open_projects_work_dir(shell):

@@ -27,6 +27,12 @@ class PatchOp:
     op: str  # "add" | "replace" | "remove"
     path: str
     value: Any = None
+    #: The ``add /metrics`` `Session.stage` prepends to a flat entry's first
+    #: per-leaf edit: the implicit tree written out, scoring the same. The
+    #: pending drawer diffs against the saved entry WITH it (`preview_base`)
+    #: so an edit reads as itself, not as the whole tree added. Not part of
+    #: the op: not in `raw()`, not in its equality.
+    materializes: bool = field(default=False, compare=False)
 
     def raw(self) -> dict:
         """The op as ``apply_patch`` and the envelope carry it."""
@@ -99,6 +105,24 @@ class SpecDocument:
 
         entry = spec_entry(self.loaded, model_id)
         return copy.deepcopy(entry) if entry is not None else None
+
+    def preview_base(self, model_id: str) -> dict | None:
+        """What the pending drawer diffs the model's entry against: the
+        saved entry with the model's materializing ops applied (a new entry
+        starts as ``{"model": model_id}``), a copy; with none of them, the
+        saved entry (``None`` for a new one)."""
+        from ..discovery.spec_update import spec_entry
+
+        ops = [
+            op.raw()
+            for op in self.pending
+            if op.model_id == model_id and op.materializes
+        ]
+        if not ops:
+            return self.saved_entry(model_id)
+        data = copy.deepcopy(self.loaded)
+        apply_patch_to_document(data, model_id, ops)
+        return copy.deepcopy(spec_entry(data, model_id))
 
     def effective(self) -> dict:
         """A copy of ``loaded`` with every pending op applied."""

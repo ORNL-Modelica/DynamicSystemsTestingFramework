@@ -177,6 +177,24 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    container this sits on holds the rows alone, never `Add row`. */
 .dstf-table-scroll { max-height: 336px; overflow-y: auto; }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
+/* The pending drawer's preview (Q6 A): the entry as test_spec.json will
+   hold it, one line per row, never wrapped — a long line scrolls INSIDE
+   the diff, not the drawer. A flex item's min-width is its content's:
+   without the min-width 0 here and on the section and body columns a long
+   line widened the diff past the drawer, which clipped it, and nothing
+   scrolled. The lines sit in a box as wide as the longest of them, so an
+   added line's tint runs the whole scrolled width. */
+.dstf-diff {
+  font-family: var(--dstf-mono); font-size: 12px; overflow-x: auto;
+  width: 100%; min-width: 0; max-width: 100%;
+  border: 1px solid var(--dstf-border-hairline); border-radius: 3px;
+}
+.dstf-diff-lines { width: max-content; min-width: 100%; }
+.dstf-diff-line { display: flex; white-space: pre; line-height: 18px; padding: 0 6px; }
+.dstf-diff-line > * { flex: none; }
+.dstf-diff-add { background: var(--dstf-pass-tint); color: var(--dstf-pass-dark); }
+.dstf-diff-del { background: var(--dstf-fail-tint); color: var(--dstf-fail-dark); }
+.dstf-diff-gap, .dstf-diff-muted { color: var(--dstf-text-muted); }
 .dstf-mono { font-family: var(--dstf-mono); }
 .dstf-why { color: var(--dstf-text-muted); font-size: 12px; }
 /* A card's title reads the expression its model wrote; the result-file

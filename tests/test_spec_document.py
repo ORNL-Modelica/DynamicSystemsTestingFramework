@@ -120,3 +120,42 @@ def test_saved_entry_is_a_copy_of_the_loaded_entry_whatever_is_pending(tmp_path)
     saved["comparison"]["tolerance"] = 9
     assert doc.loaded["tests"][0]["comparison"]["tolerance"] == 0.1
     assert doc.saved_entry("N") is None  # new in the pending ops, not loaded
+
+
+TREE_X = {
+    "combinator": "and",
+    "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.1}],
+}
+
+
+def test_a_materializing_op_says_so_and_its_raw_form_does_not():
+    op = PatchOp("M", "add", "/metrics", TREE_X, materializes=True)
+    assert op.materializes and not PatchOp("M", "add", "/metrics", TREE_X).materializes
+    assert op.raw() == {"op": "add", "path": "/metrics", "value": TREE_X}
+
+
+def test_the_preview_base_is_the_saved_entry_with_its_materialization(tmp_path):
+    """What the drawer diffs against: the entry as saved, with the tree the
+    Session wrote out for it — which scores the same — already in it; the
+    edits after it are what the diff shows."""
+    doc = SpecDocument.load(_spec(tmp_path, ENTRY))
+    doc.pending += [
+        PatchOp("M", "add", "/metrics", TREE_X, materializes=True),
+        PatchOp("M", "add", "/metrics/children/0/tolerance", 0.5),
+        PatchOp("N", "add", "/comparison", {"tolerance": 1}),
+    ]
+    assert doc.preview_base("M") == {**ENTRY, "metrics": TREE_X}
+    assert doc.loaded["tests"] == [ENTRY]  # nothing written into `loaded`
+    base = doc.preview_base("M")
+    base["metrics"]["children"][0]["tolerance"] = 9
+    assert doc.preview_base("M")["metrics"] == TREE_X  # a copy
+    # No materialization: the saved entry; a new one with none: no entry.
+    assert doc.preview_base("N") is None
+    doc.pending.append(PatchOp("P", "add", "/metrics", TREE_X, materializes=True))
+    assert doc.preview_base("P") == {"model": "P", "metrics": TREE_X}
+
+
+def test_the_preview_base_without_a_materialization_is_the_saved_entry(tmp_path):
+    doc = SpecDocument.load(_spec(tmp_path, ENTRY))
+    doc.pending.append(PatchOp("M", "add", "/metrics", TREE_X))
+    assert doc.preview_base("M") == ENTRY

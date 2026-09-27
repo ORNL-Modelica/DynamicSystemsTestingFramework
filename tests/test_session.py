@@ -21,7 +21,7 @@ from dstf.authoring.session import (
     SessionView,
     StaleSpecError,
 )
-from dstf.authoring.spec_document import PatchOp
+from dstf.authoring.spec_document import PatchOp, SpecDocument
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config, ConfigError
 from dstf.discovery.patch_apply import PatchError
@@ -3117,6 +3117,37 @@ class TestStageCollapses:
             )
 
 
+class TestTheMaterializationIsMarked:
+    """The drawer's preview diffs against the tree as scoring sees it: the
+    op `stage` prepends to write a flat entry's tree out says so."""
+
+    def test_the_prepended_tree_is_marked_and_the_edit_is_not(self, session):
+        session.stage([LOOSEN])
+        tree, edit = session.spec.pending
+        assert (tree.op, tree.path) == ("add", "/metrics") and tree.materializes
+        assert edit == LOOSEN and not edit.materializes
+
+    def test_an_edit_that_lands_on_the_tree_unmarks_it(self, session):
+        """Convention 8 folds a replace of ``/metrics`` onto the op that
+        added it: the value is no longer the scored tree."""
+        session.stage([LOOSEN])
+        tree = session.spec.pending[0]
+        session.spec = SpecDocument(
+            session.spec.path, session.spec.loaded, session.spec.content_hash, [tree]
+        )
+        other = copy.deepcopy(tree.value)
+        other["children"][0]["tolerance"] = 0.5
+        session.stage([PatchOp(A, "replace", "/metrics", other)])
+        (folded,) = session.spec.pending
+        assert (folded.op, folded.value) == ("add", other)
+        assert not folded.materializes
+
+    def test_a_tree_the_edit_supplies_is_not_marked(self, session):
+        tree = session.tree(A)
+        session.stage([PatchOp(A, "add", "/metrics", tree)])
+        assert not session.spec.pending[0].materializes
+
+
 class TestPerTestDiscardAndSavedVerdict:
     """The Test page's strip: one test's edits discarded, and the verdict
     the test has as SAVED beside the one its edits give it."""
@@ -3157,6 +3188,30 @@ class TestPerTestDiscardAndSavedVerdict:
         session.discard(models={D})
         assert events == []
         assert session.spec is spec
+
+    def test_saved_comparisons_merge_the_saved_spec_once(self, session, monkeypatch):
+        """The drawer asks for every edited test's saved verdict at once:
+        the loaded spec is merged ONCE for all of them, and each verdict is
+        the one `saved_comparison` gives."""
+        session.stage([self.LOOSEN_A])
+        session.stage([self.TIGHTEN_D])
+        merges: list[int] = []
+        real = session._merge
+
+        def counting(*args, **kwargs):
+            merges.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(session, "_merge", counting)
+        saved = session.saved_comparisons({A, D, B})
+        assert len(merges) == 1
+        assert set(saved) == {A, D, B}
+        assert classify(saved[A]) == FAIL and classify(saved[D]) == PASS
+        assert saved[B] is session.comparisons[B]  # nothing pending for B
+        merges.clear()
+        assert session.saved_comparisons({B}) == {B: session.comparisons[B]}
+        assert merges == []  # nothing pending: nothing merged
+        assert classify(session.saved_comparison(A)) == FAIL
 
     def test_saved_comparison_with_nothing_pending_is_the_comparison(self, session):
         assert session.saved_comparison(A) is session.comparisons[A]
