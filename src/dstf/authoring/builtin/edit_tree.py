@@ -1,8 +1,9 @@
 """Edit tree (§4.6 table, §4.7): the NODE and VARIABLE placements, exactly
 one test selected. At NODE the panel IS that node's controls — add, wrap,
-and on a combinator edit (Unwrap inside it), and remove — each form a ROW
-under the node's row (`Panel.row`); at VARIABLE it is the "Add a criterion
-for x" form.
+edit on a k-of-n or weighted node, and remove — each form a ROW under the
+node's row (`Panel.row`), and on a combinator its kind as a dropdown in
+the row's lead place (`Panel.lead`), unwrap its last entry; at VARIABLE it
+is the "Add a criterion for x" form.
 Every control stages one structural change against the paths the report's
 tree already shows. The D66 validator's refusal reaches the page through
 ``Panel.submit`` — the Session is what it was.
@@ -11,6 +12,8 @@ tree already shows. The D66 validator's refusal reaches the page through
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
@@ -85,7 +88,34 @@ _WRAP_SENTENCES = {
     "weighted": "The {what} becomes the only child of a new weighted node, with "
     "the one weight above.",
 }
-_EDIT_SENTENCE = "Changes this node's kind and fields; its children stay."
+#: The Edit form's sentence: on the node's own kind it sets the kind's
+#: fields; preset by the dropdown to another kind, the kind changes too.
+_EDIT_SENTENCE = "Changes this node's fields; its children stay."
+_EDIT_KIND_SENTENCE = "Changes this node's kind and fields; its children stay."
+#: The kind dropdown's value for its last entry, which is not a kind: no
+#: combinator is named this.
+_UNWRAP_VALUE = "unwrap…"
+#: What that entry reads, below a separator.
+_UNWRAP_TEXT = "unwrap — its children take its place"
+#: The kinds a node cannot take without fields: the dropdown opens the Edit
+#: form preset to one of them, and nothing is staged until Apply. And, or
+#: and warn have none — only these nodes carry the Edit icon.
+_NEEDS_FIELDS = ("k-of-n", "weighted")
+#: The dropdown's option slot: the unwrap entry below a separator.
+_KIND_OPTION = (
+    "<q-separator v-if=\"props.opt.label.startsWith('unwrap')\" />"
+    '<q-item v-bind="props.itemProps"><q-item-section>'
+    "<q-item-label>{{ props.opt.label }}</q-item-label>"
+    "</q-item-section></q-item>"
+)
+#: Under a weighted node's Threshold, following its Direction (the pass
+#: rule of `metric_tree`'s weighted node).
+_THRESHOLD_HINTS = {
+    "less": "Passes when Σ weight × score over the children is below the "
+    "threshold (lower is better).",
+    "greater": "Passes when Σ weight × score over the children is above the "
+    "threshold (higher is better).",
+}
 #: The form row's title says where the criterion lands; this, where its
 #: values come from.
 _ADD_SENTENCE = "Values come from the data where the metric needs them."
@@ -291,7 +321,11 @@ class EditTree:
 
 
 def _combinator_fields(
-    ui: Any, node: dict | None, sentence: Callable[[str], str], children: int
+    ui: Any,
+    node: dict | None,
+    sentence: Callable[[str], str],
+    children: int,
+    fixed: str | None = None,
 ) -> tuple[Callable[[], dict[str, Any]], Callable[[Any], None]]:
     """The kind select and ONLY the chosen kind's fields (board 1B), in a
     column rebuilt on the select's change; a value typed for a kind is kept
@@ -305,7 +339,10 @@ def _combinator_fields(
     threshold starts EMPTY unless the node has one, and the weights start
     as one 1 per child — ``children``, the node's count after the action
     (1 for a wrap) — so an untouched weighted form stages what it shows:
-    before, it staged no weights and threshold 0, refused every time."""
+    before, it staged no weights and threshold 0, refused every time.
+
+    ``fixed`` draws no kind select: the form is that kind's (the Edit form,
+    whose kind is the node's or the one its dropdown chose)."""
     names = [c.name for c in combinators()]
     node = node or {}
     current = node.get("combinator")
@@ -316,8 +353,10 @@ def _combinator_fields(
         "threshold": node.get("threshold"),
         "direction": node.get("direction") or _DEFAULT_DIRECTION,
     }
-    kind = (
-        ui.select(
+    kind: Any = (
+        SimpleNamespace(value=fixed)
+        if fixed is not None
+        else ui.select(
             names, label="Combinator", value=current if current in names else names[0]
         )
         .props("dense")
@@ -361,11 +400,21 @@ def _combinator_fields(
                     value=values["threshold"],
                     on_change=keep("threshold"),
                 ).props("dense").classes("w-full")
+                hint = (
+                    ui.label(_THRESHOLD_HINTS[str(values["direction"])])
+                    .classes("dstf-why")
+                    .mark("threshold-hint")
+                )
+
+                def direction(e: Any) -> None:
+                    keep("direction")(e)
+                    hint.set_text(_THRESHOLD_HINTS[str(e.value)])
+
                 ui.select(
                     _DIRECTIONS,
                     label="Direction",
                     value=values["direction"],
-                    on_change=keep("direction"),
+                    on_change=direction,
                 ).props("dense").classes("w-full")
         why.set_text(sentence(str(kind.value)))
         gate()
@@ -376,7 +425,8 @@ def _combinator_fields(
         guarded.append((button, tip))
         gate()
 
-    kind.on_value_change(lambda _e: rebuild())
+    if fixed is None:
+        kind.on_value_change(lambda _e: rebuild())
     rebuild()
     return (lambda: {"kind": kind.value, **values}), guard
 
@@ -577,43 +627,50 @@ def _cluster(
                 .mark(f"apply-wrap:{path}")
             )
 
-    def build_edit(close: Callable[[], None]) -> None:
+    def build_edit(close: Callable[[], None], kind: str | None = None) -> None:
+        """The Edit form: ``kind``'s fields — the node's own kind, or the
+        one its dropdown chose (k-of-n, weighted: they need fields before
+        anything can be staged). No kind select: the dropdown is where the
+        kind changes, and unwrap is its last entry."""
         at_open = fresh()
         if at_open is None:
             return
+        own = str(at_open.get("combinator"))
+        fixed = kind or own
         values, guard = _combinator_fields(
             ui,
             at_open,
-            lambda _kind: _EDIT_SENTENCE,
+            lambda _kind: _EDIT_SENTENCE if fixed == own else _EDIT_KIND_SENTENCE,
             children=len(at_open.get("children") or []),
+            fixed=fixed,
         )
 
         def apply() -> None:
             if ui_panel.submit(model_id=model_id, action="edit", path=path, **values()):
                 close()
 
-        def unwrap() -> None:
-            if act_now("unwrap"):
-                close()
-
         with ui.row().classes("items-center gap-2"):
-            unwrap_button = (
-                ui.button("Unwrap", on_click=unwrap)
-                .props("flat dense no-caps")
-                .mark(f"unwrap-in-edit:{path}")
-            )
-            if path == ROOT and len(at_open.get("children") or []) > 1:
-                # Several children take the node's place in its parent; the
-                # root has none to take them.
-                unwrap_button.disable()
-                with unwrap_button:
-                    ui.tooltip(_ROOT_UNWRAP)
             _cancel(ui, close, path)
             guard(
                 ui.button("Apply", on_click=apply)
                 .props("dense no-caps")
                 .mark(f"apply-edit:{path}")
             )
+
+    if is_combinator:
+        ui_panel.lead(
+            partial(
+                _kind_select,
+                ui,
+                ui_panel,
+                model_id,
+                path,
+                node,
+                lambda kind: ui_panel.row(
+                    "Edit this combinator", partial(build_edit, kind=kind)
+                ),
+            )
+        )
 
     with ui.row().classes("dstf-node-controls items-center no-wrap gap-0"):
         # A combinator takes the new criterion as its last child; a leaf
@@ -637,7 +694,9 @@ def _cluster(
             f"wrap:{path}",
             lambda: ui_panel.row(f"Wrap {text()} in a combinator", build_wrap),
         )
-        if is_combinator:
+        if node.get("combinator") in _NEEDS_FIELDS:
+            # and / or / warn have no fields: their kind is all there is,
+            # and the dropdown changes it.
             icon(
                 "tune",
                 "Change this combinator",
@@ -653,6 +712,56 @@ def _cluster(
                 f"remove:{path}",
                 lambda: act_now("remove"),
             )
+
+
+def _kind_select(
+    ui: Any,
+    ui_panel: Panel,
+    model_id: str,
+    path: str,
+    node: dict,
+    open_edit: Callable[[str], None],
+) -> None:
+    """A combinator's kind as a dropdown in its row (Q3 A), changed in
+    place: and / or / warn stage at once; k-of-n / weighted open the Edit
+    form preset to that kind (``open_edit``); `unwrap…`, below a separator,
+    unwraps. A refused change says why in the row, and the select goes
+    back to the node's kind.
+
+    Unwrap is not offered where `act` refuses it by rule — a root of
+    several children has no parent to take them, and a node of none has
+    nothing to put in its place: an option cannot carry a why-tooltip."""
+    current = str(node.get("combinator"))
+    options = {c.name: c.name for c in combinators()}
+    children = len(node.get("children") or [])
+    if children and not (path == ROOT and children > 1):
+        options[_UNWRAP_VALUE] = _UNWRAP_TEXT
+    select = (
+        ui.select(options, value=current)
+        .props('dense borderless options-dense aria-label="Combinator kind"')
+        .classes("dstf-kind")
+        .mark(f"kind:{path}")
+    )
+    select.add_slot("option", _KIND_OPTION)
+
+    def chosen(e: Any) -> None:
+        value = e.value
+        if value == current:
+            return
+        if value in _NEEDS_FIELDS:
+            select.set_value(current)  # nothing is staged until Apply
+            open_edit(str(value))
+            return
+        if value == _UNWRAP_VALUE:
+            done = ui_panel.submit(model_id=model_id, action="unwrap", path=path)
+        else:
+            done = ui_panel.submit(
+                model_id=model_id, action="edit", path=path, kind=value
+            )
+        if not done:
+            select.set_value(current)
+
+    select.on_value_change(chosen)
 
 
 def _variable_names(s: SessionView, model_id: str) -> list[str]:

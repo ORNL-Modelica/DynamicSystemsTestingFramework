@@ -1303,17 +1303,22 @@ def test_a_form_row_opens_under_its_node_and_nothing_covers_it(
         expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
         expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
-        # (b) Edit on the root: Unwrap, Cancel, Apply.
+        # (b) The root `and` has no fields and no Edit icon: its kind
+        #     dropdown, k-of-n chosen, opens the Edit row preset to k-of-n,
+        #     with Cancel and Apply (unwrap is the dropdown's).
         page.evaluate("() => window.scrollTo(0, 0)")
-        _icon(rows.nth(0), "tune").click()
+        assert _icon(rows.nth(0), "tune").count() == 0
+        rows.nth(0).get_by_label("Combinator kind").click()
+        page.get_by_role("option", name="k-of-n").click()
         expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
         expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
         expect(form).to_contain_text("Edit this combinator")
         expect(form).to_contain_text(
             "Changes this node's kind and fields; its children stay."
         )
+        expect(form.get_by_label("k — how many must pass")).to_be_visible()
         buttons = form.locator("button").all_inner_texts()
-        assert [b.strip() for b in buttons] == ["Unwrap", "Cancel", "Apply"], buttons
+        assert [b.strip() for b in buttons] == ["Cancel", "Apply"], buttons
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
         _shot(page, tmp_path, "form-row-edit-root")
@@ -2151,3 +2156,78 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
             "button", name=re.compile(r"^Discard")
         ).click()
         expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+
+
+# -- a combinator's kind is a dropdown in its row (Q3 A) --------------------
+
+#: The kinds every combinator's dropdown lists, in the registry's order.
+KINDS = ["and", "or", "k-of-n", "warn", "weighted"]
+UNWRAP = "unwrap — its children take its place"
+
+
+def _nested_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` with A's tree one level deeper: `and[k-of-n(k=1)[tube
+    · x, range · x], range · y]` — a root of two, whose dropdown offers no
+    unwrap, over a k-of-n of two, whose dropdown does."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            tube, range_x, range_y = entry["metrics"]["children"]
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {"combinator": "k-of-n", "k": 1, "children": [tube, range_x]},
+                    range_y,
+                ],
+            }
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
+    tmp_path, playwright_browser
+):
+    """The kind is a dropdown between a combinator row's pill and its count.
+    A real click opens it: on the k-of-n, the five kinds, a separator and
+    the unwrap entry; on the root of two, the five kinds alone (unwrap is
+    refused there by rule). A refused `warn` says why under the row and the
+    dropdown reads the node's kind again."""
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
+        rows = page.locator(".dstf-tree-row")
+        expect(rows).to_have_count(5, timeout=EXPECT_TIMEOUT)
+        root, k_of_n = rows.nth(0), rows.nth(1)
+        expect(root).to_contain_text("3 criteria", timeout=EXPECT_TIMEOUT)
+        expect(k_of_n).to_contain_text("k=1 · 2 criteria")
+        # Between the pill and the count, on the row's one line.
+        pill = k_of_n.locator(".dstf-pill").first.bounding_box()
+        kind_box = k_of_n.get_by_label("Combinator kind").bounding_box()
+        text = k_of_n.get_by_text("k=1 · 2 criteria").bounding_box()
+        assert pill is not None and kind_box is not None and text is not None
+        assert pill["x"] + pill["width"] <= kind_box["x"] + 1, (pill, kind_box)
+        assert kind_box["x"] + kind_box["width"] <= text["x"] + 1, (kind_box, text)
+
+        k_of_n.get_by_label("Combinator kind").click()
+        options = page.get_by_role("option")
+        expect(options).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        assert [o.strip() for o in options.all_inner_texts()] == [*KINDS, UNWRAP]
+        assert page.locator(".q-menu .q-separator").count() == 1
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "kind-open")
+        page.keyboard.press("Escape")
+        expect(options).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+        root.get_by_label("Combinator kind").click()
+        expect(options).to_have_count(5, timeout=EXPECT_TIMEOUT)
+        assert [o.strip() for o in options.all_inner_texts()] == KINDS
+        assert page.locator(".q-menu .q-separator").count() == 0
+        page.get_by_role("option", name="warn").click()
+        expect(page.locator(".dstf-tree .text-negative").first).to_have_text(
+            "'warn' combinator requires exactly 1 child, got 2",
+            timeout=EXPECT_TIMEOUT,
+        )
+        expect(root.get_by_label("Combinator kind")).to_contain_text("and")
+        expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")

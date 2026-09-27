@@ -202,6 +202,14 @@ class Panel(Protocol):
         editor — raises."""
         ...
 
+    def lead(self, build: Callable[[], None]) -> None:
+        """Draw ``build()`` in the node's lead place — beside its status,
+        where its kind is read (a combinator's kind dropdown). The place is
+        emptied first, and with the panel; while it holds something the
+        row's text leaves the kind out. A placement without one raises
+        (like ``row``)."""
+        ...
+
     def reveal(self, leaf_path: str) -> None:
         """Show that criterion's editor once the page has drawn it — after
         an add, the new criterion. A no-op where no page reveals criteria:

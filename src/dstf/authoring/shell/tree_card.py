@@ -20,7 +20,7 @@ from nicegui import ui
 
 from ..capabilities import Placement
 from ..session import Selection
-from ..tree_text import leaf_name, leaves_of, node_text, nodes_of
+from ..tree_text import count_text, leaf_name, leaves_of, node_text, nodes_of
 from .actions import InlineHost, RowTarget
 from .widgets import Pill
 
@@ -118,12 +118,22 @@ def summary_text(view: dict) -> tuple[str, list[dict], int]:
 class _Row:
     """One node's row, and what a repaint writes into it."""
 
-    def __init__(self, pill: Pill, text: ui.label, readout: ui.label | None) -> None:
-        self.pill, self.text, self.readout = pill, text, readout
+    def __init__(
+        self,
+        pill: Pill,
+        text: ui.label,
+        readout: ui.label | None,
+        lead: ui.element | None = None,
+    ) -> None:
+        self.pill, self.text, self.readout, self.lead = pill, text, readout, lead
 
     def paint(self, node: dict) -> None:
         self.pill.set(node_status(node))
-        self.text.set_text(node_text(node))
+        # A lead holding the kind (a combinator's dropdown) leaves the text
+        # the count; an empty one — a host that cannot draw, under a job's
+        # lock — leaves the kind in the text, so it never disappears.
+        led = self.lead is not None and bool(self.lead.default_slot.children)
+        self.text.set_text(count_text(node) if led else node_text(node))
         if self.readout is not None:
             self.readout.set_text(leaf_readout(node))
 
@@ -192,12 +202,14 @@ class TreeCard:
             self._shape = shape
             self._build_rows(view)
             return
-        for node in nodes_of(view):
-            self.painters[str(node.get("path"))].paint(node)
         for host in self.hosts:
             # The rows stand; what a node's controls MAY do does not (a
-            # job's lock comes and goes without the shape moving).
+            # job's lock comes and goes without the shape moving). Before
+            # the paint: a host rebuilt under a lock empties its row's
+            # lead, and the paint then reads the kind into the text.
             host.follow()
+        for node in nodes_of(view):
+            self.painters[str(node.get("path"))].paint(node)
 
     # -- the closed line -----------------------------------------------------------
 
@@ -265,12 +277,22 @@ class TreeCard:
         row = ui.row().classes("dstf-tree-row items-center no-wrap gap-3 w-full")
         with row.style(f"padding-left: {16 * depth}px").mark(f"tree-row:{path}"):
             pill = Pill(node_status(node), f"tree-pill:{path}")
-            text = ui.label(node_text(node)).classes("text-body2")
+            # A combinator's lead place, right after its pill: where its
+            # kind is read (`Panel.lead`) — a leaf has none.
+            lead: ui.element | None = None
+            if node.get("kind") != "leaf":
+                lead = ui.element("span").classes("dstf-node-lead")
+            text = (
+                ui.label(node_text(node))
+                .classes("text-body2")
+                .mark(f"tree-text:{path}")
+            )
             readout: ui.label | None = None
             if node.get("kind") == "leaf":
                 readout = ui.label(leaf_readout(node)).classes("dstf-mono text-xs")
             ui.space()
             target = RowTarget(self.page, f"tree:{path}", row, path)
+            target.lead = lead
             host = InlineHost(
                 self.page.shell,
                 Placement.NODE,
@@ -288,6 +310,9 @@ class TreeCard:
         target.slot = ui.column().classes("w-full gap-0")
         host.build()
         self.hosts.append(host)
-        self.painters[path] = _Row(pill, text, readout)
+        self.painters[path] = _Row(pill, text, readout, lead)
+        # Once the host has drawn: whether its lead holds the kind decides
+        # the text.
+        self.painters[path].paint(node)
         for child in node.get("children") or []:
             self._row(child, depth + 1)

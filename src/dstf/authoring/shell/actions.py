@@ -76,9 +76,10 @@ class ShellPanel:
         figure: FigureHookProtocol,
         row: Callable[[str, RowBuild], None] | None = None,
         reveal: Callable[[str], None] | None = None,
+        lead: ui.element | None = None,
     ) -> None:
         self._submit, self.figure = submit, figure
-        self._row, self._reveal = row, reveal
+        self._row, self._reveal, self._lead = row, reveal, lead
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -89,6 +90,14 @@ class ShellPanel:
         if self._row is None:
             raise RuntimeError("no row at this placement")
         self._row(title, build)
+
+    def lead(self, build: Callable[[], None]) -> None:
+        # Loud, like `row`: a placement with no lead place asked for one.
+        if self._lead is None:
+            raise RuntimeError("no lead place at this placement")
+        self._lead.clear()
+        with self._lead:
+            build()
 
     def reveal(self, leaf_path: str) -> None:
         # Quiet where there is no page (a dialog): the contract's no-op.
@@ -112,6 +121,10 @@ class RowTarget:
         #: host. The page calls it when a form row opens or closes under
         #: THIS row, and for no other row's.
         self.hush: Callable[[], None] = lambda: None
+        #: The row's lead place, beside its status, where a panel draws
+        #: what the node's kind is read from (`Panel.lead`); None in a row
+        #: that has none (a criteria row). Emptied with the host.
+        self.lead: ui.element | None = None
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -387,6 +400,10 @@ class InlineHost:
             for label in self.errors.values():
                 if not label.is_deleted:
                     label.delete()
+            # And what its panels drew in the row's lead place: a host
+            # rebuilt to its why-line leaves the kind to the row's text.
+            if self.row.lead is not None and not self.row.lead.is_deleted:
+                self.row.lead.clear()
         self.column.clear()
         self.errors, self.cells, self.answers = {}, {}, {}
 
@@ -478,6 +495,7 @@ class InlineHost:
                         figure,
                         row=None if self.row is None else self.row.open,
                         reveal=None if self.row is None else self.row.page.reveal,
+                        lead=None if self.row is None else self.row.lead,
                     ),
                 )
             except Exception as e:  # shown in the slot, never breaks the page

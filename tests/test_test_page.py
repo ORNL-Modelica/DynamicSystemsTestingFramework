@@ -835,10 +835,11 @@ async def test_a_repainted_row_says_the_new_readout_the_new_text_and_the_new_k(s
         await _settled(lambda: "tolerance 5.000e-01" in readout.text)
         assert _one(user, f"tree-row:{leaf}") is row  # painted, not rebuilt
         text = page.tree.painters[combinator].text
-        assert text.text == "k-of-n · 2 criteria · k=1"
+        # The kind is the dropdown beside it; the text is the count.
+        assert text.text == "k=1 · 2 criteria"
         krow = _one(user, f"tree-row:{combinator}")
         shell.session.stage([PatchOp(A, "replace", f"{combinator}/k", 2)])
-        await _settled(lambda: text.text == "k-of-n · 2 criteria · k=2")
+        await _settled(lambda: text.text == "k=2 · 2 criteria")
         assert _one(user, f"tree-row:{combinator}") is krow
 
 
@@ -5433,3 +5434,159 @@ async def test_plus_on_a_criterion_adds_right_after_it_and_opens_its_editor(
         await _settled(lambda: page.open == (0, "/metrics/children/1"))
         editor = _one(user, "editor:0:/metrics/children/1")
         assert any("dstf-editor" in e.classes for e in [editor, *_ancestors(editor)])
+
+
+# -- a combinator's kind is a dropdown in its row (Q3 A) --------------------
+
+
+async def _open_tree(user):
+    user.find(marker="tree:toggle").click()
+    await _settled(lambda: not _none(user, "tree-row:/metrics"))
+
+
+async def test_the_root_rows_kind_is_a_dropdown_and_its_text_the_count(page_shell):
+    """A's root `and` of three: the kind is a dropdown between the pill and
+    the count; unwrap is not offered (a root of several has no parent to
+    take its children); `or` stages the kind and nothing else."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        kind = _one(user, "kind:/metrics")
+        assert kind.value == "and"
+        assert kind.props.get("aria-label") == "Combinator kind"
+        row = _one(user, "tree-row:/metrics")
+        lead = kind.parent_slot.parent
+        assert "dstf-node-lead" in lead.classes and lead.parent_slot.parent is row
+        children = list(row.default_slot.children)
+        assert children.index(lead) == 1  # right after the pill
+        assert _one(user, "tree-text:/metrics").text == "3 criteria"
+        assert list(kind.options) == ["and", "or", "k-of-n", "warn", "weighted"]
+        assert _none(user, "edit:/metrics")  # an `and` has no fields
+        kind.set_value("or")
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        (op,) = shell.session.spec.pending
+        assert (op.op, op.path, op.value) == ("replace", "/metrics/combinator", "or")
+        await _settled(lambda: _one(user, "kind:/metrics").value == "or")
+        assert _one(user, "tree-text:/metrics").text == "3 criteria"
+
+
+async def test_choosing_k_of_n_opens_the_form_and_stages_nothing_until_apply(
+    page_shell,
+):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        _one(user, "kind:/metrics").set_value("k-of-n")
+        await _settled(lambda: not _none(user, "form-title:tree:/metrics"))
+        assert _one(user, "form-title:tree:/metrics").text == "Edit this combinator"
+        assert shell.session.spec.pending == []
+        form = _one(user, "form-row:tree:/metrics")
+        labels = {
+            e.props.get("label")
+            for e in user.find(kind=ui.number).elements
+            if form in list(_ancestors(e))
+        }
+        assert labels == {"k — how many must pass"}
+        assert "Combinator" not in {
+            e.props.get("label") for e in user.find(kind=ui.select).elements
+        }
+        assert _one(user, "kind:/metrics").value == "and"  # nothing staged
+        user.find(marker="apply-edit:/metrics").click()
+        await _settled(lambda: len(shell.session.spec.pending) == 2)
+        assert shell.session.tree(A)["combinator"] == "k-of-n"
+        assert shell.session.tree(A)["k"] == 1
+
+
+async def test_warn_on_a_three_child_root_is_refused_in_the_row(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        kind = _one(user, "kind:/metrics")
+        kind.set_value("warn")
+        await _settled(lambda: not _none(user, "error:edit-tree"))
+        errors = [
+            e.text
+            for e in user.find(marker="error:edit-tree").elements
+            if e.visible and _one(user, "tree:rows") in list(_ancestors(e))
+        ]
+        assert errors == ["'warn' combinator requires exactly 1 child, got 3"]
+        assert shell.session.spec.pending == []
+        assert kind.value == "and"
+
+
+async def test_unwrap_from_the_dropdown_puts_the_child_in_its_place(page_shell):
+    shell = page_shell
+    _stage_tree(shell, A, {"combinator": "and", "children": [_range(-1)]})
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        kind = _one(user, "kind:/metrics")
+        assert kind.options["unwrap…"] == "unwrap — its children take its place"
+        kind.set_value("unwrap…")
+        await _settled(lambda: "combinator" not in shell.session.tree(A))
+        assert shell.session.tree(A)["metric"] == "range"
+
+
+async def test_a_k_of_n_node_keeps_its_edit_icon_with_no_kind_select(page_shell):
+    shell = page_shell
+    _stage_tree(
+        shell, A, {"combinator": "k-of-n", "k": 1, "children": [_range(-1), _range(5)]}
+    )
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        assert _one(user, "tree-text:/metrics").text == "k=1 · 2 criteria"
+        await _open_form(user, "edit:/metrics", within="node:/metrics")
+        assert "Combinator" not in {
+            e.props.get("label") for e in user.find(kind=ui.select).elements
+        }
+        assert _none(user, "unwrap-in-edit:/metrics")
+
+
+async def test_the_weighted_forms_threshold_hint_follows_direction(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        await _open_tree(user)
+        _one(user, "kind:/metrics").set_value("weighted")
+        await _settled(lambda: not _none(user, "threshold-hint"))
+        assert _one(user, "threshold-hint").text == (
+            "Passes when Σ weight × score over the children is below the "
+            "threshold (lower is better)."
+        )
+        (direction,) = [
+            e
+            for e in user.find(kind=ui.select).elements
+            if e.props.get("label") == "Direction"
+        ]
+        with page.client:
+            direction.set_value("greater")
+        await _settled(lambda: "above" in _one(user, "threshold-hint").text)
+        assert _one(user, "threshold-hint").text == (
+            "Passes when Σ weight × score over the children is above the "
+            "threshold (higher is better)."
+        )
+
+
+async def test_a_locked_test_reads_its_kind_in_the_row_text(page_shell):
+    """A host that cannot draw (Edit tree under a job's lock) leaves the
+    lead empty, and the row reads the kind: it never disappears."""
+    shell = page_shell
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        assert _one(user, "tree-text:/metrics").text == "3 criteria"
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({A}), reloads_results=False)
+        )
+        await _settled(
+            lambda: _one(user, "tree-text:/metrics").text == "and · 3 criteria"
+        )
+        assert _none(user, "kind:/metrics")
+        gate.release.set()
+        await _settled(lambda: _one(user, "tree-text:/metrics").text == "3 criteria")
+        assert not _none(user, "kind:/metrics")

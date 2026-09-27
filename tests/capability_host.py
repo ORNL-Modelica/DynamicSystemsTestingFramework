@@ -32,8 +32,10 @@ class RecordingFigure:
 class HostPanel:
     """`Panel` for the host: ``row`` draws the form inline, in a column of
     its own below the panel (marked ``host-row``, its title
-    ``host-row:title``), and ``close`` empties it; ``reveal`` records the
-    path in ``reveals`` — there is no page to open it on."""
+    ``host-row:title``), and ``close`` empties it; ``lead`` draws into a
+    span of its own above the panel (marked ``host-lead``), emptied first;
+    ``reveal`` records the path in ``reveals`` — there is no page to open
+    it on."""
 
     def __init__(
         self,
@@ -46,6 +48,7 @@ class HostPanel:
         self.reveals = reveals if reveals is not None else []
         #: Set by `host` once the panel is drawn, so the row sits below it.
         self.slot: ui.column | None = None
+        self.lead_slot: ui.element | None = None
         self.closed = 0
 
     def submit(self, **inputs: Any) -> bool:
@@ -63,6 +66,13 @@ class HostPanel:
         with slot:
             ui.label(title).mark("host-row:title")
             build(close)
+
+    def lead(self, build: Callable[[], None]) -> None:
+        if self.lead_slot is None:
+            self.lead_slot = ui.element("span").mark("host-lead")
+        self.lead_slot.clear()
+        with self.lead_slot:
+            build()
 
     def reveal(self, leaf_path: str) -> None:
         self.reveals.append(leaf_path)

@@ -42,6 +42,19 @@ def node_text(node: dict) -> str:
     return text
 
 
+def count_text(node: dict) -> str:
+    """A combinator's row text while its kind is read from the dropdown
+    beside it: `node_text` without the kind — ``3 criteria``,
+    ``k=2 · 3 criteria``, ``threshold 0.5 · 3 criteria``."""
+    n = len(leaves_of(node))
+    parts = [f"{n} {'criterion' if n == 1 else 'criteria'}"]
+    if node.get("combinator") == "k-of-n" and node.get("k") is not None:
+        parts.insert(0, f"k={node['k']}")
+    if node.get("combinator") == "weighted" and node.get("threshold") is not None:
+        parts.insert(0, f"threshold {node['threshold']:g}")
+    return " · ".join(parts)
+
+
 def parent_kinds(view: dict | None) -> dict[str, str | None]:
     """Each node's path -> its parent's combinator (None for the root):
     what a leaf's `+` reads, since the parent takes the child it adds."""

@@ -416,6 +416,17 @@ def _none(user, marker: str) -> bool:
     return False
 
 
+def _inside_lead(user, marker: str) -> bool:
+    """Whether ``marker`` is drawn in the host's lead place (`Panel.lead`)."""
+    element = _one(user, marker)
+    lead = _one(user, "host-lead")
+    while element.parent_slot is not None:
+        element = element.parent_slot.parent
+        if element is lead:
+            return True
+    return False
+
+
 def _tips(element) -> list[str]:
     return [e.text for e in element.descendants() if isinstance(e, ui.tooltip)]
 
@@ -719,11 +730,20 @@ async def test_a_cluster_builds_a_form_only_when_its_icon_is_clicked(session):
         assert len(user.find(marker=f"apply-add:{leaf}").elements) == 1
 
 
-async def test_the_root_has_no_remove_and_a_combinator_has_edit(session):
+async def test_the_root_has_no_remove_and_a_combinator_has_its_kind(session):
+    """Q3 A: an `and` has no fields, so its kind dropdown is its one control
+    of that — no Edit icon; a k-of-n keeps the Edit icon for its k."""
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     async with host(session, EditTree(), _node(D, ROOT)) as (user, _errors, _figure):
-        await user.should_see(marker=f"edit:{ROOT}")
+        await user.should_see(marker=f"kind:{ROOT}")
+        assert _inside_lead(user, f"kind:{ROOT}")
+        await user.should_not_see(marker=f"edit:{ROOT}")
         await user.should_not_see(marker=f"remove:{ROOT}")
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
+        await user.should_see(marker=f"edit:{k_of_n}")
+        assert _one(user, f"kind:{k_of_n}").value == "k-of-n"
 
 
 async def test_remove_stages_at_once(session):
@@ -738,50 +758,74 @@ async def test_remove_stages_at_once(session):
         await _settled(lambda: len(session.tree(D)["children"]) == n - 1)
 
 
-async def test_unwrap_lives_inside_edit(session):
-    """Board 1C: no unwrap icon of its own (it was drawn on a one-child
-    combinator only); Unwrap is a button of the Edit row, and on the k-of-n
-    of two it is enabled — its children take its place in its parent."""
+async def test_unwrap_lives_in_the_kind_dropdown(session):
+    """Q3 A: no unwrap icon and no Unwrap in the Edit row; it is the kind
+    dropdown's last entry, and on the k-of-n of two its children take its
+    place in its parent."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
-    async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _figure):
-        await user.should_see(marker=f"edit:{k_of_n}")
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
         await user.should_not_see(marker=f"unwrap:{k_of_n}")
         user.find(marker=f"edit:{k_of_n}").click()
-        (unwrap,) = user.find(marker=f"unwrap-in-edit:{k_of_n}").elements
-        assert unwrap.enabled
+        await user.should_see(marker=f"apply-edit:{k_of_n}")
+        assert _none(user, f"unwrap-in-edit:{k_of_n}")
+        kind = _one(user, f"kind:{k_of_n}")
+        assert kind.options == {
+            "and": "and",
+            "or": "or",
+            "k-of-n": "k-of-n",
+            "warn": "warn",
+            "weighted": "weighted",
+            "unwrap…": "unwrap — its children take its place",
+        }
+        kind.set_value("unwrap…")
+        await _settled(lambda: len(session.tree(D)["children"]) == 4)
+        assert errors == {}
 
 
-async def test_unwrap_in_edit_stages_and_closes_the_row(session):
-    """Unwrap is the Edit row's button now, not an icon that acted at once;
-    it stages the unwrap and the row goes."""
+async def test_unwrap_from_the_dropdown_stages_at_once(session):
+    """A warn has no Edit icon (no fields); its dropdown's unwrap stages the
+    unwrap at once, the child kept."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     warn = "/metrics/children/2"
     async with host(session, EditTree(), _node(D, warn)) as (user, errors, _figure):
-        user.find(marker=f"edit:{warn}").click()
-        user.find(marker=f"unwrap-in-edit:{warn}").click()
+        await user.should_not_see(marker=f"edit:{warn}")
+        _one(user, f"kind:{warn}").set_value("unwrap…")
         await _settled(lambda: "combinator" not in session.tree(D)["children"][2])
         assert session.tree(D)["children"][2]["max_value"] == 5.0  # the child kept
         assert errors == {}
-        await _settled(lambda: _none(user, f"unwrap-in-edit:{warn}"))
 
 
 async def test_the_edit_form_is_prefilled_and_stages_an_edit(session):
-    """`tune` opens the form on THAT node's kind and fields; applying it
-    stages an edit — a wrap would have nested the node under a new one."""
+    """`tune` opens the form on THAT node's fields, with no kind select (the
+    dropdown is where the kind changes); applying it stages an edit — a
+    wrap would have nested the node under a new one."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
         user.find(marker=f"edit:{k_of_n}").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
-        (kind,) = _labelled(user, ui.select, "Combinator")
+        assert _labelled(user, ui.select, "Combinator") == []
         (k,) = _labelled(user, ui.number, K)
-        assert (kind.value, k.value) == ("k-of-n", 2)
-        kind.set_value("or")
+        assert k.value == 2
+        await user.should_see("Changes this node's fields; its children stay.")
+        k.set_value(1)
         user.find(marker=f"apply-edit:{k_of_n}").click()
+        await _settled(lambda: session.tree(D)["children"][1]["k"] == 1)
+        node = session.tree(D)["children"][1]
+        assert node["combinator"] == "k-of-n" and len(node["children"]) == 2
+        assert errors == {}
+    # The kind changes in the dropdown: to `or`, k goes with it.
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
+        staged = len(session.spec.pending)
+        _one(user, f"kind:{k_of_n}").set_value("or")
         await _settled(lambda: session.tree(D)["children"][1]["combinator"] == "or")
         node = session.tree(D)["children"][1]
         assert "k" not in node and len(node["children"]) == 2  # edited, not wrapped
+        assert [(op.op, op.path) for op in session.spec.pending[staged:]] == [
+            ("replace", f"{k_of_n}/combinator"),
+            ("remove", f"{k_of_n}/k"),
+        ]
         assert errors == {}
 
 
@@ -1177,7 +1221,7 @@ async def test_a_wrapped_combinator_reads_as_a_node(session):
         )
 
 
-async def test_edit_carries_unwrap_and_the_nodes_direction(session):
+async def test_edit_carries_the_nodes_direction(session):
     weighted = {
         "combinator": "weighted",
         "weights": [1.0, 1.0],
@@ -1194,7 +1238,7 @@ async def test_edit_carries_unwrap_and_the_nodes_direction(session):
     node = "/metrics/children/0"
     async with host(session, EditTree(), _node(D, node)) as (user, errors, _f):
         user.find(marker=f"edit:{node}").click()
-        await user.should_see(marker=f"unwrap-in-edit:{node}")
+        await user.should_see(marker=f"apply-edit:{node}")
         assert _one(user, "host-row:title").text == "Edit this combinator"
         (direction,) = _labelled(user, ui.select, "Direction")
         # Pinned, and chosen BY LABEL below: a test that set the value
@@ -1204,7 +1248,7 @@ async def test_edit_carries_unwrap_and_the_nodes_direction(session):
             "greater": "higher is better",
         }
         assert direction.options[direction.value] == "higher is better"
-        await user.should_see("Changes this node's kind and fields; its children stay.")
+        await user.should_see("Changes this node's fields; its children stay.")
         direction.set_value(_by_label(direction, "lower is better"))
         staged = len(session.spec.pending)
         user.find(marker=f"apply-edit:{node}").click()
@@ -1217,18 +1261,15 @@ async def test_edit_carries_unwrap_and_the_nodes_direction(session):
         assert errors == {}
 
 
-async def test_the_edit_rows_buttons_read_unwrap_cancel_apply(session):
+async def test_the_edit_rows_buttons_read_cancel_apply(session):
+    """Unwrap has moved into the kind dropdown."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
         user.find(marker=f"edit:{k_of_n}").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         row = _one(user, f"apply-edit:{k_of_n}").parent_slot.parent
-        assert [b.text for b in row.default_slot.children] == [
-            "Unwrap",
-            "Cancel",
-            "Apply",
-        ]
+        assert [b.text for b in row.default_slot.children] == ["Cancel", "Apply"]
 
 
 def test_unwrap_of_several_children_moves_them_into_the_parent(session):
@@ -1253,14 +1294,25 @@ def test_unwrap_of_several_children_moves_them_into_the_parent(session):
     assert session.tree(D) == {"combinator": "and", "children": [a, b, c]}
 
 
-async def test_unwrap_is_disabled_on_a_root_with_several_children(session):
+async def test_unwrap_is_not_offered_on_a_root_with_several_children(session):
+    """`act` refuses it by rule ("the root has no parent to take its
+    children"), and an option cannot carry a why-tooltip: the dropdown of a
+    root of several has no unwrap entry. A root of one keeps it."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     async with host(session, EditTree(), _node(D, ROOT)) as (user, _errors, _f):
-        user.find(marker=f"edit:{ROOT}").click()
-        await user.should_see(marker=f"unwrap-in-edit:{ROOT}")
-        button = _one(user, f"unwrap-in-edit:{ROOT}")
-        assert not button.enabled
-        assert _tips(button) == ["the root has no parent to take its children"]
+        assert list(_one(user, f"kind:{ROOT}").options) == [
+            "and",
+            "or",
+            "k-of-n",
+            "warn",
+            "weighted",
+        ]
+    one = {"combinator": "and", "children": [{"metric": "nrmse", "variable": "x"}]}
+    session.stage([PatchOp(D, "add", ROOT, one)])
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, errors, _f):
+        _one(user, f"kind:{ROOT}").set_value("unwrap…")
+        await _settled(lambda: "combinator" not in session.tree(D))
+        assert errors == {}
 
 
 async def test_plus_is_grey_under_warn_and_weighted(session):
@@ -1387,10 +1439,12 @@ async def test_edit_to_weighted_waits_for_a_threshold_too(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
-        user.find(marker=f"edit:{k_of_n}").click()
-        (kind,) = _labelled(user, ui.select, "Combinator")
-        kind.set_value("weighted")
+        # The dropdown opens the Edit form preset to weighted.
+        staged = len(session.spec.pending)
+        _one(user, f"kind:{k_of_n}").set_value("weighted")
         await _settled(lambda: "Threshold" in _labels_shown(user))
+        assert len(session.spec.pending) == staged  # nothing until Apply
+        await user.should_see("Changes this node's kind and fields; its children stay.")
         (threshold,) = _labelled(user, ui.number, "Threshold")
         (weights,) = _labelled(user, ui.input, "Weights, one per child")
         assert (threshold.value, weights.value) == (None, "1, 1")
@@ -1910,9 +1964,7 @@ async def test_a_refused_form_keeps_its_row_and_what_was_typed(session):
         await _settled(lambda: _none(user, "host-row:title"))
         assert "combinator" in session.tree(D)["children"][0]
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
-        user.find(marker=f"edit:{k_of_n}").click()
-        (kind,) = _labelled(user, ui.select, "Combinator")
-        kind.set_value("weighted")
+        _one(user, f"kind:{k_of_n}").set_value("weighted")
         await _settled(lambda: "Threshold" in _labels_shown(user))
         (weights,) = _labelled(user, ui.input, "Weights, one per child")
         (threshold,) = _labelled(user, ui.number, "Threshold")
@@ -1962,8 +2014,8 @@ async def test_a_refused_add_keeps_its_row_and_what_was_chosen(session):
 async def test_a_refused_unwrap_keeps_the_edit_row(session):
     """Unwrap of a `k-of-n` of two under a `warn`: its two children would
     take its place, and a `warn` takes one, so the validator refuses it.
-    The Edit row stays open with what was typed in it; an Unwrap that
-    closed the row before it submitted took both."""
+    An Edit row open under the node stays, with what was typed in it, and
+    the dropdown goes back to the node's kind."""
     tree = {
         "combinator": "and",
         "children": [
@@ -1975,15 +2027,16 @@ async def test_a_refused_unwrap_keeps_the_edit_row(session):
     k_of_n = "/metrics/children/1/children/0"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
         user.find(marker=f"edit:{k_of_n}").click()
-        await user.should_see(marker=f"unwrap-in-edit:{k_of_n}")
+        await user.should_see(marker=f"apply-edit:{k_of_n}")
         (k,) = _labelled(user, ui.number, K)
         k.set_value(1)
         staged = len(session.spec.pending)
-        user.find(marker=f"unwrap-in-edit:{k_of_n}").click()
+        kind = _one(user, f"kind:{k_of_n}")
+        kind.set_value("unwrap…")
         await _settled(lambda: "edit-tree" in errors)
         assert "'warn' combinator requires exactly 1 child" in errors["edit-tree"]
         assert not _none(user, "host-row:title")
-        assert not _none(user, f"unwrap-in-edit:{k_of_n}")
+        assert kind.value == "k-of-n"
         assert k.value == 1
         assert len(session.spec.pending) == staged
         assert session.tree(D)["children"][1]["children"][0]["combinator"] == "k-of-n"
@@ -2065,3 +2118,86 @@ async def test_the_plus_tooltip_and_title_say_where_the_criterion_lands(session)
         assert _one(user, "host-row:title").text == (
             "Add a criterion at the end of and · 3 criteria"
         )
+
+
+# -- a combinator's kind is a dropdown in its row (Q3 A) --------------------
+
+
+async def test_and_to_or_in_the_dropdown_stages_the_kind_alone(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(THREE))])
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, errors, _f):
+        kind = _one(user, f"kind:{ROOT}")
+        assert kind.props.get("aria-label") == "Combinator kind"
+        staged = len(session.spec.pending)
+        kind.set_value("or")
+        await _settled(lambda: session.tree(D)["combinator"] == "or")
+        ops = session.spec.pending[staged:]
+        assert [(op.op, op.path, op.value) for op in ops] == [
+            ("replace", "/metrics/combinator", "or")
+        ]
+        assert errors == {}
+
+
+async def test_choosing_k_of_n_opens_the_edit_form_and_stages_nothing_until_apply(
+    session,
+):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(THREE))])
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, errors, _f):
+        kind = _one(user, f"kind:{ROOT}")
+        staged = len(session.spec.pending)
+        kind.set_value("k-of-n")
+        await user.should_see(marker=f"apply-edit:{ROOT}")
+        assert _one(user, "host-row:title").text == "Edit this combinator"
+        assert _labels_shown(user) & FIELDS == {K}
+        assert _labelled(user, ui.select, "Combinator") == []
+        assert len(session.spec.pending) == staged
+        assert kind.value == "and"  # the node's kind until Apply
+        user.find(marker=f"apply-edit:{ROOT}").click()
+        await _settled(lambda: session.tree(D)["combinator"] == "k-of-n")
+        assert session.tree(D)["k"] == 1
+        assert errors == {}
+
+
+async def test_warn_on_a_root_of_three_is_refused_and_the_select_goes_back(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(THREE))])
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, errors, _f):
+        kind = _one(user, f"kind:{ROOT}")
+        staged = len(session.spec.pending)
+        kind.set_value("warn")
+        await _settled(lambda: "edit-tree" in errors)
+        assert "'warn' combinator requires exactly 1 child" in errors["edit-tree"]
+        assert kind.value == "and"
+        assert len(session.spec.pending) == staged
+
+
+async def test_the_weighted_threshold_hint_follows_direction(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
+        _one(user, f"kind:{k_of_n}").set_value("weighted")
+        await _settled(lambda: not _none(user, "threshold-hint"))
+        assert _one(user, "threshold-hint").text == (
+            "Passes when Σ weight × score over the children is below the "
+            "threshold (lower is better)."
+        )
+        (direction,) = _labelled(user, ui.select, "Direction")
+        direction.set_value(_by_label(direction, "higher is better"))
+        await _settled(lambda: "above" in _one(user, "threshold-hint").text)
+        assert _one(user, "threshold-hint").text == (
+            "Passes when Σ weight × score over the children is above the "
+            "threshold (higher is better)."
+        )
+
+
+def test_a_combinators_count_text_is_its_node_text_without_the_kind():
+    from dstf.authoring.tree_text import count_text, node_text
+
+    leaf = {"kind": "leaf", "metric": "nrmse", "variable": "x"}
+    node = {"kind": "combinator", "combinator": "and", "children": [leaf] * 3}
+    assert (node_text(node), count_text(node)) == ("and · 3 criteria", "3 criteria")
+    k = {**node, "combinator": "k-of-n", "k": 2}
+    assert count_text(k) == "k=2 · 3 criteria"
+    w = {**node, "combinator": "weighted", "threshold": 0.5}
+    assert count_text(w) == "threshold 0.5 · 3 criteria"
+    one = {**node, "children": [leaf]}
+    assert count_text(one) == "1 criterion"
