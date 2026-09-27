@@ -5044,7 +5044,8 @@ and checkboxes, rebuilt from Python on a layout toggle.
    emulated: a full-width row per package, an external filter (which also
    hides collapsed and, flat, every group row) and `postSortRows` (each
    package's rows under its header, in the sort's order). Enter or Space on
-   a focused group row collapses it too. `ui.table` (Quasar) was rejected: it
+   a focused group row collapses it too; Enter on a focused Test cell opens
+   the test's page, as its link does. `ui.table` (Quasar) was rejected: it
    worked only through four NiceGUI private APIs, gave screen readers no grid
    and sorted by mouse only.
 2. *The browser filters, sorts and groups; Python sends rows.* The toolbar's
@@ -5072,8 +5073,13 @@ and checkboxes, rebuilt from Python on a layout toggle.
    Accept path's N + 2 events are one transaction, not 333.
 4. *Where the state lives.* The view — pills, filters, `.*` / `Aa`,
    grouping, names, sort, columns, closed groups — is the viewer's, in
-   `localStorage` under `dstf-suite-v1:<work dir>` (per project; two tabs on
-   one project share it; a storage that refuses leaves the table working).
+   `localStorage` under `dstf-suite-v1:<config file>` (per project; two tabs
+   on one project share it; a storage that refuses leaves the table
+   working). The resolved config path, because it is known before the open
+   and the same after it: keyed by the work dir, the key before an open
+   without `--work-dir` was the config path and after it the derived work
+   dir. `dstf author` needs `--config`, so there always is one; a reopen on
+   another backend keeps the view.
    The selection is the tab's (D129): sent to Python on `selectionChanged`,
    selected again when a grid is ready, and carried with rows added later.
    `TabState` keeps only the selection and the Test page's drawer state.
@@ -5088,11 +5094,16 @@ and checkboxes, rebuilt from Python on a layout toggle.
 6. *A tool Rerun ends on a scored dashboard.* A `Job` may carry
    `after_reload`, called once the Session has reloaded and rescored; Rerun's
    renders `dashboard.html` with the Session's verdicts (the run's own
-   `finally` render stays, for a run that fails before the reload). The
-   Session renders nothing itself: a plug-in's job writes no file.
+   `finally` render stays, for a run that fails before the reload). A
+   plug-in's job writes no file. The Session renders one only after a Save
+   or a Discard, and only where a run left `dashboard.html`: a rerun under
+   unsaved edits wrote their verdicts into it, and once the edits are saved
+   or gone the file must not keep them.
 
 **Consequences.** The row model's labels: the model column reads "Test" and
-the work-dir key column "Key" on both surfaces (keys unchanged). A capability
+the work-dir key column "Key" on both surfaces (keys unchanged). The tool
+offers no Key, Worker or Elapsed column, not even in its chooser: they are
+a live run's and always "—" there. A capability
 may declare an `icon`; a bar that draws icons draws it, and the shell still
 names no capability. `TestList` is the Tests drawer's alone. Nothing in the
 pre-release seams moves. Not measured here: TRANSFORM's time to first row

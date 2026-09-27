@@ -265,11 +265,23 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
     assert spec_file.read_bytes() == before  # nothing was saved
 
 
-def _served(tmp_path, playwright_browser, *, hooks: bool = False, width: int = 1280):
+def _served(
+    tmp_path,
+    playwright_browser,
+    *,
+    hooks: bool = False,
+    width: int = 1280,
+    setup=None,
+    init_script: str | None = None,
+):
     """`dstf author` over the two-package FakeLib and a page on its Suite
-    table, drawn: (proc, url, page, context, errors, work). The caller
-    stops the process — this does when the table never draws."""
+    table, drawn: (proc, url, page, context, errors, cfg). ``setup(cfg)``
+    runs before the server starts, ``init_script`` in the page before its
+    own scripts. The caller stops the process — this does when the table
+    never draws."""
     cfg, work = _two_package_project(tmp_path)
+    if setup is not None:
+        setup(cfg)
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log, hooks=hooks)
     try:
@@ -278,6 +290,8 @@ def _served(tmp_path, playwright_browser, *, hooks: bool = False, width: int = 1
             viewport={"width": width, "height": 900}
         )
         page = context.new_page()
+        if init_script is not None:
+            page.add_init_script(init_script)
         errors: list[str] = []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.on(
@@ -293,7 +307,7 @@ def _served(tmp_path, playwright_browser, *, hooks: bool = False, width: int = 1
         proc.terminate()
         proc.wait(10)
         raise
-    return proc, url, page, context, errors, work
+    return proc, url, page, context, errors, cfg
 
 
 ALL = "G:FakeLib A B C D G G:FakeLib.Cases X"
@@ -394,13 +408,16 @@ def test_the_suite_table_groups_filters_sorts_and_names(tmp_path, playwright_bro
         page.get_by_role("button", name="Group by package").click()
         _shown(page, ALL)
 
-        # The column chooser offers Key (hidden) and hides Message.
+        # The column chooser offers Reference (hidden) — not a live run's
+        # Key, Worker or Elapsed — and hides Message.
         page.get_by_role("button", name="Choose columns").click()
         menu = page.locator("#dstf-colmenu")
-        expect(menu.locator("label", has_text="Key")).to_have_count(1)
+        expect(menu.locator("label", has_text="Reference")).to_have_count(1)
         expect(
-            menu.locator("label", has_text="Key").locator("input")
+            menu.locator("label", has_text="Reference").locator("input")
         ).not_to_be_checked()
+        for live in ("Key", "Worker", "Elapsed"):
+            expect(menu.locator("label", has_text=live)).to_have_count(0)
         menu.locator("label", has_text="Message").locator("input").uncheck()
         expect(page.locator(".ag-header-cell[col-id='detail']")).to_have_count(0)
         page.keyboard.press("Escape")
@@ -469,9 +486,10 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
 
 def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
     """The view is the viewer's, kept in localStorage under a key per
-    project (its work dir): a filter, a pill, a collapsed group, grouping,
-    a sort and a hidden column come back; the selection is the tab's."""
-    proc, url, page, context, errors, work = _served(tmp_path, playwright_browser)
+    project (its config file): a filter, a pill, a collapsed group,
+    grouping, a sort and a hidden column come back; the selection is the
+    tab's."""
+    proc, url, page, context, errors, cfg = _served(tmp_path, playwright_browser)
     try:
         _box(page, D).click()
         # C and FakeLib.Cases.X: the SIM_FAIL pill and "C" in Test; FakeLib
@@ -489,7 +507,7 @@ def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
         selection = page.locator("#dstf-suite-selection")
         expect(selection).to_contain_text("1 selected (1 hidden)")
         keys = page.evaluate("() => Object.keys(localStorage)")
-        assert keys == [f"dstf-suite-v1:{work.resolve()}"], keys
+        assert keys == [f"dstf-suite-v1:{cfg.resolve()}"], keys
         page.reload()
         expect(page.locator(ROWS).first).to_be_attached(timeout=EXPECT_TIMEOUT)
         _shown(page, "G:FakeLib G:FakeLib.Cases X")
@@ -633,6 +651,235 @@ def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_brow
             == "PASS"
         )
         assert page.evaluate("() => window.__readies") == 0  # never rebuilt
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def _d_sleeps(seconds: float):
+    """A `setup` for `_served`: D's simulation sleeps, so a rerun of D is
+    seen running."""
+
+    def setup(cfg: Path) -> None:
+        (cfg.parent.parent / "Examples" / "D.py").write_text(
+            "import time\n\n\ndef simulate(stop_time, tolerance):\n"
+            f"    time.sleep({seconds})\n    return {{}}\n",
+            encoding="utf-8",
+        )
+
+    return setup
+
+
+def test_a_running_pill_that_is_on_stays_until_switched_off(
+    tmp_path, playwright_browser
+):
+    """RUNNING is shown while a job runs. Switched on, it stays when the
+    job ends, reading 0, so it can be switched off: it hid at 0 while it
+    still filtered, and the table stayed empty with no pill to press —
+    after a reload too, the view being stored."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, setup=_d_sleeps(4)
+    )
+    try:
+        running = page.locator("button[data-pill='running']")
+        expect(running).to_have_count(0)  # nothing runs
+        _box(page, D).click()
+        rerun = re.compile(r"^Rerun 1 selected test$")
+        page.get_by_role("button", name=rerun).first.click()
+        page.locator(".q-dialog").get_by_role("button", name=rerun).click()
+        expect(running).to_have_text("RUNNING 1", timeout=EXPECT_TIMEOUT)
+        running.click()
+        expect(running).to_have_attribute("aria-pressed", "true")
+        _shown(page, "G:FakeLib D")
+        # The job ends: the pill stays, pressed, reading 0.
+        expect(running).to_have_text("RUNNING 0", timeout=60_000)
+        expect(running).to_have_attribute("aria-pressed", "true")
+        expect(running).to_be_enabled()
+        _shown(page, "")
+        page.reload()
+        expect(running).to_have_text("RUNNING 0", timeout=EXPECT_TIMEOUT)
+        expect(running).to_have_attribute("aria-pressed", "true")
+        _shown(page, "")
+        running.click()
+        _shown(page, ALL)
+        expect(running).to_have_count(0)  # off at 0: gone
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_enter_on_a_test_cell_opens_its_page(tmp_path, playwright_browser):
+    """The keyboard's way to a test: Enter on a focused Test cell opens its
+    page, as a click on its name does."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        page.locator(".ag-row[row-id='FakeLib.B'] .ag-cell[col-id='status']").click()
+        page.keyboard.press("ArrowRight")
+        assert (
+            page.evaluate("() => document.activeElement.getAttribute('col-id')")
+            == "model"
+        )
+        assert errors == [], (
+            errors
+        )  # the Suite page's; the Test page is not this test's
+        page.keyboard.press("Enter")
+        expect(page).to_have_url(
+            re.compile(r"/test/FakeLib\.B$"), timeout=EXPECT_TIMEOUT
+        )
+        expect(page.locator(".dstf-subheader")).to_contain_text(
+            "FakeLib.B", timeout=EXPECT_TIMEOUT
+        )
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_the_header_checkbox_selects_only_the_rows_shown(tmp_path, playwright_browser):
+    """ "Select all" is the rows the filters show: never a row a filter or a
+    closed group hides — Accept would store baselines for tests nobody saw
+    — and never a group row."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        # SIM_FAIL: C and FakeLib.Cases.X; the Cases group closed hides X.
+        page.locator("button[data-pill='sim-fail']").click()
+        page.locator(".ag-row[row-id='g:FakeLib.Cases'] .dstf-grp").click()
+        _shown(page, "G:FakeLib C G:FakeLib.Cases")
+        page.locator(".ag-header-select-all input").click()
+        selection = page.locator("#dstf-suite-selection")
+        expect(selection).to_contain_text("1 selected", timeout=EXPECT_TIMEOUT)
+        expect(selection).not_to_contain_text("hidden")
+        assert page.evaluate(
+            "() => DstfSuite.api.getSelectedNodes().map(n => n.data.id)"
+        ) == ["FakeLib.C"]
+        expect(
+            page.get_by_role("button", name="Rerun 1 selected test", exact=True)
+        ).to_be_enabled(timeout=EXPECT_TIMEOUT)
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_a_toolbar_control_keeps_the_focus_through_its_repaint(
+    tmp_path, playwright_browser
+):
+    """The toolbar is drawn again on every refresh (every live transaction
+    too): the focused control is focused again, so Space on a pill or Enter
+    on a view icon does not drop the keyboard to the page."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        focused = "() => document.activeElement.getAttribute('aria-label')"
+        page.locator("button[data-pill='pass']").focus()
+        page.keyboard.press(" ")
+        _shown(page, "G:FakeLib D G")
+        expect(page.locator("button[data-pill='pass']")).to_have_attribute(
+            "aria-pressed", "true"
+        )
+        assert page.evaluate(focused) == "PASS 2"
+        page.keyboard.press(" ")
+        _shown(page, ALL)
+        assert page.evaluate(focused) == "PASS 2"
+        page.get_by_role("button", name="Show flat").focus()
+        page.keyboard.press("Enter")
+        _shown(page, "A B C X D G")
+        assert page.evaluate(focused) == "Group by package"
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+#: Holds the grid's `ready` until the page calls `window.__release()`: the
+#: rows are drawn, and transactions from Python arrive, before the grid is
+#: ready.
+HOLD_READY = """(() => {
+  let d;
+  Object.defineProperty(window, 'DstfSuite', {
+    configurable: true,
+    get() { return d; },
+    set(v) {
+      d = v;
+      const ready = v.ready;
+      v.ready = (...a) => new Promise(r => { window.__release = r; })
+        .then(() => ready(...a));
+    },
+  });
+})();"""
+
+
+def test_a_transaction_before_the_grid_is_ready_is_applied_once_it_is(
+    tmp_path, playwright_browser
+):
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, hooks=True, init_script=HOLD_READY
+    )
+    try:
+        assert page.evaluate("() => DstfSuite.api") is None  # not ready yet
+        with urllib.request.urlopen(url + "__stage?model=FakeLib.A") as r:
+            assert json.loads(r.read())["pending"] == 2
+        page.wait_for_function(
+            "() => (DstfSuite.pending || []).length > 0", timeout=EXPECT_TIMEOUT
+        )
+        page.evaluate("() => window.__release()")
+        expect(
+            page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='edits']")
+        ).to_have_text("2 unsaved", timeout=EXPECT_TIMEOUT)
+        expect(page.locator("button[data-pill='edited']")).to_have_text("EDITED 1")
+        assert page.evaluate("() => DstfSuite.pending") == []
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+#: Where a column's header cell ends, against the grid's own viewport.
+COLUMN_RIGHT = """(col) => {
+  const cell = document.querySelector(`.ag-header-cell[col-id='${col}']`);
+  const view = document.querySelector('.ag-center-cols-viewport');
+  return [cell.getBoundingClientRect().right, view.getBoundingClientRect().right];
+}"""
+#: How far the grid's body scrolls sideways.
+GRID_SIDEWAYS = """() => {
+  const v = document.querySelector('.ag-center-cols-viewport');
+  return v.scrollWidth - v.clientWidth;
+}"""
+
+
+def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser):
+    """Edits comes before Message, which takes the width left over: at 1280
+    the grid does not scroll sideways, and at 900 the Edits column is in
+    view without scrolling it (Message may be cut)."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        page.wait_for_function(
+            f"() => ({GRID_SIDEWAYS})() <= 0", timeout=EXPECT_TIMEOUT
+        )
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.wait_for_function(
+            f"() => {{ const [r, v] = ({COLUMN_RIGHT})('edits'); return r <= v; }}",
+            timeout=EXPECT_TIMEOUT,
+        )
+        _no_sideways_scroll(page)
+        _keep(page, tmp_path, "suite-table-900")
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.wait_for_function(
+            f"() => ({GRID_SIDEWAYS})() <= 0", timeout=EXPECT_TIMEOUT
+        )
+        _keep(page, tmp_path, "suite-table-1280")
+        assert errors == [], errors
         context.close()
     finally:
         if proc.poll() is None:

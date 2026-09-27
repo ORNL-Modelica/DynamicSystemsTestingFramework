@@ -154,8 +154,9 @@ async def _until(predicate, tries: int = 200) -> None:
     assert predicate()
 
 
-def _final(sent: list[dict]) -> dict[str, str]:
-    final: dict[str, str] = {}
+def _final(sent: list[dict], initial: dict[str, str] | None = None) -> dict[str, str]:
+    """The grid's rows after `sent`, from the rows it was built with."""
+    final: dict[str, str] = dict(initial or {})
     for tx in sent:
         for m in tx["remove"]:
             final.pop(m, None)
@@ -213,9 +214,19 @@ async def test_the_suite_page_draws_known_rows_waiting_then_the_scans(
         register_builtins()
 
 
+def _grid_rows(sh) -> dict[str, str]:
+    """The rows the one Suite page built its grid with: id -> status text."""
+    from dstf.authoring.shell.suite import SuitePage
+
+    (page,) = [p for p in sh.pages if isinstance(p, SuitePage)]
+    return {r["id"]: r["status"] for r in page.grid.options["rowData"]}
+
+
 async def test_a_reopen_draws_the_known_rows_waiting(tmp_path, monkeypatch):
     """During a reopen the old project is still open until the merge: its
-    comparisons are not the new open's, so the known rows wait."""
+    comparisons are not the new open's, so the known rows wait — the known
+    ones, not the old project's tests (B, C and G drop out, a model only
+    the last run names is added)."""
     pytest.importorskip("nicegui")
     from nicegui.testing.user_simulation import user_simulation
 
@@ -234,10 +245,106 @@ async def test_a_reopen_draws_the_known_rows_waiting(tmp_path, monkeypatch):
         async with user_simulation(root=sh.index) as user:
             await user.open("/")
             await user.should_see(marker="wordmark", retries=20)
-            sh.session._emit("known", models=[A, D])
+            initial = _grid_rows(sh)
+            assert set(initial) == {A, B, C, D, G}
+            sh.session._emit("known", models=[A, D, "FakeLib.Gone"])
             sh.tick()
-            assert _final(sent) == {A: "…", D: "…"}
+            assert _final(sent, initial) == {A: "…", D: "…", "FakeLib.Gone": "…"}
             assert sh.session.project is not None  # the old one
+    finally:
+        caps._reset_for_tests()
+        register_builtins()
+
+
+async def test_a_failed_reopen_draws_the_old_projects_rows_again(tmp_path, monkeypatch):
+    """An open that fails takes back what it named (`known` with none):
+    every row the grid holds reads the open project's verdict again, not
+    "…" — the `known []` event names no model, and repainting only the
+    event's models left every row waiting for good."""
+    pytest.importorskip("nicegui")
+    from nicegui.testing.user_simulation import user_simulation
+
+    from dstf.authoring import capabilities as caps
+    from dstf.authoring.builtin import register_builtins
+    from dstf.authoring.shell.shell import Shell
+
+    caps._reset_for_tests()
+    register_builtins()
+    sent = _recording(monkeypatch)
+    cfg, work = _project(tmp_path)
+    sh = Shell(cfg, work_dir=work)
+    sh.session.open(cfg, work_dir=work)
+    sh.load.phase = "done"
+    # A spec the merge refuses, behind a scan that blocks (cold).
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"][0]["metrics"] = {"metric": "no-such-metric", "variable": "x"}
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    gate = threading.Event()
+    real = session_mod.scan_source_tests
+
+    def blocked(config, **kw):
+        assert gate.wait(10)
+        return real(config, **kw)
+
+    monkeypatch.setattr(session_mod, "load_scan", lambda config: None)
+    monkeypatch.setattr(session_mod, "scan_source_tests", blocked)
+    try:
+        async with user_simulation(root=sh.index) as user:
+            await user.open("/")
+            await user.should_see(marker="wordmark", retries=20)
+            initial = _grid_rows(sh)
+            assert initial == {
+                A: "FAIL",
+                B: "NO_REF",
+                C: "SIM_FAIL",
+                D: "PASS",
+                G: "PASS",
+            }
+            sh.open_async()
+            await _until(lambda: bool(sh.known))
+            await _until(lambda: _final(sent, initial)[A] == "…")
+            gate.set()
+            sh._open_thread.join(10)
+            await _until(lambda: sh.load.error is not None)
+            await asyncio.sleep(0.3)
+            assert sh.session.project is not None  # the old one, still open
+            assert _final(sent, initial) == initial
+    finally:
+        gate.set()
+        caps._reset_for_tests()
+        register_builtins()
+
+
+async def test_a_model_named_and_dropped_in_one_tick_is_never_sent(
+    tmp_path, monkeypatch
+):
+    """A page drawn before the open; the open (a scan-cache hit, so no
+    tick between its events) names a model only the last run has, then
+    its merge drops it: in one tick the model is added and removed, and the
+    grid is sent neither — a `remove` for a row it never had."""
+    pytest.importorskip("nicegui")
+    from nicegui.testing.user_simulation import user_simulation
+
+    from dstf.authoring import capabilities as caps
+    from dstf.authoring.builtin import register_builtins
+    from dstf.authoring.shell.shell import Shell
+
+    caps._reset_for_tests()
+    register_builtins()
+    sent = _recording(monkeypatch)
+    cfg, work = _project(tmp_path)
+    _with_manifest(work, "FakeLib.Gone")
+    sh = Shell(cfg, work_dir=work)
+    try:
+        async with user_simulation(root=sh.index) as user:
+            await user.open("/")
+            await user.should_see(marker="wordmark", retries=20)
+            sh.session.open(cfg, work_dir=work)
+            sh.tick()
+            (tx,) = sent
+            assert [m for m, _ in tx["add"]] == [A, B, C, D, G]
+            assert tx["remove"] == []
     finally:
         caps._reset_for_tests()
         register_builtins()

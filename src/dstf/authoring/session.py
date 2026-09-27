@@ -864,6 +864,7 @@ class Session:
             self.spec.path, self.spec.loaded, self.spec.content_hash
         )
         self._rebuild_tests(models)
+        self._rerender_dashboard()
 
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s
@@ -880,6 +881,24 @@ class Session:
         models = {model_id for model_id, _ in groups}
         self.spec = SpecDocument.load(self.spec.path)
         self._rebuild_tests(models)
+        self._rerender_dashboard()
+
+    def _rerender_dashboard(self) -> None:
+        """After a Save or a Discard: the work dir's `dashboard.html` with
+        the Session's verdicts now. A rerun under unsaved edits rendered
+        their verdicts into it; once the edits are saved or gone, the file
+        must not keep them. Only a file a run left: the tool never creates
+        one. A failed render leaves the Save / Discard done."""
+        from ..reporting.dashboard_render import render_final
+
+        project = self._require_project()
+        work_dir = project.config.work_dir
+        if work_dir is None or not (work_dir / "dashboard.html").is_file():
+            return
+        try:
+            render_final(work_dir, comparisons=list(self.comparisons.values()))
+        except Exception:  # the file is a report; the edit's fate stands
+            logger.exception("re-rendering %s failed", work_dir / "dashboard.html")
 
     def export(self) -> dict:
         from ..discovery.patch_envelope import ModelPatch, build_envelope

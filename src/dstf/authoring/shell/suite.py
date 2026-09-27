@@ -30,14 +30,14 @@ class SuitePage:
     def __init__(self, shell: Shell) -> None:
         self.shell = shell
         self.client: Any = None
-        #: The tests the grid holds, in the order Python sent them.
+        #: The tests the grid shows once this tick is flushed: the visible
+        #: tests, in the project's order.
         self.ids: list[str] = []
-        #: What this tick's events touched, sent by `flush` as one
-        #: transaction: the models to add (in order) and to repaint, and
-        #: the ids to drop.
-        self._add: list[str] = []
+        #: The tests the grid holds now: what the last flush sent.
+        self._sent: list[str] = []
+        #: What this tick's events touched, repainted by `flush` in one
+        #: transaction.
         self._update: set[str] = set()
-        self._remove: list[str] = []
 
     async def build(self) -> None:
         self.client = ui.context.client
@@ -72,6 +72,7 @@ class SuitePage:
                     icons=True,
                 )
             self.ids = self.shell.visible_tests()
+            self._sent = list(self.ids)
             self.grid = SuiteGrid(
                 self._rows(self.ids),
                 selected=self.state.checked,
@@ -83,14 +84,11 @@ class SuitePage:
         self.refresh()
 
     def _project_key(self) -> str:
-        """What names this project for the table's stored view: its work
-        dir — a reopen on another backend is another one — or, before the
-        open has one, the work dir or the config the shell was given."""
-        project = self.shell.session.project
-        if project is not None and project.config.work_dir is not None:
-            return str(project.config.work_dir)
-        if self.shell.work_dir is not None:
-            return str(self.shell.work_dir.resolve())
+        """What names this project for the table's stored view: its config
+        file, resolved — known before the open and the same after it (the
+        work dir is derived by the open when `--work-dir` is not given).
+        `dstf author` refuses to start without a config, so there always is
+        one. A reopen on another backend keeps the view."""
         return str(self.shell.config_path.resolve())
 
     def _rows(self, ids: list[str]) -> list[TestRow]:
@@ -138,21 +136,21 @@ class SuitePage:
             # A `spec` event names only the CHANGED models (an open's names
             # all, before the CLI's filter; a close's none), and `known` the
             # models an open named before its scan: what to add and drop is
-            # the visible tests against the grid's.
-            now = self.shell.visible_tests()
-            have, keep = set(self.ids), set(now)
-            self._add += [m for m in now if m not in have]
-            gone = [m for m in self.ids if m not in keep]
-            self._remove += gone
-            self._update -= set(gone)
-            self.ids = now
+            # the visible tests against the grid's, at the flush.
+            self.ids = self.shell.visible_tests()
         self._update |= self._touched(event) & set(self.ids)
         self.refresh()
 
     def _touched(self, event: dict[str, Any]) -> set[str]:
         """The models whose row an event may have changed."""
         kind = event["event"]
-        if kind in ("spec", "results", "known"):
+        if kind == "known":
+            # Every row: an open's names wait, and its failure's `known`
+            # (naming none) turns every row back to the open project's
+            # verdict — repainting only the event's models left every row
+            # reading "…" after a failed reopen.
+            return set(self.ids)
+        if kind in ("spec", "results"):
             return {str(m) for m in event.get("models", ())}
         if kind == "loading" and event.get("phase") == "results":
             return {str(event["model"])}
@@ -162,13 +160,17 @@ class SuitePage:
     def flush(self) -> None:
         """This tick's rows, as ONE transaction: the Accept path queues N + 2
         events in a tick, and one transaction per event was 333 over 331
-        rows. An added row is sent once, with the tab's selection."""
-        held = set(self.ids)
-        add = [m for m in self._add if m in held]
-        remove = self._remove
-        repaint = self._update - set(add)
-        update = [m for m in self.ids if m in repaint]
-        self._add, self._update, self._remove = [], set(), []
+        rows. The rows to add and drop are the visible tests against the
+        grid's — a model named and dropped within the tick is sent neither,
+        so the grid is never told to drop a row it never had, and one
+        dropped and named again stays (repainted if an event touched it).
+        An added row is sent once, with the tab's selection."""
+        held, sent = set(self.ids), set(self._sent)
+        add = [m for m in self.ids if m not in sent]
+        remove = [m for m in self._sent if m not in held]
+        update = [m for m in self.ids if m in sent and m in self._update]
+        self._sent = list(self.ids)
+        self._update = set()
         if not (add or update or remove):
             return
         self.grid.transaction(

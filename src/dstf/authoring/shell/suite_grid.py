@@ -31,21 +31,19 @@ ASSETS = "/_dstf"
 #: A per-viewer key for the table's view (localStorage), per project.
 STORAGE = "dstf-suite-v1"
 
-TOOL_COLUMNS: tuple[Column, ...] = (*COLUMNS, EDITS)
-#: Shown by default: the verdict, the test, its numbers, its message and its
-#: edits. Key, Worker and Elapsed are a live run's (the runs card shows a
-#: running job); they and the rest are in the column chooser.
-VISIBLE = ("status", "model", "nrmse", "vars", "sim", "warnings", "detail", "edits")
-ORDER = (
-    *VISIBLE,
-    "test",
-    "ref",
-    "resolution",
-    "worker",
-    "elapsed",
-    "translate",
-    "total",
+#: A live run's columns (the runs card shows a running job): always "—" in
+#: the tool, so not even the column chooser offers them.
+LIVE_RUN = ("test", "worker", "elapsed")
+TOOL_COLUMNS: tuple[Column, ...] = (
+    *(c for c in COLUMNS if c.key not in LIVE_RUN),
+    EDITS,
 )
+#: Shown by default: the verdict, the test, its numbers, its edits and its
+#: message — Edits before Message, which takes the width left over, so a
+#: narrow window cuts the message, not the edits. The rest are in the
+#: column chooser.
+VISIBLE = ("status", "model", "nrmse", "vars", "sim", "warnings", "edits", "detail")
+ORDER = (*VISIBLE, "ref", "resolution", "translate", "total")
 #: A text filter's tooltip; the Test column reads the full test name.
 TEXT_HELP = "text, *glob*, or a regex with .*"
 FILTER_HELP = {
@@ -93,7 +91,9 @@ def _column_defs() -> list[dict[str, Any]]:
             "suppressFloatingFilterButton": True,
             "suppressHeaderFilterButton": True,
             "suppressHeaderMenuButton": True,
-            "width": 110,
+            # Narrow enough that Edits is in view at 900 px (Message after
+            # it takes the width left over, and may be cut).
+            "width": 90,
         }
         if c.title:
             d["headerTooltip"] = c.title
@@ -102,15 +102,16 @@ def _column_defs() -> list[dict[str, Any]]:
             d["cellClass"] = "dstf-num"
         if key == "status":
             d[":cellRenderer"] = "DstfSuite.cell.status"
+            d["width"] = 100  # "SIM_FAIL" in its badge and the sort arrow
         elif key == "model":
             d[":cellRenderer"] = "DstfSuite.cell.model"
-            d.update(flex=3, minWidth=160)
+            d.update(flex=1, minWidth=140)
             del d["width"]
         elif key == "nrmse":
             # "1.5309e-01" and its header: 110 px cut both at 1280.
             d["width"] = 135
         elif key == "detail":
-            d.update(flex=2, minWidth=120)
+            d.update(flex=1, minWidth=160)
             del d["width"]
         elif key == "edits":
             d[":cellRenderer"] = "DstfSuite.cell.edits"

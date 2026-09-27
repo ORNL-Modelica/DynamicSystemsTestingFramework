@@ -106,34 +106,36 @@ async def test_the_rows_python_sends_carry_every_columns_text_and_sort(shell):
 
 
 async def test_the_grid_offers_the_tools_columns(shell):
-    """The tool's columns: the row model's, bar Key / Worker / Elapsed (a
-    live run's; the runs card shows a running job), plus Edits; the chooser
-    offers the hidden ones."""
+    """The tool's columns: the row model's, bar Key / Worker / Elapsed —
+    a live run's, always "—" in the tool, so not even the chooser offers
+    them — plus Edits, shown before Message; the chooser offers the hidden
+    ones."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         defs = _suite(shell, user).grid.options["columnDefs"]
         shown = [d["colId"] for d in defs if not d.get("hide")]
-        assert shown[:2] == ["status", "model"]
-        assert set(shown) == {
+        assert shown == [
             "status",
             "model",
             "nrmse",
             "vars",
             "sim",
             "warnings",
-            "detail",
             "edits",
-        }
+            "detail",
+        ]
         hidden = {d["colId"] for d in defs if d.get("hide")}
-        assert {"test", "worker", "elapsed", "ref", "translate", "total"} <= hidden
+        assert hidden == {"ref", "resolution", "translate", "total"}
         labels = {d["colId"]: d["headerName"] for d in defs}
-        assert (labels["model"], labels["test"], labels["edits"]) == (
-            "Test",
-            "Key",
-            "Edits",
-        )
+        assert (labels["model"], labels["edits"]) == ("Test", "Edits")
         nrmse = next(d for d in defs if d["colId"] == "nrmse")
         assert nrmse["width"] >= 130  # "1.5309e-01" and its header at 1280
+        # Message takes the width left over.
+        detail = next(d for d in defs if d["colId"] == "detail")
+        assert detail["flex"] == 1 and detail["minWidth"] > 0
+        # Nor does a row carry them.
+        row = _sent(_suite(shell, user))[A]
+        assert not {"test", "worker", "elapsed"} & set(row)
 
 
 async def test_the_selection_the_grid_reports_is_the_tabs_and_the_actions(shell):
@@ -443,3 +445,19 @@ async def test_rows_dropped_and_named_again_in_one_tick_are_repainted(shell, sen
         assert len(sent) == 1
         assert sent[0]["add"] == [] and sent[0]["remove"] == []
         assert [m for m, _, _ in sent[0]["update"]] == [A, B, C, D, G]
+
+
+def test_the_views_storage_key_is_the_same_before_and_after_the_open(
+    tmp_path, monkeypatch
+):
+    """The table's stored view is keyed by the config file: known before
+    the open, and the same after it. By the work dir it was the config
+    path before an open without `--work-dir` and the derived work dir
+    after, so a reload after the open lost the view."""
+    cfg, _work = _project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    shell = Shell(cfg, work_dir=None)
+    page = SuitePage(shell)
+    before = page._project_key()
+    shell.session.open(cfg)
+    assert page._project_key() == before == str(cfg.resolve())

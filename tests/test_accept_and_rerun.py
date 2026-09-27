@@ -17,6 +17,7 @@ failure). Only ``ConstantCsv`` is ever run — ~0.25 s, no scipy.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -146,28 +147,33 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     _assert_silent(capsys)
 
 
+def _dashboard_status(work_dir, model_id: str) -> str:
+    """The verdict `dashboard.html` shows for `model_id`."""
+    page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
+    (row,) = re.findall(
+        r'<tr[^>]*data-model="' + re.escape(model_id) + r'"[^>]*>', page
+    )
+    found = re.search(r'data-status="([^"]*)"', row)
+    assert found is not None, row
+    return found.group(1)
+
+
+#: 1.0 is outside [0.99, 0.5]: ConstantCsv fails under this edit.
+TIGHTEN = PatchOp(
+    CONSTANT_CSV, "replace", "/comparison/variable_overrides/x/max_value", 0.5
+)
+
+
 def test_a_tool_rerun_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path):
     """The run's own last render is static and unscored (the Session scores
     what it reloads); once the Session has rescored, the rerun renders the
     same page with its verdicts: the rerun test the staged edit makes fail
     reads fail, the other pass — not pending."""
-    import re
-
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"
     session = Session()
     session.open(config.config_file, work_dir=work_dir)
-    # 1.0 is outside [0.99, 0.5]: the rerun of ConstantCsv fails.
-    session.stage(
-        [
-            PatchOp(
-                CONSTANT_CSV,
-                "replace",
-                "/comparison/variable_overrides/x/max_value",
-                0.5,
-            )
-        ]
-    )
+    session.stage([TIGHTEN])  # the rerun of ConstantCsv fails
     view = SessionView(
         session, Selection(tests=frozenset({CONSTANT_CSV, POINTS_CHECK}))
     )
@@ -176,12 +182,41 @@ def test_a_tool_rerun_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path):
     assert job is not None and job.done.wait(60) and job.error is None
     page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
     assert '<meta http-equiv="refresh"' not in page
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+    assert _dashboard_status(work_dir, POINTS_CHECK) == "pass"
 
-    def status(model_id: str) -> str:
-        (row,) = re.findall(
-            r'<tr[^>]*data-model="' + re.escape(model_id) + r'"[^>]*>', page
-        )
-        return re.search(r'data-status="([^"]*)"', row).group(1)
 
-    assert status(CONSTANT_CSV) == "fail"
-    assert status(POINTS_CHECK) == "pass"
+def test_save_and_discard_rerender_the_dashboard(tmp_path):
+    """A rerun under an unsaved edit leaves `dashboard.html` with the edit's
+    verdicts. Once the edit is gone they are gone from the file too:
+    Discard renders the loaded verdicts, Save the saved ones."""
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = tmp_path / "work"
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    session.stage([TIGHTEN])
+    view = SessionView(session, Selection(tests=frozenset({CONSTANT_CSV})))
+    session.apply(Rerun().act(view))
+    job = session.running
+    assert job is not None and job.done.wait(60) and job.error is None
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+    session.discard()
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
+    session.stage([TIGHTEN])
+    assert (
+        _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
+    )  # staging renders nothing
+    session.save()
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+
+
+def test_save_and_discard_write_no_dashboard_where_no_run_left_one(tmp_path):
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = tmp_path / "work"
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    session.stage([TIGHTEN])
+    session.discard()
+    session.stage([TIGHTEN])
+    session.save()
+    assert not (work_dir / "dashboard.html").exists()

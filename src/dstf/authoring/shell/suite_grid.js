@@ -184,12 +184,18 @@
     if (i >= 0) S.collapsed.splice(i, 1); else S.collapsed.push(pkg);
     save(); D.refresh();
   };
-  // Enter / Space on a focused group row collapses it: the keyboard's click.
+  // The keyboard's clicks: Enter / Space on a focused group row collapses
+  // it; Enter on a focused Test cell opens the test's page, as its link does.
   D.keyDown = (e) => {
     const k = e.event && e.event.key;
-    if (e.node && e.node.data && e.node.data._g && (k === 'Enter' || k === ' ')) {
+    const r = e.node && e.node.data;
+    if (!r) return;
+    if (r._g && (k === 'Enter' || k === ' ')) {
       e.event.preventDefault();
-      D.toggleGroup(e.node.data._pkg);
+      D.toggleGroup(r._pkg);
+    } else if (!r._g && k === 'Enter' && e.column && e.column.getColId() === 'model') {
+      e.event.preventDefault();
+      window.location.assign('/test/' + encodeURIComponent(r.id));
     }
   };
   // Every column "has" a filter so AG Grid draws the floating filter row;
@@ -241,9 +247,11 @@
   D.rowClass = (p) => (p.data && !p.data._g ? 'dstf-tint-' + p.data.status_class : '');
 
   // -- the toolbar and the selection's label (their state is the browser's) --
-  function btn(icon, tip, pressed, onclick, extra) {
+  // `key` names the control across repaints (the focus follows it).
+  function btn(key, icon, tip, pressed, onclick, extra) {
     const b = document.createElement('button');
     b.type = 'button';
+    b.dataset.tb = key;
     b.className = 'dstf-tb' + (pressed ? ' on' : '') + (extra ? ' ' + extra : '');
     b.title = tip;
     b.setAttribute('aria-label', tip);
@@ -254,17 +262,23 @@
     b.addEventListener('click', onclick);
     return b;
   }
+  // Drawn again on every refresh — every live transaction too — so the
+  // focused control is focused again: Space on a pill or Enter on a view
+  // icon dropped the keyboard to the page.
   function renderToolbar() {
     const host = document.getElementById('dstf-suite-tools');
     if (!host) return;
+    const had = host.contains(document.activeElement) ? document.activeElement.dataset.tb : null;
     host.textContent = '';
     const pills = document.createElement('span');
     pills.className = 'dstf-pills';
     for (const [k, word] of PILLS) {
       const n = D.counts[k] || 0;
-      if (k === 'running' && !n) continue;  // shown while a job runs
       const on = S.pills.includes(k);
-      const b = btn('txt:' + word + ' ' + n, (on ? 'Stop showing only ' : 'Show only ') + word, on, () => {
+      // Shown while a job runs — and while it filters, reading 0, so a
+      // pill switched on can be switched off once the job has ended.
+      if (k === 'running' && !n && !on) continue;
+      const b = btn('pill:' + k, 'txt:' + word + ' ' + n, (on ? 'Stop showing only ' : 'Show only ') + word, on, () => {
         const i = S.pills.indexOf(k);
         if (i >= 0) S.pills.splice(i, 1); else S.pills.push(k);
         save(); D.refresh();
@@ -279,22 +293,26 @@
     // toggles with a fixed name and aria-pressed.
     const views = document.createElement('span');
     views.className = 'dstf-views';
-    views.appendChild(btn('account_tree', S.grouped ? 'Show flat' : 'Group by package', null, () => {
+    views.appendChild(btn('group', 'account_tree', S.grouped ? 'Show flat' : 'Group by package', null, () => {
       S.grouped = !S.grouped; save(); D.api.refreshClientSideRowModel('sort'); D.refresh();
     }));
-    views.appendChild(btn('label', S.short ? 'Full names' : 'Short names', null, () => {
+    views.appendChild(btn('names', 'label', S.short ? 'Full names' : 'Short names', null, () => {
       S.short = !S.short; save(); D.api.refreshCells({ columns: ['model'], force: true }); D.refresh();
     }));
-    const cols = btn('view_column', 'Choose columns', null, (e) => { e.stopPropagation(); D.columnMenu(cols); });
+    const cols = btn('columns', 'view_column', 'Choose columns', null, (e) => { e.stopPropagation(); D.columnMenu(cols); });
     cols.setAttribute('aria-haspopup', 'menu');
     views.appendChild(cols);
-    views.appendChild(btn('txt:.*', 'Regex in every column filter', S.regex, () => {
+    views.appendChild(btn('regex', 'txt:.*', 'Regex in every column filter', S.regex, () => {
       S.regex = !S.regex; save(); D.refresh();
     }));
-    views.appendChild(btn('txt:Aa', 'Match case in every column filter', S.case, () => {
+    views.appendChild(btn('case', 'txt:Aa', 'Match case in every column filter', S.case, () => {
       S.case = !S.case; save(); D.refresh();
     }));
     host.appendChild(views);
+    if (had) {
+      const again = host.querySelector(`[data-tb="${had}"]`);
+      if (again) again.focus();
+    }
   }
   // "2 selected · ✕", with the selected rows a filter or a collapsed group
   // hides counted: the actions act on every selected row.
@@ -310,7 +328,7 @@
     const label = document.createElement('span');
     label.textContent = `${ids.length} selected` + (hidden ? ` (${hidden} hidden)` : '') + ' ·';
     host.appendChild(label);
-    const clear = btn('close', 'Clear selection', null, () => D.api.deselectAll());
+    const clear = btn('clear', 'close', 'Clear selection', null, () => D.api.deselectAll());
     clear.classList.add('dstf-clear');
     host.appendChild(clear);
   };
