@@ -327,3 +327,41 @@ def test_a_number_filter_matches_the_value_not_its_text(tmp_path, playwright_bro
     _type(page, "nrmse", "=1.23456e-5")
     assert _visible(page) == ["Lib.A"]
     page.close()
+
+
+def test_a_zero_count_matches_its_filter(tmp_path, playwright_browser):
+    """Warnings `=0` reads the sort value: a 0 there is a value."""
+    page = playwright_browser.new_page()
+    page.goto(_four_verdicts(tmp_path).as_uri())
+    _type(page, "warnings", "=0")
+    assert _visible(page) == ["Lib.A", "Lib.B", "Lib.C"]
+    page.close()
+
+
+def test_the_bar_s_red_segment_carries_every_failure(tmp_path, playwright_browser):
+    """FAIL and SIM_FAIL both paint the bar red: 2 of 4 rows."""
+    page = playwright_browser.new_page()
+    page.goto(_four_verdicts(tmp_path).as_uri())
+    width = page.evaluate(
+        "() => document.querySelector('#progress-bar span.b-fail').style.width"
+    )
+    assert width == "50%"
+    page.close()
+
+
+def test_a_regex_dot_matches_only_rows_with_a_value(tmp_path, playwright_browser):
+    """An empty Message cell reads "—", but the filter reads "": `.` is
+    "has a message", and "—" matches nothing."""
+    entries = [_entry(1, "Lib.A"), _entry(2, "Lib.B")]
+    entries[0]["detail"] = "a message"
+    html = _render(tmp_path, entries)
+    ctx = playwright_browser.new_context()
+    page = ctx.new_page()
+    page.goto(html.as_uri())
+    page.click("#toggle-regex")
+    _type(page, "detail", ".")
+    assert _visible(page) == ["Lib.A"]
+    page.click("#toggle-regex")
+    _type(page, "detail", "—")
+    assert _visible(page) == []
+    ctx.close()

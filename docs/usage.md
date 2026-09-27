@@ -518,10 +518,19 @@ it against.
 
 DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the live progress page during a run and the final report after comparison.
 
-- **During a run**: the page polls `status.json` every 2s and updates rows in place (no full reload, scroll position survives). A "Refresh now" button forces an immediate fetch.
-- **After comparison**: the same page is re-rendered in final mode — the JS poll loop is dropped, and post-comparison columns are populated (Worst NRMSE, Variables, Warnings, Translate / Sim / Total wall times). Add `--report` for per-test interactive deep dives at `reports/test_NNNN/interactive.html` accessible from the Model column links.
+- **During a run**: the page is re-written on every state change and reloads itself every 5s (a meta refresh — a script fetch is blocked on `file://`). It stays live until the command that started the run has finished with it.
+- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings). The Translate / Sim / Total wall times and the Reference link come from the per-test report, so they are filled only with `--report`, which also writes the per-test interactive deep dives at `reports/test_NNNN/interactive.html`, linked from the Model column.
 
-The dashboard supports status filter buttons, per-column text filtering, and a 3-state sort cycle (none → sorted → reverse → none) on every column. Numeric columns sort descending first (largest first when triaging failures); text columns sort ascending first.
+A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), an aborted run, or a rerun from `dstf author`. SIMULATED is not a status: it is in no count pill.
+
+The count pills along the top are the status filter: click one to show only its rows (PASS, FAIL, SIM_FAIL, NO_REF, TIMED OUT, QUEUED, RUNNING; `warnings` shows the rows with any), `Total` to show every row again.
+
+Every column but Status has a typed filter under its header:
+
+- **Text columns** (Test, Reference, Model, Resolution, Worker, Message) match a **substring** by default, case-insensitively. A query containing `*` or `?` is a **glob** matched against the whole value (`*Pipe` matches `GenericPipe`, not `GenericPipe_Test`; `[` and `]` are literal). With the **`.*`** toggle pressed every text filter is a **regex**, searched (a bad one marks its box and filters nothing); with **`Aa`** pressed every text filter matches case. A row with no value in the column reads as empty to its filter, not as the `—` its cell shows — so a regex `.` on Message shows the rows that have a message.
+- **Number columns** (Elapsed, Worst NRMSE, Variables, Warnings, Translate, Sim, Total) take a comparison — `>x`, `>=x`, `<x`, `<=x`, `=x` (a bare number is `=`) — or an inclusive range `a..b` (`1e-6..1e-4`). They compare the value, not its display text; a row with no value never matches. Variables filters on the number passed.
+
+Every column sorts on a 3-state cycle (none → sorted → reverse → none). Numeric columns sort descending first (largest first when triaging failures); text columns sort ascending first. A row with no value sorts last both ways.
 
 The **Resolution** column shows where each test's simulation parameters came from: `annotation` (from the `experiment(...)` annotation in the .mo file), `test_spec` (overridden in test_spec.json), or `mixed` (some fields from each — hover to see the per-field breakdown). This is the resolution-explainer for the two-layer contract documented above.
 

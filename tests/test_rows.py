@@ -264,3 +264,37 @@ def test_the_suite_writes_each_sidecar_with_its_tests_verdict(
     _render_one_test(args, tmp_path / "reports")
     sidecar = tmp_path / "reports" / args["report_id"] / "comparison_data.json"
     assert json.loads(sidecar.read_text("utf-8"))["summary"]["status"] == "FAIL"
+
+
+def test_a_summary_with_a_status_outside_the_vocabulary_keeps_the_rows():
+    """A sidecar is data: a status no surface has a word for is ignored,
+    and the row keeps its own (the page would otherwise KeyError on it)."""
+    row = row_from_status({"test_key": "t", "model_id": "Lib.A", "status": "failed"})
+    rich = enrich_row(
+        row, {"model_id": "Lib.A", "status": "BOGUS", "n_vars": 2}, start_wall=None
+    )
+    assert (rich.status, rich.n_vars) == ("SIM_FAIL", 2)
+    assert rich.status_text == "SIM_FAIL"
+
+
+def test_an_unknown_live_state_is_not_silently_simulated():
+    """status.json is data too: a state the vocabulary does not know has no
+    verdict, and says what it was rather than reading as SIMULATED with no
+    reason."""
+    row = row_from_status({"test_key": "t", "model_id": "Lib.A", "status": "paused"})
+    assert row.status is None
+    assert row.message == "status 'paused'"
+    detailed = row_from_status(
+        {"test_key": "t", "model_id": "Lib.A", "status": "paused", "detail": "why"}
+    )
+    assert detailed.message == "status 'paused': why"
+
+
+def test_a_live_ref_id_is_only_a_ref_report_dir():
+    """A test with no baseline yet registers under its test_key: that is no
+    reference, and the Reference column must not name it as one."""
+    row = row_from_status(
+        {"test_key": "test_0003", "model_id": "Lib.A", "report_dir": "test_0003"}
+    )
+    assert row.ref_id is None and row.report_dir == "test_0003"
+    assert {c.key: c.text(row) for c in COLUMNS}["ref"] == "—"

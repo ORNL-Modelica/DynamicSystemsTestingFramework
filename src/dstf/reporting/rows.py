@@ -20,6 +20,7 @@ from typing import Any, Literal
 from ..comparison.types import TestComparison
 from .context_builder import worst_finite_score
 from .status import (
+    LIVE_STATES,
     STATUS_CLASSES,
     STATUS_LABELS,
     STATUS_ORDER,
@@ -95,6 +96,12 @@ class Column:
     sort: Callable[[TestRow], float | str | None]
     #: the header's tooltip
     title: str | None = None
+
+    def filter_text(self, row: TestRow) -> str:
+        """What a column filter reads: the cell's text, or "" when the row
+        has no value here. The cell reads "—" then; a filter that read it
+        too would match every empty row on a regex ``.`` or on "—"."""
+        return "" if self.sort(row) is None else self.text(row)
 
 
 _DASH = "—"
@@ -235,10 +242,16 @@ def summary_fields(
 def row_from_status(entry: Mapping[str, Any]) -> TestRow:
     """A row from one ``status.json`` ``tests[]`` entry — a live row."""
     report_dir = entry.get("report_dir") or ""
+    raw = entry.get("status", "queued")
+    message = entry.get("detail")
+    if raw not in LIVE_STATES:
+        # status.json is data: a state no surface has a word for has no
+        # verdict, and says what it was rather than reading SIMULATED.
+        message = f"status {raw!r}" + (f": {message}" if message else "")
     return TestRow(
         model_id=entry.get("model_id") or "",
         test_key=entry.get("test_key"),
-        status=live_status(entry.get("status", "queued")),
+        status=live_status(raw),
         # A live ref_id follows the "ref_NNNN" naming of a report_dir the run
         # pre-populated (backend.ref_id_map); a test with no baseline yet has
         # its test_key there, and no ref_id.
@@ -248,7 +261,7 @@ def row_from_status(entry: Mapping[str, Any]) -> TestRow:
         worker_id=entry.get("worker_id"),
         elapsed=entry.get("elapsed"),
         started_wall=entry.get("started_wall"),
-        message=entry.get("detail"),
+        message=message,
     )
 
 
@@ -307,10 +320,11 @@ def enrich_row(
         dst: summary[src] for src, dst in _SUMMARY_TO_ROW if src in summary
     }
     # The compare phase's verdict replaces the live state. A sidecar written
-    # before ``status`` existed carries only the word a person reads.
+    # before ``status`` existed carries only the word a person reads. A
+    # status outside the vocabulary is ignored: the row keeps its own.
     status = summary.get("status") or _STATUS_BY_LABEL.get(
         summary.get("status_text") or ""
     )
-    if status:
+    if status in STATUS_LABELS:
         changes["status"] = status
     return replace(row, **changes)

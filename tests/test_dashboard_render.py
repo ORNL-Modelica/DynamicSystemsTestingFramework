@@ -966,8 +966,9 @@ def test_every_row_carries_every_columns_attributes(tmp_path):
     assert (a["data-status"], b["data-status"]) == ("fail", "pending")
     assert a["data-sort-status"] == "3"  # FAIL's place in STATUS_ORDER
     assert a["data-nrmse"] == "5.0000e-01" and a["data-sort-nrmse"] == "0.5"
-    # No value: the text reads "—", the sort value is empty (sorted last).
-    assert b["data-nrmse"] == "—" and b["data-sort-nrmse"] == ""
+    # No value: both attributes are empty (no filter matches, sorted last);
+    # only the cell reads "—".
+    assert b["data-nrmse"] == "" and b["data-sort-nrmse"] == ""
     assert a["data-detail"] == "a message"
 
 
@@ -1052,3 +1053,142 @@ def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     statuses = [_attrs(tr)["data-status"] for tr in _body_rows(html)]
     assert statuses == ["pass", "fail", "pass"]
+
+
+def _warning():
+    from dstf.comparison.types import StructuralWarning
+
+    return StructuralWarning(field="n_states", reference_value="4", current_value="5")
+
+
+def test_the_comparison_in_hand_decides_the_verdict_over_a_sidecar(tmp_path):
+    """A sidecar from an earlier `--report` said PASS; the range was tightened
+    since and `run --rerun sim-failed` renders with the comparison it just
+    scored, which says FAIL. The comparison's verdict and numbers win; what
+    only the sidecar knows (its reference link, its ref_id, its walls)
+    survives."""
+    from dstf.comparison.types import TestComparison
+
+    snapshot = _one_test_snapshot()
+    snapshot["start_wall"] = 1.0
+    _write_status_json(tmp_path, snapshot)
+    _write_sidecar(
+        tmp_path,
+        {
+            "model_id": "Lib.A",
+            "written_at": 2.0,
+            "status": "PASS",
+            "worst_nrmse": 1e-6,
+            "n_unscored": 0,
+            "n_vars": 1,
+            "n_vars_passed": 1,
+            "n_warnings": 0,
+            "ref_id": "ref_0042",
+            "ref_file": "file:///refs/ref_0042.json",
+            "translation_wall": 1.5,
+            "sim_wall": 2.5,
+            "total_wall": 4.0,
+        },
+    )
+    comp = TestComparison(
+        model_id="Lib.A",
+        passed=False,
+        variables=[_failing_var()],
+        warnings=[_warning()],
+    )
+    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
+        "tests"
+    ]
+    assert row.status == "FAIL"
+    assert (row.worst_score, row.n_vars, row.n_vars_passed) == (0.5, 1, 0)
+    assert (row.n_warnings, row.n_unscored) == (1, 0)
+    assert (row.ref_id, row.ref_file) == ("ref_0042", "file:///refs/ref_0042.json")
+    assert (row.translation_wall, row.sim_wall, row.total_wall) == (1.5, 2.5, 4.0)
+
+
+def _failing_var():
+    from dstf.comparison.types import VariableComparison
+
+    return VariableComparison(
+        index=0,
+        name="x",
+        passed=False,
+        nrmse=0.5,
+        rmse=0.5,
+        signal_range=1.0,
+        max_abs_error=0.5,
+        max_abs_error_time=0.0,
+        reference_final=1.0,
+        actual_final=1.0,
+        tolerance_used=1e-4,
+    )
+
+
+def test_a_page_without_sidecars_keeps_what_the_live_row_knows(tmp_path):
+    """No sidecar: the row's verdict and numbers are the comparison's, its
+    provenance the live row's, and a comparison with no stored baseline
+    names none — never "ref_None"."""
+    from dstf.comparison.types import TestComparison
+
+    snapshot = _one_test_snapshot()
+    snapshot["tests"][0]["field_sources"] = {"stop_time": "annotation"}
+    _write_status_json(tmp_path, snapshot)
+    comp = TestComparison(
+        model_id="Lib.A", passed=True, test_id=None, warnings=[_warning()]
+    )
+    render_final(tmp_path, comparisons=[comp])
+    (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    attrs = _attrs(tr)
+    assert attrs["data-resolution"] == "annotation"
+    assert attrs["data-sort-warnings"] == "1"
+    assert "ref_None" not in tr
+    assert attrs["data-sort-ref"] == ""
+
+
+def test_a_zero_is_a_value_not_an_absence(tmp_path):
+    """A Warnings `=0` filter reads data-sort-warnings: a 0 rendered as ""
+    is a row with no value, which no number filter matches."""
+    from dstf.comparison.types import TestComparison
+
+    _write_status_json(tmp_path, _one_test_snapshot())
+    render_final(tmp_path, comparisons=[TestComparison(model_id="Lib.A", passed=True)])
+    (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert _attrs(tr)["data-sort-warnings"] == "0"
+
+
+def test_the_pending_badge_is_styled(tmp_path):
+    """A SIMULATED row's badge has the theme's "no verdict yet" fill."""
+    _write_status_json(tmp_path, _one_test_snapshot())
+    render_final(tmp_path)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert '<span class="status-badge pending">SIMULATED</span>' in html
+    assert re.search(
+        r"\.status-badge\.pending\s*\{\s*background:\s*var\(--dstf-pending-fill\)",
+        html,
+    )
+
+
+def test_an_absent_text_value_is_empty_to_the_filter(tmp_path):
+    """The cell reads "—"; the filter attribute is empty, so a regex `.`
+    matches only rows that have a message, and "—" matches none."""
+    _two_row_final_page(tmp_path)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    a, b = (_attrs(tr) for tr in _body_rows(html))
+    assert a["data-detail"] == "a message"
+    assert b["data-detail"] == "" and b["data-ref"] == ""
+    assert '<td class="detail-cell"' in _body_rows(html)[1]
+    assert "—" in _body_rows(html)[1]
+
+
+def test_a_sidecar_with_an_unknown_status_does_not_break_the_page(tmp_path):
+    snapshot = _one_test_snapshot()
+    _write_status_json(tmp_path, snapshot)
+    _write_sidecar(
+        tmp_path,
+        {"model_id": "Lib.A", "status": "BOGUS", "n_vars": 2, "n_vars_passed": 1},
+    )
+    render_final(tmp_path)
+    (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    # The row keeps its own state; the sidecar's numbers still land.
+    assert _attrs(tr)["data-status"] == "pending"
+    assert _attrs(tr)["data-vars"] == "1/2"

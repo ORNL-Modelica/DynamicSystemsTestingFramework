@@ -72,6 +72,11 @@ _LIVE = {
 }
 
 
+#: Every state a status.json entry is in: the ones above, and "passed" —
+#: the simulation ran, and the verdict is the compare phase's.
+LIVE_STATES = frozenset(_LIVE) | {"passed"}
+
+
 def live_status(raw: str) -> str | None:
     """A live status.json state as a status, or None for "passed": the
     simulation ran and the verdict is the compare phase's to give."""

@@ -199,13 +199,13 @@ body.has-selection { padding-bottom: 5em; }
 </thead>
 <tbody id="results-tbody">
 {#- One attribute per column, from reporting.rows: data-<key> is what a
-    column filter reads, data-sort-<key> what a sort reads ("" = no value,
-    sorted last). data-status stays the status CLASS: the pills', the
+    column filter reads, data-sort-<key> what a sort reads ("" = no value:
+    no filter matches it, and it sorts last). data-status stays the status CLASS: the pills', the
     counts' and the live tick's key. #}
 {% for t in tests %}
 <tr class="{{ t.status_class }}"
     data-status="{{ t.status_class }}"
-{% for c in columns %}{% if c.key != 'status' %}    data-{{ c.key }}="{{ c.text(t) }}"
+{% for c in columns %}{% if c.key != 'status' %}    data-{{ c.key }}="{{ c.filter_text(t) }}"
 {% endif %}    data-sort-{{ c.key }}="{{ c.sort(t) | sortval }}"
 {% endfor %}    data-started-wall="{{ t.started_wall or '' }}">
   <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>

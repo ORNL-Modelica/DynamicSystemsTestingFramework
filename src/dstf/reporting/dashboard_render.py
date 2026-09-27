@@ -12,11 +12,12 @@ tried first and is silently blocked on `file://` URLs — see the
 comment in `templates/dashboard.js`. Between reloads a 1s JS timer
 ticks the elapsed counters so they don't look frozen.
 
-Final mode is triggered after comparison from cli.cmd_run /
-cmd_compare; it drops the refresh meta tag (the page becomes static)
-and adds each test's verdict (from the comparisons the caller holds),
-per-test report links + post-run columns (worst score, warnings,
-translate/sim/total wall times) from the sidecars.
+Final mode is rendered by the command that ends a run (cli.cmd_run /
+cmd_compare, the tool's Rerun); it drops the refresh meta tag (the page
+becomes static) and adds each test's verdict and numbers (from the
+comparisons the caller holds), per-test report links + post-run columns
+(worst score, warnings, translate/sim/total wall times) from the
+sidecars.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import os
 import time
 import uuid
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -127,16 +129,28 @@ def format_run_metadata(meta: dict | None) -> dict | None:
 
 
 def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
-    """*row* with *comp*'s verdict and numbers, through ``summary_fields`` —
-    the computation the sidecar is written with. The live row keeps what
-    only it knows: its provenance, and its ref_id when the comparison has
-    no stored baseline to name."""
-    summary = summary_fields(
-        comp,
-        ref_id=f"ref_{comp.test_id}" if comp.test_id else row.ref_id,
-        field_sources=row.field_sources,
+    """*row* with *comp*'s verdict and score numbers, through
+    ``summary_fields`` — the computation the sidecar is written with.
+
+    Applied AFTER a sidecar's enrichment: the comparison held in hand is
+    this invocation's verdict, and a sidecar from an earlier ``--report``
+    (fresh against this run's start, because nothing re-ran) says what the
+    spec said then. Only the verdict and its numbers are the comparison's;
+    what only the sidecar knows (the reference link, the phase walls) and
+    what only the live row knows (its provenance) survive, and the
+    ref_id is the comparison's only where neither names one.
+    """
+    summary = summary_fields(comp)
+    return replace(
+        row,
+        status=summary["status"],
+        worst_score=summary["worst_nrmse"],
+        n_unscored=summary["n_unscored"],
+        n_vars=summary["n_vars"],
+        n_vars_passed=summary["n_vars_passed"],
+        n_warnings=summary["n_warnings"],
+        ref_id=row.ref_id or (f"ref_{comp.test_id}" if comp.test_id else None),
     )
-    return enrich_row(row, {"model_id": comp.model_id, **summary}, start_wall=None)
 
 
 def build_dashboard_context(
@@ -148,9 +162,9 @@ def build_dashboard_context(
     """Build the Jinja context for dashboard.html.
 
     mode='live' — auto_refresh=True, post-run fields stay None
-    mode='final' — auto_refresh=False, each row with a comparison gets its
-    verdict from it, then a fresh sidecar (when --report wrote one)
-    enriches it
+    mode='final' — auto_refresh=False, a fresh sidecar (when --report wrote
+    one) enriches each row, then its comparison (when the caller holds
+    one) sets its verdict and numbers
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
@@ -177,9 +191,6 @@ def build_dashboard_context(
     rows = []
     for t in snapshot.get("tests", []):
         row = row_from_status(t)
-        comp = by_model.get(row.model_id)
-        if comp is not None:
-            row = _with_verdict(row, comp)
         if mode == "final" and row.report_dir:
             sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
             if sidecar:
@@ -188,6 +199,9 @@ def build_dashboard_context(
                 row = enrich_row(
                     row, sidecar.get("summary", sidecar), start_wall=snapshot_start_wall
                 )
+        comp = by_model.get(row.model_id)
+        if comp is not None:
+            row = _with_verdict(row, comp)
         rows.append(row)
 
     # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf"
