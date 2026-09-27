@@ -106,8 +106,8 @@ class Rerun:
 
         def scored(project: Project, comparisons: dict[str, TestComparison]) -> None:
             # Once the Session has rescored the reload: the same static page,
-            # with its verdicts. The Session runs this off the UI loop, in
-            # order with its own renders: 1.6 s over TRANSFORM's work dir
+            # with its verdicts. The Session runs this off the UI loop, and
+            # the next job waits for it: 1.6 s over TRANSFORM's work dir
             # with --report sidecars (the 2026-09-27 gate; 44 ms was without
             # them).
             work_dir = project.config.work_dir

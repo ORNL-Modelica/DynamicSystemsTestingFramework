@@ -74,6 +74,11 @@ Listener = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
 
+#: How long a job waits, before its run, for an earlier job's
+#: ``after_reload`` (a Rerun's dashboard render: 1.6 s over TRANSFORM's work
+#: dir with --report sidecars). Past it the run starts and one line says so.
+BACKGROUND_WAIT = 60.0
+
 
 @dataclass
 class Project:
@@ -210,31 +215,13 @@ class PendingEditsError(RuntimeError):
         )
 
 
-@dataclass(frozen=True)
-class _RunBasis:
-    """What a results reload read against: the run ``status.json`` named
-    (its ``start_wall``) and whether that run was still writing the work
-    dir's ``dashboard.html``. A re-render stamps the Session's verdicts
-    only over the run they were read from, and only a finished one."""
-
-    start_wall: float | None
-    live: bool
-
-
-def _run_basis(work_dir: Path) -> _RunBasis:
-    from ..backends.progress import read_status
-    from ..reporting.dashboard_render import dashboard_is_live
-
-    snapshot = read_status(work_dir) or {}
-    return _RunBasis(snapshot.get("start_wall"), dashboard_is_live(work_dir))
-
-
 class _Background:
     """One daemon thread that runs what the Session hands it off the UI
-    loop, one at a time and in the order handed — a Save's render queued
-    behind a slow Discard's must not overtake it. Started when there is
-    work, ended when there is none. What it runs is logged when it raises,
-    never re-raised: it writes files beside a Save that already stands."""
+    loop — a job's ``after_reload`` — one at a time and in the order
+    handed. Started when there is work, ended when there is none. What it
+    runs is logged when it raises, whatever it raises (a hook's SystemExit
+    too), never re-raised: it writes files beside a reload that already
+    stands, and a thread that died would leave ``wait`` hanging on it."""
 
     def __init__(self) -> None:
         self._cond = threading.Condition()
@@ -261,7 +248,7 @@ class _Background:
                 what, fn = self._queue.pop(0)
             try:
                 fn()
-            except Exception:
+            except BaseException:
                 logger.exception("%s failed", what)
 
     def wait(self, timeout: float | None = None) -> bool:
@@ -290,8 +277,6 @@ class Session:
         self.rescan_done = threading.Event()
         self._reads: dict[str, _ModelReads] = {}
         self._background = _Background()
-        #: What the last results reload read against (`_rerender_dashboard`).
-        self._read_basis: _RunBasis | None = None
 
     # -- project -----------------------------------------------------------
 
@@ -501,16 +486,16 @@ class Session:
 
     def reload(self) -> None:
         """Re-read the spec from disk, dropping pending ops (what a refused
-        save offers) — and, as a Discard does, their verdicts from the
-        work dir's dashboard."""
+        save offers). Refused while a job runs, as Discard is: the job's
+        reload scores the spec."""
         project = self._require_project()
+        self._refuse_if_running()
         self.spec = SpecDocument.load(project.config.spec_path)
         self._rebuild_tests(set(self.comparisons))
-        self._rerender_dashboard()
 
     def wait_background(self, timeout: float | None = None) -> bool:
-        """Wait until every dashboard render and ``after_reload`` hook the
-        Session ran off the UI loop has finished; False on a timeout."""
+        """Wait until every ``after_reload`` hook the Session ran off the UI
+        loop has finished; False on a timeout."""
         return self._background.wait(timeout)
 
     def on(self, event: Event, cb: Listener) -> None:
@@ -935,7 +920,6 @@ class Session:
             self.spec.path, self.spec.loaded, self.spec.content_hash
         )
         self._rebuild_tests(models)
-        self._rerender_dashboard()
 
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s
@@ -954,49 +938,6 @@ class Session:
         models = {model_id for model_id, _ in groups}
         self.spec = SpecDocument.load(self.spec.path)
         self._rebuild_tests(models)
-        self._rerender_dashboard()
-
-    def _rerender_dashboard(self) -> None:
-        """After a Save, a Discard or a Reload: the work dir's
-        `dashboard.html` with the Session's verdicts now. A rerun under
-        unsaved edits rendered their verdicts into it; once the edits are
-        saved or gone, the file must not keep them. Only a file a run left:
-        the tool never creates one.
-
-        Only over the run the verdicts were read from, and only a finished
-        one — skipped, with one log line, when `status.json` names a run
-        that started after the last results reload (a CLI `dstf run` whose
-        FAIL a later Save would hide), when the page is live (a run is
-        writing it and would stop refreshing), or when the reload read a
-        run that was still writing (its results were half of that run's).
-
-        Off the UI loop, on a snapshot of the comparisons: 1.6 s over
-        TRANSFORM's work dir with --report sidecars. A failed render is
-        logged and leaves the Save / Discard done."""
-        project = self._require_project()
-        work_dir = project.config.work_dir
-        if work_dir is None or not (work_dir / "dashboard.html").is_file():
-            return
-        comparisons = list(self.comparisons.values())
-        basis = self._read_basis
-        page = work_dir / "dashboard.html"
-
-        def render() -> None:
-            from ..reporting import dashboard_render
-
-            now = _run_basis(work_dir)
-            if now.live:
-                why = "a run is writing it"
-            elif basis is None or now.start_wall != basis.start_wall:
-                why = "a run started after the tool read its results"
-            elif basis.live:
-                why = "the tool read its results while a run was writing them"
-            else:
-                dashboard_render.render_final(work_dir, comparisons=comparisons)
-                return
-            logger.warning("not re-rendering %s: %s", page, why)
-
-        self._background.submit(f"re-rendering {page}", render)
 
     def export(self) -> dict:
         from ..discovery.patch_envelope import ModelPatch, build_envelope
@@ -1045,6 +986,16 @@ class Session:
 
         def work() -> None:
             try:
+                # A job's `after_reload` still queued (the last Rerun's
+                # dashboard render) lands before this run starts, never on
+                # its live page. Waited here, off the UI loop.
+                if not self._background.wait(BACKGROUND_WAIT):
+                    logger.warning(
+                        "%s: starting with an earlier job's after_reload still "
+                        "running after %.0f s",
+                        outcome.label,
+                        BACKGROUND_WAIT,
+                    )
                 outcome.run(ctx)
             except (
                 BaseException
@@ -1084,10 +1035,10 @@ class Session:
                 job.reloaded = True
                 hook = outcome.after_reload
                 if hook is not None:
-                    # Off the UI loop, in order with the Session's own
-                    # renders (Rerun's writes the dashboard); on a snapshot
-                    # of the comparisons. A hook that raises is logged: the
-                    # reload stands.
+                    # Off the UI loop (Rerun's writes the dashboard), in the
+                    # order the jobs finished; on a snapshot of the
+                    # comparisons this reload scored. A hook that raises is
+                    # logged: the reload stands.
                     project, comparisons = self.project, dict(self.comparisons)
                     self._background.submit(
                         f"{job.label}: after_reload",
@@ -1207,10 +1158,6 @@ class Session:
         True for a model whose scoring raised (its verdict is absent),
         False otherwise."""
         project = self._require_project()
-        # Before the read: a run that starts during it is one the read may
-        # have half of, and its new start_wall says so.
-        work_dir = project.config.work_dir
-        self._read_basis = _run_basis(work_dir) if work_dir is not None else None
         locked = self.running.models if self.running is not None else frozenset()
         to_read = [t for t in project.tests if t.model_id not in locked]
         project.results = {m: r for m, r in project.results.items() if m in locked}

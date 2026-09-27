@@ -30,7 +30,6 @@ from dstf.authoring.session import (
     Selection,
     Session,
     SessionView,
-    StaleSpecError,
 )
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.progress import read_status
@@ -198,10 +197,10 @@ def test_a_tool_rerun_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path):
     assert _dashboard_status(work_dir, POINTS_CHECK) == "pass"
 
 
-def test_save_and_discard_rerender_the_dashboard(tmp_path):
-    """A rerun under an unsaved edit leaves `dashboard.html` with the edit's
-    verdicts. Once the edit is gone they are gone from the file too:
-    Discard renders the loaded verdicts, Save the saved ones."""
+def test_save_and_discard_after_a_rerun_leave_its_dashboard_alone(tmp_path):
+    """The dashboard is the report of the last run, compare or tool Rerun: a
+    rerun under an unsaved edit leaves the edit's verdicts in it, and a Save
+    or a Discard after it does not rewrite it (D137 §6)."""
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"
     session = Session()
@@ -213,67 +212,15 @@ def test_save_and_discard_rerender_the_dashboard(tmp_path):
     assert job is not None and job.done.wait(60) and job.error is None
     assert session.wait_background(10)
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+    page = (work_dir / "dashboard.html").read_bytes()
     session.discard()
-    assert session.wait_background(10)
-    assert _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
-    session.stage([TIGHTEN])
-    assert session.wait_background(10)
-    assert (
-        _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
-    )  # staging renders nothing
-    session.save()
-    assert session.wait_background(10)
-    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
-
-
-def test_a_reload_renders_the_dropped_edits_verdicts_away(tmp_path):
-    """Reload — what a Save refused over a changed spec offers — drops the
-    pending edits like Discard, and their verdicts from the page."""
-    config, _tests = python_example_copy(tmp_path)
-    work_dir = tmp_path / "work"
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
-    session.stage([TIGHTEN])
-    session.apply(
-        Rerun().act(SessionView(session, Selection(tests=frozenset({CONSTANT_CSV}))))
-    )
-    job = session.running
-    assert job is not None and job.done.wait(60) and job.error is None
-    assert session.wait_background(10)
-    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
-    p = session.spec.path
-    p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-    with pytest.raises(StaleSpecError):
-        session.save()
-    session.reload()
-    assert not session.spec.pending and session.comparisons[CONSTANT_CSV].passed
-    assert session.wait_background(10)
-    assert _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
-
-
-def test_a_save_leaves_a_later_cli_runs_page_alone(tmp_path, monkeypatch):
-    """The tool reads a run; a CLI `dstf run` after it fails a test and
-    renders that FAIL; a Save in the tool must not stamp the verdicts it
-    read before that run over it."""
-    from dstf.cli import main
-
-    config, _tests = python_example_copy(tmp_path)
-    work_dir = config.work_dir
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
-    argv = ["--config", str(config.config_file), "run", "--work-dir", str(work_dir)]
-    argv += ["--filter", CONSTANT_CSV]
-    assert main(argv) == 0
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
     assert session.comparisons[CONSTANT_CSV].passed
-    csv = config.source_path / "Examples" / "data" / "constant_experiment.csv"
-    csv.write_text(csv.read_text(encoding="utf-8").replace("1.0", "7.0"))
-    assert main(argv) == 1
-    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
-    session.stage([PatchOp(POINTS_CHECK, "add", "/comparison/tolerance", 0.02)])
+    assert session.wait_background(10)
+    assert (work_dir / "dashboard.html").read_bytes() == page
+    session.stage([TIGHTEN])
     session.save()
     assert session.wait_background(10)
-    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+    assert (work_dir / "dashboard.html").read_bytes() == page
 
 
 def _dashboard_models(work_dir) -> list[str]:
@@ -281,10 +228,10 @@ def _dashboard_models(work_dir) -> list[str]:
     return re.findall(r'<tr[^>]*data-model="([^"]*)"', page)
 
 
-def test_the_tools_dashboards_list_every_test(tmp_path):
+def test_a_tool_reruns_dashboard_lists_every_test(tmp_path):
     """A rerun of one test rewrites status.json with that test alone; the
-    pages the tool renders after it — the rerun's and a Discard's — list
-    every test the Session scored, not the rerun's one row."""
+    page the rerun renders lists every test the Session scored, not its one
+    row."""
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"
     session = Session()
@@ -299,19 +246,3 @@ def test_the_tools_dashboards_list_every_test(tmp_path):
     every = {CONSTANT_CSV, SIMPLE_RAMP, POINTS_CHECK}
     assert sorted(_dashboard_models(work_dir)) == sorted(every)
     assert _dashboard_models(work_dir)[0] == CONSTANT_CSV  # status.json's first
-    session.stage([TIGHTEN])
-    session.discard()
-    assert session.wait_background(10)
-    assert sorted(_dashboard_models(work_dir)) == sorted(every)
-
-
-def test_save_and_discard_write_no_dashboard_where_no_run_left_one(tmp_path):
-    config, _tests = python_example_copy(tmp_path)
-    work_dir = tmp_path / "work"
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
-    session.stage([TIGHTEN])
-    session.discard()
-    session.stage([TIGHTEN])
-    session.save()
-    assert not (work_dir / "dashboard.html").exists()

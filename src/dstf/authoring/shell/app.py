@@ -35,7 +35,7 @@ def run_app(
         shell.open_async(backend)
 
     app.on_startup(start)
-    app.on_shutdown(shell.terminate_children)
+    app.on_shutdown(shell.shutdown)
     ui.run(
         shell.index,
         host="127.0.0.1",

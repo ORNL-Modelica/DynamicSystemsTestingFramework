@@ -520,7 +520,7 @@ DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the
 
 - **During a run**: the page is re-written on every state change and reloads itself every 5s (a meta refresh — a script fetch is blocked on `file://`). It stays live until the command that started the run has finished with it.
 - **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/test_NNNN/interactive.html`, linked from the Model column.
-- **Which rows**: a live page lists the tests the running run holds. A final page lists the last run's tests and then every other test the command scored, in the work dir's manifest order. So `compare` after a `--filter` run, a `--merge` run, and a Rerun, Save or Discard in `dstf author` list every test with its verdict; a plain `--filter` run without `--merge` lists only its own tests, because those are all it scored.
+- **Which rows**: a live page lists the tests the running run holds. A final page lists the last run's tests and then every other test the command scored, in the work dir's manifest order. So `compare` after a `--filter` run, a `--merge` run, and a Rerun in `dstf author` list every test with its verdict; a plain `--filter` run without `--merge` lists only its own tests, because those are all it scored.
 
 The **Translate (s) / Sim (s) / Total (s)** columns — on the dashboard and on the Suite page of `dstf author` — are wall-clock seconds. Total is always the whole test; what Translate and Sim time depends on the backend:
 
@@ -788,13 +788,10 @@ back when you return from a test. Rows repaint in place as results are scored,
 edits staged and jobs run, keeping the sort, filters and selection. On a cold
 library scan the rows the spec and the last run name appear at once, reading
 "…" until the scan and the scoring reach them. A Rerun from the tool ends, like
-`dstf run`, on a static `dashboard.html` — with the tool's verdicts. Save,
-Discard and Reload render that file again with the verdicts they leave, so it
-never keeps the verdicts of edits no longer pending (only where a run left
-one) — but never over a run the tool has not read: when a `dstf run` started
-after the tool last read its results, or a run is still writing the page, the
-file is left alone and the tool logs why. Save and Discard are refused while a
-job runs.
+`dstf run`, on a static `dashboard.html` — with the tool's verdicts, those of
+any unsaved edit the Rerun ran with included. The dashboard is the report of
+the last `dstf run` / `compare` or tool Rerun; Save, Discard and Reload do not
+rewrite it. Save, Discard and Reload are refused while a job runs.
 
 The **Test page** is one test. A second header row carries the way back to the
 Suite, the model id, its verdict, the backend and baseline it was scored

@@ -359,6 +359,90 @@ async def test_a_thread_posted_completion_reaches_the_page(shell):
         await user.should_see("no job running", retries=20)
 
 
+async def test_a_discard_clicked_as_a_job_starts_is_a_notification(shell):
+    """The header disables Discard on the tick after a job starts; a click
+    within that tick reaches a Session that refuses it, and the refusal is
+    a notification, not a traceback."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        try:
+            _suite(shell, user).header._discard()  # the click within the tick
+            await user.should_see("rerun is still running", retries=20)
+            assert len(shell.session.spec.pending) == 2
+        finally:
+            gate.release.set()
+
+
+async def test_a_reload_clicked_while_a_job_runs_is_a_notification(shell):
+    """The Reload a refused Save offers is refused while a job runs, as
+    Discard is — a notification, the dialog left open."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        p = shell.session.spec.path
+        p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        header = _suite(shell, user).header
+        header._save()
+        await user.should_see("Keep my edits", retries=20)
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        try:
+            user.find("Reload").click()
+            await user.should_see("rerun is still running", retries=20)
+            assert len(shell.session.spec.pending) == 2
+        finally:
+            gate.release.set()
+
+
+def test_shutdown_waits_for_a_rerun_render_still_queued(shell):
+    """A Rerun's dashboard render runs on a daemon thread after the job has
+    finished: a Stop server or a Ctrl-C right after the rerun must not end
+    the process under it — the shutdown waits for it."""
+    landed = threading.Event()
+
+    def slow(project, comparisons):
+        time.sleep(0.5)
+        landed.set()
+
+    jobs: list = []
+    shell.session.on(
+        "job", lambda e: jobs.append(e["job"]) if e["state"] == "started" else None
+    )
+    shell.session.apply(
+        Job(
+            run=lambda ctx: None,
+            label="rerun",
+            models=frozenset({A}),
+            after_reload=slow,
+        )
+    )
+    for _ in range(250):  # the completion is posted to the UI loop's tick
+        shell.tick()
+        if jobs[0].done.is_set():
+            break
+        time.sleep(0.02)
+    assert jobs[0].done.is_set() and not landed.is_set()
+    shell.shutdown()
+    assert landed.is_set()
+
+
+def test_the_app_runs_the_shells_shutdown(tmp_path, monkeypatch):
+    import dstf.authoring.shell.app as app_mod
+
+    handlers: list = []
+    monkeypatch.setattr(app_mod.app, "on_shutdown", handlers.append)
+    monkeypatch.setattr(app_mod.app, "on_startup", lambda fn: None)
+    monkeypatch.setattr(app_mod.ui, "run", lambda *a, **k: None)
+    monkeypatch.setattr(app_mod.Shell, "mount", lambda self: None)
+    cfg, work = _project(tmp_path)
+    app_mod.run_app(cfg, work_dir=work, show=False)
+    (handler,) = handlers
+    assert handler.__func__ is Shell.shutdown
+
+
 async def test_a_rescore_after_the_open_does_not_put_the_shell_back_to_loading(shell):
     """`Session._reload_results` announces `loading(phase="results")` per
     model on EVERY rescore — a finished job's, a store write's — and only

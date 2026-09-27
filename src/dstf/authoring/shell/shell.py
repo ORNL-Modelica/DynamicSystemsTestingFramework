@@ -32,6 +32,9 @@ from .style import STYLE
 logger = logging.getLogger(__name__)
 
 TICK = 0.1  # seconds; a Session event reaches every page within one
+#: How long the shutdown waits for a Rerun's dashboard render still running
+#: (1.6 s over TRANSFORM's work dir with --report sidecars).
+SHUTDOWN_WAIT = 5.0
 
 
 class Page(Protocol):
@@ -329,6 +332,18 @@ class Shell:
         """Stop server: the children first (decision 7), then NiceGUI."""
         self.terminate_children()
         app.shutdown()
+
+    def shutdown(self) -> None:
+        """NiceGUI's shutdown (Stop server, a Ctrl-C): a Rerun's dashboard
+        render still running off the UI loop lands first — it is on a daemon
+        thread the process's exit would end mid-write — then the children
+        end (decision 7)."""
+        if not self.session.wait_background(SHUTDOWN_WAIT):
+            logger.warning(
+                "exiting with a job's after_reload still running after %.0f s",
+                SHUTDOWN_WAIT,
+            )
+        self.terminate_children()
 
     def terminate_children(self) -> None:
         for child in self.children:

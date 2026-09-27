@@ -27,6 +27,7 @@ from nicegui import ui
 
 from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
+from ..errors import user_text
 from ..session import StaleSpecError
 from ..spec_document import PatchOp
 from .widgets import Action
@@ -305,7 +306,11 @@ class Header:
             with self.dialog, ui.card():
 
                 def reload() -> None:
-                    self.shell.session.reload()
+                    try:
+                        self.shell.session.reload()
+                    except Exception as e:  # refused while a job runs
+                        ui.notify(user_text(e), type="warning")
+                        return
                     self.dialog.close()
 
                 ui.label(f"{e.path} changed on disk since it was loaded.")
@@ -319,7 +324,12 @@ class Header:
             ui.notify(f"save failed: {e}", type="negative")
 
     def _discard(self) -> None:
-        self.shell.session.discard()
+        # Refused while a job runs: the button greys on the next tick, and a
+        # click within the one the job started in still reaches the Session.
+        try:
+            self.shell.session.discard()
+        except Exception as e:
+            ui.notify(user_text(e), type="warning")
 
     def _export(self) -> None:
         project = self.shell.session.project

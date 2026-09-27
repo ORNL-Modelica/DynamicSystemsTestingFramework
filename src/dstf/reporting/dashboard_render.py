@@ -228,7 +228,7 @@ def build_dashboard_context(
     the last run's scope, which each run rewrites — then every other test
     the caller holds a comparison for, in ``batch_manifest.json``'s order,
     then by model id (D136's amendment: ``compare`` after a ``--filter``
-    run, a ``--merge``, the tool's Rerun and Save list every test they
+    run, a ``--merge`` and the tool's Rerun list every test they
     scored). Such a row takes its key and baseline from the manifest.
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
@@ -328,21 +328,6 @@ def build_dashboard_context(
         # for snapshots written before this field existed.
         "run_metadata": format_run_metadata(snapshot.get("metadata")),
     }
-
-
-#: What only a live page carries (the template's `auto_refresh`).
-_LIVE_MARK = '<meta http-equiv="refresh"'
-
-
-def dashboard_is_live(work_dir: Path) -> bool:
-    """Whether *work_dir*'s ``dashboard.html`` is a live page — a run is
-    writing it, and a final render over it would stop the browser's
-    refresh. False when there is no page to read."""
-    try:
-        text = (work_dir / "dashboard.html").read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return False
-    return _LIVE_MARK in text
 
 
 def _atomic_write(path: Path, text: str) -> None:
