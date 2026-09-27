@@ -254,11 +254,18 @@ def cmd_run(args: argparse.Namespace) -> int:
             return _output_report(comparisons, args, config)
     finally:
         if not final_rendered:
-            render_final(
-                config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
-                comparisons=comparisons or (),
-            )
+            # A page is not worth the run's own exception: a failing render
+            # here replaced a Ctrl+C in flight with its OSError.
+            try:
+                render_final(
+                    config.work_dir,
+                    rerun_prefix=build_rerun_prefix(config),
+                    comparisons=comparisons or (),
+                )
+            except Exception as e:
+                print(
+                    f"# WARN: could not write the final dashboard: {e}", file=sys.stderr
+                )
 
 
 def cmd_compare(args: argparse.Namespace) -> int:

@@ -726,6 +726,29 @@ class TestEveryRunEndsOnAStaticPage:
             cmd_run(_run_args(run_env))
         assert _REFRESH not in self._page(run_env)
 
+    def test_a_failing_final_render_does_not_mask_the_runs_own_exception(
+        self, run_env, monkeypatch, capsys
+    ):
+        """Ctrl+C in the compare phase, then the final render fails too: the
+        Ctrl+C is what propagates, and the render's failure is a warning."""
+        run_env.make([_mk_test("Lib.T1")], results={"Lib.T1": _mk_result("Lib.T1")})
+
+        def compare_all(*a, **k):
+            raise KeyboardInterrupt
+
+        def render_final(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("dstf.comparison.comparator.compare_all", compare_all)
+        monkeypatch.setattr(
+            "dstf.reporting.dashboard_render.render_final", render_final
+        )
+        with pytest.raises(KeyboardInterrupt):
+            cmd_run(_run_args(run_env))
+        assert (
+            "could not write the final dashboard: disk full" in capsys.readouterr().err
+        )
+
     @pytest.mark.parametrize("exc", [OSError("disk full"), KeyboardInterrupt()])
     def test_an_exception_from_the_backend_leaves_a_static_page(self, run_env, exc):
         """An OSError after the simulations, or Ctrl+C mid-simulation: the
