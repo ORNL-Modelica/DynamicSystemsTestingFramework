@@ -2,7 +2,8 @@
 carries the sentence that says why and what enables it, beside it
 (DESIGN.md "Disabled states explain themselves": never a bare grey
 button). The header's Save / Discard / Export and every capability's
-button at a placement are Actions."""
+button at a placement are Actions; `IconAction` is one drawn as an
+icon, its caption or its reason the tooltip."""
 
 from __future__ import annotations
 
@@ -37,6 +38,33 @@ class Action:
         if self.why is not None:
             self.why.set_text(reason or "")
             self.why.set_visibility(reason is not None)
+
+
+class IconAction:
+    """An Action drawn as an icon button: the caption — or, disabled, the
+    sentence that says why — is its tooltip and its accessible name (an
+    icon's ligature text is not a name). A disabled Quasar button takes no
+    pointer events, so the tooltip sits on a span around it (as Remove
+    plot's does)."""
+
+    def __init__(self, on_click: Callable[[], None], *, icon: str, marker: str) -> None:
+        with ui.element("span").classes("dstf-icon-action") as self.container:
+            self.button = (
+                ui.button(icon=icon, on_click=on_click)
+                .props("outline dense")
+                .mark(marker)
+            )
+            self.tip = ui.tooltip("").mark(f"{marker}:tip")
+
+    def set(self, caption: str, reason: str | None) -> None:
+        text = caption if reason is None else reason
+        self.tip.set_text(text)
+        self.button.props["aria-label"] = text
+        self.button.update()
+        if reason is None:
+            self.button.enable()
+        else:
+            self.button.disable()
 
 
 class Pill:

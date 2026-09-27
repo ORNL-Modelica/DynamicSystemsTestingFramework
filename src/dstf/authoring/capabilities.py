@@ -192,6 +192,13 @@ class Panel(Protocol):
 
 @runtime_checkable
 class Capability(Protocol):
+    """A plug-in the shell draws at its placements. It MAY also declare
+    ``icon`` (a Material icon name): a bar that draws icons (the Suite
+    toolbar) draws it as that icon, its caption the tooltip; one without
+    keeps its text button. Not a protocol member — a runtime-checkable
+    protocol requires every member, and most capabilities have no icon —
+    so the shell reads it with ``getattr``."""
+
     name: str
     label: str
     placements: frozenset[Placement]
@@ -206,7 +213,7 @@ class Capability(Protocol):
 
     def caption(self, s: SessionView) -> str:
         """The button's label: its object, its effect and a count
-        ("Rerun 2 selected tests (Dymola)"). At zero it still says what it
+        ("Rerun 2 selected tests"). At zero it still says what it
         would do; ``available`` then carries the sentence. The inline
         placements (CRITERION, NODE) draw no button and never read it."""
         ...

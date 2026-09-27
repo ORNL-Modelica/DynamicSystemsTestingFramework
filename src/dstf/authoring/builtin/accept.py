@@ -96,6 +96,8 @@ class Accept:
     name = "accept"
     label = "Accept"
     placements = frozenset({Placement.SUITE, Placement.TEST})
+    #: drawn as this icon where a bar draws icons (the Suite toolbar)
+    icon = "done_all"
 
     def available(self, s: SessionView) -> bool | str:
         project = s.project

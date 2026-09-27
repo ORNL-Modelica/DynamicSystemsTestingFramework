@@ -33,7 +33,7 @@ from ..capabilities import FigureHook as FigureHookProtocol
 from ..errors import USER_ERRORS, user_text
 from ..session import Selection
 from .figure_hook import FigureHook
-from .widgets import Action
+from .widgets import Action, IconAction
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -132,13 +132,17 @@ class ActionBar:
         *,
         marker: str,
         figure: FigureHook | None = None,
+        icons: bool = False,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.marker, self.figure = marker, figure
+        #: Draw each capability that declares an ``icon`` (a Material icon
+        #: name) as an icon button; one that declares none keeps its text.
+        self.icons = icons
         self.errors: dict[
             str, str
         ] = {}  # capability name -> the error its dialog shows
-        self.actions: dict[str, Action] = {}
+        self.actions: dict[str, Action | IconAction] = {}
         self._owner: str | None = None  # the open panel's key on the hook
         self.dialog = ui.dialog()  # one element, rebuilt per open
         # Esc and a backdrop click close the dialog without reaching `close`.
@@ -158,10 +162,19 @@ class ActionBar:
             self.actions = {}
             with self.container:
                 for cap, _ in placed:
-                    self.actions[cap.name] = Action(
-                        partial(self.open, cap),
-                        props="outline dense no-caps",
-                        marker=f"action:{cap.name}",
+                    icon = getattr(cap, "icon", None) if self.icons else None
+                    self.actions[cap.name] = (
+                        IconAction(
+                            partial(self.open, cap),
+                            icon=icon,
+                            marker=f"action:{cap.name}",
+                        )
+                        if icon is not None
+                        else Action(
+                            partial(self.open, cap),
+                            props="outline dense no-caps",
+                            marker=f"action:{cap.name}",
+                        )
                     )
         loading = self.shell.load.in_progress
         for cap, avail in placed:

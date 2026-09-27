@@ -40,6 +40,8 @@ class Rerun:
     name = "rerun"
     label = "Rerun"
     placements = frozenset({Placement.SUITE, Placement.TEST})
+    #: drawn as this icon where a bar draws icons (the Suite toolbar)
+    icon = "replay"
 
     def available(self, s: SessionView) -> bool | str:
         if s.project is None:
@@ -54,13 +56,12 @@ class Rerun:
         return True
 
     def caption(self, s: SessionView) -> str:
-        """Count, backend, and the selection's unsaved edits (brief §3.6: a
-        run uses the spec with pending edits applied — `stage` re-merges
-        `project.tests` — and the button says so)."""
-        project = s.project
-        backend = project.config.backend_name if project is not None else "?"
+        """Count and the selection's unsaved edits (brief §3.6: a run uses
+        the spec with pending edits applied — `stage` re-merges
+        `project.tests` — and the button says so). No backend: the header
+        shows it (owner ruling, 2026-09-26); the panel names it."""
         models = set(_models(s))
-        text = f"Rerun {plural(len(models), 'selected test')} ({backend})"
+        text = f"Rerun {plural(len(models), 'selected test')}"
         edits = sum(1 for op in s.pending if op.model_id in models)
         if edits:
             text += f" (with {plural(edits, 'unsaved edit')})"

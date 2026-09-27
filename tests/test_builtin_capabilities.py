@@ -1841,20 +1841,21 @@ def test_accept_caption_counts_what_it_will_store_and_needs_a_selection(session)
     assert Accept().available(none) == "Accept needs a selection"
 
 
-def test_rerun_caption_names_count_backend_and_the_selections_unsaved_edits(session):
+def test_rerun_caption_names_count_and_the_selections_unsaved_edits_not_the_backend(
+    session,
+):
+    # No backend: the header shows it; the panel names it.
     one = SessionView(session, Selection(tests=frozenset({A})))
-    assert Rerun().caption(one) == "Rerun 1 selected test (Python)"
+    assert Rerun().caption(one) == "Rerun 1 selected test"
     assert (
         Rerun().available(SessionView(session, Selection()))
         == "Rerun needs a selection"
     )
     session.stage([LOOSEN])  # two ops on A: the materialization and the edit
-    assert (
-        Rerun().caption(one) == "Rerun 1 selected test (Python) (with 2 unsaved edits)"
-    )
+    assert Rerun().caption(one) == "Rerun 1 selected test (with 2 unsaved edits)"
     # Another model's edits are not this selection's.
     other = SessionView(session, Selection(tests=frozenset({D})))
-    assert Rerun().caption(other) == "Rerun 1 selected test (Python)"
+    assert Rerun().caption(other) == "Rerun 1 selected test"
 
 
 async def test_a_refused_form_keeps_its_row_and_what_was_typed(session):

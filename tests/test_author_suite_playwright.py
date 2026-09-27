@@ -167,9 +167,7 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
             "button", name=re.compile(r"^Accept 2 results as baselines")
         )
         expect(accept).to_be_enabled(timeout=EXPECT_TIMEOUT)
-        rerun = page.get_by_role(
-            "button", name=re.compile(r"^Rerun 2 selected tests \(Python\)")
-        )
+        rerun = page.get_by_role("button", name=re.compile(r"^Rerun 2 selected tests$"))
         expect(rerun).to_be_enabled(timeout=EXPECT_TIMEOUT)
 
         # A click on A's name views A: the Test page, in this tab.
@@ -191,9 +189,7 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         )
         # Its TEST-placement buttons speak of this one test.
         expect(
-            page.get_by_role(
-                "button", name=re.compile(r"^Rerun 1 selected test \(Python\)")
-            )
+            page.get_by_role("button", name=re.compile(r"^Rerun 1 selected test$"))
         ).to_be_visible(timeout=EXPECT_TIMEOUT)
 
         # Back to the Suite: D and G are still checked, A is not (viewing ≠
@@ -401,7 +397,7 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
             5, timeout=EXPECT_TIMEOUT
         )
         _row(page, D.rsplit(".", 1)[-1]).get_by_role("checkbox").click()
-        rerun = re.compile(r"^Rerun 1 selected test \(Python\)")
+        rerun = re.compile(r"^Rerun 1 selected test$")
         page.get_by_role("button", name=rerun).first.click()
         page.locator(".q-dialog").get_by_role("button", name=rerun).click()
         expect(header).to_contain_text("1 running", timeout=EXPECT_TIMEOUT)
