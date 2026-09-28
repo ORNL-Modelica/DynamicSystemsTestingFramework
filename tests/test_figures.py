@@ -1039,3 +1039,17 @@ def test_the_tools_nrmse_axis_is_anchored_to_the_plot():
     report = variable_figure(view)["layout"]
     assert report["yaxis4"]["anchor"] == "free"
     assert report["yaxis4"]["autoshift"] is True
+
+
+def test_a_context_series_draws_no_criteria_of_its_own():
+    """A context variable scored on ANOTHER plot keeps its criteria there:
+    beside this plot's subject it is one grey line, nothing else."""
+    from dstf.figures.plotly import plot_figure
+
+    view = _tube_and_range_view()
+    subject = replace(view, name="y", leaves=())
+    alone = plot_figure([subject])
+    fig = plot_figure([subject], context=[view])
+    added = fig["data"][len(alone["data"]) :]
+    assert [tr["meta"]["kind"] for tr in added] == ["context"]
+    assert fig["layout"]["shapes"] == alone["layout"]["shapes"]

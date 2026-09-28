@@ -764,21 +764,28 @@ class Session:
         visibility: Visibility | None = None,
     ) -> dict:
         """The editable figure of plot ``index`` (IndexError past the end).
-        One series is :meth:`figure`; several are drawn over the same cached
-        bases. ``editing`` and ``visibility`` as in :meth:`figure`."""
+        A subject of one variable with no context is :meth:`figure`; a
+        family, or context, is drawn over the same cached bases. A context
+        view draws as a trace only — a context variable scored on another
+        plot signs no leaf onto this one. ``editing`` and ``visibility`` as
+        in :meth:`figure`."""
         from ..figures.plotly import plot_figure
 
         if index < 0:
             raise IndexError(index)
         plot = self.plots(model_id)[index]
-        drawn = [name for name in plot.series if name not in plot.missing]
         if len(plot.subject) == 1 and not plot.context:
             return self.figure(
                 model_id, plot.subject[0], editing=editing, visibility=visibility
             )
         return plot_figure(
-            [self._editable_view(model_id, name) for name in drawn],
+            [self._editable_view(model_id, name) for name in plot.subject],
             None,
+            context=[
+                self._editable_view(model_id, name)
+                for name in plot.context
+                if name not in plot.missing
+            ],
             editable=True,
             rings_for=editing,
             visibility=visibility,

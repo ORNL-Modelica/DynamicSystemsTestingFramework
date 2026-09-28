@@ -912,7 +912,74 @@ def variable_figure(
     return {"data": data, "layout": layout, "config": config}
 
 
+#: A context series' line colour: the theme table's ``text-muted``, as a
+#: literal — a figure's traces are data, and follow no page theme.
+#: `test_the_context_colour_is_the_themes_muted_text` pins the two equal.
+CONTEXT_COLOR = "#888888"
+
+
+def _context_trace(view: VariableView) -> dict | None:
+    """One context series: grey and thinner, on the subject's axes, with no
+    reference and no criteria geometry — drawn beside the plot's subject,
+    never scored there. ``None`` for a series the result lacks."""
+    if not _draws_actual(view):
+        return None
+    assert view.act_time is not None and view.act_values is not None
+    return with_hover(
+        {
+            "type": "scatter",
+            "mode": "lines",
+            "name": f"{as_text(view.label)} · context",
+            "xaxis": "x",
+            "yaxis": "y",
+            "x": view.act_time.tolist(),
+            "y": view.act_values.tolist(),
+            "line": {"color": CONTEXT_COLOR, "width": 1.0},
+            "meta": {
+                "id": f"context/{view.name}",
+                "kind": "context",
+                "samples": len(view.act_time),
+                "full_samples": view.full_samples.get("act", len(view.act_time)),
+            },
+        },
+        view.label,
+    )
+
+
 def plot_figure(
+    views: Sequence[VariableView],
+    max_samples: int | None = None,
+    *,
+    context: Sequence[VariableView] = (),
+    editable: bool = False,
+    labels: Mapping[str, str] | None = None,
+    rings_for: Collection[str] | None = None,
+    visibility: Visibility | None = None,
+) -> dict:
+    """The figure for one plot of a test: ``views`` are its SUBJECT (one
+    variable, or the members of one array family), ``context`` the grey
+    series drawn beside it on the same y axis (:func:`_context_trace`).
+    Context changes nothing the subject draws — a one-variable subject
+    keeps its overlays and error traces — and brings no leaves: a context
+    variable's criteria are on its own plot."""
+    figure = _subject_figure(
+        views,
+        max_samples,
+        editable=editable,
+        labels=labels,
+        rings_for=rings_for,
+        visibility=visibility,
+    )
+    for view in context:
+        if max_samples:
+            view = decimate_view(view, max_samples)
+        trace = _context_trace(view)
+        if trace is not None:
+            figure["data"].append(trace)
+    return figure
+
+
+def _subject_figure(
     views: Sequence[VariableView],
     max_samples: int | None = None,
     *,
@@ -921,7 +988,7 @@ def plot_figure(
     rings_for: Collection[str] | None = None,
     visibility: Visibility | None = None,
 ) -> dict:
-    """The figure for one plot of a test (DESIGN.md "Plots are modular").
+    """The figure of a plot's subject (DESIGN.md "Plots are modular").
 
     One view is :func:`variable_figure`, unchanged. Several draw every
     series in its family's hue (:mod:`.families`) — actual solid, reference

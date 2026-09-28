@@ -2869,13 +2869,31 @@ class TestPlots:
         s = self._open(tmp_path)
         assert s.plot_figure(A, 0) == s.figure(A, "x")
 
-    def test_plot_figure_of_two_series_draws_both(self, tmp_path):
+    def test_plot_figure_draws_context_beside_its_subject(self, tmp_path):
+        """x alone is `figure`'s drawing, error traces and all; its context
+        z is one more trace on the same axis."""
         s = self._open(tmp_path)
+        alone = s.plot_figure(A, 0)
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         fig = s.plot_figure(A, 0)
-        ids = [tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"]
-        assert ids == ["actual/x", "actual/z"]
+        ids = [
+            tr["meta"]["id"]
+            for tr in fig["data"]
+            if tr["meta"]["kind"] in ("act", "context")
+        ]
+        assert ids == ["actual", "context/z"]
+        assert fig["data"][: len(alone["data"])] == alone["data"]
         assert fig["config"]["edits"] == {"shapePosition": True}
+
+    def test_a_context_variable_scored_elsewhere_signs_no_leaf_here(self, tmp_path):
+        """y is scored on its own plot; as context on x's it is a line."""
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "replace", "/plots", [{"var": "x", "context": ["y"]}])])
+        fig = s.plot_figure(A, 0)
+        leaves = {tr["meta"]["leaf"] for tr in fig["data"] if "leaf" in tr["meta"]}
+        assert leaves and "/metrics/children/2" not in leaves
 
     def test_plot_figure_keeps_the_leaves_of_a_tracked_series(self, tmp_path):
         s = self._open(tmp_path)
@@ -2885,7 +2903,7 @@ class TestPlots:
         leafy = lambda fig: sorted(  # noqa: E731
             tr["meta"].get("id") or tr["meta"]["family"]
             for tr in fig["data"]
-            if tr["meta"]["kind"] not in ("act", "ref", "error", "overlay")
+            if tr["meta"]["kind"] not in ("act", "ref", "error", "overlay", "context")
         )
         assert leafy(multi) == leafy(single)
 
@@ -3005,8 +3023,12 @@ class TestPlotsUnderALock:
         s.plot_figure(A, 0)
         s.running = None  # the job ended without dropping `_reads`
         fig = s.plot_figure(A, 0)
-        acts = [tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"]
-        assert acts == ["actual/x", "actual/z"]
+        drawn = [
+            (tr["meta"]["id"], len(tr["y"]))
+            for tr in fig["data"]
+            if tr["meta"]["kind"] in ("act", "context")
+        ]
+        assert drawn == [("actual", 5), ("context/z", 5)]
 
     def test_a_single_series_base_read_under_the_lock_is_not_cached(self, tmp_path):
         s = self._locked_with_layout(tmp_path)
