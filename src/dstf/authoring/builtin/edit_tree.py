@@ -129,6 +129,8 @@ _NO_ADD = {
     "added alone",
 }
 _ROOT_UNWRAP = "the root has no parent to take its children"
+#: Why a watch plot's `+` is grey (the plan's call C2; U2 lifts it).
+_UNTRACKED = "Criteria on an untracked variable come with the next step (U2)"
 #: Why a weighted form's action is grey: its threshold starts EMPTY, not 0
 #: (0 with `less` always fails), and has to be typed.
 _NO_THRESHOLD = "enter a threshold"
@@ -697,7 +699,10 @@ def _variable_plus(
     test's other variables too), landing at the end of the root combinator
     — or, under a root leaf, as ``and[leaf, new]`` — and revealing the new
     criterion's editor. Grey, with the reason, under a root that takes no
-    child alone.
+    child alone, and on a variable the test does not track — a watch plot
+    of a name the result file has and the run did not record: its add
+    form's select could not offer it, and a criterion on it would score
+    nothing until the variable is tracked (U2).
 
     It reads the variable as the PAGE does — the scope handed down with
     the selection (`Selection.texts`: the expression its model wrote, with
@@ -708,6 +713,8 @@ def _variable_plus(
     entry = s.selection.texts.get(variable)
     text = variable if entry is None else entry.text
     no_add = _NO_ADD.get(str((s.tree(model_id) or {}).get("combinator")))
+    if no_add is None and variable not in _variable_names(s, model_id):
+        no_add = _UNTRACKED
     tip = no_add or f"Add a criterion for {text}"
 
     def build_add(close: Callable[[], None]) -> None:

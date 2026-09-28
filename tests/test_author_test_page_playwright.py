@@ -1062,7 +1062,20 @@ HOVER_TEXTS = (
 )
 
 
-def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_browser):
+def _context_page_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` with y drawn as CONTEXT on x's plot, and no watch
+    plots: x's card draws y grey beside it."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["plots"] = [{"var": "x", "context": ["y"]}]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def test_a_hover_over_a_context_series_reads_its_name(tmp_path, playwright_browser):
     """The hover box a person sees in the TOOL, under a real mouse.
 
     The tool re-hosts the figure the report draws, under NiceGUI's own
@@ -1071,12 +1084,13 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
     per-point array. Nothing but a rendered page says so — the figure dict
     carried the label all along.
 
-    A card drawing SEVERAL series is the one that always carries a hover:
-    a single-series card names its traces "Actual" / "Reference" and adds
-    one only when the label is not the name. Plot 2 of the fixture is
-    `[x, y]`; Focus is how it is drawn without scrolling to it."""
-    with _served(tmp_path, playwright_browser) as page:
-        page.locator(".dstf-plot").nth(2).get_by_role("button", name="Focus").click()
+    A context series always carries a hover — its variable's text — and
+    it is what a person reads to tell the grey line from the subject's.
+    Focus draws x's card without a scroll."""
+    with _served(tmp_path, playwright_browser, project=_context_page_project) as page:
+        card = page.locator(".dstf-plot").nth(0)
+        expect(card.locator(".dstf-context")).to_contain_text("y")
+        card.get_by_role("button", name="Focus").click()
         expect(page.locator(".dstf-plot:visible")).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )
@@ -1086,11 +1100,11 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
         plot = page.locator(".dstf-plot:visible .js-plotly-plot")
         pixel = None
         for _ in range(30):
-            pixel = plot.evaluate(POINT_PIXEL, ["actual/x", 3])
+            pixel = plot.evaluate(POINT_PIXEL, ["context/y", 3])
             if pixel is not None:
                 break
             page.wait_for_timeout(200)
-        assert pixel is not None, "the focused card never drew actual/x"
+        assert pixel is not None, "the focused card never drew context/y"
         x, y = pixel
         page.mouse.move(x - 40, y - 20)
         page.wait_for_timeout(100)
@@ -1099,7 +1113,7 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
         texts = page.evaluate(HOVER_TEXTS)
         _shot(page, tmp_path, "hover")
         assert texts, "no hover box under the mouse"
-        assert any(line.startswith("x: ") for line in texts), texts
+        assert any(line.startswith("y: ") for line in texts), texts
         assert not any("%{" in line for line in texts), texts
 
 
@@ -2096,7 +2110,8 @@ def test_a_click_selects_a_plot_outside_its_plot_area(tmp_path, playwright_brows
         _shot(page, tmp_path, "ring")
         cards.nth(3).locator(".text-subtitle2").first.click()
         _ring_is(page, 3)
-        cards.nth(1).get_by_role("button", name="Remove plot").click()
+        # Plot 2 is a watch plot (of w1): a derived one has no Remove.
+        cards.nth(2).get_by_role("button", name="Remove plot").click()
         expect(cards).to_have_count(6, timeout=EXPECT_TIMEOUT)
         _ring_is(page, 2)
 
@@ -2673,26 +2688,28 @@ def _editor_in_view(page) -> None:
 def test_a_lower_plots_plus_opens_the_editor_on_that_plot_in_view(
     tmp_path, playwright_browser
 ):
-    """Plot 3 draws x and y: its `+` then Add opens the new editor on plot 3
-    and brings it into view — it opened on plot 0, ~855 px above the
-    click. From plot 0's form, choosing y (plot 0 draws x alone) opens the
-    editor on a plot that draws y, in view too."""
+    """Plot 1 (y's) with its criteria header at the window's foot: its `+`
+    then Add opens the new editor on plot 1 and brings it into view — the
+    editor opens under the plot's rows, below the fold, and it once opened
+    on plot 0, ~855 px from the click. From plot 0's form, choosing y (plot
+    0 is x's) opens the editor on the plot that draws y, in view too."""
     with _served(tmp_path, playwright_browser) as page:
         cards, editors = page.locator(".dstf-plot"), page.locator(".dstf-editor")
         expect(cards).to_have_count(7, timeout=EXPECT_TIMEOUT)
-        card = cards.nth(3)
-        card.scroll_into_view_if_needed()
+        card = cards.nth(1)
         head = card.locator(".dstf-criteria-head")
-        head.get_by_role("button", name="Add a criterion for x").click()
+        head.evaluate("e => e.scrollIntoView({block: 'end'})")
+        page.wait_for_timeout(300)
+        head.get_by_role("button", name="Add a criterion for y").click()
         add = page.get_by_role("button", name="Add", exact=True)
         expect(add).to_be_visible(timeout=EXPECT_TIMEOUT)
         add.click()
         expect(editors).to_have_count(1, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(600)
-        assert _editor_card(page) == 3
+        assert _editor_card(page) == 1
         _editor_in_view(page)
         page.mouse.move(5, 5)
-        _shot(page, tmp_path, "reveal-plot-3")
+        _shot(page, tmp_path, "reveal-plot-1")
         editors.get_by_role("button", name="Done").click()
         expect(editors).to_have_count(0, timeout=EXPECT_TIMEOUT)
 

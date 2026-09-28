@@ -66,3 +66,26 @@ def parent_kinds(view: dict | None) -> dict[str, str | None]:
         for child in node.get("children") or []:
             kinds[str(child.get("path"))] = node.get("combinator")
     return kinds
+
+
+def ancestor_kinds(view: dict | None) -> dict[str, tuple[str, ...]]:
+    """Each node's path -> its ancestors' combinators, the root's first:
+    where in the tree a criteria row's leaf sits, which its row is led by
+    (``and › k-of-n ›``). A plot's rows are its subject's leaves, so the
+    tree's structure is read off the row, not off the order of the rows."""
+    out: dict[str, tuple[str, ...]] = {}
+
+    def walk(node: dict, above: tuple[str, ...]) -> None:
+        out[str(node.get("path"))] = above
+        kind = node.get("combinator")
+        for child in node.get("children") or []:
+            walk(child, above + ((str(kind),) if kind else ()))
+
+    if view is not None:
+        walk(view, ())
+    return out
+
+
+def crumb_text(kinds: tuple[str, ...]) -> str:
+    """``and › k-of-n ›`` — a row's breadcrumb; empty for a root leaf."""
+    return " ".join(f"{kind} ›" for kind in kinds)

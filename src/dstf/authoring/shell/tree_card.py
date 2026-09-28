@@ -216,7 +216,9 @@ class TreeCard:
     def _reset_layout(self) -> None:
         """Reset layout, at the line's end while the test's EFFECTIVE entry
         has a ``plots`` key (the owner's ruling, Q8 A) — on both of the
-        line's branches: a test with no tree can have a layout."""
+        line's branches: a test with no tree can have extras. It takes the
+        context series and the watch plots; the derived plots are the
+        tree's, and stay."""
         page = self.page
         if "plots" not in (page.shell.session.spec.entry(page.model_id) or {}):
             return
@@ -227,7 +229,8 @@ class TreeCard:
             .mark("tree:reset-layout")
         ):
             ui.tooltip(
-                "Stage removing this test's plots key: one plot per tracked variable"
+                "Stage removing this test's plots key: its context series and "
+                "watch plots go"
             )
 
     def _line(self, view: dict | None) -> None:

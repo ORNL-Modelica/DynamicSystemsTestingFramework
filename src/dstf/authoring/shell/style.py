@@ -128,6 +128,18 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    card is ~540 px at 900 px, and it broke inside itself ("tube" over
    "· x"). The readout beside it may wrap. */
 .dstf-crit-name { white-space: nowrap; }
+/* A row's breadcrumb — its ancestors' kinds, `and › k-of-n ›` — leads it,
+   muted and on one line: a plot's rows are its variable's leaves from
+   anywhere in the tree, and the crumb says where each sits. */
+.dstf-crumb { white-space: nowrap; }
+/* A plot's context series (grey on the plot, not scored), listed above it
+   each with the × that takes it off: Plotly's legend cannot hold a
+   button. */
+.dstf-context { padding: 0 8px; }
+.dstf-context-chip {
+  border: 1px solid var(--dstf-border-hairline); border-radius: 4px;
+  padding: 0 0 0 6px;
+}
 /* A long criterion name keeps its one line, so at narrow widths the row
    wraps (it carries no `no-wrap`): the readout and the node's controls move
    to a second line, the controls at its right end, instead of pushing the
