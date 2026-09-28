@@ -367,7 +367,12 @@ def test_flat_folds_a_tracked_family_apart_from_the_results_own_names():
     )
     (group,) = _groups(names=[*unit, *_PIPE[:2]], group="flat", **args)
     assert _members(group) == [tuple(unit), tuple(_PIPE[:2])]
-    assert [r.text for r in group.rows] == ["pipe.T[1:2]", "pipe.T[1:2]"]
+    # Both read "pipe.T[1:2]"; the folded names tell them apart, and the
+    # drawer mutes the tracked row's beside it (`VariablesDrawer._row`).
+    assert [(r.text, r.file_text) for r in group.rows] == [
+        ("pipe.T[1:2]", "unitTests.x[1:2]"),
+        ("pipe.T[1:2]", "pipe.T[1:2]"),
+    ]
     ids = [r.id for r in group.rows]
     assert ids == ["1/All variables/tracked:pipe.T[]", "1/All variables/pipe.T[]"]
     assert len({"".join(i.split()) for i in ids}) == 2

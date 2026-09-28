@@ -5351,7 +5351,9 @@ accepted the planner's choices ("No objections").
    page load dispatching to the drawer's column: `ui.on` re-sent the page's
    listeners and failed the Suite's Playwright tests. An Esc while a Quasar
    dialog or menu is open is left to it: the stale-file dialog over the
-   drawer closes, and the drawer stays. The board's per-edit sentences
+   drawer closes, and the drawer stays. One already fading out (Quasar's
+   `-leave-` classes, ~100 ms) is not open: a second Esc 40 ms after the
+   first closes the drawer. The board's per-edit sentences
    ("edit nrmse on pulse.y: tolerance 0.01 → 0.005") are not built
    (planner's choice): each section has its edit count and verdict line.
 6. *The drawers' one control set (Q7).* The budgeted matcher moves to
@@ -5384,7 +5386,13 @@ accepted the planner's choices ("No objections").
    of the test carries (the one label rule, `variable_texts`) or another
    row the drawer draws reads (the controller's call: a tracked expression
    `a.Q` beside an untracked variable named `a.Q` that no plot or criterion
-   holds is outside the test's scope, and two rows read "a.Q"). A family is
+   holds is outside the test's scope, and two rows read "a.Q"). A family
+   has no one name: what is muted beside it is its names folded
+   (`unitTests.x[1:2]`) when they read otherwise, so under Flat a tracked
+   `pipe.T[1:2]` and the result's own — TRANSFORM's
+   `batemanEquations.Ns[1:4]` twice — read apart, and so do their checks'
+   and chevrons' labels and their titles, which carry it under every names
+   setting. A family is
    opened by its key and whether it is tracked — not by its row's id, which
    carries the group, nor by its members, which a filter narrows — so it
    stays open across a switch of group and under a filter that keeps some
@@ -5410,4 +5418,10 @@ items went to `docs/ideas.md`. Not measured here: the TRANSFORM gate over
 a copy, which the plan leaves to its controller.
 
 **Not built here**, so nobody looks for it: the strip's simulation-settings
-state (O1); the preview's per-edit sentences.
+state (O1); the preview's per-edit sentences; a fix for the page error
+"Resize must be passed a displayed plot div element." after a rebuild in a
+page's first ~1 s (the TRANSFORM gate, a Discard just after the page
+opened) — NiceGUI's plotly element starts observing its div only after
+`await import("nicegui-plotly")`, so it observes a div already removed;
+nothing visible breaks, and a page-side guard cannot be ordered ahead of
+it (watch-only in `docs/ideas.md`).

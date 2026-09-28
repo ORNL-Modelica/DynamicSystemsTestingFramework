@@ -14,7 +14,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from ..reporting.rows import TestRow, summary_fields
-from ..reporting.status import RUNNING, SIM_FAIL
+from ..reporting.status import RUNNING, SCORING_FAILED, SIM_FAIL
 
 if TYPE_CHECKING:
     from .session import Session
@@ -73,7 +73,7 @@ def suite_row(
             message=comp.error_message,
         )
     if model_id in failed:
-        return replace(row, status=SIM_FAIL, message="scoring failed (see the log)")
+        return replace(row, status=SIM_FAIL, message=f"{SCORING_FAILED} (see the log)")
     return replace(row, waiting=True)
 
 

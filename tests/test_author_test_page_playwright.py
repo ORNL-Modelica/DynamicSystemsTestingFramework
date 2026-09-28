@@ -504,7 +504,9 @@ def test_escape_on_a_menu_or_a_dialog_over_the_pending_drawer_closes_only_it(
     """With the drawer open at 1280 px, the strip's ⋮ menu beside it: one Esc
     closes the menu, and the drawer stays. Then the file changed on disk,
     Save these: the stale-file dialog opens over the drawer, and one Esc
-    closes the dialog — Quasar's — with the drawer still open under it."""
+    closes the dialog — Quasar's — with the drawer still open under it.
+    A second Esc 40 ms after the first, while the menu or the dialog is
+    still fading out, is the drawer's: it closes."""
     with _served(
         tmp_path, playwright_browser, project=_two_var_project, hooks=True
     ) as page:
@@ -524,6 +526,12 @@ def test_escape_on_a_menu_or_a_dialog_over_the_pending_drawer_closes_only_it(
         expect(more).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(400)  # a drawer Esc closed would have slid
         assert _drawer_open(page)
+        more.click()
+        expect(more).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
+        _two_escapes_close_the_drawer(page)
+        page.get_by_role("button", name="Preview and save").click()
+        page.wait_for_timeout(400)
+        assert _drawer_open(page)
         spec = next(tmp_path.rglob("test_spec.json"))
         original = spec.read_bytes()
         spec.write_bytes(original + b"\n")
@@ -537,8 +545,25 @@ def test_escape_on_a_menu_or_a_dialog_over_the_pending_drawer_closes_only_it(
             page.wait_for_timeout(400)  # a drawer Esc closed would have slid
             assert _drawer_open(page)
             _shot(page, tmp_path, "stale-dialog-after-esc")
+            page.get_by_role("button", name="Save these").click()
+            expect(dialog).to_be_visible(timeout=EXPECT_TIMEOUT)
+            _two_escapes_close_the_drawer(page)
+            expect(dialog).to_be_hidden(timeout=EXPECT_TIMEOUT)
         finally:
             spec.write_bytes(original)
+
+
+def _two_escapes_close_the_drawer(page) -> None:
+    """Esc, and Esc again 40 ms later: the first closes the menu or the
+    dialog, which is still fading out (~100 ms) when the second lands."""
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(40)
+    page.keyboard.press("Escape")
+    page.wait_for_function(
+        "document.querySelector('.dstf-pending-drawer')"
+        ".getBoundingClientRect().x >= window.innerWidth - 1",
+        timeout=EXPECT_TIMEOUT,
+    )
 
 
 # -- the page's frame, its plots on scroll, and the tree -------------------

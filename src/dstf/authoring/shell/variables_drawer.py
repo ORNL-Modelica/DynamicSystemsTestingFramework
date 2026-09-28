@@ -372,6 +372,16 @@ class VariablesDrawer:
 
     def _row(self, row: VarRow, *, member: bool = False) -> None:
         page, key = self.page, row.id
+        # What is muted beside the row's text: a lone variable's name, or a
+        # family's names folded (`file_text`) when they read otherwise.
+        # Under Flat a tracked x={pipe.T[1], pipe.T[2]} and the result's own
+        # pipe.T[1:2] both read "pipe.T[1:2]" — on TRANSFORM two rows of
+        # `batemanEquations.Ns[1:4]` with alike titles and alike checks —
+        # and a family has no one name to say which is which.
+        muted = row.name
+        if muted is None and row.file_text != row.text:
+            muted = row.file_text
+        said = row.text if muted is None else f"{row.text} ({muted})"
         with (
             ui.row()
             .classes(
@@ -393,9 +403,7 @@ class VariablesDrawer:
                     .props("flat dense round size=sm")
                     .mark(marker("var-open", key))
                 )
-                chevron.props["aria-label"] = (
-                    f"{'Close' if opened else 'Open'} {row.text}"
-                )
+                chevron.props["aria-label"] = f"{'Close' if opened else 'Open'} {said}"
                 chevron.props["aria-expanded"] = "true" if opened else "false"
             checked, icon = _state(row)
             # A disabled Quasar button takes no pointer events: the reason's
@@ -410,9 +418,7 @@ class VariablesDrawer:
                 )
                 # A row that shows a muted name says it too: two rows
                 # reading "a.Q" had two checks a screen reader read alike.
-                check.props["aria-label"] = (
-                    row.text if row.name is None else f"{row.text} ({row.name})"
-                )
+                check.props["aria-label"] = said
                 if not page.cards:
                     check.disable()  # no plot to act on: "+ new plot" makes one
                 elif row.stranded:
@@ -437,17 +443,20 @@ class VariablesDrawer:
             names = self.state.vars_names
             shown = row.file_text if names == "file" else row.text
             text = ui.label(shown).classes("dstf-var-text dstf-mono text-xs")
-            text.props["title"] = (
-                row.text if row.name is None else f"{row.text} ({row.name})"
-            )
-            if row.name is not None and (
+            text.props["title"] = said
+            # A family has no one name for the scope test: `alike` is what
+            # says it reads as another drawn row does.
+            if muted is not None and (
                 names == "both"
                 or (
                     names == "expression"
-                    and (self.texts.get(row.name) != row.text or row.text in self.alike)
+                    and (
+                        (row.name is not None and self.texts.get(row.name) != row.text)
+                        or row.text in self.alike
+                    )
                 )
             ):
-                ui.label(row.name).classes("dstf-varname")
+                ui.label(muted).classes("dstf-varname")
             ui.space()
             # These two never wrap (the stylesheet's `.dstf-var-where` rule
             # keeps each to one line and unshrunk): squeezed by a long name,

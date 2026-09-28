@@ -445,11 +445,17 @@ class Header:
 #: listener to the page's layout, which on the Suite page is already drawn
 #: when the header is built, and NiceGUI says so in the browser's console.
 #: An Esc while a dialog or a menu is open is theirs (Quasar closes it): the
-#: drawer under it stays.
+#: drawer under it stays. One already closing is not open: it stays in the
+#: page for its leave animation (~100 ms; Quasar's `-leave-` classes, on a
+#: dialog's `.q-dialog__inner`), and a guard that counted it swallowed a
+#: second Esc 40 ms after the first.
 ESC_EVENT = "dstf_pending_esc"
 ESC_JS = f"""
 window.__dstfPendingEsc ??= (document.addEventListener("keydown", (e) => {{
-  if (e.key !== "Escape" || document.querySelector(".q-dialog, .q-menu")) return;
+  if (e.key !== "Escape") return;
+  const open = [...document.querySelectorAll(".q-dialog, .q-menu")].some(
+    (el) => !/-leave-/.test((el.querySelector(".q-dialog__inner") ?? el).className));
+  if (open) return;
   document.querySelector(".dstf-pending-body")
     ?.dispatchEvent(new CustomEvent("{ESC_EVENT}"));
 }}), true);

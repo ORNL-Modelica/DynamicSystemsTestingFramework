@@ -228,7 +228,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 /* A Full name is cut at its start, where ids sharing a package prefix
    differ least (`test_list._full_name`: the id is a <bdi> inside). */
-.dstf-tests .dstf-name .dstf-cut-start { direction: rtl; text-align: left; }
+.dstf-tests .dstf-name .dstf-cut-start { direction: rtl; }
 .dstf-tests .dstf-badge, .dstf-tests .dstf-pill-named { flex: none; }
 .dstf-row {
   min-height: 32px; border-bottom: 1px solid var(--dstf-border-hairline);

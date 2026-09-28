@@ -1761,3 +1761,46 @@ planning.
   - After a Rerun with edits pending, `saved_comparison` scores the saved
     spec against the results read for the edited TestModels. Unverified:
     it matters only for a backend that reads only the named variables.
+- **Watch-only from the Test page step's final review and TRANSFORM gate
+  (2026-09-28)**:
+  - Every Test page load logs NiceGUI's "Event listeners changed after
+    initial definition. Re-rendering affected elements." once (a browser
+    console warning, echoed to the server log: 27 times in the gate's log).
+    It predates the Test page step: one per load at 14f1ba7 and at 7bec0fd
+    alike (FakeLib, two loads each). `TestPage.build` calls
+    `ui.on("dstf_plot_visible", …)` after `client.connected()`, which adds a
+    listener to the page's layout after the layout is drawn, so NiceGUI
+    re-renders the layout (that call moved before `client.connected()`, in
+    a scratch copy of 7bec0fd, logs it 0 times over the same two loads).
+    The pending drawer's Esc avoids this by sending its event to an
+    element built with its listener (`header.ESC_JS`).
+  - After the header's Discard in a Test page's first ~1 s (the TRANSFORM
+    gate: edits of two tests pending, an `or` tree with three leaves), the
+    browser logs an uncaught "Resize must be passed a displayed plot div
+    element." once per removed plot. Nothing visible breaks: the rebuilt
+    cards draw. Cause: NiceGUI's plotly element (3.16) creates its
+    ResizeObserver only after `await import("nicegui-plotly")` — over a
+    second on a page's first plots — so a card the rebuild removed in that
+    window gets an observer on its detached div, and `Plotly.Plots.resize`
+    rejects it. Seen with a logging ResizeObserver over FakeLib: `observe`
+    called on `c822` / `c824` with `isConnected` false ~1.3 s after they
+    were removed, the rejection's stack running from NiceGUI's
+    `plotly.js:12` into `Plots.resize`. Holding the module's request until
+    after the Discard reproduces it every time. Not fixed:
+    (a) an `unhandledrejection` listener dropping that one rejection passed
+    6 of 6 runs, but suppresses by Plotly's message text; (b) a page-side
+    wrap of `Plotly.Plots.resize` cannot be ordered ahead of the element's
+    own import (3 of 6 runs still threw), and holding the plots until the
+    wrap is in leaves a first-second race for a row opened then; (c) the
+    tool's own copy of the plotly element with a connected check fixes the
+    cause but forks a library file. The likely fix is upstream: a NiceGUI
+    report that its plotly element should not observe an unmounted div.
+  - The Variables drawer on TRANSFORM's `TritiumExamples.HumTest` (76,992
+    names, 64,407 rows, capped at 200) opens in ~1.2 s, and each menu
+    change takes ~1.5 s. Over 6,089 names it is 0.6 s to open and 0.7-0.8 s
+    per change.
+  - A plain GET of `/` without a browser logs "app.storage.tab can only be
+    used with a client connection" from `SuitePage.build` → `tab_state()`.
+  - The Tests drawer's "Status, failures first" sorts within each package
+    group when the list is grouped (the owner's Q1 A: "sorting sorts within
+    each group"). Failures reach the top of the list only with Show flat.

@@ -758,7 +758,8 @@ then Reset layout) say "These edits leave the entry as saved." Below the
 tests, Save these / Discard these — the header's Save and Discard, over every
 pending edit. Its close button or Esc closes it; under 1024 px it lies over
 the header and the strip. An Esc while a menu or a dialog is open closes that
-one, and the drawer stays.
+one, and the drawer stays; a second Esc, even while it is still fading out,
+closes the drawer.
 
 The **Suite page** is a table of the tests, with the dashboard's columns and
 words (one row model, D136): Status, Test, Worst NRMSE, Variables, Sim (s),
@@ -875,7 +876,8 @@ so a switch of test keeps it:
   fold apart: never one row over both); **Names** — the expression, the
   result-file name, or both (the expression with the name muted beside it;
   under Expression, a label another variable of the test shares, or another
-  row of the drawer reads, still keeps its name beside it). An opened family
+  row of the drawer reads, still keeps its name beside it — a family's names,
+  folded, as `unitTests.x[1:2]`). An opened family
   stays open when the group changes or the filter keeps part of it.
 - on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED
   n`, over every test whatever the filter, filtering as the Suite table's do; a

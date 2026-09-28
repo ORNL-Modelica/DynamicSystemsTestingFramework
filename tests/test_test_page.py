@@ -5370,12 +5370,14 @@ class TestVariablesDrawer:
         self, drawer_shell, monkeypatch
     ):
         """At most `MEMBERS` of a family's own rows (50; 2 here, for the
-        fixture's three-member family), and a line counting the rest."""
+        fixture's three-member family), and a line counting the rest — once
+        it is opened: a closed family counts nothing."""
         from dstf.authoring.shell import variables_drawer
 
         monkeypatch.setattr(variables_drawer, "MEMBERS", 2)
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
+            assert "… 1 more" not in _labels_in(_one(user, "drawer:variables"))
             user.find(marker=var_marker("var-open", ROW_PIPE)).click()
             for name in PIPE[:2]:
                 assert not _none(user, var_marker("var-row", f"{ROW_PIPE}/{name}"))
@@ -6559,6 +6561,70 @@ class TestVariablesDrawerControls:
             assert _labels_in(_one(user, member)) == ["pipe.T[1]", "x"]
             result = _one(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
             assert _labels_in(result) == ["pipe.T[1]"]
+
+    async def test_flat_draws_a_tracked_family_and_the_results_own_apart(
+        self, drawer_shell
+    ):
+        """x={pipe.T[1], pipe.T[2]} beside the result's own pipe.T[1:2],
+        under Flat and filtered to those two: both rows read "pipe.T[1:2]"
+        (TRANSFORM's `batemanEquations.Ns[1:4]` twice, alike titles and
+        alike checks). The tracked one carries its folded names, "x, y" —
+        muted beside it under Both and Expression, and in its check's and
+        its chevron's labels and its title under every names setting; the
+        result's own, whose names read as it does, carries none."""
+        from test_session import with_expressions
+
+        shell = drawer_shell
+        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
+        shell.session._score(A)
+        tracked, own = "1/All variables/tracked:pipe.T[]", "1/All variables/pipe.T[]"
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            await _pick(user, "var-group-by", "flat")
+            user.find(marker="var-regex").click()
+            user.find(marker="var-needle").type(r"pipe\.T\[[12]\]")
+            await _settled(lambda: page.state.vars_needle == r"pipe\.T\[[12]\]")
+            row_of = var_marker("var-row", tracked)
+            for mode, labels in (
+                ("both", ["pipe.T[1:2]", "x, y", "plot 2"]),
+                ("expression", ["pipe.T[1:2]", "x, y", "plot 2"]),
+                ("file", ["x, y", "plot 2"]),
+            ):
+                await _pick(user, "var-names", mode)
+                await _settled(lambda m=mode: page.state.vars_names == m)
+                await _settled(lambda w=labels: _labels_in(_one(user, row_of)) == w)
+                checks = {
+                    row: _one(user, var_marker("var-check", row)).props["aria-label"]
+                    for row in (tracked, own)
+                }
+                assert checks == {
+                    tracked: "pipe.T[1:2] (x, y)",
+                    own: "pipe.T[1:2]",
+                }, mode
+                opener = _one(user, var_marker("var-open", tracked))
+                assert opener.props["aria-label"] == "Open pipe.T[1:2] (x, y)", mode
+                titles = [
+                    e.props.get("title")
+                    for e in _one(user, var_marker("var-row", tracked)).descendants()
+                    if isinstance(e, ui.label) and "dstf-var-text" in e.classes
+                ]
+                assert titles == ["pipe.T[1:2] (x, y)"], mode
+                own_labels = _labels_in(_one(user, var_marker("var-row", own)))
+                assert "x, y" not in own_labels, mode
+            # Drawn alone, the tracked family reads like no other row: under
+            # Expression its names are not muted beside it (a lone
+            # variable's rule), and its check still says them.
+            await _pick(user, "var-names", "expression")
+            await _settled(lambda: page.state.vars_names == "expression")
+            user.find(marker="var-needle").clear()
+            user.find(marker="var-needle").type("^[xy]$")
+            await _settled(lambda: _none(user, var_marker("var-row", own)))
+            assert _labels_in(_one(user, var_marker("var-row", tracked))) == [
+                "pipe.T[1:2]",
+                "plot 2",
+            ]
+            check = _one(user, var_marker("var-check", tracked))
+            assert check.props["aria-label"] == "pipe.T[1:2] (x, y)"
 
     async def test_an_opened_family_stays_open_across_a_switch_of_group(
         self, drawer_shell
