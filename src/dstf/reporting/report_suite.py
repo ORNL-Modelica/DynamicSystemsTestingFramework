@@ -177,7 +177,9 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
         return plots, _tracked_series(result, comp_variables, test, tracked)
     available = backend_cls.result_names(test_dir)
     plots = resolved_plots(test, tracked, available=available)
-    wanted = sorted({n for p in plots for n in p.series} - set(tracked))
+    wanted = sorted(
+        {n for p in plots for n in p.series if n not in p.missing} - set(tracked)
+    )
     return plots, {
         **_tracked_series(result, comp_variables, test, tracked),
         **backend_cls.result_series(test_dir, wanted),
@@ -272,8 +274,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     arrays = {**(extra_series or {}), **nobaseline}
     if plots is None:
         plots = tuple(
-            ResolvedPlot(index=i, kind="time", series=(n,), missing=())
-            for i, n in enumerate(by_name)
+            ResolvedPlot(index=i, subject=(n,)) for i, n in enumerate(by_name)
         )
     vidx = {n: i for i, n in enumerate(by_name)}
     # Two readings of the same scope: `labels` where the muted name rides
@@ -292,7 +293,9 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     tree_rendered: set[str] = set()
     for position, plot in enumerate(plots):
         drawn = [n for n in plot.series if n in by_name or n in arrays]
-        missing = [*plot.missing, *(n for n in plot.series if n not in drawn)]
+        missing = list(
+            dict.fromkeys([*plot.missing, *(n for n in plot.series if n not in drawn)])
+        )
         views = [
             view_from_trajectory(
                 n, by_name[n].get("trajectory") or {}, leaves_by_var.get(n, [])
@@ -485,7 +488,7 @@ def generate_comparison_plots(
         # The page's label scope takes the plots too: a plot-only series
         # named like another variable's expression is what decides whether
         # that other one reads its name beside its label.
-        plot_series=[n for p in plots or () for n in p.series],
+        plot_series=[n for p in plots or () for n in p.series if n not in p.missing],
     )
 
     # The page's plot keys, from the full-resolution context. Only the

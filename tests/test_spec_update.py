@@ -194,8 +194,8 @@ def test_a_patch_that_leaves_plots_invalid_writes_nothing(tmp_path):
     config = _config(tmp_path)
     spec_path = _spec(tmp_path, {"model": "M", "variables": ["x"]})
     before = spec_path.read_bytes()
-    bad = [{"op": "add", "path": "/plots", "value": [{"series": []}]}]
-    with pytest.raises(PatchError, match=r"plots\[0\]\.series"):
+    bad = [{"op": "add", "path": "/plots", "value": [{"var": "x", "series": []}]}]
+    with pytest.raises(PatchError, match=r"plots\[0\]: unknown key 'series'"):
         apply_validated_patches(spec_path, [("M", bad)], config)
     assert spec_path.read_bytes() == before
 
@@ -203,7 +203,7 @@ def test_a_patch_that_leaves_plots_invalid_writes_nothing(tmp_path):
 def test_a_valid_plots_patch_is_written(tmp_path):
     config = _config(tmp_path)
     spec_path = _spec(tmp_path, {"model": "M", "variables": ["x"]})
-    layout = [{"kind": "time", "series": [{"var": "x"}, {"var": "z"}]}]
+    layout = [{"var": "x", "context": ["z"]}, {"var": "w"}]
     apply_validated_patches(
         spec_path, [("M", [{"op": "add", "path": "/plots", "value": layout}])], config
     )

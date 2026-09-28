@@ -17,7 +17,7 @@ from .recognizer import RecognizerResult, get_recognizers
 
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
-    from .plots import PlotSpec
+    from .plots import PlotExtra
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +72,10 @@ class TestModel:
     # of the implicit flat-AND. Parse-only today — no behavior gated on it.
     metric_tree_spec: Optional["SpecNode"] = None
 
-    # The entry's optional ``plots`` layout (brief §3.10): None when the key
-    # is absent — both tiers then draw one plot per tracked variable.
-    plots: tuple["PlotSpec", ...] | None = None
+    # The entry's optional ``plots`` extras (`discovery.plots`): context
+    # series and watch plots beside the plots derived from the tree. None
+    # when the key is absent, ``()`` for ``[]`` — both mean no extras.
+    plots: tuple["PlotExtra", ...] | None = None
 
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.

@@ -340,17 +340,15 @@ def _entry_schema() -> dict:
 def test_the_entry_schema_describes_plots():
     plots = _entry_schema()["properties"]["plots"]
     assert plots["type"] == "array"
-    plot = plots["items"]
-    assert plot["required"] == ["series"]
-    assert plot["additionalProperties"] is False
-    assert plot["properties"]["kind"] == {"enum": ["time"]}
-    series = plot["properties"]["series"]
-    assert series["minItems"] == 1
-    assert series["items"]["required"] == ["var"]
-    assert series["items"]["additionalProperties"] is False
+    extra = plots["items"]
+    assert extra["required"] == ["var"]
+    assert extra["additionalProperties"] is False
+    assert set(extra["properties"]) == {"var", "context"}
+    assert extra["properties"]["context"]["type"] == "array"
 
 
 def test_the_plots_schema_refuses_what_the_parser_refuses():
-    series = _entry_schema()["properties"]["plots"]["items"]["properties"]["series"]
-    assert series["uniqueItems"] is True
-    assert series["items"]["properties"]["var"]["pattern"] == "^[^*?]*[^*?\\s][^*?]*$"
+    extra = _entry_schema()["properties"]["plots"]["items"]["properties"]
+    assert extra["var"]["pattern"] == "^[^*?]*[^*?\\s][^*?]*$"
+    assert extra["context"]["uniqueItems"] is True
+    assert extra["context"]["items"]["pattern"] == extra["var"]["pattern"]

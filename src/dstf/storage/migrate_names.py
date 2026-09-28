@@ -625,10 +625,11 @@ def _migrate_spec(
             node["variable"] = target(node["variable"]) or node["variable"]
 
         _walk_leaves(entry.get("metrics"), leaf)
-        for plot in entry.get("plots") or []:
-            for series in plot.get("series") or []:
-                if "var" in series:
-                    series["var"] = target(series["var"]) or series["var"]
+        for extra in entry.get("plots") or []:
+            if "var" in extra:
+                extra["var"] = target(extra["var"]) or extra["var"]
+            if "context" in extra:
+                extra["context"] = [target(n) or n for n in extra["context"]]
     report.spec_rewritten = [
         (model_id, old, new, count)
         for (model_id, old), (new, count) in rewritten.items()

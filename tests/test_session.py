@@ -213,9 +213,7 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
 
 
 def _page_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project`, scored by an explicit tree and drawn as seven
-    plots — a page taller than the viewport, so the cards below it are the
-    ones render-on-scroll has to reach.
+    """`_two_var_project`, scored by an explicit tree.
 
     A's tree is `and[tube · x, range · x, range · y]` (the tube is
     `test_handles.TREE`'s band leaf, its control points inside the trace's
@@ -251,14 +249,6 @@ def _page_project(tmp_path: Path) -> tuple[Path, Path]:
                 },
             ],
         }
-        entry["plots"] = [
-            {"kind": "time", "series": [{"var": "x"}]},
-            {"kind": "time", "series": [{"var": "y"}]},
-            *(
-                {"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}
-                for _ in range(5)
-            ),
-        ]
     spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     return cfg, work
 
