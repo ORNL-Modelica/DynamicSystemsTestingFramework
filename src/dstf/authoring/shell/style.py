@@ -223,10 +223,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    or a 40-character short name, pushed the badge out of the drawer at
    900 px, and a package label ran past it. */
 .dstf-tests .dstf-name { flex: 1 1 auto; min-width: 0; }
-.dstf-tests .dstf-name .q-btn__content { min-width: 0; flex-wrap: nowrap; }
 .dstf-tests .dstf-name .q-btn__content > .block {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* A Full name is cut at its start, where ids sharing a package prefix
+   differ least (`test_list._full_name`: the id is a <bdi> inside). */
+.dstf-tests .dstf-name .dstf-cut-start { direction: rtl; text-align: left; }
 .dstf-tests .dstf-badge, .dstf-tests .dstf-pill-named { flex: none; }
 .dstf-row {
   min-height: 32px; border-bottom: 1px solid var(--dstf-border-hairline);

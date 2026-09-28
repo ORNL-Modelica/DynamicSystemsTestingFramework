@@ -349,6 +349,53 @@ def test_tracked_first_is_tracked_then_everything_else_diagnostics_too():
     assert ("a0",) in _members(other)
 
 
+def test_flat_folds_a_tracked_family_apart_from_the_results_own_names():
+    """``x={pipe.T[1], pipe.T[2]}`` beside the result's own ``pipe.T[1:2]``
+    (TRANSFORM's shape): under Flat, one group holds both, and a fold over
+    all four read ``pipe.T[1,1,2,2]`` over two different quantities. The
+    tracked and the untracked fold apart, in result-file order, and the
+    tracked family's id is marked — both key ``pipe.T[]``. The whitespace-
+    free id is the row's marker (`variables_drawer.marker`)."""
+    unit = dict(list(_UNIT.items())[:2])
+    args = dict(
+        tracked=list(unit),
+        labels=unit,
+        texts=unit,
+        layout=(),
+        selected=None,
+        scored={},
+    )
+    (group,) = _groups(names=[*unit, *_PIPE[:2]], group="flat", **args)
+    assert _members(group) == [tuple(unit), tuple(_PIPE[:2])]
+    assert [r.text for r in group.rows] == ["pipe.T[1:2]", "pipe.T[1:2]"]
+    ids = [r.id for r in group.rows]
+    assert ids == ["1/All variables/tracked:pipe.T[]", "1/All variables/pipe.T[]"]
+    assert len({"".join(i.split()) for i in ids}) == 2
+    # the result file's order decides which family comes first
+    interleaved = [_PIPE[0], *unit, _PIPE[1]]
+    (group,) = _groups(names=interleaved, group="flat", **args)
+    assert _members(group) == [tuple(_PIPE[:2]), tuple(unit)]
+    # the other two groupings keep the rows they had
+    rows = {
+        how: [
+            (r.id, r.members)
+            for g in _groups(names=[*unit, *_PIPE[:2]], group=how, **args)
+            for r in g.rows
+        ]
+        for how in ("component", "tracked")
+    }
+    assert rows == {
+        "component": [
+            ("0/Tracked/pipe.T[]", tuple(unit)),
+            ("1/pipe/pipe.T[]", tuple(_PIPE[:2])),
+        ],
+        "tracked": [
+            ("0/Tracked/pipe.T[]", tuple(unit)),
+            ("1/Other variables/pipe.T[]", tuple(_PIPE[:2])),
+        ],
+    }
+
+
 def test_the_name_order_sorts_each_group_by_what_it_reads():
     (group,) = _groups(group="flat", order="name")
     assert [r.text for r in group.rows] == [

@@ -16,12 +16,11 @@ from nicegui import ui
 #: A menu's keyboard (Quasar's QMenu has none): ArrowDown / ArrowUp move
 #: the focus to the next / previous choice, wrapping; Home / End to the
 #: first / last. From outside the choices ArrowDown goes to the first and
-#: ArrowUp to the last. Tab closes the menu (the menu pattern: its choices
-#: are out of the tab order, `tabindex="-1"`, and Tab leaves it); Quasar
-#: puts the focus back where it was when the menu opened. ``MENU`` is the
-#: menu's element id (`_menu_keys`).
+#: ArrowUp to the last. Tab closes it; the focus returns to its button (the
+#: menu pattern: its choices are out of the tab order, `tabindex="-1"`).
+#: ``__MENU_ID__`` is the menu's element id (`_menu_keys`).
 _MENU_KEYS = """(e) => {
-  if (e.key === 'Tab') { getElement(MENU)?.hide(); return; }
+  if (e.key === 'Tab') { getElement(__MENU_ID__)?.hide(); return; }
   const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
   if (!keys.includes(e.key)) return;
   const items = [...e.currentTarget.querySelectorAll('[role="menuitemradio"]')];
@@ -45,7 +44,7 @@ TIP_ABOVE = 'anchor="top middle" self="bottom middle"'
 
 def _menu_keys(menu: ui.menu) -> str:
     """`_MENU_KEYS` for ``menu``."""
-    return _MENU_KEYS.replace("MENU", str(menu.id))
+    return _MENU_KEYS.replace("__MENU_ID__", str(menu.id))
 
 
 def _pressed(button: ui.button, on: bool) -> None:

@@ -18,6 +18,7 @@ edit."""
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
@@ -99,11 +100,15 @@ def _state(row: VarRow) -> tuple[str, str]:
 class VariablesDrawer:
     def __init__(self, page: TestPage, panel: ui.column) -> None:
         self.page = page
-        #: The families opened to their members, by their members: kept
-        #: across rebuilds, so a check inside an opened family leaves it
-        #: open, and never by row id, which carries the group — a family
-        #: opened By component closed under Flat.
-        self.opened: set[tuple[str, ...]] = set()
+        #: The families opened to their members, by `_family`: kept across
+        #: rebuilds, so a check inside an opened family leaves it open. Never
+        #: by row id, which carries the group — a family opened By component
+        #: closed under Flat — nor by its members, which a filter narrows.
+        self.opened: set[tuple[str, bool]] = set()
+        #: The test's tracked names, as the last rebuild read them.
+        self.tracked: frozenset[str] = frozenset()
+        #: The texts two or more of the drawn rows read as.
+        self.alike: set[str] = set()
         #: The filter and its toggles are the tab's (`TabState`): a switch
         #: of test builds a new drawer, and it starts from them.
         self.state = page.state
@@ -292,6 +297,7 @@ class VariablesDrawer:
                 return
             scope = reads.scope
             self.texts = {name: t.text for name, t in scope.items()}
+            self.tracked = frozenset(reads.tracked)
             # Everything but the names and the filter, for the members too.
             groups_of = partial(
                 variable_groups,
@@ -316,31 +322,53 @@ class VariablesDrawer:
                 self.box.say("the pattern took too long; simplify it")
                 return
             groups, shown, total = cap(found, ROWS)
-            for group in groups:
+            drawn = [
+                (group, [(row, self._members(row, groups_of)) for row in group.rows])
+                for group in groups
+            ]
+            # The one label rule (`display_label`) over what the drawer
+            # draws: a tracked expression `a.Q` beside an untracked variable
+            # NAMED `a.Q` is no collision in the test's scope when no plot or
+            # criterion holds the second, and two rows read "a.Q".
+            reads_as = Counter(
+                r.text
+                for _, rows in drawn
+                for row, members in rows
+                for r in (row, *members)
+            )
+            self.alike = {text for text, n in reads_as.items() if n > 1}
+            for group, rows in drawn:
                 ui.label(group.title).classes("dstf-group").mark(
                     f"var-group:{group.rank}-{_slug(group.title)}"
                 )
-                for row in group.rows:
+                for row, members in rows:
                     self._row(row)
-                    if len(row.members) > 1 and row.members in self.opened:
-                        self._members(row, groups_of)
+                    for member in members:
+                        self._row(member, member=True)
+                    if members and len(row.members) > MEMBERS:
+                        ui.label(f"… {len(row.members) - MEMBERS} more").classes(
+                            "dstf-why dstf-var-member"
+                        )
             if shown < total:
                 ui.label(
                     f"Showing {shown} of {total:,} rows — narrow the filter"
                 ).classes("dstf-why").mark("var-cap")
 
-    def _members(self, row: VarRow, groups_of: Callable[..., list[VarGroup]]) -> None:
-        """An opened family's members, each a row of its own under it. Each
-        is `variable_groups`' row for that one name — the same rules, the
-        same state — with an id under its family's."""
+    def _members(
+        self, row: VarRow, groups_of: Callable[..., list[VarGroup]]
+    ) -> list[VarRow]:
+        """An opened family's members, each drawn as a row of its own under
+        it (none for a family not opened). Each is `variable_groups`' row for
+        that one name — the same rules, the same state — with an id under its
+        family's."""
+        if len(row.members) < 2 or self._family(row) not in self.opened:
+            return []
+        out = []
         for name in row.members[:MEMBERS]:
             (group,) = groups_of(names=[name], keep=lambda _: True)
             (member,) = group.rows
-            self._row(replace(member, id=f"{row.id}/{name}"), member=True)
-        if len(row.members) > MEMBERS:
-            ui.label(f"… {len(row.members) - MEMBERS} more").classes(
-                "dstf-why dstf-var-member"
-            )
+            out.append(replace(member, id=f"{row.id}/{name}"))
+        return out
 
     def _row(self, row: VarRow, *, member: bool = False) -> None:
         page, key = self.page, row.id
@@ -356,11 +384,11 @@ class VariablesDrawer:
             # name can hold a `"`. A check's only text was its icon's
             # ligature, `check_box_outline_blank`.
             if len(row.members) > 1:
-                opened = row.members in self.opened
+                opened = self._family(row) in self.opened
                 chevron = (
                     ui.button(
                         icon="expand_more" if opened else "chevron_right",
-                        on_click=partial(self._open, row.members),
+                        on_click=partial(self._open, self._family(row)),
                     )
                     .props("flat dense round size=sm")
                     .mark(marker("var-open", key))
@@ -404,8 +432,8 @@ class VariablesDrawer:
             # alone, or both — the expression with the name muted beside it.
             # The expression alone still keeps the name beside a label
             # another name of the test carries (`variable_texts`, the one
-            # label rule): two rows reading "a.Q" said nothing of which was
-            # which.
+            # label rule) or another row drawn here reads (`alike`): two rows
+            # reading "a.Q" said nothing of which was which.
             names = self.state.vars_names
             shown = row.file_text if names == "file" else row.text
             text = ui.label(shown).classes("dstf-var-text dstf-mono text-xs")
@@ -414,7 +442,10 @@ class VariablesDrawer:
             )
             if row.name is not None and (
                 names == "both"
-                or (names == "expression" and self.texts.get(row.name) != row.text)
+                or (
+                    names == "expression"
+                    and (self.texts.get(row.name) != row.text or row.text in self.alike)
+                )
             ):
                 ui.label(row.name).classes("dstf-varname")
             ui.space()
@@ -434,11 +465,19 @@ class VariablesDrawer:
 
     # -- the edits -----------------------------------------------------------------
 
-    def _open(self, members: tuple[str, ...]) -> None:
-        if members in self.opened:
-            self.opened.discard(members)
+    def _family(self, row: VarRow) -> tuple[str, bool]:
+        """What an opened family is known by: its key, and whether it is
+        tracked. The key alone is not enough — a tracked family whose
+        expressions are ``pipe.T[i]`` keys ``pipe.T[]`` as the result's own
+        ``pipe.T[i]`` do — and a family is all tracked or all not
+        (`variable_rows` folds the two apart)."""
+        return row.key, row.members[0] in self.tracked
+
+    def _open(self, family: tuple[str, bool]) -> None:
+        if family in self.opened:
+            self.opened.discard(family)
         else:
-            self.opened.add(members)
+            self.opened.add(family)
         self.rebuild()
 
     def _check(self, row: VarRow) -> None:

@@ -34,7 +34,9 @@ class VarRow:
     #: ``<group rank>/<group title>/<key>``, unique within the drawer. The
     #: rank is in it because a title is not unique: a tracked family whose
     #: expressions read ``Tracked.a[i]`` and the untracked ``Tracked.a[i]``
-    #: beside it are both "Tracked" and both key ``Tracked.a[]``.
+    #: beside it are both "Tracked" and both key ``Tracked.a[]``. A tracked
+    #: family in a group of untracked ones too (Flat) keys ``tracked:<key>``:
+    #: under Flat both ``pipe.T[]`` rows are in "All variables".
     id: str
     members: tuple[str, ...]  #: names, by index; one for a lone variable
     text: str  #: what it reads as: the family label, or the label
@@ -108,7 +110,10 @@ def variable_groups(
     ``group`` (the drawer's group menu): ``component`` — tracked, then by
     component, top level, diagnostics; ``flat`` — one group, "All
     variables"; ``tracked`` — "Tracked", then "Other variables" with
-    everything else, diagnostics included. Families fold in every one.
+    everything else, diagnostics included. Families fold in every one, the
+    tracked names apart from the rest: under Flat a tracked family whose
+    expressions are ``pipe.T[i]`` and the result's own ``pipe.T[i]`` fold
+    to the same key, and one row over both read ``pipe.T[1,1,2,2]``.
     ``order``: ``file`` keeps a group's rows in first-appearance
     (result-file) order; ``name`` sorts them by what they are shown as —
     ``file_text`` when ``read`` (the names menu) is ``file``, else
@@ -133,10 +138,19 @@ def variable_groups(
             if not at or at[-1] != i:
                 at.append(i)
     showing = {n: tuple(index.get(n, ())) for n in kept}
+    position = {n: i for i, n in enumerate(kept)}
     out: list[VarGroup] = []
     for rank, title in sorted(by_group, key=lambda g: (g[0], g[1].casefold(), g[1])):
+        in_group = by_group[rank, title]
+        # Folded apart, then merged back in result-file order (a family's
+        # first appearance, `group_families`' own order).
+        families = sorted(
+            group_families([n for n in in_group if n in tracked_set], texts)
+            + group_families([n for n in in_group if n not in tracked_set], texts),
+            key=lambda f: min(position[m] for m in f[1]),
+        )
         rows = []
-        for key, members in group_families(by_group[rank, title], texts):
+        for key, members in families:
             text = family_label(key, members, labels)
             # Folded again, over the NAMES: `key` is the fold over the texts
             # (`pipe.T[]` for x={pipe.T[3], pipe.T[5]}), and read with the
@@ -159,7 +173,9 @@ def variable_groups(
             rows.append(
                 VarRow(
                     key=key,
-                    id=f"{rank}/{title}/{key}",
+                    id=f"{rank}/{title}/"
+                    + ("tracked:" if rank != 0 and members[0] in tracked_set else "")
+                    + key,
                     members=tuple(members),
                     text=text,
                     file_text=file_text,

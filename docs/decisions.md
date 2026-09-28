@@ -5330,7 +5330,7 @@ accepted the planner's choices ("No objections").
 5. *The preview (Q6 A).* `authoring/spec_preview.py`: the entry as
    `json.dumps(indent=2)` writes it, before and after, diffed by `difflib`
    with `autojunk` off (on, a 60-leaf entry tightened at two leaves read
-   ~201 changed lines instead of 4); variables read by their label, the
+   ~400 changed lines (201 replaced) instead of 4); variables read by their label, the
    result-file name muted. *O2:* the `before` is the tree as scoring sees
    it — when a test's ops begin with the materialization `Session.stage`
    prepends (`PatchOp.materializes`), the saved entry with that applied, and
@@ -5363,18 +5363,33 @@ accepted the planner's choices ("No objections").
    with `.*` / `Aa` beside it; sort by package order, name A→Z, or status,
    failures first (FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, unscored,
    then package order — not `STATUS_ORDER`, which lists PASS first); a
-   group toggle; Short / Full names; status pills with EDITED, OR'd as on
+   group toggle; Short / Full names — a Short name cut at its end, a Full
+   one at its START (the controller's call: TRANSFORM's ids share long
+   package prefixes, and cut at the end two of them read alike), the id in
+   a `<bdi>` inside a right-to-left span: a bare `direction: rtl` moved a
+   leading or trailing `_` to the other end in Chromium, and isolates drawn
+   by `::before` / `::after` entered the button's accessible name; status
+   pills with EDITED, OR'd as on
    the Suite, counting every test whatever the filter, a scoring failure
    counted and kept as SIM_FAIL (the Suite's rule). Its kept set is cached
    on the needle, the toggles and the set of tests — a pathological regex
    cost 0.79 s of CPU per pass over 331 ids, and events repaint every
    second during a job; a bad pattern or one out of time hides nothing and
    says why. The Variables drawer: sort by result-file order or A→Z by what
-   is shown; group by component, flat or tracked first; names as
-   expression, result-file name or both — Expression keeps the name, muted,
-   beside a label another name of the test carries (the one label rule,
-   `variable_texts`). A family is opened by its members, so it stays open
-   across a switch of group. Rebuilt over 6,011 names: 164-255 ms in every
+   is shown; group by component, flat or tracked first — in each group the
+   tracked names fold apart from the result's own, so under Flat a tracked
+   `x={pipe.T[1], pipe.T[2]}` and the result's `pipe.T[1:2]` are two rows,
+   not one reading `pipe.T[1,1,2,2]`; names as expression, result-file name
+   or both — Expression keeps the name, muted, beside a label another name
+   of the test carries (the one label rule, `variable_texts`) or another
+   row the drawer draws reads (the controller's call: a tracked expression
+   `a.Q` beside an untracked variable named `a.Q` that no plot or criterion
+   holds is outside the test's scope, and two rows read "a.Q"). A family is
+   opened by its key and whether it is tracked — not by its row's id, which
+   carries the group, nor by its members, which a filter narrows — so it
+   stays open across a switch of group and under a filter that keeps some
+   of it, and a tracked family and the result's own that share a key open
+   apart. Rebuilt over 6,011 names: 164-255 ms in every
    group × order × names mode (the default 166-215 ms).
 7. *A figure beside a drawer.* Reported during the review fixes: after
    the pending drawer closed at 1280 px, a figure kept the width it had

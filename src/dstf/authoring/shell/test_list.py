@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nicegui import ui
+from nicegui.elements.mixins.text_element import TextElement
 
 from ...reporting.rows import unsaved_text
 from ...reporting.status import SCORING_FAILED, classify_with_class
@@ -42,6 +43,19 @@ def _package(model_id: str) -> str:
 
 def _name(model_id: str, short: bool) -> str:
     return model_id.rsplit(".", 1)[-1] if short else model_id
+
+
+def _full_name(button: ui.button, model_id: str) -> None:
+    """A Full name, cut at its START (the stylesheet's `.dstf-cut-start`):
+    TRANSFORM's ids share long package prefixes, and cut at the end two of
+    them read alike. Drawn in place of Quasar's label, in the `.block` span
+    Quasar draws one in, the id in a `<bdi>`: the span is right-to-left,
+    and a bare `direction: rtl` moved a leading or trailing `_` or `.` to
+    the other end (Chromium); inside the isolate the id keeps its order.
+    Not isolates from `::before` / `::after`: those entered the button's
+    accessible name."""
+    with button, ui.element("span").classes("block dstf-cut-start"):
+        TextElement(tag="bdi", text=model_id)
 
 
 class TestList:
@@ -92,7 +106,7 @@ class TestList:
                 ) as container:
                     name = (
                         ui.button(
-                            _name(model_id, short),
+                            _name(model_id, short) if short else "",
                             on_click=lambda m=model_id: self.on_open(m),
                         )
                         .props("flat dense no-caps align=left")
@@ -103,6 +117,8 @@ class TestList:
                     # is its title (on the props dict: a props string
                     # breaks on a quote).
                     name.props["title"] = model_id
+                    if not short:
+                        _full_name(name, model_id)
                     # `color=None`: a Quasar badge otherwise carries
                     # `bg-primary`, whose `!important` beats the inline
                     # status fill and paints every verdict blue (the review

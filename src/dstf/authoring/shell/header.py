@@ -660,11 +660,12 @@ class PendingDrawer:
         spec = session.spec
         ui.label(model_id).classes("text-bold dstf-mono").mark("drawer-model")
         # One sentence, as the strip's: a plain block of inline labels, its
-        # separator a label of its own, its spaces kept. Not a flex row: its
-        # items are blocks, and a copy or a screen reader reads one per line.
+        # separator a label of its own, whose spaces stand between the words
+        # as any inline text's do. Not a flex row: its items are blocks, and
+        # a copy or a screen reader reads one per line.
         with ui.element("div").classes("dstf-drawer-status text-xs text-secondary"):
             ui.label(plural(n, "edit")).classes("inline").mark("drawer-count")
-            ui.label(SEP).classes("inline whitespace-pre")
+            ui.label(SEP).classes("inline")
             ui.label(
                 verdict_phrase(
                     classify(comp) if comp is not None else None, saved_status

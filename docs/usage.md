@@ -829,8 +829,9 @@ draws: a swatch, a verdict pill, `metric · <the variable's label>`, the CLI's
 criterion line, and that node's controls (Edit tree, below). Clicking a row
 opens that criterion's editor below it, one at a time, with the plot above as
 its editing surface — drag a ring to move a handle, or edit the fields; every
-change is staged, and Save writes them. The criteria rows' header carries a
-`+` per tracked series ("Add a criterion for x"), and Focus on the plot's own
+change is staged, and Save writes them. The criteria rows' header carries
+one `+` ("Add a criterion for x", x the plot's first tracked series; its
+form's select offers the test's other variables), and Focus on the plot's own
 toolbar shows that plot alone until "Show all N plots".
 
 A plot's legend holds its signals only — actual, reference and any overlays —
@@ -866,11 +867,16 @@ so a switch of test keeps it:
   move among the choices, Home and End jump, Enter chooses, Esc or Tab closes.
   Tests: **Sort** — package order, name A→Z, or status, failures first (FAIL,
   SIM_FAIL, scoring failed, NO_REF, PASS, then unscored); a **group** toggle
-  (by package, or flat); **Names** — short or full. Vars: **Sort** —
+  (by package, or flat); **Names** — short (cut at its end where it does not
+  fit) or full (cut at its start, so ids sharing a package read apart; the
+  whole id is the row's tooltip). Vars: **Sort** —
   result-file order or A→Z by what a row reads; **Group** — by component,
-  flat, or tracked first; **Names** — the expression, the result-file name, or
-  both (the expression with the name muted beside it; under Expression, a
-  label another variable of the test shares still keeps its name beside it).
+  flat, or tracked first (a tracked family and the result's own variables
+  fold apart: never one row over both); **Names** — the expression, the
+  result-file name, or both (the expression with the name muted beside it;
+  under Expression, a label another variable of the test shares, or another
+  row of the drawer reads, still keeps its name beside it). An opened family
+  stays open when the group changes or the filter keeps part of it.
 - on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED
   n`, over every test whatever the filter, filtering as the Suite table's do; a
   test whose scoring failed counts under SIM_FAIL, as its Suite row reads.

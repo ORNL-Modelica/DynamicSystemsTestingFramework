@@ -123,7 +123,8 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # The pending count opens the preview: each edited test's entry before and after, as a diff.
 # A rail down the left opens the Tests drawer (switch test) or the Variables drawer (add a series
 # to the selected plot, or a new plot); Remove plot and Reset layout take them away. Both drawers
-# carry one control set: filter with .* / Aa, sort, group and names menus; Tests adds status pills.
+# carry one control set: filter with .* / Aa; Tests has sort and names menus and a group toggle, and
+# status pills (a Full name is cut at its start); Variables has sort, group and names menus.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs

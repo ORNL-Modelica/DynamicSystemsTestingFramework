@@ -4238,6 +4238,17 @@ async def _tests_drawer(shell, user, model=A) -> TestPage:
     return page
 
 
+def _bdi_text(element) -> str | None:
+    """The text of the first `<bdi>` under ``element``, else None."""
+    for slot in element.slots.values():
+        for child in slot.children:
+            if child.tag == "bdi":
+                return child.text
+            if (found := _bdi_text(child)) is not None:
+                return found
+    return None
+
+
 async def _pick(user, menu: str, value: str) -> None:
     """Open ``menu``'s menu and choose ``value``."""
     user.find(marker=menu).click()
@@ -4304,7 +4315,10 @@ class TestTestsDrawerControls:
             assert group.props["aria-pressed"] == "false"
             assert _plus_tips(group) == ["Group by package"]
             await _pick(user, "tests-drawer:names", "full")
-            await _settled(lambda: _one(user, "tests-drawer:" + A).text == A)
+            # A Full name is a <bdi> in the button, not its label: it is cut
+            # at its start (`test_list._full_name`).
+            await _settled(lambda: _bdi_text(_one(user, "tests-drawer:" + A)) == A)
+            assert _one(user, "tests-drawer:" + A).text == ""
             assert page.state.tests_short is False
 
     async def test_the_pills_count_every_test_whatever_the_filter(self, shell):
@@ -6488,11 +6502,70 @@ class TestVariablesDrawerControls:
                 lambda: _labels_in(_one(user, var_marker("var-row", ROW_X))) == ["x"]
             )
 
+    async def test_expression_names_keep_the_name_where_two_drawn_rows_read_alike(
+        self, drawer_shell
+    ):
+        """The one label rule over the DRAWER's rows: x's expression is
+        `z`, and the result has an untracked variable named `z` that no
+        plot or criterion holds — outside the test's scope, so
+        `variable_texts` sees no collision. The drawer draws both reading
+        "z": x keeps its name muted beside it; `z`, whose label is its
+        name, reads alone."""
+        from test_session import with_expressions
+
+        shell = drawer_shell
+        with_expressions(shell.session, A, {"x": "z"})
+        shell.session._score(A)
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            await _pick(user, "var-names", "expression")
+            await _settled(lambda: page.state.vars_names == "expression")
+            rows = {
+                r: _labels_in(_one(user, var_marker("var-row", r)))
+                for r in (ROW_X, ROW_Y, ROW_Z)
+            }
+            assert rows == {ROW_X: ["z", "x"], ROW_Y: ["y", "plot 2"], ROW_Z: ["z"]}
+            # filtered to x alone, nothing drawn reads like it
+            user.find(marker="var-needle").type("x")
+            await _settled(lambda: _none(user, var_marker("var-row", ROW_Z)))
+            assert _labels_in(_one(user, var_marker("var-row", ROW_X))) == ["z"]
+
+    async def test_expression_names_count_the_members_an_opened_family_draws(
+        self, drawer_shell
+    ):
+        """x={pipe.T[1], pipe.T[2]} beside the result's own pipe.T[1:3]: the
+        two family rows read apart, but opened, the tracked member x and
+        the result's pipe.T[1] both read "pipe.T[1]" — x keeps its name."""
+        from test_session import with_expressions
+
+        shell = drawer_shell
+        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
+        shell.session._score(A)
+        tracked = "0/Tracked/pipe.T[]"
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            await _pick(user, "var-names", "expression")
+            await _settled(lambda: page.state.vars_names == "expression")
+            user.find(marker=var_marker("var-open", tracked)).click()
+            await _settled(
+                lambda: not _none(user, var_marker("var-row", f"{tracked}/x"))
+            )
+            member = var_marker("var-row", f"{tracked}/x")
+            assert _labels_in(_one(user, member)) == ["pipe.T[1]"]
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            await _settled(
+                lambda: not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            )
+            assert _labels_in(_one(user, member)) == ["pipe.T[1]", "x"]
+            result = _one(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            assert _labels_in(result) == ["pipe.T[1]"]
+
     async def test_an_opened_family_stays_open_across_a_switch_of_group(
         self, drawer_shell
     ):
-        """A family is opened by its members, not by its row's id, which
-        carries the group: under Flat, pipe.T[] is still open."""
+        """A family is opened by its key and whether it is tracked, not by
+        its row's id, which carries the group: under Flat, pipe.T[] is
+        still open."""
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
             user.find(marker=var_marker("var-open", ROW_PIPE)).click()
@@ -6507,6 +6580,46 @@ class TestVariablesDrawerControls:
             assert _one(user, var_marker("var-open", flat)).props["aria-expanded"] == (
                 "true"
             )
+
+    async def test_an_opened_family_stays_open_under_a_filter_that_narrows_it(
+        self, drawer_shell
+    ):
+        """A filter that keeps two of pipe.T[1:3] changes the family's
+        members, not the family: it stays open, over what the filter kept."""
+        async with user_simulation(root=drawer_shell.index) as user:
+            page = await _drawer(drawer_shell, user)
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            await _settled(
+                lambda: not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            )
+            user.find(marker="var-regex").click()
+            user.find(marker="var-needle").type(r"pipe\.T\[[12]\]")
+            await _settled(lambda: page.state.vars_needle == r"pipe\.T\[[12]\]")
+            await _settled(lambda: _none(user, var_marker("var-row", ROW_X)))
+            opener = _one(user, var_marker("var-open", ROW_PIPE))
+            assert opener.props["aria-expanded"] == "true"
+            assert not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[1]}"))
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[2]}"))
+
+    async def test_a_tracked_family_and_the_results_own_open_apart(self, drawer_shell):
+        """x={pipe.T[1], pipe.T[2]} folds the tracked x, y to `pipe.T[]`,
+        the key the result's own pipe.T[1:3] folds to: opening the tracked
+        one leaves the result's closed."""
+        from test_session import with_expressions
+
+        shell = drawer_shell
+        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
+        shell.session._score(A)
+        tracked = "0/Tracked/pipe.T[]"
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            user.find(marker=var_marker("var-open", tracked)).click()
+            await _settled(
+                lambda: not _none(user, var_marker("var-row", f"{tracked}/x"))
+            )
+            opener = _one(user, var_marker("var-open", ROW_PIPE))
+            assert opener.props["aria-expanded"] == "false"
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
 
     async def test_the_menus_survive_a_switch_of_test(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:

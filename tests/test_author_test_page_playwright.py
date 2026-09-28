@@ -1904,10 +1904,21 @@ FIGURE_FITS_SLOT = """() => [...document.querySelectorAll('.dstf-plot-slot')]
                  getComputedStyle(e).getPropertyValue('--toolbar-gutter'))])"""
 
 
-def _figures_fill_their_slots(page) -> None:
-    page.wait_for_timeout(800)  # the drawer's slide, and Plotly's own delay
-    widths = page.evaluate(FIGURE_FITS_SLOT)
-    assert widths and all(abs(svg - slot) <= 2 for svg, slot in widths), widths
+def _figures_fill_their_slots(page, low: float = 0, high: float = 1e9) -> float:
+    """Wait for every drawn figure to fill its slot, each slot ``low`` to
+    ``high`` px wide — the width is in the wait, so a figure that still fits
+    the slot it had before the drawer moved does not end it; return the
+    narrowest slot."""
+    page.wait_for_function(
+        f"""([low, high]) => {{
+          const widths = ({FIGURE_FITS_SLOT})();
+          return widths.length > 0 && widths.every(([svg, slot]) =>
+            Math.abs(svg - slot) <= 2 && slot >= low && slot <= high);
+        }}""",
+        arg=[low, high],
+        timeout=EXPECT_TIMEOUT,
+    )
+    return min(slot for _, slot in page.evaluate(FIGURE_FITS_SLOT))
 
 
 def test_a_closed_drawer_leaves_every_figure_filling_its_card(
@@ -1918,7 +1929,8 @@ def test_a_closed_drawer_leaves_every_figure_filling_its_card(
     Variables drawer likewise. NiceGUI's plotly element observes its size
     and Plotly redraws 100 ms after it is told: read as the drawer lands,
     the figure is still the drawer's width narrower, and it fills the card
-    ~150 ms later."""
+    ~150 ms later. Open, each drawer narrows the slots by at least 300 px
+    (the pending drawer by ~520, the rail's by its 320)."""
     with _served(
         tmp_path, playwright_browser, project=_two_var_project, hooks=True
     ) as page:
@@ -1927,21 +1939,21 @@ def test_a_closed_drawer_leaves_every_figure_filling_its_card(
             json.loads(r.read())
         preview = page.get_by_role("button", name="Preview and save")
         expect(preview).to_be_visible(timeout=EXPECT_TIMEOUT)
-        _figures_fill_their_slots(page)
+        closed = _figures_fill_their_slots(page)
         preview.click()
         drawer = page.locator(".dstf-pending-drawer")
         expect(drawer.locator(".dstf-drawer-status")).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )
-        _figures_fill_their_slots(page)
+        _figures_fill_their_slots(page, high=closed - 300)
         drawer.get_by_role("button", name="Close", exact=True).click()
-        _figures_fill_their_slots(page)
+        _figures_fill_their_slots(page, low=closed - 2)
         _shot(page, tmp_path, "pending-drawer-closed-1280")
         variables = page.locator(".dstf-rail").get_by_text("Vars", exact=True)
         variables.click()
-        _figures_fill_their_slots(page)
+        _figures_fill_their_slots(page, high=closed - 300)
         variables.click()
-        _figures_fill_their_slots(page)
+        _figures_fill_their_slots(page, low=closed - 2)
 
 
 #: Every criteria row's name (metric · variable), measured: its height
@@ -2773,8 +2785,9 @@ def test_a_menus_arrow_up_goes_last_and_tab_closes_it(tmp_path, playwright_brows
 LONG_IDS = [
     "TRANSFORM.HeatExchangers.GenericDistributed_HX.Examples.Variants.WithWall."
     "GenericDistributed_HX_withMass",
+    # ends in `_`: a bare `direction: rtl` drew it at the name's left end
     "TRANSFORM.HeatExchangers.GenericDistributed_HX.Examples.Variants.WithWall."
-    "GenericDistributed_HX_noMassXY",
+    "GenericDistributed_HX_noMassXY_",
     # its short name is 40 characters
     "TRANSFORM.Fluid.Pipes.Examples.Variants.WithWallAndMoreWords."
     "GenericPipe_withWall_withHeatTransfer_ab",
@@ -2827,12 +2840,46 @@ PAST_THE_PANEL = """() => {
 }"""
 
 
+#: Each Tests-drawer name, by its title: its `.block`'s text-overflow,
+#: whether it overflows, the indices of the characters it shows whole, and
+#: whether they sit left to right in the id's order.
+NAME_CUTS = """() => {
+  const p = [...document.querySelectorAll('.dstf-drawer-panel')]
+    .find((x) => x.offsetParent !== null);
+  const out = {};
+  for (const n of p.querySelectorAll('.dstf-name')) {
+    const b = n.querySelector('.q-btn__content > .block');
+    const box = b.getBoundingClientRect();
+    const node = document.createTreeWalker(b, NodeFilter.SHOW_TEXT).nextNode();
+    const seen = [];
+    for (let i = 0; i < node.textContent.length; i++) {
+      const r = document.createRange();
+      r.setStart(node, i);
+      r.setEnd(node, i + 1);
+      const c = r.getBoundingClientRect();
+      if (c.width > 0 && c.left >= box.left - 0.5 && c.right <= box.right + 0.5)
+        seen.push([i, c.left]);
+    }
+    out[n.getAttribute('title')] = {
+      overflow: getComputedStyle(b).textOverflow,
+      cut: b.scrollWidth > b.clientWidth,
+      text: node.textContent,
+      shown: seen.map(([i]) => i),
+      inOrder: seen.every(([, x], k) => k === 0 || x > seen[k - 1][1]),
+    };
+  }
+  return out;
+}"""
+
+
 @pytest.mark.parametrize("names", ["Short", "Full"])
 def test_the_tests_drawer_fits_long_ids_at_900_px(tmp_path, playwright_browser, names):
     """TRANSFORM's ids at 900 px: a name is cut with an ellipsis and carries
     the whole id as its title, a package label wraps, every badge stays
     inside the drawer, and the edits pill beside a long name keeps to one
-    line."""
+    line. A Short name is cut at its end; a Full one at its START, so two
+    ids sharing a long package prefix read apart — and its characters stay
+    in order (a bare `direction: rtl` moved a trailing `_` to the left)."""
     with _served(
         tmp_path, playwright_browser, project=_long_ids_project, hooks=True
     ) as page:
@@ -2856,5 +2903,20 @@ def test_the_tests_drawer_fits_long_ids_at_900_px(tmp_path, playwright_browser, 
         )
         name = drawer.locator(".dstf-name").filter(has_text="withHeatTransfer_ab")
         assert name.get_attribute("title") == LONG_IDS[2]
+        cuts = page.evaluate(NAME_CUTS)
+        assert {c["overflow"] for c in cuts.values()} == {"ellipsis"}, cuts
+        assert cuts[LONG_IDS[2]]["cut"], cuts[LONG_IDS[2]]
+        for model in LONG_IDS:
+            assert cuts[model]["inOrder"], cuts[model]
+        if names == "Short":
+            assert cuts[LONG_IDS[2]]["shown"][0] == 0, cuts[LONG_IDS[2]]
+        else:
+            shown = []
+            for model in LONG_IDS[:2]:
+                cut = cuts[model]
+                assert cut["cut"] and cut["shown"][-1] == len(model) - 1, cut
+                assert cut["shown"][0] > 0, cut
+                shown.append("".join(model[i] for i in cut["shown"]))
+            assert shown[0] != shown[1], shown
         page.mouse.move(600, 5)
         _shot(page, tmp_path, f"tests-drawer-900-{names.lower()}")
