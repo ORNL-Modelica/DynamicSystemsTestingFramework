@@ -49,22 +49,6 @@ class PlotExtra:
     context: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
-class SeriesSpec:
-    """The key's former shape, kept importable until the Test page's plot
-    cards and the Variables drawer stop editing it (the plan's Tasks 5-6)."""
-
-    var: str
-
-
-@dataclass(frozen=True)
-class PlotSpec:
-    """The key's former shape; see :class:`SeriesSpec`."""
-
-    series: tuple[SeriesSpec, ...]
-    kind: str = "time"
-
-
 @dataclass(frozen=True, kw_only=True)
 class ResolvedPlot:
     """One plot as a tier draws it. ``subject`` is one variable or the

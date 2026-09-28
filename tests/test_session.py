@@ -2384,13 +2384,16 @@ def _drawer_project(tmp_path: Path, extra: int = 0) -> tuple[Path, Path]:
 #: FakeLib's `x` and `y` are not: a card's header row and a drawer row
 #: that fitted every short name overflowed on these at 900 px.
 LONG = ("heater.flowModel.states[1].T", "condenser.heatTransfer.Q_flow_total")
+#: An UNTRACKED name of the same length in `_long_names_project`'s result:
+#: what a watch plot is made of.
+LONG_WATCH = "evaporator.flowModel.states[3].h_flow"
 
 
 def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
     """`_project` with A tracking the two `LONG` names, both with a
     baseline (one nrmse each; the first fails, so its card has a pill and
     an error select), drawn as two plots, the first with the second as its
-    context."""
+    context; the result also carries the untracked `LONG_WATCH`."""
     cfg, work = _project(tmp_path)
     t = [i / 4 for i in range(5)]
     first, second = LONG
@@ -2402,6 +2405,7 @@ def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
                 "variables": {
                     first: [v * 1.25 for v in t],
                     second: [2 * v for v in t],
+                    LONG_WATCH: [3 * v for v in t],
                 },
             }
         ),

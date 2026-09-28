@@ -524,16 +524,6 @@ class TestPage:
             else:
                 card.card.classes(remove="dstf-plot-selected")
 
-    def scored(self, view: dict | None) -> dict[str, int]:
-        """``{variable: its number of criteria}`` over ``view``, the caller's
-        ONE read of the tree — this never reads one itself."""
-        out: dict[str, int] = {}
-        for leaf in leaves_of(view):
-            name = leaf.get("variable")
-            if name:
-                out[str(name)] = out.get(str(name), 0) + 1
-        return out
-
     def stage_layout(
         self, extras: Sequence[PlotExtra], select: int | None = None
     ) -> bool:

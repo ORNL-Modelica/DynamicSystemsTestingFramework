@@ -3,7 +3,8 @@ drawer"), as data: the page draws them and knows none of the rules.
 
 Every variable of the last result, in groups, with arrays folded into one
 row (`figures.families`, the one family rule both tiers use), filtered,
-and each row's state against the selected plot. Three groupings (the
+and each row's state against the plots: in the selected plot's context,
+its subject, some plot's subject. Three groupings (the
 drawer's group menu): by component — the tracked ones first, then by the
 first dot component of the NAME, inside any ``der(...)`` ("(top level)"
 for a name with none), the diagnostics last; flat, one group; and tracked
@@ -16,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from ..discovery.plots import PlotSpec
+from ..discovery.plots import ResolvedPlot
 from ..figures.families import family_label, group_families, mask_quoted
 
 TOP_LEVEL = "(top level)"
@@ -44,12 +45,16 @@ class VarRow:
     #: the NAMES (``unitTests.x[1:2]``), or the name
     file_text: str
     name: str | None  #: the muted name beside ``text``, when they differ
-    on_selected: int  #: members the selected plot shows
+    #: members the selected plot draws as CONTEXT — what its check adds or
+    #: takes off
+    on_selected: int
     elsewhere: tuple[int, ...]  #: other plots showing any member, 0-based
-    #: members a removal from the selected plot would leave on no plot while
-    #: a criterion scores them (the owner's ruling): the row refuses it.
-    stranded: tuple[str, ...]
-    criteria: int  #: criteria on the stranded members, for the sentence
+    #: whether a member is the selected plot's SUBJECT: its check is on and
+    #: grey, since a plot cannot lose its subject
+    is_subject: bool
+    #: the plot (0-based) a member is the subject of, or None: a variable
+    #: with a plot of its own has its "+ new plot" grey
+    subject_of: int | None
 
 
 @dataclass(frozen=True)
@@ -88,17 +93,17 @@ def variable_groups(
     diagnostics: Collection[str],
     labels: Mapping[str, str],
     texts: Mapping[str, str],
-    layout: Sequence[PlotSpec],
+    plots: Sequence[ResolvedPlot],
     selected: int | None,
-    scored: Mapping[str, int],
     keep: Callable[[str], bool],
     group: str = "component",
     order: str = "file",
     read: str = "both",
 ) -> list[VarGroup]:
-    """``names`` in the drawer's groups. ``scored`` maps a scored name to
-    its number of criteria; ``keep`` is the filter, asked of the name AND
-    the label. Absent from either map, a name reads as itself.
+    """``names`` in the drawer's groups, each row's state read off
+    ``plots`` and the ``selected`` one (None: no plot); ``keep`` is the
+    filter, asked of the name AND the label. Absent from either map, a name
+    reads as itself.
 
     Two maps, the report's rule for a plot title
     (``reporting/report_suite.py``): the FOLD is over ``texts`` (the test's
@@ -129,14 +134,23 @@ def variable_groups(
         else:
             where = _group(name, tracked_set, diag)
         by_group.setdefault(where, []).append(name)
-    # the layout indexed once: scanning every plot per name cost 395 ms over
+    # the plots indexed once: scanning every plot per name cost 395 ms over
     # 6,093 names and 300 plots
     index: dict[str, list[int]] = {}
-    for i, plot in enumerate(layout):
-        for s in plot.series:
-            at = index.setdefault(s.var, [])
+    subject_of: dict[str, int] = {}
+    for i, plot in enumerate(plots):
+        for name in plot.subject:
+            subject_of.setdefault(name, i)
+        for name in plot.series:
+            at = index.setdefault(name, [])
             if not at or at[-1] != i:
                 at.append(i)
+    # the page's cards can lag the Session's plots by one sync
+    chosen = (
+        plots[selected] if selected is not None and 0 <= selected < len(plots) else None
+    )
+    context = set(chosen.context) if chosen is not None else set()
+    subject = set(chosen.subject) if chosen is not None else set()
     showing = {n: tuple(index.get(n, ())) for n in kept}
     position = {n: i for i, n in enumerate(kept)}
     out: list[VarGroup] = []
@@ -159,16 +173,9 @@ def variable_groups(
                 family_label(k, m) for k, m in group_families(members)
             )
             lone = members[0] if len(members) == 1 else None
-            on = [m for m in members if selected is not None and selected in showing[m]]
+            on = [m for m in members if m in context]
             elsewhere = sorted(
                 {i for m in members for i in showing[m] if i != selected}
-            )
-            # a row partly on the plot ADDS its missing members on a click:
-            # no removal is on offer, so nothing is stranded
-            stuck = (
-                tuple(m for m in on if m in scored and showing[m] == (selected,))
-                if len(on) == len(members)
-                else ()
             )
             rows.append(
                 VarRow(
@@ -182,8 +189,10 @@ def variable_groups(
                     name=lone if lone is not None and text != lone else None,
                     on_selected=len(on),
                     elsewhere=tuple(elsewhere),
-                    stranded=stuck,
-                    criteria=sum(scored[m] for m in stuck),
+                    is_subject=any(m in subject for m in members),
+                    subject_of=next(
+                        (subject_of[m] for m in members if m in subject_of), None
+                    ),
                 )
             )
         if order == "name":

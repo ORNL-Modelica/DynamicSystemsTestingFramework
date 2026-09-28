@@ -532,10 +532,6 @@ def _range(lo):
     return {"metric": "range", "variable": "x", "min_value": lo}
 
 
-def _plot(*names):
-    return {"series": [{"var": n} for n in names]}
-
-
 async def _open_form(user, marker: str, within: str) -> None:
     """Click the cluster's icon marked ``marker`` and wait for its form: an
     Edit tree form is built on the icon's click, into a row under its host's
@@ -4785,7 +4781,7 @@ def test_the_current_row_is_emitted_after_the_row_hover():
     assert STYLE.index(".dstf-row.dstf-row-current") > STYLE.index(".dstf-row:hover")
 
 
-# -- 3c: the selected plot, Add series, Remove plot, Reset layout -------------
+# -- 3c: the selected plot, Remove plot, Reset layout -------------------------
 
 
 def _ringed(page) -> list[int]:
@@ -5008,8 +5004,9 @@ ROW_PORT3 = "1/port/port[2, 3, 1].C[]"
 PORT3 = ["port[2, 3, 1].C[1]", "port[2, 3, 1].C[2]"]
 
 
-def _raw(*plots):
-    return [{"kind": "time", "series": [{"var": v} for v in p]} for p in plots]
+def _ctx(var: str, *context: str) -> dict:
+    """One entry of the ``plots`` key as a writer stores it."""
+    return {"var": var, **({"context": list(context)} if context else {})}
 
 
 @pytest.fixture
@@ -5053,6 +5050,11 @@ def _op_value(shell) -> list:
     return op.value
 
 
+def _new_why(user, row_id: str) -> str:
+    """The tooltip on a row's grey "+ new plot"."""
+    return _tooltip_text(_one(user, var_marker("var-new-why", row_id)))
+
+
 def _raised(caplog) -> list[str]:
     """The exceptions a click's handler raised: NiceGUI logs them and the
     click returns as if nothing happened."""
@@ -5067,10 +5069,10 @@ async def _drawer(shell, user, model=A) -> TestPage:
 
 
 class TestVariablesDrawer:
-    """The drawer does every layout edit on the selected plot (the owner's
-    rulings Q5-Q7): a check adds a row's members or takes them off, a
-    scored variable keeps its last plot, "+ new plot" puts a row on a plot
-    of its own below the selected one and selects it."""
+    """The drawer edits the plot extras on the selected plot (the owner's
+    rulings Q5-Q7, Q12-Q14): a check adds a row's members to its CONTEXT or
+    takes them off — its subject's check is on and grey — and "+ new plot"
+    makes a WATCH plot of one variable, after the others, and selects it."""
 
     async def test_the_filter_and_its_toggles_survive_a_switch_of_test(
         self, drawer_shell
@@ -5107,140 +5109,167 @@ class TestVariablesDrawer:
                 "var-group:2-top-level",
                 "var-group:3-Diagnostics",
             ]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 1 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 1 of 2"
+            )
             assert "pipe.T[1:3]" in _labels_in(
                 _one(user, var_marker("var-row", ROW_PIPE))
             )
             assert "port[2, 1].C[1:3]" in _labels_in(
                 _one(user, var_marker("var-row", ROW_PORT))
             )
+            # x is plot 1's subject: its check is on, and grey.
             assert _checked(user, ROW_X) == "true"
+            assert not _one(user, var_marker("var-check", ROW_X)).enabled
+            assert _tooltip_text(_one(user, var_marker("var-why", ROW_X))) == (
+                "The plot's subject"
+            )
             assert _checked(user, ROW_Y) == "false"
+            assert _one(user, var_marker("var-check", ROW_Y)).enabled
 
-    async def test_a_checkbox_adds_a_series_to_the_selected_plot_as_one_op(
+    async def test_a_checkbox_adds_context_to_the_selected_plot_as_one_op(
         self, drawer_shell
     ):
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             user.find(marker=var_marker("var-check", ROW_Z)).click()
-            assert _op_value(shell) == _raw(["x", "z"], ["y"])
+            assert _op_value(shell) == [_ctx("x", "z")]
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             user.find(marker=var_marker("var-check", ROW_PIPE)).click()
-            assert _op_value(shell) == _raw(["x", "z", *PIPE], ["y"])
-            await _settled(lambda: len(page.cards[0].resolved.series) == 5)
+            assert _op_value(shell) == [_ctx("x", "z", *PIPE)]
+            await _settled(lambda: page.cards[0].resolved.context == ("z", *PIPE))
             await _settled(lambda: _checked(user, ROW_PIPE) == "true")
-            # The card folds the family as the report does (the executing
-            # review's correction 8): the title, and the plot-only line.
-            assert _one(user, "plot-title:0").text == "x, z, pipe.T[1:3]"
-            assert _one(user, "plot-only:0").text == (
-                "z, pipe.T[1:3] are plot only: they have no criteria."
-            )
+            # Context, not a criterion: the card's rows and title are x's.
+            assert _one(user, "plot-title:0").text == "x"
+            assert list(page.cards[0].rows) == [T0]
+            assert _one(user, f"context-name:0:{PIPE[0]}").text == PIPE[0]
 
-    async def test_a_family_partly_on_the_plot_is_mixed_and_a_click_adds_the_rest(
+    async def test_a_family_partly_in_the_context_is_mixed_and_a_click_adds_the_rest(
         self, drawer_shell
     ):
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", PIPE[1]], ["y"]))])
+        shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", PIPE[1])])])
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             assert _checked(user, ROW_PIPE) == "mixed"
             user.find(marker=var_marker("var-check", ROW_PIPE)).click()
-            assert _op_value(shell) == _raw(["x", PIPE[1], PIPE[0], PIPE[2]], ["y"])
+            assert _op_value(shell) == [_ctx("x", PIPE[1], PIPE[0], PIPE[2])]
 
-    async def test_unchecking_removes_and_a_scored_last_plot_refuses(
+    async def test_unchecking_takes_the_context_off_and_the_emptied_entry_goes(
         self, drawer_shell
     ):
+        """x's entry held z alone: with z off it records nothing, and the
+        key goes with it (`layout_op`: no extras is a remove)."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             user.find(marker=var_marker("var-check", ROW_Z)).click()
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             user.find(marker=var_marker("var-check", ROW_Z)).click()
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            assert [op.op for op in shell.session.spec.pending] == ["add", "remove"]
+            assert "plots" not in shell.session.spec.entry(A)
             await _settled(lambda: _checked(user, ROW_Z) == "false")
-            assert not _one(user, var_marker("var-check", ROW_X)).enabled
-            assert _tooltip_text(_one(user, var_marker("var-why", ROW_X))) == (
-                "x is scored by 1 criterion and this is the only plot that shows "
-                "it. Add it to another plot first, or remove its criteria."
-            )
-            # A row with nothing to strand says nothing.
             assert _one(user, var_marker("var-check", ROW_Z)).enabled
 
-    async def test_new_plot_goes_below_the_selected_one_and_is_selected(
+    async def test_new_plot_makes_a_watch_plot_after_the_others_and_selects_it(
         self, drawer_shell
     ):
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
-            user.find(marker=var_marker("var-new", ROW_PORT)).click()
-            assert _op_value(shell) == _raw(["x"], PORT, ["y"])
+            user.find(marker=var_marker("var-new", ROW_Z)).click()
+            assert _op_value(shell) == [_ctx("z")]
             await _settled(lambda: len(page.cards) == 3)
-            assert page.selected == 1 and _ringed(page) == [1]
+            assert page.cards[2].resolved.watch
+            assert page.selected == 2 and _ringed(page) == [2]
             await _settled(
-                lambda: _one(user, "var-target").text == "Checkboxes act on plot 2 of 3"
+                lambda: (
+                    _one(user, "var-target").text
+                    == "Checkboxes add context to plot 3 of 3"
+                )
             )
-            assert _checked(user, ROW_PORT) == "true"
+            # z is that plot's subject now: on and grey, and no second plot.
+            assert _checked(user, ROW_Z) == "true"
+            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
+            assert not _one(user, var_marker("var-new", ROW_Z)).enabled
+            assert _new_why(user, ROW_Z) == "Already the subject of plot 3"
 
-    async def test_a_double_click_on_the_last_plots_only_series(
+    async def test_new_plot_is_grey_on_a_subject_and_on_a_family(self, drawer_shell):
+        """A watch plot is of ONE variable (C3): a family's row makes none,
+        its members, opened, each do. A plot's subject has its plot."""
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            assert not _one(user, var_marker("var-new", ROW_X)).enabled
+            assert _new_why(user, ROW_X) == "Already the subject of plot 1"
+            assert _new_why(user, ROW_Y) == "Already the subject of plot 2"
+            assert not _one(user, var_marker("var-new", ROW_PIPE)).enabled
+            assert _new_why(user, ROW_PIPE) == (
+                "A watch plot shows one variable: open the family"
+            )
+            assert _one(user, var_marker("var-new", ROW_Z)).enabled
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            member = f"{ROW_PIPE}/{PIPE[0]}"
+            await _settled(lambda: not _none(user, var_marker("var-new", member)))
+            assert _one(user, var_marker("var-new", member)).enabled
+
+    async def test_a_check_on_a_plot_that_has_just_gone_does_nothing(
         self, drawer_shell, caplog
     ):
-        """A real double-click: the second click lands on the row drawn
-        BEFORE the first one's edit, while the selection names a plot the
-        layout no longer has. It raised IndexError; it does nothing."""
+        """A check clicked after the selected watch plot was removed, before
+        the page caught up: the selection names a plot there is no longer,
+        and the check does nothing — never an IndexError."""
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x"], ["y"], ["z"]))])
+        shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("z")])])
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             with page.client:
                 page.select(2)
             await _settled(lambda: _checked(user, ROW_Z) == "true")
-            check = user.find(marker=var_marker("var-check", ROW_Z))
-            check.click()
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            check = user.find(marker=var_marker("var-check", ROW_A0))
+            with page.client:
+                page.remove_watch(2, "z")
+            (op,) = [op for op in shell.session.spec.pending if op.op == "remove"]
             with caplog.at_level(logging.ERROR):
-                check.click()  # the same row, before any rebuild
+                check.click()  # the row drawn for plot 3, before any rebuild
             assert _raised(caplog) == []
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            assert shell.session.spec.pending[-1] == op
 
     async def test_a_stale_check_acts_on_what_the_selected_plot_holds_now(
         self, drawer_shell
     ):
         """ "+ new plot" selects its plot at once; the rows follow on the
         next cycle. A click on z's check in between read "all on" from the
-        row drawn for plot 1 and took z off plot 2, which never had it; it
-        reads plot 2 as it is, and adds z there."""
+        row drawn for plot 1 and took z off plot 3, which never had it; it
+        reads plot 3 as it is, and adds z there."""
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+        shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             check = user.find(marker=var_marker("var-check", ROW_Z))
             user.find(marker=var_marker("var-new", ROW_A0)).click()
-            assert page.selected == 1
-            assert _op_value(shell) == _raw(["x", "z"], ["a0"], ["y"])
+            assert page.selected == 2
+            assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0")]
             check.click()  # drawn for plot 1, which shows z
-            assert _op_value(shell) == _raw(["x", "z"], ["a0", "z"], ["y"])
+            assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0", "z")]
 
-    async def test_new_plot_from_a_stale_row_after_its_plot_went(
+    async def test_new_plot_twice_from_one_row_makes_one_plot(
         self, drawer_shell, caplog
     ):
-        """ "+ new plot" clicked after a check removed the selected plot, and
-        before the page caught up: the selection names no plot, and
-        `new_plot` raised IndexError for it. Nothing is staged instead."""
+        """A real double-click on "+ new plot": the second click lands on the
+        row drawn BEFORE the first one's edit, whose variable is a watch
+        plot's subject by then. It makes no second plot — and never the
+        ValueError of a second entry on one variable."""
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x"], ["y"], ["z"]))])
         async with user_simulation(root=shell.index) as user:
-            page = await _drawer(shell, user)
-            with page.client:
-                page.select(2)
-            await _settled(lambda: _checked(user, ROW_Z) == "true")
-            new = user.find(marker=var_marker("var-new", ROW_PORT))
-            user.find(marker=var_marker("var-check", ROW_Z)).click()
+            await _drawer(shell, user)
+            new = user.find(marker=var_marker("var-new", ROW_Z))
+            new.click()
             with caplog.at_level(logging.ERROR):
-                new.click()
+                new.click()  # the same row, before any rebuild
             assert _raised(caplog) == []
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            assert _op_value(shell) == [_ctx("z")]
 
     async def test_the_filter_globs_regexes_and_says_a_bad_regex(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:
@@ -5327,6 +5356,8 @@ class TestVariablesDrawer:
             ] == ["a.Q (x)", "a.Q (y)", "z"]
 
     async def test_a_family_opens_to_its_members(self, drawer_shell):
+        """Each member a row of its own: its check and its "+ new plot" act
+        on that one variable."""
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
             assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
@@ -5347,15 +5378,16 @@ class TestVariablesDrawer:
     async def test_the_drawer_follows_the_selected_plot(self, drawer_shell):
         """`select` moves the drawer's target and its checks, and a repaint
         stages nothing and says nothing. A check that were a `ui.checkbox`
-        repainted by `set_value` (mutation (a)) stages nothing here either
-        — y is refused as stranded — so it is the refusal's notification
-        that kills it here; the checkbox tests see the op it stages."""
+        repainted by `set_value` (mutation (a)) would stage x as context on
+        plot 2 here as its check turned off."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             with page.client:
                 page.select(1)
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
             assert _checked(user, ROW_Y) == "true"
             assert _checked(user, ROW_X) == "false"
             assert not _one(user, var_marker("var-check", ROW_Y)).enabled
@@ -5367,7 +5399,7 @@ class TestVariablesDrawer:
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
-            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: _checked(user, ROW_Z) == "true")
 
     async def test_a_closed_drawer_is_not_rebuilt(self, drawer_shell):
@@ -5382,12 +5414,14 @@ class TestVariablesDrawer:
             drawer.rebuild = lambda: (built.append(1), real())
             with page.client:
                 page.select(1)
-            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: len(page.cards[0].resolved.series) == 2)
             assert built == []
             user.find(marker="rail:variables").click()
             assert built == [1]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
 
     async def test_a_test_with_no_result_says_so(self, tmp_path):
         from test_session import _drawer_project
@@ -5419,9 +5453,8 @@ class TestVariablesDrawer:
                 diagnostics=session.project.config.diagnostic_variables,
                 labels={n: t.label for n, t in scope.items()},
                 texts={n: t.text for n, t in scope.items()},
-                layout=session.layout(A),
+                plots=session.plots(A),
                 selected=0,
-                scored={"x": 1, "y": 1},
                 keep=lambda text: True,
             ),
             200,
@@ -5451,14 +5484,16 @@ class TestVariablesDrawer:
                 for state in ("started", "running", "finished"):
                     page.handle({"event": "job", "state": state})
             assert built == []
-            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             await asyncio.sleep(0.3)  # the rescore the stage started, and its events
             assert built == [1]
             with page.client:
                 page.select(1)
             assert built == [1, 1]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
 
     async def test_a_draw_that_raised_is_drawn_again_by_the_next_refresh(
         self, drawer_shell, monkeypatch
@@ -5489,14 +5524,12 @@ class TestVariablesDrawer:
                 drawer.refresh()
             assert not _none(user, var_marker("var-row", ROW_X))
 
-    async def test_a_select_or_an_add_series_builds_the_open_drawer_at_most_once(
+    async def test_a_click_on_a_card_builds_the_open_drawer_at_most_once(
         self, drawer_shell
     ):
-        """Add series with the drawer open built it more than once — the
-        select's refresh, then `Rail.open`'s own rebuild of a drawer that
-        was already open — and a click on the selected card went through a
-        refresh too. A build clears the body first: that is what is
-        counted."""
+        """A click on the selected card went through a refresh, and a click
+        selecting another builds the open drawer once. A build clears the
+        body first: that is what is counted."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
@@ -5505,13 +5538,14 @@ class TestVariablesDrawer:
             built = []
             clear = drawer.body.clear
             drawer.body.clear = lambda: (built.append(1), clear())[1]
-            with page.client:
-                page.select(0)  # the selected card, clicked again
+            user.find(marker="plot:0").click()  # the selected card, again
             assert built == []
-            user.find(marker="add-series:1").click()
+            user.find(marker="plot:1").click()
             assert page.selected == 1 and built == [1]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
-            user.find(marker="add-series:1").click()  # its plot, selected
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
+            user.find(marker="plot:1").click()  # its plot, selected
             assert built == [1]
 
     async def test_a_row_names_the_other_plots_that_show_it_counting_from_1(
@@ -5597,22 +5631,33 @@ class TestVariablesDrawer:
             assert _groups_shown(user) == ["var-group:2-top-level"]
 
     async def test_with_no_plot_the_checks_are_grey_and_new_plot_makes_plot_1(
-        self, drawer_shell
+        self, tmp_path
     ):
-        """An empty ``plots`` key: nothing for a check to act on, so each is
-        disabled; "+ new plot" makes the first plot and selects it."""
-        shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", [])])
+        """B tracks nothing its result file holds, and has no tree: no plot
+        for a check to act on, so each is disabled; "+ new plot" makes the
+        first plot — a watch plot — and selects it."""
+        from test_session import _drawer_project
+
+        cfg, work = _drawer_project(tmp_path)
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = ["not.in.the.file"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        shell = _opened(cfg, work)
         async with user_simulation(root=shell.index) as user:
-            page = await _drawer(shell, user)
+            page = await _drawer(shell, user, B)
             assert page.cards == []
             assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
-            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
-            user.find(marker=var_marker("var-new", ROW_Z)).click()
-            assert _op_value(shell) == _raw(["z"])
+            row = "2/(top level)/x"
+            assert not _one(user, var_marker("var-check", row)).enabled
+            user.find(marker=var_marker("var-new", row)).click()
+            (op,) = shell.session.spec.pending
+            assert (op.model_id, op.op, op.value) == (B, "add", [_ctx("x")])
             await _settled(lambda: len(page.cards) == 1)
             assert page.selected == 0 and _ringed(page) == [0]
-            await _settled(lambda: _checked(user, ROW_Z) == "true")
+            await _settled(lambda: _checked(user, row) == "true")
 
     async def test_a_result_with_no_variables_says_so(self, tmp_path):
         from test_session import _drawer_project
@@ -6781,10 +6826,12 @@ class TestVariablesDrawerControls:
             user.find(marker="var-needle").type(r"pipe\.T\[[12]\]")
             await _settled(lambda: page.state.vars_needle == r"pipe\.T\[[12]\]")
             row_of = var_marker("var-row", tracked)
+            # x and y are ONE plot's subject now — one family, one scale —
+            # the selected one, so no "plot k" rides beside the row.
             for mode, labels in (
-                ("both", ["pipe.T[1:2]", "x, y", "plot 2"]),
-                ("expression", ["pipe.T[1:2]", "x, y", "plot 2"]),
-                ("file", ["x, y", "plot 2"]),
+                ("both", ["pipe.T[1:2]", "x, y"]),
+                ("expression", ["pipe.T[1:2]", "x, y"]),
+                ("file", ["x, y"]),
             ):
                 await _pick(user, "var-names", mode)
                 await _settled(lambda m=mode: page.state.vars_names == m)
@@ -6816,8 +6863,7 @@ class TestVariablesDrawerControls:
             user.find(marker="var-needle").type("^[xy]$")
             await _settled(lambda: _none(user, var_marker("var-row", own)))
             assert _labels_in(_one(user, var_marker("var-row", tracked))) == [
-                "pipe.T[1:2]",
-                "plot 2",
+                "pipe.T[1:2]"
             ]
             check = _one(user, var_marker("var-check", tracked))
             assert check.props["aria-label"] == "pipe.T[1:2] (x, y)"
