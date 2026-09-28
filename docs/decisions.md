@@ -5256,3 +5256,137 @@ the result beside it.
 **Not built here**, so nobody looks for it: nothing. The gap this entry
 first named here — a no-`--report` dashboard of a `--filter` run showing
 only that run's rows, even with `--merge` — is D136's amendment.
+
+## D139 — The Test page: a status strip, one add model, a Save preview and the drawers' one control set (2026-09-27)
+
+**Context.** The owner ruled on the feedback board (2026-09-26, v2) on the
+Test page. Q2 A — a full-width status strip directly under the test's row,
+inside the part that stays at the top, saying the test's situation and
+filling the one next action. Q3 A — every `+` opens the same inline row
+where it was clicked; a new criterion lands right after the clicked one;
+a combinator's kind is a dropdown changed in place. Q6 A — the
+pending-edits drawer is a preview of each test's entry as `test_spec.json`
+will hold it. Q7 — one control set on every list (the Suite table's half
+is D137). Before, Accept and Rerun sat outlined in the test's row (DESIGN.md
+"Buttons"); a plot's "Add a criterion for x" was a VARIABLE button with a
+dialog (D131); a combinator's kind and Unwrap lived in its Edit form
+(D133); the drawer listed one raw line per op; the Tests drawer had a
+substring filter, the Variables drawer a filter and nothing else. The
+owner ruled twice more on 2026-09-27, before the build (O1, O2 below), and
+accepted the planner's choices ("No objections").
+
+**Decision.**
+
+1. *The strip (Q2 A; reverses DESIGN.md "Buttons").* `authoring/situation.py`
+   decides, pure: running, edits, scoring failed, waiting, no result,
+   SIM_FAIL, NO_REF, FAIL, simulate-only, PASS — the first that applies
+   wins — each with a tone (grey, red, amber) and one sentence
+   (`shell/strip.py` draws it). Accept and Rerun leave the test's row for
+   the strip. The controller's calls: "N unsaved edits" counts ops, so the
+   first criterion edit on a flat test reads 2 (the materialization and the
+   edit), as the header's count does; a saved spec that cannot be scored
+   reads "verdict would change scoring failed → PASS"; an unscored test
+   while the project is read waits ("Scoring…"); a result counts only when
+   the manifest does not list its model as unfinished (what Accept's
+   "re-run before accepting" reads); a simulate-only test that ran says
+   "Simulate-only: it runs, and nothing is compared." The strip's Discard
+   is this test's (`Session.discard(models=)`, planner's choice), labelled
+   "Discard" as the board drew it, its tooltip "Discards this test's edits;
+   the header's Discard drops every test's." *O1:* there is no
+   simulation-settings state — `/simulation` is not stageable
+   (`spec-update`'s whitelist is `/comparison`, `/metrics`, `/plots`, and
+   widening it changes the TRANSFORM seam); the state waits for a
+   simulation-settings editor.
+2. *A capability says when it is next.* `Capability.emphasis` maps a
+   `Situation` to `Emphasis.NEXT` (drawn filled) or `MENU` (the strip's ⋮);
+   a situation it does not name draws it quiet. Read with `getattr`, like
+   `icon`, and only by a bar the page tells its situation; the shell still
+   names no capability. Accept is NEXT on FAIL and NO_REF and in the menu
+   on PASS, edits, SIM_FAIL and no result; Rerun is NEXT on SIM_FAIL and no
+   result and in the menu on edits. The strip's verdict clause asks
+   `Session.saved_comparison` —
+   the saved spec scored afresh, uncached, `None` for an entry only a
+   pending op creates: ~12 ms a call on a TRANSFORM copy, 8 ms of it the
+   331-test merge.
+3. *One add model (Q3 A; reverses D131's dialog for VARIABLE).* `+` on a
+   criterion stages the new one right after it; on a combinator, as its
+   last child. The plot's "Add a criterion for x" is a `+` in the card's
+   criteria header, an inline row like every other: VARIABLE is an
+   `InlineHost` now, and `ActionBar` hosts SUITE and TEST only (its
+   `figure=` is deleted). After Add the new criterion's editor opens on the
+   plot the `+` was on when that plot draws it (`RowTarget.index`,
+   `TestPage.reveal(path, index)`), scrolled into view.
+4. *The kind dropdown (Q3 A; reverses D133's kind in the Edit form and
+   Unwrap there).* `Panel.lead` draws in a combinator row's lead place,
+   where its kind is read, and raises on a row without one. The dropdown
+   holds and / or / k-of-n / warn / weighted and, below a separator,
+   "unwrap — its children take its place" — omitted where Unwrap is refused
+   by rule (a root with several children): an option cannot carry a
+   why-tooltip. and / or / warn stage at once; k-of-n and weighted open the
+   Edit form preset to that kind, which needs k or a threshold first. The
+   tune icon stays only on k-of-n and weighted nodes. The Edit form says
+   "Changes this node's fields; its children stay." — "…kind and
+   fields…" when the dropdown preset it.
+5. *The preview (Q6 A).* `authoring/spec_preview.py`: the entry as
+   `json.dumps(indent=2)` writes it, before and after, diffed by `difflib`
+   with `autojunk` off (on, a 60-leaf entry tightened at two leaves read
+   ~201 changed lines instead of 4); variables read by their label, the
+   result-file name muted. *O2:* the `before` is the tree as scoring sees
+   it — when a test's ops begin with the materialization `Session.stage`
+   prepends (`PatchOp.materializes`), the saved entry with that applied, and
+   one note line says Save also writes the criteria out as a tree; a tree
+   built from edited overrides (`_saved_scoring_tree`) is not marked, so it
+   shows as added and there is no note. Built only while the drawer is
+   open, and again only when the pending ops, the file or an edited test's
+   verdict moved; `Session.saved_comparisons` merges the saved spec once per
+   rebuild. Save these / Discard these are the header's own; the close
+   button and Esc close it, which under 1024 px — where it is an overlay
+   over the header and the strip — are the only ways out besides a click
+   behind it. Esc is one `document` keydown per tab dispatching to the
+   drawer's column: `ui.on` re-sent the page's listeners and failed the
+   Suite's Playwright tests. So an Esc that closes a Quasar menu while the
+   drawer is open closes the drawer too. The board's per-edit sentences
+   ("edit nrmse on pulse.y: tolerance 0.01 → 0.005") are not built
+   (planner's choice): each section has its edit count and verdict line.
+6. *The drawers' one control set (Q7).* The budgeted matcher moves to
+   `authoring/needle.py`; every control is the tab's (`TabState`), drawn by
+   `shell/drawer_controls.py`, so a switch of test keeps them. Each menu's
+   choices are `menuitemradio` with the current one checked; the arrow keys
+   wrap, Home and End jump (Quasar's QMenu has none), Tab closes the menu,
+   and the choices are out of the tab order. The Tests drawer: the filter
+   with `.*` / `Aa` beside it; sort by package order, name A→Z, or status,
+   failures first (FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, unscored,
+   then package order — not `STATUS_ORDER`, which lists PASS first); a
+   group toggle; Short / Full names; status pills with EDITED, OR'd as on
+   the Suite, counting every test whatever the filter, a scoring failure
+   counted and kept as SIM_FAIL (the Suite's rule). Its kept set is cached
+   on the needle, the toggles and the set of tests — a pathological regex
+   cost 0.79 s of CPU per pass over 331 ids, and events repaint every
+   second during a job; a bad pattern or one out of time hides nothing and
+   says why. The Variables drawer: sort by result-file order or A→Z by what
+   is shown; group by component, flat or tracked first; names as
+   expression, result-file name or both — Expression keeps the name, muted,
+   beside a label another name of the test carries (the one label rule,
+   `variable_texts`). A family is opened by its members, so it stays open
+   across a switch of group. Rebuilt over 6,011 names: 164-255 ms in every
+   group × order × names mode (the default 166-215 ms).
+7. *A figure beside a drawer.* Reported during the review fixes: after
+   the pending drawer closed at 1280 px, a figure kept the width it had
+   beside it. Measured, it does not: read as the drawer lands, the figure is
+   still the drawer's width narrower, and it fills its card ~150 ms later —
+   NiceGUI's plotly element observes its size, and Plotly redraws 100 ms
+   after it is told — for the pending drawer and the rail's alike. Nothing
+   is added; a Playwright test holds both to it.
+
+**Consequences.** DESIGN.md "Buttons" no longer holds on the Test page: its
+next action is filled. The contract gains `Capability.emphasis`,
+`Panel.lead` (a host's panel must implement it), `RowTarget.index` and
+`reveal(path, index)`; `ActionBar(figure=)` is gone. Nothing in the
+pre-release seams moves: the preview writes nothing, Save still goes
+through `spec-update`'s read-modify-write, and the CLI, `testing.json`,
+`test_spec.json` and the reference-JSON layout are unchanged. Watch-only
+items went to `docs/ideas.md`. Not measured here: the TRANSFORM gate over
+a copy, which the plan leaves to its controller.
+
+**Not built here**, so nobody looks for it: the strip's simulation-settings
+state (O1); the preview's per-edit sentences.

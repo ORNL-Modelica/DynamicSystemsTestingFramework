@@ -1746,3 +1746,18 @@ planning.
     (the tooltip still names it).
   - `Header.refresh` reads status.json on every refresh (small file, but
     every session event).
+- **Watch-only from the Test page build (2026-09-27; D139)**:
+  - The pending drawer's per-edit sentences the board drew ("edit nrmse on
+    pulse.y: tolerance 0.01 → 0.005") are not built (the planner's choice
+    4): each section has its edit count and verdict line. A generic
+    op-to-sentence renderer is its own piece of work.
+  - `spec_preview.entry_lines` slows on many repeated lines (`difflib` with
+    `autojunk` off): 600 leaves took 141 ms, 1,500 leaves 0.9 s. TRANSFORM
+    averages 2.6 variables per test.
+  - On a short screen a criterion's editor can be taller than the room
+    under the header, so its top or bottom stays out of view.
+  - When scoring the EDITED spec raises, the strip and the pending drawer
+    read the comparison from before the edit.
+  - After a Rerun with edits pending, `saved_comparison` scores the saved
+    spec against the results read for the edited TestModels. Unverified:
+    it matters only for a backend that reads only the named variables.

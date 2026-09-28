@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -36,10 +36,13 @@ DynamicSystemsTestingFramework/
 │   │                             #      layout.py (the plot layout's edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
 │   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
+│   │                             #      situation.py (a test's situation and the strip's sentence), spec_preview.py (an entry's
+│   │                             #      diff as test_spec.json would write it), needle.py (the drawers' budgeted filter matcher),
 │   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages,
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
 │   │                             #      test_list (the Tests drawer's list), tree_card + plot_card,
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
+│   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
@@ -111,12 +114,16 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # group rows, a column chooser); Accept the selection's results as baselines, Rerun the selection.
 # Open a test: its criteria tree closed to one line naming what failed, its plots stacked and drawn
 # as they scroll into view, a criterion's editor under its row (drag its handles on the plot above),
-# +/wrap/− on every tree node and edit on a combinator, each form opening as a row under its node,
-# "Add a criterion for x" under its plot, Focus to show one plot alone. A plot's legend holds its
-# signals, above the plot; a swatch on each criteria row shows or hides that criterion's drawing;
-# one Error select per plot that draws one series picks the error series shown.
+# a status strip under the test's row saying its situation and filling the one next action,
+# +/wrap/− on every tree node (edit on a k-of-n or weighted one), each form an inline row under its
+# node: a `+` adds right after a criterion, last under a combinator, or from a plot's criteria
+# header; a combinator's kind is a dropdown in its row (unwrap in it). Focus shows one plot alone.
+# A plot's legend holds its signals, above the plot; a swatch on each criteria row shows or hides
+# that criterion's drawing; one Error select per plot that draws one series picks the error series.
+# The pending count opens the preview: each edited test's entry before and after, as a diff.
 # A rail down the left opens the Tests drawer (switch test) or the Variables drawer (add a series
-# to the selected plot, or a new plot); Remove plot and Reset layout take them away.
+# to the selected plot, or a new plot); Remove plot and Reset layout take them away. Both drawers
+# carry one control set: filter with .* / Aa, sort, group and names menus; Tests adds status pills.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs

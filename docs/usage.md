@@ -743,11 +743,20 @@ only it is cached. The index of sibling-backend overlays is built on its own
 thread as the project opens, so a click normally finds it already built.
 
 **The layout.** Two pages under one header. The header carries the library, the
-backend, the open's progress, the pending-op count (click it for the preview:
-a drawer showing, per edited test, its entry before and after as
-`test_spec.json` will hold it, what the edits do to its verdict, and its own
-Save these / Discard these; its close button or Esc closes it), Save, Discard,
-Export, a link to the dashboard and Stop server.
+backend, the open's progress, the pending-op count (click it for the preview,
+below), Save, Discard, Export, a link to the dashboard and Stop server.
+
+**The preview** is the pending-op count's drawer: per edited test, in staging
+order, its entry before and after its edits as `test_spec.json` will hold it
+(`json.dumps(indent=2)`, what Save writes), added lines green and removed lines
+red, each variable read by its label with its result-file name muted beside
+it; how many edits the test has and what they do to its verdict ("2 edits ·
+verdict would change PASS → FAIL"). When a test's first edit wrote its
+implicit tree out, the diff is against that tree, and a note says Save writes
+the tree too ("they score the same"). Save these and Discard these are the
+header's own Save and Discard. Its close button or Esc closes it; under
+1024 px it lies over the header and the strip. An Esc that closes a menu while
+the drawer is open closes the drawer too.
 
 The **Suite page** is a table of the tests, with the dashboard's columns and
 words (one row model, D136): Status, Test, Worst NRMSE, Variables, Sim (s),
@@ -796,8 +805,19 @@ the last `dstf run` / `compare` or tool Rerun; Save, Discard and Reload do not
 rewrite it. Save, Discard and Reload are refused while a job runs.
 
 The **Test page** is one test. A second header row carries the way back to the
-Suite, the model id, its verdict, the backend and baseline it was scored
-against, and the actions on that one test. Under it, the criteria tree is
+Suite, the model id, its verdict, and the backend and baseline it was scored
+against. Under it, still in the part that stays at the top, the **status
+strip** says the test's situation in one sentence and fills its one next
+action: "Fails 2 of 3 criteria. If the new behaviour is right, accept it as
+the baseline." (red, Accept filled); "No baseline yet — accept this result as
+the first one" (Accept filled); "The simulation failed. Fix the model or its
+settings, then rerun." and "No result yet — rerun to simulate it." (Rerun
+filled); "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
+and save opens the preview on this test, and Discard drops this test's edits
+only — the header's Discard drops every test's); "Passes against its
+baseline." (grey, Accept in the strip's ⋮ menu: there is nothing new to
+accept). The count is of pending ops, so a flat test's first criterion edit
+reads 2 — its tree written out, and the edit. Under the strip, the criteria tree is
 closed to a single line — the root's verdict, what the root is, the tally, and
 the first failures by name, each a button that jumps to its criterion — and
 "Show tree" opens it to a row per node. Then come the test's plots, one per
@@ -807,9 +827,9 @@ draws: a swatch, a verdict pill, `metric · <the variable's label>`, the CLI's
 criterion line, and that node's controls (Edit tree, below). Clicking a row
 opens that criterion's editor below it, one at a time, with the plot above as
 its editing surface — drag a ring to move a handle, or edit the fields; every
-change is staged, and Save writes them. Under the plot sits "Add a criterion
-for x" per tracked series, and Focus on the plot's own toolbar shows that plot
-alone until "Show all N plots".
+change is staged, and Save writes them. The criteria rows' header carries a
+`+` per tracked series ("Add a criterion for x"), and Focus on the plot's own
+toolbar shows that plot alone until "Show all N plots".
 
 A plot's legend holds its signals only — actual, reference and any overlays —
 on a line above the plot area, so it never sits on the trace or on a ring.
@@ -827,6 +847,31 @@ plot's toolbar — No error, or one of the signed, absolute and per-point NRMSE
 series, each on its labelled axis.
 Plotly's own toolbar stands vertically in a gutter right of the plot, clear of
 that axis's labels.
+
+**The rail's drawers.** A rail down the Test page's left edge opens one drawer
+at a time beside the plots, narrowing them: **Tests**, the suite's tests with
+this one highlighted (a click opens that test, and the drawer stays open), and
+**Vars**, every variable of the result — a check adds a row's variables to the
+selected plot or takes them off, "+ new plot" puts them on a plot of their own
+below it. Both drawers carry one control set, and every setting is the tab's,
+so a switch of test keeps it:
+
+- a filter box with **`.*`** (regular expression) and **`Aa`** (match case)
+  beside it — a substring, or a glob with `*` / `?` matched against the whole
+  text; the Vars filter asks a variable's name and its label. A pattern that
+  is not a regular expression, or takes too long, is said under the box.
+- icon buttons opening menus, each choice checked when current: the arrow keys
+  move among the choices, Home and End jump, Enter chooses, Esc or Tab closes.
+  Tests: **Sort** — package order, name A→Z, or status, failures first (FAIL,
+  SIM_FAIL, scoring failed, NO_REF, PASS, then unscored); a **group** toggle
+  (by package, or flat); **Names** — short or full. Vars: **Sort** —
+  result-file order or A→Z by what a row reads; **Group** — by component,
+  flat, or tracked first; **Names** — the expression, the result-file name, or
+  both (the expression with the name muted beside it; under Expression, a
+  label another variable of the test shares still keeps its name beside it).
+- on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED
+  n`, over every test whatever the filter, filtering as the Suite table's do; a
+  test whose scoring failed counts under SIM_FAIL, as its Suite row reads.
 
 Below the Suite page's list is the job panel: while a job runs it reads
 `running: <label>` and one row per test in the job, taken from the `status.json`
@@ -854,12 +899,20 @@ exported patch carry one edit per leaf rather than a keystroke log (the preview
 shows the entry as it will be saved either way).
 
 **Edit tree** is the controls on every node of the tree and on every criteria
-row — `+`, wrap and `−`, and on a combinator edit, with Unwrap inside it — and
-the "Add a criterion for x" form under each plot. Each stages one op per structural
-change: wrap a node in a combinator, change a combinator's kind and its `k` /
-weights / threshold, add a leaf beside or under a node, remove a node (the root
-has nothing to be removed from). A test the flat path scored gets its implicit
-tree materialized by the same op.
+row — `+`, wrap and `−` — and the `+` in each plot's criteria header. Each
+stages one op per structural change: wrap a node in a combinator, change a
+combinator's kind and its `k` / weights / threshold, add a leaf, remove a node
+(the root has nothing to be removed from). `+` on a criterion adds the new one
+right after it; on a combinator, as its last child; a plot's `+` adds under the
+root. A test the flat path scored gets its implicit tree materialized by the
+same op.
+
+A combinator's kind is a dropdown in its row — and, or, k-of-n, warn,
+weighted, and below a separator "unwrap — its children take its place" (left
+out on a root with several children, which cannot unwrap). And, or and warn
+stage at once; k-of-n and weighted open the node's form preset to that kind,
+since they need `k` or a threshold first. The tune icon, which opens that form,
+is on k-of-n and weighted nodes only: and, or and warn have no fields.
 
 Each form opens as a row under the node's row, titled for the node, and it is
 the one thing open on the page: it replaces an open criterion's editor, and an
