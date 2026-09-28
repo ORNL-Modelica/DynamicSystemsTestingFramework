@@ -45,6 +45,11 @@ QUEUED = "QUEUED"
 RUNNING = "RUNNING"
 TIMED_OUT = "TIMED_OUT"
 
+#: What the tool says for a test whose scoring raised: it has a result and
+#: no comparison at all. Not a status of the classifier's — it has no
+#: comparison to classify — and the Tests drawer counts it under SIM_FAIL.
+SCORING_FAILED = "scoring failed"
+
 #: Every status, in the order the count pills and a sort by status use.
 STATUS_ORDER = (QUEUED, RUNNING, PASS, FAIL, SIM_FAIL, NO_REF, TIMED_OUT)
 

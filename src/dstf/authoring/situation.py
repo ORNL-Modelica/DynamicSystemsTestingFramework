@@ -76,7 +76,7 @@ def strip_for(
     locks it; ``edits`` its pending ops; ``status`` / ``saved_status`` the
     classifier's word for the comparison as edited / as saved (None while
     unscored, or — saved — for an entry the loaded spec does not have;
-    ``"scoring failed"`` — saved — when scoring the saved spec raised);
+    ``SCORING_FAILED`` — saved — when scoring the saved spec raised);
     ``has_result`` whether the last run finished it; ``loading`` whether
     the project is still being read — an unscored test is then waiting for
     it, never without a result, which may not be read yet; ``fails`` /

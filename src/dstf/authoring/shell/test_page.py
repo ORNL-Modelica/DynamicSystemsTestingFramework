@@ -19,7 +19,7 @@ from nicegui import ui
 
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
-from ...reporting.status import classify, classify_with_class
+from ...reporting.status import SCORING_FAILED, classify, classify_with_class
 from ...storage.batch_manifest import unfinished_run_models
 from ...storage.ref_index import RefIndex
 from ..capabilities import plural
@@ -192,7 +192,7 @@ class TestPage:
         if result is None or not result.success:
             return "this test has no result"
         if self.shell.session.comparisons.get(self.model_id) is None:
-            return "scoring failed"
+            return SCORING_FAILED
         return "this test has no baseline"
 
     def _no_plots_reason(self, test: Any) -> str:
@@ -688,7 +688,7 @@ class TestPage:
                 saved = session.saved_comparison(model_id)
             except Exception:
                 logger.exception("the saved verdict of %s", model_id)
-                saved_status = "scoring failed"
+                saved_status = SCORING_FAILED
             else:
                 saved_status = classify(saved) if saved is not None else None
         running = session.running

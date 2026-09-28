@@ -30,7 +30,7 @@ from nicegui import ui
 
 from ...backends.progress import read_status
 from ...reporting.dashboard_render import format_run_metadata, short_tool_version
-from ...reporting.status import classify
+from ...reporting.status import SCORING_FAILED, classify
 from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..errors import user_text
@@ -623,7 +623,7 @@ class PendingDrawer:
             try:
                 out[m] = word(session.saved_comparison(m))
             except Exception:
-                out[m] = "scoring failed"
+                out[m] = SCORING_FAILED
         return out
 
     def _build(self) -> None:

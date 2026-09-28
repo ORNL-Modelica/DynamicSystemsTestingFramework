@@ -20,6 +20,7 @@ from ...reporting.status import (
     FAIL,
     NO_REF,
     PASS,
+    SCORING_FAILED,
     SIM_FAIL,
     STATUS_CLASSES,
     classify,
@@ -35,8 +36,6 @@ if TYPE_CHECKING:
 RAIL, PANEL = 40, 320
 
 EDITED = "EDITED"
-#: What `TestList.paint` calls a model the open could not score.
-SCORING_FAILED = "scoring failed"
 #: The Tests drawer's status pills, in the Suite's order, and EDITED.
 PILLS = (PASS, FAIL, SIM_FAIL, NO_REF, EDITED)
 #: Each pill's `.dstf-pill-<status>` tokens; EDITED reads as the Suite's

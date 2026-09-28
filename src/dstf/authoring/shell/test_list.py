@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from nicegui import ui
 
 from ...reporting.rows import unsaved_text
-from ...reporting.status import classify_with_class
+from ...reporting.status import SCORING_FAILED, classify_with_class
 from ...reporting.theme import STATUS
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ class TestList:
         if comp is not None:
             verdict, css = classify_with_class(comp)
         elif model_id in self.shell.load.failed_models:
-            verdict, css = "scoring failed", "sim-fail"
+            verdict, css = SCORING_FAILED, "sim-fail"
         else:
             verdict, css = "", "queued"
         row.verdict = verdict
