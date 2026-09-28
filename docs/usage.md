@@ -743,9 +743,11 @@ only it is cached. The index of sibling-backend overlays is built on its own
 thread as the project opens, so a click normally finds it already built.
 
 **The layout.** Two pages under one header. The header carries the library, the
-backend, the open's progress, the pending-op count (click it for the drawer of
-staged ops, grouped by model), Save, Discard, Export, a link to the dashboard
-and Stop server.
+backend, the open's progress, the pending-op count (click it for the preview:
+a drawer showing, per edited test, its entry before and after as
+`test_spec.json` will hold it, what the edits do to its verdict, and its own
+Save these / Discard these; its close button or Esc closes it), Save, Discard,
+Export, a link to the dashboard and Stop server.
 
 The **Suite page** is a table of the tests, with the dashboard's columns and
 words (one row model, D136): Status, Test, Worst NRMSE, Variables, Sim (s),
@@ -847,8 +849,9 @@ falling back to the test's. Structured fields — tube control points,
 checkpoints, declared events and peaks — are shown read-only here and edited in
 Edit on plot. Every control change stages one `replace` of the whole leaf and
 rescores the test, so the figure and the verdicts follow the edit; consecutive
-replaces of one leaf collapse into one pending op, so the drawer reads "leaf →
-new leaf" rather than a keystroke log.
+replaces of one leaf collapse into one pending op, so the pending count and the
+exported patch carry one edit per leaf rather than a keystroke log (the preview
+shows the entry as it will be saved either way).
 
 **Edit tree** is the controls on every node of the tree and on every criteria
 row — `+`, wrap and `−`, and on a combinator edit, with Unwrap inside it — and

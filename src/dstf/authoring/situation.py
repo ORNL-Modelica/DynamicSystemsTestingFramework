@@ -43,6 +43,10 @@ class Strip:
 
 _ACCEPT_IT = "If the new behaviour is right, accept it as the baseline."
 
+#: Between the EDITS count and what the edits do to the verdict — in the
+#: strip's sentence and on the pending drawer's line under each test.
+SEP = " · "
+
 
 def verdict_phrase(status: str | None, saved_status: str | None) -> str:
     """What the edits do to the verdict: the EDITS clause after the count,
@@ -85,7 +89,7 @@ def strip_for(
         return Strip(
             S.EDITS,
             "amber",
-            f"{plural(edits, 'unsaved edit')} · {verdict_phrase(status, saved_status)}",
+            f"{plural(edits, 'unsaved edit')}{SEP}{verdict_phrase(status, saved_status)}",
         )
     if scoring_failed:
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")

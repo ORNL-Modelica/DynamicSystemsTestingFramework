@@ -3147,6 +3147,61 @@ class TestTheMaterializationIsMarked:
         session.stage([PatchOp(A, "add", "/metrics", tree)])
         assert not session.spec.pending[0].materializes
 
+    def test_a_tree_built_from_edited_overrides_is_not_marked(self, session):
+        """The tree is built from the overrides as EDITED: it is not what
+        the saved entry scores, and the drawer shows it added."""
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        session.stage(
+            [
+                PatchOp(
+                    A, "add", "/metrics/children/0/window", {"start": 0.0, "end": 1.0}
+                )
+            ]
+        )
+        assert [op.materializes for op in session.spec.pending] == [False] * 3
+        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
+
+    def test_an_earlier_edit_the_tree_does_not_read_keeps_the_mark(self, session):
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 0.5})])
+        session.stage([LOOSEN])
+        assert [op.materializes for op in session.spec.pending] == [
+            False,
+            True,
+            False,
+        ]
+
+    def test_rescores_materialization_is_marked_and_previews_as_nothing(self, session):
+        from dstf.authoring.spec_preview import entry_lines
+
+        session.rescore(A)
+        (tree,) = session.spec.pending
+        assert tree.materializes
+        assert entry_lines(session.spec.preview_base(A), session.spec.entry(A)) == []
+        session.stage([LOOSEN])
+        lines = entry_lines(session.spec.preview_base(A), session.spec.entry(A))
+        assert [line.text.strip() for line in lines if line.kind == "add"] == [
+            '"variable": "x",',
+            '"tolerance": 0.5',
+        ]
+
+    def test_a_capabilitys_patch_cannot_claim_a_mark(self, session):
+        """Only the Session's own materialization is the scored tree: a
+        Patch that says its op is one is staged unmarked."""
+        tree = session.tree(A)
+        session.apply(
+            Patch(ops=[PatchOp(A, "add", "/metrics", tree, materializes=True)])
+        )
+        assert not session.spec.pending[0].materializes
+
 
 class TestPerTestDiscardAndSavedVerdict:
     """The Test page's strip: one test's edits discarded, and the verdict

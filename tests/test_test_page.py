@@ -5708,6 +5708,59 @@ async def test_an_unscored_test_waits_while_the_project_is_read(shell):
         assert _one(user, "strip-text").text == "Scoring…"
 
 
+async def test_a_read_but_unscored_test_waits_while_the_project_is_read(shell):
+    """Its result is read and its scoring is not: while the load is in
+    progress it waits, and is not "Scoring failed"."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        shell.load.phase = "results"
+        del shell.session.comparisons[D]
+        with page.client:
+            page.sync()
+        assert _one(user, "strip-text").text == "Scoring…"
+
+
+def _strip_raises(monkeypatch) -> None:
+    from dstf.authoring.shell import test_page as test_page_mod
+
+    def boom(**kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(test_page_mod, "strip_for", boom)
+
+
+async def test_a_strip_that_raises_does_not_stop_the_sync(shell, monkeypatch, caplog):
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        _strip_raises(monkeypatch)
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        await user.should_see("5.000e-01", retries=20)  # the cards followed
+        assert "the strip of" in caplog.text
+        assert "a page failed" not in caplog.text
+
+
+async def test_a_strip_that_raises_still_locks_the_bar(shell, monkeypatch):
+    """The strip's paint refreshes the bar; when it raises, the bar is
+    refreshed anyway: a job on this test greys its Rerun."""
+    from dstf.authoring.shell import shell as shell_mod
+
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        assert _one(user, "action:rerun").enabled
+        # No 1 s poll during the job: its refresh of the bar would hide the
+        # one the paint owes (the timer's interval was set at mount).
+        monkeypatch.setattr(shell_mod, "TICK", 1e-6)
+        _strip_raises(monkeypatch)
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({D}), reloads_results=False)
+        )
+        await _settled(lambda: shell.session.running is not None)
+        await _settled(lambda: not _one(user, "action:rerun").enabled)
+        gate.release.set()
+        await _settled(lambda: shell.session.running is None)
+
+
 async def test_one_results_event_refreshes_the_strips_bar_once(shell, monkeypatch):
     """A `results` event for this test syncs, and the sync's paint refreshes
     the bar: `handle` does not refresh it a second time."""

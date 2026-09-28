@@ -365,15 +365,15 @@ def test_the_strips_preview_opens_the_drawer_on_this_tests_section(
     tmp_path, playwright_browser
 ):
     """Q6 A: Preview and save opens the pending drawer — the preview — with
-    this test's section scrolled into view. D's edits are staged first, so
-    A's section is the second, below the fold of a 600 px window until the
-    drawer scrolls to it."""
+    this test's section scrolled to the drawer's top. D's edits are staged
+    first and G's last, so A's section is the middle one of three, below
+    the fold of a 600 px window until the drawer scrolls to it."""
     with _served(
         tmp_path, playwright_browser, project=_two_var_project, hooks=True
     ) as page:
         page.set_viewport_size({"width": 1280, "height": 600})
         base = page.url.split("test/")[0]
-        for model in ("FakeLib.D", A):
+        for model in ("FakeLib.D", A, "FakeLib.G"):
             with urllib.request.urlopen(f"{base}__stage?model={model}") as r:
                 json.loads(r.read())
         expect(page.locator(".dstf-strip-text")).to_contain_text(
@@ -381,9 +381,10 @@ def test_the_strips_preview_opens_the_drawer_on_this_tests_section(
         )
         page.get_by_role("button", name="Preview and save").click()
         drawer = page.locator(".dstf-pending-drawer")
-        expect(drawer).to_contain_text("4 pending edits · 2 tests")
-        sections = drawer.locator(".dstf-diff")
-        expect(sections).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        expect(drawer).to_contain_text("6 pending edits · 3 tests")
+        sections = drawer.locator(".dstf-drawer-section")
+        expect(sections).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        expect(sections.nth(1)).to_contain_text(A)
         content = page.locator(".q-drawer--right .q-drawer__content")
         page.wait_for_function(
             "document.querySelector('.q-drawer--right .q-drawer__content')"
@@ -392,11 +393,65 @@ def test_the_strips_preview_opens_the_drawer_on_this_tests_section(
         )
         page.wait_for_timeout(400)  # the drawer's slide
         header = page.locator(".q-header").bounding_box()
+        top = content.bounding_box()
         box = sections.nth(1).bounding_box()
-        assert header is not None and box is not None
+        assert header is not None and top is not None and box is not None
         assert box["y"] >= header["y"] + header["height"] - 1, (header, box)
-        assert box["y"] + box["height"] <= 600, box
+        # Its top at the drawer's: scrolled to its START, not merely into view.
+        assert abs(box["y"] - top["y"]) <= 2, (top, box)
         assert content.evaluate("e => e.scrollHeight > e.clientHeight")
+
+
+def _drawer_open(page) -> bool:
+    box = page.locator(".dstf-pending-drawer").bounding_box()
+    width = page.viewport_size["width"]
+    return box is not None and box["x"] < width - 1
+
+
+@pytest.mark.parametrize("width", [900, 1280])
+def test_the_pending_drawer_closes_by_its_button_and_by_escape(
+    tmp_path, playwright_browser, width
+):
+    """Under 1024 px the drawer is an overlay over the header and the strip:
+    its own close button and Esc take it away, at either width. Its line
+    under each test reads as one sentence, the separator spaced."""
+    with _served(
+        tmp_path, playwright_browser, project=_two_var_project, hooks=True
+    ) as page:
+        page.set_viewport_size({"width": width, "height": 800})
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__stage?model={A}") as r:
+            json.loads(r.read())
+        expect(page.locator(".dstf-strip-text")).to_contain_text(
+            "unsaved", timeout=EXPECT_TIMEOUT
+        )
+        preview = page.get_by_role("button", name="Preview and save")
+        preview.click()
+        drawer = page.locator(".dstf-pending-drawer")
+        status = drawer.locator(".dstf-drawer-status")
+        expect(status).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        assert status.text_content() == "2 edits · verdict stays FAIL"
+        page.wait_for_timeout(400)  # the drawer's slide
+        assert _drawer_open(page)
+        _shot(page, tmp_path, f"pending-drawer-{width}")
+        page.keyboard.press("Escape")
+        page.wait_for_function(
+            f"(() => {{ const b = document.querySelector('.dstf-pending-drawer')"
+            f".getBoundingClientRect(); return b.x >= {width - 1}; }})()",
+            timeout=EXPECT_TIMEOUT,
+        )
+        _shot(page, tmp_path, f"pending-drawer-{width}-after-esc")
+        preview.click()
+        close = drawer.get_by_role("button", name="Close", exact=True)
+        expect(close).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)
+        assert _drawer_open(page)
+        close.click()
+        page.wait_for_function(
+            f"(() => {{ const b = document.querySelector('.dstf-pending-drawer')"
+            f".getBoundingClientRect(); return b.x >= {width - 1}; }})()",
+            timeout=EXPECT_TIMEOUT,
+        )
 
 
 # -- the page's frame, its plots on scroll, and the tree -------------------

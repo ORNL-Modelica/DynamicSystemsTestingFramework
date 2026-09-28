@@ -663,6 +663,9 @@ class TestPage:
                 self.strip.paint(self._situation(comp, view))
             except Exception:
                 logger.exception("the strip of %s", self.model_id)
+                # The paint refreshes the bar; raised before it, the bar
+                # still follows a job that locked this test.
+                self.strip.actions.refresh()
 
     def _situation(self, comp: Any, view: dict | None) -> Strip:
         """The strip's inputs, read from the Session: the verdict as edited

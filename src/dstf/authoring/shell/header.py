@@ -35,7 +35,7 @@ from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..errors import user_text
 from ..session import StaleSpecError
-from ..situation import verdict_phrase
+from ..situation import SEP, verdict_phrase
 from ..spec_document import PatchOp
 from ..spec_preview import entry_lines, spans
 from .actions import log_unless_users
@@ -279,6 +279,11 @@ class Header:
             save_caption(s.spec.pending, s.spec.loaded, s.spec.path.name), reason
         )
         self.discard.set(f"Discard {plural(n, 'edit')}", reason)
+        # The drawer's own Save and Discard, gated as these are — here, not
+        # in its build: that runs only when what the preview shows moved,
+        # and a job starting or the load moves nothing it shows.
+        self.drawer.save.set("Save these", reason)
+        self.drawer.discard.set("Discard these", reason)
         self.export_text.set_text(f"Export {plural(n, 'edit')} to spec_patch.json")
         self.export.set_enabled(n > 0)
         self.export_why.set_text("no pending edits" if n == 0 else "")
@@ -432,6 +437,22 @@ class Header:
         self.dialog.open()
 
 
+#: The event Esc sends to the drawer's column, and the one listener that
+#: sends it — installed once per tab, when the drawer first opens. A keydown
+#: on the document, not on the drawer: focus is where the click that opened
+#: it left it (the header's button, the strip's). Sent to an element the
+#: drawer built with its listener on, never through `ui.on`: that adds a
+#: listener to the page's layout, which on the Suite page is already drawn
+#: when the header is built, and NiceGUI says so in the browser's console.
+ESC_EVENT = "dstf_pending_esc"
+ESC_JS = f"""
+window.__dstfPendingEsc ??= (document.addEventListener("keydown", (e) => {{
+  if (e.key !== "Escape") return;
+  document.querySelector(".dstf-pending-body")
+    ?.dispatchEvent(new CustomEvent("{ESC_EVENT}"));
+}}), true);
+"""
+
 #: A diff line's prefix, as `git diff` and the board print it.
 _PREFIX = {"same": "  ", "add": "+ ", "del": "- ", "gap": "  "}
 
@@ -465,15 +486,17 @@ class PendingDrawer:
     a flat entry's first per-leaf edit writes its implicit tree out, and
     the diff shows the edit, with a note that Save writes the tree too.
     "Save these" and "Discard these" are the header's own Save and Discard
-    (the stale-file dialog included). Toggled by the header's pending
-    button; `show(model)` opens it on one test's section (the strip's
-    Preview and save).
+    (the stale-file dialog included), greyed when they are and for the same
+    reason. Toggled by the header's pending button; `show(model)` opens it
+    on one test's section (the strip's Preview and save). Its close button
+    and Esc close it: under 1024 px it is an overlay over the header and
+    the strip, and a click on the page behind was the only other way out.
 
     Built only while open: the header refreshes on every event (the 1 s
     poll during a job included), and a drawer rebuilt there scored every
     edited test's saved spec each time and put every diff back at its left
     edge. Opening it builds it; while open it builds again only when what
-    it shows moved (`_key`)."""
+    it shows moved (`_key`). Closing it forgets what it drew."""
 
     WIDTH = 520
 
@@ -489,23 +512,54 @@ class PendingDrawer:
             .props(f"bordered width={self.WIDTH}")
             .classes("dstf-pending-drawer")
         )
-        with self.element, ui.column().classes("w-full min-w-0 gap-3"):
-            self.summary = ui.label().classes("text-bold").mark("drawer-summary")
+        with (
+            self.element,
+            ui.column().classes("dstf-pending-body w-full min-w-0 gap-3") as body,
+        ):
+            with ui.row().classes("w-full items-center no-wrap gap-2"):
+                self.summary = ui.label().classes("text-bold").mark("drawer-summary")
+                ui.space()
+                ui.button(icon="close", on_click=self.close).props(
+                    'flat dense round aria-label="Close"'
+                ).mark("drawer-close")
             self.body = ui.column().classes("w-full min-w-0 gap-4")
             with ui.row().classes("gap-2") as self.buttons:
-                ui.button("Save these", on_click=save).props(
-                    "unelevated dense no-caps color=primary"
-                ).mark("drawer-save")
-                ui.button("Discard these", on_click=discard).props(
-                    "flat dense no-caps"
-                ).mark("drawer-discard")
+                # Captions and reasons are the header's (`Header.refresh`).
+                self.save = Action(
+                    save,
+                    props="unelevated dense no-caps color=primary",
+                    marker="drawer-save",
+                )
+                self.discard = Action(
+                    discard,
+                    props="flat dense no-caps",
+                    marker="drawer-discard",
+                    why=False,
+                )
         self.sections: dict[str, ui.element] = {}
         #: What the drawn preview was built from (`_key`); None: not built.
         self.drawn: object = None
-        self.element.on_value_change(lambda e: self.refresh() if e.value else None)
+        #: The comparisons whose ids `drawn` records, held while it does: a
+        #: freed one's id can be reused by the next, and the key would miss
+        #: the verdict it brought.
+        self.held: list[Any] = []
+        self.element.on_value_change(self._toggled)
+        body.on(ESC_EVENT, lambda _: self.close())
+
+    def _toggled(self, e: Any) -> None:
+        if e.value:
+            ui.run_javascript(ESC_JS)
+            self.refresh()
+        else:
+            # Closed, it follows nothing: its next open builds again.
+            self.drawn = None
+            self.held = []
 
     def toggle(self) -> None:
         self.element.toggle()
+
+    def close(self) -> None:
+        self.element.set_value(False)
 
     def show(self, model_id: str) -> None:
         """Open the drawer with ``model_id``'s section scrolled into view
@@ -519,29 +573,32 @@ class PendingDrawer:
                 '?.scrollIntoView({block: "start"})'
             )
 
-    def _key(self) -> object:
+    def _key(self) -> tuple[object, list[Any]]:
         """What the preview shows moves with: the pending ops, the file, and
-        each edited test's verdict (a rescore replaces the comparison)."""
+        each edited test's verdict (a rescore replaces the comparison) —
+        and the comparisons it names by id, to hold."""
         session = self.shell.session
         spec = session.spec
-        edited = dict.fromkeys(op.model_id for op in spec.pending)
-        return (
+        edited = list(dict.fromkeys(op.model_id for op in spec.pending))
+        comps = [session.comparisons.get(m) for m in edited]
+        key = (
             tuple(spec.pending),
             spec.content_hash,
-            tuple((m, id(session.comparisons.get(m))) for m in edited),
+            tuple((m, id(c)) for m, c in zip(edited, comps, strict=True)),
         )
+        return key, comps
 
     def refresh(self) -> None:
         """Build the preview again — only while the drawer is open, and only
         when what it shows moved."""
         if not self.element.value:
             return
-        key = self._key()
+        key, comps = self._key()
         if key == self.drawn:
             return
         self.drawn = None  # a raise below leaves it to be built again
         self._build()
-        self.drawn = key
+        self.drawn, self.held = key, comps
 
     def _saved_statuses(self, models: list[str]) -> dict[str, str | None]:
         """The classifier's word for each test as SAVED, the saved spec
@@ -588,7 +645,7 @@ class PendingDrawer:
                 comp = session.comparisons.get(model_id)
                 with (
                     ui.column()
-                    .classes("w-full min-w-0 gap-1")
+                    .classes("dstf-drawer-section w-full min-w-0 gap-1")
                     .mark(f"drawer-test:{model_id}") as section
                 ):
                     self.sections[model_id] = section
@@ -600,8 +657,11 @@ class PendingDrawer:
         session = self.shell.session
         spec = session.spec
         ui.label(model_id).classes("text-bold dstf-mono").mark("drawer-model")
-        with ui.row().classes("gap-2 text-xs text-secondary"):
+        # One sentence, as the strip's: its separator a label of its own, its
+        # spaces kept (a row's gap is no text to a copy or a screen reader).
+        with ui.row().classes("dstf-drawer-status gap-0 text-xs text-secondary"):
             ui.label(plural(n, "edit")).mark("drawer-count")
+            ui.label(SEP).classes("whitespace-pre")
             ui.label(
                 verdict_phrase(
                     classify(comp) if comp is not None else None, saved_status
@@ -619,12 +679,17 @@ class PendingDrawer:
                     spec.saved_entry(model_id) is None,
                 )
             ).classes("text-xs text-secondary").mark("drawer-note")
+        lines = entry_lines(spec.preview_base(model_id), spec.entry(model_id))
+        if not lines:
+            # Its edits are the tree written out and nothing else (a
+            # `rescore`): the note says so, and there is no diff to box.
+            return
         texts = session.variable_texts(model_id)
         with (
             ui.element("div").classes("dstf-diff").mark("drawer-diff"),
             ui.element("div").classes("dstf-diff-lines"),
         ):
-            for line in entry_lines(spec.preview_base(model_id), spec.entry(model_id)):
+            for line in lines:
                 with (
                     ui.element("div")
                     .classes(f"dstf-diff-line dstf-diff-{line.kind}")

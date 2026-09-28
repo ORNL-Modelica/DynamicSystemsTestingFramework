@@ -513,7 +513,19 @@ class Session:
         self._refuse_if_locked([model_id])
         op = self._materialization(model_id)
         if op is not None:
-            self.stage([PatchOp(model_id, op["op"], op["path"], op["value"])])
+            # Marked as `stage` marks its own: the drawer previews it as
+            # nothing changed, with the note that Save writes it.
+            self.stage(
+                [
+                    PatchOp(
+                        model_id,
+                        op["op"],
+                        op["path"],
+                        op["value"],
+                        materializes=self._saved_scoring_tree(model_id),
+                    )
+                ]
+            )
             return self.comparisons[model_id]
         comp = self._score(model_id)
         self._emit("results", models={model_id})
@@ -868,23 +880,25 @@ class Session:
                         "differences applies) — author the tree explicitly"
                     )
                 # Marked: the drawer diffs against the saved entry with this
-                # tree in it (`SpecDocument.preview_base`) — it scores what
-                # the flat path scored.
+                # tree in it (`SpecDocument.preview_base`) — but only when it
+                # is the tree the SAVED entry scores. Built from overrides an
+                # earlier pending op edited, it is not: unmarked, it shows as
+                # added, and the note does not say "they score the same".
                 staged.append(
                     PatchOp(
                         model_id,
                         tree_op["op"],
                         tree_op["path"],
                         tree_op.get("value"),
-                        materializes=True,
+                        materializes=self._saved_scoring_tree(model_id),
                     )
                 )
-            staged += [
-                PatchOp(model_id, r["op"], r["path"], r.get("value")) for r in raw
-            ]
+            # The ops as given: `rescore`'s materialization carries its mark.
+            staged += [op for op in ops if op.model_id == model_id]
         # Convention 8: an edit that lands on the path the last pending op
-        # wrote supersedes it, so the drawer and the envelope read "value ->
-        # new value", never a keystroke log: a replace after an add or a
+        # wrote supersedes it, so the pending count and the envelope carry
+        # one op, never a keystroke log (the drawer shows the entry's diff
+        # either way): a replace after an add or a
         # replace of the same path is that op with the new value, and a
         # remove after a replace is the remove. A remove after an ADD is
         # kept as two: when the member existed, the add replaced it, and
@@ -1008,7 +1022,9 @@ class Session:
                 self.apply(one)
             return
         if isinstance(outcome, Patch):
-            self.stage(outcome.ops)
+            # A capability's op is never the Session's materialization: only
+            # `stage` and `rescore` know the tree they built scores the same.
+            self.stage([replace(op, materializes=False) for op in outcome.ops])
         elif isinstance(outcome, StoreWrite):
             self._refuse_if_locked(outcome.models)
             message = outcome.run(self._require_project().store)
@@ -1267,6 +1283,18 @@ class Session:
             raise RuntimeError(
                 f"scoring {model_id} failed ({len(failures)} of {len(to_read)} models)"
             ) from error
+
+    def _saved_scoring_tree(self, model_id: str) -> bool:
+        """Whether the tree `_materialization` builds now is the one the
+        SAVED entry scores — what marks it (`PatchOp.materializes`). The
+        tree is built from ``comparison.variable_overrides`` (the tracked
+        variables are not stageable), so it is when those are as saved."""
+
+        def overrides(entry: dict) -> dict:
+            return (entry.get("comparison") or {}).get("variable_overrides") or {}
+
+        saved = self.spec.saved_entry(model_id) or {"model": model_id}
+        return overrides(saved) == overrides(self.spec.entry(model_id) or {})
 
     def _materialization(self, model_id: str) -> dict | None:
         """The ``add /metrics`` op for a test the flat path scored, built

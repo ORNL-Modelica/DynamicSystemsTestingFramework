@@ -1,8 +1,9 @@
 """Edit criteria (§4.6 table, §4.7): the CRITERION placement; a mode switch,
 the mode's form, the window, the ``against`` selector. Each change stages one
-``replace`` of the whole leaf and the test rescores — the drawer reads
-"leaf -> new leaf", never a keystroke log (the Session collapses the
-consecutive replaces).
+``replace`` of the whole leaf and the test rescores. The Session collapses
+consecutive replaces of one leaf into one pending op, so the pending count
+and the exported envelope carry one edit, never a keystroke log (the
+preview drawer shows the entry's diff either way).
 """
 
 from __future__ import annotations

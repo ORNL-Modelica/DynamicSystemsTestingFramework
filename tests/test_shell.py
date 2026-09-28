@@ -7,6 +7,7 @@ placement tests/test_capability_conformance.py."""
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import sys
 import threading
@@ -524,6 +525,117 @@ async def test_the_preview_is_built_only_while_the_drawer_is_open(shell, monkeyp
         shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
         await user.should_see(marker=f"drawer-test:{D}", retries=20)
         assert calls[-1] == {A, D}
+
+
+async def test_the_open_drawer_follows_a_rescore_that_moved_the_verdict(shell):
+    """A rerun's reload rescores A with nothing pending moved: the drawer's
+    key holds the comparison, and the verdict line follows it."""
+    import numpy as np
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])  # A: FAIL at 0.01, PASS loosened
+        _open_drawer(user)
+        await user.should_see(marker="drawer-verdict", retries=20)
+        assert _one(user, "drawer-verdict").text == "verdict would change FAIL → PASS"
+        for v in shell.session.project.results[A].variables:
+            v.values = np.asarray(v.values) * 10.0  # a rerun's result, far off
+        shell.session._score_all({A})  # the reload's rescore: one `results` event
+        await _settled(
+            lambda: _one(user, "drawer-verdict").text == "verdict stays FAIL"
+        )
+
+
+async def test_a_reopened_drawer_is_built_again(shell, monkeypatch):
+    """A closed drawer forgets what it drew: a comparison freed while it
+    was closed can come back at the address its key recorded, and the
+    reopened drawer would show the verdict it had."""
+    from dstf.authoring.shell.header import PendingDrawer
+
+    builds: list[int] = []
+    real = PendingDrawer._build
+
+    def counting(self):
+        builds.append(1)
+        real(self)
+
+    monkeypatch.setattr(PendingDrawer, "_build", counting)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        _open_drawer(user)
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        user.find(marker="pending").click()  # close
+        await asyncio.sleep(0.3)
+        _open_drawer(user)
+        await _settled(lambda: len(builds) == 2)
+
+
+async def test_the_open_drawer_holds_every_comparison_its_key_names(shell):
+    """The key names each edited test's comparison by id; while it does,
+    the drawer holds that comparison, so a rescore that replaced it cannot
+    free it and bring a new one back at its address. Closed, it holds
+    nothing."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        _open_drawer(user)
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        drawer = _suite(shell, user).header.drawer
+        recorded = [i for _, i in drawer.drawn[2]]
+        # No await: nothing refreshes the drawer after this rescore.
+        shell.session._score(A)
+        gc.collect()
+        assert [id(c) for c in drawer.held] == recorded
+        user.find(marker="pending").click()  # close
+        await _settled(lambda: drawer.held == [])
+
+
+async def test_a_rescored_flat_test_shows_its_note_and_no_empty_diff(shell):
+    """`rescore` writes A's tree out and nothing else: the section says
+    Save writes the tree, and draws no empty diff box."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.rescore(A)
+        _open_drawer(user)
+        await user.should_see(marker="drawer-note", retries=20)
+        with pytest.raises(AssertionError):
+            user.find(marker="drawer-diff")
+
+
+async def test_the_drawers_save_and_discard_wait_like_the_headers(shell):
+    """ "Save these" / "Discard these" are the header's Save and Discard:
+    greyed with the same sentence while a job runs or the project is still
+    being read — and a click then writes nothing."""
+    path = shell.session.spec.path
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        _open_drawer(user)
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        await _settled(lambda: _one(user, "drawer-save").enabled)
+        assert _one(user, "drawer-discard").enabled
+        gate = _Gate()
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({B}), reloads_results=False)
+        )
+        await _settled(lambda: not _one(user, "drawer-save").enabled)
+        assert not _one(user, "drawer-discard").enabled
+        assert _one(user, "drawer-save:why").text == "Probe is running"
+        gate.release.set()
+        await _settled(lambda: shell.session.running is None)
+        await _settled(lambda: _one(user, "drawer-save").enabled)
+        shell.load.phase = "results"
+        shell._events.put({"event": "poll"})
+        await _settled(lambda: not _one(user, "drawer-save").enabled)
+        assert not _one(user, "drawer-discard").enabled
+        assert _one(user, "drawer-save:why").text == shell.busy_reason()
+        before = path.read_bytes()
+        user.find(marker="drawer-save").click()
+        user.find(marker="drawer-discard").click()
+        await asyncio.sleep(0.3)
+        assert path.read_bytes() == before
+        assert len(shell.session.spec.pending) == 2
 
 
 async def test_a_saved_verdict_that_raises_says_so_for_its_test_alone(
