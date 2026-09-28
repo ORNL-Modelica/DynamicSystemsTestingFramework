@@ -664,8 +664,13 @@ class TestPage:
             except Exception:
                 logger.exception("the strip of %s", self.model_id)
                 # The paint refreshes the bar; raised before it, the bar
-                # still follows a job that locked this test.
-                self.strip.actions.refresh()
+                # still follows a job that locked this test. The bar may be
+                # what raised (a capability's `emphasis` that is no dict):
+                # raised again here, it would stop the sync after all.
+                try:
+                    self.strip.actions.refresh()
+                except Exception:
+                    logger.exception("the bar of %s", self.model_id)
 
     def _situation(self, comp: Any, view: dict | None) -> Strip:
         """The strip's inputs, read from the Session: the verdict as edited

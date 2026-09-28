@@ -5335,17 +5335,23 @@ accepted the planner's choices ("No objections").
    it — when a test's ops begin with the materialization `Session.stage`
    prepends (`PatchOp.materializes`), the saved entry with that applied, and
    one note line says Save also writes the criteria out as a tree; a tree
-   built from edited overrides (`_saved_scoring_tree`) is not marked, so it
-   shows as added and there is no note. Built only while the drawer is
-   open, and again only when the pending ops, the file or an edited test's
-   verdict moved; `Session.saved_comparisons` merges the saved spec once per
-   rebuild. Save these / Discard these are the header's own; the close
-   button and Esc close it, which under 1024 px — where it is an overlay
-   over the header and the strip — are the only ways out besides a click
-   behind it. Esc is one `document` keydown per tab dispatching to the
-   drawer's column: `ui.on` re-sent the page's listeners and failed the
-   Suite's Playwright tests. So an Esc that closes a Quasar menu while the
-   drawer is open closes the drawer too. The board's per-edit sentences
+   built from edited overrides, or after a pending op removed the saved
+   entry's own tree (`_saved_scoring_tree`), is not marked, so it shows as
+   added and there is no note. `stage` keeps a copy of each op's value: a
+   caller editing its dict after staging changes neither the preview, the
+   export nor Save. A section whose edits leave the entry as saved (a
+   series added, then Reset layout: no diff and no tree written out) says
+   "These edits leave the entry as saved." and draws no diff box. Built
+   only while the drawer is open, and again only when the pending ops, the
+   file or an edited test's verdict moved; `Session.saved_comparisons`
+   merges the saved spec once per rebuild. Save these / Discard these are
+   the header's own; the close button and Esc close it, which under 1024 px
+   — where it is an overlay over the header and the strip — are the only
+   ways out besides a click behind it. Esc is one `document` keydown per
+   page load dispatching to the drawer's column: `ui.on` re-sent the page's
+   listeners and failed the Suite's Playwright tests. An Esc while a Quasar
+   dialog or menu is open is left to it: the stale-file dialog over the
+   drawer closes, and the drawer stays. The board's per-edit sentences
    ("edit nrmse on pulse.y: tolerance 0.01 → 0.005") are not built
    (planner's choice): each section has its edit count and verdict line.
 6. *The drawers' one control set (Q7).* The budgeted matcher moves to

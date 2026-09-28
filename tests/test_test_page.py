@@ -5860,6 +5860,26 @@ async def test_a_strip_that_raises_does_not_stop_the_sync(shell, monkeypatch, ca
         assert "a page failed" not in caplog.text
 
 
+async def test_a_bar_that_raises_does_not_stop_the_sync(shell, monkeypatch, caplog):
+    """The strip's paint refreshes its bar, and the except branch refreshes
+    it again: a bar that raises there too (a capability whose `emphasis` is
+    not a dict) is logged, and the cards still follow."""
+    real = ActionBar.refresh
+
+    def boom(self):
+        if self.placement is Placement.TEST:
+            raise ValueError("bar boom")
+        real(self)
+
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        monkeypatch.setattr(ActionBar, "refresh", boom)
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        await user.should_see("5.000e-01", retries=20)  # the cards followed
+        assert "the bar of" in caplog.text
+        assert "a page failed" not in caplog.text
+
+
 async def test_a_strip_that_raises_still_locks_the_bar(shell, monkeypatch):
     """The strip's paint refreshes the bar; when it raises, the bar is
     refreshed anyway: a job on this test greys its Rerun."""

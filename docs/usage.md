@@ -750,13 +750,15 @@ below), Save, Discard, Export, a link to the dashboard and Stop server.
 order, its entry before and after its edits as `test_spec.json` will hold it
 (`json.dumps(indent=2)`, what Save writes), added lines green and removed lines
 red, each variable read by its label with its result-file name muted beside
-it; how many edits the test has and what they do to its verdict ("2 edits ·
-verdict would change PASS → FAIL"). When a test's first edit wrote its
+it; how many edits the test has and what the edits do to its verdict ("2
+edits · verdict would change PASS → FAIL"). When a test's first edit wrote its
 implicit tree out, the diff is against that tree, and a note says Save writes
-the tree too ("they score the same"). Save these and Discard these are the
-header's own Save and Discard. Its close button or Esc closes it; under
-1024 px it lies over the header and the strip. An Esc that closes a menu while
-the drawer is open closes the drawer too.
+the tree too ("they score the same"); edits that cancel out (a series added,
+then Reset layout) say "These edits leave the entry as saved." Below the
+tests, Save these / Discard these — the header's Save and Discard, over every
+pending edit. Its close button or Esc closes it; under 1024 px it lies over
+the header and the strip. An Esc while a menu or a dialog is open closes that
+one, and the drawer stays.
 
 The **Suite page** is a table of the tests, with the dashboard's columns and
 words (one row model, D136): Status, Test, Worst NRMSE, Variables, Sim (s),

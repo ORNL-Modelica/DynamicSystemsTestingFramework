@@ -894,7 +894,13 @@ class Session:
                     )
                 )
             # The ops as given: `rescore`'s materialization carries its mark.
-            staged += [op for op in ops if op.model_id == model_id]
+            # Each value a copy: the caller's dict stays the caller's, and
+            # editing it after staging changes neither export nor Save.
+            staged += [
+                replace(op, value=copy.deepcopy(op.value))
+                for op in ops
+                if op.model_id == model_id
+            ]
         # Convention 8: an edit that lands on the path the last pending op
         # wrote supersedes it, so the pending count and the envelope carry
         # one op, never a keystroke log (the drawer shows the entry's diff
@@ -1286,14 +1292,19 @@ class Session:
 
     def _saved_scoring_tree(self, model_id: str) -> bool:
         """Whether the tree `_materialization` builds now is the one the
-        SAVED entry scores — what marks it (`PatchOp.materializes`). The
-        tree is built from ``comparison.variable_overrides`` (the tracked
-        variables are not stageable), so it is when those are as saved."""
+        SAVED entry scores — what marks it (`PatchOp.materializes`). Never
+        when the saved entry has its own ``metrics``: it scores that tree,
+        and one built after a pending op removed it is a change. Otherwise
+        the tree is built from ``comparison.variable_overrides`` (the
+        tracked variables are not stageable), so it is when those are as
+        saved."""
 
         def overrides(entry: dict) -> dict:
             return (entry.get("comparison") or {}).get("variable_overrides") or {}
 
         saved = self.spec.saved_entry(model_id) or {"model": model_id}
+        if "metrics" in saved:
+            return False
         return overrides(saved) == overrides(self.spec.entry(model_id) or {})
 
     def _materialization(self, model_id: str) -> dict | None:

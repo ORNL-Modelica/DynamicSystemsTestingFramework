@@ -3202,6 +3202,90 @@ class TestTheMaterializationIsMarked:
         )
         assert not session.spec.pending[0].materializes
 
+    def test_rescore_after_an_overrides_edit_is_not_marked(self, session):
+        """`rescore`'s tree, built from overrides a pending op edited, is not
+        what the saved entry scores: unmarked, as `stage`'s."""
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        session.rescore(A)
+        assert [op.materializes for op in session.spec.pending] == [False, False]
+        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
+
+    def test_an_override_whose_value_moved_unmarks_the_tree(self, tmp_path):
+        """The overrides are compared by value, not by their keys: x's saved
+        tolerance moved, so the tree built from it is not the saved one."""
+        s = _session_with_entry(
+            tmp_path, {"comparison": {"variable_overrides": {"x": {"tolerance": 0.3}}}}
+        )
+        s.stage(
+            [PatchOp(A, "replace", "/comparison/variable_overrides/x/tolerance", 0.5)]
+        )
+        s.stage(
+            [
+                PatchOp(
+                    A, "add", "/metrics/children/0/window", {"start": 0.0, "end": 1.0}
+                )
+            ]
+        )
+        assert [op.materializes for op in s.spec.pending] == [False, False, False]
+
+    def test_a_saved_tree_removed_is_not_what_the_saved_entry_scores(self, tmp_path):
+        """The saved entry scores its OWN tree: with it removed, the tree
+        `rescore` builds from the overrides is not that one, even though the
+        overrides are as saved — unmarked, it diffs as a change."""
+        from dstf.authoring.spec_preview import entry_lines
+
+        authored = {
+            "combinator": "and",
+            "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.3}],
+        }
+        s = _session_with_entry(tmp_path, {"metrics": authored})
+        s.stage([PatchOp(A, "remove", "/metrics")])
+        s.rescore(A)
+        assert not s.spec.pending[-1].materializes
+        assert entry_lines(s.spec.preview_base(A), s.spec.entry(A)) != []
+
+
+def _session_with_entry(tmp_path: Path, extra: dict) -> Session:
+    """`_project` with ``extra`` merged into A's entry on disk before `open`."""
+    cfg, work = _project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry.update(extra)
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+class TestAStagedValueIsTheSessions:
+    """`stage` keeps a copy of each op's value: the caller's dict is its own."""
+
+    def test_a_caller_editing_its_dict_after_staging_changes_nothing(self, session):
+        value = {
+            "combinator": "and",
+            "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.5}],
+        }
+        session.stage([PatchOp(A, "add", "/metrics", value)])
+        value["children"][0]["tolerance"] = 99.0  # the caller keeps editing
+        assert session.spec.pending[0].value["children"][0]["tolerance"] == 0.5
+        (patch,) = session.export()["patches"]
+        assert patch["patch"][0]["value"]["children"][0]["tolerance"] == 0.5
+        session.save()
+        saved = session.spec.saved_entry(A)
+        assert saved is not None
+        assert saved["metrics"]["children"][0]["tolerance"] == 0.5
+
 
 class TestPerTestDiscardAndSavedVerdict:
     """The Test page's strip: one test's edits discarded, and the verdict

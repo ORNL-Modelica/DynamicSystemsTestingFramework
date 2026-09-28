@@ -414,7 +414,9 @@ def test_the_pending_drawer_closes_by_its_button_and_by_escape(
 ):
     """Under 1024 px the drawer is an overlay over the header and the strip:
     its own close button and Esc take it away, at either width. Its line
-    under each test reads as one sentence, the separator spaced."""
+    under each test reads as one sentence as rendered — `innerText`, what a
+    copy or a screen reader takes, not only its text nodes — the separator
+    spaced."""
     with _served(
         tmp_path, playwright_browser, project=_two_var_project, hooks=True
     ) as page:
@@ -430,7 +432,7 @@ def test_the_pending_drawer_closes_by_its_button_and_by_escape(
         drawer = page.locator(".dstf-pending-drawer")
         status = drawer.locator(".dstf-drawer-status")
         expect(status).to_have_count(1, timeout=EXPECT_TIMEOUT)
-        assert status.text_content() == "2 edits · verdict stays FAIL"
+        assert status.inner_text() == "2 edits · verdict stays FAIL"
         page.wait_for_timeout(400)  # the drawer's slide
         assert _drawer_open(page)
         _shot(page, tmp_path, f"pending-drawer-{width}")
@@ -452,6 +454,91 @@ def test_the_pending_drawer_closes_by_its_button_and_by_escape(
             f".getBoundingClientRect(); return b.x >= {width - 1}; }})()",
             timeout=EXPECT_TIMEOUT,
         )
+
+
+def _keydown_listeners(page) -> int:
+    """The keydown listeners on `document`, read over CDP."""
+    cdp = page.context.new_cdp_session(page)
+    doc = cdp.send("Runtime.evaluate", {"expression": "document"})
+    got = cdp.send(
+        "DOMDebugger.getEventListeners", {"objectId": doc["result"]["objectId"]}
+    )
+    return sum(1 for listener in got["listeners"] if listener["type"] == "keydown")
+
+
+def test_the_pending_drawers_escape_is_one_listener_per_page_load(
+    tmp_path, playwright_browser
+):
+    """Three opens, three Escs: the Esc listener is added once, on the first
+    open, never once per open."""
+    with _served(
+        tmp_path, playwright_browser, project=_two_var_project, hooks=True
+    ) as page:
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__stage?model={A}") as r:
+            json.loads(r.read())
+        expect(page.locator(".dstf-strip-text")).to_contain_text(
+            "unsaved", timeout=EXPECT_TIMEOUT
+        )
+        preview = page.get_by_role("button", name="Preview and save")
+        before = _keydown_listeners(page)
+        for _ in range(3):
+            preview.click()
+            page.wait_for_function(
+                "document.querySelector('.dstf-pending-drawer')"
+                ".getBoundingClientRect().x < window.innerWidth - 1",
+                timeout=EXPECT_TIMEOUT,
+            )
+            page.keyboard.press("Escape")
+            page.wait_for_function(
+                "document.querySelector('.dstf-pending-drawer')"
+                ".getBoundingClientRect().x >= window.innerWidth - 1",
+                timeout=EXPECT_TIMEOUT,
+            )
+        assert _keydown_listeners(page) - before == 1
+
+
+def test_escape_on_a_menu_or_a_dialog_over_the_pending_drawer_closes_only_it(
+    tmp_path, playwright_browser
+):
+    """With the drawer open at 1280 px, the strip's ⋮ menu beside it: one Esc
+    closes the menu, and the drawer stays. Then the file changed on disk,
+    Save these: the stale-file dialog opens over the drawer, and one Esc
+    closes the dialog — Quasar's — with the drawer still open under it."""
+    with _served(
+        tmp_path, playwright_browser, project=_two_var_project, hooks=True
+    ) as page:
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__stage?model={A}") as r:
+            json.loads(r.read())
+        expect(page.locator(".dstf-strip-text")).to_contain_text(
+            "unsaved", timeout=EXPECT_TIMEOUT
+        )
+        page.get_by_role("button", name="Preview and save").click()
+        page.wait_for_timeout(400)  # the drawer's slide
+        assert _drawer_open(page)
+        more = page.locator('.dstf-strip button[aria-label="More actions"]')
+        more.click()
+        expect(more).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
+        page.keyboard.press("Escape")
+        expect(more).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)  # a drawer Esc closed would have slid
+        assert _drawer_open(page)
+        spec = next(tmp_path.rglob("test_spec.json"))
+        original = spec.read_bytes()
+        spec.write_bytes(original + b"\n")
+        try:
+            page.get_by_role("button", name="Save these").click()
+            dialog = page.get_by_text("changed on disk since it was loaded")
+            expect(dialog).to_be_visible(timeout=EXPECT_TIMEOUT)
+            _shot(page, tmp_path, "stale-dialog-over-drawer")
+            page.keyboard.press("Escape")
+            expect(dialog).to_be_hidden(timeout=EXPECT_TIMEOUT)
+            page.wait_for_timeout(400)  # a drawer Esc closed would have slid
+            assert _drawer_open(page)
+            _shot(page, tmp_path, "stale-dialog-after-esc")
+        finally:
+            spec.write_bytes(original)
 
 
 # -- the page's frame, its plots on scroll, and the tree -------------------

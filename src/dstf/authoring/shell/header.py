@@ -438,16 +438,18 @@ class Header:
 
 
 #: The event Esc sends to the drawer's column, and the one listener that
-#: sends it — installed once per tab, when the drawer first opens. A keydown
-#: on the document, not on the drawer: focus is where the click that opened
-#: it left it (the header's button, the strip's). Sent to an element the
-#: drawer built with its listener on, never through `ui.on`: that adds a
+#: sends it — installed once per page load, when the drawer first opens. A
+#: keydown on the document, not on the drawer: focus is where the click that
+#: opened it left it (the header's button, the strip's). Sent to an element
+#: the drawer built with its listener on, never through `ui.on`: that adds a
 #: listener to the page's layout, which on the Suite page is already drawn
 #: when the header is built, and NiceGUI says so in the browser's console.
+#: An Esc while a dialog or a menu is open is theirs (Quasar closes it): the
+#: drawer under it stays.
 ESC_EVENT = "dstf_pending_esc"
 ESC_JS = f"""
 window.__dstfPendingEsc ??= (document.addEventListener("keydown", (e) => {{
-  if (e.key !== "Escape") return;
+  if (e.key !== "Escape" || document.querySelector(".q-dialog, .q-menu")) return;
   document.querySelector(".dstf-pending-body")
     ?.dispatchEvent(new CustomEvent("{ESC_EVENT}"));
 }}), true);
@@ -657,16 +659,17 @@ class PendingDrawer:
         session = self.shell.session
         spec = session.spec
         ui.label(model_id).classes("text-bold dstf-mono").mark("drawer-model")
-        # One sentence, as the strip's: its separator a label of its own, its
-        # spaces kept (a row's gap is no text to a copy or a screen reader).
-        with ui.row().classes("dstf-drawer-status gap-0 text-xs text-secondary"):
-            ui.label(plural(n, "edit")).mark("drawer-count")
-            ui.label(SEP).classes("whitespace-pre")
+        # One sentence, as the strip's: a plain block of inline labels, its
+        # separator a label of its own, its spaces kept. Not a flex row: its
+        # items are blocks, and a copy or a screen reader reads one per line.
+        with ui.element("div").classes("dstf-drawer-status text-xs text-secondary"):
+            ui.label(plural(n, "edit")).classes("inline").mark("drawer-count")
+            ui.label(SEP).classes("inline whitespace-pre")
             ui.label(
                 verdict_phrase(
                     classify(comp) if comp is not None else None, saved_status
                 )
-            ).mark("drawer-verdict")
+            ).classes("inline").mark("drawer-verdict")
         trees = [
             op.value
             for op in spec.pending
@@ -681,8 +684,14 @@ class PendingDrawer:
             ).classes("text-xs text-secondary").mark("drawer-note")
         lines = entry_lines(spec.preview_base(model_id), spec.entry(model_id))
         if not lines:
-            # Its edits are the tree written out and nothing else (a
-            # `rescore`): the note says so, and there is no diff to box.
+            # No diff to box: the edits leave the entry as `preview_base` has
+            # it. Either they are the tree written out and nothing else (a
+            # `rescore`) — the note says so — or they cancel out (a series
+            # added, then Reset layout), and a line says that.
+            if not trees:
+                ui.label("These edits leave the entry as saved.").classes(
+                    "text-xs text-secondary"
+                ).mark("drawer-nochange")
             return
         texts = session.variable_texts(model_id)
         with (
