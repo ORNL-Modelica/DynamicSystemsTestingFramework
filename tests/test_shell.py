@@ -604,10 +604,10 @@ async def test_a_rescored_flat_test_shows_its_note_and_no_empty_diff(shell):
 
 
 async def test_edits_that_cancel_out_say_the_entry_stays_as_saved(tmp_path):
-    """A series added, then Reset layout: two edits, no diff and nothing
-    written out — the section says the entry stays as saved, and draws no
-    empty diff box. (`_two_var_project`'s A tracks x and y.)"""
-    from dstf.authoring.layout import add_series, current_layout, layout_op, reset_op
+    """A context series added, then Reset layout: two edits, no diff and
+    nothing written out — the section says the entry stays as saved, and
+    draws no empty diff box. (`_two_var_project`'s A tracks x and y.)"""
+    from dstf.authoring.layout import add_context, layout_op, reset_op
     from test_session import _two_var_project
 
     cfg, work = _two_var_project(tmp_path)
@@ -615,8 +615,8 @@ async def test_edits_that_cancel_out_say_the_entry_stays_as_saved(tmp_path):
     shell.session.open(cfg, work_dir=work)
     shell.load.phase = "done"
     session = shell.session
-    layout = current_layout(None, ["x", "y"])
-    session.stage([layout_op(A, session.spec.entry(A), add_series(layout, 0, ["y"]))])
+    extras = add_context(session.layout(A), session.plots(A)[0], ["y"])
+    session.stage([layout_op(A, session.spec.entry(A), extras)])
     session.stage([reset_op(A)])
     assert len([op for op in session.spec.pending if op.model_id == A]) == 2
     async with user_simulation(root=shell.index) as user:
@@ -1563,7 +1563,7 @@ async def test_save_names_a_new_entry(tmp_path):
     bar = "MyLib.Bar"
     assert bar in shell.visible_tests()
     assert spec_entry(shell.session.spec.loaded, bar) is None
-    shell.session.stage([PatchOp(bar, "add", "/plots", [{"series": [{"var": "y"}]}])])
+    shell.session.stage([PatchOp(bar, "add", "/plots", [{"var": "y"}])])
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         assert _one(user, "save").text == (

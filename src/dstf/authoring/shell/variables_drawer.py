@@ -32,6 +32,7 @@ from ...figures.families import HUES
 from ..layout import (
     Layout,
     add_series,
+    drawn_layout,
     new_plot,
     remove_series,
     stranded,
@@ -221,7 +222,7 @@ class VariablesDrawer:
             names=session.variable_names(model_id),
             tracked=session.tracked(model_id),
             scope=session.variable_texts(model_id),
-            layout=session.layout(model_id),
+            layout=drawn_layout(session.plots(model_id)),
             scored=page.scored(session.tree_view(model_id)),
         )
 
@@ -504,7 +505,7 @@ class VariablesDrawer:
         if not page.cards:
             return
         session = page.shell.session
-        layout = session.layout(page.model_id)
+        layout = drawn_layout(session.plots(page.model_id))
         if not 0 <= page.selected < len(layout):
             return
         holds = {s.var for s in layout[page.selected].series}
@@ -527,7 +528,7 @@ class VariablesDrawer:
         (planner's choice 1); the members stay where they were. A selection
         the layout no longer has does nothing, as in `_check`."""
         page = self.page
-        layout = page.shell.session.layout(page.model_id)
+        layout = drawn_layout(page.shell.session.plots(page.model_id))
         if page.cards and not 0 <= page.selected < len(layout):
             return
         new, at = new_plot(layout, page.selected if page.cards else None, row.members)

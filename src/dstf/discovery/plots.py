@@ -267,12 +267,6 @@ def derive_plots(
     )
 
 
-def default_plots(tracked: Sequence[str]) -> tuple[PlotSpec, ...]:
-    """The former default layout, for the former layout edits (see
-    :class:`SeriesSpec`)."""
-    return tuple(PlotSpec(series=(SeriesSpec(v),)) for v in tracked)
-
-
 def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     """The variables a test HAS a plot for by default, in the order both
     tiers draw them: what the comparison scored, then the rest of the loaded

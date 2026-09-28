@@ -31,7 +31,14 @@ from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.patch_apply import PatchError
-from ..discovery.plots import PlotSpec, ResolvedPlot, resolved_plots, tracked_names
+from ..discovery.plots import (
+    PlotExtra,
+    ResolvedPlot,
+    derive_plots,
+    result_magnitudes,
+    tracked_names,
+    tree_leaves,
+)
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
@@ -61,7 +68,6 @@ from .capabilities import (
     Patch,
     StoreWrite,
 )
-from .layout import current_layout
 from .spec_document import PatchOp, SpecDocument
 
 if TYPE_CHECKING:
@@ -703,26 +709,50 @@ class Session:
             reads.series[variable] = got.get(variable)
         return reads.series[variable]
 
-    def layout(self, model_id: str) -> tuple[PlotSpec, ...]:
-        """The layout a gesture edits (`authoring.layout`): the effective
-        ``plots`` key with pending ops applied, else one plot per tracked
-        variable. Unlike :meth:`plots` it keeps a series the result lacks —
-        it is what the spec says, not what a page can draw."""
+    def layout(self, model_id: str) -> tuple[PlotExtra, ...]:
+        """The extras a gesture edits (`authoring.layout`): the effective
+        ``plots`` key with pending ops applied, ``()`` without one. It keeps
+        a name the result lacks — it is what the spec says."""
         test = self._require_project().test(model_id)
         if test is None:
             raise KeyError(model_id)
-        return current_layout(test.plots, self.tracked(model_id))
+        return tuple(test.plots or ())
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
-        """The test's plots as the page draws them: the entry's ``plots``
-        with pending ops applied, else one per tracked variable."""
+        """The test's plots as the page draws them
+        (:func:`~dstf.discovery.plots.derive_plots`): one per scored
+        variable or one-scale array family, in the order the tree first
+        names it, decorated by the effective ``plots`` extras. The leaves
+        come from the tree SPEC with pending ops applied — never
+        :meth:`tree`, which materializes the tree and reads the baseline —
+        else the implicit tree of what was compared; nothing compared and
+        no tree is one plot per tracked name.
+
+        The fold reads the PLAIN labels
+        (:func:`~dstf.reporting.context_builder.plain_labels`), not
+        :meth:`labels`: the label scope holds these plots' series."""
+        from ..reporting.context_builder import _spec_for, plain_labels
+
         project = self._require_project()
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
-        return resolved_plots(
-            test, self.tracked(model_id), available=self._reads_for(model_id).names
+        comp = self.comparisons.get(model_id)
+        compared = list(comp.variables) if comp is not None else []
+        result = project.results.get(model_id)
+        spec = (
+            _spec_for(compared, test)
+            if test.metric_tree_spec is not None or compared
+            else None
+        )
+        return derive_plots(
+            tree_leaves(spec),
+            plain_labels(compared, result),
+            self.layout(model_id),
+            tracked=self.tracked(model_id),
+            available=self._reads_for(model_id).names,
+            magnitudes=result_magnitudes(result),
         )
 
     def plot_figure(
@@ -741,12 +771,13 @@ class Session:
         if index < 0:
             raise IndexError(index)
         plot = self.plots(model_id)[index]
-        if len(plot.series) == 1:
+        drawn = [name for name in plot.series if name not in plot.missing]
+        if len(plot.subject) == 1 and not plot.context:
             return self.figure(
-                model_id, plot.series[0], editing=editing, visibility=visibility
+                model_id, plot.subject[0], editing=editing, visibility=visibility
             )
         return plot_figure(
-            [self._editable_view(model_id, name) for name in plot.series],
+            [self._editable_view(model_id, name) for name in drawn],
             None,
             editable=True,
             rings_for=editing,

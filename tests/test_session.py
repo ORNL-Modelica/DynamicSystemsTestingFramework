@@ -25,7 +25,7 @@ from dstf.authoring.spec_document import PatchOp, SpecDocument
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config, ConfigError
 from dstf.discovery.patch_apply import PatchError
-from dstf.discovery.plots import default_plots, parse_plots
+from dstf.discovery.plots import PlotExtra, parse_plots
 from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
 from dstf.discovery.test_registry import TestModel
 from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify
@@ -212,8 +212,15 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
     return cfg, work
 
 
+#: The untracked variables of A's result `_page_project` draws as watch plots.
+PAGE_WATCH = ("w1", "w2", "w3", "w4", "w5")
+
+
 def _page_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project`, scored by an explicit tree.
+    """`_two_var_project`, scored by an explicit tree, with five WATCH plots
+    over `PAGE_WATCH`, extra variables of A's result file: seven plots, a
+    page taller than the viewport, so the cards below it are the ones
+    render-on-scroll has to reach.
 
     A's tree is `and[tube · x, range · x, range · y]` (the tube is
     `test_handles.TREE`'s band leaf, its control points inside the trace's
@@ -226,11 +233,17 @@ def _page_project(tmp_path: Path) -> tuple[Path, Path]:
     from test_handles import TREE
 
     cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for k, name in enumerate(PAGE_WATCH, start=3):
+        payload["variables"][name] = [k * v for v in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
     spec_path = cfg.parent / "test_spec.json"
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     for entry in spec["tests"]:
         if entry["model"] != A:
             continue
+        entry["plots"] = [{"var": name} for name in PAGE_WATCH]
         entry["metrics"] = {
             "combinator": "and",
             "children": [
@@ -2376,7 +2389,8 @@ LONG = ("heater.flowModel.states[1].T", "condenser.heatTransfer.Q_flow_total")
 def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
     """`_project` with A tracking the two `LONG` names, both with a
     baseline (one nrmse each; the first fails, so its card has a pill and
-    an error select), drawn as three plots: one per name, then both."""
+    an error select), drawn as two plots, the first with the second as its
+    context."""
     cfg, work = _project(tmp_path)
     t = [i / 4 for i in range(5)]
     first, second = LONG
@@ -2398,11 +2412,7 @@ def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
     for entry in spec["tests"]:
         if entry["model"] == A:
             entry["variables"] = [first, second]
-            entry["plots"] = [
-                {"kind": "time", "series": [{"var": first}]},
-                {"kind": "time", "series": [{"var": second}]},
-                {"kind": "time", "series": [{"var": first}, {"var": second}]},
-            ]
+            entry["plots"] = [{"var": first, "context": [second]}]
     spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     tt = np.asarray(t)
     ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
@@ -2419,7 +2429,8 @@ def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
     return cfg, work
 
 
-LAYOUT = [{"kind": "time", "series": [{"var": "x"}, {"var": "z"}]}]
+#: A context series on x's plot: z, an untracked variable of A's result.
+LAYOUT = [{"var": "x", "context": ["z"]}]
 
 
 class TestPlots:
@@ -2454,7 +2465,8 @@ class TestPlots:
         )
         assert [vc.name for vc in s.comparisons[A].variables] == ["x"]
         assert s.tracked(A) == ["x", "y"]
-        assert [p.series for p in s.plots(A)] == [("x",), ("y",)]
+        # the plots come from the tree: y's last criterion went, so did its plot
+        assert [p.series for p in s.plots(A)] == [("x",)]
 
     def test_labels_read_the_results_expressions(self, tmp_path):
         """What the page READS for each variable: the expression the model
@@ -2495,9 +2507,7 @@ class TestPlots:
         s = Session()
         s.open(cfg, work_dir=work)
         with_expressions(s, A, {"x": "z"})
-        s.stage(
-            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "z"}]}])]
-        )
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         assert s.labels(A)["x"] == "z (x)"
         assert s.labels(A)["z"] == "z"  # its label IS its name: nothing ambiguous
 
@@ -2593,6 +2603,106 @@ class TestPlots:
             (1, ("y",), ()),
         ]
 
+    def test_plots_follow_the_tree_on_the_page_project(self, tmp_path):
+        """A's tree is `and[tube·x, range·x, range·y]`: plots [x, y], then
+        the key's watch plots in their order."""
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [(p.subject, p.watch) for p in s.plots(A)] == [
+            (("x",), False),
+            (("y",), False),
+            *(((w,), True) for w in PAGE_WATCH),
+        ]
+        assert all(p.missing == () for p in s.plots(A))
+
+    def test_nothing_compared_is_one_plot_per_tracked_name(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.comparisons[B].variables == []
+        assert [(p.subject, p.watch) for p in s.plots(B)] == [
+            (("x",), False),
+            (("y",), False),
+        ]
+
+    def test_a_family_folds_by_the_expression_on_one_scale(self, tmp_path):
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "range", "variable": UT2, "min_value": -9.0},
+                {"metric": "range", "variable": UT1, "min_value": -9.0},
+            ],
+        }
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        with_expressions(s, A, {UT1: "pipe.T[1]", UT2: "pipe.T[2]"})
+        assert [p.subject for p in s.plots(A)] == [(UT1, UT2)]
+        with_expressions(s, A, {UT1: "a.T", UT2: "b.p"})
+        assert [p.subject for p in s.plots(A)] == [(UT2,), (UT1,)]
+
+    def test_a_family_on_two_scales_does_not_fold(self, tmp_path):
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {UT1: "x[1]", UT2: "x[2]"})
+        assert [p.subject for p in s.plots(A)] == [(UT1, UT2)]
+        result = s.project.results[A]
+        result.variables[1].values = result.variables[1].values * 1e5
+        assert [p.subject for p in s.plots(A)] == [(UT1,), (UT2,)]
+
+    def test_context_and_a_watch_plot_are_staged_extras(self, tmp_path):
+        from dstf.authoring.layout import add_context, layout_op, new_watch
+
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        extras = add_context(s.layout(A), s.plots(A)[0], ["y"])
+        extras = new_watch(extras, "a.untracked.name")
+        s.stage([layout_op(A, s.spec.entry(A), extras)])
+        assert [(p.subject, p.context, p.watch) for p in s.plots(A)] == [
+            (("x",), ("y",), False),
+            (("y",), (), False),
+            *(((w,), (), True) for w in PAGE_WATCH),
+            (("a.untracked.name",), (), True),
+        ]
+        assert s.plots(A)[-1].missing == ("a.untracked.name",)
+        assert s.layout(A) == (
+            *(PlotExtra(w) for w in PAGE_WATCH),
+            PlotExtra("x", ("y",)),
+            PlotExtra("a.untracked.name"),
+        )
+        assert [op.path for op in s.spec.pending] == ["/plots"]
+
+    def test_removing_a_variables_last_criterion_removes_its_plot(self, tmp_path):
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "remove", "/metrics/children/2")])
+        assert [p.subject for p in s.plots(A)] == [("x",), *((w,) for w in PAGE_WATCH)]
+
+    def test_with_an_extra_the_plot_stays_as_a_watch_plot(self, tmp_path):
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "replace", "/plots", [{"var": "y", "context": ["x"]}])])
+        s.stage([PatchOp(A, "remove", "/metrics/children/2")])
+        assert [(p.subject, p.context, p.watch) for p in s.plots(A)] == [
+            (("x",), (), False),
+            (("y",), ("x",), True),
+        ]
+
+    def test_painting_the_plots_never_loads_the_baseline(self, tmp_path, monkeypatch):
+        """The plots walk the tree SPEC, never the materialized tree: that
+        reads the baseline, and the page paints its cards before it."""
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        monkeypatch.setattr(
+            s, "tree", lambda *a, **k: pytest.fail("plots materialized the tree")
+        )
+        assert len(s.plots(A)) == 7
+
     def test_view_of_an_untracked_variable_reads_the_result_file(self, tmp_path):
         s = self._open(tmp_path)
         view = s.view(A, "z")
@@ -2639,8 +2749,8 @@ class TestPlots:
         # here; it is the per-call leaf decimation the assertion allows.
         leaf_series = sum(
             isinstance(p, Series)
-            for name in LAYOUT[0]["series"]
-            for leaf in s.view(A, name["var"]).leaves
+            for name in ("x", "z")
+            for leaf in s.view(A, name).leaves
             for p in leaf.geometry
         )
         calls = []
@@ -2692,47 +2802,44 @@ class TestPlots:
         assert not rings(s.plot_figure(A, 0, editing=()))
 
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
-        assert len(s.plots(A)[0].series) == 2  # and the multi-series branch
+        assert s.plots(A)[0].series == ("x", "z")  # and the branch with context
         assert rings(view.plot_figure(A, 0))
         assert not rings(view.plot_figure(A, 0, editing=()))
 
     def test_a_staged_layout_is_what_plots_answers(self, tmp_path):
         s = self._open(tmp_path)
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
-        assert [(p.series, p.missing) for p in s.plots(A)] == [(("x", "z"), ())]
+        assert [(p.series, p.missing) for p in s.plots(A)] == [
+            (("x", "z"), ()),
+            (("y",), ()),
+        ]
         s.discard()
         assert len(s.plots(A)) == 2
 
-    def test_layout_is_the_effective_plots_key_else_one_per_tracked(self, tmp_path):
-        """The layout a gesture edits is what the spec SAYS: it keeps a
-        series the result lacks, which `plots` (what a page draws) drops."""
+    def test_layout_is_the_effective_plots_key(self, tmp_path):
+        """The extras a gesture edits are what the spec SAYS: no key is no
+        extras, and a name the result lacks stays in them."""
         s = self._open(tmp_path)
-        assert s.layout(A) == default_plots(["x", "y"])
-        assert s.layout(B) == default_plots(
-            ["x", "y"]
-        )  # nothing scored: the result's names
+        assert s.layout(A) == () and s.layout(B) == ()
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         assert s.layout(A) == parse_plots(LAYOUT)
         s.discard()
-        raw = [{"kind": "time", "series": [{"var": "x"}, {"var": "nope"}]}]
+        raw = [{"var": "x", "context": ["gone"]}]
         s.stage([PatchOp(A, "add", "/plots", raw)])
         assert s.layout(A) == parse_plots(raw)
-        assert [p.series for p in s.plots(A)] == [("x",)]
 
     def test_a_series_the_result_lacks_is_named_missing(self, tmp_path):
         s = self._open(tmp_path)
-        s.stage(
-            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "gone"}]}])]
-        )
-        (plot,) = s.plots(A)
-        assert plot.series == ("x",) and plot.missing == ("gone",)
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": ["gone"]}])])
+        plot = s.plots(A)[0]
+        assert plot.series == ("x", "gone") and plot.missing == ("gone",)
 
     def test_staging_an_invalid_layout_changes_nothing(self, tmp_path):
         from dstf.config import ConfigError
         from dstf.discovery.patch_apply import PatchError
 
         s = self._open(tmp_path)
-        with pytest.raises((PatchError, ConfigError), match=r"plots\[0\]\.series"):
+        with pytest.raises((PatchError, ConfigError), match=r"plots\[0\]: unknown key"):
             s.stage([PatchOp(A, "add", "/plots", [{"series": []}])])
         assert s.spec.pending == [] or tuple(s.spec.pending) == ()
         assert len(s.plots(A)) == 2
@@ -2756,7 +2863,7 @@ class TestPlots:
         assert entry["plots"] == LAYOUT
         again = Session()
         again.open(cfg, work_dir=work)
-        assert [p.series for p in again.plots(A)] == [("x", "z")]
+        assert [p.series for p in again.plots(A)] == [("x", "z"), ("y",)]
 
     def test_plot_figure_of_one_series_is_the_variables_figure(self, tmp_path):
         s = self._open(tmp_path)
@@ -2966,11 +3073,9 @@ class TestPlotsMisses:
         s = self._open(tmp_path)
         monkeypatch.setattr(PythonBackend, "result_names", classmethod(lambda c, d: []))
         s._reload_results()
-        s.stage(
-            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "gone"}]}])]
-        )
-        (plot,) = s.plots(A)
-        assert plot.series == ("x",) and plot.missing == ("gone",)
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": ["gone"]}])])
+        plot = s.plots(A)[0]
+        assert plot.series == ("x", "gone") and plot.missing == ("gone",)
 
     def test_a_negative_plot_index_is_an_index_error(self, tmp_path):
         s = self._open(tmp_path)
@@ -2989,13 +3094,17 @@ def test_plot_figure_passes_the_pages_visibility(tmp_path):
     range_x = "/metrics/children/1"
     hide = Visibility(hidden=frozenset({range_x}))
     for reader in (s, SessionView(s)):
-        # Plot 0 draws x alone (the one-series branch), plot 2 x and y.
-        for index in (0, 2):
-            fig = reader.plot_figure(A, index, editing=(), visibility=hide)
+        # Plot 0 draws x alone (the one-series branch), then with y beside it.
+        for extras in ([], [{"var": "x", "context": ["y"]}]):
+            s.discard()
+            if extras:
+                s.stage([PatchOp(A, "replace", "/plots", extras)])
+            fig = reader.plot_figure(A, 0, editing=(), visibility=hide)
             mine = [
                 t for t in fig["data"] if (t.get("meta") or {}).get("leaf") == range_x
             ]
-            assert mine and all(t["visible"] is False for t in mine), index
+            assert mine and all(t["visible"] is False for t in mine), extras
+        s.discard()
         fig = reader.figure(A, "x", visibility=Visibility(error="error/signed"))
         shown = [
             t["meta"]["id"]
@@ -3007,8 +3116,8 @@ def test_plot_figure_passes_the_pages_visibility(tmp_path):
         assert fig["layout"]["yaxis4"]["visible"] is False
 
 
-L1 = [{"kind": "time", "series": [{"var": "x"}]}]
-L2 = [{"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}]
+L1 = [{"var": "x", "context": ["z"]}]
+L2 = [{"var": "x", "context": ["z", "a0"]}]
 
 
 def _session_with_plots(tmp_path: Path, plots: list) -> Session:
@@ -3068,7 +3177,7 @@ class TestStageCollapses:
         s.stage([PatchOp(A, "replace", "/plots", L2)])
         before = list(s.spec.pending)
         with pytest.raises(ConfigError):
-            s.stage([PatchOp(A, "replace", "/plots", [{"kind": "nope"}])])
+            s.stage([PatchOp(A, "replace", "/plots", [{"var": "x", "kind": "nope"}])])
         assert s.spec.pending == before
 
     def test_a_batch_is_not_collapsed_through_its_last_op(self, session):

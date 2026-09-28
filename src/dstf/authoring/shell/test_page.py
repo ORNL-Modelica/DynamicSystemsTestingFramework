@@ -24,7 +24,7 @@ from ...storage.batch_manifest import unfinished_run_models
 from ...storage.ref_index import RefIndex
 from ..capabilities import plural
 from ..errors import user_text
-from ..layout import Layout, layout_op, reset_op
+from ..layout import Layout, drawn_layout, layout_op, reset_op
 from ..session import JobRunningError, LockedError
 from ..situation import Strip, strip_for
 from ..tree_pointer import node_or_none
@@ -465,7 +465,7 @@ class TestPage:
         # The layout and the scored counts too, for every card's Remove
         # plot: a card that asked for them read the layout and the tree
         # once per plot (3c's executing review).
-        layout = session.layout(self.model_id)
+        layout = drawn_layout(plots)
         scored = self.scored(view)
         with self.column:
             self.cards = [
