@@ -99,6 +99,10 @@ class TestList:
                         .classes("dstf-name")
                         .mark(f"{self.marker}{model_id}")
                     )
+                    # Cut with an ellipsis in a narrow drawer: the whole id
+                    # is its title (on the props dict: a props string
+                    # breaks on a quote).
+                    name.props["title"] = model_id
                     # `color=None`: a Quasar badge otherwise carries
                     # `bg-primary`, whose `!important` beats the inline
                     # status fill and paints every verdict blue (the review

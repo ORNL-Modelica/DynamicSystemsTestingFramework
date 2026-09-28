@@ -1,11 +1,15 @@
 """The Variables drawer's rows (the roadmap's 3c; DESIGN.md "The Variables
 drawer"), as data: the page draws them and knows none of the rules.
 
-Every variable of the last result, in groups — the tracked ones first, then
-by the first dot component of the NAME, inside any ``der(...)`` ("(top
-level)" for a name with none), the diagnostics last — with arrays folded
-into one row (`figures.families`, the one family rule both tiers use),
-filtered, and each row's state against the selected plot."""
+Every variable of the last result, in groups, with arrays folded into one
+row (`figures.families`, the one family rule both tiers use), filtered,
+and each row's state against the selected plot. Three groupings (the
+drawer's group menu): by component — the tracked ones first, then by the
+first dot component of the NAME, inside any ``der(...)`` ("(top level)"
+for a name with none), the diagnostics last; flat, one group; and tracked
+first, the rest in one group after them. Two orders: result-file order, or
+A→Z by what a row reads as. Three reads (the names menu): the expression,
+the result-file name, or both."""
 
 from __future__ import annotations
 

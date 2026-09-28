@@ -30,7 +30,17 @@ from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: 
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.authoring.tree_text import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
-from test_session import LOOSEN, A, B, C, D, G, _Gate, _two_var_project  # noqa: E402
+from test_session import (  # noqa: E402
+    CASES_X,
+    LOOSEN,
+    A,
+    B,
+    C,
+    D,
+    G,
+    _Gate,
+    _two_var_project,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -4416,6 +4426,117 @@ class TestTestsDrawerControls:
             assert _shown(shell, user) == [D, G]
             assert _none(user, "tests-drawer:group:FakeLib")
 
+    async def test_match_case_pressed_after_typing_filters_again(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:needle").type(".a")
+            await _settled(lambda: _shown(shell, user) == [A])
+            user.find(marker="tests-drawer:case").click()
+            await _settled(lambda: _shown(shell, user) == [])
+
+    async def test_regex_pressed_after_typing_filters_again(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:needle").type(r"^FakeLib\.A$")
+            await _settled(lambda: _shown(shell, user) == [])
+            user.find(marker="tests-drawer:regex").click()
+            await _settled(lambda: _shown(shell, user) == [A])
+
+    async def test_a_test_the_spec_adds_is_filtered_afresh(self, shell, monkeypatch):
+        """The kept set is cached on the test set too: a test the spec adds
+        is asked of the filter, never hidden as one it did not keep."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            real = shell.visible_tests
+            monkeypatch.setattr(shell, "visible_tests", lambda: [*real(), "FakeLib.Z"])
+            page.rail.tests.handle({"event": "spec", "models": set()})
+            await _settled(lambda: "FakeLib.Z" in _shown(shell, user))
+
+    async def test_a_pressed_pill_at_zero_stays_enabled_to_be_switched_off(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:pill:FAIL").click()
+            await _settled(lambda: _shown(shell, user) == [A])
+            shell.session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+            await _settled(lambda: page.rail.tests.list.rows[A].verdict == "PASS")
+            pill = _one(user, "tests-drawer:pill:FAIL")
+            assert pill.text == "FAIL 0" and pill.enabled
+            assert pill.props["aria-pressed"] == "true" and _shown(shell, user) == []
+            user.find(marker="tests-drawer:pill:FAIL").click()
+            await _settled(lambda: len(_shown(shell, user)) == 5)
+            assert not _one(user, "tests-drawer:pill:FAIL").enabled
+
+    async def test_the_name_sort_reorders_a_flat_list(self, two_package_shell):
+        """Flat, package order puts Cases.X between C and D; by name, its
+        full id's last part sorts it after every other test."""
+        shell = two_package_shell
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            user.find(marker="tests-drawer:group").click()
+            await _settled(lambda: _shown(shell, user)[3] == CASES_X)
+            await _pick(user, "tests-drawer:sort", "name")
+            await _settled(lambda: _shown(shell, user)[-1] == CASES_X)
+
+    async def test_scoring_failed_counts_and_filters_as_sim_fail(self, shell):
+        """The Suite's rule (`suite_rows`): a test the open could not score
+        is SIM_FAIL to the pills — counted there and kept by that pill — and
+        keeps its own place in the status sort, after SIM_FAIL: B, the one
+        here, comes before C in package order."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            shell.load.failed_models.append(B)
+            del shell.session.comparisons[B]
+            page.rail.tests._rebuild()
+            await _settled(
+                lambda: page.rail.tests.list.rows[B].verdict == "scoring failed"
+            )
+            assert _one(user, "tests-drawer:pill:SIM_FAIL").text == "SIM_FAIL 2"
+            assert _one(user, "tests-drawer:pill:NO_REF").text == "NO_REF 0"
+            user.find(marker="tests-drawer:pill:SIM_FAIL").click()
+            await _settled(lambda: _shown(shell, user) == [B, C])
+            await _pick(user, "tests-drawer:sort", "status")
+            await _settled(lambda: _shown(shell, user) == [C, B])
+
+    async def test_a_status_sort_reorder_does_not_search_again(
+        self, shell, monkeypatch
+    ):
+        """The kept set is keyed on the SET of tests, not the drawn order:
+        a rescore that moves a test under the status sort rebuilds the rows
+        and asks the filter nothing."""
+        from dstf.authoring.shell import rail as rail_module
+
+        asked: list[str] = []
+        real = rail_module.matcher
+
+        def counting(*args, **kwargs):
+            keep = real(*args, **kwargs)
+            return lambda text: (asked.append(text), keep(text))[1]
+
+        monkeypatch.setattr(rail_module, "matcher", counting)
+        async with user_simulation(root=shell.index) as user:
+            await _tests_drawer(shell, user)
+            await _pick(user, "tests-drawer:sort", "status")
+            user.find(marker="tests-drawer:needle").type("FakeLib")
+            await _settled(lambda: asked != [])
+            await _settled(lambda: _shown(shell, user) == [A, C, B, D, G])
+            asked.clear()
+            # D's nrmse 6e-4 fails at 1e-5: D moves up among the failures
+            shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+            await _settled(lambda: _shown(shell, user) == [A, D, C, B, G])
+            assert asked == []
+
+
+@pytest.fixture
+def two_package_shell(tmp_path):
+    """`_two_package_project`: `FakeLib.Cases.X` besides A, B, C, D, G."""
+    from test_session import _two_package_project
+
+    cfg, work = _two_package_project(tmp_path)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
 
 def test_the_current_row_is_emitted_after_the_row_hover():
     """`.dstf-row.dstf-row-current` and `.dstf-row:hover` weigh the same, so
@@ -6097,6 +6218,22 @@ async def test_the_plus_on_a_lower_plot_opens_the_editor_on_that_plot(page_shell
         assert not _none(user, "editor:3:/metrics/children/3")
 
 
+async def test_a_criteria_rows_plus_on_a_lower_plot_opens_the_editor_there(
+    page_shell,
+):
+    """`+` on the tube's row of plot 3 — not plot 0, the first card holding
+    x — and Add open the new criterion's editor on plot 3, under the row
+    the click was on."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        await _open_form(user, f"add:{TUBE}", within=f"node:3:{TUBE}")
+        user.find(marker=f"apply-add:{TUBE}").click()
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        await _settled(lambda: page.open is not None)
+        assert page.open == (3, "/metrics/children/1")
+
+
 async def test_the_plots_plus_for_another_variable_opens_where_it_is_drawn(
     page_shell,
 ):
@@ -6300,6 +6437,56 @@ class TestVariablesDrawerControls:
             # The filter still asks the name and the label whatever is shown.
             user.find(marker="var-needle").type("unitTests")
             await _settled(lambda: ut1_row() == [AWKWARD_EXPRESSION])
+
+    async def test_expression_names_keep_the_name_beside_a_label_two_share(
+        self, drawer_shell
+    ):
+        """The one label rule (`variable_texts`): `x={a.Q, a.Q}` reads "a.Q"
+        twice, so under Expression each keeps its result-file name muted
+        beside it, as Both shows it; a label no other row shares reads
+        alone."""
+        from test_session import with_expressions
+
+        shell = drawer_shell
+        with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
+        shell.session._score(A)
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            await _pick(user, "var-names", "expression")
+            await _settled(lambda: page.state.vars_names == "expression")
+            rows = {
+                r: _labels_in(_one(user, var_marker("var-row", r)))
+                for r in (ROW_X, ROW_Y, ROW_Z)
+            }
+            assert rows == {
+                ROW_X: ["a.Q", "x"],
+                ROW_Y: ["a.Q", "y", "plot 2"],
+                ROW_Z: ["z"],
+            }
+            await _pick(user, "var-names", "file")
+            await _settled(
+                lambda: _labels_in(_one(user, var_marker("var-row", ROW_X))) == ["x"]
+            )
+
+    async def test_an_opened_family_stays_open_across_a_switch_of_group(
+        self, drawer_shell
+    ):
+        """A family is opened by its members, not by its row's id, which
+        carries the group: under Flat, pipe.T[] is still open."""
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            await _settled(
+                lambda: not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            )
+            await _pick(user, "var-group-by", "flat")
+            flat = "1/All variables/pipe.T[]"
+            await _settled(
+                lambda: not _none(user, var_marker("var-row", f"{flat}/{PIPE[0]}"))
+            )
+            assert _one(user, var_marker("var-open", flat)).props["aria-expanded"] == (
+                "true"
+            )
 
     async def test_the_menus_survive_a_switch_of_test(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:

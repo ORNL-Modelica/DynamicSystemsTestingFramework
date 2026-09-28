@@ -1808,6 +1808,55 @@ def test_the_rail_narrows_the_plots_and_nothing_scrolls_sideways(
             _plot_width_is(page, w0)
 
 
+#: Each drawn plot: its figure's width against what its card's plot slot
+#: leaves it, the slot less the toolbar's gutter.
+FIGURE_FITS_SLOT = """() => [...document.querySelectorAll('.dstf-plot-slot')]
+  .filter((e) => e.querySelector('.main-svg'))
+  .map((e) => [e.querySelector('.main-svg').getBoundingClientRect().width,
+               e.getBoundingClientRect().width - parseFloat(
+                 getComputedStyle(e).getPropertyValue('--toolbar-gutter'))])"""
+
+
+def _figures_fill_their_slots(page) -> None:
+    page.wait_for_timeout(800)  # the drawer's slide, and Plotly's own delay
+    widths = page.evaluate(FIGURE_FITS_SLOT)
+    assert widths and all(abs(svg - slot) <= 2 for svg, slot in widths), widths
+
+
+def test_a_closed_drawer_leaves_every_figure_filling_its_card(
+    tmp_path, playwright_browser
+):
+    """At 1280 px the pending drawer sits beside the page, narrowing it:
+    once it closes, each drawn figure fills its card again. The rail's
+    Variables drawer likewise. NiceGUI's plotly element observes its size
+    and Plotly redraws 100 ms after it is told: read as the drawer lands,
+    the figure is still the drawer's width narrower, and it fills the card
+    ~150 ms later."""
+    with _served(
+        tmp_path, playwright_browser, project=_two_var_project, hooks=True
+    ) as page:
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__stage?model={A}") as r:
+            json.loads(r.read())
+        preview = page.get_by_role("button", name="Preview and save")
+        expect(preview).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _figures_fill_their_slots(page)
+        preview.click()
+        drawer = page.locator(".dstf-pending-drawer")
+        expect(drawer.locator(".dstf-drawer-status")).to_have_count(
+            1, timeout=EXPECT_TIMEOUT
+        )
+        _figures_fill_their_slots(page)
+        drawer.get_by_role("button", name="Close", exact=True).click()
+        _figures_fill_their_slots(page)
+        _shot(page, tmp_path, "pending-drawer-closed-1280")
+        variables = page.locator(".dstf-rail").get_by_text("Vars", exact=True)
+        variables.click()
+        _figures_fill_their_slots(page)
+        variables.click()
+        _figures_fill_their_slots(page)
+
+
 #: Every criteria row's name (metric · variable), measured: its height
 #: against its own line height. "normal" is 1.2 of the font size.
 CRIT_NAME_LINES = """
@@ -2604,3 +2653,121 @@ def test_the_variables_drawers_menus_answer_a_real_mouse(tmp_path, playwright_br
             page.get_by_role("menuitemradio", name="Flat", exact=True)
         ).to_have_attribute("aria-checked", "true", timeout=EXPECT_TIMEOUT)
         page.keyboard.press("Escape")
+
+
+def test_a_menus_arrow_up_goes_last_and_tab_closes_it(tmp_path, playwright_browser):
+    """The menu pattern: from outside its choices ArrowUp goes to the LAST
+    one; Tab closes the menu; the choices are out of the tab order."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.locator(".dstf-rail").get_by_text("Tests", exact=True).click()
+        drawer = page.locator(".dstf-drawer-panel").filter(has_text="Tests")
+        sort = drawer.get_by_role("button", name="Sort", exact=True)
+        expect(sort).to_be_visible(timeout=EXPECT_TIMEOUT)
+        sort.focus()
+        page.keyboard.press("Enter")
+        items = page.get_by_role("menuitemradio")
+        expect(items).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        assert [items.nth(i).get_attribute("tabindex") for i in range(3)] == (
+            ["-1"] * 3
+        )
+        page.keyboard.press("ArrowUp")
+        assert page.evaluate(ACTIVE_TEXT) == "Status, failures first"
+        page.keyboard.press("Tab")
+        expect(items).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        # Opened by the mouse, the focus on the menu itself: Tab closes it.
+        sort.click()
+        expect(items).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        page.keyboard.press("Tab")
+        expect(items).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+
+LONG_IDS = [
+    "TRANSFORM.HeatExchangers.GenericDistributed_HX.Examples.Variants.WithWall."
+    "GenericDistributed_HX_withMass",
+    "TRANSFORM.HeatExchangers.GenericDistributed_HX.Examples.Variants.WithWall."
+    "GenericDistributed_HX_noMassXY",
+    # its short name is 40 characters
+    "TRANSFORM.Fluid.Pipes.Examples.Variants.WithWallAndMoreWords."
+    "GenericPipe_withWall_withHeatTransfer_ab",
+]
+
+
+def _long_ids_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` and three tests with TRANSFORM-length ids; the last
+    has a tree of its own, so an edit stages on it with no result."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for model in LONG_IDS:
+        spec["tests"].append(
+            {
+                "model": model,
+                "source": "../Examples/A.py",
+                "variables": ["x"],
+                "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+            }
+        )
+    spec["tests"][-1]["metrics"] = {
+        "combinator": "and",
+        "children": [
+            {"metric": "range", "variable": "x", "min_value": -1.0, "max_value": 2.0}
+        ],
+    }
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+#: Every visible descendant of the open drawer's panel whose right edge is
+#: more than 1 px past the panel's, every badge of the panel outside it,
+#: and each shown edits pill's height in lines.
+PAST_THE_PANEL = """() => {
+  const p = [...document.querySelectorAll('.dstf-drawer-panel')]
+    .find((x) => x.offsetParent !== null);
+  const right = p.getBoundingClientRect().right;
+  const past = [...p.querySelectorAll('*')]
+    .filter((e) => e.getClientRects().length > 0)
+    .filter((e) => e.getBoundingClientRect().right > right + 1)
+    .map((e) => `${e.tagName}.${e.className}`);
+  const badges = [...p.querySelectorAll('.dstf-badge')];
+  const lines = [...p.querySelectorAll('.dstf-pill-named')]
+    .filter((e) => e.offsetParent !== null)
+    .map((e) => { const r = document.createRange(); r.selectNodeContents(e);
+      return new Set([...r.getClientRects()].map((b) => Math.round(b.top))).size; });
+  return {past, badges: badges.length, lines,
+          outside: badges.filter((b) => b.getBoundingClientRect().right > right + 1).length};
+}"""
+
+
+@pytest.mark.parametrize("names", ["Short", "Full"])
+def test_the_tests_drawer_fits_long_ids_at_900_px(tmp_path, playwright_browser, names):
+    """TRANSFORM's ids at 900 px: a name is cut with an ellipsis and carries
+    the whole id as its title, a package label wraps, every badge stays
+    inside the drawer, and the edits pill beside a long name keeps to one
+    line."""
+    with _served(
+        tmp_path, playwright_browser, project=_long_ids_project, hooks=True
+    ) as page:
+        page.set_viewport_size({"width": 900, "height": 900})
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__stage?model={LONG_IDS[2]}") as r:
+            json.loads(r.read())
+        page.locator(".dstf-rail").get_by_text("Tests", exact=True).click()
+        drawer = page.locator(".dstf-drawer-panel").filter(has_text="Tests")
+        expect(drawer.locator(".dstf-row")).to_have_count(8, timeout=EXPECT_TIMEOUT)
+        if names == "Full":
+            drawer.get_by_role("button", name="Names", exact=True).click()
+            page.get_by_role("menuitemradio", name="Full", exact=True).click()
+            expect(drawer.locator(".dstf-name").first).to_have_text(
+                "FakeLib.A", timeout=EXPECT_TIMEOUT
+            )
+        page.wait_for_timeout(600)
+        measured = page.evaluate(PAST_THE_PANEL)
+        assert measured == {"past": [], "badges": 8, "lines": [1], "outside": 0}, (
+            measured
+        )
+        name = drawer.locator(".dstf-name").filter(has_text="withHeatTransfer_ab")
+        assert name.get_attribute("title") == LONG_IDS[2]
+        page.mouse.move(600, 5)
+        _shot(page, tmp_path, f"tests-drawer-900-{names.lower()}")

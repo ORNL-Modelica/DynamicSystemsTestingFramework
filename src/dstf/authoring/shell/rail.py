@@ -203,11 +203,12 @@ class TestsDrawer:
         """The ids the filter keeps, and the sentence under the box — every
         id, and why, for a bad pattern or one that ran out of time: the
         drawer hides nothing then. Cached on the needle, its toggles and
-        the ids: events repaint the rows every second during a job, and a
-        pathological pattern cost 0.79 s of CPU per pass over 331 ids (the
-        plan's executing review)."""
+        the SET of ids, never their order: events repaint the rows every
+        second during a job, a rescore under the status sort reorders them,
+        and a pathological pattern cost 0.79 s of CPU per pass over 331 ids
+        (the plan's executing review)."""
         state = self.page.state
-        ids = tuple(self.list.rows)
+        ids = frozenset(self.list.rows)
         key = (state.tests_needle, state.tests_regex, state.tests_case, ids)
         if self.kept is None or self.kept[0] != key:
             why: str | None = None
@@ -226,12 +227,16 @@ class TestsDrawer:
     def _filter(self) -> None:
         """The filter and the pills over the rows; the pills count every
         row, whatever the filter. The statuses pressed are OR'd, and EDITED
-        with them — the Suite's rule (`suite_grid.js`)."""
+        with them — the Suite's rule (`suite_grid.js`). A test the open
+        could not score is SIM_FAIL to the pills, counted and kept, as the
+        Suite's row says it (`suite_rows`); the status sort keeps it a
+        place of its own (`FAILURES_FIRST`)."""
         state = self.page.state
         counts = dict.fromkeys(PILLS, 0)
         for row in self.list.rows.values():
-            if row.verdict in counts:
-                counts[row.verdict] += 1
+            pill = _pill_word(row)
+            if pill in counts:
+                counts[pill] += 1
             if row.pending:
                 counts[EDITED] += 1
         for word, button in self.pills.items():
@@ -253,7 +258,7 @@ class TestsDrawer:
                 return False
             if not pills:
                 return True
-            return row.verdict in pills or (EDITED in pills and row.pending > 0)
+            return _pill_word(row) in pills or (EDITED in pills and row.pending > 0)
 
         self.list.filter(keep)
 
@@ -285,6 +290,12 @@ class TestsDrawer:
             self._rebuild()
             return
         self._filter()
+
+
+def _pill_word(row: Row) -> str:
+    """The status pill a row counts under: its verdict, SIM_FAIL for
+    "scoring failed"."""
+    return SIM_FAIL if row.verdict == SCORING_FAILED else row.verdict
 
 
 def _rank(verdict: str) -> int:

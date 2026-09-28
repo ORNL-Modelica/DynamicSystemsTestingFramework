@@ -2,9 +2,10 @@
 the owner's rulings Q5-Q7, 2026-09-25): every variable of the last result
 in `variable_rows`' groups, folded and filtered, each row checked against
 the selected plot. Its filter and its sort, group and names menus are the
-tab's (`TabState`), drawn by `drawer_controls` as the Tests drawer's are. It does every layout edit (Q6 A): a check adds a row's
-members to the selected plot or takes them off, "+ new plot" puts them on a
-plot of their own below it. The rules are not here: the rows are data
+tab's (`TabState`), drawn by `drawer_controls` as the Tests drawer's are.
+It does every layout edit (Q6 A): a check adds a row's members to the
+selected plot or takes them off, "+ new plot" puts them on a plot of their
+own below it. The rules are not here: the rows are data
 (`authoring.variable_rows`), the edits pure functions (`authoring.layout`),
 and the page stages what they return (`TestPage.stage_layout`).
 
@@ -98,9 +99,11 @@ def _state(row: VarRow) -> tuple[str, str]:
 class VariablesDrawer:
     def __init__(self, page: TestPage, panel: ui.column) -> None:
         self.page = page
-        #: The families opened to their members, by row id: kept across
-        #: rebuilds, so a check inside an opened family leaves it open.
-        self.opened: set[str] = set()
+        #: The families opened to their members, by their members: kept
+        #: across rebuilds, so a check inside an opened family leaves it
+        #: open, and never by row id, which carries the group — a family
+        #: opened By component closed under Flat.
+        self.opened: set[tuple[str, ...]] = set()
         #: The filter and its toggles are the tab's (`TabState`): a switch
         #: of test builds a new drawer, and it starts from them.
         self.state = page.state
@@ -319,7 +322,7 @@ class VariablesDrawer:
                 )
                 for row in group.rows:
                     self._row(row)
-                    if len(row.members) > 1 and row.id in self.opened:
+                    if len(row.members) > 1 and row.members in self.opened:
                         self._members(row, groups_of)
             if shown < total:
                 ui.label(
@@ -353,11 +356,11 @@ class VariablesDrawer:
             # name can hold a `"`. A check's only text was its icon's
             # ligature, `check_box_outline_blank`.
             if len(row.members) > 1:
-                opened = key in self.opened
+                opened = row.members in self.opened
                 chevron = (
                     ui.button(
                         icon="expand_more" if opened else "chevron_right",
-                        on_click=partial(self._open, key),
+                        on_click=partial(self._open, row.members),
                     )
                     .props("flat dense round size=sm")
                     .mark(marker("var-open", key))
@@ -399,13 +402,20 @@ class VariablesDrawer:
             # title (on the props dict: a name can hold a `"`).
             # The names menu: the expression alone, the result-file name
             # alone, or both — the expression with the name muted beside it.
+            # The expression alone still keeps the name beside a label
+            # another name of the test carries (`variable_texts`, the one
+            # label rule): two rows reading "a.Q" said nothing of which was
+            # which.
             names = self.state.vars_names
             shown = row.file_text if names == "file" else row.text
             text = ui.label(shown).classes("dstf-var-text dstf-mono text-xs")
             text.props["title"] = (
                 row.text if row.name is None else f"{row.text} ({row.name})"
             )
-            if names == "both" and row.name is not None:
+            if row.name is not None and (
+                names == "both"
+                or (names == "expression" and self.texts.get(row.name) != row.text)
+            ):
                 ui.label(row.name).classes("dstf-varname")
             ui.space()
             # These two never wrap (the stylesheet's `.dstf-var-where` rule
@@ -424,11 +434,11 @@ class VariablesDrawer:
 
     # -- the edits -----------------------------------------------------------------
 
-    def _open(self, key: str) -> None:
-        if key in self.opened:
-            self.opened.discard(key)
+    def _open(self, members: tuple[str, ...]) -> None:
+        if members in self.opened:
+            self.opened.discard(members)
         else:
-            self.opened.add(key)
+            self.opened.add(members)
         self.rebuild()
 
     def _check(self, row: VarRow) -> None:

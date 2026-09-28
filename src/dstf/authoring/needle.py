@@ -1,6 +1,6 @@
-"""The filter every list of the tool asks (the Tests and Variables
-drawers): a needle as a substring, a glob or a typed regex, the regex held
-to a budget of its own CPU and of the UI loop's wall time."""
+"""The filter both drawers of the Test page ask (Tests and Variables): a
+needle as a substring, a glob or a typed regex, the regex held to a budget
+of its own CPU and of the UI loop's wall time."""
 
 from __future__ import annotations
 
@@ -73,7 +73,8 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
         pattern = regex_package.compile(needle, 0 if case else regex_package.IGNORECASE)
         # CPU, then wall; set at the first name, not at compile. The closure
         # is one thread's: `thread_time` readings from two threads cannot be
-        # compared, and the drawer builds and uses it within one `_build`.
+        # compared, and each drawer builds and uses it within one pass
+        # (`VariablesDrawer._build`, `TestsDrawer._kept`).
         deadlines: list[float] = []
 
         def search(text: str) -> bool:

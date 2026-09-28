@@ -16,8 +16,12 @@ from nicegui import ui
 #: A menu's keyboard (Quasar's QMenu has none): ArrowDown / ArrowUp move
 #: the focus to the next / previous choice, wrapping; Home / End to the
 #: first / last. From outside the choices ArrowDown goes to the first and
-#: ArrowUp to the last.
+#: ArrowUp to the last. Tab closes the menu (the menu pattern: its choices
+#: are out of the tab order, `tabindex="-1"`, and Tab leaves it); Quasar
+#: puts the focus back where it was when the menu opened. ``MENU`` is the
+#: menu's element id (`_menu_keys`).
 _MENU_KEYS = """(e) => {
+  if (e.key === 'Tab') { getElement(MENU)?.hide(); return; }
   const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
   if (!keys.includes(e.key)) return;
   const items = [...e.currentTarget.querySelectorAll('[role="menuitemradio"]')];
@@ -37,6 +41,11 @@ _MENU_KEYS = """(e) => {
 
 #: A view control's tooltip, above it: below, it covers what opens there.
 TIP_ABOVE = 'anchor="top middle" self="bottom middle"'
+
+
+def _menu_keys(menu: ui.menu) -> str:
+    """`_MENU_KEYS` for ``menu``."""
+    return _MENU_KEYS.replace("MENU", str(menu.id))
 
 
 def _pressed(button: ui.button, on: bool) -> None:
@@ -156,11 +165,12 @@ def menu_button(
         # Above the button: below it (Quasar's default) the tooltip covered
         # the open menu's first choice and its check.
         ui.tooltip(tip).props(TIP_ABOVE)
-        with ui.menu().props('role="menu"').on("keydown", js_handler=_MENU_KEYS):
+        with ui.menu().props('role="menu"') as element:
+            element.on("keydown", js_handler=_menu_keys(element))
             for key, label in options:
                 item = (
                     ui.menu_item(on_click=partial(choose, key))
-                    .props('role="menuitemradio"')
+                    .props('role="menuitemradio" tabindex="-1"')
                     .mark(f"{marker}:{key}")
                 )
                 # `ui.menu_item` has no `set_text`: the text is a label in

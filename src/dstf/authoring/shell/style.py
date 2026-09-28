@@ -215,8 +215,19 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-progress { font-size: 12px; color: var(--dstf-text-secondary); }
 .dstf-group {
   font-size: 10px; text-transform: uppercase; letter-spacing: .03em;
-  color: var(--dstf-text-muted); padding: 12px 0 2px;
+  color: var(--dstf-text-muted); padding: 12px 0 2px; overflow-wrap: anywhere;
 }
+/* The Tests drawer's rows at a real library's lengths: the name takes what
+   the badge and the edits pill leave it and is cut with an ellipsis (the
+   whole id is its title), and they never shrink. A TRANSFORM id in Full,
+   or a 40-character short name, pushed the badge out of the drawer at
+   900 px, and a package label ran past it. */
+.dstf-tests .dstf-name { flex: 1 1 auto; min-width: 0; }
+.dstf-tests .dstf-name .q-btn__content { min-width: 0; flex-wrap: nowrap; }
+.dstf-tests .dstf-name .q-btn__content > .block {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dstf-tests .dstf-badge, .dstf-tests .dstf-pill-named { flex: none; }
 .dstf-row {
   min-height: 32px; border-bottom: 1px solid var(--dstf-border-hairline);
   background: var(--dstf-surface); transition: background .1s;
