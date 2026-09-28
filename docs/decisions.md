@@ -5352,8 +5352,9 @@ accepted the planner's choices ("No objections").
    listeners and failed the Suite's Playwright tests. An Esc while a Quasar
    dialog or menu is open is left to it: the stale-file dialog over the
    drawer closes, and the drawer stays. One already fading out (Quasar's
-   `-leave-` classes, ~100 ms) is not open: a second Esc 40 ms after the
-   first closes the drawer. The board's per-edit sentences
+   `-leave-` classes, ~300 ms (Quasar's default transition-duration)) is
+   not open: a second Esc 40 ms after the first closes the drawer. The
+   board's per-edit sentences
    ("edit nrmse on pulse.y: tolerance 0.01 → 0.005") are not built
    (planner's choice): each section has its edit count and verdict line.
 6. *The drawers' one control set (Q7).* The budgeted matcher moves to

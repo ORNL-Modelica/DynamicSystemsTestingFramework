@@ -6480,7 +6480,8 @@ class TestVariablesDrawerControls:
         """The one label rule (`variable_texts`): `x={a.Q, a.Q}` reads "a.Q"
         twice, so under Expression each keeps its result-file name muted
         beside it, as Both shows it; a label no other row shares reads
-        alone."""
+        alone. The scope is the test's, not the drawn rows': with y
+        filtered away, x still keeps its name."""
         from test_session import with_expressions
 
         shell = drawer_shell
@@ -6503,6 +6504,12 @@ class TestVariablesDrawerControls:
             await _settled(
                 lambda: _labels_in(_one(user, var_marker("var-row", ROW_X))) == ["x"]
             )
+            await _pick(user, "var-names", "expression")
+            await _settled(lambda: page.state.vars_names == "expression")
+            user.find(marker="var-regex").click()
+            user.find(marker="var-needle").type("^x$")
+            await _settled(lambda: _none(user, var_marker("var-row", ROW_Y)))
+            assert _labels_in(_one(user, var_marker("var-row", ROW_X))) == ["a.Q", "x"]
 
     async def test_expression_names_keep_the_name_where_two_drawn_rows_read_alike(
         self, drawer_shell

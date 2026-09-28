@@ -555,7 +555,8 @@ def test_escape_on_a_menu_or_a_dialog_over_the_pending_drawer_closes_only_it(
 
 def _two_escapes_close_the_drawer(page) -> None:
     """Esc, and Esc again 40 ms later: the first closes the menu or the
-    dialog, which is still fading out (~100 ms) when the second lands."""
+    dialog, which is still fading out (~300 ms (Quasar's default
+    transition-duration)) when the second lands."""
     page.keyboard.press("Escape")
     page.wait_for_timeout(40)
     page.keyboard.press("Escape")
@@ -564,6 +565,45 @@ def _two_escapes_close_the_drawer(page) -> None:
         ".getBoundingClientRect().x >= window.innerWidth - 1",
         timeout=EXPECT_TIMEOUT,
     )
+
+
+def test_a_dialog_still_open_under_a_fading_menu_keeps_the_drawers_escape(
+    tmp_path, playwright_browser
+):
+    """The drawer open, the strip's ⋮ menu over it, and a dialog open under
+    the menu (a stand-in `.q-dialog`: a select's menu inside the
+    Change-backend dialog is the real case). Esc closes the menu; a second
+    Esc 40 ms later, while the menu fades out, finds the dialog still open —
+    it is the dialog's, and the drawer stays."""
+    with _served(
+        tmp_path, playwright_browser, project=_two_var_project, hooks=True
+    ) as page:
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__stage?model={A}") as r:
+            json.loads(r.read())
+        expect(page.locator(".dstf-strip-text")).to_contain_text(
+            "unsaved", timeout=EXPECT_TIMEOUT
+        )
+        page.get_by_role("button", name="Preview and save").click()
+        page.wait_for_timeout(400)  # the drawer's slide
+        assert _drawer_open(page)
+        more = page.locator('.dstf-strip button[aria-label="More actions"]')
+        more.click()
+        expect(more).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
+        page.evaluate(
+            """() => { const d = document.createElement('div');
+            d.className = 'q-dialog dstf-stand-in';
+            d.innerHTML = '<div class="q-dialog__inner"></div>';
+            document.body.appendChild(d); }"""
+        )
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(40)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)  # a drawer Esc closed would have slid
+            assert _drawer_open(page)
+        finally:
+            page.evaluate("() => document.querySelector('.dstf-stand-in').remove()")
 
 
 # -- the page's frame, its plots on scroll, and the tree -------------------

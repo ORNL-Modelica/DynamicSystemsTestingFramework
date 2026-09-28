@@ -1708,7 +1708,9 @@ planning.
     roles.
   - A Plotly page error, "Resize must be passed a displayed plot div
     element.", fires when the rail is clicked right after a Test page loads
-    (3 of 3, before and after the build). Nothing visible breaks.
+    (3 of 3, before and after the build). Nothing visible breaks. Likely the
+    same first-second NiceGUI plotly race as the Discard entry of
+    2026-09-28 below.
   - At 900 px the header's plain labels ("Python · linux", "1 running ·
     rerun") break mid-phrase; the two-line rule covers buttons only.
   - A multi-series plot's title lists its series in layout order in the
@@ -1795,6 +1797,8 @@ planning.
     tool's own copy of the plotly element with a connected check fixes the
     cause but forks a library file. The likely fix is upstream: a NiceGUI
     report that its plotly element should not observe an unmounted div.
+    Likely the same first-second race as the rail-click Resize error of
+    2026-09-26 above.
   - The Variables drawer on TRANSFORM's `TritiumExamples.HumTest` (76,992
     names, 64,407 rows, capped at 200) opens in ~1.2 s, and each menu
     change takes ~1.5 s. Over 6,089 names it is 0.6 s to open and 0.7-0.8 s

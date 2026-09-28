@@ -416,7 +416,7 @@ class VariablesDrawer:
                     )
                     .mark(marker("var-check", key))
                 )
-                # A row that shows a muted name says it too: two rows
+                # A row with a muted name says it too: two rows
                 # reading "a.Q" had two checks a screen reader read alike.
                 check.props["aria-label"] = said
                 if not page.cards:
