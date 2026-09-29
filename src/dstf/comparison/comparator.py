@@ -581,6 +581,9 @@ def compare_test(
                     reference_final=float("nan"),
                     actual_final=float("nan"),
                     mode=mode.name,
+                    # As on the no-baseline comparison below: the editor
+                    # shows it as in effect, and the default 0.0 read "0".
+                    tolerance_used=tolerance,
                     diagnostics={
                         "error": (
                             f"quantity {var_override['quantity']!r}: a stats-path "

@@ -2542,6 +2542,115 @@ async def test_cpu_time_is_seeded_relative(tmp_path):
     assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel")
 
 
+_XY = [{"metric": "nrmse", "variable": "x"}, {"metric": "nrmse", "variable": "y"}]
+
+
+@pytest.mark.parametrize(
+    ("tree", "path", "at", "warned"),
+    [
+        ({"combinator": "and", "children": _XY}, ROOT, f"{ROOT}/children/-", True),
+        ({"combinator": "or", "children": _XY}, ROOT, f"{ROOT}/children/-", False),
+        (
+            {"combinator": "k-of-n", "k": 1, "children": _XY},
+            ROOT,
+            f"{ROOT}/children/-",
+            False,
+        ),
+        (
+            {"combinator": "and", "children": _XY},
+            f"{ROOT}/children/0",
+            f"{ROOT}/children/1",
+            True,
+        ),
+        (
+            {"combinator": "or", "children": _XY},
+            f"{ROOT}/children/0",
+            f"{ROOT}/children/1",
+            False,
+        ),
+        (
+            {
+                "combinator": "and",
+                "children": [
+                    _XY[0],
+                    {"combinator": "k-of-n", "k": 1, "children": _XY},
+                ],
+            },
+            f"{ROOT}/children/1/children/1",
+            f"{ROOT}/children/1/children/2",
+            False,
+        ),
+    ],
+    ids=["and", "or", "k-of-n", "beside-in-and", "beside-in-or", "beside-in-k-of-n"],
+)
+async def test_cpu_time_warns_only_where_it_lands_in_an_and(
+    tmp_path, tree, path, at, warned
+):
+    """A `warn` child passes whatever it scores: under an `or` or a `k-of-n`
+    it would make its parent pass with nothing else passing. There CPU time
+    is added bare, with its 10% — an `and` (the root leaf's too, which
+    becomes one) is where a warn only keeps it from failing the test."""
+    session = _wide_session(tmp_path, 0)
+    session.stage([PatchOp(A, "add", ROOT, copy.deepcopy(tree))])
+    _with_diagnostics(session, CPUtime=0.4)
+    view = SessionView(session, Selection(tests=frozenset({A}), variable="y"))
+    (op,) = (
+        EditTree()
+        .act(
+            view,
+            action="add",
+            model_id=A,
+            path=path,
+            variable="CPUtime",
+            metric="scalar",
+        )
+        .ops
+    )
+    assert op.path == at
+    leaf = op.value["children"][0] if warned else op.value
+    assert op.value.get("combinator") == ("warn" if warned else None)
+    assert leaf["quantity"] == "CPUtime.final"
+    assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel")
+
+
+async def test_cpu_time_beside_a_root_leaf_warns_in_the_and_it_makes(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    session.stage([PatchOp(A, "add", ROOT, dict(_XY[0]))])
+    _with_diagnostics(session, CPUtime=0.4)
+    view = SessionView(session, Selection(tests=frozenset({A}), variable="y"))
+    (op,) = (
+        EditTree()
+        .act(
+            view,
+            action="add",
+            model_id=A,
+            path=ROOT,
+            variable="CPUtime",
+            metric="scalar",
+        )
+        .ops
+    )
+    assert op.value["combinator"] == "and"
+    assert op.value["children"][1]["combinator"] == "warn"
+
+
+async def test_cpu_time_added_bare_under_an_or_reveals_its_leaf(tmp_path):
+    """Added bare, the criterion IS the leaf: the reveal opens it."""
+    session = _wide_session(tmp_path, 0)
+    session.stage([PatchOp(A, "add", ROOT, {"combinator": "or", "children": _XY})])
+    _with_diagnostics(session, CPUtime=0.4)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    reveals: list[str] = []
+    async with host(session, EditTree(), sel, reveals) as (user, errors, _figure):
+        await _open_plus(user, "y")
+        user.find(marker="apply-add:y:variable:pick:CPUtime").click()
+        user.find(marker="apply-add:y").click()
+        await _settled(lambda: len(session.tree(A)["children"]) == 3)
+        added = session.tree(A)["children"][-1]
+        assert "combinator" not in added and added["variable"] == "CPUtime"
+        assert reveals == [f"{ROOT}/children/2"] and errors == {}
+
+
 async def test_a_diagnostic_refuses_a_trajectory_metric(tmp_path):
     """B4: `act` decides "diagnostic" from what the run recorded, and a
     metric that takes no quantity cannot score one."""

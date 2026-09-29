@@ -5750,8 +5750,12 @@ last run did not record: rerun to score it/them."
    (`Session.tracked`). A result read while a criterion was staged (a
    rerun runs with the pending edits, a re-read with the merged TestModel)
    keeps that variable after the criterion is discarded; scored as tracked
-   it failed the test for want of a baseline. Checked over TRANSFORM's 331
-   tests: the flat path's scoring is identical before and after.
+   it failed the test for want of a baseline. The flat path's scoring is
+   unchanged on TRANSFORM, measured by the Part A mutation review
+   (2026-09-29): all 331 TRANSFORM results scored with 493d1b7 and with
+   7234ec8 — 0 differences in verdict, scored lists (873 variables) or
+   NRMSE; TRANSFORM has no `variables` patterns and no trees, so the glob
+   branch is unit-tested only.
 4. *The re-read (O2).* `Session.stage` re-reads a model whose criteria
    name a variable the loaded result lacks and its result FILE holds, with
    the merged TestModel, and rescores it. The read happens before the spec
@@ -5826,7 +5830,13 @@ last run did not record: rerun to score it/them."
    time (`seeds.TIMES`, today `CPUtime`) is seeded INSIDE a `warn` — a
    run's CPU time moves with the machine's load, under `--parallel` most of
    all, and 10% failed tests whose model did not change; a count stays
-   bare. The Add still opens the leaf's row. K2: at most 200 rows, "Showing
+   bare. Only where it lands in an `and` (an `and` node, or beside a root
+   leaf, which makes the root one): a `warn` child passes whatever it
+   scores, so under an `or`, a `k-of-n` or a `weighted` parent it is added
+   bare, with its `0.1 rel` — a warn there would pass an `or` or a
+   `k-of-n` with nothing else passing. `EditTree.act("add")` hands
+   `seed_diagnostic` the landing combinator's kind. The Add still opens
+   the leaf's row. K2: at most 200 rows, "Showing
    200 of N — narrow the search" when capped. K3: the value in effect on
    the hint line (item 6). K4: `bottom-slots` on every one-line field
    (item 7). K5: the grip's bounds and default (item 8; its widest gained
@@ -5842,7 +5852,8 @@ last run did not record: rerun to score it/them."
 on its variable is what tracks it — and with it went `edit_tree.
 _variable_names`, `Selection.tracked`, `PlotCard`'s `tracked` and the
 Test page's tracked reads. The plan's K1 said a diagnostic criterion is
-not wrapped in `warn`, leaving that default to U3; CPU time now is.
+not wrapped in `warn`, leaving that default to U3; CPU time added to an
+`and` now is.
 
 **Consequences.** A result holds the criteria's variables after the
 tracked ones on every backend, so a rerun records a criterion's variable

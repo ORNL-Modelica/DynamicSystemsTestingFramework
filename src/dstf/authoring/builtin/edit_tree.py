@@ -226,6 +226,15 @@ class EditTree:
         if node is None:
             raise ValueError(f"{path} names no node of {model_id}")
         if action == "add":
+            # The kind of the combinator the criterion lands in (a root leaf
+            # becomes an `and` of both): CPU time warns only in an `and`.
+            if "combinator" in node:
+                into = str(node["combinator"])
+            elif path == ROOT:
+                into = "and"
+            else:
+                parent_node = node_or_none(tree, path.rsplit("/children/", 1)[0])
+                into = str((parent_node or {}).get("combinator"))
             diagnostics = _diagnostics(s, model_id)
             if inputs["variable"] in diagnostics:
                 # A diagnostic is one stored number (K1): its final through
@@ -236,7 +245,7 @@ class EditTree:
                         f"{inputs['variable']} is a diagnostic: scalar scores it"
                     )
                 leaf = seed_diagnostic(
-                    inputs["variable"], diagnostics[inputs["variable"]]
+                    inputs["variable"], diagnostics[inputs["variable"]], into=into
                 )
             else:
                 # Seeded: a bare range, tube or scalar does not resolve, and
@@ -540,8 +549,9 @@ def _parent_of(path: str) -> str | None:
 
 def _first_leaf(tree: dict | None, path: str) -> str:
     """The first leaf at or under ``path``: what an Add reveals. A seed may
-    be a combinator around its leaf — CPU time is added inside a ``warn``
-    (`seed_diagnostic`) — and the editor opens on the criterion."""
+    be a combinator around its leaf — CPU time is added to an ``and``
+    inside a ``warn`` (`seed_diagnostic`) — and the editor opens on the
+    criterion."""
     node = node_or_none(tree, path)
     while node is not None and node.get("children"):
         path, node = f"{path}/children/0", node["children"][0]

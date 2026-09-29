@@ -328,7 +328,7 @@ def test_a_hand_written_window_bound_may_be_a_string():
 
 
 def test_a_count_is_seeded_exact():
-    leaf = seed_diagnostic("EventCounter", np.array([0.0, 3.0, 7.0]))
+    leaf = seed_diagnostic("EventCounter", np.array([0.0, 3.0, 7.0]), into="and")
     assert leaf == {
         "metric": "scalar",
         "variable": "EventCounter",
@@ -342,14 +342,15 @@ def test_cpu_time_is_seeded_relative_even_when_its_final_is_whole():
     """A tiny model's CPUtime can be 0.0 or 1.0 at the end: a whole number,
     and no count — seeded as one, a next run's 0.01 s would fail it."""
     for values in ([0.0, 0.5, 1.25], [0.0, 0.0, 0.0], [0.0, 1.0, 1.0]):
-        (leaf,) = seed_diagnostic("CPUtime", np.array(values))["children"]
+        (leaf,) = seed_diagnostic("CPUtime", np.array(values), into="and")["children"]
         assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel"), values
 
 
 def test_cpu_time_is_seeded_inside_a_warn_and_a_count_bare():
-    """A run's CPU time moves with the machine's load (`--parallel`): its
-    criterion warns, never fails; a count only moves with the model."""
-    node = seed_diagnostic("CPUtime", np.array([0.0, 0.2, 0.4]))
+    """A run's CPU time moves with the machine's load (`--parallel`): in an
+    `and` its criterion warns, never fails; a count only moves with the
+    model."""
+    node = seed_diagnostic("CPUtime", np.array([0.0, 0.2, 0.4]), into="and")
     assert node == {
         "combinator": "warn",
         "children": [
@@ -362,20 +363,46 @@ def test_cpu_time_is_seeded_inside_a_warn_and_a_count_bare():
             }
         ],
     }
-    assert "combinator" not in seed_diagnostic("EventCounter", np.array([0.0, 3.0]))
-    assert "combinator" not in seed_diagnostic("Wall", np.array([0.0, 2.5]))
+    assert "combinator" not in seed_diagnostic(
+        "EventCounter", np.array([0.0, 3.0]), into="and"
+    )
+    assert "combinator" not in seed_diagnostic("Wall", np.array([0.0, 2.5]), into="and")
     parse_metric_tree(node)  # a tree the evaluator reads
 
 
+@pytest.mark.parametrize("into", ["or", "k-of-n", "weighted"])
+def test_cpu_time_is_seeded_bare_where_a_warn_would_pass_its_parent(into):
+    """A `warn` child passes whatever it scores: in an `or` or a `k-of-n` it
+    would pass its parent with nothing else passing. Only an `and` takes the
+    warn; anywhere else the leaf goes bare, with its 10%."""
+    leaf = seed_diagnostic("CPUtime", np.array([0.0, 0.2, 0.4]), into=into)
+    assert leaf == {
+        "metric": "scalar",
+        "variable": "CPUtime",
+        "quantity": "CPUtime.final",
+        "tolerance": 0.1,
+        "tolerance_mode": "rel",
+    }
+
+
 def test_another_diagnostic_is_a_count_when_every_sample_is_whole():
-    assert seed_diagnostic("Steps", np.array([0.0, 2.0, 9.0]))["tolerance"] == 0
-    assert seed_diagnostic("Wall", np.array([0.0, 2.0, 9.5]))["tolerance"] == 0.1
+    assert (
+        seed_diagnostic("Steps", np.array([0.0, 2.0, 9.0]), into="and")["tolerance"]
+        == 0
+    )
+    assert (
+        seed_diagnostic("Wall", np.array([0.0, 2.0, 9.5]), into="and")["tolerance"]
+        == 0.1
+    )
 
 
 def test_a_missing_sample_does_not_unmake_a_count():
     """Only the FINITE samples are read: a NaN (a sample the run did not
     record) is no fraction."""
-    assert seed_diagnostic("Steps", np.array([0.0, 2.0, np.nan]))["tolerance"] == 0
+    assert (
+        seed_diagnostic("Steps", np.array([0.0, 2.0, np.nan]), into="and")["tolerance"]
+        == 0
+    )
 
 
 def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
@@ -383,7 +410,7 @@ def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
     diag = VariableResult(
         index=0, time=t, values=np.array([0.0, 2.0, 5.0]), name="EventCounter"
     )
-    raw = seed_diagnostic("EventCounter", diag.values)
+    raw = seed_diagnostic("EventCounter", diag.values, into="and")
     spec = parse_metric_tree(raw)
     base = BaselineView(
         name=PRIMARY_BASELINE,

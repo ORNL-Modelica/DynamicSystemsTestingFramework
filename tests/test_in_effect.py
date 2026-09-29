@@ -164,3 +164,25 @@ def test_the_reports_tree_view_carries_no_values_in_effect(tmp_path):
     comp = s.comparisons[A]
     view = build_tree_view(list(comp.variables), s.project.test(A), comp.metric_tree)
     assert all("in_effect" not in leaf for leaf in _leaves(view))
+
+
+def test_a_stats_path_quantity_on_the_flat_path_says_the_tolerance(tmp_path):
+    """The flat path refuses a stats-path quantity (it needs a `metrics`
+    tree); its comparison still says the tolerance it would have applied."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["comparison"] = {
+                "tolerance": 0.01,
+                "variable_overrides": {
+                    "x": {"mode": "scalar", "quantity": "CPUtime.final"}
+                },
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    x = next(leaf for leaf in _leaves(s.tree_view(A)) if leaf["variable"] == "x")
+    assert x["passed"] is False and "stats-path" in x["error"]
+    assert x["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}

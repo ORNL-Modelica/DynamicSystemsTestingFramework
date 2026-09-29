@@ -197,7 +197,7 @@ COUNTS = frozenset({"EventCounter"})
 TIMES = frozenset({"CPUtime"})
 
 
-def seed_diagnostic(name: str, values: np.ndarray | None) -> dict:
+def seed_diagnostic(name: str, values: np.ndarray | None, *, into: str) -> dict:
     """A criterion on the diagnostic ``name`` (the plan's K1): its stored
     final through a quantity path, ``tolerance 0 abs`` for a count and
     ``0.1 rel`` otherwise. A diagnostic of neither known kind is a count
@@ -205,10 +205,13 @@ def seed_diagnostic(name: str, values: np.ndarray | None) -> dict:
     diagnostic's name: parsed without one, the leaf's variable becomes the
     quantity text, and its row reads ``scalar · CPUtime.final``.
 
-    A time (`TIMES`) is seeded inside a ``warn``: a run's CPU time moves
-    with the machine's load — under ``--parallel`` most of all — and 10%
-    would fail a test whose model did not change. A count stays bare: it
-    only moves when the model does."""
+    A time (`TIMES`) is seeded inside a ``warn`` when it lands in an
+    ``and`` (``into``, the kind of the combinator it is added to): a run's
+    CPU time moves with the machine's load — under ``--parallel`` most of
+    all — and 10% would fail a test whose model did not change. Anywhere
+    else it is bare: a ``warn`` child passes whatever it scores, so under
+    an ``or`` or a ``k-of-n`` it would pass its parent with nothing else
+    passing. A count stays bare: it only moves when the model does."""
     finite = values[np.isfinite(values)] if values is not None else np.array([])
     count = name in COUNTS or (
         name not in TIMES
@@ -222,6 +225,6 @@ def seed_diagnostic(name: str, values: np.ndarray | None) -> dict:
         "tolerance": 0 if count else 0.1,
         "tolerance_mode": "abs" if count else "rel",
     }
-    if name in TIMES:
+    if name in TIMES and into == "and":
         return {"combinator": "warn", "children": [leaf]}
     return leaf
