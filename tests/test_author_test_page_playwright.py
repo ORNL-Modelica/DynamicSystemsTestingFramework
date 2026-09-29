@@ -22,6 +22,7 @@ import math
 import os
 import re
 import shutil
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -2455,8 +2456,9 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
             _pushed_right(page, 2)
             _shot(page, tmp_path, f"cards-900-{drawer}")
 
-        # A title with no place to break: it breaks inside itself rather
-        # than scrolling the page sideways (1477 px without that).
+        # A title with no place to break: it is cut (a variable label, cut
+        # in its middle) rather than scrolling the page sideways (1477 px
+        # without that).
         title = page.locator(TITLES).first
         kept = title.text_content()
         title.evaluate("(e, text) => { e.textContent = text; }", "Q" + "x" * 149)
@@ -3013,3 +3015,93 @@ def test_the_tests_drawer_fits_long_ids_at_900_px(tmp_path, playwright_browser, 
             assert shown[0] != shown[1], shown
         page.mouse.move(600, 5)
         _shot(page, tmp_path, f"tests-drawer-900-{names.lower()}")
+
+
+# -- Q20: variable labels cut in the middle ------------------------------------
+
+#: A BranchingDynamicPipes-shaped UnitTests expression, x's here.
+CAT3 = "cat(1, pipe2.mediums.T, pipe2.mediums.p)[3]"
+
+#: One `.dstf-mid` element's cut: whether its head overflows and how, the
+#: head's characters shown whole (by range rects, as `NAME_CUTS` reads the
+#: Tests drawer), whether the tail shows whole inside the element and the
+#: open drawer's panel, its title and its innerText.
+MID_CUT = """(e) => {
+  const head = e.querySelector('.dstf-mid-head');
+  const tail = e.querySelector('.dstf-mid-tail');
+  const box = head.getBoundingClientRect(), outer = e.getBoundingClientRect();
+  const node = document.createTreeWalker(head, NodeFilter.SHOW_TEXT).nextNode();
+  const shown = [];
+  for (let i = 0; node && i < node.textContent.length; i++) {
+    const r = document.createRange();
+    r.setStart(node, i);
+    r.setEnd(node, i + 1);
+    const c = r.getBoundingClientRect();
+    if (c.width > 0 && c.left >= box.left - 0.5 && c.right <= box.right + 0.5)
+      shown.push(i);
+  }
+  const t = tail.getBoundingClientRect();
+  const panel = e.closest('.dstf-drawer-panel');
+  const edge = panel ? panel.getBoundingClientRect().right : window.innerWidth;
+  return {
+    cut: head.scrollWidth > head.clientWidth,
+    overflow: getComputedStyle(head).textOverflow,
+    head: node ? node.textContent : '',
+    shown,
+    tail: tail.textContent,
+    tailWhole: t.width > 0 && t.left >= box.right - 0.5
+      && t.right <= outer.right + 0.5 && t.right <= edge + 0.5,
+    title: e.getAttribute('title'),
+    inner: e.innerText,
+  };
+}"""
+
+
+def test_a_variable_label_is_cut_in_the_middle_at_900_px(tmp_path, playwright_browser):
+    """Q20 in Chromium: x reads a BranchingDynamicPipes expression, and in
+    the 320 px Variables drawer its row is cut in the MIDDLE — the head's
+    first characters, an ellipsis, the tail `[3]` whole — with the whole
+    label as its title; its innerText and a copied selection are the whole
+    label (two inline-blocks, never a flex pair: HIGH 6). The card's title
+    and the criteria row have the room: not cut."""
+    with _served(tmp_path, playwright_browser, hooks=True) as page:
+        base = page.url.split("test/")[0]
+        query = urllib.parse.urlencode({"name": "x", "expression": CAT3})
+        with urllib.request.urlopen(f"{base}__expression?{query}") as r:
+            assert json.loads(r.read()) == {"stamped": 1}
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _open_vars(page)
+        row = _var_row(page, CAT3)
+        expect(row).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        _no_sideways_scroll(page)
+        text = row.locator(".dstf-mid")
+        cut = text.evaluate(MID_CUT)
+        _shot(page, tmp_path, "mid-cut-900")
+        assert cut["cut"] and cut["overflow"] == "ellipsis", cut
+        head = "cat(1, pipe2.mediums.T, pipe2.mediums.p)"
+        assert cut["head"] == head and cut["tail"] == "[3]", cut
+        # the head's start, in order, and not all of it; the tail whole
+        assert cut["shown"] == list(range(len(cut["shown"]))), cut
+        assert 0 < len(cut["shown"]) < len(head), cut
+        assert cut["tailWhole"], cut
+        assert cut["title"] == f"{CAT3} (x)", cut
+        assert cut["inner"] == CAT3, cut
+        # a copy of the row's text is the whole label
+        page.context.grant_permissions(
+            ["clipboard-read", "clipboard-write"], origin=base.rstrip("/")
+        )
+        text.evaluate(
+            "(e) => { const r = document.createRange(); r.selectNodeContents(e);"
+            " const s = getSelection(); s.removeAllRanges(); s.addRange(r); }"
+        )
+        page.keyboard.press("Control+C")
+        assert page.evaluate("() => navigator.clipboard.readText()") == CAT3
+        # the card's title and x's criteria rows are not cut at this width
+        title = page.locator(".dstf-plot").first.locator(".dstf-card-title .dstf-mid")
+        assert not title.first.evaluate(MID_CUT)["cut"]
+        names = page.locator(".dstf-plot").first.locator(".dstf-crit-name")
+        expect(names.first).to_contain_text(CAT3)
+        for i in range(names.count()):
+            assert not names.nth(i).evaluate(MID_CUT)["cut"], i

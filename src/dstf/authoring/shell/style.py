@@ -95,13 +95,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* A card's header row wraps (3c's gate over a real library: at 900 px
    beside a drawer, a long title, its pills and the toolbar in one row
    that neither wrapped nor shrank scrolled the page sideways). The title
-   and its pills take what is left and wrap inside it, a long name at any
-   character; the toolbar wraps as one unit, pushed to the right. No
+   and its pills take what is left and wrap inside it, a long name cut in
+   its middle (`.dstf-mid`); the toolbar wraps as one unit, pushed to the
+   right. No
    `no-wrap` on the row: kept to one line, the title shrank instead (to
    three and four lines at 900 px beside a drawer). */
 .dstf-card-head { row-gap: 4px; }
-.dstf-card-title { flex: 1 1 auto; }
-.dstf-card-title > .text-subtitle2 { overflow-wrap: anywhere; }
+/* `min-width: 0`: a title cut in its middle is one unbreakable line, and
+   the row's automatic minimum — that whole line — pushed the page sideways
+   (1477 px on a 150-character title). */
+.dstf-card-title { flex: 1 1 auto; min-width: 0; }
 .dstf-card-tools { flex: none; margin-left: auto; }
 .dstf-plot-slot { min-height: 320px; --toolbar-gutter: 34px; }
 /* The plot's vertical toolbar stands in a gutter of its own, right of the
@@ -128,6 +131,27 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    card is ~540 px at 900 px, and it broke inside itself ("tube" over
    "· x"). The readout beside it may wrap. */
 .dstf-crit-name { white-space: nowrap; }
+/* A variable label cut in the MIDDLE (D140, Q20; `widgets.MiddleCut`): the
+   head ellipsized, the tail (`[3]`, the element) whole. Two inline-blocks
+   in an inline-block — never a flex pair — so innerText and a copy read the
+   whole label; the head is capped at the element's width less the tail's
+   (`--tail`, its length in ch), and the tail is at least that wide: in a
+   proportional font `[3]` is narrower than 3ch, and a head capped by more
+   than the tail took was cut with room to spare. In a flex row the element
+   shrinks: `overflow: hidden` makes its minimum width 0. */
+.dstf-mid {
+  display: inline-block; max-width: 100%; overflow: hidden;
+  white-space: nowrap; vertical-align: bottom;
+}
+.dstf-mid-head {
+  display: inline-block; max-width: calc(100% - var(--tail, 0ch));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+.dstf-mid-tail {
+  display: inline-block; min-width: var(--tail, 0ch); white-space: nowrap;
+  vertical-align: bottom;
+}
 /* A row's breadcrumb — its ancestors' kinds, `and › k-of-n ›` — leads it,
    muted and on one line: a plot's rows are its variable's leaves from
    anywhere in the tree, and the crumb says where each sits. */

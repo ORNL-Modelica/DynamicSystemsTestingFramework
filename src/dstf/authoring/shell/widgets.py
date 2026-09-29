@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from nicegui import ui
+from nicegui.elements.mixins.text_element import TextElement
 
 
 class Action:
@@ -108,3 +109,58 @@ class Pill:
         self.status = status
         self.label.classes(add=f"dstf-pill-{status}")
         self.label.set_text(text if text is not None else status)
+
+
+#: How much of a label with no index the tail keeps (Q20).
+TAIL_CHARS = 12
+
+
+def middle_split(text: str) -> tuple[str, str]:
+    """``(head, tail)``: the tail is the text from the last ``[`` — the
+    index says which element — or its last `TAIL_CHARS` characters when it
+    has none (D140, Q20)."""
+    at = text.rfind("[")
+    if at == -1:
+        at = max(0, len(text) - TAIL_CHARS)
+    return text[:at], text[at:]
+
+
+class _Part(TextElement):
+    """A span of text: not a `ui.label`, whose `div` would break the line."""
+
+    def __init__(self, cls: str) -> None:
+        super().__init__(tag="span", text="")
+        self.classes(cls)
+
+
+class MiddleCut(ui.element):
+    """A variable label cut in the MIDDLE (D140, Q20): the head — what the
+    variable is — ellipsized, the tail — which element — whole. Both are
+    inline-blocks in an inline-block (never a flex pair: HIGH 6 of the
+    plan's review), the head's width capped at the element's less the
+    tail's ``--tail`` (its length in ``ch``), so the element's innerText,
+    a copy of it and its accessible name are the whole label; its title is
+    too. ``text`` / ``set_text`` as a label's, so a reader of ``.text`` is
+    unchanged. Model ids keep their start cut (the Tests drawer)."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__("span")
+        self.classes("dstf-mid")
+        with self:
+            self.head = _Part("dstf-mid-head")
+            self.tail = _Part("dstf-mid-tail")
+        self.text = ""
+        self.set_text(text)
+
+    def set_text(self, text: str) -> None:
+        # A repaint of the text it has sends nothing, as a label's does.
+        if text == self.text and "title" in self.props:
+            return
+        self.text = text
+        head, tail = middle_split(text)
+        self.head.set_text(head)
+        self.tail.set_text(tail)
+        self.style(f"--tail: {len(tail)}ch")
+        # On the props dict: a label can hold a `"`.
+        self.props["title"] = text
+        self.update()

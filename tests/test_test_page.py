@@ -27,6 +27,7 @@ from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
+from dstf.authoring.shell.widgets import MiddleCut, middle_split  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.authoring.tree_text import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
@@ -5216,6 +5217,9 @@ def _labels_in(element) -> list[str]:
     out: list[str] = []
     for slot in element.slots.values():
         for child in slot.children:
+            if isinstance(child, MiddleCut):
+                out.append(child.text)  # one label, cut in two spans
+                continue
             if isinstance(child, ui.label):
                 out.append(child.text)
             out.extend(_labels_in(child))
@@ -5811,7 +5815,7 @@ class TestVariablesDrawer:
             titles = {
                 e.text: e.props.get("title")
                 for e in _one(user, "drawer:variables").descendants()
-                if isinstance(e, ui.label) and "dstf-var-text" in e.classes
+                if isinstance(e, MiddleCut) and "dstf-var-text" in e.classes
             }
             assert titles == {"a.Q": f"a.Q ({UT1})", UT2: UT2}
 
@@ -6908,6 +6912,60 @@ def _var_rows(user) -> list[list[str]]:
     return [
         _labels_in(_one(user, m)) for m in _marks(drawer) if m.startswith("var-row:")
     ]
+
+
+#: A BranchingDynamicPipes-shaped UnitTests expression: its head says what
+#: it is, its tail which element (Q20).
+CAT3 = "cat(1, pipe2.mediums.T, pipe2.mediums.p)[3]"
+
+
+def test_a_label_splits_at_its_last_index_or_twelve_from_its_end():
+    assert middle_split(CAT3) == ("cat(1, pipe2.mediums.T, pipe2.mediums.p)", "[3]")
+    assert middle_split("pipe.medium[2].T[10]") == ("pipe.medium[2].T", "[10]")
+    assert middle_split("condenser.heatTransfer.Q_flow_total") == (
+        "condenser.heatTransfer.",
+        "Q_flow_total",
+    )
+    assert middle_split("x") == ("", "x")
+
+
+async def test_variable_labels_are_cut_in_the_middle_the_switcher_is_not(
+    drawer_shell,
+):
+    """Q20: a card's title, a criteria row's name and a Variables-drawer
+    row read a variable through a `MiddleCut` — the head, the tail from the
+    last `[`, the tail's width as `--tail`, the whole text as its title and
+    as its `.text`. The Focus switcher's options stay plain text (C4)."""
+    from test_session import with_expressions
+
+    shell = drawer_shell
+    with_expressions(shell.session, A, {"x": CAT3})
+    shell.session._score(A)
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user)
+        title = _one(user, "plot-title:0")
+        assert isinstance(title, MiddleCut)
+        assert (title.text, title.props["title"]) == (CAT3, CAT3)
+        assert (title.head.text, title.tail.text) == (
+            "cat(1, pipe2.mediums.T, pipe2.mediums.p)",
+            "[3]",
+        )
+        assert title.style["--tail"] == "3ch"
+        (row,) = page.cards[0].rows.values()
+        assert isinstance(row.name, MiddleCut)
+        assert (row.name.text, row.name.tail.text) == (f"nrmse · {CAT3}", "[3]")
+        (text,) = [
+            e
+            for e in _one(user, var_marker("var-row", ROW_X)).descendants()
+            if isinstance(e, MiddleCut)
+        ]
+        assert "dstf-var-text" in text.classes
+        assert (text.text, text.tail.text) == (CAT3, "[3]")
+        # the drawer's title says the muted name too, as it did
+        assert text.props["title"] == f"{CAT3} (x)"
+        with page.client:
+            page.focus(0)
+        assert list(_one(user, "focus-switch").options.values())[0] == CAT3
 
 
 class TestVariablesDrawerControls:

@@ -37,6 +37,7 @@ from ..layout import add_context, new_watch, remove_context
 from ..needle import matcher
 from ..variable_rows import VarGroup, VarRow, cap, variable_groups
 from .drawer_controls import filter_box, menu_button
+from .widgets import MiddleCut
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -440,7 +441,7 @@ class VariablesDrawer:
             # reading "a.Q" said nothing of which was which.
             names = self.state.vars_names
             shown = row.file_text if names == "file" else row.text
-            text = ui.label(shown).classes("dstf-var-text dstf-mono text-xs")
+            text = MiddleCut(shown).classes("dstf-var-text dstf-mono text-xs")
             text.props["title"] = said
             # A family has no one name for the scope test: `alike` is what
             # says it reads as another drawn row does.

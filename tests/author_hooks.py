@@ -27,6 +27,22 @@ async def _stage(model: str = "FakeLib.A") -> dict:
     return {"pending": len(session.spec.pending)}
 
 
+@app.get("/__expression")
+async def _expression(name: str, expression: str, model: str = "FakeLib.A") -> dict:
+    """Stamp ``expression`` on ``name`` of ``model``'s loaded result and
+    rescore (`test_session.with_expressions`: FakeLib's Python backend
+    carries no expression; only a Modelica UnitTests component writes
+    one). The page shows it on its next load."""
+    session = _shell().session
+    hit = 0
+    for var in session.project.results[model].variables:
+        if var.name == name:
+            var.expression = expression
+            hit += 1
+    session._score(model)
+    return {"stamped": hit}
+
+
 @app.get("/__touch")
 async def _touch() -> list[str]:
     """`.classes(add=…)` on every live Suite grid, Python-side."""

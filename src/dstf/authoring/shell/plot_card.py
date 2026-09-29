@@ -44,7 +44,7 @@ from ..tree_text import (
 from .actions import InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status
-from .widgets import Pill
+from .widgets import MiddleCut, Pill
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -215,7 +215,7 @@ class CriterionRow:
                     f"crumb:{index}:{path}"
                 )
             self.pill = Pill(leaf_status(leaf), f"criterion-pill:{index}:{path}")
-            self.name = ui.label().classes(
+            self.name = MiddleCut().classes(
                 "dstf-crit-name text-body2 text-weight-medium"
             )
             self.readout = ui.label().classes("dstf-mono text-xs")
@@ -399,7 +399,7 @@ class PlotCard:
                 # context is listed under it.
                 series = self.subject
                 with ui.row().classes("dstf-card-title items-center gap-3"):
-                    ui.label(folded(series, labels, self.texts)).classes(
+                    MiddleCut(folded(series, labels, self.texts)).classes(
                         "text-subtitle2"
                     ).mark(f"plot-title:{index}")
                     if any(labels[n] != n for n in series):
