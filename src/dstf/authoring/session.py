@@ -759,18 +759,22 @@ class Session:
             reads.names_read = True
         return reads.names or ()
 
-    def _unread_in_file(self, models: Iterable[str]) -> set[str]:
-        """The ``models`` whose criteria name a variable the loaded result
-        lacks and its result FILE holds — a backend that records every
-        variable (Dymola, the JSON driver) has it already, and a re-read
-        with the merged TestModel extracts it (the owner's O2). A name the
-        file lacks (OpenModelica, FMPy, a typo) only a rerun records; the
-        strip asks for that (`situation.new_variables`)."""
+    def _unread_in_file(
+        self, models: Iterable[str], tests: Sequence[TestModel]
+    ) -> set[str]:
+        """The ``models`` whose criteria — as ``tests`` merge them — name a
+        variable the loaded result lacks and its result FILE holds — a
+        backend that records every variable (Dymola, the JSON driver) has
+        it already, and a re-read with the merged TestModel extracts it
+        (the owner's O2). A name the file lacks (OpenModelica, FMPy, a
+        typo) only a rerun records; the strip asks for that
+        (`situation.new_variables`)."""
         project = self._require_project()
+        by_id = {t.model_id: t for t in tests}
         out: set[str] = set()
         for model_id in models:
             missing = unrecorded_variables(
-                project.test(model_id),
+                by_id.get(model_id),
                 project.results.get(model_id),
                 project.config.diagnostic_variables,
             )
@@ -1082,19 +1086,22 @@ class Session:
         tests = self._merge(
             project.config, project.scanned, effective
         )  # ConfigError on a bad tree
-        self.spec = candidate
-        project.tests = tests
         # A criterion on a variable the result file holds but the last read
         # did not extract: read again with the merged TestModel, which now
-        # tracks it, so it scores at once — no rerun (the owner's O2).
-        # `_reread_results` directly, not `_rebuild_tests(reread=True)`: the
+        # tracks it, so it scores at once — no rerun (the owner's O2). Read
+        # BEFORE anything is replaced: a read that raises (the disk went
+        # away) leaves the Session as it was, as the docstring promises.
+        # Read directly, not through `_rebuild_tests(reread=True)`: the
         # effective spec is merged just above (on TRANSFORM a merge is most
         # of a stage's cost; that would do it twice), and it would re-read
         # AND rescore only the models it is handed — the other staged models
         # must be rescored whether or not theirs is re-read.
-        reread = self._unread_in_file(models)
+        reread = self._unread_in_file(models, tests)
+        fresh = self._read_again(reread, tests) if reread else {}
+        self.spec = candidate
+        project.tests = tests
         if reread:
-            self._reread_results(reread)
+            self._keep_read(reread, fresh)
         self._emit("spec", models=models)
         self._score_all(models)
 
@@ -1330,19 +1337,18 @@ class Session:
 
     def _reread_results(self, models: set[str]) -> None:
         """Re-read ``models`` from the last run with their CURRENT
-        TestModels, dropping what an earlier read stored for them. Only
-        they are stored: ``read_results`` reports every manifest entry, and
-        the others are not being re-read. A model with no manifest entry
-        ends with no result and is scored NO_REF / SIM_FAIL by the caller,
-        as after a full reload.
+        TestModels (`_read_again`), and keep what was read (`_keep_read`)."""
+        self._keep_read(models, self._read_again(models, self._require_project().tests))
 
-        Atomic: the read goes into a dict of its own, swapped in only once
-        it returns — a read that raises leaves every result and read as it
-        was. The result FILE did not change, so its listing
-        (`_ModelReads.names`) is kept, and the next `variable_names` does
-        not list it again; what came from the old result goes."""
+    def _read_again(
+        self, models: set[str], tests: Sequence[TestModel]
+    ) -> dict[str, TestResult]:
+        """``models`` read from the last run with their TestModels in
+        ``tests``; nothing is stored. Only they are kept: ``read_results``
+        reports every manifest entry, and the others are not being re-read.
+        A read that raises leaves every result and read as it was."""
         project = self._require_project()
-        to_read = [t for t in project.tests if t.model_id in models]
+        to_read = [t for t in tests if t.model_id in models]
         fresh: dict[str, TestResult] = {}
 
         def on_result(model_id: str, result: TestResult) -> None:
@@ -1350,6 +1356,16 @@ class Session:
                 fresh[model_id] = result
 
         project.backend.read_last_results(to_read, on_result=on_result)
+        return fresh
+
+    def _keep_read(self, models: set[str], fresh: dict[str, TestResult]) -> None:
+        """``fresh`` (`_read_again`) in place of what an earlier read stored
+        for ``models``. A model it has no result for (no manifest entry)
+        ends with none and is scored NO_REF / SIM_FAIL by the caller, as
+        after a full reload. The result FILE did not change, so its listing
+        (`_ModelReads.names`) is kept, and the next `variable_names` does
+        not list it again; what came from the old result goes."""
+        project = self._require_project()
         for model_id in models:
             if model_id in fresh:
                 project.results[model_id] = fresh[model_id]

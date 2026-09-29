@@ -203,17 +203,25 @@ def seed_diagnostic(name: str, values: np.ndarray | None) -> dict:
     ``0.1 rel`` otherwise. A diagnostic of neither known kind is a count
     when every finite sample is a whole number. ``variable`` is the
     diagnostic's name: parsed without one, the leaf's variable becomes the
-    quantity text, and its row reads ``scalar · CPUtime.final``."""
+    quantity text, and its row reads ``scalar · CPUtime.final``.
+
+    A time (`TIMES`) is seeded inside a ``warn``: a run's CPU time moves
+    with the machine's load — under ``--parallel`` most of all — and 10%
+    would fail a test whose model did not change. A count stays bare: it
+    only moves when the model does."""
     finite = values[np.isfinite(values)] if values is not None else np.array([])
     count = name in COUNTS or (
         name not in TIMES
         and finite.size > 0
         and bool(np.all(finite == np.round(finite)))
     )
-    return {
+    leaf = {
         "metric": "scalar",
         "variable": name,
         "quantity": f"{name}.final",
         "tolerance": 0 if count else 0.1,
         "tolerance_mode": "abs" if count else "rel",
     }
+    if name in TIMES:
+        return {"combinator": "warn", "children": [leaf]}
+    return leaf

@@ -52,7 +52,9 @@ def picker_rows(
     empty section is absent. ``names`` is every name of the result file
     (`Session.variable_names`); ``diagnostics`` what the run RECORDED as
     one — each is listed there and only there, whether or not the file
-    listing names it too (a Dymola file holds `CPUtime` as a variable).
+    listing names it too (a Dymola file holds `CPUtime` as a variable),
+    unless the plot draws it: a diagnostic on the plot is listed under On
+    this plot, as every series of the plot is.
     ``keep`` is `needle.matcher`'s closure: its ``TimeoutError`` reaches
     the caller, which says it."""
     first = list(dict.fromkeys(on_plot))

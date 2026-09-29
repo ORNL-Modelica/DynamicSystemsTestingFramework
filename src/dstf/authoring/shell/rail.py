@@ -9,6 +9,7 @@ it open."""
 
 from __future__ import annotations
 
+import json
 from functools import partial
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -45,37 +46,83 @@ MIN_PANEL, MAX_FRACTION, MIN_PLOTS = 240, 0.6, 480
 
 def max_panel(window: float) -> float:
     """The widest a dragged panel may be in a ``window`` px wide window —
-    `_DRAG`'s ``max``. The floor wins when a narrow window leaves less."""
+    `_WIDTH`'s ``max``. The floor wins when a narrow window leaves less."""
     return min(MAX_FRACTION * window, window - RAIL - MIN_PLOTS)
 
 
-#: The resize handle's drag (K5): the drawer's `width` prop and the panel's
-#: width follow the pointer in the BROWSER, on NiceGUI's own element store
-#: (`mounted_app.elements`, reactive, so Quasar re-lays the page out and
-#: Plotly's observer reflows each plot); the release sends the width to
-#: Python once, which sets the same values and keeps them in `TabState`.
-#: `mounted_app.elements[id].props` is NiceGUI 3.16's INTERNAL client-side
-#: store, not an API: an upgrade that renames it leaves the drag moving
-#: the panel only, the drawer catching up on release (the Playwright drag
-#: test fails first). The panel is the VISIBLE one (`offsetParent`): both
-#: drawers' panels are in the row, one hidden (B10).
+#: The drawer's width in the BROWSER (K5), installed by `Rail.__init__` as
+#: `window.__dstfDrawer`: the visible panel (`offsetParent`: both drawers'
+#: panels are in the row, one hidden, B10), the clamp to `MIN_PANEL` and
+#: `max_panel` — only the browser knows the window's width — and `apply`,
+#: which sets the panel's width and the drawer's `width` prop on NiceGUI's
+#: element store (`mounted_app.elements`, reactive, so Quasar re-lays the
+#: page out and Plotly's observer reflows each plot) while the pointer or a
+#: key moves it. `mounted_app.elements[id].props` is NiceGUI 3.16's
+#: INTERNAL client-side store, not an API: the lookup is guarded (`store`),
+#: so on a NiceGUI that renames it the panel still moves and the release
+#: still sends the width — only the drawer lags the panel until the
+#: server's update (the Playwright test reading the drawer's width
+#: mid-drag fails first). `fit` clamps a width the window no longer holds
+#: — the tab's width from a wider window — on load (the width the server
+#: has, sent at once) and on a window `resize` (sent once, 150 ms after
+#: the last).
+_WIDTH = """(() => {
+  const RAIL = __RAIL__, MIN = __MIN__;
+  const panel = () => [...document.querySelectorAll('.dstf-drawer-panel')]
+    .find((p) => p.offsetParent !== null);
+  const max = () => Math.min(__MAX__ * window.innerWidth, window.innerWidth - RAIL - __PLOTS__);
+  const clamp = (w) => Math.round(Math.max(MIN, Math.min(w, max())));
+  const width = (p) => Math.round(p.getBoundingClientRect().width);
+  // `mounted_app` is a top-level `let` of nicegui.js — a global binding,
+  // no property of `window` — hence the try.
+  const store = () => {
+    try { return mounted_app?.elements; } catch { return undefined; }
+  };
+  const bounds = () => document.getElementById('__GRIP__')
+    ?.setAttribute('aria-valuemax', Math.round(Math.max(MIN, max())));
+  const apply = (p, w) => {
+    p.style.width = w + 'px';
+    const drawer = store()?.[__DRAWER__];
+    if (drawer) drawer.props.width = RAIL + w;
+    document.getElementById('__GRIP__')?.setAttribute('aria-valuenow', w);
+    bounds();
+  };
+  const send = (w) => emitEvent('dstf_drawer_width', w, window.innerWidth);
+  let timer = null;
+  const fit = (known) => {
+    const p = panel();
+    const w = known ?? (p ? width(p) : null);
+    bounds();
+    if (w === null) return;
+    const c = clamp(w);
+    if (c === w) return;
+    if (p) apply(p, c);
+    clearTimeout(timer);
+    if (known !== undefined) send(c);
+    else timer = setTimeout(() => send(c), 150);
+  };
+  window.__dstfDrawer = {panel, max, clamp, width, apply, fit};
+  if (!window.__dstfDrawerResize) {
+    window.__dstfDrawerResize = true;
+    window.addEventListener('resize', () => window.__dstfDrawer?.fit());
+  }
+})();"""
+
+#: The grip's drag: the panel follows the pointer (`apply`), and the
+#: release sends the width to Python once, which sets the same values and
+#: keeps them in `TabState`.
 _DRAG = """(e) => {
   if (e.button !== 0) return;
+  const d = window.__dstfDrawer, panel = d?.panel();
+  if (!panel) return;
   e.preventDefault();
   const handle = e.currentTarget;
-  const panel = [...handle.parentElement.querySelectorAll('.dstf-drawer-panel')]
-    .find((p) => p.offsetParent !== null);
-  if (!panel) return;
-  const drawer = mounted_app.elements['__DRAWER__'];
   const x0 = e.clientX, w0 = panel.getBoundingClientRect().width;
-  const max = () => Math.min(__MAX__ * window.innerWidth, window.innerWidth - __RAIL__ - __PLOTS__);
-  const clamp = (w) => Math.round(Math.max(__MIN__, Math.min(w, max())));
   let w = w0;
   handle.setPointerCapture(e.pointerId);
   const move = (m) => {
-    w = clamp(w0 + m.clientX - x0);
-    panel.style.width = w + 'px';
-    drawer.props.width = __RAIL__ + w;
+    w = d.clamp(w0 + m.clientX - x0);
+    d.apply(panel, w);
   };
   const up = () => {
     handle.removeEventListener('pointermove', move);
@@ -84,6 +131,27 @@ _DRAG = """(e) => {
   };
   handle.addEventListener('pointermove', move);
   handle.addEventListener('pointerup', up);
+}"""
+
+#: The grip from the keyboard (a focusable `separator`, WAI-ARIA's window
+#: splitter): ←/→ 16 px, with Shift 64, Home the narrowest, End the
+#: widest; the panel follows each key, and the key's release sends the
+#: width once — a held → sends one width, not one per repeat.
+_STEP, _BIG_STEP = 16, 64
+_GRIP_KEYS = ("ArrowLeft", "ArrowRight", "Home", "End")
+_KEYDOWN = """(e) => {
+  const d = window.__dstfDrawer, panel = d?.panel();
+  if (!panel) return;
+  const w = d.width(panel), step = e.shiftKey ? __BIG__ : __STEP__;
+  const to = {ArrowLeft: w - step, ArrowRight: w + step, Home: __MIN__, End: d.max()}[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  d.apply(panel, d.clamp(to));
+}"""
+_KEYUP = """(e) => {
+  if (!__KEYS__.includes(e.key)) return;
+  const d = window.__dstfDrawer, panel = d?.panel();
+  if (panel) emit(d.width(panel), window.innerWidth);
 }"""
 
 
@@ -408,17 +476,38 @@ class Rail:
                 .on(
                     "pointerdown",
                     lambda e: self.resize(*e.args),
-                    js_handler=_DRAG.replace("__DRAWER__", str(self.drawer.id))
-                    .replace("__MIN__", str(MIN_PANEL))
-                    .replace("__MAX__", str(MAX_FRACTION))
-                    .replace("__PLOTS__", str(MIN_PLOTS))
-                    .replace("__RAIL__", str(RAIL)),
+                    js_handler=_DRAG,
+                )
+                .on(
+                    "keydown",
+                    js_handler=_KEYDOWN.replace("__MIN__", str(MIN_PANEL))
+                    .replace("__STEP__", str(_STEP))
+                    .replace("__BIG__", str(_BIG_STEP)),
+                )
+                .on(
+                    "keyup",
+                    lambda e: self.resize(*e.args),
+                    js_handler=_KEYUP.replace("__KEYS__", json.dumps(_GRIP_KEYS)),
                 )
             )
-            self.grip.props["role"] = "separator"
-            self.grip.props["aria-orientation"] = "vertical"
-            self.grip.props["aria-label"] = "Resize the drawer"
+            # A window splitter (WAI-ARIA): focusable, its value the panel's
+            # width — the most is the browser's (`_WIDTH`'s `bounds`).
+            grip = self.grip.props
+            grip["role"] = "separator"
+            grip["aria-orientation"] = "vertical"
+            grip["aria-label"] = "Resize the drawer"
+            grip["tabindex"] = "0"
+            grip["aria-valuemin"] = str(MIN_PANEL)
             self.grip.set_visibility(False)
+        ui.on("dstf_drawer_width", lambda e: self.resize(*e.args))
+        ui.run_javascript(
+            _WIDTH.replace("__DRAWER__", str(self.drawer.id))
+            .replace("__GRIP__", self.grip.html_id)
+            .replace("__MIN__", str(MIN_PANEL))
+            .replace("__MAX__", str(MAX_FRACTION))
+            .replace("__PLOTS__", str(MIN_PLOTS))
+            .replace("__RAIL__", str(RAIL))
+        )
 
     def open(self, kind: str | None) -> None:
         """Show ``kind``'s panel and hide the other; None closes both. The
@@ -450,7 +539,13 @@ class Rail:
         self.drawer.props(f"width={RAIL + width if kind else RAIL}")
         for panel in self.panels.values():
             panel.style(f"width: {width}px")
+        self.grip.props["aria-valuenow"] = str(width)
         self.grip.set_visibility(kind is not None)
+        self.grip.update()
+        if kind is not None:
+            # The tab's width may be one a wider window held: the browser
+            # clamps it to this one's and sends it back (`fit`).
+            self.page.client.run_javascript(f"window.__dstfDrawer?.fit({width})")
 
     def resize(self, width: Any, window: Any) -> None:
         """A drag's release (`_DRAG`): the width the browser clamped and the

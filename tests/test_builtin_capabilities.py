@@ -2403,19 +2403,67 @@ async def test_the_chosen_line_names_a_choice_the_filter_hides(tmp_path):
         assert picker.chosen.text == "Chosen: pipe.T[3]"
 
 
+def _press(picker, key: str, needle: str = "") -> None:
+    """A key in the filter box, as `_KEYS` sends it: with the box's text."""
+    picker._key(SimpleNamespace(args={"key": key, "needle": needle}))
+
+
 async def test_the_pickers_keys_move_and_choose(tmp_path):
     session = _wide_session(tmp_path, 3)
     sel = Selection(tests=frozenset({A}), variable="y")
     async with host(session, EditTree(), sel) as (user, _errors, _figure):
         picker = await _open_plus(user, "y")
         assert picker.cursor == 0  # the chosen row, y
-        picker._key(SimpleNamespace(args="ArrowDown"))
-        picker._key(SimpleNamespace(args="ArrowDown"))
-        picker._key(SimpleNamespace(args="Enter"))
+        _press(picker, "ArrowDown")
+        _press(picker, "ArrowDown")
+        _press(picker, "Enter")
         assert picker.value == "v0"
-        picker._key(SimpleNamespace(args="ArrowUp"))
-        picker._key(SimpleNamespace(args="Enter"))
+        _press(picker, "ArrowUp")
+        _press(picker, "Enter")
         assert picker.value == "x"
+
+
+async def test_a_key_typed_before_the_filter_acts_on_the_list_as_typed(tmp_path):
+    """The filter reaches the server 250 ms after the last keystroke; a key
+    carries the box's text, so ↓ Enter typed inside that act on the list
+    the user sees — and the filter arriving after draws nothing again,
+    leaving the cursor where the key put it."""
+    session = _wide_session(tmp_path, 3)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        _press(picker, "ArrowDown", "v")
+        assert list(picker.options) == ["v0", "v1", "v2"]
+        _press(picker, "ArrowDown", "v")
+        _press(picker, "Enter", "v")
+        assert picker.value == "v1"
+        picker._filter("v", False, False)  # the debounced change, late
+        assert picker.cursor == 1 and picker.value == "v1"
+        assert "dstf-pick-cursor" in picker._drawn["v1"].classes
+
+
+async def test_the_picker_is_a_combobox_over_a_listbox(tmp_path):
+    """WAI-ARIA: the box a combobox controlling the list, the cursor's row
+    its active descendant; each option named by its text and, when that
+    differs, the name — never the middle cut's two parts."""
+    from test_session import with_expressions
+
+    session = _wide_session(tmp_path, 1)
+    with_expressions(session, A, {"x": "pipe.T[3]"})
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        box = picker.box.needle.props
+        assert picker.list.props["role"] == "listbox"
+        assert box["role"] == "combobox"
+        assert box["aria-controls"] == picker.list.html_id
+        assert "aria-activedescendant" not in box
+        _press(picker, "ArrowDown")
+        assert box["aria-activedescendant"] == picker._drawn["x"].html_id
+        labels = {n: e.props["aria-label"] for n, e in picker._drawn.items()}
+        assert labels == {"y": "y", "x": "pipe.T[3] (x)", "v0": "v0"}
+        picker._filter("v0", False, False)
+        assert "aria-activedescendant" not in box  # its row is gone
 
 
 async def test_a_simulate_only_test_says_nothing_is_scored(tmp_path):
@@ -2446,7 +2494,7 @@ async def test_a_diagnostic_offers_scalar_only_and_seeds_a_quantity_path(tmp_pat
     """Q2 + K1: a diagnostic is one stored number — the Metric select offers
     what takes a ``quantity`` (scalar), and Add writes its final through a
     quantity path, a count exact. Back on an ordinary variable, every metric
-    that scores a time series."""
+    that scores a time series, and the one chosen there before."""
     session = _wide_session(tmp_path, 0)
     _with_diagnostics(session, CPUtime=0.37, EventCounter=4.0)
     sel = Selection(tests=frozenset({A}), variable="y")
@@ -2470,10 +2518,14 @@ async def test_a_diagnostic_offers_scalar_only_and_seeds_a_quantity_path(tmp_pat
         assert errors == {}
         picker = await _open_plus(user, "y")
         met = _metric_select(user)
+        met.set_value("tube")
         user.find(marker="apply-add:y:variable:pick:CPUtime").click()
         assert list(met.options) == ["scalar"]
+        user.find(marker="apply-add:y:variable:pick:EventCounter").click()
+        # back on an ordinary variable, the metric chosen before the
+        # diagnostics, not the list's first
         user.find(marker="apply-add:y:variable:pick:x").click()
-        assert list(met.options) == everything
+        assert list(met.options) == everything and met.value == "tube"
 
 
 async def test_cpu_time_is_seeded_relative(tmp_path):
@@ -2484,8 +2536,10 @@ async def test_cpu_time_is_seeded_relative(tmp_path):
         view, action="add", model_id=A, path=ROOT, variable="CPUtime", metric="scalar"
     )
     (op,) = patch.ops
-    assert op.value["quantity"] == "CPUtime.final"
-    assert (op.value["tolerance"], op.value["tolerance_mode"]) == (0.1, "rel")
+    assert op.value["combinator"] == "warn"  # CPU time moves with the load
+    (leaf,) = op.value["children"]
+    assert leaf["quantity"] == "CPUtime.final"
+    assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel")
 
 
 async def test_a_diagnostic_refuses_a_trajectory_metric(tmp_path):

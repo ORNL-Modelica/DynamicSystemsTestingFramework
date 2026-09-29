@@ -620,6 +620,9 @@ def compare_test(
                     actual_final=float(var_result.values[-1])
                     if len(var_result.values) > 0
                     else float("nan"),
+                    # The tolerance it would have applied: the editor shows
+                    # it as in effect, and the default 0.0 read "0" there.
+                    tolerance_used=tolerance,
                 )
             )
             continue

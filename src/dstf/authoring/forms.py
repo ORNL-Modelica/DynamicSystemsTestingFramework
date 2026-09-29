@@ -114,12 +114,16 @@ def render_form(
             continue
         if spec.name in values:
             form._values[spec.name] = current
-        control = _control(
-            spec, current, lambda v, name=spec.name: _set(form, name, v, on_change)
-        )
         effect = in_effect.get(spec.name) if current is None else None
-        if effect is not None:
-            hint = in_effect_hint(effect)
+        hint = in_effect_hint(effect) if effect is not None else None
+        control = _control(
+            spec,
+            current,
+            lambda v, name=spec.name, hint=hint: _edited(
+                form, name, v, on_change, hint
+            ),
+        )
+        if hint is not None:
             control.props["hint"] = hint
             control.style(
                 f"min-width: {math.ceil(len(hint) * HINT_PX_PER_CHAR) + HINT_PADDING_PX}px"
@@ -139,6 +143,19 @@ def render_form(
 def _set(form: Form, name: str, value: Any, on_change: OnChange) -> None:
     form._values[name] = value
     on_change(form.values())
+
+
+def _edited(
+    form: Form, name: str, value: Any, on_change: OnChange, hint: str | None
+) -> None:
+    """An edit of ``name``: a typed value is the one in effect now, so the
+    hint naming another goes; cleared, the field says it again. The width
+    the hint needed is kept: the row does not reflow as a value is typed."""
+    control = form.controls.get(name)
+    if hint is not None and control is not None:
+        control.props["hint"] = None if value is not None else hint
+        control.update()
+    _set(form, name, value, on_change)
 
 
 def _at_least(lo: float) -> Callable[[Any], bool]:

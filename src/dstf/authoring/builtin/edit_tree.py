@@ -460,12 +460,21 @@ def _add_form(
     labels = s.labels(model_id)
     first = variable or (on_plot or names or [""])[0]
 
+    #: The metric chosen on an ordinary variable while a diagnostic —
+    #: which offers scalar alone — is picked: back on an ordinary one, it is
+    #: chosen again, not the first metric of the list.
+    kept: dict[str, str] = {}
+
     def follow(name: str) -> None:
         """The Metric select offers what can score ``name`` (Q2)."""
         options = _metrics_for(diagnostic=name in diagnostics)
-        met.set_options(
-            options, value=met.value if met.value in options else options[0]
-        )
+        value = met.value
+        if name in diagnostics:
+            if list(met.options) != options:  # leaving an ordinary variable
+                kept["metric"] = met.value
+        else:
+            value = kept.pop("metric", value)
+        met.set_options(options, value=value if value in options else options[0])
 
     var = VariablePicker(
         lambda keep: picker_rows(
@@ -501,7 +510,7 @@ def _add_form(
         ):
             return  # refused: the row stays, with what was chosen
         close()
-        ui_panel.reveal(added)
+        ui_panel.reveal(_first_leaf(s.tree(model_id), added))
 
     project = s.project
     tests = project.tests if project is not None else ()
@@ -527,6 +536,16 @@ def _cancel(ui: Any, close: Callable[[], None], path: str) -> None:
 
 def _parent_of(path: str) -> str | None:
     return path.rsplit("/children/", 1)[0] if "/children/" in path else None
+
+
+def _first_leaf(tree: dict | None, path: str) -> str:
+    """The first leaf at or under ``path``: what an Add reveals. A seed may
+    be a combinator around its leaf — CPU time is added inside a ``warn``
+    (`seed_diagnostic`) — and the editor opens on the criterion."""
+    node = node_or_none(tree, path)
+    while node is not None and node.get("children"):
+        path, node = f"{path}/children/0", node["children"][0]
+    return path
 
 
 def _added_path(tree: dict | None, path: str) -> str:

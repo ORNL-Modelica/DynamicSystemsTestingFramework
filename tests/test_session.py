@@ -3769,6 +3769,32 @@ class TestACriterionOnAFileVariable:
         assert s.project.results[D] is before
         assert s._reads[D] is reads
 
+    def test_a_stage_whose_re_read_raises_leaves_the_session_as_it_was(
+        self, tmp_path, monkeypatch
+    ):
+        """`stage`'s promise — on any error the Session is unchanged — holds
+        across the re-read: it reads before the spec and the tests are
+        replaced, so nothing is pending, the tests and the comparison are
+        the ones before, and no event said otherwise."""
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        spec, tests, comp = s.spec, s.project.tests, s.comparisons[D]
+        events: list[dict] = []
+        for kind in ("spec", "results"):
+            s.on(kind, events.append)
+
+        def boom(tests, **kw):
+            raise OSError("the disk went away")
+
+        monkeypatch.setattr(s.project.backend, "read_last_results", boom)
+        with pytest.raises(OSError, match="went away"):
+            s.stage([self._leaf("w")])
+        assert s.spec is spec and s.spec.pending == []
+        assert s.project.tests is tests
+        assert s.comparisons[D] is comp
+        assert events == []
+
     def test_a_re_read_keeps_the_files_listing(self, tmp_path, monkeypatch):
         """The file did not change: the re-read keeps its listing, and the
         next `variable_names` does not list it again."""

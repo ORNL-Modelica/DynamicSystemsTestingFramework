@@ -27,11 +27,14 @@ from .widgets import MiddleCut
 _SPACE = re.compile(r"\s+")
 
 #: The filter box's keys the list answers, the page's default kept for
-#: every other key (a caret move, a typed character).
+#: every other key (a caret move, a typed character). Each carries the
+#: box's text AS TYPED: the filter reaches the server 250 ms after the last
+#: keystroke (`debounce`), and ↓ Enter typed inside that moved the cursor
+#: on the list before the filter and chose a row the list then hid.
 _KEYS = """(e) => {
   if (['ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) {
     e.preventDefault();
-    emit(e.key);
+    emit({key: e.key, needle: e.target.value || ''});
   }
 }"""
 
@@ -80,6 +83,17 @@ class VariablePicker(ui.column):
                 .classes("dstf-pick-list w-full gap-0")
                 .mark(f"{marker}:pick-list")
             )
+            # A combobox over a listbox (WAI-ARIA): the box keeps the focus
+            # and names the cursor's row as its active descendant.
+            self.list.props["role"] = "listbox"
+            # Not "Variables": a label lookup of the box's "Variable" (the
+            # tests', a screen reader's jump) would find both.
+            self.list.props["aria-label"] = "Matching names"
+            needle = self.box.needle.props
+            needle["role"] = "combobox"
+            needle["aria-controls"] = self.list.html_id
+            needle["aria-expanded"] = "true"
+            needle["aria-autocomplete"] = "list"
             self.cap = ui.label().classes("dstf-why").mark(f"{marker}:pick-cap")
             self.chosen = (
                 ui.label()
@@ -93,13 +107,20 @@ class VariablePicker(ui.column):
     # -- the list ------------------------------------------------------------
 
     def _filter(self, needle: str, regex_on: bool, case: bool) -> None:
-        self._state = {"needle": needle, "regex": regex_on, "case": case}
+        """The box's filter. The same one again — the debounced change after
+        a key already drew its needle (`_key`) — draws nothing: a redraw
+        would take the cursor off the row just moved to."""
+        state = {"needle": needle, "regex": regex_on, "case": case}
+        if state == self._state:
+            return
+        self._state = state
         self._draw()
 
     def _draw(self) -> None:
         st = self._state
         self.list.clear()
         self._drawn, self.shown, self.cursor = {}, [], -1
+        self._active(None)
         try:
             keep = matcher(st["needle"], regex=st["regex"], case=st["case"])
             picked = self._rows_of(keep)
@@ -139,6 +160,11 @@ class VariablePicker(ui.column):
             if row.text != row.name:
                 ui.label(row.name).classes("dstf-varname dstf-var-text")
         element.props["role"] = "option"
+        # Its accessible name is said, not read off the row: the middle
+        # cut's two parts read as "…T_very_long_co mponent_name".
+        element.props["aria-label"] = (
+            row.text if row.text == row.name else f"{row.text} ({row.name})"
+        )
         element.props["aria-selected"] = "true" if row.name == self.value else "false"
         if row.name == self.value:
             element.classes(add="dstf-pick-on")
@@ -183,6 +209,7 @@ class VariablePicker(ui.column):
             old.classes(remove="dstf-pick-cursor")
         self.cursor = to % len(self.shown)
         new = self._cursor_element()
+        self._active(new)
         if new is not None:
             new.classes(add="dstf-pick-cursor")
             self.client.run_javascript(
@@ -190,13 +217,28 @@ class VariablePicker(ui.column):
                 '?.scrollIntoView({block: "nearest"})'
             )
 
+    def _active(self, row: ui.element | None) -> None:
+        """The box's ``aria-activedescendant``: the cursor's row, if any."""
+        props = self.box.needle.props
+        if row is None:
+            if props.pop("aria-activedescendant", None) is not None:
+                self.box.needle.update()
+            return
+        props["aria-activedescendant"] = row.html_id
+        self.box.needle.update()
+
     def _cursor_element(self) -> ui.element | None:
         if 0 <= self.cursor < len(self.shown):
             return self._drawn.get(self.shown[self.cursor].name)
         return None
 
     def _key(self, e: Any) -> None:
-        key = e.args
+        """A key on the list AS THE USER SEES IT: a needle typed since the
+        last filter is drawn first (`_KEYS`)."""
+        key, needle = e.args["key"], e.args["needle"]
+        if needle != self._state["needle"]:
+            self._state = {**self._state, "needle": needle}
+            self._draw()
         if key == "ArrowDown":
             self._move(self.cursor + 1)
         elif key == "ArrowUp":

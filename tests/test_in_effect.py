@@ -103,3 +103,64 @@ def test_a_scalar_with_bounds_and_a_tube_show_no_tolerance(tmp_path):
     bounded, scalar, tube = _leaves(s.tree_view(A))
     assert "in_effect" not in bounded and "in_effect" not in tube
     assert scalar["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
+
+
+def test_a_leaf_that_was_not_scored_never_says_zero_in_effect(tmp_path):
+    """A leaf that returned before it scored — a variable the result lacks,
+    a baseline the test does not have — shows the tolerance it WOULD have
+    applied, never the comparison's 0.0 default."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "nrmse", "variable": "w_not_in_result"},
+            {"metric": "nrmse", "variable": "y", "against": "nope"},
+        ],
+    }
+    s = _session(tmp_path, test_tol=0.01, metrics=tree)
+    _, missing, no_baseline = _leaves(s.tree_view(A))
+    for leaf in (missing, no_baseline):
+        assert leaf["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
+
+
+def test_a_tracked_variable_the_baseline_lacks_on_the_flat_path(tmp_path):
+    """The flat path's no-baseline comparison says the tolerance too."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = ["x", "y", "w"]
+            entry["comparison"] = {"tolerance": 0.01}
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    t = [i / 4 for i in range(5)]
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {
+                    "x": [v * 1.25 for v in t],
+                    "y": [2 * v for v in t],
+                    "w": t,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    s = Session()
+    s.open(cfg, work_dir=work)
+    w = next(leaf for leaf in _leaves(s.tree_view(A)) if leaf["variable"] == "w")
+    assert w["passed"] is False
+    assert w["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
+
+
+def test_the_reports_tree_view_carries_no_values_in_effect(tmp_path):
+    """`in_effect` is the tool's (K3): the report's `build_tree_view`, which
+    names no source, adds none."""
+    from dstf.reporting.context_builder import build_tree_view
+
+    s = _session(tmp_path, test_tol=0.01)
+    comp = s.comparisons[A]
+    view = build_tree_view(list(comp.variables), s.project.test(A), comp.metric_tree)
+    assert all("in_effect" not in leaf for leaf in _leaves(view))

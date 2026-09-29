@@ -303,6 +303,8 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   cursor: col-resize; touch-action: none; z-index: 1;
 }
 .dstf-drawer-handle:hover { background: var(--dstf-selection); }
+/* Focused from the keyboard, the grip is the accent: ←/→ move it (K5). */
+.dstf-drawer-handle:focus-visible { outline: none; background: var(--dstf-accent); }
 /* The Variables drawer's rows (3c): "+ new plot" is there on the hovered
    row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
    reflow as the mouse moves down the list — and on a row with focus in

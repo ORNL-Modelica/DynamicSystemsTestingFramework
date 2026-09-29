@@ -323,6 +323,15 @@ def _evaluate_leaf(
 
     def _leaf(vc: VariableComparison) -> MetricResult:
         vc.expression = expression
+        # The tolerance this leaf applies, on every return: one that fails
+        # before it scores (a variable the result lacks, a baseline the test
+        # does not have) is the one the editor opens on, and the
+        # comparison's 0.0 default read "in effect: 0" there. A tolerance
+        # that is no number is the leaf's own, never shown as in effect.
+        try:
+            vc.tolerance_used = float(leaf.params.get("tolerance", base_tolerance))
+        except (TypeError, ValueError):
+            vc.tolerance_used = float(base_tolerance)
         return leaf_from_variable(vc)
 
     # A metric declares which dataset kinds it can score. Unscorable input
@@ -448,7 +457,6 @@ def _evaluate_leaf(
         return _leaf(_leaf_config_error_comparison(leaf, exc))
     vc.index = index
     vc.name = leaf.variable
-    vc.tolerance_used = tolerance
     if windowed:
         # The window is a leaf property, not a mode's: the evaluator owns it.
         vc.geometry = vc.geometry + (

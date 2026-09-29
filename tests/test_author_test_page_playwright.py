@@ -3253,6 +3253,11 @@ READ_FIELDS = """() => [...document.querySelectorAll(
 })"""
 
 
+def _tolerance_line(fields: list) -> float:
+    """The Tolerance field's input line (`READ_FIELDS`)."""
+    return next(line for label, line, *_ in fields if label == "Tolerance")
+
+
 def test_the_editors_fields_line_up_and_say_the_value_in_effect(
     tmp_path, playwright_browser
 ):
@@ -3280,6 +3285,17 @@ def test_the_editors_fields_line_up_and_say_the_value_in_effect(
                 1,
             ), fields
             _shot(page, tmp_path, f"editor-fields-{index}")
+            if index == 0:
+                # a typed value is the one in effect: the hint goes, and
+                # the row does not move
+                tolerance = page.locator(".dstf-editor").get_by_label("Tolerance")
+                tolerance.fill("0.5")
+                tolerance.press("Tab")
+                page.wait_for_timeout(800)
+                typed = {f[0]: f for f in page.evaluate(READ_FIELDS)}
+                assert typed["Tolerance"][3] == "", typed
+                assert abs(typed["Tolerance"][1] - _tolerance_line(fields)) <= 1
+                _shot(page, tmp_path, "editor-typed-tolerance")
             page.locator(".dstf-editor").get_by_role("button", name="Done").click()
             expect(page.locator(".dstf-editor")).to_have_count(
                 0, timeout=EXPECT_TIMEOUT
@@ -3441,3 +3457,178 @@ def test_a_long_label_has_the_drawer_rows_first_line(tmp_path, playwright_browse
         assert label is not None and name is not None
         assert name["y"] >= label["y"] + label["height"] - 1, (label, name)
         _shot(page, tmp_path, "two-line-row")
+
+
+# -- batch U2-B: the picker's keys, the drawer's width -----------------------
+
+
+def _amb_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` whose A result file holds ten names that do not
+    match `T_amb` and two that do, after them."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for name in [f"a{i}" for i in range(10)] + ["system.T_amb", "room.T_amb_set"]:
+        payload["variables"][name] = list(payload["time"])
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return cfg, work
+
+
+def test_keys_typed_inside_the_filters_debounce_act_on_the_list_shown(
+    tmp_path, playwright_browser
+):
+    """`T_amb` typed fast and ↓ Enter at once — inside the filter's 250 ms
+    debounce — chose a row of the list BEFORE the filter (y), which the list
+    then hid: the keys carry the box's text, so the choice is a row shown.
+    The box is a combobox over a listbox in the browser too (Quasar hands
+    the input its attributes), the cursor's row its active descendant."""
+    with _served(tmp_path, playwright_browser, project=_amb_project) as page:
+        head = page.locator(".dstf-plot").first.locator(".dstf-criteria-head")
+        expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
+        head.get_by_role("button", name="Add a criterion for x").click()
+        box = page.get_by_label("Variable")
+        expect(box).to_be_visible(timeout=EXPECT_TIMEOUT)
+        box.click()
+        box.press_sequentially("T_amb", delay=20)
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        rows = page.locator(".dstf-pick-row")
+        expect(rows).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(700)  # the debounced filter has arrived
+        expect(rows).to_have_count(2)
+        chosen = page.locator(".dstf-pick-chosen").inner_text()
+        shown = [
+            page.locator(".dstf-pick-row").nth(i).get_attribute("aria-label")
+            for i in range(2)
+        ]
+        assert chosen == f"Chosen: {shown[0]}", (chosen, shown)
+        expect(page.locator(".dstf-pick-on")).to_have_count(1)
+        _shot(page, tmp_path, "picker-fast-type")
+        expect(page.get_by_role("combobox", name="Variable")).to_have_count(1)
+        expect(page.get_by_role("listbox")).to_have_count(1)
+        cursor = page.locator(".dstf-pick-cursor")
+        expect(cursor).to_have_count(1)
+        assert box.get_attribute("aria-activedescendant") == cursor.get_attribute("id")
+        assert box.get_attribute("aria-controls") == page.get_by_role(
+            "listbox"
+        ).get_attribute("id")
+        expect(page.get_by_role("option", name="system.T_amb")).to_have_count(1)
+
+
+#: The open drawer's panel width and the drawer's (`.dstf-rail-drawer`,
+#: the rail and the panel, less the `bordered` drawer's 1 px border).
+PANEL_AND_DRAWER = """() => {
+  const panel = [...document.querySelectorAll('.dstf-drawer-panel')]
+    .find(p => p.offsetParent !== null);
+  const drawer = document.querySelector('.dstf-rail-drawer');
+  return [Math.round(panel.getBoundingClientRect().width),
+          Math.round(drawer.getBoundingClientRect().width) + 1];
+}"""
+
+
+def test_the_drawer_follows_the_panel_during_a_drag(tmp_path, playwright_browser):
+    """The drawer's width follows the pointer in the browser (NiceGUI's
+    element store), not only once the server has the release: mid-drag,
+    before the button is up, the drawer is the rail plus the panel."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        _open_vars(page)
+        grip = page.locator(".dstf-drawer-handle")
+        expect(grip).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(500)
+        box = grip.bounding_box()
+        assert box is not None
+        x, y = box["x"] + box["width"] / 2, box["y"] + 200
+        page.mouse.move(x, y)
+        page.mouse.down()
+        for k in range(1, 11):
+            page.mouse.move(x + 200 * k / 10, y)
+        page.wait_for_timeout(300)
+        panel, drawer = page.evaluate(PANEL_AND_DRAWER)
+        page.mouse.up()
+        assert panel == 520, panel
+        assert drawer == 40 + panel, (panel, drawer)
+
+
+def test_a_width_the_window_no_longer_holds_is_clamped_in_the_browser(
+    tmp_path, playwright_browser
+):
+    """The tab's width is kept from a wider window: 760 px (the widest at
+    1280) left the plots 100 px at 900. A window shrunk under it clamps it
+    to that window's widest (380 px at 900) — the plots keep 480 px — and
+    so does a page opened in the narrower window: the browser clamps it on
+    load and tells the server, which keeps it."""
+    with _served(tmp_path, playwright_browser, project=_long_names_project) as page:
+        url = page.url
+        _open_vars(page)
+        expect(page.locator(".dstf-drawer-handle")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        _drag_grip(page, 2000)
+        page.wait_for_timeout(400)
+        assert page.evaluate(PANEL_AND_DRAWER) == [760, 800]
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.wait_for_timeout(800)
+        assert page.evaluate(PANEL_AND_DRAWER) == [380, 420]
+        column = page.evaluate(CARD_ROOM)[0]
+        assert round(column) >= 480, column
+        _shot(page, tmp_path, "drawer-shrunk-900")
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        assert page.evaluate(PANEL_AND_DRAWER) == [380, 420]
+        # the load's own clamp: widest again at 1280, then a page opened
+        # in a 900 px window
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.wait_for_timeout(300)
+        _drag_grip(page, 2000)
+        page.wait_for_timeout(400)
+        assert page.evaluate(PANEL_AND_DRAWER) == [760, 800]
+        page.goto("about:blank")
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.goto(url)
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        assert page.evaluate(PANEL_AND_DRAWER) == [380, 420]
+        page.reload()  # the server kept what the browser sent
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        assert page.evaluate(PANEL_AND_DRAWER) == [380, 420]
+
+
+def test_the_grip_answers_the_keyboard(tmp_path, playwright_browser):
+    """The grip is a focusable separator (WAI-ARIA's window splitter): ←/→
+    16 px, with Shift 64, Home the narrowest, End the widest, its
+    `aria-valuenow` the width and `aria-valuemax` the widest this window
+    allows; the width a key leaves is the tab's (kept on a reload)."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        _open_vars(page)
+        grip = page.locator(".dstf-drawer-handle")
+        expect(grip).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(500)
+        assert grip.evaluate("g => g.tabIndex") == 0
+        grip.focus()
+
+        def width() -> int:
+            return page.evaluate(PANEL_AND_DRAWER)[0]
+
+        page.keyboard.press("ArrowRight")
+        assert width() == 336
+        page.keyboard.press("Shift+ArrowRight")
+        assert width() == 400
+        page.keyboard.press("ArrowLeft")
+        assert width() == 384
+        assert grip.get_attribute("aria-valuenow") == "384"
+        assert grip.get_attribute("aria-valuemin") == "240"
+        assert grip.get_attribute("aria-valuemax") == "760"
+        _shot(page, tmp_path, "grip-focused")
+        page.keyboard.press("Home")
+        assert width() == 240
+        page.keyboard.press("End")
+        assert width() == 760
+        page.keyboard.press("ArrowLeft")
+        page.wait_for_timeout(400)
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        assert page.evaluate(PANEL_AND_DRAWER) == [744, 784]

@@ -1877,13 +1877,20 @@ async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_tree(extras_shell)
         before = len(shell.session.tree(A)["children"])
         _click_in(user, "add-for:x", within="criteria-header:1")
         await _settled(lambda: not _none(user, "apply-add:x:variable"))
+        revealed: list[str] = []
+        in_tree = page._reveal_in_tree
+        page._reveal_in_tree = lambda path: (revealed.append(path), in_tree(path))
         user.find(marker="apply-add:x:variable:pick:CPUtime").click()
         user.find(marker="apply-add:x").click()
-        added = f"/metrics/children/{before}"
+        # CPU time is seeded inside a warn: the reveal is its LEAF's row
+        added = f"/metrics/children/{before}/children/0"
         await _settled(lambda: len(shell.session.tree(A)["children"]) == before + 1)
-        assert shell.session.tree(A)["children"][-1]["quantity"] == "CPUtime.final"
+        assert shell.session.tree(A)["children"][-1]["combinator"] == "warn"
+        leaf = shell.session.tree(A)["children"][-1]["children"][0]
+        assert leaf["quantity"] == "CPUtime.final"
         await _settled(lambda: page.tree.is_open)
         await _settled(lambda: not _none(user, f"tree-row:{added}"))
+        assert revealed == [added]
         assert page.open is None  # no plot holds it: no plot's editor opened
 
 
@@ -7806,6 +7813,10 @@ async def test_a_resized_drawer_sets_the_drawer_the_panels_and_the_tab(extras_sh
         rail.resize(517.4, 1280)
         assert page.state.drawer_width == 517
         assert rail.drawer.props["width"] == str(RAIL + 517)
+        # the grip is a focusable separator whose value is the width
+        grip = rail.grip.props
+        assert (grip["role"], grip["tabindex"]) == ("separator", "0")
+        assert (grip["aria-valuemin"], grip["aria-valuenow"]) == (str(MIN_PANEL), "517")
         assert all(p._style.get("width") == "517px" for p in rail.panels.values())
         await _test_page(shell, user, B)
         other = _page(shell, user)
