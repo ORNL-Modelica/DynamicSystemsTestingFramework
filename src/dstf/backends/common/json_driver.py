@@ -34,6 +34,7 @@ from ..types import (
 )
 from . import result_files
 from .proc_output import decode_output
+from .result_variables import criterion_variables
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,21 @@ class JsonDriverBackend(Backend):
                 requested = available
             elif not test.variable_patterns:
                 requested = []
+        # The variables a criterion names, APPENDED after the patterns (their
+        # indices stay put); one the payload lacks is loud, as a missing
+        # UnitTests variable is on the .mat backends.
+        requested = list(requested)
+        for name in criterion_variables(test, self.config.diagnostic_variables):
+            if name in requested:
+                continue
+            if name in available:
+                requested.append(name)
+            else:
+                logger.warning(
+                    "Variable %s not found in simulation output for %s",
+                    name,
+                    test.model_id,
+                )
 
         variables = []
         # index is the position in the *requested* list, so a name the driver

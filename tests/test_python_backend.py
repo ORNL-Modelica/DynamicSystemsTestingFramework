@@ -360,6 +360,7 @@ class TestPythonNonNumericValues:
             source_path=tmp_path,
             work_dir=tmp_path / "work",
             timeout=1,
+            diagnostic_variables=[],
         )
         backend = pr.PythonBackend(cfg)
         test_dir = tmp_path / "work" / "test_0001"

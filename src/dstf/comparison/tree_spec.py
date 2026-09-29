@@ -23,7 +23,7 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -181,6 +181,27 @@ def reads_a_statistic(metric_name: str, params: Mapping[str, Any]) -> bool:
         and desc.accepts_quantity
         and isinstance(params.get("quantity"), str)
     )
+
+
+def tree_variables(spec: SpecNode | None, diagnostics: Iterable[str] = ()) -> list[str]:
+    """The variables a tree makes a run track: every leaf's ``variable``
+    that resolves one (:func:`resolves_a_variable`), unique, in tree order,
+    without the ``diagnostics`` — a diagnostic is scored through a quantity
+    path over its stored summary, never extracted as a trajectory. A backend
+    APPENDS these after the UnitTests variables and the ``variables``
+    patterns, so the indices of those two stay what `migrate_names` reads.
+    ``[]`` for no tree (the implicit tree scores only what is tracked)."""
+    if spec is None:
+        return []
+    skip = set(diagnostics)
+    out: list[str] = []
+    for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
+        if not resolves_a_variable(leaf):
+            continue
+        if leaf.variable in skip or leaf.variable in out:
+            continue
+        out.append(leaf.variable)
+    return out
 
 
 def collect_variables_by_baseline(spec: SpecNode) -> dict[str, list[str]]:

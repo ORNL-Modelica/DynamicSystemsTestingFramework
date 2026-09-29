@@ -46,9 +46,11 @@ import numpy as np
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
+from ...discovery.unit_tests import unit_test_variables
 from .. import register
 from ..base import Backend
 from ..common import result_files
+from ..common.result_variables import criterion_variables
 from ..types import (
     Capability,
     DatasetType,
@@ -166,7 +168,12 @@ class FmpyBackend(Backend):
                 self.progress.on_phase(test_key, "loading")
             md = fmpy.read_model_description(str(fmu_path))
             available = _list_scalar_variables(md)
-            requested = _resolve_requested_outputs(test, available)
+            requested = _tracked(
+                test,
+                _resolve_requested_outputs(test, available),
+                available,
+                self.config.diagnostic_variables,
+            )
 
             solver = _SOLVER_MAP.get(test.method, "CVode")
             sim_kwargs = {
@@ -175,7 +182,11 @@ class FmpyBackend(Backend):
                 "stop_time": test.stop_time,
                 "solver": solver,
                 "relative_tolerance": test.tolerance,
-                "output": requested or None,  # None = record all variables
+                # None records the FMU's OUTPUTS only (fmpy 0.3's
+                # `Recorder` -> `_get_output_variables`: outputs, else up to
+                # five states) — never every variable. Empty: nothing is
+                # compared, so what fmpy picks is only plotted.
+                "output": requested or None,
             }
             if test.output_interval is not None:
                 sim_kwargs["output_interval"] = test.output_interval
@@ -297,6 +308,9 @@ class FmpyBackend(Backend):
                 requested = available
             elif not test.variable_patterns:
                 requested = []
+        requested = _tracked(
+            test, requested, available, self.config.diagnostic_variables
+        )
 
         time_arr = np.asarray(arr["time"], dtype=np.float64)
         variables = [
@@ -349,15 +363,36 @@ def _list_scalar_variables(md) -> list[str]:
 def _resolve_requested_outputs(test: TestModel, available: list[str]) -> list[str]:
     """Resolve the test's variable patterns against the FMU's declared variables.
 
-    When the spec asks for everything (``"*"``), pass ``None`` through to FMPy
-    (``None`` means "record all outputs" in FMPy). We resolve explicitly here
-    too so the count is accurate for logs.
+    When the spec asks for everything (``"*"``), every declared variable is
+    requested explicitly: FMPy's ``output=None`` records the OUTPUTS only.
     """
     if not test.variable_patterns:
         return []
     if test.variable_patterns == ["*"]:
         return available
     return resolve_variable_patterns(test.variable_patterns, available)
+
+
+def _tracked(
+    test: TestModel,
+    requested: list[str],
+    available: list[str],
+    diagnostic_vars: list[str],
+) -> list[str]:
+    """``requested`` (the resolved patterns), then the UnitTests variables
+    and the variables a criterion names that ``available`` has — APPENDED,
+    so the patterns' indices stay put. The simulate side (``available``:
+    the model description's variables) and the read side (the saved
+    columns) both go through it, so what is recorded is what is read."""
+    have = set(available)
+    out = list(requested)
+    for name in (
+        *(v.name for v in unit_test_variables(test)),
+        *criterion_variables(test, diagnostic_vars),
+    ):
+        if name in have and name not in out:
+            out.append(name)
+    return out
 
 
 def _save_result(path: Path, arr: np.ndarray) -> None:

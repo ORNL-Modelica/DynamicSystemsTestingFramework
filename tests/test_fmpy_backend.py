@@ -60,6 +60,7 @@ def _make_config(tmp_path: Path) -> SimpleNamespace:
         backend_name="FMPy",
         parallel=1,
         timeout=60,
+        diagnostic_variables=[],
     )
 
 
@@ -254,6 +255,7 @@ class TestFmpyBackendFixes:
             backend_name="FMPy",
             parallel=1,
             timeout=60,
+            diagnostic_variables=[],
         )
         return FmpyBackend(cfg)
 
@@ -329,3 +331,82 @@ class TestFmpyMissingDependency:
         message = str(excinfo.value)
         assert "optional 'fmpy' extra" in message
         assert "--extra fmpy" in message
+
+
+# ---------------------------------------------------------------------------
+# A variable a criterion names is recorded and read (U2 Task 1)
+# ---------------------------------------------------------------------------
+
+
+class TestFmpyTracksTheCriteriasVariables:
+    def _backend(self, tmp_path, monkeypatch, captured):
+        fake = types.ModuleType("fmpy")
+        fake.read_model_description = lambda p: SimpleNamespace(
+            modelVariables=[SimpleNamespace(name=n) for n in ("h", "v", "g")]
+        )
+
+        def sim(**kw):
+            captured.update(kw)
+            names = ["time", *(kw["output"] or ["h"])]
+            arr = np.zeros(3, dtype=[(n, "f8") for n in names])
+            arr["time"] = [0.0, 0.5, 1.0]
+            return arr
+
+        fake.simulate_fmu = sim
+        monkeypatch.setitem(sys.modules, "fmpy", fake)
+        from dstf.backends.fmpy.backend import FmpyBackend
+
+        cfg = SimpleNamespace(
+            work_dir=tmp_path / "work",
+            source_type="fmu",
+            backend_name="FMPy",
+            parallel=1,
+            timeout=60,
+            diagnostic_variables=["CPUtime", "EventCounter"],
+        )
+        return FmpyBackend(cfg)
+
+    def _test(self, tmp_path, patterns):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"fake fmu")
+        return _tm(
+            "Model",
+            source_file=fmu,
+            variable_patterns=patterns,
+            metric_tree_spec=parse_metric_tree(
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "range", "variable": "g", "max_value": 20},
+                        {
+                            "metric": "scalar",
+                            "variable": "CPUtime",
+                            "quantity": {"reduce": "max"},
+                        },
+                    ],
+                }
+            ),
+        )
+
+    def test_no_patterns_records_and_reads_the_tree_variable(
+        self, tmp_path, monkeypatch
+    ):
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        test = self._test(tmp_path, [])
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success, rr.error_message
+        assert captured["output"] == ["g"]
+        result = backend.read_result(test, "test_0001", rr)
+        assert [(v.index, v.name) for v in result.variables] == [(1, "g")]
+
+    def test_patterns_first_then_the_tree_variable(self, tmp_path, monkeypatch):
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        test = self._test(tmp_path, ["h"])
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert captured["output"] == ["h", "g"]
+        result = backend.read_result(test, "test_0001", rr)
+        assert [(v.index, v.name) for v in result.variables] == [(1, "h"), (2, "g")]

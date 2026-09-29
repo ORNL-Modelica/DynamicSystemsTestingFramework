@@ -22,6 +22,7 @@ from pathlib import Path
 
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
+from ..common.result_variables import criterion_variables
 from ..types import _pattern_to_regex
 
 
@@ -83,7 +84,7 @@ def build_variable_filter(
         alternatives.append(_pattern_to_regex(pat).pattern)
     # Extra literal names (no globs). build_simulate_args uses this for the
     # UnitTests component's variables (``<instance>.x[i]``), which the spec
-    # doesn't list.
+    # doesn't list, and for the variables a criterion names.
     for n in extra_names:
         alternatives.append(re.escape(n))
     # Diagnostic variables (literal names — no globs)
@@ -135,6 +136,7 @@ def build_simulate_args(
     specified. Solver names are lowercased here so a framework-wide
     Dymola-style ``"Dassl"`` survives the crossing.
     """
+    diagnostic_vars = list(diagnostic_vars)  # read twice below
     args: list[str] = []
     args.append(f"stopTime={float(test.stop_time)!r}")
     if test.number_of_intervals is not None:
@@ -153,8 +155,12 @@ def build_simulate_args(
         diagnostic_vars,
         # The UnitTests component's variables are in no spec pattern: both
         # OM backends would otherwise filter them out of the .mat. Naming
-        # them here is what keeps the two paths saying the same thing.
-        extra_names=[v.name for v in unit_test_variables(test)],
+        # them here is what keeps the two paths saying the same thing. The
+        # variables a criterion names follow them (tracked because scored).
+        extra_names=[
+            *(v.name for v in unit_test_variables(test)),
+            *criterion_variables(test, diagnostic_vars),
+        ],
     )
     args.append(_format_sim_kwarg("variableFilter", var_filter))
     return args

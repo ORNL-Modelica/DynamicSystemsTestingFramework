@@ -1006,3 +1006,64 @@ def test_a_spec_key_is_counted_once_per_model_and_key(lib):
     moved = [(m, old) for m, old, _, _ in report.spec_rewritten]
     assert len(moved) == len(set(moved))
     assert ("MyLib.Plain", "a", "unitTests.x[1]", 4) in report.spec_rewritten
+
+
+def test_a_baseline_with_an_appended_criterion_variable_is_left_alone(tmp_path):
+    """The index rule end to end: extraction appends the variable a
+    criterion names AFTER the UnitTests variables, `store_reference` stores
+    it, and the migration reads indices 1..N as the component's — the
+    appended entry is a variable it leaves alone."""
+    import numpy as np
+
+    from dstf.backends.common.result_variables import extract_variables
+    from dstf.backends.types import TestResult
+    from dstf.comparison.tree_spec import parse_metric_tree
+    from dstf.discovery.test_registry import TestModel
+    from dstf.storage.migrate_names import migrate_document
+    from dstf.storage.reference_store import ReferenceStore
+
+    lib = tmp_path / "Lib"
+    lib.mkdir()
+    (lib / "package.mo").write_text("package Lib\nend Lib;\n")
+    test = TestModel(
+        model_id="Lib.T",
+        source_file=Path(""),
+        source_package="Lib",
+        short_name="T",
+        n_vars=2,
+        x_expressions=["a", "b"],
+        source="unit_tests",
+        metric_tree_spec=parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "range", "variable": "pipe.T[1]", "max_value": 9},
+                    {"metric": "nrmse", "variable": "unitTests.x[1]"},
+                ],
+            }
+        ),
+    )
+    t = np.array([0.0, 1.0])
+    mat = {
+        n: (t, np.array([1.0, 2.0]))
+        for n in ("unitTests.x[1]", "unitTests.x[2]", "pipe.T[1]")
+    }
+    variables, _ = extract_variables(mat, test, [])
+    config = Config(source_path=lib, reference_root=tmp_path / "refs")
+    store = ReferenceStore(config)
+    assert store.store_reference(
+        test, TestResult(model_id="Lib.T", success=True, variables=variables)
+    )
+    ref = store.get_reference("Lib.T")
+    assert [(v["index"], v["name"]) for v in ref["variables"]] == [
+        (1, "unitTests.x[1]"),
+        (2, "unitTests.x[2]"),
+        (3, "pipe.T[1]"),
+    ]
+    new, problems, _ = migrate_document(ref, test)
+    assert problems == []
+    assert new is None or [v["name"] for v in new["variables"]] == [
+        "unitTests.x[1]",
+        "unitTests.x[2]",
+        "pipe.T[1]",
+    ]

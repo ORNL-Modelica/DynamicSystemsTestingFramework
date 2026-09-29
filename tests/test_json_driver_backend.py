@@ -373,3 +373,67 @@ class TestJuliaToolVersion:
         assert setup.run_metadata["tool_version"] == "julia version 1.11.2"
         status = json.loads((backend.config.work_dir / "status.json").read_text())
         assert status["metadata"]["tool_version"] == "julia version 1.11.2"
+
+
+class TestTheCriteriasVariablesAreRead:
+    def test_a_tree_variable_is_read_after_the_patterns(self, tmp_path):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        backend = _julia_backend(tmp_path)
+        _write_payload(
+            backend,
+            {
+                "success": True,
+                "time": [0.0, 1.0],
+                "variables": {"x": [0.0, 2.0], "y": [1.0, 3.0], "w": [0.0, 0.0]},
+            },
+        )
+        test = _tm()
+        test.metric_tree_spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "range", "variable": "y", "max_value": 5},
+                    {"metric": "nrmse", "variable": "x"},
+                ],
+            }
+        )
+        result = backend.read_result(test, "test_0001", None)
+        assert [(v.index, v.name) for v in result.variables] == [(1, "x"), (2, "y")]
+
+    def test_no_patterns_a_tree_variable_is_still_read(self, tmp_path):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        backend = _julia_backend(tmp_path)
+        _write_payload(
+            backend,
+            {"success": True, "time": [0.0, 1.0], "variables": {"y": [1.0, 3.0]}},
+        )
+        test = _tm()
+        test.variable_patterns = []
+        test.metric_tree_spec = parse_metric_tree(
+            {"metric": "range", "variable": "y", "max_value": 5}
+        )
+        result = backend.read_result(test, "test_0001", None)
+        assert [v.name for v in result.variables] == ["y"]
+
+    def test_a_tree_variable_the_payload_lacks_warns(self, tmp_path, caplog):
+        """A missing criterion variable is loud, as a missing UnitTests
+        variable is on Dymola and OpenModelica."""
+        import logging
+
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        backend = _julia_backend(tmp_path)
+        _write_payload(
+            backend,
+            {"success": True, "time": [0.0, 1.0], "variables": {"x": [0.0, 2.0]}},
+        )
+        test = _tm()
+        test.metric_tree_spec = parse_metric_tree(
+            {"metric": "range", "variable": "gone", "max_value": 5}
+        )
+        with caplog.at_level(logging.WARNING):
+            result = backend.read_result(test, "test_0001", None)
+        assert [v.name for v in result.variables] == ["x"]
+        assert any("Variable gone not found" in r.getMessage() for r in caplog.records)

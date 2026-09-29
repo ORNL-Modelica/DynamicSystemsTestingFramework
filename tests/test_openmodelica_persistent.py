@@ -1005,3 +1005,26 @@ class TestOmPersistentOmcPath:
         worker = self._worker(tmp_path, None)
         worker.start()
         assert "OPENMODELICAHOME" not in os.environ
+
+
+def test_the_persistent_lane_filters_in_the_criterias_variables(tmp_path):
+    """Both OM lanes build the filter; this one through the worker."""
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    test = _make_test(
+        metric_tree_spec=parse_metric_tree({"metric": "range", "variable": "pipe.T[1]"})
+    )
+    test_dir = tmp_path / "work" / "test_0001"
+    captured: dict = {}
+
+    def fake_simulate(expr: str):
+        captured["expr"] = expr
+        test_dir.mkdir(parents=True, exist_ok=True)
+        _write_stub_mat(test_dir / "result_res.mat", stop_time=test.stop_time)
+        return {"resultFile": str(test_dir / "result_res.mat"), "messages": "ok"}
+
+    worker, _, _ = TestWorkerRunTest()._bootstrap_worker(
+        tmp_path, responses={"simulate(": fake_simulate}
+    )
+    worker.run_test(test, "test_0001")
+    assert "pipe\\\\.T\\\\[1\\\\]" in captured["expr"], captured["expr"]

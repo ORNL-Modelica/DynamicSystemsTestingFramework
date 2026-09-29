@@ -294,3 +294,66 @@ class TestRunTiming:
 
     def test_no_elapsed_no_total(self):
         assert run_timing(_run(sim_wall=0.5)) == {"sim_wall": 0.5}
+
+
+def _tree(*leaves):
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    return parse_metric_tree({"combinator": "and", "children": list(leaves)})
+
+
+class TestTreeVariablesAreTracked:
+    """A variable a criterion names is extracted — APPENDED after the
+    UnitTests variables and the patterns, so their indices stay put."""
+
+    def _test(self):
+        return _unit_tests_test(
+            1,
+            x_expressions=["q"],
+            variable_patterns=["a"],
+            source="both",
+            metric_tree_spec=_tree(
+                {"metric": "nrmse", "variable": "b"},
+                {"metric": "nrmse", "variable": "a"},
+                {
+                    "metric": "scalar",
+                    "variable": "CPUtime",
+                    "quantity": {"reduce": "max"},
+                },
+                {
+                    "metric": "scalar",
+                    "variable": "ev",
+                    "quantity": "EventCounter.final",
+                },
+            ),
+        )
+
+    def test_needed_names_the_tree_variable_not_a_diagnostic_twice(self, tmp_path):
+        test = self._test()
+        test.variable_patterns = []
+        needed = compute_needed_variables(tmp_path / "absent.mat", test, ["CPUtime"])
+        assert needed == {"unitTests.x[1]", "b", "a", "CPUtime"}
+
+    def test_indices_ut_then_pattern_then_tree(self):
+        mat = {
+            "unitTests.x[1]": _series([1.0]),
+            "a": _series([2.0]),
+            "b": _series([3.0]),
+            "CPUtime": _series([0.1]),
+        }
+        variables, diagnostics = extract_variables(mat, self._test(), ["CPUtime"])
+        assert [(v.index, v.name) for v in variables] == [
+            (1, "unitTests.x[1]"),
+            (2, "a"),
+            (3, "b"),
+        ]
+        assert [d.name for d in diagnostics] == ["CPUtime"]
+
+    def test_a_missing_tree_variable_warns(self, caplog):
+        mat = {"unitTests.x[1]": _series([1.0]), "a": _series([2.0])}
+        with caplog.at_level(logging.WARNING):
+            variables, _ = extract_variables(mat, self._test(), ["CPUtime"])
+        assert [v.name for v in variables] == ["unitTests.x[1]", "a"]
+        assert any("b" in r.getMessage().split() for r in caplog.records) or any(
+            "Variable b not found" in r.getMessage() for r in caplog.records
+        )

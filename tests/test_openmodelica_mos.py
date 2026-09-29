@@ -255,3 +255,40 @@ class TestBuildSimulateMos:
         )
         assert "loadModel(" not in mos
         assert mos.count("loadFile(") == 1  # only the main library
+
+
+class TestTheFilterNamesTheCriteriasVariables:
+    def test_a_criterion_variable_passes_the_filter_diagnostic_once(self):
+        import re
+
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        test = _make_test(
+            n_vars=1,
+            variable_patterns=["x"],
+            source="both",
+            metric_tree_spec=parse_metric_tree(
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "nrmse", "variable": "pipe.T[1]"},
+                        {
+                            "metric": "scalar",
+                            "variable": "CPUtime",
+                            "quantity": {"reduce": "max"},
+                        },
+                    ],
+                }
+            ),
+        )
+        (arg,) = [
+            a
+            for a in build_simulate_args(test, ["CPUtime"])
+            if a.startswith("variableFilter")
+        ]
+        regex = arg.split("=", 1)[1].strip('"').replace("\\\\", "\\")
+        pat = re.compile(regex)
+        assert pat.fullmatch("pipe.T[1]")
+        assert pat.fullmatch("unitTests.x[1]")
+        assert not pat.fullmatch("pipe.T[2]")
+        assert regex.count("CPUtime") == 1

@@ -10,6 +10,7 @@ timing computation — only what is genuinely identical lives here.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,19 @@ from ..types import TestRunResult, VariableResult, resolve_variable_patterns
 from .mat_reader import list_result_mat_variables
 
 logger = logging.getLogger(__name__)
+
+
+def criterion_variables(test: TestModel, diagnostic_vars: Iterable[str]) -> list[str]:
+    """The variables ``test``'s criteria name (`tree_variables`): what every
+    backend records and extracts AFTER the UnitTests variables and the
+    ``variables`` patterns, so the indices of those two stay what a stored
+    baseline and `migrate_names` read. Imported here, not at module level:
+    importing ``dstf.comparison`` runs its package init, which imports the
+    comparator, which imports ``dstf.backends`` — a cycle from any backend
+    module."""
+    from ...comparison.tree_spec import tree_variables
+
+    return tree_variables(test.metric_tree_spec, diagnostic_vars)
 
 
 def compute_needed_variables(
@@ -45,6 +59,9 @@ def compute_needed_variables(
             return None  # fallback: load everything
         resolved = resolve_variable_patterns(test.variable_patterns, all_names)
         needed.update(resolved)
+
+    # Variables a criterion names (literal: no name matrix needed)
+    needed.update(criterion_variables(test, diagnostic_vars))
 
     needed.update(diagnostic_vars)
 
@@ -109,7 +126,26 @@ def extract_variables(
                 seen.add(var_name)
                 idx += 1
 
-    # 3. Diagnostic variables (auto-captured, not compared — D54–D55)
+    # 3. Variables a criterion names, APPENDED: the indices of the first two
+    # groups stay what a stored baseline and `migrate_names` read.
+    for var_name in criterion_variables(test, diagnostic_vars):
+        if var_name in seen:
+            continue
+        if var_name in mat_data:
+            time_arr, values = mat_data[var_name]
+            results.append(
+                VariableResult(index=idx, time=time_arr, values=values, name=var_name)
+            )
+            seen.add(var_name)
+            idx += 1
+        else:
+            logger.warning(
+                "Variable %s not found in simulation output for %s",
+                var_name,
+                test.model_id,
+            )
+
+    # 4. Diagnostic variables (auto-captured, not compared — D54–D55)
     diagnostics: list[VariableResult] = []
     diag_idx = 1
     for var_name in diagnostic_vars:
@@ -191,6 +227,7 @@ def run_timing(rr: TestRunResult) -> dict[str, float]:
 
 __all__ = [
     "compute_needed_variables",
+    "criterion_variables",
     "extract_variables",
     "fold_diagnostics_into_statistics",
     "merge_timing_stats",
