@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dstf.discovery.plots import ResolvedPlot
 from dstf.reporting.report_suite import plot_page_keys
 
 
@@ -97,7 +98,6 @@ def _fixture_context(label: str | None = None) -> dict:
                 },
                 "overlays": [],
                 "leaf_paths": ["/metrics/children/0"],
-                "tree": tree,
                 "passed": True,
                 "n_advisory_failed": 0,
             }
@@ -105,12 +105,13 @@ def _fixture_context(label: str | None = None) -> dict:
         "variable_texts": {"h": {"label": label or "h", "text": label or "h"}},
         "decimated": [],
         "diag_figures": [],
-        "nb_figures": [],
         "run_metadata": None,
     }
     # The page's plot keys come from the ONE producer, never hand-rolled:
-    # the default layout is one plot per key of ``variables_by_name``.
-    ctx.update(plot_page_keys(ctx, None, {}, None, None))
+    # one plot, the tree's one scored variable.
+    ctx.update(
+        plot_page_keys(ctx, (ResolvedPlot(index=0, subject=("h",)),), {}, None, None)
+    )
     return ctx
 
 

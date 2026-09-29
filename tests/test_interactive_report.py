@@ -362,13 +362,13 @@ def compared(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def two_series(tmp_path_factory):
-    """The same test, laid out as ONE plot of its first two tracked
+    """The same test, drawn as ONE plot whose subject is its first two
     variables — ``x`` and ``y``, named literally off ``_generate_compared``."""
     from dstf.discovery.plots import ResolvedPlot
 
     html, _comp = _generate_compared(
         tmp_path_factory.mktemp("two_series"),
-        plots=(ResolvedPlot(0, "time", ("x", "y"), ()),),
+        plots=(ResolvedPlot(index=0, subject=("x", "y")),),
     )
     return html
 
@@ -496,9 +496,9 @@ def test_every_variable_plot_paints_from_its_figure_dict(compared, playwright_br
 
 @pytest.mark.playwright
 def test_a_two_series_plot_paints_both_traces(two_series, playwright_browser):
-    """A declared plot of two variables paints both actual traces, names
-    both in the legend, and offers no error-overlay select (the picker is
-    per-variable and a plot of several series has no one variable)."""
+    """A plot whose subject is two variables paints both actual traces,
+    names both in the legend, and offers no error-overlay select (the
+    picker is per-variable and a subject of several has no one variable)."""
     page, errors = _open(playwright_browser, two_series)
     try:
         ids = page.evaluate(
@@ -616,11 +616,11 @@ def test_overlay_picker_toggles_soft_check_and_companion(compared, playwright_br
 
 
 def test_overlay_picker_on_the_no_baseline_page(no_baseline, playwright_browser):
-    """A no-baseline plot has no comparison behind it at all, so its picker
-    is a separate path from the compared page's."""
+    """A no-baseline plot has no comparison behind it at all: its overlays
+    come off the no-baseline trajectory, not a scored variable's."""
     page, errors = _open(playwright_browser, no_baseline)
     probe = """() => {
-        const el = document.getElementById('nb-plot-0');
+        const el = document.getElementById('plot-0');
         return {
           python: !!el._mt_python,
           overlays: el._fullData.filter(t => (t.meta || {}).kind === 'overlay')
@@ -628,7 +628,7 @@ def test_overlay_picker_on_the_no_baseline_page(no_baseline, playwright_browser)
         };
     }"""
     before = page.evaluate(probe)
-    page.locator('[data-plot-id="nb-plot-0"] input.overlay-toggle').first.check()
+    page.locator('[data-plot-id="plot-0"] input.overlay-toggle').first.check()
     page.wait_for_timeout(120)
     after = page.evaluate(probe)
     page.close()
@@ -805,7 +805,7 @@ def test_diagnostic_and_no_baseline_plots_paint_from_dicts(
 
     page, errors = _open(playwright_browser, no_baseline)
     nb = page.evaluate("""() => {
-        const el = document.getElementById('nb-plot-0');
+        const el = document.getElementById('plot-0');
         return {python: !!el._mt_python, n: el.data.length};
     }""")
     page.close()

@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
+from dstf.discovery.plots import ResolvedPlot  # noqa: E402
 from dstf.reporting.report_suite import plot_page_keys  # noqa: E402
 from report_fixtures import (  # noqa: E402
     _context_with_figure,
@@ -76,10 +77,31 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
         "values": [v * 1.01 for v in traj["ref_values"]],
     }
     ctx["variables_by_name"][var]["overlays"] = [overlay]
+    # A second plot, of a series with no baseline: its curve and overlays
+    # come off the no-baseline trajectory, not a scored variable's.
+    ctx["nobaseline_trajectories"] = [
+        {
+            "name": "fresh",
+            "time": list(traj["act_time"]),
+            "values": list(traj["act_values"]),
+            "overlays": [overlay],
+        }
+    ]
     # The overlay joined the context AFTER the sections were built, so the
-    # picker's rows only exist once they are rebuilt — before the figure is
-    # replaced, which the rebuild would otherwise overwrite.
-    ctx.update(plot_page_keys(ctx, None, {}, None, None))
+    # picker's rows only exist once they are rebuilt — before the scored
+    # plot's figure is replaced, which the rebuild would otherwise overwrite.
+    ctx.update(
+        plot_page_keys(
+            ctx,
+            (
+                ResolvedPlot(index=0, subject=(var,)),
+                ResolvedPlot(index=1, subject=("fresh",)),
+            ),
+            {},
+            None,
+            None,
+        )
+    )
     ctx["plot_figures"][0] = variable_figure(
         build_view(
             var,
@@ -90,31 +112,13 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
             overlays=[overlay],
         )
     )
-    ctx["nobaseline_trajectories"] = [
-        {
-            "name": "fresh",
-            "time": list(traj["act_time"]),
-            "values": list(traj["act_values"]),
-            "overlays": [overlay],
-        }
-    ]
-    ctx["nb_figures"] = [
-        variable_figure(
-            build_view(
-                "fresh",
-                act_time=traj["act_time"],
-                act_values=traj["act_values"],
-                overlays=[overlay],
-            )
-        )
-    ]
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
     assert page.evaluate("!!document.getElementById('plot-0')._mt_python")
-    assert page.evaluate("!!document.getElementById('nb-plot-0')._mt_python")
+    assert page.evaluate("!!document.getElementById('plot-1')._mt_python")
     seen = {}
-    for plot_id in ("plot-0", "nb-plot-0"):
+    for plot_id in ("plot-0", "plot-1"):
         js = (
             f"() => document.getElementById('{plot_id}')._fullData"
             ".filter(t => (t.meta || {}).kind === 'overlay').map(t => t.visible)"
@@ -126,7 +130,7 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
     page.close()
     assert seen == {
         "plot-0": (["legendonly"], [True]),
-        "nb-plot-0": (["legendonly"], [True]),
+        "plot-1": (["legendonly"], [True]),
     }
 
 
@@ -502,7 +506,9 @@ def _page_with_a_wave_and_an_overlay(tmp_path):
     ctx["variables_by_name"][var]["overlays"] = [overlay]
     # The picker's rows are built from the context's overlays; the figure
     # is replaced after, which the rebuild would otherwise overwrite.
-    ctx.update(plot_page_keys(ctx, None, {}, None, None))
+    ctx.update(
+        plot_page_keys(ctx, (ResolvedPlot(index=0, subject=(var,)),), {}, None, None)
+    )
     ctx["plot_figures"][0] = variable_figure(
         build_view(
             var,

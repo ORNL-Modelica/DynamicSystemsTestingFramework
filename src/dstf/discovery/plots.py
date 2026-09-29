@@ -260,21 +260,3 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
         have.add(var.name)
         out.append(var.name)
     return out
-
-
-def resolved_plots(
-    test: TestModel, tracked: Sequence[str], *, available: Sequence[str] | None
-) -> tuple[ResolvedPlot, ...]:
-    """Interim, until the report derives its plots from the tree (the
-    plan's Task 4): one plot per ``tracked`` name or array, the test's
-    extras on them. ``available`` as in :func:`derive_plots`; a tracked
-    name is never missing, as before."""
-    from .unit_tests import is_unit_test_variable
-
-    return derive_plots(
-        None,
-        test.plots or (),
-        tracked=tracked,
-        unit_tests=[n for n in tracked if is_unit_test_variable(test, n)],
-        available=None if available is None else [*available, *tracked],
-    )

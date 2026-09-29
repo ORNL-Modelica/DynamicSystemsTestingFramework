@@ -662,32 +662,6 @@ def _mark_advisory(node: dict, *, under_warn: bool = False) -> None:
         _mark_advisory(child, under_warn=warn)
 
 
-def tree_for_variable(view: dict | None, name: str) -> dict | None:
-    """``view`` filtered to the leaves scoring ``name``, ancestors kept.
-
-    Returns ``None`` when no leaf under ``view`` targets the variable, which
-    is what drops a combinator whose whole subtree belongs to some other
-    variable. Leaves and combinators are shallow-copied: the per-variable
-    mount renders the same leaf dicts the full tree does.
-    """
-    if not view:
-        return None
-    if view.get("kind") == "leaf":
-        return dict(view) if view.get("variable") == name else None
-    kept = [
-        sub
-        for sub in (
-            tree_for_variable(child, name) for child in view.get("children") or []
-        )
-        if sub is not None
-    ]
-    if not kept:
-        return None
-    out = dict(view)
-    out["children"] = kept
-    return out
-
-
 def _tree_summary(view: dict | None) -> dict | None:
     """The pieces the summary line is built from: the leaf tally, the ROOT
     verdict, and how many advisory leaves failed.
@@ -713,7 +687,7 @@ def _tree_summary(view: dict | None) -> dict | None:
 def _spec_for(comparisons: list, test_model):
     """The tree the view walks: the authored one, else the implicit tree
     synthesized from what was scored. Both the tree view and the
-    per-variable mounts read it, so they agree by construction."""
+    per-variable entries read it, so they agree by construction."""
     from ..comparison.tree_spec import (
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
@@ -787,9 +761,8 @@ def build_tree_view(
             ", ".join(missing),
         )
     _augment_tree_view(tree_view, comparisons_by_path, texts)
-    # Must run before the per-variable subtrees are cut: they shallow-copy
-    # the leaf dicts, so a flag stamped afterwards would reach the full-tree
-    # mount only.
+    # Before the per-variable pills read it (`_build_tree_view_and_variables`)
+    # and before a plot's criteria rows share these leaf dicts.
     _mark_advisory(tree_view)
     return tree_view
 
@@ -808,8 +781,9 @@ def _build_tree_view_and_variables(
     (a serialized SpecNode tree with per-node paths + evaluation results,
     leaves augmented with render artifacts). ``variables_by_name`` carries
     one entry per unique variable — its trajectory + overlays + the leaf
-    paths targeting it — so per-variable plot sections mount a filtered
-    view of the same tree.
+    paths targeting it + its verdict — and a plot's section lists its
+    subject's leaves of the same tree
+    (:func:`~dstf.reporting.report_suite.criteria_rows`).
 
     When there are no comparisons the function returns ``(None, {})`` —
     sim-failed and no-baseline tests render without a tree view at all.
@@ -851,8 +825,6 @@ def _build_tree_view_and_variables(
             "trajectory": match_traj or {},
             "overlays": (match_traj or {}).get("overlays", []),
             "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
-            # The tree as this variable's mount renders it.
-            "tree": tree_for_variable(tree_view, vn),
             "passed": bool(var_leaves)
             and all(bool(leaf.get("passed")) for leaf in gating),
             "n_advisory_failed": sum(
