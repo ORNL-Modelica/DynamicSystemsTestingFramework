@@ -406,110 +406,132 @@ class VariablesDrawer:
         # names folded (`file_text`).
         muted = row.name
         said = row.text if muted is None else f"{row.text} ({muted})"
+        # The names menu: the expression alone, the result-file name alone,
+        # or both — the expression with the name muted beside it. The
+        # expression alone still keeps the name beside a label another name
+        # of the test carries (`variable_texts`, the one label rule) or
+        # another row drawn here reads (`alike`): two rows reading "a.Q"
+        # said nothing of which was which. A family has no one name for the
+        # scope test: `alike` is what says it reads as another drawn row does.
+        names = self.state.vars_names
+        show_muted = muted is not None and (
+            names == "both"
+            or (
+                names == "expression"
+                and (
+                    (row.name is not None and self.texts.get(row.name) != row.text)
+                    or row.text in self.alike
+                )
+            )
+        )
+        # Two lines (2026-09-29): the label alone on the first, after its
+        # controls, with the row's whole width — a real library's labels
+        # outran the one line they shared with the name, "plot N" and
+        # "+ new plot" — and those, muted, on the second. A second line that
+        # would hold nothing but the hover-only "+ new plot" collapses, the
+        # `+` at line 1's right (K6): a list of untracked names was every
+        # other line empty.
+        two_lines = show_muted or bool(row.elsewhere)
         with (
-            ui.row()
+            ui.column()
             .classes(
-                "dstf-var-row items-center no-wrap gap-1 w-full"
-                + (" dstf-var-member" if member else "")
+                "dstf-var-row gap-0 w-full" + (" dstf-var-member" if member else "")
             )
             .mark(marker("var-row", key))
         ):
-            # Names go on the props dict, never through a props string: a
-            # name can hold a `"`. A check's only text was its icon's
-            # ligature, `check_box_outline_blank`.
-            if len(row.members) > 1:
-                opened = self._family(row) in self.opened
-                chevron = (
-                    ui.button(
-                        icon="expand_more" if opened else "chevron_right",
-                        on_click=partial(self._open, self._family(row)),
+            with ui.row().classes("dstf-var-line1 items-center no-wrap gap-1 w-full"):
+                # Names go on the props dict, never through a props string: a
+                # name can hold a `"`. A check's only text was its icon's
+                # ligature, `check_box_outline_blank`.
+                if len(row.members) > 1:
+                    opened = self._family(row) in self.opened
+                    chevron = (
+                        ui.button(
+                            icon="expand_more" if opened else "chevron_right",
+                            on_click=partial(self._open, self._family(row)),
+                        )
+                        .props("flat dense round size=sm")
+                        .mark(marker("var-open", key))
                     )
-                    .props("flat dense round size=sm")
-                    .mark(marker("var-open", key))
-                )
-                chevron.props["aria-label"] = f"{'Close' if opened else 'Open'} {said}"
-                chevron.props["aria-expanded"] = "true" if opened else "false"
-            checked, icon = _state(row)
-            # A disabled Quasar button takes no pointer events: the reason's
-            # tooltip is on a span around it.
-            with ui.element("span").mark(marker("var-why", key)):
-                check = (
-                    ui.button(icon=icon, on_click=partial(self._check, row))
-                    .props(
-                        f'flat dense round size=sm role="checkbox" aria-checked="{checked}"'
+                    chevron.props["aria-label"] = (
+                        f"{'Close' if opened else 'Open'} {said}"
                     )
-                    .mark(marker("var-check", key))
-                )
-                # A row with a muted name says it too: two rows
-                # reading "a.Q" had two checks a screen reader read alike.
-                check.props["aria-label"] = said
-                if not page.cards:
-                    check.disable()  # no plot to act on: "+ new plot" makes one
-                elif row.is_subject:
-                    # A plot cannot lose its subject: a derived plot's is the
-                    # tree's, a watch plot's is the plot.
-                    check.disable()
-                    ui.tooltip("The plot's subject")
-            if len(row.members) > 1:
-                with ui.element("span").classes("dstf-var-ramp"):
-                    for stop in _RAMP:
-                        ui.element("span").style(f"background: {stop}")
-            # A real library's names outrun 320 px and are cut with an
-            # ellipsis: the text carries all of it, and the name, as its
-            # title (on the props dict: a name can hold a `"`).
-            # The names menu: the expression alone, the result-file name
-            # alone, or both — the expression with the name muted beside it.
-            # The expression alone still keeps the name beside a label
-            # another name of the test carries (`variable_texts`, the one
-            # label rule) or another row drawn here reads (`alike`): two rows
-            # reading "a.Q" said nothing of which was which.
-            names = self.state.vars_names
-            shown = row.file_text if names == "file" else row.text
-            text = MiddleCut(shown).classes("dstf-var-text dstf-mono text-xs")
-            text.props["title"] = said
-            # A family has no one name for the scope test: `alike` is what
-            # says it reads as another drawn row does.
-            if muted is not None and (
-                names == "both"
-                or (
-                    names == "expression"
-                    and (
-                        (row.name is not None and self.texts.get(row.name) != row.text)
-                        or row.text in self.alike
+                    chevron.props["aria-expanded"] = "true" if opened else "false"
+                checked, icon = _state(row)
+                # A disabled Quasar button takes no pointer events: the
+                # reason's tooltip is on a span around it.
+                with ui.element("span").mark(marker("var-why", key)):
+                    check = (
+                        ui.button(icon=icon, on_click=partial(self._check, row))
+                        .props(
+                            "flat dense round size=sm "
+                            f'role="checkbox" aria-checked="{checked}"'
+                        )
+                        .mark(marker("var-check", key))
                     )
-                )
-            ):
-                ui.label(muted).classes("dstf-varname")
-            ui.space()
-            # These two never wrap (the stylesheet's `.dstf-var-where` rule
-            # keeps each to one line and unshrunk): squeezed by a long name,
-            # "+ new plot" took two lines and "plot 2, 3" broke after "plot".
-            if row.elsewhere:
-                ui.label(
-                    "plot " + ", ".join(str(i + 1) for i in row.elsewhere)
-                ).classes("dstf-why dstf-var-where")
-            # A watch plot is of ONE variable, and a variable has one plot
-            # at most: grey, with why, on a family's row (its members,
-            # opened, each make one) and on any plot's subject.
-            why = (
-                self.withheld
-                if self.withheld is not None
-                else f"Already the subject of plot {row.subject_of + 1}"
-                if row.subject_of is not None
-                else "A watch plot shows one variable: open the family"
-                if len(row.members) > 1
-                else None
+                    # A row with a muted name says it too: two rows
+                    # reading "a.Q" had two checks a screen reader read alike.
+                    check.props["aria-label"] = said
+                    if not page.cards:
+                        check.disable()  # no plot to act on: "+ new plot" makes one
+                    elif row.is_subject:
+                        # A plot cannot lose its subject: a derived plot's is
+                        # the tree's, a watch plot's is the plot.
+                        check.disable()
+                        ui.tooltip("The plot's subject")
+                if len(row.members) > 1:
+                    with ui.element("span").classes("dstf-var-ramp"):
+                        for stop in _RAMP:
+                            ui.element("span").style(f"background: {stop}")
+                # A real library's names outrun the panel and are cut in the
+                # middle: the text carries all of it, and the name, as its
+                # title (on the props dict: a name can hold a `"`).
+                shown = row.file_text if names == "file" else row.text
+                text = MiddleCut(shown).classes("dstf-var-text dstf-mono text-xs")
+                text.props["title"] = said
+                if not two_lines:
+                    ui.space()
+                    self._new_button(row, key)
+            if two_lines:
+                with ui.row().classes(
+                    "dstf-var-line2 items-center no-wrap gap-2 w-full"
+                ):
+                    if show_muted and muted is not None:
+                        ui.label(muted).classes("dstf-varname")
+                    ui.space()
+                    # These two never wrap (the stylesheet's `.dstf-var-where`
+                    # rule keeps each to one line and unshrunk): squeezed by a
+                    # long name, "+ new plot" took two lines and "plot 2, 3"
+                    # broke after "plot".
+                    if row.elsewhere:
+                        ui.label(
+                            "plot " + ", ".join(str(i + 1) for i in row.elsewhere)
+                        ).classes("dstf-why dstf-var-where")
+                    self._new_button(row, key)
+
+    def _new_button(self, row: VarRow, key: str) -> None:
+        """ "+ new plot": a watch plot is of ONE variable, and a variable has
+        one plot at most — grey, with why, on a family's row (its members,
+        opened, each make one) and on any plot's subject."""
+        why = (
+            self.withheld
+            if self.withheld is not None
+            else f"Already the subject of plot {row.subject_of + 1}"
+            if row.subject_of is not None
+            else "A watch plot shows one variable: open the family"
+            if len(row.members) > 1
+            else None
+        )
+        with ui.element("span").mark(marker("var-new-why", key)):
+            new = (
+                ui.button("+ new plot", on_click=partial(self._new, row))
+                .props("flat dense no-caps size=sm")
+                .classes("dstf-var-new")
+                .mark(marker("var-new", key))
             )
-            with ui.element("span").mark(marker("var-new-why", key)):
-                new = (
-                    ui.button("+ new plot", on_click=partial(self._new, row))
-                    .props("flat dense no-caps size=sm")
-                    .classes("dstf-var-new")
-                    .mark(marker("var-new", key))
-                )
-                if why is not None:
-                    new.disable()
-                    ui.tooltip(why)
+            if why is not None:
+                new.disable()
+                ui.tooltip(why)
 
     # -- the edits -----------------------------------------------------------------
 

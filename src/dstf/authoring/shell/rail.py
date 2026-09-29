@@ -33,7 +33,48 @@ from .variables_drawer import VariablesDrawer
 if TYPE_CHECKING:
     from .test_page import TestPage
 
-RAIL, PANEL = 40, 320
+RAIL = 40
+#: A dragged panel's bounds (K5): at least this many px, at most this
+#: fraction of the window — the browser clamps to both, which only it
+#: can measure; the server holds the floor again.
+MIN_PANEL, MAX_FRACTION = 240, 0.6
+
+#: The resize handle's drag (K5): the drawer's `width` prop and the panel's
+#: width follow the pointer in the BROWSER, on NiceGUI's own element store
+#: (`mounted_app.elements`, reactive, so Quasar re-lays the page out and
+#: Plotly's observer reflows each plot); the release sends the width to
+#: Python once, which sets the same values and keeps them in `TabState`.
+#: `mounted_app.elements[id].props` is NiceGUI 3.16's INTERNAL client-side
+#: store, not an API: an upgrade that renames it leaves the drag moving
+#: the panel only, the drawer catching up on release (the Playwright drag
+#: test fails first). The panel is the VISIBLE one (`offsetParent`): both
+#: drawers' panels are in the row, one hidden (B10).
+_DRAG = """(e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const handle = e.currentTarget;
+  const panel = [...handle.parentElement.querySelectorAll('.dstf-drawer-panel')]
+    .find((p) => p.offsetParent !== null);
+  if (!panel) return;
+  const drawer = mounted_app.elements['__DRAWER__'];
+  const x0 = e.clientX, w0 = panel.getBoundingClientRect().width;
+  const clamp = (w) => Math.round(Math.max(__MIN__, Math.min(w, __MAX__ * window.innerWidth)));
+  let w = w0;
+  handle.setPointerCapture(e.pointerId);
+  const move = (m) => {
+    w = clamp(w0 + m.clientX - x0);
+    panel.style.width = w + 'px';
+    drawer.props.width = __RAIL__ + w;
+  };
+  const up = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', up);
+    emit(w);
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', up);
+}"""
+
 
 EDITED = "EDITED"
 #: The Tests drawer's status pills, in the Suite's order, and EDITED.
@@ -322,7 +363,10 @@ class Rail:
             .props(f"width={RAIL} behavior=desktop bordered")
             .classes("dstf-rail-drawer")
         )
-        with self.drawer, ui.row().classes("no-wrap gap-0 items-stretch w-full h-full"):
+        with (
+            self.drawer,
+            ui.row().classes("dstf-rail-row no-wrap gap-0 items-stretch w-full h-full"),
+        ):
             with ui.column().classes("dstf-rail gap-1 items-center"):
                 for kind, icon, text, tip in (
                     ("tests", "format_list_bulleted", "Tests", None),
@@ -346,6 +390,23 @@ class Rail:
                 )
                 panel.set_visibility(False)
                 self.panels[kind] = panel
+            self.grip = (
+                ui.element("div")
+                .classes("dstf-drawer-handle")
+                .mark("drawer-handle")
+                .on(
+                    "pointerdown",
+                    lambda e: self.resize(e.args),
+                    js_handler=_DRAG.replace("__DRAWER__", str(self.drawer.id))
+                    .replace("__MIN__", str(MIN_PANEL))
+                    .replace("__MAX__", str(MAX_FRACTION))
+                    .replace("__RAIL__", str(RAIL)),
+                )
+            )
+            self.grip.props["role"] = "separator"
+            self.grip.props["aria-orientation"] = "vertical"
+            self.grip.props["aria-label"] = "Resize the drawer"
+            self.grip.set_visibility(False)
 
     def open(self, kind: str | None) -> None:
         """Show ``kind``'s panel and hide the other; None closes both. The
@@ -360,8 +421,8 @@ class Rail:
             button.classes(remove="dstf-rail-on")
             if name == kind:
                 button.classes(add="dstf-rail-on")
-        self.drawer.props(f"width={RAIL + PANEL if kind else RAIL}")
         self.page.state.drawer = kind
+        self._width(self.page.state.drawer_width)
         if kind == "tests" and self.tests is None:
             self.tests = TestsDrawer(self.page, self.panels["tests"])
         elif kind == "variables":
@@ -369,6 +430,25 @@ class Rail:
                 self.variables = VariablesDrawer(self.page, self.panels["variables"])
             elif was != "variables":
                 self.variables.rebuild()  # it was not followed while closed
+
+    def _width(self, width: int) -> None:
+        """The drawer's `width` prop and the panels' width: RAIL alone with
+        no drawer open."""
+        kind = self.page.state.drawer
+        self.drawer.props(f"width={RAIL + width if kind else RAIL}")
+        for panel in self.panels.values():
+            panel.style(f"width: {width}px")
+        self.grip.set_visibility(kind is not None)
+
+    def resize(self, width: Any) -> None:
+        """A drag's release (`_DRAG`): the width the browser clamped, held
+        to the floor again here, kept in `TabState`."""
+        try:
+            px = max(MIN_PANEL, int(round(float(width))))
+        except (TypeError, ValueError):
+            return
+        self.page.state.drawer_width = px
+        self._width(px)
 
     def toggle(self, kind: str) -> None:
         self.open(None if self.page.state.drawer == kind else kind)

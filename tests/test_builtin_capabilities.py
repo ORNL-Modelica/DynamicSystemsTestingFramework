@@ -2538,5 +2538,8 @@ async def test_the_editor_says_the_tolerance_in_effect_until_the_mode_moves(sess
         mode = next(
             c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
         )
-        mode.set_value("scalar")
+        # points has a tolerance field and its seed sets none: the base one
+        # would read as "in effect" for a mode that was never scored
+        mode.set_value("points")
+        await user.should_see("Default tolerance")
         await _settled(lambda: not _hints(user))

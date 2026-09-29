@@ -293,7 +293,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-rail .q-btn { width: 100%; padding: 4px 0; min-width: 0; }
 .dstf-rail-label { font-size: 10px; letter-spacing: 0; line-height: 1.2; }
 .dstf-rail-on { background: var(--dstf-selection); color: var(--dstf-accent); }
-.dstf-drawer-panel { width: 320px; min-width: 0; }
+/* The panel's width is the tab's (`TabState.drawer_width`, set inline by
+   `Rail`); its right edge is the resize grip (K5), 6 px of the drawer over
+   the panel's border. */
+.dstf-drawer-panel { min-width: 0; flex: none; }
+.dstf-rail-row { position: relative; }
+.dstf-drawer-handle {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+  cursor: col-resize; touch-action: none; z-index: 1;
+}
+.dstf-drawer-handle:hover { background: var(--dstf-selection); }
 /* The Variables drawer's rows (3c): "+ new plot" is there on the hovered
    row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
    reflow as the mouse moves down the list — and on a row with focus in
@@ -304,6 +313,15 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    with the selected plot's ring inside it, as the owner's board drew it: a
    bare ring beside the text read as an empty checkbox. */
 .dstf-var-row { min-height: 28px; }
+/* Two lines (2026-09-29): the label with the row's width on the first; the
+   muted name, "plot N" and "+ new plot" on the second, under the label
+   (past the check). A row with nothing but "+ new plot" is one line (K6). */
+.dstf-var-line1 { min-height: 26px; }
+.dstf-var-line2 { padding-left: 28px; min-height: 18px; font-size: 11px; }
+.dstf-var-line2 .q-btn { min-height: 18px; }
+.dstf-var-line2 .dstf-varname {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .dstf-var-row:hover { background: var(--dstf-surface-hover); }
 .dstf-var-row .dstf-var-new { visibility: hidden; }
 .dstf-var-row:hover .dstf-var-new,

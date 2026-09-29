@@ -22,6 +22,9 @@ class TabState:
     #: every control of both drawers (3c; step T, Q7): the tab's, so a
     #: switch of test, which builds new drawers, keeps them.
     drawer: str | None = None
+    #: The open drawer's panel width in px, dragged by its right edge (K5):
+    #: the tab's, so a switch of test keeps it.
+    drawer_width: int = 320
     tests_needle: str = ""
     tests_regex: bool = False
     tests_case: bool = False

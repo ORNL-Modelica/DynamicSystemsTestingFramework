@@ -7781,3 +7781,72 @@ class TestVariablesDrawerControls:
             assert _one(user, "var-sort:name").props["aria-checked"] == "true"
             assert _one(user, "var-names:file").props["aria-checked"] == "true"
             assert _groups_shown(user) == ["var-group:1-All-variables"]
+
+
+# -- the drawer: two-line rows, drag to resize (U2, Task 6) ----------------------
+
+
+async def test_a_resized_drawer_sets_the_drawer_the_panels_and_the_tab(extras_shell):
+    """K5 on the server: the release's width (`Rail.resize`) is the drawer's
+    `width` prop with the rail, every panel's width and the tab's — a new
+    page's drawer opens at it; below 240 px it is floored; a closed drawer
+    is the rail alone and the grip goes with the panel."""
+    from dstf.authoring.shell.rail import MIN_PANEL, RAIL
+
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        rail = page.rail
+        assert page.state.drawer_width == 320
+        rail.open("variables")
+        assert rail.grip.visible
+        assert rail.drawer.props["width"] == str(RAIL + 320)
+        rail.resize(517.4)
+        assert page.state.drawer_width == 517
+        assert rail.drawer.props["width"] == str(RAIL + 517)
+        assert all(p._style.get("width") == "517px" for p in rail.panels.values())
+        await _test_page(shell, user, B)
+        other = _page(shell, user)
+        assert other is not page and other.state.drawer == "variables"
+        assert other.rail.drawer.props["width"] == str(RAIL + 517)
+        assert other.rail.panels["variables"]._style.get("width") == "517px"
+        other.rail.resize(12)
+        assert other.state.drawer_width == MIN_PANEL
+        other.rail.resize("not a number")
+        assert other.state.drawer_width == MIN_PANEL
+        other.rail.open(None)
+        assert other.rail.drawer.props["width"] == str(RAIL)
+        assert not other.rail.grip.visible
+
+
+async def test_a_drawer_rows_label_is_alone_on_its_first_line(extras_shell):
+    """2026-09-29: line 1 holds the controls and the label, nothing after
+    it; line 2 "plot N" and "+ new plot"."""
+    from dstf.authoring.shell.widgets import MiddleCut
+
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.rail.open("variables")
+        (row,) = user.find(marker=var_marker("var-row", "2/(top level)/w")).elements
+        line1, line2 = row.default_slot.children
+        assert "dstf-var-line1" in line1.classes and "dstf-var-line2" in line2.classes
+        assert isinstance(line1.default_slot.children[-1], MiddleCut)
+        texts = [e.text for e in line2.descendants() if hasattr(e, "text")]
+        assert "plot 4" in texts and "+ new plot" in texts
+
+
+async def test_a_drawer_row_with_nothing_but_new_plot_is_one_line(drawer_shell):
+    """K6: a second line holding only the hover-only "+ new plot" collapses;
+    the `+` sits at line 1's right, after the label."""
+    from dstf.authoring.shell.widgets import MiddleCut
+
+    async with user_simulation(root=drawer_shell.index) as user:
+        await _drawer(drawer_shell, user)
+        (row,) = user.find(marker=var_marker("var-row", ROW_A0)).elements
+        (line1,) = row.default_slot.children
+        assert "dstf-var-line1" in line1.classes
+        kids = line1.default_slot.children
+        at = next(i for i, e in enumerate(kids) if isinstance(e, MiddleCut))
+        after = [m for e in kids[at + 1 :] for m in _marks(e)]
+        assert var_marker("var-new", ROW_A0) in after

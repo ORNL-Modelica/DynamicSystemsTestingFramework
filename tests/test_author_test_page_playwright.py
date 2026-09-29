@@ -3284,3 +3284,112 @@ def test_the_editors_fields_line_up_and_say_the_value_in_effect(
             expect(page.locator(".dstf-editor")).to_have_count(
                 0, timeout=EXPECT_TIMEOUT
             )
+
+
+#: The open drawer's panel width, and the first plot's svg width.
+WIDTHS = """() => {
+  const panel = [...document.querySelectorAll('.dstf-drawer-panel')]
+    .find(p => p.offsetParent !== null);
+  const svg = document.querySelector('.js-plotly-plot .main-svg');
+  return [panel ? panel.getBoundingClientRect().width : null,
+          svg ? svg.getBoundingClientRect().width : null];
+}"""
+
+#: Starts recording every animation frame's panel width into
+#: `window.__frames` for ``ms``: a release that re-rendered the drawer from
+#: the server's old width flashes it back for a frame or more.
+FRAMES = """(ms) => {
+  const seen = window.__frames = [], end = performance.now() + ms;
+  const tick = () => {
+    const p = [...document.querySelectorAll('.dstf-drawer-panel')]
+      .find(p => p.offsetParent !== null);
+    seen.push(p ? Math.round(p.getBoundingClientRect().width) : null);
+    if (performance.now() < end) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}"""
+
+
+def _drag_grip(page, dx: float, *, watch_ms: int = 0) -> list | None:
+    """Drag the grip ``dx`` px; with ``watch_ms``, the panel's width on
+    every frame from just before the release until ``watch_ms`` after."""
+    grip = page.locator(".dstf-drawer-handle")
+    box = grip.bounding_box()
+    assert box is not None
+    x, y = box["x"] + box["width"] / 2, box["y"] + 200
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for k in range(1, 11):
+        page.mouse.move(x + dx * k / 10, y)
+    if watch_ms:
+        page.evaluate(FRAMES, watch_ms)
+    page.mouse.up()
+    if not watch_ms:
+        return None
+    page.wait_for_timeout(watch_ms + 200)
+    return page.evaluate("window.__frames")
+
+
+def test_the_drawer_resizes_by_its_edge_and_keeps_its_width(
+    tmp_path, playwright_browser
+):
+    """K5 in Chromium: the grip on the open drawer's right edge, dragged
+    200 px right, makes the 320 px panel 520 px with no frame back at 320
+    after the release, and a plot 200 px narrower; past the bounds it
+    clamps at 60% of the window and at 240 px; the width is the tab's, kept
+    on a switch of test."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        _open_vars(page)
+        expect(page.locator(".dstf-drawer-handle")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        panel0, svg0 = page.evaluate(WIDTHS)
+        assert round(panel0) == 320, panel0
+        frames = _drag_grip(page, 200, watch_ms=1500)
+        assert len(frames) > 30, frames  # ~1.5 s of frames past the release
+        assert all(w == 520 for w in frames), frames
+        page.wait_for_timeout(600)
+        panel1, svg1 = page.evaluate(WIDTHS)
+        assert round(panel1) == 520, panel1
+        assert abs((svg0 - svg1) - 200) <= 4, (svg0, svg1)
+        _shot(page, tmp_path, "drawer-520")
+        _drag_grip(page, 2000)
+        page.wait_for_timeout(400)
+        assert round(page.evaluate(WIDTHS)[0]) == round(0.6 * VIEWPORT["width"])
+        _drag_grip(page, -2000)
+        page.wait_for_timeout(400)
+        assert round(page.evaluate(WIDTHS)[0]) == 240
+        _drag_grip(page, 200)
+        page.wait_for_timeout(400)
+        # A switch of test (the Tests drawer): the width is the tab's.
+        page.goto(page.url.replace(f"test/{A}", f"test/{C}"))
+        expect(page.locator(".dstf-subheader")).to_contain_text(
+            C, timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(600)
+        assert round(page.evaluate(WIDTHS)[0]) == 440
+
+
+def test_a_long_label_has_the_drawer_rows_first_line(tmp_path, playwright_browser):
+    """2026-09-29: a row's label has its first line to itself; the name and
+    "plot N" are on the second. At the default 320 px the `cat(...)[3]`
+    label shows at least 30 of its characters (range rects)."""
+    with _served(tmp_path, playwright_browser, hooks=True) as page:
+        base = page.url.split("test/")[0]
+        query = urllib.parse.urlencode({"name": "x", "expression": CAT3})
+        with urllib.request.urlopen(f"{base}__expression?{query}") as r:
+            assert json.loads(r.read()) == {"stamped": 1}
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _open_vars(page)
+        row = _var_row(page, CAT3)
+        expect(row).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        cut = row.locator(".dstf-var-line1 .dstf-mid").evaluate(MID_CUT)
+        assert len(cut["shown"]) + len("[3]") >= 30, cut
+        # the name is on the second line, below the label
+        label = row.locator(".dstf-var-line1").bounding_box()
+        name = row.locator(".dstf-var-line2 .dstf-varname").bounding_box()
+        assert label is not None and name is not None
+        assert name["y"] >= label["y"] + label["height"] - 1, (label, name)
+        _shot(page, tmp_path, "two-line-row")
