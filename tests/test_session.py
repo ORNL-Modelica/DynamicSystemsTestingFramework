@@ -924,6 +924,47 @@ class TestOpen:
         assert s.project.results["MyLib.Bar"].success is True
         assert classify(s.rescore("MyLib.Bar")) == NO_REF
 
+    def test_a_rescans_read_that_raises_leaves_the_session_as_it_was(
+        self, tmp_path, monkeypatch
+    ):
+        """The rescan re-reads a changed model with its new TestModel. The
+        read happened after the tests were swapped and the gone models'
+        comparisons dropped, so one that raised (the disk went away) left a
+        project whose tests were the new scan's and whose results and
+        comparisons were the old one's. Read first: a raise changes
+        nothing."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        _mo, before = _bump_stop_time(tmp_path)
+        posted: list = []
+        s = Session(post=posted.append)
+        s.open(cfg, work_dir=tmp_path / "work")
+        for fn in list(posted):  # the open's own hooks; the rescan may be among them
+            if fn.__name__ != "apply":
+                posted.remove(fn)
+                fn()
+        deadline = time.monotonic() + 10.0
+        while not any(fn.__name__ == "apply" for fn in posted):
+            assert time.monotonic() < deadline, "the rescan posted nothing"
+            time.sleep(0.02)
+        apply = next(fn for fn in posted if fn.__name__ == "apply")
+        project = s.project
+        tests, scanned = list(project.tests), dict(project.scanned)
+        comparisons, results = dict(s.comparisons), dict(project.results)
+
+        def gone(*_args, **_kwargs):
+            raise OSError("the work dir went away")
+
+        monkeypatch.setattr(project.backend, "read_last_results", gone)
+        with pytest.raises(OSError, match="went away"):
+            apply()
+        assert project.tests == tests
+        assert project.test(before.model_id).stop_time == before.stop_time
+        assert project.scanned == scanned
+        assert s.comparisons == comparisons and project.results == results
+        assert s.rescan_done.is_set()  # a waiter is never left hanging
+
     def test_only_the_changed_model_of_two_is_rescored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
         cfg = _modelica_project(tmp_path)

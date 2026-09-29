@@ -491,7 +491,6 @@ class Session:
             try:
                 # The project may have been swapped or closed meanwhile.
                 if changed_models and self.project is project:
-                    project.scanned = fresh
                     # Only what changed is rescored: a one-file edit over
                     # TRANSFORM must not run 331 comparisons on the UI loop.
                     # A model a running job has locked is left to that job's
@@ -505,7 +504,7 @@ class Session:
                     locked = (
                         self.running.models if self.running is not None else frozenset()
                     )
-                    self._rebuild_tests(changed_models - locked, reread=True)
+                    self._rebuild_tests(changed_models - locked, scanned=fresh)
                 self._emit("loading", phase="rescan", changed=bool(changed_models))
             finally:
                 done.set()
@@ -1091,7 +1090,7 @@ class Session:
         # tracks it, so it scores at once — no rerun (the owner's O2). Read
         # BEFORE anything is replaced: a read that raises (the disk went
         # away) leaves the Session as it was, as the docstring promises.
-        # Read directly, not through `_rebuild_tests(reread=True)`: the
+        # Read directly, not through `_rebuild_tests(scanned=...)`: the
         # effective spec is merged just above (on TRANSFORM a merge is most
         # of a stage's cost; that would do it twice), and it would re-read
         # AND rescore only the models it is handed — the other staged models
@@ -1310,17 +1309,25 @@ class Session:
         )
         return merge_tests(scanned, spec_tests_by_model(models))
 
-    def _rebuild_tests(self, models: set[str], *, reread: bool = False) -> None:
+    def _rebuild_tests(
+        self, models: set[str], *, scanned: dict[str, TestModel] | None = None
+    ) -> None:
         """Re-merge the scan against the effective spec; models the spec no
         longer names drop out of ``comparisons``, models it newly names are
-        scored (with whatever result the last reload holds for them). With
-        ``reread`` the ``models`` are first re-read from the last run with
-        their merged TestModels (the rescan's case)."""
+        scored (with whatever result the last reload holds for them).
+
+        ``scanned`` is the rescan's new scan: it is merged in place of the
+        project's, and the ``models`` are re-read from the last run with
+        their merged TestModels. The read comes BEFORE anything is
+        replaced — the scan, the tests, the comparisons — so a read that
+        raises (the disk went away) leaves the Session as it was."""
         project = self._require_project()
-        project.tests = self._merge(
-            project.config, project.scanned, self.spec.effective()
-        )
-        current = {t.model_id for t in project.tests}
+        scan = project.scanned if scanned is None else scanned
+        tests = self._merge(project.config, scan, self.spec.effective())
+        current = {t.model_id for t in tests}
+        reread = models & current if scanned is not None else set()
+        fresh = self._read_again(reread, tests) if reread else {}
+        project.scanned, project.tests = scan, tests
         gone = set(self.comparisons) - current
         new = current - set(self.comparisons)
         for model_id in gone:
@@ -1331,14 +1338,9 @@ class Session:
         for model_id in set(self._reads) - current:
             del self._reads[model_id]
         if reread:
-            self._reread_results(models & current)
+            self._keep_read(reread, fresh)
         self._emit("spec", models=models | gone | new)
         self._score_all((models | new) & current)
-
-    def _reread_results(self, models: set[str]) -> None:
-        """Re-read ``models`` from the last run with their CURRENT
-        TestModels (`_read_again`), and keep what was read (`_keep_read`)."""
-        self._keep_read(models, self._read_again(models, self._require_project().tests))
 
     def _read_again(
         self, models: set[str], tests: Sequence[TestModel]

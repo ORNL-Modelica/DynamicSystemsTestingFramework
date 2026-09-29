@@ -415,8 +415,8 @@ async def test_a_new_entrys_note_says_it_is_new(tmp_path):
     shell.load.phase = "done"
     # Scanned: a recognizer would find it; FakeLib's Python source has none.
     # Re-read: the open read no result for a model that was no test.
-    shell.session.project.scanned[D] = d_model
-    shell.session._rebuild_tests({D}, reread=True)
+    scanned = {**shell.session.project.scanned, D: d_model}
+    shell.session._rebuild_tests({D}, scanned=scanned)
     assert shell.session.spec.saved_entry(D) is None
     async with user_simulation(root=shell.index) as user:
         await _open(user)
