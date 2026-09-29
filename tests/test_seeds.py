@@ -11,8 +11,13 @@ import pytest
 from dstf.backends.types import VariableResult
 from dstf.comparison.algorithms import _compute_fft_spectrum
 from dstf.comparison.modes import resolve_mode
-from dstf.comparison.seeds import SeedData, _outward, seeded_leaf
-from dstf.comparison.tree_eval import PRIMARY_BASELINE, BaselineView, evaluate_spec
+from dstf.comparison.seeds import SeedData, _outward, seed_diagnostic, seeded_leaf
+from dstf.comparison.tree_eval import (
+    PRIMARY_BASELINE,
+    BaselineView,
+    ScalarSources,
+    evaluate_spec,
+)
 from dstf.comparison.tree_spec import parse_metric_tree
 
 SEEDED = ["range", "tube", "scalar", "dominant-frequency"]
@@ -317,3 +322,54 @@ def test_a_hand_written_window_bound_may_be_a_string():
     may hold ``"start": "2"``; the seed reads it the same way."""
     t, _ = SeedData(ref=(T, RAMP), act=None).within({"start": "2", "end": "5"}).ref
     assert (t[0], t[-1]) == (2.0, 5.0)
+
+
+# -- a diagnostic's seed (U2, K1) ------------------------------------------------
+
+
+def test_a_count_is_seeded_exact():
+    leaf = seed_diagnostic("EventCounter", np.array([0.0, 3.0, 7.0]))
+    assert leaf == {
+        "metric": "scalar",
+        "variable": "EventCounter",
+        "quantity": "EventCounter.final",
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+
+def test_cpu_time_is_seeded_relative_even_when_its_final_is_whole():
+    """A tiny model's CPUtime can be 0.0 or 1.0 at the end: a whole number,
+    and no count — seeded as one, a next run's 0.01 s would fail it."""
+    for values in ([0.0, 0.5, 1.25], [0.0, 0.0, 0.0], [0.0, 1.0, 1.0]):
+        leaf = seed_diagnostic("CPUtime", np.array(values))
+        assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel"), values
+
+
+def test_another_diagnostic_is_a_count_when_every_sample_is_whole():
+    assert seed_diagnostic("Steps", np.array([0.0, 2.0, 9.0]))["tolerance"] == 0
+    assert seed_diagnostic("Wall", np.array([0.0, 2.0, 9.5]))["tolerance"] == 0.1
+
+
+def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
+    t = np.array([0.0, 1.0, 2.0])
+    diag = VariableResult(
+        index=0, time=t, values=np.array([0.0, 2.0, 5.0]), name="EventCounter"
+    )
+    raw = seed_diagnostic("EventCounter", diag.values)
+    spec = parse_metric_tree(raw)
+    base = BaselineView(
+        name=PRIMARY_BASELINE,
+        ref_vars_by_name={},
+        shared_ref_time=None,
+        statistics={},
+        diagnostics=[{"name": "EventCounter", "final": 5.0}],
+    )
+    got = evaluate_spec(
+        spec,
+        {},
+        {PRIMARY_BASELINE: base},
+        1e-4,
+        scalars=ScalarSources(statistics={}, diagnostics=[diag]),
+    )
+    assert got.passed, got

@@ -1855,6 +1855,38 @@ async def test_a_watch_cards_plus_adds_a_seeded_range_on_untracked_w(extras_shel
         await _settled(lambda: page.strip.situation.value == "edits")
 
 
+async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_tree(extras_shell):
+    """B6: a diagnostic's criterion is scored through a quantity path and has
+    no plot, so an Add from a plot's `+` has no row there to open: the tree
+    card opens instead, on the new criterion's row."""
+    import numpy as np
+
+    from dstf.backends.types import VariableResult
+
+    shell = extras_shell
+    result = shell.session.project.results[A]
+    t = np.asarray(result.variables[0].time)
+    result.diagnostics = [
+        VariableResult(
+            index=0, time=t, values=np.linspace(0, 0.4, len(t)), name="CPUtime"
+        )
+    ]
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.tree is not None and not page.tree.is_open
+        before = len(shell.session.tree(A)["children"])
+        _click_in(user, "add-for:x", within="criteria-header:1")
+        await _settled(lambda: not _none(user, "apply-add:x:variable"))
+        user.find(marker="apply-add:x:variable:pick:CPUtime").click()
+        user.find(marker="apply-add:x").click()
+        added = f"/metrics/children/{before}"
+        await _settled(lambda: len(shell.session.tree(A)["children"]) == before + 1)
+        assert shell.session.tree(A)["children"][-1]["quantity"] == "CPUtime.final"
+        await _settled(lambda: page.tree.is_open)
+        await _settled(lambda: not _none(user, f"tree-row:{added}"))
+        assert page.open is None  # no plot holds it: no plot's editor opened
+
+
 async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):
     """C1: the context sits in a row above the plot, each name with a `×`;
     it is no criterion. x's entry holds nothing else, so it goes."""

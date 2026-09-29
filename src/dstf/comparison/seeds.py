@@ -188,3 +188,32 @@ def seeded_leaf(metric: str, variable: str, data: SeedData) -> dict:
     if desc is None or desc.seed is None:
         return leaf
     return {**leaf, **desc.seed(data)}
+
+
+#: Diagnostics whose kind is known by name (K1): a count is scored exact, a
+#: time within 10%. A tiny model's CPUtime can end on a whole 0.0 or 1.0:
+#: read by its values alone it is a count, and a next run's 0.01 s fails.
+COUNTS = frozenset({"EventCounter"})
+TIMES = frozenset({"CPUtime"})
+
+
+def seed_diagnostic(name: str, values: np.ndarray | None) -> dict:
+    """A criterion on the diagnostic ``name`` (the plan's K1): its stored
+    final through a quantity path, ``tolerance 0 abs`` for a count and
+    ``0.1 rel`` otherwise. A diagnostic of neither known kind is a count
+    when every finite sample is a whole number. ``variable`` is the
+    diagnostic's name: parsed without one, the leaf's variable becomes the
+    quantity text, and its row reads ``scalar · CPUtime.final``."""
+    finite = values[np.isfinite(values)] if values is not None else np.array([])
+    count = name in COUNTS or (
+        name not in TIMES
+        and finite.size > 0
+        and bool(np.all(finite == np.round(finite)))
+    )
+    return {
+        "metric": "scalar",
+        "variable": name,
+        "quantity": f"{name}.final",
+        "tolerance": 0 if count else 0.1,
+        "tolerance_mode": "abs" if count else "rel",
+    }

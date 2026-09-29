@@ -400,6 +400,9 @@ class TestPage:
             0 <= index < len(self.cards) and path in self.cards[index].rows
         ):
             index = None
+        if not any(path in card.rows for card in self.cards):
+            self._reveal_in_tree(path)
+            return
         self.open_criterion(path, index)
         if self.open is not None and self.open[1] == path:
             self.client.run_javascript(
@@ -407,6 +410,26 @@ class TestPage:
                 '?.scrollIntoView({block: "nearest"});'
                 'document.querySelector(".dstf-editor")'
                 '?.scrollIntoView({block: "nearest"})'
+            )
+
+    def _reveal_in_tree(self, path: str) -> None:
+        """A criterion no plot holds — a diagnostic's, scored through a
+        quantity path (B6) — is revealed where it is: the tree card opens
+        and its row is brought into view. Its values are edited nowhere on
+        this page yet: a tree row hosts the node's controls, not the
+        criterion editor."""
+        tree = self.tree
+        if tree is None:
+            return
+        if not tree.is_open:
+            tree.toggle()
+        row = tree.rows_by_path.get(path)
+        if row is not None:
+            self.client.run_javascript(
+                f'document.getElementById("{row.html_id}")'
+                # centred, as a jump is: "nearest" left it under the sticky
+                # header (Chromium, 900 px)
+                '?.scrollIntoView({block: "center"})'
             )
 
     def toggle_criterion(self, index: int, path: str) -> None:

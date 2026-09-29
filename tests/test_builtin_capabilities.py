@@ -2429,3 +2429,77 @@ async def test_a_simulate_only_test_says_nothing_is_scored(tmp_path):
         (add,) = user.find(marker="apply-add:y").elements
         assert not add.enabled
         await user.should_see("This test is simulate-only: nothing is scored")
+
+
+# -- the metric list follows the variable (U2, Task 4) ---------------------------
+
+
+def _metric_select(user):
+    return next(
+        e
+        for e in user.find(kind=ui.select).elements
+        if e.props.get("label") == "Metric"
+    )
+
+
+async def test_a_diagnostic_offers_scalar_only_and_seeds_a_quantity_path(tmp_path):
+    """Q2 + K1: a diagnostic is one stored number — the Metric select offers
+    what takes a ``quantity`` (scalar), and Add writes its final through a
+    quantity path, a count exact. Back on an ordinary variable, every metric
+    that scores a time series."""
+    session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, CPUtime=0.37, EventCounter=4.0)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, errors, _figure):
+        picker = await _open_plus(user, "y")
+        met = _metric_select(user)
+        everything = list(met.options)
+        assert "scalar" in everything and len(everything) > 1
+        assert _sections(picker)["Diagnostics"] == ["CPUtime", "EventCounter"]
+        user.find(marker="apply-add:y:variable:pick:EventCounter").click()
+        assert list(met.options) == ["scalar"] and met.value == "scalar"
+        user.find(marker="apply-add:y").click()
+        await _settled(lambda: len(session.tree(A)["children"]) == 3)
+        assert session.tree(A)["children"][-1] == {
+            "metric": "scalar",
+            "variable": "EventCounter",
+            "quantity": "EventCounter.final",
+            "tolerance": 0,
+            "tolerance_mode": "abs",
+        }
+        assert errors == {}
+        picker = await _open_plus(user, "y")
+        met = _metric_select(user)
+        user.find(marker="apply-add:y:variable:pick:CPUtime").click()
+        assert list(met.options) == ["scalar"]
+        user.find(marker="apply-add:y:variable:pick:x").click()
+        assert list(met.options) == everything
+
+
+async def test_cpu_time_is_seeded_relative(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, CPUtime=1.0)
+    view = SessionView(session, Selection(tests=frozenset({A}), variable="y"))
+    patch = EditTree().act(
+        view, action="add", model_id=A, path=ROOT, variable="CPUtime", metric="scalar"
+    )
+    (op,) = patch.ops
+    assert op.value["quantity"] == "CPUtime.final"
+    assert (op.value["tolerance"], op.value["tolerance_mode"]) == (0.1, "rel")
+
+
+async def test_a_diagnostic_refuses_a_trajectory_metric(tmp_path):
+    """B4: `act` decides "diagnostic" from what the run recorded, and a
+    metric that takes no quantity cannot score one."""
+    session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, CPUtime=1.0)
+    view = SessionView(session, Selection(tests=frozenset({A}), variable="y"))
+    with pytest.raises(ValueError, match="scalar"):
+        EditTree().act(
+            view,
+            action="add",
+            model_id=A,
+            path=ROOT,
+            variable="CPUtime",
+            metric="nrmse",
+        )

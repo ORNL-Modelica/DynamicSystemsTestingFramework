@@ -147,6 +147,8 @@ class TreeCard:
         self.root_pill: Pill | None = None
         self.hosts: list[InlineHost] = []
         self.painters: dict[str, _Row] = {}
+        #: Each node's row by its path: what a reveal brings into view.
+        self.rows_by_path: dict[str, ui.row] = {}
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
@@ -173,6 +175,7 @@ class TreeCard:
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.named = [], {}, []
+        self.rows_by_path = {}
         self.root_pill = None
         self.is_open = False
         self._shape = ()
@@ -271,7 +274,7 @@ class TreeCard:
     def _build_rows(self, view: dict) -> None:
         for host in self.hosts:
             host.clear()
-        self.hosts, self.painters = [], {}
+        self.hosts, self.painters, self.rows_by_path = [], {}, {}
         self.rows.clear()
         with self.rows:
             self._row(view, 0)
@@ -279,6 +282,7 @@ class TreeCard:
     def _row(self, node: dict, depth: int) -> None:
         path, model = str(node["path"]), self.page.model_id
         row = ui.row().classes("dstf-tree-row items-center no-wrap gap-3 w-full")
+        self.rows_by_path[path] = row
         with row.style(f"padding-left: {16 * depth}px").mark(f"tree-row:{path}"):
             pill = Pill(node_status(node), f"tree-pill:{path}")
             # A combinator's lead place, right after its pill: where its

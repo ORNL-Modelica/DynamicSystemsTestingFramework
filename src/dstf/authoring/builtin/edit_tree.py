@@ -18,8 +18,9 @@ from functools import partial
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from ...backends.types import DatasetType
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
-from ...comparison.seeds import SeedData, seeded_leaf
+from ...comparison.seeds import SeedData, seed_diagnostic, seeded_leaf
 from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
@@ -225,13 +226,26 @@ class EditTree:
         if node is None:
             raise ValueError(f"{path} names no node of {model_id}")
         if action == "add":
-            # Seeded: a bare range, tube or scalar does not resolve, and a
-            # bare dominant-frequency always fails "no peaks declared".
-            leaf = seeded_leaf(
-                inputs["metric"],
-                inputs["variable"],
-                seed_data(s, model_id, inputs["variable"]),
-            )
+            diagnostics = _diagnostics(s, model_id)
+            if inputs["variable"] in diagnostics:
+                # A diagnostic is one stored number (K1): its final through
+                # a quantity path, never a trajectory — a `{"reduce": ...}`
+                # scalar on one never scores.
+                if inputs["metric"] not in _metrics_for(diagnostic=True):
+                    raise ValueError(
+                        f"{inputs['variable']} is a diagnostic: scalar scores it"
+                    )
+                leaf = seed_diagnostic(
+                    inputs["variable"], diagnostics[inputs["variable"]]
+                )
+            else:
+                # Seeded: a bare range, tube or scalar does not resolve, and
+                # a bare dominant-frequency always fails "no peaks declared".
+                leaf = seeded_leaf(
+                    inputs["metric"],
+                    inputs["variable"],
+                    seed_data(s, model_id, inputs["variable"]),
+                )
             if "combinator" in node:
                 under = path
             elif path == ROOT:
@@ -444,6 +458,15 @@ def _add_form(
     on_plot = _plot_series(s, model_id, s.selection.variable)
     diagnostics = list(_diagnostics(s, model_id))
     labels = s.labels(model_id)
+    first = variable or (on_plot or names or [""])[0]
+
+    def follow(name: str) -> None:
+        """The Metric select offers what can score ``name`` (Q2)."""
+        options = _metrics_for(diagnostic=name in diagnostics)
+        met.set_options(
+            options, value=met.value if met.value in options else options[0]
+        )
+
     var = VariablePicker(
         lambda keep: picker_rows(
             on_plot=on_plot,
@@ -452,12 +475,18 @@ def _add_form(
             labels=labels,
             keep=keep,
         ),
-        value=variable or (on_plot or names or [""])[0],
+        value=first,
         text_of=lambda name: labels.get(name, name),
+        on_change=follow,
         marker=f"{mark}:variable",
     )
+    options = _metrics_for(diagnostic=first in diagnostics)
     met = (
-        ui.select([d.name for d in metrics()], label="Metric", value=DEFAULT_METRIC)
+        ui.select(
+            options,
+            label="Metric",
+            value=DEFAULT_METRIC if DEFAULT_METRIC in options else options[0],
+        )
         .props("dense")
         .classes("w-full")
     )
@@ -821,6 +850,21 @@ def _diagnostics(s: SessionView, model_id: str) -> dict[str, Any]:
     if result is None:
         return {}
     return {d.name: d.values for d in result.diagnostics or [] if d.name}
+
+
+def _metrics_for(*, diagnostic: bool) -> list[str]:
+    """What the Metric select offers (Q2): a diagnostic is one stored
+    number, scored by a metric that takes a ``quantity``; any other
+    variable, every metric that scores a time series."""
+    return [
+        d.name
+        for d in metrics()
+        if (
+            d.accepts_quantity
+            if diagnostic
+            else DatasetType.TIME_SERIES in d.accepted_datasets
+        )
+    ]
 
 
 def _plot_series(s: SessionView, model_id: str, variable: str | None) -> list[str]:
