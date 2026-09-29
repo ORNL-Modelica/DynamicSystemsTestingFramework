@@ -1179,6 +1179,32 @@ async def test_a_plot_whose_subject_the_result_lacks_draws_no_chart(shell):
         assert page.cards[1].plot is None
 
 
+async def test_a_missing_subject_with_a_drawable_context_draws_no_chart(shell):
+    """The report draws no chart when no SUBJECT is drawable, whatever the
+    context; the tool agrees — `y`, drawable, is context on the plot of
+    `ghost`, which the result lacks."""
+    _stage_tree(
+        shell,
+        A,
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "range", "variable": "ghost", "min_value": 0.0},
+            ],
+        },
+    )
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"var": "ghost", "context": ["y"]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (card,) = [c for c in page.cards if c.resolved.subject == ("ghost",)]
+        assert card.resolved.context == ("y",)
+        assert card.resolved.missing == ("ghost",)
+        assert _none(user, f"plot-slot:{card.index}")
+
+
 async def test_criteria_rows_follow_the_tree(shell):
     _stage_tree(shell)
     async with user_simulation(root=shell.index) as user:
@@ -1251,12 +1277,86 @@ async def test_the_plus_adds_a_criterion_for_the_variable(shell):
 
 
 async def test_a_test_with_no_result_has_no_cards(shell):
-    """C's run left no result file: the reader hands in a FAILED result
-    (the Suite row says sim failed), so the reason is the run."""
+    """C's last run never finished it (its manifest entry is still
+    pending): the reader hands in a failed result, but there is no result
+    to read, so the reason is the result, as the strip says — not the
+    run."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, C)
-        assert _one(user, "plots:count").text == "no plots: the run failed"
+        assert _one(user, "plots:count").text == "no plots: this test has no result"
         assert page.cards == []
+
+
+def _c_run(tmp_path, status: str | None) -> Shell:
+    """`shell` with C's manifest entry reading ``status`` — `pending` is a
+    run that never finished C, `failed` one that finished it, failed — or,
+    with None, gone: C was never run. C has no result file either way."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if status is None:
+        del manifest["test_0003"]
+    else:
+        manifest["test_0003"]["last_run_status"] = status
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+#: The lines of the Test page that say why a test has nothing to show.
+_RUN_LINES = ("strip-text", "plots:count", "tree:summary", "var-target")
+
+
+async def test_an_unfinished_run_says_no_result_on_every_line(tmp_path):
+    """ONE run-state rule (`TestPage.run_state`): the strip said "No result
+    yet" for C's unfinished run while the count, the tree and the drawer
+    said the run failed."""
+    shell = _c_run(tmp_path, "pending")
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert page.run_state() == "none"
+        said = {m: _one(user, m).text for m in _RUN_LINES}
+        assert said == {
+            "strip-text": "No result yet — rerun to simulate it.",
+            "plots:count": "no plots: this test has no result",
+            "tree:summary": "nothing scored: this test has no result",
+            "var-target": "No result yet: no plots",
+        }
+        assert _one(user, "var-empty").text == "this test has no result"
+
+
+async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
+    """C's run finished and failed: every line says the run failed — the
+    tree's too, which said "this test has no result"."""
+    shell = _c_run(tmp_path, "failed")
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert page.run_state() == "failed"
+        said = {m: _one(user, m).text for m in _RUN_LINES}
+        assert said["strip-text"].startswith("The simulation failed.")
+        assert {m: t for m, t in said.items() if m != "strip-text"} == {
+            "plots:count": "no plots: the run failed",
+            "tree:summary": "nothing scored: the run failed",
+            "var-target": "The run failed: no plots",
+        }
+        assert _one(user, "var-empty").text == "the run failed"
+
+
+async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):
+    """C is in no manifest and has no result at all: nothing on the page
+    says the run failed — there was none."""
+    shell = _c_run(tmp_path, None)
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert shell.session.project.results.get(C) is None
+        assert page.run_state() == "none"
+        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert _one(user, "tree:summary").text == (
+            "nothing scored: this test has no result"
+        )
+        assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
 
 
 async def test_an_empty_plots_key_is_no_extras(shell):
@@ -3812,10 +3912,14 @@ async def test_a_swatch_is_there_once_the_plot_is(page_shell):
         card = page.cards[0]
         # Nothing is known of what a leaf draws before its figure exists.
         assert card.plot is None
-        assert not any(row.swatch.visible for row in card.rows.values())
+        # Invisible, never display:none: a hidden swatch keeps its box.
+        assert all("invisible" in row.swatch.classes for row in card.rows.values())
+        assert all(row.swatch.visible for row in card.rows.values())
         with page.client:
             card.show()
-        assert {p for p, row in card.rows.items() if row.swatch.visible} == {
+        assert {
+            p for p, row in card.rows.items() if "invisible" not in row.swatch.classes
+        } == {
             TUBE,
             RANGE_X,
         }
@@ -3855,7 +3959,7 @@ async def test_a_criterion_that_draws_only_a_shape_has_a_swatch(page_shell):
             s["name"].startswith(windowed + "/") for s in figure["layout"]["shapes"]
         )
         assert windowed in card.drawable
-        assert card.rows[windowed].swatch.visible
+        assert "invisible" not in card.rows[windowed].swatch.classes
 
 
 def _count_sends(card) -> list[int]:
@@ -5699,15 +5803,28 @@ class TestVariablesDrawer:
             check.click()  # drawn for plot 1, which shows z
             assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0", "z")]
 
-    async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell):
-        """A failed run has no plots (O2), and a watch plot made on it
-        would draw nothing: the drawer says why, its checks and every
-        "+ new plot" are grey, and a click that reaches `_new` anyway —
-        drawn before the run failed — stages nothing."""
+    @pytest.mark.parametrize(
+        ("status", "why"),
+        [
+            ("passed", "The run failed: no plots"),
+            # A run that never finished A: its partial result is no result.
+            ("pending", "No result yet: no plots"),
+        ],
+    )
+    async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell, status, why):
+        """A result that is not a success has no plots (O2), and a watch
+        plot made on it would draw nothing: the drawer says why — worded
+        by the run state — its checks and every "+ new plot" are grey, and
+        a click that reaches `_new` anyway — drawn before the run failed —
+        stages nothing."""
         from dstf.authoring.variable_rows import VarRow
         from dstf.backends.types import TestResult
 
         shell = drawer_shell
+        path = shell.session.project.config.work_dir / "batch_manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["test_0001"]["last_run_status"] = status
+        path.write_text(json.dumps(manifest), encoding="utf-8")
         result = shell.session.project.results[A]
         shell.session.project.results[A] = TestResult(
             model_id=A, success=False, variables=list(result.variables)
@@ -5715,9 +5832,9 @@ class TestVariablesDrawer:
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             assert page.cards == []
-            assert _one(user, "var-target").text == "The run failed: no plots"
+            assert _one(user, "var-target").text == why
             assert not _one(user, var_marker("var-new", ROW_Z)).enabled
-            assert _new_why(user, ROW_Z) == "The run failed: no plots"
+            assert _new_why(user, ROW_Z) == why
             assert not _one(user, var_marker("var-check", ROW_Z)).enabled
             drawer = page.rail.variables
             assert drawer is not None
@@ -5736,6 +5853,24 @@ class TestVariablesDrawer:
             with page.client:
                 drawer._new(row)
             assert shell.session.spec.pending == []
+
+    async def test_an_unfinished_run_with_a_whole_result_keeps_new_plot(
+        self, drawer_shell
+    ):
+        """O2's gate — a result that is not a success — greys "+ new
+        plot", not the run state: a run that never finished A, whose result
+        file still reads as a success, is no result on the page's lines and
+        still has its plots and a live "+ new plot"."""
+        shell = drawer_shell
+        path = shell.session.project.config.work_dir / "batch_manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["test_0001"]["last_run_status"] = "pending"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            assert page.run_state() == "none"
+            assert len(page.cards) == 2
+            assert _one(user, var_marker("var-new", ROW_Z)).enabled
 
     async def test_a_run_that_fails_moves_the_drawers_signature(self, drawer_shell):
         """Whether the run failed is part of what the drawer is drawn from:
@@ -5963,8 +6098,9 @@ class TestVariablesDrawer:
         shell.load.phase = "done"
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user, B)
-            assert _one(user, "var-empty").text == "this test has no result"
-            # The reader hands a missing result file in as a failed run.
+            # The reader hands a missing result file in as a failed run,
+            # and B's manifest says the run finished: the run failed.
+            assert _one(user, "var-empty").text == "the run failed"
             assert _one(user, "var-target").text == "The run failed: no plots"
 
     async def test_the_cap_line(self, tmp_path):

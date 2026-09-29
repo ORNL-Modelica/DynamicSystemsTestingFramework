@@ -99,7 +99,10 @@ details summary:hover { color: var(--dstf-text); }
 .node-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4em; font-size: 0.9em; }
 .node-label { font-weight: 500; color: var(--dstf-text); }
 .node-score { font-size: 0.85em; color: var(--dstf-text-secondary); font-family: var(--dstf-mono); }
-.node-status { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; }
+/* One width, its text centred: PASS, FAIL and the pending dash, so a plot
+   section's leaf names start in one column (D140; the tool's `.dstf-pill`
+   keeps the same). */
+.node-status { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; min-width: 4em; text-align: center; }
 .node-status.pass { background: var(--dstf-pass-pill); color: var(--dstf-pass-dark); }
 .node-status.fail { background: var(--dstf-fail-pill); color: var(--dstf-fail-dark); }
 .node-status.pending { background: var(--dstf-pending-pill); color: var(--dstf-pending-fill); }

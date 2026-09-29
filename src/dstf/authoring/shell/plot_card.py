@@ -128,8 +128,13 @@ _SWATCH_TIPS = {
     False: "Show this criterion's drawing",
 }
 _SWATCH_STATES = " ".join(
-    f"dstf-swatch-{s}"
-    for s in ("on", "off", "locked", "pass", "fail", "warn", "queued")
+    [
+        *(
+            f"dstf-swatch-{s}"
+            for s in ("on", "off", "locked", "pass", "fail", "warn", "queued")
+        ),
+        "invisible",
+    ]
 )
 
 
@@ -206,8 +211,10 @@ class CriterionRow:
             with self.swatch:
                 self.swatch_tip = ui.tooltip("")
             # Hidden until the plot is drawn: which leaves draw anything is
-            # known only from the figure (`PlotCard.drawable`).
-            self.swatch.set_visibility(False)
+            # known only from the figure (`PlotCard.drawable`). INVISIBLE,
+            # never display:none — a hidden swatch keeps its box, so every
+            # row's name starts in one column (D140).
+            self.swatch.classes("invisible")
             # Its ancestors' kinds, muted: where in the tree it sits. The
             # card's rows come from anywhere in it (a plot is a view of the
             # tree), and their order alone does not say which is under what.
@@ -265,13 +272,14 @@ class CriterionRow:
         card = self.card
         is_open = card.is_open(self.path)
         on = drawn(leaf, card.choices.get(self.path), is_open)
-        self.swatch.set_visibility(self.path in card.drawable)
-        # ONE call: a remove and then an add are two changes to the element
-        # even when they cancel, and a no-op sync re-sent every swatch.
+        # ONE call, its visibility too: a remove and then an add are two
+        # changes to the element even when they cancel, and a no-op sync
+        # re-sent every swatch.
         self.swatch.classes(
             remove=_SWATCH_STATES,
             add=f"dstf-swatch-{'on' if on else 'off'} dstf-swatch-{leaf_status(leaf)}"
-            + (" dstf-swatch-locked" if is_open else ""),
+            + (" dstf-swatch-locked" if is_open else "")
+            + ("" if self.path in card.drawable else " invisible"),
         )
         if is_open:
             self.swatch.props("aria-disabled=true")

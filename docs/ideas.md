@@ -1825,3 +1825,13 @@ planning.
   `julia` is not on PATH here, so the Julia-marked tests
   (`tests/test_julia_backend.py`) cannot run, and a .jl edit nothing
   executes is not verified. Change and run them where Julia is installed.
+- **Watch-only: a result file deleted after a passed run reads as failed
+  (2026-09-29, from the U1 review)**: the result reader hands a missing
+  result file in as a failed `TestResult`, and `TestPage.run_state` reads a
+  manifest entry that is not `pending` as a run that finished. So a test
+  whose run passed, and whose `result.json` / `.mat` was deleted from the
+  work dir afterwards, says "the run failed" on every line of its Test page
+  (the strip, the count, the tree and the Variables drawer) — as the Suite
+  row says sim failed. Not changed: nothing deletes a result file but a
+  person, and telling the two apart needs the reader to say "no file"
+  rather than "failed".

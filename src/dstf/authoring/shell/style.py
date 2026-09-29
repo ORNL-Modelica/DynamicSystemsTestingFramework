@@ -72,9 +72,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-strip-amber { background: var(--dstf-warn-tint); border-left-color: var(--dstf-warn-border); }
 .dstf-strip-text { flex: 1 1 20em; }
 .dstf-strip > .dstf-strip-actions { margin-left: auto; }
+/* A pill is at least as wide as WARN, its text centred: PASS and FAIL are
+   one width, so the names after them on a plot's criteria rows start in
+   one column (D140; the report's `.node-status` keeps the same). */
 .dstf-pill {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
+  min-width: 4.8em; text-align: center;
 }
 /* A pill that carries its variable's name ("x FAIL", on a card drawing
    more than one series): the name keeps the case the test wrote it in. */

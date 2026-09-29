@@ -3105,3 +3105,69 @@ def test_a_variable_label_is_cut_in_the_middle_at_900_px(tmp_path, playwright_br
         expect(names.first).to_contain_text(CAT3)
         for i in range(names.count()):
             assert not names.nth(i).evaluate(MID_CUT)["cut"], i
+
+
+#: A tree whose x rows sit at three depths with both verdicts: the nrmse
+#: FAILs (x is 1.25t against t) and draws nothing, so its swatch is hidden;
+#: the two ranges pass and draw.
+_ALIGN_TREE = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        {
+            "combinator": "k-of-n",
+            "k": 1,
+            "children": [
+                {
+                    "combinator": "or",
+                    "children": [
+                        {
+                            "combinator": "warn",
+                            "children": [
+                                {"metric": "range", "variable": "x", "min_value": -1.0}
+                            ],
+                        },
+                        {"metric": "range", "variable": "y", "min_value": -1.0},
+                    ],
+                },
+                {"metric": "range", "variable": "x", "max_value": 100.0},
+            ],
+        },
+    ],
+}
+
+
+def _align_project(tmp_path: Path) -> tuple[Path, Path]:
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = _ALIGN_TREE
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def test_a_plots_leaf_names_start_in_one_column(tmp_path, playwright_browser):
+    """D140: every leaf name on a card starts in one column, whatever its
+    row's depth, its verdict and whether its swatch shows — a hidden swatch
+    keeps its box and a pill is as wide as PASS or FAIL."""
+    with _served(tmp_path, playwright_browser, project=_align_project) as page:
+        card = page.locator(".dstf-plot").first
+        expect(card.locator(".dstf-crit")).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        # Drawn: the swatches of the leaves that draw show.
+        expect(card.locator(".dstf-swatch >> visible=true").first).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        rows = card.evaluate(
+            """(card) => [...card.querySelectorAll('.dstf-crit')].map(r => ({
+                 pill: r.querySelector('.dstf-pill').innerText,
+                 swatch: getComputedStyle(r.querySelector('.dstf-swatch')).visibility,
+                 name: r.querySelector('.dstf-crit-name').getBoundingClientRect().left,
+               }))"""
+        )
+        _shot(page, tmp_path, "leaf-names-one-column")
+        names = [r["name"] for r in rows]
+        assert max(names) - min(names) < 0.5, rows
+        assert {r["pill"] for r in rows} == {"PASS", "FAIL"}, rows
+        assert {r["swatch"] for r in rows} == {"visible", "hidden"}, rows

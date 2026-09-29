@@ -298,7 +298,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
         return n in by_name or n in nobaseline or n in arrays
 
     records: list[dict] = []
-    figures: list[dict] = []
+    figures: list[dict | None] = []
     series: list[list[str]] = []
     sections: list[dict] = []
     for position, plot in enumerate(plots):
@@ -309,12 +309,18 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
         missing = list(
             dict.fromkeys([*plot.missing, *(n for n in plot.series if n not in drawn)])
         )
+        # No drawable SUBJECT, no chart (the template's `plot.subject`),
+        # whatever the context: no figure either. The null keeps the
+        # section's place — report.js paints `PLOT_FIGURES[idx]` into
+        # `plot-${idx}`.
         figures.append(
             plot_figure(
                 [subject_view(n) for n in subject],
                 budget,
                 context=[context_view(n) for n in context_names],
             )
+            if subject
+            else None
         )
         variables = [
             {
@@ -693,6 +699,8 @@ def _decimated_traces(context: dict) -> list[dict]:
     for section, fig in zip(
         context.get("plot_sections") or [], context.get("plot_figures") or []
     ):
+        if fig is None:
+            continue  # a section with no chart
         subject = section.get("subject") or []
         scan(
             ", ".join(

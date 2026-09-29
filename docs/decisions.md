@@ -5488,7 +5488,14 @@ variable order (D133).
    taken is not a file without the series. A run that FAILED has no plots
    on either tier, its extras included (O2, literally); the tool's count
    line reads "no plots: the run failed", and its Variables drawer "The
-   run failed: no plots", its checks and "+ new plot" grey.
+   run failed: no plots", its checks and "+ new plot" grey. Every line of
+   the Test page words its reason by ONE run-state rule,
+   `TestPage.run_state`: a test with no result, or whose last run never
+   finished it (its manifest entry still pending), reads "this test has no
+   result" on the count and tree lines, as the strip says "No result yet",
+   and its drawer "No result yet: no plots" over the partial result the
+   reader hands in; only a run that finished and failed reads "the run
+   failed".
 2. *The new `plots` schema.* A list of extras `{"var", "context"?}`: an
    entry on a scored variable (or a member of its family) adds its
    `context` to that plot; any other entry is a watch plot. No glob, no
@@ -5520,7 +5527,10 @@ variable order (D133).
    report never imports the tool), and every crumb on a plot is as wide
    as its longest, in ch (the report's `crumb_ch`, the tool's `PlotCard`),
    so a plot's leaf names start in one column — a fixed 14ch was outgrown
-   by a fourth level.
+   by a fourth level. For the same column a hidden swatch keeps its box
+   (`invisible`, never display:none) and a verdict pill has a minimum
+   width with its text centred (the tool's `.dstf-pill`, the report's
+   `.node-status`), so PASS and FAIL are one width.
 6. *The controller's calls* (said to the owner; reversible on the owner's
    word). C1: context series are listed in a row above the plot, each
    with a `×` ("Remove {text} from this plot") — Plotly's legend cannot

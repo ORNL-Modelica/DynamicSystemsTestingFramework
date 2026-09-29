@@ -193,48 +193,76 @@ class TestPage:
         self.strip = StatusStrip(self)
         self.actions = self.strip.actions
 
-    def _result(self) -> Any:
+    def result(self) -> Any:
         project = self.shell.session.project
         return project.results.get(self.model_id) if project is not None else None
 
+    def run_state(self) -> str:
+        """The ONE run-state rule every line of the page words its reason
+        by: "none" — no result, or the last run never finished the test
+        (its manifest entry still pending: what the reader handed in is
+        not a result, as Accept's "re-run before accepting" reads it) —
+        "failed" when the run finished and failed, else "ok". The strip
+        said "No result yet" for an unfinished run while the count, the
+        tree and the drawer said the run failed."""
+        result = self.result()
+        project = self.shell.session.project
+        if result is None or project is None:
+            return "none"
+        work_dir = project.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        if self.model_id in unfinished_run_models(work_dir):
+            return "none"
+        return "ok" if result.success else "failed"
+
+    def plots_withheld(self) -> bool:
+        """O2's gate: a result that is not a success has no plots whatever
+        its tree and extras say, and a watch plot made on it would draw
+        nothing — a run that failed, or one that never finished the test
+        and left a partial result. `run_state` words it."""
+        result = self.result()
+        return result is not None and not result.success
+
+    def _state_reason(self) -> str | None:
+        """The clause a run state that is not "ok" gives every line, or
+        None."""
+        state = self.run_state()
+        if state == "failed":
+            return "the run failed"
+        if state == "none":
+            return "this test has no result"
+        return None
+
     def unscored_reason(self) -> str:
         """Why this test has no tree, as a clause the line it is read into
-        completes ("nothing scored: this test has no baseline"): it never
-        ran, its scoring raised, or it has no baseline to be scored
-        against. A model whose scoring raised keeps its result and has no
-        comparison at all — the Suite row says `scoring failed` for the
-        same state — so "no baseline" would name the wrong cause."""
-        result = self._result()
-        if result is None or not result.success:
-            return "this test has no result"
+        completes ("nothing scored: this test has no baseline"): its run
+        failed or it has no result (`run_state`, first), its scoring
+        raised, or it has no baseline to be scored against. A model whose
+        scoring raised keeps its result and has no comparison at all — the
+        Suite row says `scoring failed` for the same state — so "no
+        baseline" would name the wrong cause."""
+        reason = self._state_reason()
+        if reason is not None:
+            return reason
         if self.shell.session.comparisons.get(self.model_id) is None:
             return SCORING_FAILED
         return "this test has no baseline"
 
-    def run_failed(self) -> bool:
-        """Whether the test's last run failed: it has no plots whatever its
-        tree and extras say (O2), and a plot made on it would draw
-        nothing."""
-        result = self._result()
-        return result is not None and not result.success
-
     def _no_plots_reason(self, from_tree: bool) -> str:
         """Why there is no PLOT, which is not why there is no tree: a test
         with no tree still draws one plot per tracked variable, so a page
-        with none has no result, a result with nothing in it — or a tree
-        whose every criterion scores a statistic (a stored-scalar leaf
-        names no series, so it derives no plot). ``from_tree`` is
-        `Session.plots_from_tree`, never whether there is a tree VIEW: a
-        test with no baseline has none, and its authored tree still names
-        its plots."""
-        # A failed run first: it has no plots whatever its tree says (O2).
-        # It has a result — a partial one — so not "no result".
-        if self.run_failed():
-            return "the run failed"
+        with none has a failed run or no result (`run_state`, first: a
+        failed run has no plots whatever its tree says, O2), a result with
+        nothing in it — or a tree whose every criterion scores a statistic
+        (a stored-scalar leaf names no series, so it derives no plot).
+        ``from_tree`` is `Session.plots_from_tree`, never whether there is
+        a tree VIEW: a test with no baseline has none, and its authored
+        tree still names its plots."""
+        reason = self._state_reason()
+        if reason is not None:
+            return reason
         if from_tree:
             return "this test's criteria score statistics, not signals"
-        if self._result() is None:
-            return "this test has no result"
         return "the result has no variables"
 
     # -- the one open editor ---------------------------------------------------
@@ -783,13 +811,7 @@ class TestPage:
                 saved_status = classify(saved) if saved is not None else None
         running = session.running
         loading = self.shell.load.in_progress
-        # A test whose last run never finished it has a result that is not
-        # one (what Accept's "re-run before accepting" reads).
-        work_dir = project.config.work_dir
-        assert work_dir is not None  # resolved in Config.__post_init__
-        has_result = self._result() is not None and (
-            model_id not in unfinished_run_models(work_dir)
-        )
+        has_result = self.run_state() != "none"
         statuses = [leaf_status(leaf) for leaf in leaves_of(view)]
         return strip_for(
             running=(

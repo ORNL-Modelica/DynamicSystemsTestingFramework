@@ -764,6 +764,36 @@ def test_metric_tree_is_read_only(compared, playwright_browser):
     assert set(controls.values()) == {0}, controls
 
 
+def test_a_sections_leaf_names_start_in_one_column(compared, playwright_browser):
+    """D140: a plot section's leaf names start in one column whatever their
+    rows' depths and verdicts — x's tube passes under `and ›` and its nrmse
+    fails under `and › warn ›`, and the pills are one width."""
+    import os
+    import shutil
+
+    html, _ = compared
+    page, errors = _open(playwright_browser, html)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    sections = page.evaluate("""() => [...document.querySelectorAll('.plot-criteria')]
+        .map(m => [...m.querySelectorAll('.criteria-row')].map(r => ({
+            pill: r.querySelector('.node-status').innerText,
+            name: r.querySelector('.node-label').getBoundingClientRect().left,
+        })))""")
+    page.locator("#nodes-0").scroll_into_view_if_needed()
+    keep = os.environ.get("DSTF_KEEP_SHOTS")
+    if keep:
+        shot = Path(html).parent / "leaf-names-one-column.png"
+        page.screenshot(path=str(shot))
+        Path(keep).mkdir(parents=True, exist_ok=True)
+        shutil.copy(shot, Path(keep) / "report-leaf-names-one-column.png")
+    page.close()
+    assert errors == []
+    assert {r["pill"] for r in sections[0]} == {"PASS", "FAIL"}, sections[0]
+    for rows in sections:
+        names = [r["name"] for r in rows]
+        assert max(names) - min(names) < 0.5, rows
+
+
 # ---------------------------------------------------------------------------
 # Kept: statistics, diagnostics, artifacts, and their plots
 # ---------------------------------------------------------------------------

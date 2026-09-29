@@ -1930,6 +1930,24 @@ class TestPlotSections:
         assert '<select class="error-overlay-select" data-plot="0">' in page
         assert '<select class="error-overlay-select" data-plot="2">' in page
 
+    def test_a_section_with_no_chart_embeds_no_figure(self, tmp_path):
+        """No drawable SUBJECT, no chart — whatever the context: ``gone``'s
+        section draws ``z`` as context and still has no chart, so the page
+        carries no figure for it (a null holds its place, since
+        ``PLOT_FIGURES[idx]`` paints ``plot-${idx}``)."""
+        page, _ = self._render(
+            tmp_path,
+            metrics=self.GONE,
+            extras=[{"var": "gone", "context": ["z"]}],
+            extra_vars=("z",),
+        )
+        section = _parse(page).by_id("variable-section-1")
+        assert section.by_class("plotly-chart") == []
+        figures = _page_data(page, "PLOT_FIGURES")
+        assert len(figures) == 3
+        assert figures[1] is None
+        assert figures[0] is not None and figures[2] is not None
+
     def test_a_statistics_leaf_is_no_criterion_of_its_variables_plot(self, tmp_path):
         """A stored-scalar leaf's ``variable`` is free text naming the leaf,
         not a series (`names_a_series`): x's plot lists its nrmse leaf and
@@ -2631,6 +2649,37 @@ def test_the_drawn_reference_is_paired_by_name_not_by_index():
     by = {tr["name"]: tr for tr in trajectories}
     assert by["b"]["ref_values"] == vals["b"].tolist()
     assert by["a"]["ref_values"] == vals["a"].tolist()
+
+
+def test_a_name_stored_twice_draws_its_first_entry():
+    """Duplicate names in a stored reference: scoring reads the FIRST entry
+    (the comparator); the drawn reference is the same one."""
+    import numpy as np
+
+    from conftest import make_test_model
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.comparator import compare_test
+    from dstf.reporting.context_builder import build_trajectories
+
+    t = np.linspace(0, 1, 11)
+    reference = {
+        "test_id": 1,
+        "time": t.tolist(),
+        "variables": [
+            {"index": 1, "name": "a", "expression": "", "values": [1.0] * 11},
+            {"index": 2, "name": "a", "expression": "", "values": [9.0] * 11},
+        ],
+    }
+    test = make_test_model("P.M", variable_patterns=["a"])
+    result = TestResult(
+        model_id="P.M",
+        success=True,
+        variables=[VariableResult(index=1, time=t, values=np.ones(11), name="a")],
+    )
+    comp = compare_test(test, result, reference)
+    assert comp.passed  # scored against the first entry
+    (traj,), _diag, _nb = build_trajectories(list(comp.variables), result, reference)
+    assert traj["ref_values"] == [1.0] * 11
 
 
 class TestAVariableReadsAsItsExpression:

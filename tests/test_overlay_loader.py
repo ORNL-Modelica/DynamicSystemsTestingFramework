@@ -851,6 +851,60 @@ class TestAMalformedMappingIsSaidAndStillCounts:
         assert overlay.warnings == []
 
 
+class TestANameStoredTwice:
+    """Duplicate names in a stored file: the FIRST entry is the one drawn,
+    as the comparator scores it and the context builder draws a primary's
+    — the last one had overwritten it."""
+
+    TWICE = [
+        {"name": "h", "values": [1.0, 1.0]},
+        {"name": "h", "values": [9.0, 9.0]},
+    ]
+
+    def test_a_soft_check_overlays_its_first_entry(self, tmp_path):
+        baseline = _FakeBaseline(name="e", time=[0.0, 1.0], variables=self.TWICE)
+        store = _FakeStore(tmp_path, soft_checks={"e": baseline})
+        (ov,) = load_overlays(store, "M")
+        assert ov.variables["h"].values == [1.0, 1.0]
+
+    def test_a_json_companion_overlays_its_first_entry(self, tmp_path):
+        data_file = tmp_path / "ext.json"
+        data_file.write_text(
+            json.dumps({"time": [0.0, 1.0], "variables": self.TWICE}),
+            encoding="utf-8",
+        )
+        companion = _FakeCompanion(
+            name="ext", kind="external", format="json", path=str(data_file)
+        )
+        store = _FakeStore(tmp_path, companions={"ext": companion})
+        (ov,) = load_overlays(store, "M")
+        assert ov.variables["h"].values == [1.0, 1.0]
+
+    def test_a_sibling_backends_reference_overlays_its_first_entry(self, tmp_path):
+        from dstf.reporting.overlay_loader import (
+            _sibling_backend_index,
+            load_sibling_backend_overlays,
+        )
+
+        _sibling_backend_index.cache_clear()
+        peer = tmp_path / "Dymola" / "windows"
+        peer.mkdir(parents=True)
+        (peer / "ref_0001.json").write_text(
+            json.dumps(
+                {
+                    "model_id": "M",
+                    "status": "active",
+                    "time": [0.0, 1.0],
+                    "variables": self.TWICE,
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        (ov,) = load_sibling_backend_overlays(cfg, "M")
+        assert ov.variables["h"].values == [1.0, 1.0]
+
+
 class TestOverlaySummary:
     def test_an_ambiguity_reaches_the_summary(self):
         overlays = [

@@ -58,8 +58,10 @@ _RAMP = HUES[0]
 
 _SPACE = re.compile(r"\s+")
 
-#: The target line and the grey "+ new plot"'s reason on a run that failed.
+#: The target line and the grey "+ new plot"'s reason on a run that failed,
+#: and on one that never finished the test (`TestPage.run_state`).
 RUN_FAILED = "The run failed: no plots"
+NO_RESULT = "No result yet: no plots"
 
 
 def marker(kind: str, row_id: str) -> str:
@@ -113,8 +115,9 @@ class VariablesDrawer:
         self.tracked: frozenset[str] = frozenset()
         #: The texts two or more of the drawn rows read as.
         self.alike: set[str] = set()
-        #: Whether the run failed, as the last build read it.
-        self.failed = False
+        #: Why "+ new plot" is grey on every row — O2's gate, worded by the
+        #: run state — as the last build read it, or None.
+        self.withheld: str | None = None
         #: The filter and its toggles are the tab's (`TabState`): a switch
         #: of test builds a new drawer, and it starts from them.
         self.state = page.state
@@ -238,13 +241,16 @@ class VariablesDrawer:
 
     def _signature(self, reads: _Reads | None) -> object:
         """Everything a build draws from: the reads, the selected plot and
-        the number of plots, whether the run failed, the filter and the
-        menus, the families opened, and the reason an empty result gives."""
+        the number of plots, the run state and O2's gate, the filter and
+        the menus, the families opened, and the reason an empty result
+        gives."""
         page = self.page
         head = (
             page.selected,
             len(page.cards),
-            page.run_failed(),
+            page.run_state(),
+            page.plots_withheld(),
+            page.result() is None,
             self.state.vars_needle,
             self.state.vars_regex,
             self.state.vars_case,
@@ -282,14 +288,22 @@ class VariablesDrawer:
             self.target.set_text("")
             return
         n = len(page.cards)
-        # A failed run has no plots (O2): nothing to add context to, and a
-        # watch plot made on it would draw nothing.
-        self.failed = page.run_failed()
+        # O2's gate: a result that is not a success has no plots — nothing
+        # to add context to, and a watch plot made on it would draw nothing
+        # — worded by the run state, as every line of the page is.
+        run = page.run_state()
+        self.withheld = (
+            (RUN_FAILED if run == "failed" else NO_RESULT)
+            if page.plots_withheld()
+            else None
+        )
         self.target.set_text(
             f"Checkboxes add context to plot {page.selected + 1} of {n}"
             if n
             else RUN_FAILED
-            if self.failed
+            if run == "failed"
+            else NO_RESULT
+            if run == "none" and page.result() is not None
             else "No plot yet: + new plot adds one"
         )
         try:
@@ -305,10 +319,9 @@ class VariablesDrawer:
         project = page.shell.session.project
         with self.body:
             if not names:
-                reason = page.unscored_reason()
                 ui.label(
-                    reason
-                    if reason == "this test has no result"
+                    page.unscored_reason()
+                    if run != "ok"
                     else "the result has no variables"
                 ).classes("dstf-why").mark("var-empty")
                 return
@@ -479,8 +492,8 @@ class VariablesDrawer:
             # at most: grey, with why, on a family's row (its members,
             # opened, each make one) and on any plot's subject.
             why = (
-                RUN_FAILED
-                if self.failed
+                self.withheld
+                if self.withheld is not None
                 else f"Already the subject of plot {row.subject_of + 1}"
                 if row.subject_of is not None
                 else "A watch plot shows one variable: open the family"
@@ -546,12 +559,13 @@ class VariablesDrawer:
         """A WATCH plot of the row's one variable, after every other plot,
         selected. Read NOW: a variable some plot has as its subject — a
         second click before the page caught up with the first — makes
-        none, and neither does a run that failed since the row was drawn."""
+        none, and neither does a result that is not a success (O2's gate)
+        since the row was drawn."""
         page = self.page
         session = page.shell.session
         plots = session.plots(page.model_id)
         if (
-            page.run_failed()
+            page.plots_withheld()
             or len(row.members) != 1
             or any(row.members[0] in p.subject for p in plots)
         ):
