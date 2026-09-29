@@ -744,6 +744,7 @@ class TestQuantityGate:
             source_package="Test",
             short_name="Model",
             n_vars=1,
+            variable_patterns=["x"],
             variable_overrides={
                 "x": {"mode": "scalar", "quantity": "CPUtime.final", "tolerance": 0.0}
             },

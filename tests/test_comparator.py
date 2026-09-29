@@ -1788,7 +1788,7 @@ class TestPointsClipping:
 
 class TestExplicitZeroTolerance:
     def test_zero_test_tolerance_fails_nonzero_error(self):
-        test = _mk_test(comparison_tolerance=0.0)
+        test = _mk_test(comparison_tolerance=0.0, variable_patterns=["x"])
         result = _mk_result(values=np.ones(11) + 1e-6)
         reference = {
             "variables": [
@@ -1805,7 +1805,7 @@ class TestExplicitZeroTolerance:
         assert comp.variables[0].tolerance_used == 0.0
 
     def test_zero_reference_tolerance_honored(self):
-        test = _mk_test()
+        test = _mk_test(variable_patterns=["x"])
         result = _mk_result(values=np.ones(11) + 1e-6)
         reference = {
             "comparison": {"tolerance": 0.0},
@@ -1910,7 +1910,10 @@ class TestUnknownMode:
             resolve_mode({"mode": "Tube"}, 0.01)
 
     def test_typo_mode_fails_variable_not_silently_nrmse(self):
-        test = _mk_test(variable_overrides={"x": {"mode": "Tube", "tube_abs": 5.0}})
+        test = _mk_test(
+            variable_patterns=["x"],
+            variable_overrides={"x": {"mode": "Tube", "tube_abs": 5.0}},
+        )
         result = _mk_result()
         reference = {
             "variables": [
@@ -2892,16 +2895,15 @@ class TestPairingIsByNameOnly:
     def test_a_nameless_result_variable_is_not_paired_by_index(self):
         """No backend builds a nameless variable; one that arrives anyway is
         a bug, not an invitation to score it against whatever entry sits at
-        its index."""
+        its index. It is none of the test's tracked names, so the flat path
+        does not score it at all."""
         result = TestResult(
             model_id="MyLib.Test",
             success=True,
             variables=[VariableResult(index=1, time=_VI_T, values=_VI_T, name="")],
         )
         comp = compare_test(_vi_test(), result, _vi_reference())
-        assert not comp.passed
-        (vc,) = comp.variables
-        assert vc.name == "" and vc.nrmse == float("inf")
+        assert comp.variables == []
 
     def test_a_baseline_holding_the_name_at_another_index_still_scores(self):
         """Pairing is by name, so a reordered baseline scores as it did
@@ -2956,3 +2958,74 @@ class TestTheMigrationHintIsSharedByBothPaths:
             comp.variables[0].diagnostics.get("error", "")
         ]
         assert not any("migrate-variable-names" in message for message in messages)
+
+
+# ---------------------------------------------------------------------------
+# The flat path scores what the test tracks, not whatever the result holds
+# ---------------------------------------------------------------------------
+
+
+def _tracked_result(*names: str) -> TestResult:
+    t = np.array([0.0, 0.5, 1.0])
+    return TestResult(
+        model_id="Test.Model",
+        success=True,
+        variables=[
+            VariableResult(index=i, name=n, time=t, values=t + i)
+            for i, n in enumerate(names, start=1)
+        ],
+    )
+
+
+def _tracked_reference(*names: str) -> dict:
+    t = [0.0, 0.5, 1.0]
+    return {
+        "test_id": "0001",
+        "time": t,
+        "variables": [
+            {"index": i, "name": n, "values": [v + i for v in t]}
+            for i, n in enumerate(names, start=1)
+        ],
+    }
+
+
+class TestTheFlatPathScoresWhatTheTestTracks:
+    """A result may hold a variable the test does not track — one a
+    criterion named before it was discarded (a re-read, a rerun with a
+    pending criterion). The flat path scores the tracked ones only: an
+    extra with no baseline would fail the test for a variable it never
+    asked about."""
+
+    def test_an_untracked_extra_is_not_scored(self):
+        test = _make_test()  # tracks ["x"]
+        comp = compare_test(
+            test, _tracked_result("x", "w"), _tracked_reference("x"), 1e-4
+        )
+        assert [vc.name for vc in comp.variables] == ["x"]
+        assert comp.passed
+
+    def test_a_glob_and_the_unit_tests_names_are_tracked(self):
+        test = TestModel(
+            model_id="Test.Model",
+            source_file=Path(""),
+            source_package="Test",
+            short_name="Model",
+            n_vars=1,
+            x_expressions=["a.T"],
+            source="both",
+            variable_patterns=["pipe.T*"],
+        )
+        names = ("unitTests.x[1]", "pipe.T[1]", "pipe.T[2]", "w")
+        comp = compare_test(
+            test, _tracked_result(*names), _tracked_reference(*names[:3]), 1e-4
+        )
+        assert [vc.name for vc in comp.variables] == list(names[:3])
+        assert comp.passed
+
+    def test_a_star_scores_every_variable(self):
+        test = _make_test()
+        test.variable_patterns = ["*"]
+        comp = compare_test(
+            test, _tracked_result("x", "w"), _tracked_reference("x", "w"), 1e-4
+        )
+        assert [vc.name for vc in comp.variables] == ["x", "w"]

@@ -29,7 +29,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..backends import TestResult
-from ..backends.types import DatasetType
+from ..backends.types import (
+    DatasetType,
+    VariableResult,
+    _pattern_to_regex,
+    is_glob_pattern,
+)
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
 from ..storage.reference_store import ReferenceStore
@@ -315,6 +320,38 @@ def _warn_about_overrides_that_name_nothing(
     )
 
 
+def _tracked_results(test: TestModel, result: TestResult) -> list[VariableResult]:
+    """The variables of ``result`` that ``test`` TRACKS — what the flat
+    path (no tree) scores: its UnitTests variables and its ``variables``
+    patterns matched against the result's names, ``"*"`` every one.
+
+    Never simply every variable the result holds. A tree names variables
+    too, and a backend records and extracts them beside the tracked ones:
+    a result read while a criterion was staged (a rerun runs with the
+    pending edits) keeps that variable after the criterion is discarded,
+    and scored here, with no baseline, it failed the test for a variable
+    the test never asked about. On a result extracted for the test as it
+    stands this is every variable: without a tree, extraction is exactly
+    these two groups.
+
+    Matched quietly: the backend that extracted the result already warned
+    about a pattern that matched nothing, and this runs on every rescore."""
+    if "*" in test.variable_patterns:
+        return list(result.variables)
+    wanted = {v.name for v in unit_test_variables(test)}
+    globs = []
+    for pattern in test.variable_patterns:
+        if is_glob_pattern(pattern):
+            globs.append(_pattern_to_regex(pattern))
+        else:
+            wanted.add(pattern)
+    return [
+        v
+        for v in result.variables
+        if v.name in wanted or any(g.fullmatch(v.name) for g in globs)
+    ]
+
+
 def _tracked_but_not_scored(
     test: TestModel, result: TestResult
 ) -> StructuralWarning | None:
@@ -495,7 +532,8 @@ def compare_test(
         test.model_id, test.variable_overrides, ref_var_overrides, result
     )
 
-    for var_result in result.variables:
+    tracked = _tracked_results(test, result)
+    for var_result in tracked:
         # A variable is paired with the baseline entry carrying its name.
         # There is no index fallback: a result variable always has the name
         # its result file gives it (a nameless one is a backend bug), and an
@@ -632,10 +670,10 @@ def compare_test(
     # leaves — same semantics as before. Phase 3.3+ swaps in user-authored
     # trees from test_spec.json.
     #
-    # The loop appends exactly one comparison per result variable, in order,
-    # so the expression rides onto each of them here rather than at all five
-    # of the loop's append sites.
-    for vc, var_result in zip(comparisons, result.variables, strict=True):
+    # The loop appends exactly one comparison per tracked variable, in
+    # order, so the expression rides onto each of them here rather than at
+    # all five of the loop's append sites.
+    for vc, var_result in zip(comparisons, tracked, strict=True):
         vc.expression = var_result.expression
     tree = implicit_and_tree(comparisons)
 

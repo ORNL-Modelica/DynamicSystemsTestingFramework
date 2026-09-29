@@ -86,6 +86,7 @@ def _render_real_page(tmp_path, n_vars: int, n_samples: int, cap: int):
         source_package="TestLib",
         short_name="Fixture",
         n_vars=n_vars,
+        variable_patterns=[t["name"] for t in trajectories],
         variable_overrides=overrides,
     )
     comp = compare_test(test, result, ref)

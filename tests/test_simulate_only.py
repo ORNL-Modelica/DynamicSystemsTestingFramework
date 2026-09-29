@@ -18,6 +18,7 @@ def _make_test(simulate_only: bool) -> TestModel:
         source_package="My.Sim",
         short_name="Only",
         n_vars=1,
+        variable_patterns=["x"],
         simulate_only=simulate_only,
     )
 

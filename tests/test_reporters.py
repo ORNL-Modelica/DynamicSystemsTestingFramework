@@ -364,6 +364,7 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
         source_package="Test",
         short_name="Model",
         n_vars=1,
+        variable_patterns=["x"],
         variable_overrides={"x": {"mode": "tubee"}},
     )
     result = TestResult(

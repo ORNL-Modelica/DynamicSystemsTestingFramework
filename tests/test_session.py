@@ -1405,6 +1405,29 @@ class TestRescoreAndStage:
         assert len(session.spec.pending) == m + 7
 
 
+class TestAFlatTestScoresWhatItTracks:
+    def test_an_extra_in_the_result_is_neither_scored_nor_materialized(self, tmp_path):
+        """D tracks ["x"] with no tree; its result also holds w (a re-read
+        for a criterion since discarded leaves one). The verdict and the
+        tree a per-leaf op materializes are x's alone."""
+        cfg, work = _project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        x = s.project.results[D].variables[0]
+        s.project.results[D].variables.append(
+            VariableResult(index=2, time=x.time, values=x.values * 7, name="w")
+        )
+        # A flat-path rescore (an op no tree needs), then a per-leaf one
+        # that materializes the tree from what that scored.
+        s.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.01})])
+        assert [vc.name for vc in s.comparisons[D].variables] == ["x"]
+        assert classify(s.comparisons[D]) == PASS
+        s.stage([PatchOp(D, "add", "/metrics/children/0/tolerance", 0.01)])
+        tree = s.spec.pending[1]
+        assert tree.path == "/metrics"
+        assert [c["variable"] for c in tree.value["children"]] == ["x"]
+
+
 class TestView:
     def test_a_scored_variable_carries_its_leaves(self, session):
         view = session.view(A, "x")

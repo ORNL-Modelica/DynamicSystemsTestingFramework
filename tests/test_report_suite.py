@@ -226,6 +226,7 @@ class TestViewAndLookupDrift:
             source_package="Fixture",
             short_name="M",
             n_vars=2,
+            variable_patterns=["x", "y"],
         )
         flat = TestModel(
             **base,
@@ -486,6 +487,7 @@ class TestEmbeddedFigures:
             source_package="Fixture",
             short_name="M",
             n_vars=1,
+            variable_patterns=["x"],
             variable_overrides={
                 "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01}
             },
@@ -572,6 +574,7 @@ class TestEmbeddedFigures:
             source_package="Fixture",
             short_name="M",
             n_vars=1,
+            variable_patterns=["x"],
             variable_overrides={"x": {"mode": "points", "tolerance": 0.01}},
         )
         comp = compare_test(test, result, ref)
@@ -1259,6 +1262,7 @@ class TestRestoredViewingChecks:
             source_package="Fixture",
             short_name="M",
             n_vars=1,
+            variable_patterns=["x"],
             **kw,
         )
 
@@ -1482,6 +1486,7 @@ class TestPlotSections:
             source_package="Fixture",
             short_name="M",
             n_vars=2,
+            variable_patterns=["x", "y"],
             metric_tree_spec=parse_metric_tree(metrics) if metrics else None,
             plots=parse_plots(extras) if extras is not None else None,
         )
