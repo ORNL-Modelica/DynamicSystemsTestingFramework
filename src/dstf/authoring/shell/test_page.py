@@ -29,7 +29,7 @@ from ..capabilities import plural
 from ..errors import user_text
 from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..session import JobRunningError, LockedError
-from ..situation import Strip, strip_for
+from ..situation import Strip, new_variables, strip_for
 from ..tree_pointer import node_or_none
 from ..tree_text import nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
@@ -838,6 +838,13 @@ class TestPage:
             fails=statuses.count("fail"),
             criteria=len(statuses),
             advisory=statuses.count("warn"),
+            # The merged TestModel carries the EFFECTIVE tree (`stage`
+            # re-merges `project.tests`): a staged criterion counts.
+            new_variables=new_variables(
+                project.test(model_id),
+                self.result() if has_result else None,
+                project.config.diagnostic_variables,
+            ),
         )
 
     def sync(self, force: bool = False) -> None:

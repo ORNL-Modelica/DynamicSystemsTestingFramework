@@ -45,11 +45,14 @@ class Rerun:
     #: drawn as this icon where a bar draws icons (the Suite toolbar)
     icon = "replay"
     #: the Test page's strip: the next action when there is no result to
-    #: read; in the ⋮ while edits are pending (their next action is Save)
+    #: read, or a criterion names a variable the last run did not record;
+    #: in the ⋮ while edits are pending otherwise (their next action is Save)
     emphasis = {
         Situation.SIM_FAIL: Emphasis.NEXT,
         Situation.NO_RESULT: Emphasis.NEXT,
         Situation.EDITS: Emphasis.MENU,
+        Situation.EDITS_NEW: Emphasis.NEXT,
+        Situation.NEW_VARIABLES: Emphasis.NEXT,
     }
 
     def available(self, s: SessionView) -> bool | str:

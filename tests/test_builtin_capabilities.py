@@ -1791,6 +1791,8 @@ def test_accept_is_the_next_action_where_the_result_differs_or_has_no_baseline()
         S.NO_REF: Emphasis.NEXT,
         S.PASS: Emphasis.MENU,
         S.EDITS: Emphasis.MENU,
+        S.EDITS_NEW: Emphasis.MENU,
+        S.NEW_VARIABLES: Emphasis.MENU,
         S.SIM_FAIL: Emphasis.MENU,
         S.NO_RESULT: Emphasis.MENU,
     }
@@ -1807,6 +1809,9 @@ def test_rerun_is_the_next_action_where_there_is_no_result_to_read():
         S.SIM_FAIL: Emphasis.NEXT,
         S.NO_RESULT: Emphasis.NEXT,
         S.EDITS: Emphasis.MENU,
+        # a criterion names a variable the last run did not record
+        S.EDITS_NEW: Emphasis.NEXT,
+        S.NEW_VARIABLES: Emphasis.NEXT,
     }
 
 

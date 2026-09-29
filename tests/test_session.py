@@ -3637,3 +3637,57 @@ class TestPerTestDiscardAndSavedVerdict:
         assert s.project.test(D) is None
         s.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.01})])
         assert s.saved_comparison(D) is None
+
+
+class TestACriterionOnAFileVariable:
+    """The owner's O2: staging a criterion on a variable the loaded result
+    lacks re-reads the model when its result FILE holds the variable (a
+    backend that records everything), so it scores at once; a name the
+    file lacks is left for a rerun, and nothing is re-read."""
+
+    def _leaf(self, variable: str) -> PatchOp:
+        return PatchOp(
+            D,
+            "add",
+            "/metrics/children/-",
+            {"metric": "range", "variable": variable, "min_value": 0, "max_value": 1},
+        )
+
+    def test_a_variable_the_file_has_is_re_read_and_scored(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        path = work / "test_0004" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["w"] = [0.5 for _ in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [v.name for v in s.project.results[D].variables] == ["x"]
+        s.stage([self._leaf("w")])
+        assert [(v.index, v.name) for v in s.project.results[D].variables] == [
+            (1, "x"),
+            (2, "w"),
+        ]
+        leaf = s.comparisons[D].metric_tree.children[-1]
+        assert leaf.passed, leaf.diagnostics
+        assert classify(s.comparisons[D]) == PASS
+        # The saved spec (no tree) scores what D tracks, not the re-read w.
+        assert classify(s.saved_comparison(D)) == PASS
+        s.discard()
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert [vc.name for vc in s.comparisons[D].variables] == ["x"]
+        assert classify(s.comparisons[D]) == PASS
+
+    def test_a_variable_the_file_lacks_is_not_re_read(self, session, monkeypatch):
+        before = session.project.results[D]
+        reads: list = []
+        real = session.project.backend.read_last_results
+        monkeypatch.setattr(
+            session.project.backend,
+            "read_last_results",
+            lambda tests, **kw: (reads.append(tests), real(tests, **kw))[1],
+        )
+        session.stage([self._leaf("z")])
+        assert reads == []
+        assert session.project.results[D] is before
+        leaf = session.comparisons[D].metric_tree.children[-1]
+        assert not leaf.passed

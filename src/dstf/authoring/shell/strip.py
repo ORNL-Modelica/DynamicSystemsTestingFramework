@@ -2,7 +2,8 @@
 row directly under the test's row, inside the header that stays at the
 top. It says the test's situation (`authoring.situation`) in a tone, and
 fills the one next action: the shell's own Preview and save / Discard for
-pending edits, and the TEST-placement capabilities, each drawn as its
+pending edits (quiet when the edits name a variable only a rerun records),
+and the TEST-placement capabilities, each drawn as its
 declared `emphasis` for the situation says — filled, quiet, or in the ⋮.
 The strip knows no capability by name."""
 
@@ -65,9 +66,17 @@ class StatusStrip:
                 )
         self._show_edit_buttons(False)
 
-    def _show_edit_buttons(self, editing: bool) -> None:
+    def _show_edit_buttons(self, editing: bool, *, filled: bool = True) -> None:
+        """Preview and save and Discard, shown while edits are pending;
+        Preview and save is the filled next action unless the edits name a
+        variable only a rerun records — Rerun is then the one filled (the
+        owner's O1), and Preview and save is quiet, still one click."""
         self.preview.set_visibility(editing)
         self.discard.container.set_visibility(editing)
+        if filled:
+            self.preview.props(remove="flat", add="unelevated color=primary")
+        else:
+            self.preview.props(remove="unelevated color=primary", add="flat")
 
     def _tone(self, tone: str) -> None:
         self.row.classes(
@@ -80,7 +89,10 @@ class StatusStrip:
         self.text.set_text(strip.sentence)
         # Before the bar's refresh: its emphasis reads the situation.
         self.situation = strip.situation
-        self._show_edit_buttons(strip.situation is Situation.EDITS)
+        self._show_edit_buttons(
+            strip.situation in (Situation.EDITS, Situation.EDITS_NEW),
+            filled=strip.situation is not Situation.EDITS_NEW,
+        )
         self.discard.set("Discard", self.page.shell.busy_reason())
         self.actions.container.set_visibility(True)
         self.actions.refresh()

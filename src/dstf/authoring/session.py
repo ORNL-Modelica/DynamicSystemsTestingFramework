@@ -67,6 +67,7 @@ from .capabilities import (
     Patch,
     StoreWrite,
 )
+from .situation import unrecorded_variables
 from .spec_document import PatchOp, SpecDocument
 
 if TYPE_CHECKING:
@@ -736,6 +737,15 @@ class Session:
         project = self._require_project()
         if project.test(model_id) is None:
             raise KeyError(model_id)
+        tracked = self.tracked(model_id)
+        have = set(tracked)
+        return tracked + [n for n in self._file_names(model_id) if n not in have]
+
+    def _file_names(self, model_id: str) -> tuple[str, ...]:
+        """Every name in the last result FILE, listed once and kept with the
+        model's reads; ``()`` when the backend keeps no file it can list, or
+        a job has the model locked and it was not listed before."""
+        project = self._require_project()
         reads = self._reads_for(model_id)
         if not reads.names_read and not self._is_locked(model_id):
             test_dir = self._test_dir(model_id)
@@ -746,9 +756,27 @@ class Session:
             )
             reads.names = None if listed is None else tuple(listed)
             reads.names_read = True
-        tracked = self.tracked(model_id)
-        have = set(tracked)
-        return tracked + [n for n in reads.names or () if n not in have]
+        return reads.names or ()
+
+    def _unread_in_file(self, models: Iterable[str]) -> set[str]:
+        """The ``models`` whose criteria name a variable the loaded result
+        lacks and its result FILE holds — a backend that records every
+        variable (Dymola, the JSON driver) has it already, and a re-read
+        with the merged TestModel extracts it (the owner's O2). A name the
+        file lacks (OpenModelica, FMPy, a typo) only a rerun records; the
+        strip asks for that (`situation.new_variables`)."""
+        project = self._require_project()
+        out: set[str] = set()
+        for model_id in models:
+            result = project.results.get(model_id)
+            if result is None or not result.success:
+                continue
+            missing = unrecorded_variables(
+                project.test(model_id), result, project.config.diagnostic_variables
+            )
+            if missing and not set(missing).isdisjoint(self._file_names(model_id)):
+                out.add(model_id)
+        return out
 
     def _is_locked(self, model_id: str) -> bool:
         """A job holds this model: its work dir is being rewritten, so the
@@ -1054,6 +1082,17 @@ class Session:
         )  # ConfigError on a bad tree
         self.spec = candidate
         project.tests = tests
+        # A criterion on a variable the result file holds but the last read
+        # did not extract: read again with the merged TestModel, which now
+        # tracks it, so it scores at once — no rerun (the owner's O2).
+        # `_reread_results` directly, not `_rebuild_tests(reread=True)`: the
+        # effective spec is merged just above (on TRANSFORM a merge is most
+        # of a stage's cost; that would do it twice), and it would re-read
+        # AND rescore only the models it is handed — the other staged models
+        # must be rescored whether or not theirs is re-read.
+        reread = self._unread_in_file(models)
+        if reread:
+            self._reread_results(reread)
         self._emit("spec", models=models)
         self._score_all(models)
 

@@ -14,20 +14,33 @@ a simulation-settings editor."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
+from ..comparison.tree_spec import tree_variables
 from ..reporting.status import FAIL, NO_REF, PASS, SIM_FAIL
 from .capabilities import plural
+
+if TYPE_CHECKING:
+    from ..backends.types import TestResult
+    from ..discovery.test_registry import TestModel
 
 
 class Situation(Enum):
     RUNNING = "running"
     EDITS = "edits"
+    #: pending edits whose criteria name a variable the last run did not
+    #: record: Rerun is the one next action, Save is quiet (the owner's O1)
+    EDITS_NEW = "edits_new"
     SCORING_FAILED = "scoring_failed"
     WAITING = "waiting"
     NO_RESULT = "no_result"
     SIM_FAIL = "sim_fail"
+    #: saved criteria name a variable the last run did not record: a
+    #: baseline accepted now would not hold it (the owner's O3)
+    NEW_VARIABLES = "new_variables"
     NO_REF = "no_ref"
     FAIL = "fail"
     SIMULATE_ONLY = "simulate_only"
@@ -58,6 +71,34 @@ def verdict_phrase(status: str | None, saved_status: str | None) -> str:
     return f"verdict would change {saved_status} → {status or '…'}"
 
 
+def unrecorded_variables(
+    test: TestModel | None, result: TestResult | None, diagnostics: Iterable[str]
+) -> list[str]:
+    """The variables ``test``'s criteria name (`tree_variables`, the rule
+    every backend tracks by) that ``result`` does not hold. ``[]`` without
+    a result: there is nothing to rerun FOR yet."""
+    if test is None or result is None:
+        return []
+    have = {v.name for v in result.variables}
+    return [
+        n for n in tree_variables(test.metric_tree_spec, diagnostics) if n not in have
+    ]
+
+
+def new_variables(
+    test: TestModel | None, result: TestResult | None, diagnostics: Iterable[str]
+) -> int:
+    """How many variables only a rerun records: those of
+    :func:`unrecorded_variables`. A variable the result FILE holds is not
+    one of them — `Session.stage` re-reads the model when a criterion names
+    it (the owner's O2), so the result holds it by the time this counts."""
+    return len(unrecorded_variables(test, result, diagnostics))
+
+
+def _rerun(n: int) -> str:
+    return f"rerun to score {'it' if n == 1 else 'them'}"
+
+
 def strip_for(
     *,
     running: str | None = None,
@@ -71,6 +112,7 @@ def strip_for(
     fails: int = 0,
     criteria: int = 0,
     advisory: int = 0,
+    new_variables: int = 0,
 ) -> Strip:
     """The strip for one test. ``running`` is the label of the job that
     locks it; ``edits`` its pending ops; ``status`` / ``saved_status`` the
@@ -82,16 +124,17 @@ def strip_for(
     the project is still being read — an unscored test is then waiting for
     it, never without a result, which may not be read yet; ``fails`` /
     ``criteria`` / ``advisory`` its leaves failing, in all, and failing
-    inside a warn."""
+    inside a warn; ``new_variables`` the variables its criteria name that
+    the last run did not record (:func:`new_variables`)."""
     S = Situation
     if running is not None:
         return Strip(S.RUNNING, "grey", f"{running} is running on this test.")
     if edits:
-        return Strip(
-            S.EDITS,
-            "amber",
-            f"{plural(edits, 'unsaved edit')}{SEP}{verdict_phrase(status, saved_status)}",
-        )
+        sentence = f"{plural(edits, 'unsaved edit')}{SEP}{verdict_phrase(status, saved_status)}"
+        if new_variables:
+            new = f"{plural(new_variables, 'new variable')}: {_rerun(new_variables)}"
+            return Strip(S.EDITS_NEW, "amber", f"{sentence}{SEP}{new}")
+        return Strip(S.EDITS, "amber", sentence)
     if scoring_failed:
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")
     if status is None and (has_result or loading):
@@ -103,6 +146,13 @@ def strip_for(
             S.SIM_FAIL,
             "red",
             "The simulation failed. Fix the model or its settings, then rerun.",
+        )
+    if new_variables:
+        return Strip(
+            S.NEW_VARIABLES,
+            "amber",
+            f"{plural(new_variables, 'new variable')} the last run did not "
+            f"record: {_rerun(new_variables)}.",
         )
     if status == NO_REF:
         return Strip(

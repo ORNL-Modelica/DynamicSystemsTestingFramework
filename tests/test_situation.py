@@ -149,3 +149,111 @@ def test_a_strip_is_frozen():
 )
 def test_precedence_is_the_tables_order(inputs, first):
     assert strip_for(**inputs).situation is first
+
+
+# -- a criterion on a variable the last run did not record ------------------
+
+NEW_ROWS = [
+    (
+        dict(
+            edits=1,
+            status="FAIL",
+            saved_status="PASS",
+            has_result=True,
+            new_variables=1,
+        ),
+        S.EDITS_NEW,
+        "amber",
+        "1 unsaved edit · verdict would change PASS → FAIL"
+        " · 1 new variable: rerun to score it",
+    ),
+    (
+        dict(
+            edits=2,
+            status="FAIL",
+            saved_status="FAIL",
+            has_result=True,
+            new_variables=2,
+        ),
+        S.EDITS_NEW,
+        "amber",
+        "2 unsaved edits · verdict stays FAIL · 2 new variables: rerun to score them",
+    ),
+    # Saved without a rerun: the leaf still reads "not found in the result",
+    # and "accept it" would store a baseline without the variable.
+    (
+        dict(status="FAIL", has_result=True, fails=1, criteria=2, new_variables=1),
+        S.NEW_VARIABLES,
+        "amber",
+        "1 new variable the last run did not record: rerun to score it.",
+    ),
+    (
+        dict(status="NO_REF", has_result=True, new_variables=2),
+        S.NEW_VARIABLES,
+        "amber",
+        "2 new variables the last run did not record: rerun to score them.",
+    ),
+]
+
+
+@pytest.mark.parametrize(("inputs", "situation", "tone", "sentence"), NEW_ROWS)
+def test_new_variables_ask_for_a_rerun(inputs, situation, tone, sentence):
+    assert strip_for(**inputs) == Strip(situation, tone, sentence)
+
+
+def test_nothing_new_is_todays_sentence():
+    for inputs, situation, tone, sentence in ROWS:
+        assert strip_for(**inputs, new_variables=0) == Strip(situation, tone, sentence)
+
+
+@pytest.mark.parametrize(
+    ("inputs", "first"),
+    [
+        (dict(running="Rerun", edits=1, new_variables=1), S.RUNNING),
+        (dict(status="SIM_FAIL", has_result=True, new_variables=1), S.SIM_FAIL),
+        (dict(status=None, has_result=False, new_variables=1), S.NO_RESULT),
+        (dict(status=None, has_result=True, new_variables=1), S.WAITING),
+        (dict(scoring_failed=True, new_variables=1), S.SCORING_FAILED),
+        (dict(status="PASS", has_result=True, new_variables=1), S.NEW_VARIABLES),
+    ],
+)
+def test_new_variables_come_after_sim_fail_and_before_no_ref(inputs, first):
+    assert strip_for(**inputs).situation is first
+
+
+def test_new_variables_counts_what_the_result_lacks():
+    import numpy as np
+
+    from conftest import make_test_model
+    from dstf.authoring.situation import new_variables
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    test = make_test_model(
+        "L.A",
+        variable_patterns=["x"],
+        metric_tree_spec=parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "range", "variable": "y", "max_value": 1},
+                    {"metric": "scalar", "variable": "c", "quantity": "CPUtime.final"},
+                    {
+                        "metric": "scalar",
+                        "variable": "CPUtime",
+                        "quantity": {"reduce": "max"},
+                    },
+                ],
+            }
+        ),
+    )
+    t = np.array([0.0, 1.0])
+    result = TestResult(
+        model_id="L.A",
+        success=True,
+        variables=[VariableResult(index=1, time=t, values=t, name="x")],
+    )
+    assert new_variables(test, result, ["CPUtime"]) == 1
+    assert new_variables(test, None, ["CPUtime"]) == 0
+    assert new_variables(None, result, ["CPUtime"]) == 0

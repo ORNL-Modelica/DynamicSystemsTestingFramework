@@ -6624,6 +6624,79 @@ async def test_the_strip_asks_the_saved_verdict_once_per_paint_and_only_with_edi
         assert len(calls) == n + 1
 
 
+async def test_the_strip_asks_for_a_rerun_for_a_criterions_new_variable(shell):
+    """A criterion staged on a variable the result FILE lacks (D's holds x
+    only) scores "not found in the result" until a rerun: the strip says so
+    and fills Rerun alone — Preview and save goes quiet (the owner's O1).
+    Saved, it still asks: accepting now would store a baseline without the
+    variable."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        leaf = {"metric": "range", "variable": "z", "min_value": 0, "max_value": 9}
+        shell.session.stage([PatchOp(D, "add", "/metrics/children/-", leaf)])
+        await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
+        assert _one(user, "strip-text").text == (
+            "2 unsaved edits · verdict would change PASS → FAIL"
+            " · 1 new variable: rerun to score it"
+        )
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "filled"}
+        preview, discard = _one(user, "strip-preview"), _one(user, "strip-discard")
+        assert preview.visible and "unelevated" not in preview.props
+        assert "flat" in preview.props
+        assert discard.visible and "flat" in discard.props
+        assert page.strip.situation.value == "edits_new"
+        shell.session.save()
+        await _settled(lambda: not shell.session.spec.pending)
+        with page.client:
+            page.sync()
+        assert _one(user, "strip-text").text == (
+            "1 new variable the last run did not record: rerun to score it."
+        )
+        assert page.strip.situation.value == "new_variables"
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "filled"}
+        assert _none(user, "strip-preview")
+        # An edit that names nothing new: Preview and save is filled again.
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1.0})])
+        await _settled(lambda: page.strip.situation.value == "edits_new")
+        shell.session.discard()
+        shell.session.stage(
+            [PatchOp(D, "remove", "/metrics/children/1", None)],
+        )
+        await _settled(lambda: page.strip.situation.value == "edits")
+        assert "unelevated" in _one(user, "strip-preview").props
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+
+
+async def test_the_strip_counts_nothing_new_for_a_tracked_variable(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        leaf = {"metric": "range", "variable": "x", "min_value": 0, "max_value": 9}
+        shell.session.stage([PatchOp(D, "add", "/metrics/children/-", leaf)])
+        await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
+        assert "new variable" not in _one(user, "strip-text").text
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+
+
+async def test_a_criterion_on_a_variable_the_file_has_is_scored_without_a_rerun(
+    shell,
+):
+    """The owner's O2: where the result FILE holds the variable (the Python
+    backend records everything), staging re-reads the model and scores it
+    at once — the strip asks for no rerun."""
+    path = shell.session.project.config.work_dir / "test_0004" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["variables"]["w"] = [0.5 for _ in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        leaf = {"metric": "range", "variable": "w", "min_value": 0, "max_value": 1}
+        shell.session.stage([PatchOp(D, "add", "/metrics/children/-", leaf)])
+        await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
+        assert _one(user, "strip-text").text == ("2 unsaved edits · verdict stays PASS")
+        assert page.strip.situation.value == "edits"
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+
+
 async def test_the_strips_discard_is_refused_while_a_job_runs(shell):
     gate = _Gate()
     async with user_simulation(root=shell.index) as user:

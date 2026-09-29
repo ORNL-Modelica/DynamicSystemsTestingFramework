@@ -106,6 +106,10 @@ class Accept:
         Situation.NO_REF: Emphasis.NEXT,
         Situation.PASS: Emphasis.MENU,
         Situation.EDITS: Emphasis.MENU,
+        # a criterion's variable to record first: accepted now, the
+        # baseline would not hold it
+        Situation.EDITS_NEW: Emphasis.MENU,
+        Situation.NEW_VARIABLES: Emphasis.MENU,
         Situation.SIM_FAIL: Emphasis.MENU,
         Situation.NO_RESULT: Emphasis.MENU,
     }

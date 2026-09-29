@@ -246,3 +246,41 @@ def test_a_tool_reruns_dashboard_lists_every_test(tmp_path):
     every = {CONSTANT_CSV, SIMPLE_RAMP, POINTS_CHECK}
     assert sorted(_dashboard_models(work_dir)) == sorted(every)
     assert _dashboard_models(work_dir)[0] == CONSTANT_CSV  # status.json's first
+
+
+def test_a_criterion_on_a_variable_the_python_backend_recorded_scores_at_once(
+    tmp_path,
+):
+    """The owner's O2 over a real backend: the Python backend records every
+    variable the script returns, so a criterion staged on one the spec does
+    not track re-reads the result — APPENDED after the tracked ones — and
+    scores it with no rerun; the strip counts nothing new."""
+    from dstf.authoring.situation import new_variables
+
+    config, _tests = python_example_copy(tmp_path)
+    src = config.config_file.parent.parent.parent / "Examples" / "ConstantCsv.py"
+    text = src.read_text(encoding="utf-8")
+    assert '"variables": {"x": values}' in text
+    src.write_text(
+        text.replace(
+            '"variables": {"x": values}', '"variables": {"x": values, "y": values}'
+        ),
+        encoding="utf-8",
+    )
+    work_dir = tmp_path / "work"
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    view = SessionView(session, Selection(tests=frozenset({CONSTANT_CSV})))
+    session.apply(Rerun().act(view))
+    job = session.running
+    assert job is not None and job.done.wait(60) and job.error is None
+    assert [v.name for v in session.project.results[CONSTANT_CSV].variables] == ["x"]
+
+    leaf = {"metric": "range", "variable": "y", "min_value": 0.5, "max_value": 1.5}
+    session.stage([PatchOp(CONSTANT_CSV, "add", "/metrics/children/-", leaf)])
+    result = session.project.results[CONSTANT_CSV]
+    assert [(v.index, v.name) for v in result.variables] == [(1, "x"), (2, "y")]
+    test = session.project.test(CONSTANT_CSV)
+    assert new_variables(test, result, config.diagnostic_variables) == 0
+    scored = session.comparisons[CONSTANT_CSV].metric_tree.children[-1]
+    assert scored.passed, scored.diagnostics
