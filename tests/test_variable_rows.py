@@ -9,7 +9,7 @@ import pytest
 from dstf.authoring import variable_rows
 from dstf.authoring.needle import matcher
 from dstf.authoring.variable_rows import cap, variable_groups
-from dstf.discovery.plots import ResolvedPlot
+from dstf.discovery.plots import ResolvedPlot, derive_plots
 
 NAMES = [
     "x",
@@ -44,7 +44,6 @@ def _groups(**kw):
         tracked=["x", "y"],
         diagnostics=["CPUtime", "EventCounter"],
         labels={},
-        texts={},
         plots=_l((["x"], ["z"]), (["y"], ["pipe.T[1]"])),
         selected=0,
         keep=lambda text: True,
@@ -111,11 +110,11 @@ def test_no_selected_plot_means_nothing_on_it():
 
 def test_labels_are_read_and_the_name_rides_beside():
     labels = {"x": "a.Q"}
-    row = _groups(labels=labels, texts=labels)[0].rows[0]
+    row = _groups(labels=labels)[0].rows[0]
     assert (row.text, row.name) == ("a.Q", "x")
     assert _groups()[0].rows[0].name is None
     keep = matcher("a.Q", regex=False, case=False)
-    (group,) = _groups(labels=labels, texts=labels, keep=keep)
+    (group,) = _groups(labels=labels, keep=keep)
     assert [r.members for r in group.rows] == [("x",)]
 
 
@@ -146,18 +145,16 @@ def test_a_family_row_counts_the_members_in_the_context():
     assert (full.on_selected, full.is_subject) == (3, False)
 
 
-# a tracked UnitTests family whose expressions are pipe.T[i], beside the
-# result file's own pipe.T[i]: two rows, one key, two ids
-_PIPE = [f"pipe.T[{i}]" for i in (1, 2, 3)]
+# the tracked elements of an array beside the untracked rest of it: two
+# rows, one key, two ids
+_PIPE = [f"pipe.T[{i}]" for i in (1, 2, 3, 4)]
 _UNIT = {f"unitTests.x[{i}]": f"pipe.T[{i}]" for i in (1, 2, 3)}
 
 
 def test_a_row_id_is_unique_where_its_key_is_not():
     groups = _groups(
-        names=[*_UNIT, *_PIPE],
-        tracked=list(_UNIT),
-        labels=_UNIT,
-        texts=_UNIT,
+        names=_PIPE,
+        tracked=_PIPE[:2],
         plots=(),
         selected=None,
     )
@@ -167,16 +164,13 @@ def test_a_row_id_is_unique_where_its_key_is_not():
 
 
 def test_a_row_id_is_unique_where_group_title_and_key_are_not():
-    """A tracked family whose expressions read ``Tracked.a[i]`` beside the
-    result file's own ``Tracked.a[i]``, untracked: both groups are titled
-    "Tracked" and both rows key ``Tracked.a[]``; only the rank tells them
-    apart."""
-    unit = {f"unitTests.x[{i}]": f"Tracked.a[{i}]" for i in (1, 2)}
+    """The tracked ``Tracked.a[1:2]`` beside the untracked ``Tracked.a[3:4]``:
+    both groups are titled "Tracked" and both rows key ``Tracked.a[]``; only
+    the rank tells them apart."""
+    names = [f"Tracked.a[{i}]" for i in (1, 2, 3, 4)]
     groups = _groups(
-        names=[*unit, *unit.values()],
-        tracked=list(unit),
-        labels=unit,
-        texts=unit,
+        names=names,
+        tracked=names[:2],
         plots=(),
         selected=None,
     )
@@ -247,17 +241,30 @@ def test_a_prefix_named_like_a_group_is_its_own_group():
     assert len(ids) == len(set(ids))
 
 
-def test_the_fold_is_over_the_texts_and_the_row_reads_the_label():
-    """x={pipe.T[1], pipe.T[1]}: two variables, one label. Their texts carry
-    the name, so they fold into no family (the report's plot-title rule);
-    each row reads the plain label with its name beside it."""
-    labels = {"u1": "pipe.T[1]", "u2": "pipe.T[1]"}
-    texts = {"u1": "pipe.T[1] (u1)", "u2": "pipe.T[1] (u2)"}
+def test_rows_fold_as_the_plots_do_unit_tests_elements_never():
+    """The owner's ruling O3, as `derive_plots` folds: by RESULT-FILE NAME,
+    and a UnitTests element never — three whose expressions read
+    ``pipe.T[1:3]`` are three plots, and three rows, each reading its
+    expression with its name beside it. The result's own ``pipe.T[1:3]``
+    folds by name into one."""
+    unit = list(_UNIT)
+    (tracked, pipe) = _groups(
+        names=[*unit, *_PIPE[:3]],
+        tracked=unit,
+        labels=_UNIT,
+        unit_tests=unit,
+        plots=derive_plots(None, (), tracked=unit, unit_tests=unit),
+        selected=0,
+    )
+    assert [(r.members, r.text, r.name) for r in tracked.rows] == [
+        ((n,), _UNIT[n], n) for n in unit
+    ]
+    assert [r.members for r in pipe.rows] == [tuple(_PIPE[:3])]
+    # two variables reading one label are two rows too
     (group,) = _groups(
         names=["u1", "u2"],
         tracked=["u1", "u2"],
-        labels=labels,
-        texts=texts,
+        labels={"u1": "pipe.T[1]", "u2": "pipe.T[1]"},
         plots=(),
         selected=None,
     )
@@ -272,12 +279,10 @@ def test_the_filter_asks_the_label_not_the_text():
     never the disambiguated text, whose ``(u1)`` the row does not show. A
     needle only the text matches keeps nothing."""
     labels = {"u1": "pipe.T[1]", "u2": "pipe.T[1]"}
-    texts = {"u1": "pipe.T[1] (u1)", "u2": "pipe.T[1] (u2)"}
     args = dict(
         names=["u1", "u2"],
         tracked=[],
         labels=labels,
-        texts=texts,
         plots=(),
         selected=None,
     )
@@ -362,52 +367,43 @@ def test_tracked_first_is_tracked_then_everything_else_diagnostics_too():
 
 
 def test_flat_folds_a_tracked_family_apart_from_the_results_own_names():
-    """``x={pipe.T[1], pipe.T[2]}`` beside the result's own ``pipe.T[1:2]``
-    (TRANSFORM's shape): under Flat, one group holds both, and a fold over
-    all four read ``pipe.T[1,1,2,2]`` over two different quantities. The
-    tracked and the untracked fold apart, in result-file order, and the
-    tracked family's id is marked — both key ``pipe.T[]``. The whitespace-
-    free id is the row's marker (`variables_drawer.marker`)."""
-    unit = dict(list(_UNIT.items())[:2])
-    args = dict(
-        tracked=list(unit),
-        labels=unit,
-        texts=unit,
-        plots=(),
-        selected=None,
-    )
-    (group,) = _groups(names=[*unit, *_PIPE[:2]], group="flat", **args)
-    assert _members(group) == [tuple(unit), tuple(_PIPE[:2])]
-    # Both read "pipe.T[1:2]"; the folded names tell them apart, and the
-    # drawer mutes the tracked row's beside it (`VariablesDrawer._row`).
+    """The tracked ``pipe.T[1:2]`` beside the untracked ``pipe.T[3:4]``:
+    under Flat one group holds both, and one row over all four hid which of
+    them the test tracks. The tracked and the untracked fold apart, in
+    result-file order, and the tracked family's id is marked — both key
+    ``pipe.T[]``. The whitespace-free id is the row's marker
+    (`variables_drawer.marker`)."""
+    args = dict(tracked=_PIPE[:2], plots=(), selected=None)
+    (group,) = _groups(names=_PIPE, group="flat", **args)
+    assert _members(group) == [tuple(_PIPE[:2]), tuple(_PIPE[2:])]
     assert [(r.text, r.file_text) for r in group.rows] == [
-        ("pipe.T[1:2]", "unitTests.x[1:2]"),
         ("pipe.T[1:2]", "pipe.T[1:2]"),
+        ("pipe.T[3:4]", "pipe.T[3:4]"),
     ]
     ids = [r.id for r in group.rows]
     assert ids == ["1/All variables/tracked:pipe.T[]", "1/All variables/pipe.T[]"]
     assert len({"".join(i.split()) for i in ids}) == 2
     # the result file's order decides which family comes first
-    interleaved = [_PIPE[0], *unit, _PIPE[1]]
+    interleaved = [_PIPE[2], *_PIPE[:2], _PIPE[3]]
     (group,) = _groups(names=interleaved, group="flat", **args)
-    assert _members(group) == [tuple(_PIPE[:2]), tuple(unit)]
+    assert _members(group) == [tuple(_PIPE[2:]), tuple(_PIPE[:2])]
     # the other two groupings keep the rows they had
     rows = {
         how: [
             (r.id, r.members)
-            for g in _groups(names=[*unit, *_PIPE[:2]], group=how, **args)
+            for g in _groups(names=_PIPE, group=how, **args)
             for r in g.rows
         ]
         for how in ("component", "tracked")
     }
     assert rows == {
         "component": [
-            ("0/Tracked/pipe.T[]", tuple(unit)),
-            ("1/pipe/pipe.T[]", tuple(_PIPE[:2])),
+            ("0/Tracked/pipe.T[]", tuple(_PIPE[:2])),
+            ("1/pipe/pipe.T[]", tuple(_PIPE[2:])),
         ],
         "tracked": [
-            ("0/Tracked/pipe.T[]", tuple(unit)),
-            ("1/Other variables/pipe.T[]", tuple(_PIPE[:2])),
+            ("0/Tracked/pipe.T[]", tuple(_PIPE[:2])),
+            ("1/Other variables/pipe.T[]", tuple(_PIPE[2:])),
         ],
     }
 
@@ -428,27 +424,26 @@ def test_the_name_order_sorts_each_group_by_what_it_reads():
     assert [r.text for r in group.rows][:4] == ["x", "y", "a0", "z"]
 
 
-def test_a_folded_familys_file_text_folds_the_names():
-    """``x={pipe.T[3], pipe.T[5]}``: the rows fold over the expressions
-    (`pipe.T[3:2:5]`), and read by result-file name the same row is
-    ``unitTests.x[1:2]`` — folded over the NAMES, never the expressions'
-    fold read with the names' indices."""
-    names = ["unitTests.x[1]", "unitTests.x[2]", "z"]
-    texts = {"unitTests.x[1]": "pipe.T[3]", "unitTests.x[2]": "pipe.T[5]"}
+def test_a_rows_file_text_is_its_name_folded():
+    """``x={pipe.T[3], pipe.T[5]}``: two rows reading their expressions,
+    each ``unitTests.x[i]`` by result-file name; a family of the result's
+    own reads its names folded either way."""
+    names = ["unitTests.x[1]", "unitTests.x[2]", "z[1]", "z[2]"]
+    labels = {"unitTests.x[1]": "pipe.T[3]", "unitTests.x[2]": "pipe.T[5]"}
     (group,) = _groups(
         names=names,
         tracked=names[:2],
-        labels=texts,
-        texts=texts,
+        labels=labels,
+        unit_tests=names[:2],
         plots=(),
         selected=None,
         group="flat",
     )
-    family, lone = group.rows
-    assert family.members == ("unitTests.x[1]", "unitTests.x[2]")
-    assert family.text == "pipe.T[3:2:5]"
-    assert family.file_text == "unitTests.x[1:2]"
-    assert (lone.text, lone.file_text) == ("z", "z")
+    assert [(r.text, r.file_text) for r in group.rows] == [
+        ("pipe.T[3]", "unitTests.x[1]"),
+        ("pipe.T[5]", "unitTests.x[2]"),
+        ("z[1:2]", "z[1:2]"),
+    ]
 
 
 def test_the_name_order_sorts_by_what_the_names_menu_shows():
@@ -461,7 +456,6 @@ def test_the_name_order_sorts_by_what_the_names_menu_shows():
         names=names,
         tracked=[],
         labels=labels,
-        texts=labels,
         plots=(),
         selected=None,
         group="flat",

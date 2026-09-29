@@ -15,6 +15,16 @@ def leaves_of(view: dict | None) -> list[dict]:
     return [leaf for child in view.get("children") or [] for leaf in leaves_of(child)]
 
 
+def names_a_series(leaf: dict) -> bool:
+    """Does this leaf of a `tree_view` score a SERIES of the result?
+    `resolves_a_variable` over the view's dict: a stored-scalar leaf's
+    ``variable`` is free text naming the leaf, and a plot of a variable it
+    happens to spell showed that leaf as its criterion."""
+    from ..comparison.tree_spec import reads_a_statistic
+
+    return not reads_a_statistic(str(leaf.get("metric")), leaf.get("params") or {})
+
+
 def nodes_of(view: dict | None) -> list[dict]:
     """Every node of a `tree_view`, combinators included, in tree order."""
     if view is None:

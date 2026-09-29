@@ -72,6 +72,7 @@ from .spec_document import PatchOp, SpecDocument
 if TYPE_CHECKING:
     import numpy as np
 
+    from ..comparison.tree_spec import LeafSpec
     from ..figures.plotly import Visibility
 
 Event = Literal["spec", "results", "job", "loading", "known"]
@@ -118,6 +119,12 @@ class Selection:
     picks a test to read a label off, which is also why a selection of two
     tests (refused at VARIABLE anyway) cannot show one of them's
     expression.
+
+    ``tracked`` is the page's one read of the selected test's tracked names
+    (:meth:`Session.tracked`), for the same reason: a plot's ``+`` asks
+    whether its variable is one, and a card that read the list for itself
+    re-derived it once per card. ``None`` — a selection built with none —
+    reads it when asked.
     """
 
     tests: frozenset[str] = frozenset()
@@ -125,6 +132,7 @@ class Selection:
     leaf_path: str | None = None
     node_path: str | None = None
     texts: Mapping[str, VariableText] = MappingProxyType({})
+    tracked: frozenset[str] | None = None
 
 
 @dataclass
@@ -714,6 +722,25 @@ class Session:
             raise KeyError(model_id)
         return tuple(test.plots or ())
 
+    def _plot_leaves(self, model_id: str) -> list[LeafSpec] | None:
+        """:func:`~dstf.discovery.plots.plot_leaves` for this test: the
+        leaves its plots derive from, ``None`` for one plot per tracked
+        name. From the tree SPEC and what was compared — no baseline read."""
+        test = self._require_project().test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        comp = self.comparisons.get(model_id)
+        compared = [vc.name for vc in comp.variables] if comp is not None else []
+        return plot_leaves(test, compared)
+
+    def plots_from_tree(self, model_id: str) -> bool:
+        """Whether the test's plots derive from a tree — the authored one,
+        or the implicit tree of what was compared — rather than one per
+        tracked variable or array. NOT whether there is a tree VIEW: a test
+        with no baseline compares nothing, and an authored tree still says
+        what its plots are."""
+        return self._plot_leaves(model_id) is not None
+
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         """The test's plots as the page draws them
         (:func:`~dstf.discovery.plots.derive_plots`): one per scored
@@ -730,9 +757,7 @@ class Session:
         if test is None:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
-        comp = self.comparisons.get(model_id)
-        compared = [vc.name for vc in comp.variables] if comp is not None else []
-        leaves = plot_leaves(test, compared)
+        leaves = self._plot_leaves(model_id)
         tracked = self.tracked(model_id)
         names = [leaf.variable for leaf in leaves] if leaves is not None else tracked
         # A name the RESULT carries is never missing: the file's listing

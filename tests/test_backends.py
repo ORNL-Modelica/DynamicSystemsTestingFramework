@@ -335,6 +335,17 @@ class TestVariablePatterns:
         resolved = resolve_variable_patterns(["nonexistent*"], available)
         assert resolved == []
 
+    def test_patterns_resolve_in_the_order_they_were_written(self):
+        """Explicit names as written, each glob's matches in the file's
+        order, a name matched twice where it was first. Sorted, ``x[10]``
+        came before ``x[2]``, and a test with no tree drew its plots — and
+        an accept wrote its ``variables`` — alphabetically."""
+        available = ["b", "x[1]", "x[2]", "x[10]", "a"]
+        got = resolve_variable_patterns(["b", "x[*", "a", "b"], available)
+        assert got == ["b", "x[1]", "x[2]", "x[10]", "a"]
+        got = resolve_variable_patterns(["a", "*"], available)
+        assert got == ["a", "b", "x[1]", "x[2]", "x[10]"]
+
     def test_pattern_to_regex_dots(self):
         """Dots in patterns are escaped (literal, not regex any-char)."""
         import re

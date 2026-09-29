@@ -930,7 +930,9 @@ def test_the_readout_says_the_criterion_once():
 async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(shell):
     """A leaf the scorer could not score carries its reason IN the
     criterion ("scalar leaf not scored — …"), so the error is not a branch
-    of its own: reading it there said the reason without the mode."""
+    of its own: reading it there said the reason without the mode. A
+    stored-scalar leaf names a statistic, not a series: it is read on the
+    tree's row, and x's card has no row of it."""
     sentinel = {
         "combinator": "and",
         "children": [
@@ -952,8 +954,10 @@ async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(sh
         assert leaf_readout(unscorable).startswith("scalar leaf not scored — ")
         assert unscorable["error"] not in ("", None)
         assert leaf_readout(unscorable) == unscorable["criterion"]
-        assert _one(user, f"criterion-readout:0:{T1}").text == leaf_readout(unscorable)
         assert leaf_readout(scored) == scored["criterion"]
+        assert _none(user, f"criterion:0:{T1}")
+        await _open_tree(user)
+        assert leaf_readout(unscorable) in _labels_in(_one(user, f"tree-row:{T1}"))
 
 
 # -- the plot cards ----------------------------------------------------------
@@ -1531,9 +1535,10 @@ async def test_a_watch_card_says_no_criteria_and_its_remove_stages_the_rest(
         assert _one(user, "plot-empty:3").text == "No criteria yet."
         assert _one(user, "plot-title:3").text == "w"
         assert _none(user, "plot-derived:3") and _none(user, "plot-empty:1")
+        # the derived plots counted apart from the watch plot
         assert (
             _one(user, "plots:count").text
-            == "4 plots · derived from the criteria · 1 watch"
+            == "3 plots · derived from the criteria · 1 watch"
         )
         # w is not tracked: its `+` is there, grey, and says when (C2).
         (plus,) = _inside(user, "add-for:w", "criteria-header:3")
@@ -1629,11 +1634,129 @@ async def test_a_tree_of_statistics_alone_has_no_plots_and_says_so(shell):
 
 async def test_a_test_with_no_tree_has_one_card_per_tracked_variable(shell):
     """C5: nothing scored derives nothing; the count line says what the
-    cards are then."""
+    cards are then — an array folds there too — and counts a watch plot
+    apart."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, B)
         assert [c.resolved.subject for c in page.cards] == [("x",), ("y",)]
-        assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
+        assert _one(user, "plots:count").text == (
+            "2 plots · one per tracked variable or array"
+        )
+        shell.session.stage([PatchOp(B, "add", "/plots", [{"var": "z"}])])
+        await _settled(lambda: len(page.cards) == 3)
+        assert _one(user, "plots:count").text == (
+            "2 plots · one per tracked variable or array · 1 watch"
+        )
+
+
+async def test_a_tree_on_a_test_with_no_baseline_derives_its_plots(shell):
+    """B has no baseline, so nothing is compared and there is no tree VIEW;
+    an authored tree still names what its plots are (`plot_leaves`), and
+    the count line says so — it branched on the view."""
+    shell.session.stage(
+        [
+            PatchOp(
+                B,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "y"}],
+                },
+            )
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert shell.session.tree_view(B) is None
+        assert [c.resolved.subject for c in page.cards] == [("y",)]
+        assert _one(user, "plots:count").text == "1 plot · derived from the criteria"
+
+
+async def test_a_statistics_leaf_draws_no_row_on_its_variables_card(shell):
+    """A stored-scalar leaf's ``variable`` is free text naming the leaf, not
+    a series (`resolves_a_variable`): a watch plot of a variable that
+    spelling matches has no criteria, and its card shows none — no row, no
+    pill, nothing it draws."""
+    stats = {
+        "metric": "scalar",
+        "variable": "x",
+        "quantity": "CPUtime.final",
+        "max_value": 1e9,
+    }
+    tree = {
+        "combinator": "and",
+        "children": [{"metric": "nrmse", "variable": "y"}, stats],
+    }
+    shell.session.stage(
+        [
+            PatchOp(A, "add", "/metrics", tree),
+            PatchOp(A, "add", "/plots", [{"var": "x"}]),
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[-1]
+        assert (card.resolved.subject, card.resolved.watch) == (("x",), True)
+        assert card.rows == {} and card.pills == {}
+        assert card._leaves_all(shell.session.tree_view(A)) == []
+        assert _one(user, "plot-empty:1").text == "No criteria yet."
+
+
+async def test_a_watch_plot_turning_derived_keeps_the_selection(tmp_path):
+    """A watch plot selected, then given a criterion: it becomes its
+    variable's derived plot and MOVES — to where the tree names it — and
+    the selection moves with it, by its subject; the index it had names
+    another plot now."""
+    shell = _opened(
+        *_nested_project(tmp_path, [{"var": "w"}, {"var": "y", "context": ["z"]}])
+    )
+    shell.session.stage([PatchOp(A, "remove", N_Y)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [(c.resolved.subject, c.resolved.watch) for c in page.cards][-2:] == [
+            (("w",), True),
+            (("y",), True),
+        ]
+        with page.client:
+            page.select(3)
+        _click_in(user, "add-for:y", within="criteria-header:3")
+        await user.should_see(marker="apply-add:y")
+        user.find(marker="apply-add:y").click()
+        await _settled(lambda: not _page(shell, user).cards[2].resolved.watch)
+        page = _page(shell, user)
+        card = page.cards[2]
+        assert (card.resolved.subject, card.resolved.context) == (("y",), ("z",))
+        assert page.selected == 2 and _ringed(page) == [2]
+        await _settled(lambda: page.open is not None and page.open[0] == 2)
+
+
+async def test_an_edit_to_a_context_variables_criterion_resends_only_its_card(
+    tmp_path,
+):
+    """x's card draws y as CONTEXT; y's criterion, on y's own card, is
+    edited: only y's card is re-sent. A context variable's leaves sign
+    nothing onto a card (`PlotCard.signature` reads the SUBJECT)."""
+    cfg, work = _two_var_project(tmp_path)
+    shell = _opened(cfg, work)
+    shell.session.stage(
+        [
+            PatchOp(A, "add", "/metrics", copy.deepcopy(TWO_RANGES)),
+            PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}]),
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards[0].resolved.context == ("y",)
+        with page.client:
+            page.cards[0].show()
+            page.cards[1].show()
+        on_x, on_y = _counted(page.cards[0]), _counted(page.cards[1])
+        shell.session.stage(
+            [PatchOp(A, "replace", "/metrics/children/1/min_value", -5)]
+        )
+        await _settled(lambda: on_y[0] >= 1)
+        assert on_x[0] == 0
 
 
 async def test_reset_layout_says_the_extras_go(extras_shell):
@@ -1851,8 +1974,9 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(tmp_path):
         assert calls["variable_texts"] <= 1, calls
         # Bounded, and by the page — not by how many cards it has. Measured
         # with the plots derived from the tree: 2 plot resolutions (the
-        # rebuild's and the label scope's) and 4 tracked-name reads.
-        assert calls["plots"] <= 2 and calls["tracked"] <= 4, calls
+        # rebuild's and the label scope's) and 5 tracked-name reads (one of
+        # them the page's, handed to every card's `+`).
+        assert calls["plots"] <= 2 and calls["tracked"] <= 5, calls
         calls["tracked"] = 0
         with page.client:
             page.sync()
@@ -1860,7 +1984,9 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(tmp_path):
 
 
 @pytest.mark.parametrize("n", [5, 40])
-async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(tmp_path, n):
+async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(
+    tmp_path, monkeypatch, n
+):
     """The guard the review's cost probe is: a build, a rebuild and a sync
     read the Session a bounded number of times, and the bound does not move
     between five cards and forty. It was O(cards) with a factor of two —
@@ -1870,9 +1996,21 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(tmp_pa
     Drawing is not in the bound: `show()` is per card by nature — a figure
     is assembled for the card being drawn — and the page draws only what is
     scrolled to."""
+    from dstf.authoring.builtin import edit_tree
+
     shell = _watch_shell(tmp_path, n - 2)
     session = shell.session
     calls = _count_reads(session)
+    # A card's `+` asks whether its variable is tracked: it reads the list
+    # the page hands down (`Selection.tracked`), never its own.
+    listed = [0]
+    real_names = edit_tree._variable_names
+
+    def counting_names(*a, **k):
+        listed[0] += 1
+        return real_names(*a, **k)
+
+    monkeypatch.setattr(edit_tree, "_variable_names", counting_names)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _settled(lambda: len(page.cards) == n)
@@ -1882,8 +2020,10 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(tmp_pa
         view = session.tree_view(A)
         for key in calls:
             calls[key] = 0
+        listed[0] = 0
         with page.column:
             page.rebuild(view)
+        assert listed[0] == 0, (listed, n)
         rebuild = dict(calls)
         for key in calls:
             calls[key] = 0
@@ -1891,12 +2031,12 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(tmp_pa
             page.sync()
         sync = dict(calls)
     # Measured with the plots derived from the tree, the same at 5 and 40:
-    # the build 2 scope builds, 4 plot resolutions and 8 tracked-name reads;
-    # a rebuild or a sync half that.
+    # the build 2 scope builds, 4 plot resolutions and 9 tracked-name reads;
+    # a rebuild or a sync about half that.
     for phase in (build, rebuild, sync):
         assert phase["variable_texts"] <= 2, (phase, n)
         assert phase["plots"] <= 4, (phase, n)
-        assert phase["tracked"] <= 8, (phase, n)
+        assert phase["tracked"] <= 9, (phase, n)
 
 
 # -- the editor: below its row, one at a time, the plot as its surface ------
@@ -5302,6 +5442,33 @@ class TestVariablesDrawer:
             check.click()  # drawn for plot 1, which shows z
             assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0", "z")]
 
+    async def test_new_plot_on_a_family_row_stages_nothing(self, drawer_shell):
+        """C3: a watch plot shows ONE variable. The family row's button is
+        grey; a click that reaches `_new` anyway — drawn before the row
+        folded — makes no plot of the array."""
+        from dstf.authoring.variable_rows import VarRow
+
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            row = VarRow(
+                key="pipe.T[]",
+                id=ROW_PIPE,
+                members=tuple(PIPE),
+                text="pipe.T[1:3]",
+                file_text="pipe.T[1:3]",
+                name=None,
+                on_selected=0,
+                elsewhere=(),
+                is_subject=False,
+                subject_of=None,
+            )
+            with page.client:
+                drawer._new(row)
+            assert shell.session.spec.pending == []
+
     async def test_new_plot_twice_from_one_row_makes_one_plot(
         self, drawer_shell, caplog
     ):
@@ -5500,7 +5667,6 @@ class TestVariablesDrawer:
                 tracked=session.tracked(A),
                 diagnostics=session.project.config.diagnostic_variables,
                 labels={n: t.label for n, t in scope.items()},
-                texts={n: t.text for n, t in scope.items()},
                 plots=session.plots(A),
                 selected=0,
                 keep=lambda text: True,
@@ -6818,96 +6984,31 @@ class TestVariablesDrawerControls:
     async def test_expression_names_count_the_members_an_opened_family_draws(
         self, drawer_shell
     ):
-        """x={pipe.T[1], pipe.T[2]} beside the result's own pipe.T[1:3]: the
-        two family rows read apart, but opened, the tracked member x and
-        the result's pipe.T[1] both read "pipe.T[1]" — x keeps its name."""
+        """x={pipe.T[1]} beside the result's own pipe.T[1:3]: x is a row of
+        its own — rows fold by NAME, as the plots do — reading "pipe.T[1]"
+        alone while the family is shut; opened, the result's pipe.T[1] reads
+        "pipe.T[1]" too, and x keeps its name."""
         from test_session import with_expressions
 
         shell = drawer_shell
-        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
+        with_expressions(shell.session, A, {"x": "pipe.T[1]"})
         shell.session._score(A)
-        tracked = "0/Tracked/pipe.T[]"
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             await _pick(user, "var-names", "expression")
             await _settled(lambda: page.state.vars_names == "expression")
-            user.find(marker=var_marker("var-open", tracked)).click()
-            await _settled(
-                lambda: not _none(user, var_marker("var-row", f"{tracked}/x"))
-            )
-            member = var_marker("var-row", f"{tracked}/x")
-            assert _labels_in(_one(user, member)) == ["pipe.T[1]"]
+            row = var_marker("var-row", ROW_X)
+            await _settled(lambda: _labels_in(_one(user, row)) == ["pipe.T[1]"])
+            assert _labels_in(_one(user, var_marker("var-row", ROW_PIPE))) == [
+                "pipe.T[1:3]"
+            ]
             user.find(marker=var_marker("var-open", ROW_PIPE)).click()
             await _settled(
                 lambda: not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
             )
-            assert _labels_in(_one(user, member)) == ["pipe.T[1]", "x"]
+            assert _labels_in(_one(user, row)) == ["pipe.T[1]", "x"]
             result = _one(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
             assert _labels_in(result) == ["pipe.T[1]"]
-
-    async def test_flat_draws_a_tracked_family_and_the_results_own_apart(
-        self, drawer_shell
-    ):
-        """x={pipe.T[1], pipe.T[2]} beside the result's own pipe.T[1:2],
-        under Flat and filtered to those two: both rows read "pipe.T[1:2]"
-        (TRANSFORM's `batemanEquations.Ns[1:4]` twice, alike titles and
-        alike checks). The tracked one carries its folded names, "x, y" —
-        muted beside it under Both and Expression, and in its check's and
-        its chevron's labels and its title under every names setting; the
-        result's own, whose names read as it does, carries none."""
-        from test_session import with_expressions
-
-        shell = drawer_shell
-        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
-        shell.session._score(A)
-        tracked, own = "1/All variables/tracked:pipe.T[]", "1/All variables/pipe.T[]"
-        async with user_simulation(root=shell.index) as user:
-            page = await _drawer(shell, user)
-            await _pick(user, "var-group-by", "flat")
-            user.find(marker="var-regex").click()
-            user.find(marker="var-needle").type(r"pipe\.T\[[12]\]")
-            await _settled(lambda: page.state.vars_needle == r"pipe\.T\[[12]\]")
-            row_of = var_marker("var-row", tracked)
-            for mode, labels in (
-                ("both", ["pipe.T[1:2]", "x, y", "plot 2"]),
-                ("expression", ["pipe.T[1:2]", "x, y", "plot 2"]),
-                ("file", ["x, y", "plot 2"]),
-            ):
-                await _pick(user, "var-names", mode)
-                await _settled(lambda m=mode: page.state.vars_names == m)
-                await _settled(lambda w=labels: _labels_in(_one(user, row_of)) == w)
-                checks = {
-                    row: _one(user, var_marker("var-check", row)).props["aria-label"]
-                    for row in (tracked, own)
-                }
-                assert checks == {
-                    tracked: "pipe.T[1:2] (x, y)",
-                    own: "pipe.T[1:2]",
-                }, mode
-                opener = _one(user, var_marker("var-open", tracked))
-                assert opener.props["aria-label"] == "Open pipe.T[1:2] (x, y)", mode
-                titles = [
-                    e.props.get("title")
-                    for e in _one(user, var_marker("var-row", tracked)).descendants()
-                    if isinstance(e, ui.label) and "dstf-var-text" in e.classes
-                ]
-                assert titles == ["pipe.T[1:2] (x, y)"], mode
-                own_labels = _labels_in(_one(user, var_marker("var-row", own)))
-                assert "x, y" not in own_labels, mode
-            # Drawn alone, the tracked family reads like no other row: under
-            # Expression its names are not muted beside it (a lone
-            # variable's rule), and its check still says them.
-            await _pick(user, "var-names", "expression")
-            await _settled(lambda: page.state.vars_names == "expression")
-            user.find(marker="var-needle").clear()
-            user.find(marker="var-needle").type("^[xy]$")
-            await _settled(lambda: _none(user, var_marker("var-row", own)))
-            assert _labels_in(_one(user, var_marker("var-row", tracked))) == [
-                "pipe.T[1:2]",
-                "plot 2",
-            ]
-            check = _one(user, var_marker("var-check", tracked))
-            assert check.props["aria-label"] == "pipe.T[1:2] (x, y)"
 
     async def test_an_opened_family_stays_open_across_a_switch_of_group(
         self, drawer_shell
@@ -6950,25 +7051,34 @@ class TestVariablesDrawerControls:
             assert not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[1]}"))
             assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[2]}"))
 
-    async def test_a_tracked_family_and_the_results_own_open_apart(self, drawer_shell):
-        """x={pipe.T[1], pipe.T[2]} folds the tracked x, y to `pipe.T[]`,
-        the key the result's own pipe.T[1:3] folds to: opening the tracked
+    async def test_a_tracked_family_and_the_results_own_open_apart(self, tmp_path):
+        """A tracks pipe.T[1:2]; the result carries pipe.T[3:4] besides. Both
+        fold to `pipe.T[]`, one tracked and one not: opening the tracked
         one leaves the result's closed."""
-        from test_session import with_expressions
+        from test_session import _drawer_project
 
-        shell = drawer_shell
-        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
-        shell.session._score(A)
+        cfg, work = _drawer_project(tmp_path)
+        path = work / "test_0001" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["pipe.T[4]"] = [9 * v for v in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["variables"] = ["x", "y", *PIPE[:2]]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        shell = _opened(cfg, work)
         tracked = "0/Tracked/pipe.T[]"
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             user.find(marker=var_marker("var-open", tracked)).click()
             await _settled(
-                lambda: not _none(user, var_marker("var-row", f"{tracked}/x"))
+                lambda: not _none(user, var_marker("var-row", f"{tracked}/{PIPE[0]}"))
             )
             opener = _one(user, var_marker("var-open", ROW_PIPE))
             assert opener.props["aria-expanded"] == "false"
-            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[2]}"))
 
     async def test_the_menus_survive_a_switch_of_test(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:

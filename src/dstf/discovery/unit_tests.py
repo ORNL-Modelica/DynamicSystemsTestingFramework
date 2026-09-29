@@ -10,6 +10,7 @@ themselves.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -33,8 +34,11 @@ def is_unit_test_variable(test: TestModel, name: str) -> bool:
     so no plot folds it into a family with another (the owner's ruling O3,
     2026-09-28)."""
     head = f"{test.unit_tests_instance}.{_ARRAY}["
+    # ASCII digits: `str.isdigit` takes `²` and `١` for one too
     return (
-        name.startswith(head) and name.endswith("]") and name[len(head) : -1].isdigit()
+        name.startswith(head)
+        and name.endswith("]")
+        and re.fullmatch(r"[0-9]+", name[len(head) : -1]) is not None
     )
 
 

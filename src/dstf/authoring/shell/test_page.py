@@ -109,6 +109,9 @@ class TestPage:
         #: drawer's "+ new plot", selects another. Its card wears
         #: `dstf-plot-selected`.
         self.selected = 0
+        #: The selected plot's subject, which a rebuild re-selects wherever
+        #: it moved; None when a gesture placed the selection by index.
+        self.follow: tuple[str, ...] | None = None
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
@@ -198,13 +201,16 @@ class TestPage:
             return SCORING_FAILED
         return "this test has no baseline"
 
-    def _no_plots_reason(self, view: dict | None) -> str:
+    def _no_plots_reason(self, from_tree: bool) -> str:
         """Why there is no PLOT, which is not why there is no tree: a test
         with no tree still draws one plot per tracked variable, so a page
         with none has no result, a result with nothing in it — or a tree
         whose every criterion scores a statistic (a stored-scalar leaf
-        names no series, so it derives no plot)."""
-        if view is not None:
+        names no series, so it derives no plot). ``from_tree`` is
+        `Session.plots_from_tree`, never whether there is a tree VIEW: a
+        test with no baseline has none, and its authored tree still names
+        its plots."""
+        if from_tree:
             return "this test's criteria score statistics, not signals"
         result = self._result()
         if result is None or not result.success:
@@ -457,6 +463,11 @@ class TestPage:
         # Focus names an INDEX, and after this the indices may name other
         # plots; the plots a user had drawn are re-drawn where they are left.
         self.focused = None
+        # The selection follows its PLOT, by subject: a watch plot given a
+        # criterion becomes derived and moves to where the tree names it,
+        # and the index it had names another plot. A gesture that placed
+        # the selection itself (`stage_layout`'s ``select``) left none.
+        follow = self.follow
         shown = {card.index for card in self.cards if card.plot is not None}
         for card in self.cards:
             card.dispose()
@@ -464,11 +475,13 @@ class TestPage:
         plots = session.plots(self.model_id)
         # The label scope too: it is one fact about the TEST, and a card
         # that read it for itself cost one `plots` + `tracked` read per
-        # plot — 35 for a five-plot test.
+        # plot — 35 for a five-plot test. And the tracked names, which each
+        # card's `+` asks about (`Selection.tracked`).
         scope = session.variable_texts(self.model_id)
+        tracked = frozenset(session.tracked(self.model_id))
         with self.column:
             self.cards = [
-                PlotCard(self, plot.index, plot, view, scope) for plot in plots
+                PlotCard(self, plot.index, plot, view, scope, tracked) for plot in plots
             ]
         for card in self.cards:
             # A rebuild must not blank what the user was looking at: the
@@ -477,24 +490,37 @@ class TestPage:
             if card.index in shown:
                 card.show(view)
         self._paint_focus(view)
-        # The selection names an INDEX too; it is kept, clamped to the cards
-        # there are now, and its ring painted on the new cards. The drawer
-        # follows at the end of the sync that called this, once.
-        self._ring(self.selected)
-        self.count.set_text(self._count_text(view, plots))
+        # The selection names an INDEX too; it is kept — on the plot it
+        # followed, else clamped to the cards there are now — and its ring
+        # painted on the new cards. The drawer follows at the end of the
+        # sync that called this, once.
+        moved = next(
+            (
+                plot.index
+                for plot in plots
+                if follow and any(name in plot.subject for name in follow)
+            ),
+            None,
+        )
+        self._ring(self.selected if moved is None else moved)
+        self.count.set_text(
+            self._count_text(session.plots_from_tree(self.model_id), plots)
+        )
         self._observe()
 
-    def _count_text(self, view: dict | None, plots: Sequence[ResolvedPlot]) -> str:
+    def _count_text(self, from_tree: bool, plots: Sequence[ResolvedPlot]) -> str:
         """What the cards are: derived from the criteria, or — nothing
-        scored — one per tracked variable; and how many of them are a
-        person's watch plots."""
+        scored — one per tracked variable or array; counted apart from a
+        person's watch plots, which are neither."""
         if not plots:
-            return f"no plots: {self._no_plots_reason(view)}"
+            return f"no plots: {self._no_plots_reason(from_tree)}"
         why = (
-            "one per tracked variable" if view is None else "derived from the criteria"
+            "derived from the criteria"
+            if from_tree
+            else "one per tracked variable or array"
         )
         watch = sum(1 for plot in plots if plot.watch)
-        return f"{plural(len(plots), 'plot')} · {why}" + (
+        return f"{plural(len(plots) - watch, 'plot')} · {why}" + (
             f" · {watch} watch" if watch else ""
         )
 
@@ -522,6 +548,7 @@ class TestPage:
 
     def _ring(self, index: int) -> None:
         self.selected = max(0, min(index, len(self.cards) - 1))
+        self.follow = self.cards[self.selected].resolved.subject if self.cards else None
         for card in self.cards:
             if card.index == self.selected:
                 card.card.classes(add="dstf-plot-selected")
@@ -544,13 +571,13 @@ class TestPage:
         op = layout_op(self.model_id, session.spec.entry(self.model_id), extras)
         if op is None:
             return False
-        before = self.selected
+        before = self.selected, self.follow
         if select is not None:
-            self.selected = select
+            self.selected, self.follow = select, None
         try:
             session.stage([op])
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
-            self.selected = before
+            self.selected, self.follow = before
             ui.notify(user_text(e), type="warning")
             return False
         return True

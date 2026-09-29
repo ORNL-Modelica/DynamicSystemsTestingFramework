@@ -31,6 +31,7 @@ from nicegui import ui
 
 from ...backends.types import VariableText
 from ...discovery.plots import PlotExtra, ResolvedPlot
+from ...discovery.unit_tests import is_unit_test_variable
 from ...figures.families import HUES
 from ..layout import add_context, new_watch, remove_context
 from ..needle import matcher
@@ -74,6 +75,9 @@ class _Reads:
     tracked: list[str]
     scope: dict[str, VariableText]
     plots: tuple[ResolvedPlot, ...]
+    #: the names that are the test's UnitTests elements: rows of their own,
+    #: as they are plots of their own (O3)
+    unit_tests: frozenset[str]
 
 
 def _slug(title: str) -> str:
@@ -213,11 +217,17 @@ class VariablesDrawer:
         if page.gone:
             return None
         session, model_id = page.shell.session, page.model_id
+        names = session.variable_names(model_id)
+        project = session.project
+        test = project.test(model_id) if project is not None else None
         return _Reads(
-            names=session.variable_names(model_id),
+            names=names,
             tracked=session.tracked(model_id),
             scope=session.variable_texts(model_id),
             plots=session.plots(model_id),
+            unit_tests=frozenset(
+                n for n in names if test is not None and is_unit_test_variable(test, n)
+            ),
         )
 
     def _signature(self, reads: _Reads | None) -> object:
@@ -243,6 +253,7 @@ class VariablesDrawer:
             tuple(reads.tracked),
             tuple((n, t.label, t.text) for n, t in reads.scope.items()),
             reads.plots,
+            reads.unit_tests,
             "" if reads.names else page.unscored_reason(),
         )
 
@@ -300,8 +311,8 @@ class VariablesDrawer:
                     project.config.diagnostic_variables if project is not None else ()
                 ),
                 labels={name: t.label for name, t in scope.items()},
-                texts=self.texts,
                 plots=reads.plots,
+                unit_tests=reads.unit_tests,
                 selected=page.selected if n else None,
                 group=self.state.vars_group,
                 order=self.state.vars_sort,
@@ -365,15 +376,10 @@ class VariablesDrawer:
 
     def _row(self, row: VarRow, *, member: bool = False) -> None:
         page, key = self.page, row.id
-        # What is muted beside the row's text: a lone variable's name, or a
-        # family's names folded (`file_text`) when they read otherwise.
-        # Under Flat a tracked x={pipe.T[1], pipe.T[2]} and the result's own
-        # pipe.T[1:2] both read "pipe.T[1:2]" — on TRANSFORM two rows of
-        # `batemanEquations.Ns[1:4]` with alike titles and alike checks —
-        # and a family has no one name to say which is which.
+        # What is muted beside the row's text: a lone variable's name. A
+        # family has none to mute: rows fold by NAME, so its text is its
+        # names folded (`file_text`).
         muted = row.name
-        if muted is None and row.file_text != row.text:
-            muted = row.file_text
         said = row.text if muted is None else f"{row.text} ({muted})"
         with (
             ui.row()

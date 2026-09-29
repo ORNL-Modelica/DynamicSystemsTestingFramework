@@ -33,7 +33,14 @@ from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
 from ..session import Selection
-from ..tree_text import ancestor_kinds, crumb_text, leaf_name, leaves_of, parent_kinds
+from ..tree_text import (
+    ancestor_kinds,
+    crumb_text,
+    leaf_name,
+    leaves_of,
+    names_a_series,
+    parent_kinds,
+)
 from .actions import InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status
@@ -291,11 +298,13 @@ class PlotCard:
         resolved: ResolvedPlot,
         view: dict | None,
         scope: Mapping[str, VariableText],
+        tracked: frozenset[str],
     ) -> None:
-        """``view`` and ``scope`` are the page's ONE read of each, handed to
-        every card: a card that read them for itself cost one read per plot
-        on every rebuild (the Task 5-6 review)."""
+        """``view``, ``scope`` and ``tracked`` are the page's ONE read of
+        each, handed to every card: a card that read them for itself cost
+        one read per plot on every rebuild (the Task 5-6 review)."""
         self.page, self.index, self.resolved = page, index, resolved
+        self.tracked = tracked
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
         # subscribes before there is a plot to attach to.
@@ -426,13 +435,10 @@ class PlotCard:
             self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
             takers, crumbs = parent_kinds(view), ancestor_kinds(view)
-            members = set(self.subject)
             with criteria.mark(f"criteria:{index}"):
                 # TREE order, never the subject's member order: a family's
                 # rows are where the tree has them, each with its crumb.
-                for leaf in leaves_of(view):
-                    if leaf.get("variable") not in members:
-                        continue
+                for leaf in self._leaves_all(view):
                     path = str(leaf["path"])
                     self.rows[path] = CriterionRow(
                         self, leaf, takers.get(path), crumb_text(crumbs.get(path, ()))
@@ -472,8 +478,9 @@ class PlotCard:
                     variable=self.subject[0],
                     # The page's one read of the scope, so the `+` reads
                     # this variable's text without building it per card
-                    # (`Selection.texts`).
+                    # (`Selection.texts`), and of the tracked names.
                     texts=scope,
+                    tracked=self.tracked,
                 ),
                 figure=self.hook,
                 marker=f"variable:{index}",
@@ -542,7 +549,11 @@ class PlotCard:
 
     @staticmethod
     def _leaves(view: dict | None, variable: str) -> list[dict]:
-        return [leaf for leaf in leaves_of(view) if leaf.get("variable") == variable]
+        return [
+            leaf
+            for leaf in leaves_of(view)
+            if leaf.get("variable") == variable and names_a_series(leaf)
+        ]
 
     def _view(self, view: Any = UNREAD) -> dict | None:
         """The page's read of this sync, or one of this card's own when it
@@ -629,13 +640,15 @@ class PlotCard:
     # -- the plot ------------------------------------------------------------------
 
     def _leaves_all(self, view: dict | None) -> list[dict]:
-        """Every leaf on this plot's SUBJECT. Not its context: a context
-        variable scored on another plot draws nothing of its criteria
-        here."""
+        """Every leaf on this plot's SUBJECT, in tree order: its rows, what
+        it draws, what its signature signs. Not its context — a context
+        variable scored on another plot draws nothing of its criteria here —
+        and no stored-scalar leaf, whose ``variable`` names the leaf, not a
+        series (`names_a_series`)."""
         return [
             leaf
             for leaf in leaves_of(view)
-            if leaf.get("variable") in self.resolved.subject
+            if leaf.get("variable") in self.resolved.subject and names_a_series(leaf)
         ]
 
     def is_open(self, path: str) -> bool:
@@ -792,8 +805,7 @@ class PlotCard:
         view = self._view(view)
         leaves = [
             [leaf.get("path"), *(leaf.get(key) for key in _SIGNED)]
-            for leaf in leaves_of(view)
-            if leaf.get("variable") in self.resolved.subject
+            for leaf in self._leaves_all(view)
         ]
         return json.dumps(
             [

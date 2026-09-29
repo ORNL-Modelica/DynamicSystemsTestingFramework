@@ -2990,6 +2990,52 @@ class TestPlots:
         assert v.plot_figure(A, 0) == s.plot_figure(A, 0)
 
 
+def _ordered_project(tmp_path: Path, names: list[str]) -> tuple[Path, Path]:
+    """`_two_var_project` with A and B tracking ``names``, listed in that
+    order in the spec and in both results."""
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    t = [i / 4 for i in range(5)]
+    for key in ("test_0001", "test_0002"):
+        (work / key / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {
+                        n: [(k + 1) * v for v in t] for k, n in enumerate(names)
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] in (A, B):
+            entry["variables"] = list(names)
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+class TestPlotsInTheSpecsOrder:
+    """With no tree the plots are the tracked names, in the order the spec
+    wrote them — never sorted (`resolve_variable_patterns`)."""
+
+    def test_unit_tests_elements_come_in_index_order(self, tmp_path):
+        names = [f"unitTests.x[{i}]" for i in range(1, 13)]
+        cfg, work = _ordered_project(tmp_path, names)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [p.subject for p in s.plots(B)] == [(n,) for n in names]
+
+    def test_names_come_as_the_spec_wrote_them(self, tmp_path):
+        names = ["heater.T", "condenser.Q"]
+        cfg, work = _ordered_project(tmp_path, names)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [p.subject for p in s.plots(B)] == [(n,) for n in names]
+
+
 class TestPlotsUnderALock:
     """The file reads behave as `view` and `figure` always have for a model a
     job holds: from memory, never from the directory the job is rewriting."""

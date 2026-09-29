@@ -102,6 +102,9 @@ def test_a_unit_tests_element_is_told_by_the_tests_instance():
         "ut.x[1].y",
         "ut.y[1]",
         "a.ut.x[1]",
+        # a digit to `str.isdigit`, never an index of an array
+        "ut.x[\u00b2]",
+        "ut.x[\u0661]",
     ):
         assert not is_unit_test_variable(test, name), name
     assert all(

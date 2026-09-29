@@ -248,7 +248,9 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     page drew a card per half-written variable (the final review).
 
     ``scored`` comes first even when the tree's order differs from the
-    result file's: it is the order the test's author wrote."""
+    result file's. The result's own come in its order — the spec's
+    patterns' order (`resolve_variable_patterns`: explicit names as
+    written, a glob's matches in the file's order), never sorted."""
     names = [name for name in scored if name]
     have = set(names)
     out = list(dict.fromkeys(names))

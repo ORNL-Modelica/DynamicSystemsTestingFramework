@@ -709,11 +709,15 @@ def _variable_plus(
     the name beside it when another variable of that test shares it). The
     scope is not derived here: a caption per card that built it for itself
     was the page's whole rebuild cost. A selection carrying none reads the
-    name; the form still writes the leaf against the NAME."""
+    name; the form still writes the leaf against the NAME. The tracked
+    names are handed down the same way (`Selection.tracked`)."""
     entry = s.selection.texts.get(variable)
     text = variable if entry is None else entry.text
     no_add = _NO_ADD.get(str((s.tree(model_id) or {}).get("combinator")))
-    if no_add is None and variable not in _variable_names(s, model_id):
+    tracked = s.selection.tracked
+    if tracked is None:
+        tracked = frozenset(_variable_names(s, model_id))
+    if no_add is None and variable not in tracked:
         no_add = _UNTRACKED
     tip = no_add or f"Add a criterion for {text}"
 
