@@ -8,6 +8,7 @@ tab closes. Never the Session's — that is the decision."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from nicegui import app
 
@@ -37,9 +38,28 @@ class TabState:
     vars_sort: str = "file"  # "file" | "name"
 
 
+async def connected_tab_state(client: Any) -> TabState | None:
+    """This tab's state once ``client`` has a live connection, or None when
+    the client was deleted first — every page awaits this before drawing,
+    and returns on None: there is no browser to draw for.
+
+    ``Client.connected()`` also returns when the client is DELETED: a plain
+    GET (the tests' readiness probe, a curl) makes a client that never
+    connects, NiceGUI prunes it a minute later, and `tab_state` raised
+    "app.storage.tab can only be used with a client connection" from the
+    page's build. And a handshake followed by a disconnect before the build
+    resumed (a loop held up past the ping budget) leaves a live client with
+    no tab until the browser reconnects: that one is waited for again."""
+    while not client.has_socket_connection:
+        if client.is_deleted:
+            return None
+        await client.connected()
+    return tab_state()
+
+
 def tab_state() -> TabState:
-    """This tab's state, created on first use. Needs a connected client: a
-    page awaits ``ui.context.client.connected()`` before calling this."""
+    """This tab's state, created on first use. Needs a connected client:
+    a page's build asks `connected_tab_state`."""
     store = app.storage.tab
     state = store.get(KEY)
     if not isinstance(state, TabState):

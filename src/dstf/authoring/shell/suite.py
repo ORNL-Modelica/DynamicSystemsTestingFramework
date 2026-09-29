@@ -21,7 +21,7 @@ from .actions import ActionBar
 from .header import Header
 from .runs import RunsCard
 from .suite_grid import GRID_CSS, STORAGE, SuiteGrid, scripts_html
-from .tabstate import TabState, tab_state
+from .tabstate import TabState, connected_tab_state
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -66,8 +66,10 @@ class SuitePage:
         # default 256 px, drew the first 15 rows of a 710 px table and left
         # the rest blank until a scroll or a resize.
         ui.add_css(GRID_CSS)
-        await self.client.connected()
-        self.state: TabState = tab_state()
+        state = await connected_tab_state(self.client)
+        if state is None:
+            return
+        self.state: TabState = state
         self.shell.page_setup()
         ui.page_title("DSTF")
         self.header = Header(self.shell)

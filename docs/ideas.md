@@ -1835,3 +1835,16 @@ planning.
   row says sim failed. Not changed: nothing deletes a result file but a
   person, and telling the two apart needs the reader to say "no file"
   rather than "failed".
+- **Watch-only: NiceGUI 3.16 replays a lost message after newer updates
+  (2026-09-29, from the cold-open Test page bug, D141)**: on a reconnect
+  of the same client, `Outbox.try_rewind` puts the messages the browser
+  missed back into `outbox.messages`, and `Outbox.loop` sends the pending
+  element `updates` FIRST and the replayed messages after them. A page that
+  changed while its socket was down therefore ends on its OLDER state.
+  Seen over a copy of a TRANSFORM run: the server logged `REWIND to 4 next
+  5 history [4]`, and the browser received `update id=4` (the badge's PASS)
+  and then `update id=5` (the replayed "Scoring…" paint), and stayed there
+  until a reload. D141 keeps the UI loop from blocking past the ping budget,
+  so the drop no longer happens on a cold open, but any real network drop
+  can still leave a page stale this way. The fix is upstream: report it to
+  NiceGUI with this sequence. Not changed here.

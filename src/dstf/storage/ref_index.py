@@ -145,18 +145,22 @@ class RefIndex:
 
         self._loaded = True
 
-    def _ensure_loaded(self):
+    def ensure_loaded(self) -> None:
+        """Scan now if not yet scanned. Lazy by default; `Session.open`
+        calls it before its project is live, so the UI loop — which reads
+        the index the moment the project is set — never scans (every ref
+        file read whole) and never races the open thread's scan."""
         if not self._loaded:
             self._scan()
 
     def get_id(self, model_id: str) -> str | None:
         """Look up the numeric ID for a model. Returns None if not found."""
-        self._ensure_loaded()
+        self.ensure_loaded()
         return self._by_model.get(model_id)
 
     def get_model_id(self, test_id: str) -> str | None:
         """Look up the model ID for a numeric test ID."""
-        self._ensure_loaded()
+        self.ensure_loaded()
         entry = self._by_id.get(test_id)
         if entry and entry["status"] != "obsolete":
             return entry["model_id"]
@@ -223,7 +227,7 @@ class RefIndex:
         highest-numbered ref (``manifest cleanup`` after it was marked
         obsolete) does not hand its ID to a different model in a later run.
         """
-        self._ensure_loaded()
+        self.ensure_loaded()
         max_id = max((int(k) for k in self._by_id), default=0)
         return f"{max(max_id, self._read_high_water()) + 1:04d}"
 
@@ -273,7 +277,7 @@ class RefIndex:
 
     def active_tests(self) -> dict[str, str]:
         """Return dict of test_id -> model_id for all active (non-obsolete, non-skip) tests."""
-        self._ensure_loaded()
+        self.ensure_loaded()
         return {
             tid: entry["model_id"]
             for tid, entry in self._by_id.items()
@@ -282,7 +286,7 @@ class RefIndex:
 
     def all_tests(self) -> dict[str, dict]:
         """Return dict of test_id -> {model_id, status} for all tests."""
-        self._ensure_loaded()
+        self.ensure_loaded()
         return dict(self._by_id)
 
     @staticmethod

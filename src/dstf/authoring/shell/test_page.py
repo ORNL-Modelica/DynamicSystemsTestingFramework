@@ -37,7 +37,7 @@ from .header import Header
 from .plot_card import UNREAD, PlotCard, folded
 from .rail import Rail
 from .strip import StatusStrip
-from .tabstate import tab_state
+from .tabstate import connected_tab_state
 from .tree_card import TreeCard, leaf_status
 
 if TYPE_CHECKING:
@@ -117,8 +117,10 @@ class TestPage:
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
-        await self.client.connected()
-        self.state = tab_state()  # the tab's, shared with its Suite page
+        state = await connected_tab_state(self.client)
+        if state is None:
+            return
+        self.state = state  # the tab's, shared with its Suite page
         self.shell.page_setup()
         self.model_id = model_id
         ui.page_title(f"DSTF — {model_id.rsplit('.', 1)[-1]}")
@@ -936,7 +938,7 @@ class TestPage:
         self.rail.handle(event)
         known = self._known()
         syncs = event["event"] == "job" or (
-            event["event"] in ("results", "spec", "loading", "opened")
+            event["event"] in ("results", "spec", "loading", "opened", "overlays")
             and self._mine(event)
         )
         if self.actions is not None and known and not syncs:
@@ -950,6 +952,11 @@ class TestPage:
             # panels — but they re-send no figure. Five job events per
             # Rerun re-sent every drawn plot five times (the 3b review).
             self.sync(force=event.get("state") in ("finished", "failed", "written"))
+        elif syncs and event["event"] == "overlays":
+            # The sibling-backend overlays arrived after the plots were
+            # drawn without them (`Session._overlays_ready`); no leaf's
+            # signature sees an overlay, so the drawn plots are re-sent.
+            self.sync(force=True)
         elif syncs:
             self.sync()
 

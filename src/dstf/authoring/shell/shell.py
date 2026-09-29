@@ -112,7 +112,7 @@ class Shell:
         #: event), until the merge's `spec` event: the tests while an open
         #: is under way.
         self.known: list[str] = []
-        for event in ("spec", "results", "job", "loading", "known"):
+        for event in ("spec", "results", "job", "loading", "known", "overlays"):
             self.session.on(event, self._events.put)
         self.pages: list[Page] = []
         self.load = LoadState()

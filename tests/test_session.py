@@ -987,7 +987,10 @@ class TestOpen:
         )
         rescored = []
         s.on("results", lambda e: rescored.append(set(e["models"])))
-        posted.get(timeout=10)()  # the rescan's re-merge, run on "the UI loop"
+        # The rescan's re-merge, run on "the UI loop" — and the open's other
+        # post, the sibling index ready (D141), in whichever order they came.
+        for _ in range(2):
+            posted.get(timeout=10)()
         assert s.rescan_done.is_set()
         assert s.comparisons[before.model_id] is comp  # not rescored under the lock
         assert all(before.model_id not in r for r in rescored)
@@ -1864,6 +1867,13 @@ class TestOutcomes:
         posted = []
         s = Session(post=posted.append)
         s.open(cfg, work_dir=work)
+        # The open's own post first: the sibling index ready (D141).
+        assert s.overlay_index_ready.wait(5.0)
+        for _ in range(50):
+            if posted:
+                break
+            threading.Event().wait(0.05)
+        posted.pop(0)()
         s.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
         deadline = threading.Event()
         for _ in range(50):
