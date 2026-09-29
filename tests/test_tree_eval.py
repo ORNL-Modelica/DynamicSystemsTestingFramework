@@ -5,6 +5,7 @@ simulation + reference data, and the compare_test integration path.
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
@@ -909,6 +910,30 @@ class TestLeafPathStamping:
         tree = self._eval({"metric": "nrmse", "variable": "x", "tolerance": 0.1})
         vc = leaf_comparisons_by_path(tree)["/metrics"]
         assert not any(isinstance(p, Window) for p in vc.geometry)
+
+    @pytest.mark.parametrize("bad", ["abc", None])
+    def test_a_tolerance_that_is_no_number_fails_its_leaf_not_the_run(self, bad):
+        """A leaf's tolerance that is no number is that leaf's config error
+        (D107): `float("abc")` raised out of the evaluator and took the
+        whole comparison, its other leaves included, with it."""
+        tree = self._eval(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": bad},
+                    {"metric": "nrmse", "variable": "x", "tolerance": 0.1},
+                ],
+            }
+        )
+        by_path = leaf_comparisons_by_path(tree)
+        vc = by_path["/metrics/children/0"]
+        assert not vc.passed and vc.diagnostics["config_error"] is True
+        assert (
+            "tolerance" in vc.diagnostics["error"]
+            and repr(bad) in vc.diagnostics["error"]
+        )
+        assert vc.tolerance_used == 1e-4  # the base: the leaf's own is none
+        assert by_path["/metrics/children/1"].passed
 
     def test_a_config_error_leaf_still_carries_its_path(self):
         tree = self._eval(

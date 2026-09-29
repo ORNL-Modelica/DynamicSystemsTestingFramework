@@ -325,14 +325,18 @@ def _evaluate_leaf(
         vc.expression = expression
         # The tolerance this leaf applies, on every return: one that fails
         # before it scores (a variable the result lacks, a baseline the test
-        # does not have) is the one the editor opens on, and the
-        # comparison's 0.0 default read "in effect: 0" there. A tolerance
-        # that is no number is the leaf's own, never shown as in effect.
-        try:
-            vc.tolerance_used = float(leaf.params.get("tolerance", base_tolerance))
-        except (TypeError, ValueError):
-            vc.tolerance_used = float(base_tolerance)
+        # does not have) reports the one it would have applied, never the
+        # comparison's 0.0 default.
+        vc.tolerance_used = tolerance
         return leaf_from_variable(vc)
+
+    try:
+        tolerance = _leaf_tolerance(leaf, base_tolerance)
+    except ValueError as exc:
+        # A tolerance that is no number fails its leaf, not the run (D107);
+        # the base is the one it reports as applied.
+        tolerance = float(base_tolerance)
+        return _leaf(_leaf_config_error_comparison(leaf, exc))
 
     # A metric declares which dataset kinds it can score. Unscorable input
     # is a hard fail with a diagnostic naming both sides, not a crash inside
@@ -345,7 +349,6 @@ def _evaluate_leaf(
         return _leaf(_incompatible_dataset_comparison(leaf, desc, dataset_kind))
 
     override = _leaf_override_dict(leaf)
-    tolerance = float(leaf.params.get("tolerance", base_tolerance))
     try:
         mode = resolve_mode(override, tolerance, default_points=False)
     except ValueError as exc:
@@ -604,6 +607,17 @@ def _slice_window(
     if end is not None:
         mask &= t <= end
     return t[mask], v[mask]
+
+
+def _leaf_tolerance(leaf: LeafSpec, base: float) -> float:
+    """The tolerance ``leaf`` applies: its own, else the test's ``base``.
+    One that is no number (``"abc"``, ``null``) is a ``ValueError`` naming
+    it, which the caller turns into the leaf's config error (D107)."""
+    value = leaf.params.get("tolerance", base)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"tolerance must be a number, got {value!r}") from None
 
 
 def _leaf_override_dict(leaf: LeafSpec) -> dict:
