@@ -5426,3 +5426,142 @@ opened) — NiceGUI's plotly element starts observing its div only after
 `await import("nicegui-plotly")`, so it observes a div already removed;
 nothing visible breaks, and a page-side guard cannot be ordered ahead of
 it (watch-only in `docs/ideas.md`).
+
+## D140 — Plots are derived from the criteria tree; `plots` holds a person's extras (2026-09-28)
+
+**Context.** The owner used the Test page over TRANSFORM and ruled on a
+grill and a board over a real test (BranchingDynamicPipes, 2026-09-28: "A
+for both"): the page should be about the test's variables and their
+criteria, not a layout a person assembles. Q1 b — one test-wide criteria
+tree; plots are views of it. Q10 — one plot per scored variable or array
+family, derived from the criteria. Q11 c — the plots stacked, plus Focus
+with a variable switcher. Q12 — context series: other variables drawn
+greyed on a plot, same y axis, not scored, added from the Variables drawer
+and removable. Q13 / Q14 — watch plots: a person can make an unscored plot
+of a variable, add context to it and remove it; a watch plot whose
+variable later gets a criterion becomes its derived plot, keeping its
+context. Q15 — the board over a real test before any plan. Q16 — a
+derived plot has no Remove: it goes when its last criterion goes. Q17 —
+derived plots in tree order (where a depth-first walk first names the
+variable), watch plots after, in the order they were made. Q19 — a family
+is an array of one quantity. Q20 — variable labels are cut in the MIDDLE
+(the head says what it is, the tail its index); model ids keep their
+start cut. Two executing reviews then built the plan in archives, and the
+owner ruled twice more: O2 — nothing scored is one plot per tracked
+variable on both tiers; O3 — a UnitTests variable never folds, every
+other array always folds, by its result-file name, with no scale rule.
+O3 replaced O1 (fold only on one scale, max|v| within 10x), which is
+deleted: the scale question existed only because the fold read UnitTests
+expressions as arrays — `check_atm`'s local `x` holds 1 Pa in atm beside
+1 atm in Pa.
+
+Before, a test's plots were the `plots` key's layout (D130) or one per
+tracked variable; the Variables drawer added and removed series and plots
+(D134), a scored variable could not leave its last plot (D134 Q7 A, the
+stranded rule), and a plot's criteria rows were its variables' leaves in
+variable order (D133).
+
+**Decision.**
+
+1. *The rule (Q1 b, Q10, Q17, O2, O3).* `discovery/plots.py::derive_plots`
+   is the one rule both tiers draw by: the leaves `plot_leaves(test,
+   compared)` returns — the authored tree's, even with nothing compared
+   (a test with no baseline: its tree names what will be scored), else
+   the implicit tree of what was compared, else none — in depth-first
+   order, a stored-scalar leaf skipped (its `variable` names the leaf, not
+   a series); one plot per lone variable or family, placed where the tree
+   first names any member; with no tree, one plot per tracked variable or
+   array in `tracked_names` order. The fold is by RESULT-FILE NAME
+   (`pipe.T[1]..pipe.T[n]` is one plot), never by label, and each of the
+   test's UnitTests elements (`is_unit_test_variable`: `<instance>.x[i]`,
+   ASCII digits) is a plot of its own whatever its expression reads.
+   `Session.plots` never calls `Session.tree()` (which reads the
+   baseline); the report's `plot_inputs` calls the same two functions.
+2. *The new `plots` schema.* A list of extras `{"var", "context"?}`: an
+   entry on a scored variable (or a member of its family) adds its
+   `context` to that plot; any other entry is a watch plot. No glob, no
+   duplicate `var`, no context naming its own `var`, no unknown key, no
+   `null`. No migration: no spec used the key (TRANSFORM-UnitTests' spec
+   and the four examples' carry none), and `/plots` stays on
+   `spec-update`'s whitelist as it was. `migrate-variable-names` rewrites
+   `var` and `context`; `export-schema` describes the extras.
+3. *The edits (reverses D134's layout editing and the stranded rule).*
+   `authoring/layout.py` edits the extras: `add_context`, `remove_context`
+   (an entry left with no context on a derived plot is dropped),
+   `new_watch` (refuses a duplicate), `remove_watch`; removing the last
+   extra writes `remove /plots`, so Reset layout hides again. New plot,
+   Remove plot and Reset layout act on watch plots and context only; a
+   derived plot cannot lose its subject, so nothing is stranded — `stranded`
+   and `stranded_sentence` are deleted, and so is Add series (it did
+   nothing visible).
+4. *Context in the figure (Q12).* `plot_figure(..., *, context=())`: a
+   context view draws one grey (`CONTEXT_COLOR`, pinned equal to the
+   theme's text-muted), thinner trace on the subject's y axis, named
+   `<label> · context`, its hover the label through `meta`, with no
+   reference and no criteria geometry. The overlays and the error select
+   apply whenever the SUBJECT is one variable.
+5. *The rows (changes D133's).* A plot's criteria rows are the leaves on
+   its subject in TREE order, each led by its ancestors' kinds, the root
+   first (`and › k-of-n ›`); a stored-scalar leaf is on no card
+   (`tree_text.names_a_series`).
+6. *The controller's calls* (said to the owner; reversible on the owner's
+   word). C1: context series are listed in a row above the plot, each
+   with a `×` ("Remove {text} from this plot") — Plotly's legend cannot
+   hold a button. C2: a watch card's `+` is grey while its variable is not
+   tracked, until U2. C3: "+ new plot" is grey on a family's row ("A
+   watch plot shows one variable: open the family"). C4: the Focus
+   switcher's options are plain labels. C5: the count line reads
+   "N plots · one per tracked variable or array" with no tree, else
+   "N plots · derived from the criteria[ · K watch]", the derived plots
+   counted apart from the watch plots; whether the plots come from a tree
+   is `Session.plots_from_tree`, not whether there is a tree view. C6: a
+   derived card's missing Remove is an info icon, "This plot exists
+   because of its criteria." C7: Reset layout's tooltip says the context
+   series and watch plots go. And O3 applied to the Variables drawer
+   (changes D139's grouping): its rows fold as the plots do — by name, a
+   UnitTests element a row of its own — so the "family names muted beside
+   it" of D139 goes; a name-folded family reads its names.
+7. *The Test page.* The selected plot follows its subject across a
+   rebuild (a watch plot given a criterion moves up); the page reads the
+   tracked names once and hands them to every card's `+`
+   (`Selection.tracked`). Focus gains a select (`focus-switch`, Q11 c)
+   through the same path a card's Focus takes. A variable label — a card's
+   title, a criteria row's name, a drawer row — is a `MiddleCut`: the head
+   and the tail from the last `[` (else the last 12 characters) as two
+   inline-blocks in an inline-block, never a flex pair, so innerText and a
+   copy are the whole label; the head is capped at the width less the
+   tail's `--tail` (its length in ch), the tail at least that wide.
+8. *The report (O2).* Its plots are the tool's: the "Simulated Variables
+   (No Baseline)" block goes (a no-baseline or simulate-only test draws
+   one plot per tracked variable, with its overlay picker); each plot
+   section lists its criteria in tree order with their crumbs under a
+   `nodes-{i}` mount per PLOT (was one per variable), its context muted
+   ("Context · not scored: …"), a watch plot "No criteria yet."; the
+   "criteria are under its first plot" and "plot only" notes go. The
+   sidecar's `plots` record gains `subject`, `context` and `watch`: it is
+   what the report drew.
+9. *The pattern order.* `resolve_variable_patterns` returned its names
+   sorted, so a test with no tree drew `x[10]` before `x[2]`; it returns
+   them in pattern order (explicit names as written, a glob's matches in
+   the file's order, the first occurrence kept). An accept now writes
+   pattern-tracked `variables` in that order: a stored baseline's variable
+   index changes on its next accept; pairing is by name, so no score
+   moves.
+
+**Consequences.** The report and the tool draw the same plots from the
+same two functions, and a criterion added or removed moves a plot on both.
+The `plots` key changes meaning; `test_spec.json`'s other keys, the CLI and
+the reference-JSON layout do not (item 9 changes the ORDER a baseline's
+variables are written in, not the layout). D134's layout editing and D133's
+criteria rows no longer hold as written. Not measured here: the
+TRANSFORM gate over a copy (plot counts per test before and after, with
+the reason for each change), which the plan leaves to its controller.
+
+**Next (U2-U4).** U2 — the add form: one searchable picker over every
+variable of the file and the diagnostics, metrics narrowed to the variable,
+and Q18 b: a variable is tracked because a criterion names it (runs
+record, store and score it; no `spec-update` change; rerun, then accept),
+which lifts C2's grey `+`. U3 — the Statistics card, collapsed to one line
+naming the changed rows; a missing zero count read as 0. U4 — moving a
+subtree: drag and "Move to…", auto-wrapped in `and`. Per-plot log or linear
+axes are logged in `docs/ideas.md`, not built.

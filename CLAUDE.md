@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -112,19 +112,23 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
 # The Suite page is a table of the tests (count pills, typed column filters with .* / Aa, package
 # group rows, a column chooser); Accept the selection's results as baselines, Rerun the selection.
-# Open a test: its criteria tree closed to one line naming what failed, its plots stacked and drawn
-# as they scroll into view, a criterion's editor under its row (drag its handles on the plot above),
+# Open a test: its criteria tree closed to one line naming what failed, its plots — one per scored
+# variable or array in tree order, then watch plots (D140) — stacked and drawn as they scroll into
+# view, each with its criteria rows in tree order led by their ancestors (`and › k-of-n ›`),
+# a criterion's editor under its row (drag its handles on the plot above),
 # a status strip under the test's row saying its situation and filling the one next action,
 # +/wrap/− on every tree node (edit on a k-of-n or weighted one), each form an inline row under its
 # node: a `+` adds right after a criterion, last under a combinator, or from a plot's criteria
-# header; a combinator's kind is a dropdown in its row (unwrap in it). Focus shows one plot alone.
+# header; a combinator's kind is a dropdown in its row (unwrap in it). Focus shows one plot alone,
+# a select switches plots. Variable labels are cut in the middle (head…[3]).
 # A plot's legend holds its signals, above the plot; a swatch on each criteria row shows or hides
-# that criterion's drawing; one Error select per plot that draws one series picks the error series.
+# that criterion's drawing; one Error select per plot of one variable picks the error series.
 # The pending count opens the preview: each edited test's entry before and after, as a diff.
-# A rail down the left opens the Tests drawer (switch test) or the Variables drawer (add a series
-# to the selected plot, or a new plot); Remove plot and Reset layout take them away. Both drawers
-# carry one control set: filter with .* / Aa; Tests has sort and names menus and a group toggle, and
-# status pills (a Full name is cut at its start); Variables has sort, group and names menus.
+# A rail down the left opens the Tests drawer (switch test) or the Variables drawer (a context
+# series on the selected plot, or a watch plot); `×`, Remove plot and Reset layout take them
+# away. Both drawers carry one control set: filter with .* / Aa; Tests has sort and names menus,
+# a group toggle and status pills (a Full name is cut at its start); Variables has sort, group
+# and names menus.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs
@@ -214,9 +218,9 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 
 ### test_spec.json format
 
-Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot layout under `plots` (`[{"kind": "time", "series": [{"var": ...}]}]` — read by the report and the tool, ignored by scoring; absent means one plot per tracked variable; a series may name any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
+Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
 
-**A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` series' `var` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
+**A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
 
 ```json
 {

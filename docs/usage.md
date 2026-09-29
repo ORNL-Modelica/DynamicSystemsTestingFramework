@@ -145,49 +145,62 @@ Use case for the two layers: a model author can write `experiment(StopTime=100)`
 
 #### Plot layout (`plots`)
 
-An entry may carry an optional `plots` key: the plots the per-test report and
-the authoring tool draw for that test. Scoring ignores it.
+A test's plots are **derived from its criteria** (D140): one plot per scored
+variable or array family, in the order the metric tree first names it (a
+depth-first walk; a family sits where the tree first names any member). A
+test with no tree — nothing scored, no `metrics` — draws one plot per tracked
+variable or array, in the order the spec's `variables` wrote them (a glob's
+matches in the result file's order). The report and `dstf author` draw the
+same plots. A criterion on a variable IS its plot: a plot goes when its last
+criterion goes.
+
+The optional `plots` key holds only what a person adds to that — its
+**extras**. Scoring ignores it.
 
 ```json
 {
   "model": "MyLib.Examples.PipeTest",
-  "variables": ["pipe.m_flow", "pipe.T[1]"],
+  "variables": ["pipe.m_flow", "unitTests.x[6]"],
   "plots": [
-    {"kind": "time", "series": [{"var": "pipe.m_flow"}, {"var": "pump.N"}]},
-    {"kind": "time", "series": [{"var": "pipe.T[1]"}, {"var": "pipe.T[6]"}, {"var": "pipe.T[11]"}]}
+    {"var": "unitTests.x[6]", "context": ["unitTests.x[10]"]},
+    {"var": "pump.N"}
   ]
 }
 ```
 
-- **Absent** means one plot per tracked variable. `"plots": []` means no
-  plots. `null` is refused.
-- A series names **one variable of the result**, tracked or not (`pump.N`
-  above is plot only: no criterion scores it) — the name its result file
-  gives it, so a variable of the `UnitTests` component is `unitTests.x[i]`
-  and not the text the model wrote for it (see "A variable's name, and its
-  expression" below). A pattern (`*`,
-  `?`) is refused; square brackets are part of a name. A variable may be on
-  several plots, once per plot.
-- `kind` is `"time"`, the only kind today, and is always written. Unknown keys
-  inside a plot or a series are refused, so a typo is loud.
-- Indexed LABELS that differ in their last integer index (`pipe.T[1]`,
-  `pipe.T[6]`, …) draw as one family: one hue ramped light to dark by index,
-  one legend entry (`pipe.T[1:5:11]`). The fold is over what a person reads,
-  under one of two rules. A RESULT-FILE NAME folds on its last single-integer
-  index and nothing else — a result file spells names no whitelist
-  anticipates (`θ[1]`, `pipe₊T[1]` from Julia/MTK, `T-wall[1]`,
-  `$DER.x[1]`), and a multi-dimensional index (`x[2,3]`) is not one array
-  position. An EXPRESSION the model wrote must additionally be a plain
-  indexed name, a negated alias or `der(...)` of one: a reduction over an
-  array (`sum(core.Qs[6, :])`) is a quantity of its own, so two of them are
-  two families. A text that carries a name in parentheses — two variables
-  sharing one expression — belongs to no family either.
-- A plot of several series shows no overlays and no error traces; both belong
-  to a plot of one variable.
-- A series the result does not hold draws nothing and the plot says
-  "Not in this result: …". Which untracked variables a result holds depends on
-  the backend: Dymola, Julia and Python result files hold every variable;
+- An entry whose `var` is scored (a leaf of the tree names it, or a member of
+  its family) adds its `context` to that variable's plot: **context series**
+  draw grey and thinner on the plot's own y axis, not scored, named
+  `<label> · context` in the legend.
+- An entry whose `var` is not scored is a **watch plot**: a plot of that
+  variable with no criteria yet, after the derived plots, in the order the
+  entries are written. A watch plot whose variable later gets a criterion
+  becomes that variable's derived plot, keeping its context; a derived plot
+  whose last criterion goes stays as a watch plot while its entry is there.
+- `var` names one variable of the result file — the name the file gives it,
+  so a variable of the `UnitTests` component is `unitTests.x[i]` and not the
+  text the model wrote for it (see "A variable's name, and its expression"
+  below). `context` is a list of such names: optional, no duplicates, not
+  the entry's own `var`. A pattern (`*`, `?`) is refused anywhere; square
+  brackets are part of a name. Two entries with the same `var`, unknown keys
+  and `null` are refused; absent or `[]` means no extras.
+- **Families.** An element of the test's `UnitTests` component is always a
+  plot of its own, whatever its expression reads — `pipe.T[3]` and
+  `cat(1, pipe2.mediums.T, pipe2.mediums.p)[3]` alike: it is a test
+  quantity of its own. Any other array element folds by its RESULT-FILE NAME
+  into one family plot — `pipe.T[1]` .. `pipe.T[11]` draw as one hue ramped
+  light to dark by index, one legend entry `pipe.T[1:11]` — on its last
+  single-integer index (`x[2,3]` is no array position). There is no scale
+  check.
+- The overlays and the error select belong to a plot whose subject is one
+  variable; context does not count.
+- A name the result does not hold draws nothing and the plot says "Not in
+  this result: …". Which untracked variables a result holds depends on the
+  backend: Dymola, Julia and Python result files hold every variable;
   OpenModelica's and FMPy's hold only the tracked ones.
+
+The key's shape before D140 (`{"kind": "time", "series": [...]}`, a whole
+layout) is refused; no spec used it, so nothing migrates.
 
 **Components.UnitTests** (the in-source `n=N, x={...}` block) is a **discovery marker** carrying the variable list only. It deliberately does not carry simulation parameters — those live in the annotation (model-author-facing, editor-honored) or in `test_spec.json` (test-author-facing, override-only). Keeping the third layer out is what makes the contract teachable.
 
@@ -195,7 +208,7 @@ the authoring tool draw for that test. Scoring ignores it.
 
 A tracked variable is named by the **result file**, and everything that
 addresses one — a `comparison.variable_overrides` key, a `metrics` leaf's
-`variable`, a `plots` series' `var`, a baseline entry, the element ids on the
+`variable`, a `plots` entry's `var` and `context`, a baseline entry, the element ids on the
 report page — uses that name.
 
 For a variable of the `UnitTests` component the result file names it by its
@@ -209,11 +222,11 @@ variable's **expression**. It is a label:
 - what the console, JUnit, the report page and `dstf author` READ for that
   variable. ONE rule decides the text, and its scope is the TEST — every
   name the test's page can show: the result's tracked variables, the scored
-  comparisons' variables and every series of the test's plots, plot-only
-  ones included. A variable reads as its expression, unless another name in
+  comparisons' variables and every variable of the test's plots, context
+  series and watch plots included. A variable reads as its expression, unless another name in
   that scope carries the same expression — `x={a.Q, a.Q}` is legal — and
   then the name rides with it: `a.Q (unitTests.x[1])`. A variable whose
-  label IS its name is never spelled twice, so a plot-only variable
+  label IS its name is never spelled twice, so a context variable
   genuinely named `z` keeps its plain `z` beside a tracked one whose
   EXPRESSION is `z`.
   The two surfaces that show the name beside the title anyway — the
@@ -551,11 +564,13 @@ The **Resolution** column shows where each test's simulation parameters came fro
 computes nothing: every number on it comes from a figure Python built or from
 markup the server rendered. It shows
 
-- one Plotly chart per plot of the test — its `plots` key, else one per tracked
-  variable: the variables a criterion scores, in the test's order, then the rest
-  of what the test tracks, which is the same default layout the authoring tool
-  draws, so a tracked variable no criterion scores now has a section here too.
-  Each chart draws actual, reference and the criterion geometry
+- one Plotly chart per plot of the test, the plots the authoring tool draws
+  (see "Plot layout"): one per scored variable or family in the tree's order,
+  then the watch plots; with nothing scored — no baseline, or simulate-only —
+  one per tracked variable. Under each chart are its criteria in tree order,
+  each led by its ancestors' kinds (`and › k-of-n ›`), its context series
+  listed muted ("Context · not scored: …"), and a watch plot says "No
+  criteria yet.". Each chart draws actual, reference and the criterion geometry
   the metrics emitted (a tube's band, a range's bounds, a points leaf's
   tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
   scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
@@ -564,11 +579,11 @@ markup the server rendered. It shows
   plot. A section's heading reads
   its variables' labels, with their result-file names muted beside it when
   the two differ, and `data-variable` on the markup is always the name;
-- an **overlay picker** above any plot whose variable a soft_check or companion
-  carries data for — the overlay traces are already in the figure, and the
+- an **overlay picker** above any plot of one variable a soft_check or
+  companion carries data for — the overlay traces are already in the figure, and the
   checkbox toggles their visibility;
-- an **error-overlay** dropdown per plot: signed error, absolute error, or
-  per-point NRMSE. Signed and absolute error share the right axis
+- an **error-overlay** dropdown per plot of one scored variable: signed error,
+  absolute error, or per-point NRMSE. Signed and absolute error share the right axis
   "Error [signal units]"; NRMSE, dimensionless, has its own, "NRMSE [–]". Each
   axis is shown while a series on it is visible, whether the select or a legend
   click turned it on;
@@ -577,8 +592,8 @@ markup the server rendered. It shows
   — plus a summary line counting leaves passed and flagging advisory failures
   under a `warn` wrapper. A leaf reads `metric · <label>`: the expression its
   model wrote where there is one, the name otherwise;
-- statistics, diagnostics and artifact sections, and plots for diagnostic and
-  no-baseline variables;
+- statistics, diagnostics and artifact sections, and plots for diagnostic
+  variables;
 - a **decimation banner** naming every trace the page thinned, with its full and
   embedded sample counts, when any was thinned. `max_embedded_samples` in
   `testing.json` sets the cap; the full-resolution data is in
@@ -753,8 +768,8 @@ red, each variable read by its label with its result-file name muted beside
 it; how many edits the test has and what the edits do to its verdict ("2
 edits · verdict would change PASS → FAIL"). When a test's first edit wrote its
 implicit tree out, the diff is against that tree, and a note says Save writes
-the tree too ("they score the same"); edits that cancel out (a series added,
-then Reset layout) say "These edits leave the entry as saved." Below the
+the tree too ("they score the same"); edits that cancel out (a context series
+added, then Reset layout) say "These edits leave the entry as saved." Below the
 tests, Save these / Discard these — the header's Save and Discard, over every
 pending edit. Its close button or Esc closes it; under 1024 px it lies over
 the header and the strip. An Esc while a menu or a dialog is open closes that
@@ -823,17 +838,31 @@ accept). The count is of pending ops, so a flat test's first criterion edit
 reads 2 — its tree written out, and the edit. Under the strip, the criteria tree is
 closed to a single line — the root's verdict, what the root is, the tally, and
 the first failures by name, each a button that jumps to its criterion — and
-"Show tree" opens it to a row per node. Then come the test's plots, one per
-tracked variable unless the entry's `plots` key says otherwise, each drawn as
-it scrolls into view. Under each plot are the criteria rows of the variables it
-draws: a swatch, a verdict pill, `metric · <the variable's label>`, the CLI's
-criterion line, and that node's controls (Edit tree, below). Clicking a row
-opens that criterion's editor below it, one at a time, with the plot above as
-its editing surface — drag a ring to move a handle, or edit the fields; every
-change is staged, and Save writes them. The criteria rows' header carries
-one `+` ("Add a criterion for x", x the plot's first tracked series; its
-form's select offers the test's other variables), and Focus on the plot's own
-toolbar shows that plot alone until "Show all N plots".
+"Show tree" opens it to a row per node. Then come the test's plots — derived
+from its criteria, one per scored variable or family in the tree's order, then
+its watch plots (see "Plot layout"); a line above them says which ("3 plots ·
+derived from the criteria · 1 watch", or "one per tracked variable or array"
+with no tree) — each drawn as it scrolls into view. A plot's title is its
+variable's label, with the result-file name muted beside it where they differ.
+Under each plot are its variable's criteria rows, in TREE order, each led by
+its ancestors' kinds (`and › k-of-n ›`): a swatch, a verdict pill,
+`metric · <the variable's label>`, the CLI's criterion line, and that node's
+controls (Edit tree, below). Clicking a row opens that criterion's editor
+below it, one at a time, with the plot above as its editing surface — drag a
+ring to move a handle, or edit the fields; every change is staged, and Save
+writes them. The criteria rows' header carries one `+` ("Add a criterion for
+x", x the plot's variable, a family's first member; its form's select offers
+the test's other variables). Context series are listed in a row above the
+plot, each with a `×` that takes it off. A derived plot has no Remove — an
+icon says "This plot exists because of its criteria." — and goes when its
+last criterion goes; a watch plot reads "No criteria yet." and has **Remove
+plot** (its `+` is grey while its variable is not tracked). Reset layout, on
+the tree's line, stages removing the `plots` key: the context series and
+watch plots go, the derived plots stay. Focus on the plot's own toolbar shows
+that plot alone, a select on the focus bar switches to any other (a watch
+plot marked "watch"), until "Show all N plots". A long variable label is cut
+in its MIDDLE — its head, an ellipsis, its index (`cat(1, pipe2.mediums.T, …[3]`)
+— with the whole label as its tooltip; a model id is cut at its start.
 
 A plot's legend holds its signals only — actual, reference and any overlays —
 on a line above the plot area, so it never sits on the trace or on a ring.
@@ -856,8 +885,11 @@ that axis's labels.
 at a time beside the plots, narrowing them: **Tests**, the suite's tests with
 this one highlighted (a click opens that test, and the drawer stays open), and
 **Vars**, every variable of the result — a check adds a row's variables to the
-selected plot or takes them off, "+ new plot" puts them on a plot of their own
-below it. Both drawers carry one control set, and every setting is the tab's,
+selected plot as context series or takes them off (the plot's own variable is
+checked and grey), "+ new plot" makes a watch plot of one variable after the
+others (grey on a plot's variable, and on a family: open it and pick one).
+Rows fold as the plots do: an array by result-file name into one row, a
+`UnitTests` element always a row of its own. Both drawers carry one control set, and every setting is the tab's,
 so a switch of test keeps it:
 
 - a filter box with **`.*`** (regular expression) and **`Aa`** (match case)
@@ -872,12 +904,11 @@ so a switch of test keeps it:
   fit) or full (cut at its start, so ids sharing a package read apart; the
   whole id is the row's tooltip). Vars: **Sort** —
   result-file order or A→Z by what a row reads; **Group** — by component,
-  flat, or tracked first (a tracked family and the result's own variables
+  flat, or tracked first (the tracked elements of an array and the rest of it
   fold apart: never one row over both); **Names** — the expression, the
   result-file name, or both (the expression with the name muted beside it;
   under Expression, a label another variable of the test shares, or another
-  row of the drawer reads, still keeps its name beside it — a family's names,
-  folded, as `unitTests.x[1:2]`). An opened family
+  row of the drawer reads, still keeps its name beside it). An opened family
   stays open when the group changes or the filter keeps part of it.
 - on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED
   n`, over every test whatever the filter, filtering as the Suite table's do; a
