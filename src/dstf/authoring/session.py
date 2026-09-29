@@ -95,6 +95,11 @@ class Project:
     tests: list[TestModel]
     results: dict[str, TestResult]
     dataset_kind: DatasetType
+    #: Set once this project's sibling-backend overlay index is built (or
+    #: its build failed): the project's, so a read asks the flag of the
+    #: project it reads — a reopen has no window where a read of the new
+    #: project sees the old one's set flag.
+    overlays_ready: threading.Event = field(default_factory=threading.Event)
 
     def test(self, model_id: str) -> TestModel | None:
         return next((t for t in self.tests if t.model_id == model_id), None)
@@ -166,7 +171,8 @@ class _ModelReads:
         default_factory=dict
     )
     #: Whether the overlays include the sibling-backend ones: False for a
-    #: read taken before the open's sibling index was ready.
+    #: read taken before the project's sibling index was ready; the first
+    #: read after it reloads the overlays (`_reads_for`).
     siblings: bool = True
 
 
@@ -289,7 +295,6 @@ class Session:
         self.notices: list[str] = []
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
-        self.overlay_index_ready = threading.Event()
         self.rescan_done = threading.Event()
         self._reads: dict[str, _ModelReads] = {}
         self._background = _Background()
@@ -392,12 +397,10 @@ class Session:
             # of it — both sides are json.loads, whose C scanner holds the GIL, so
             # they overlap on file IO and contend on parsing. Not earlier than this:
             # everything above can still raise, and an open that fails must leave
-            # the live session's state — this Event included — as it was.
-            ready = threading.Event()
-            self.overlay_index_ready = ready
+            # the live session's state as it was.
             threading.Thread(
                 target=self._warm_overlay_index,
-                args=(self.project, ready),
+                args=(self.project,),
                 name="dstf-overlay-index",
                 daemon=True,
             ).start()
@@ -427,9 +430,17 @@ class Session:
             self._emit("known", models=[])
             raise
 
-    def _warm_overlay_index(self, project: Project, ready: threading.Event) -> None:
+    @property
+    def overlay_index_ready(self) -> threading.Event:
+        """The open project's `Project.overlays_ready`; with none open, an
+        Event nothing sets."""
+        project = self.project
+        return project.overlays_ready if project is not None else threading.Event()
+
+    def _warm_overlay_index(self, project: Project) -> None:
         from ..reporting.overlay_loader import warm_sibling_backend_index
 
+        ready = project.overlays_ready
         try:
             warm_sibling_backend_index(project.config)
         except Exception:  # a broken sibling file must not kill the thread silently
@@ -437,18 +448,21 @@ class Session:
             ready.set()
             return
         ready.set()
-        self._post(lambda: self._overlays_ready(project))
+        try:
+            self._post(lambda: self._overlays_ready(project))
+        except Exception:  # the UI loop is gone (a shutdown): no page to redraw
+            logger.debug("the sibling index is ready and the UI loop is gone")
 
     def _overlays_ready(self, project: Project) -> None:
-        """The sibling index is built: drop what was read without it
-        (`_reads_for`) and name those models in ONE ``overlays`` event, so
-        a page redraws them with their sibling-backend overlays. Nothing
-        for a project no longer open — its reads are gone with it."""
+        """The sibling index is built: name the models read without it
+        (`_reads_for`) in ONE ``overlays`` event, so a page redraws them
+        and their next read gains the sibling-backend overlays. The reads
+        are kept, not dropped: they hold what was read from the result file,
+        which a model a job holds cannot read again until the job's reload.
+        Nothing for a project no longer open."""
         if self.project is not project:
             return
         stale = {m for m, reads in self._reads.items() if not reads.siblings}
-        for model_id in stale:
-            del self._reads[model_id]
         if stale:
             self._emit("overlays", models=stale)
 
@@ -626,14 +640,23 @@ class Session:
 
         project = self._require_project()
         reads = self._reads.get(model_id)
+        if reads is not None and not reads.siblings and project.overlays_ready.is_set():
+            # Read before the index was ready: the overlays again, now with
+            # the sibling-backend ones; the decimated bases carry the
+            # overlays and go with them. What came from the result file stays.
+            reads.overlays = load_overlays(
+                project.store, model_id, config=project.config
+            )
+            reads.siblings = True
+            reads.bases.clear()
         if reads is None:
             # Never wait on the sibling-backend index: while the open's warm
             # thread builds it, it holds the index's lock, and a read on the
             # UI loop waited as long (over TRANSFORM, with the reference
             # index's scan, past the browser's ping budget). Until it is
             # ready the read has no sibling overlays; `_overlays_ready`
-            # drops it then, and its `overlays` event redraws the page.
-            siblings = self.overlay_index_ready.is_set()
+            # names the model then, and its `overlays` event redraws the page.
+            siblings = project.overlays_ready.is_set()
             reads = _ModelReads(
                 ref=project.store.get_reference(model_id),
                 overlays=load_overlays(

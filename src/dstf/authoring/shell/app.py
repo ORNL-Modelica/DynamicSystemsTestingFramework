@@ -43,13 +43,4 @@ def run_app(
         show=show,
         reload=False,
         title="DSTF",
-        # A margin, not the fix: NiceGUI derives its socket ping budget from
-        # this (interval 0.8x, timeout 0.4x — about 6 s at the default 3 s),
-        # and a loop held up past it drops the browser's socket. A cold open
-        # of TRANSFORM held the loop ~5.5 s on a Test page's first sync (the
-        # reference index's scan and the sibling index's lock, both moved
-        # off the loop since), and the reconnect's replay left the page
-        # stale. At 10 s the budget is 12 s; a closed tab's page is dropped
-        # 10 s after it closes instead of 3.
-        reconnect_timeout=10.0,
     )

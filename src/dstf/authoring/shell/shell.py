@@ -189,7 +189,7 @@ class Shell:
         # reconnect timeout); a page navigated away from in the user
         # simulation is never deleted, so tests pick a page by its client.
         self.pages = [p for p in self.pages if not p.client.is_deleted]
-        for event in events:
+        for event in _folded(events):
             self._absorb(event)
             for page in list(self.pages):
                 try:
@@ -439,6 +439,26 @@ class Shell:
         self.mount()
         self.start()
         await SuitePage(self).build()
+
+
+def _is_scan_step(event: dict[str, Any]) -> bool:
+    return event["event"] == "loading" and event.get("phase") == "scan"
+
+
+def _folded(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``events`` with each run of adjacent scan steps reduced to its last:
+    a step carries the running count, so the last says all the run does.
+    One by one, every step synced an open Test page in full and re-read
+    `status.json` in its header: one tick over 3,269 queued steps
+    (TRANSFORM's .mo count, a TRANSFORM-sized `status.json`, one Test page)
+    held the UI loop about 13 s, and 0.02 s folded."""
+    out: list[dict[str, Any]] = []
+    for event in events:
+        if out and _is_scan_step(event) and _is_scan_step(out[-1]):
+            out[-1] = event
+        else:
+            out.append(event)
+    return out
 
 
 @dataclass(frozen=True)

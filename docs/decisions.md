@@ -5620,10 +5620,12 @@ scan ran, synced in full on the UI loop the moment `Session.open` set
 reference index (every `ref_*.json` read whole, lazily, from `_paint`'s
 baseline name), the rest waiting on the sibling-backend index's lock,
 held by the warm thread D127 starts at the commit point. NiceGUI's ping
-budget at its default `reconnect_timeout` is about 6 s. The browser
-dropped the socket and reconnected to the same client within 0.1 s, and
-NiceGUI 3.16's outbox replay sent the stale update after the fresh one
-(logged in `docs/ideas.md`). A warm-cache open never hits this: the
+budget at its default `reconnect_timeout` of 3 s is 6 s: a 4 s interval
+plus a 2 s timeout, its floors (it scales them from `reconnect_timeout`
+by 0.8 and 0.4, and 3 s scales below both). The browser dropped the
+socket and reconnected to the same client within 0.1 s, and NiceGUI
+3.16's outbox replay sent the stale update after the fresh one (logged in
+`docs/ideas.md`). A warm-cache open never hits this: the
 project exists before any page does.
 
 **Decision.**
@@ -5632,28 +5634,49 @@ project exists before any page does.
    on the open thread before the commit point. The loop never scans it,
    and the open thread and the loop no longer both run `_scan`, which
    clears and refills.
-2. A read never waits on the sibling-backend index. Until
-   `overlay_index_ready` is set, `_reads_for` loads overlays without the
-   sibling-backend ones. Once the index is built, the Session drops the
-   reads taken without it and emits ONE new `overlays` event naming their
-   models. The Test page re-sends its drawn plots on it (no leaf's
-   signature sees an overlay). **Changed behaviour:** a plot drawn in the
-   first seconds after an open gains its sibling-backend overlays a moment
-   later instead of the loop waiting for them. The warm thread stays where
-   D127 put it. A warm that fails emits nothing.
+2. A read never waits on the sibling-backend index. Until the project's
+   `Project.overlays_ready` is set, `_reads_for` loads overlays without
+   the sibling-backend ones. Once the index is built, the Session emits
+   ONE new `overlays` event naming the models read without it, and the
+   next read of each reloads its overlays with the sibling ones and drops
+   its decimated bases. The reads are kept, not dropped: they hold what
+   was read from the result file, which a model a job holds cannot read
+   again until the job's reload. The Test page re-sends its drawn plots on
+   the event (no leaf's signature sees an overlay). The flag is the
+   project's, not the Session's: a reopen set `project` before it replaced
+   a Session-level flag, and a read in between saw the old project's set
+   flag and built the new project's sibling index on the loop.
+   `Session.overlay_index_ready` reads the open project's. **Changed
+   behaviour:** a plot drawn in the first seconds after an open gains its
+   sibling-backend overlays a moment later instead of the loop waiting for
+   them. The warm thread stays where D127 put it. A warm that fails emits
+   nothing, and a warm whose post finds the UI loop gone (a shutdown) logs
+   it and ends.
 3. A page's build asks `connected_tab_state`: it waits until the client
    really has a connection and returns None when the client was deleted,
    and the page returns. A plain GET (a readiness probe, a curl) makes a
    client that never connects; NiceGUI prunes it a minute later, which
    ended the page's `connected()` wait, and `tab_state` raised.
-4. `dstf author` runs NiceGUI with `reconnect_timeout=10`, a ping budget
-   of about 12 s, as a margin under 1 and 2, not a fix.
+4. One tick handles each run of adjacent `loading`/`scan` events as its
+   last (`shell._folded`): a step carries the running count. One by one,
+   every step synced an open Test page in full and re-read `status.json`
+   in each page's header; a probe of one tick over 3,269 queued steps
+   (TRANSFORM's `.mo` count, a TRANSFORM-sized `status.json`, one Test
+   page) took about 13 s, and 0.02 s folded.
+5. `dstf author` keeps NiceGUI's default `reconnect_timeout`. A first cut
+   of this fix raised it to 10 s (a 12 s ping budget) as a margin. With 1–4
+   nothing measured stalls the loop near the 6 s budget, and a longer
+   timeout keeps a dropped client alive longer, so more real drops end in
+   a reconnect to it — the path on which NiceGUI's replay-order bug
+   (`docs/ideas.md`) leaves a page on an older state.
 
 **Consequences.** A cold open's first page reaches its verdict without a
 reload. Measured over a copy of the gate's run (cold cache, the page
 opened 5 s into the scan, five runs each): before, 3 of 5 stuck, with the
 longest loop stall 5.5–6.1 s; with 1–3 at NiceGUI's default
-`reconnect_timeout`, 0 of 5, longest stall ≤ 2.8 s; with 1–4, 0 of 5,
-≤ 3.0 s. What remains of the stall is the header re-reading `status.json`
-once per queued scan event (not changed here). The sibling-backend overlays of a test read before the index is
-ready arrive in a second draw. `tests/test_cold_open.py`.
+`reconnect_timeout`, 0 of 5, longest stall ≤ 2.8 s (≤ 3.0 s with it at
+10 s); with 1–5, 0 of 5 stuck, no socket drop before the browser closed,
+longest stall 2.7 s. What remains of it is the Test page's first full
+sync after the open (the result file's names read for its plots, the
+header's `status.json`), not the scan steps. The sibling-backend overlays
+of a test read before the index is ready arrive in a second draw. `tests/test_cold_open.py`.
