@@ -89,3 +89,86 @@ async def test_none_values_are_omitted_from_the_values_dict():
             "max_value" not in forms["f"].values()
             and "points" not in forms["f"].values()
         )
+
+
+# -- values in effect; one bottom line (U2, K3 + K4) -----------------------------
+
+IN_EFFECT = {"tolerance": {"value": 0.01, "source": "test"}}
+
+
+async def test_a_field_without_a_value_shows_the_value_in_effect_as_its_hint():
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Cfg, mode="x"),
+            {},
+            on_change=lambda v: None,
+            in_effect=IN_EFFECT,
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        form = forms["f"]
+        tol = form.controls["tolerance"]
+        assert tol.props.get("hint") == "in effect: 0.01 (the test's tolerance)"
+        # the dataclass default is no longer offered beside it
+        assert tol.props.get("placeholder") is None
+        assert form.values() == {}  # an in-effect value is never written
+
+
+async def test_a_field_with_its_own_value_shows_no_hint():
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Cfg, mode="x"),
+            {"tolerance": 0.5},
+            on_change=lambda v: None,
+            in_effect=IN_EFFECT,
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        tol = forms["f"].controls["tolerance"]
+        assert not tol.props.get("hint")
+        assert forms["f"].values() == {"tolerance": 0.5}
+
+
+async def test_every_one_line_field_reserves_the_bottom_line():
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Cfg, mode="x"), {}, on_change=lambda v: None
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        c = forms["f"].controls
+        for name in ("tolerance", "mode_kind", "note", "max_value"):
+            assert "bottom-slots" in c[name].props, name
+
+
+async def test_a_field_with_a_hint_is_wide_enough_for_it_on_one_line():
+    """K8: the hint's line never widens a Quasar field by itself."""
+    from dstf.authoring.forms import HINT_PADDING_PX, HINT_PX_PER_CHAR
+
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Cfg, mode="x"),
+            {},
+            on_change=lambda v: None,
+            in_effect=IN_EFFECT,
+            classes="dstf-field",
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        c = forms["f"].controls
+        hint = c["tolerance"].props["hint"]
+        width = int(c["tolerance"]._style["min-width"].removesuffix("px"))
+        assert width >= len(hint) * HINT_PX_PER_CHAR + HINT_PADDING_PX
+        assert "min-width" not in c["note"]._style

@@ -459,11 +459,11 @@ def compare_test(
     # (strictest possible) must be honored (review 2026-07-06, finding 7).
     ref_comparison = reference.get("comparison", {})
     if test.comparison_tolerance is not None:
-        base_tolerance = test.comparison_tolerance
+        base_tolerance, tolerance_source = test.comparison_tolerance, "test"
     elif ref_comparison.get("tolerance") is not None:
-        base_tolerance = ref_comparison["tolerance"]
+        base_tolerance, tolerance_source = ref_comparison["tolerance"], "reference"
     else:
-        base_tolerance = default_tolerance
+        base_tolerance, tolerance_source = default_tolerance, "project"
 
     # Phase 3.3: when the spec provides an explicit MetricTree, it fully
     # replaces the implicit flat-AND + per-variable overrides. The user's
@@ -523,6 +523,7 @@ def compare_test(
             variables=collect_leaf_variables(tree),
             warnings=structural_warnings + ([unscored] if unscored else []),
             metric_tree=tree,
+            tolerance_source=tolerance_source,
         )
 
     # Merge variable overrides: spec overrides take precedence over reference
@@ -684,6 +685,7 @@ def compare_test(
         variables=comparisons,
         warnings=structural_warnings,
         metric_tree=tree,
+        tolerance_source=tolerance_source,
     )
 
 

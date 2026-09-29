@@ -974,6 +974,8 @@ class Session:
             test,
             comp.metric_tree,
             self.variable_texts(model_id),
+            # the editor's "in effect" hints (K3); the report shows none
+            comp.tolerance_source,
         )
 
     def tree(self, model_id: str) -> dict | None:

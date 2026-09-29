@@ -124,6 +124,12 @@ class TestComparison:
     # exactly). Phase 3.2+ replaces with user-authored trees from
     # test_spec.json. None when no comparison ran (sim failure, no baseline).
     metric_tree: MetricResult | None = None
+    #: Where the tolerance a leaf without its own was scored with came from:
+    #: ``"test"`` (the spec's ``comparison.tolerance``), ``"reference"`` (the
+    #: baseline JSON's) or ``"project"`` (``Config.tolerance``: the CLI's,
+    #: else testing.json's, else 1e-4 — the comparator is handed one number
+    #: and cannot tell those apart). None where nothing was scored.
+    tolerance_source: str | None = None
 
     @property
     def evaluated(self) -> bool:

@@ -10,6 +10,7 @@ different surface.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -19,6 +20,34 @@ from nicegui import ui
 from ..comparison.mode_schema import FieldSpec, Schema
 
 OnChange = Callable[[dict], None]
+
+#: What a source of a value in effect reads as (K3); the keys are
+#: `TestComparison.tolerance_source`'s.
+SOURCES = {
+    "test": "the test's tolerance",
+    "reference": "the baseline's tolerance",
+    "project": "the project's tolerance",
+}
+#: The one bottom-space rule of an editor row (K4): every one-line field
+#: reserves Quasar's bottom line, whether it holds a hint, a validation
+#: message or nothing, so the input lines of a row share one y. Without it
+#: a number with a validation rule reserved the line and nothing else did,
+#: and its input line sat 20 px above the row's.
+BOTTOM = "bottom-slots"
+#: A hint is on ONE line (K8): Quasar's bottom line is absolutely placed,
+#: so its text never widens the field, and at the row's 140 px the hint
+#: "in effect: 0.01 (the test's tolerance)" wrapped to three lines under
+#: its field. A field with a hint is at least as wide as the hint: px per
+#: character of Quasar's 11 px hint font, measured in Chromium (185 px for
+#: that 38-character hint, 252 px for 50: 4.9-5.0 px, rounded up for a
+#: wider fallback font), plus the bottom line's 12 px padding each side.
+HINT_PX_PER_CHAR, HINT_PADDING_PX = 5.4, 24
+
+
+def in_effect_hint(entry: dict) -> str:
+    """``in effect: 0.01 (the test's tolerance)``."""
+    source = SOURCES.get(str(entry.get("source")), str(entry.get("source")))
+    return f"in effect: {entry['value']:g} ({source})"
 
 
 @dataclass
@@ -42,7 +71,12 @@ class Form:
 
 
 def render_form(
-    schema: Schema, values: dict, on_change: OnChange, *, classes: str = ""
+    schema: Schema,
+    values: dict,
+    on_change: OnChange,
+    *,
+    classes: str = "",
+    in_effect: dict | None = None,
 ) -> Form:
     """Build one control per field into the current NiceGUI container.
 
@@ -52,7 +86,14 @@ def render_form(
     out itself — the criterion editor puts them in one wrapping row, where
     each control needs a width of its own. A multi-line control (a list
     shown as JSON) takes the whole line instead, whatever ``classes`` says.
+
+    ``in_effect`` (the tree view leaf's, K3) names the value the evaluation
+    applied to a field the leaf does not set: that field's hint line says
+    it, in place of the dataclass default as a placeholder — which is not
+    what was applied — and ``values()`` never writes it. A field with a
+    value of its own shows no hint.
     """
+    in_effect = in_effect or {}
     form = Form()
     for spec in schema.fields:
         current = values.get(spec.name)  # the default is a placeholder, not a value
@@ -76,8 +117,17 @@ def render_form(
         control = _control(
             spec, current, lambda v, name=spec.name: _set(form, name, v, on_change)
         )
-        if current is None and spec.default is not None:
+        effect = in_effect.get(spec.name) if current is None else None
+        if effect is not None:
+            hint = in_effect_hint(effect)
+            control.props["hint"] = hint
+            control.style(
+                f"min-width: {math.ceil(len(hint) * HINT_PX_PER_CHAR) + HINT_PADDING_PX}px"
+            )
+        elif current is None and spec.default is not None:
             control.props(f'placeholder="{spec.default}"')
+        if spec.type != "bool":
+            control.props(BOTTOM)
         if classes:
             control.classes(classes)
         if spec.help:

@@ -2503,3 +2503,40 @@ async def test_a_diagnostic_refuses_a_trajectory_metric(tmp_path):
             variable="CPUtime",
             metric="nrmse",
         )
+
+
+# -- values in effect (U2, Task 5) -----------------------------------------------
+
+
+def _hints(user) -> dict[str, str]:
+    """``{label: hint}`` of every field with a hint line."""
+    out: dict[str, str] = {}
+    for kind in (ui.number, ui.select, ui.input):
+        try:
+            elements = user.find(kind=kind).elements
+        except AssertionError:
+            continue
+        out |= {
+            str(e.props.get("label")): str(e.props["hint"])
+            for e in elements
+            if e.props.get("hint")
+        }
+    return out
+
+
+async def test_the_editor_says_the_tolerance_in_effect_until_the_mode_moves(session):
+    """K3: a leaf without a tolerance of its own is scored with the base
+    one, and the editor says which on the field's hint line — never
+    written. A switched mode's fields were never applied: no hint."""
+    tol = session.comparisons[A].variables[0].tolerance_used
+    async with host(session, EditCriteria(), LEAF0) as (user, _errors, _):
+        await user.should_see("Tolerance")
+        assert _hints(user) == {
+            "Tolerance": f"in effect: {tol:g} (the project's tolerance)"
+        }
+        assert len(session.spec.pending) == 0
+        mode = next(
+            c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
+        )
+        mode.set_value("scalar")
+        await _settled(lambda: not _hints(user))

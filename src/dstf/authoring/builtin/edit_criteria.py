@@ -62,7 +62,7 @@ class EditCriteria:
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
         from nicegui import ui
 
-        from ..forms import render_form
+        from ..forms import BOTTOM, render_form
 
         sel = s.selection
         model_id = next(iter(sel.tests))
@@ -103,6 +103,13 @@ class EditCriteria:
                     state["params"],
                     on_change=set_params,
                     classes="dstf-field",
+                    # The mode the leaf was scored in: a switched mode's
+                    # fields were never applied, so nothing is in effect.
+                    in_effect=(
+                        leaf.get("in_effect")
+                        if state["metric"] == leaf["metric"]
+                        else None
+                    ),
                 )
 
         def set_params(values: dict) -> None:
@@ -154,24 +161,24 @@ class EditCriteria:
                 label="mode",
                 value=state["metric"],
                 on_change=lambda e: set_metric(e.value),
-            ).props("dense").classes("dstf-field")
+            ).props(f"dense {BOTTOM}").classes("dstf-field")
             form_slot = ui.column().classes("dstf-form")
             ui.number(
                 label="window start",
                 value=state["window"].get("start"),
                 on_change=lambda e: set_window("start", e.value),
-            ).props("dense").classes("dstf-field")
+            ).props(f"dense {BOTTOM}").classes("dstf-field")
             ui.number(
                 label="window end",
                 value=state["window"].get("end"),
                 on_change=lambda e: set_window("end", e.value),
-            ).props("dense").classes("dstf-field")
+            ).props(f"dense {BOTTOM}").classes("dstf-field")
             ui.select(
                 names or ["primary"],
                 label="against",
                 value=state["against"],
                 on_change=lambda e: set_against(e.value),
-            ).props("dense").classes("dstf-field")
+            ).props(f"dense {BOTTOM}").classes("dstf-field")
         build_form()
 
     def act(self, s: SessionView, **inputs: Any) -> Patch:

@@ -3203,3 +3203,84 @@ def test_the_pickers_keyboard_chooses_a_variable_and_add_stages_it(
         expect(page.get_by_text("nrmse · w3").first).to_be_visible(
             timeout=EXPECT_TIMEOUT
         )
+
+
+def _tolerance_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A at a test tolerance of 0.01, scored by an
+    nrmse leaf with no tolerance of its own and a scalar."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["comparison"] = {"tolerance": 0.01}
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {
+                        "metric": "scalar",
+                        "variable": "y",
+                        "quantity": {"reduce": "max"},
+                    },
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+#: Each one-line field of the open editor: its label, its input line's y
+#: (the control's bottom), the field's own bottom — what a wrapped row
+#: aligns (`items-end`), so it names the row — its hint, and how many line
+#: boxes the hint's text takes.
+READ_FIELDS = """() => [...document.querySelectorAll(
+    '.dstf-editor .dstf-fields .q-field:not(.q-textarea)')].map(f => {
+  const c = f.querySelector('.q-field__control').getBoundingClientRect();
+  const m = f.querySelector('.q-field__messages');
+  const tops = new Set();
+  if (m) {
+    const walk = document.createTreeWalker(m, NodeFilter.SHOW_TEXT);
+    for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+      const r = document.createRange();
+      r.selectNodeContents(t);
+      for (const q of r.getClientRects()) tops.add(Math.round(q.top));
+    }
+  }
+  const lines = tops.size;
+  return [(f.querySelector('.q-field__label') || {}).innerText || '',
+          c.bottom, f.getBoundingClientRect().bottom,
+          m ? m.innerText : '', lines];
+})"""
+
+
+def test_the_editors_fields_line_up_and_say_the_value_in_effect(
+    tmp_path, playwright_browser
+):
+    """K3 + K4 + K8 at 1280: every one-line field of a wrapped row has its
+    input line at one y (±1 px) — a number with a validation rule reserved
+    the bottom line and floated 20 px above the rest — and the tolerance
+    the leaf does not set says the one the test applied, on ONE line."""
+    with _served(tmp_path, playwright_browser, project=_tolerance_project) as page:
+        page.wait_for_timeout(700)
+        for index, name in ((0, "nrmse · x"), (1, "scalar · y")):
+            _open_crit(page, index, name)
+            expect(page.locator(".dstf-editor")).to_have_count(
+                1, timeout=EXPECT_TIMEOUT
+            )
+            page.wait_for_timeout(400)
+            fields = page.evaluate(READ_FIELDS)
+            rows: dict[int, list[float]] = {}
+            for _label, line, bottom, _hint, _n in fields:
+                rows.setdefault(round(bottom), []).append(line)
+            for ys in rows.values():
+                assert max(ys) - min(ys) <= 1, (name, fields)
+            hints = {label: (hint, n) for label, _b, _t, hint, n in fields}
+            assert hints["Tolerance"] == (
+                "in effect: 0.01 (the test's tolerance)",
+                1,
+            ), fields
+            _shot(page, tmp_path, f"editor-fields-{index}")
+            page.locator(".dstf-editor").get_by_role("button", name="Done").click()
+            expect(page.locator(".dstf-editor")).to_have_count(
+                0, timeout=EXPECT_TIMEOUT
+            )

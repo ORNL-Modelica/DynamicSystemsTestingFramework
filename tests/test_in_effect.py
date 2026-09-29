@@ -1,0 +1,105 @@
+"""A criterion's values in effect (the plan's Task 5, K3): the tree view's
+leaf carries ``in_effect`` — the tolerance the evaluation applied, and
+where it came from — for a leaf that does not set its own."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from dstf.authoring.session import Session
+from test_session import A, _two_var_project
+
+
+def _session(tmp_path, *, test_tol=None, metrics=None, ref_tol=None, cfg_tol=None):
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            if test_tol is not None:
+                entry["comparison"] = {"tolerance": test_tol}
+            if metrics is not None:
+                entry["metrics"] = metrics
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    doc = json.loads(cfg.read_text(encoding="utf-8"))
+    if cfg_tol is None:
+        doc.pop("tolerance", None)  # the fixture's 0.01: here, 1e-4
+    else:
+        doc["tolerance"] = cfg_tol
+    cfg.write_text(json.dumps(doc), encoding="utf-8")
+    if ref_tol is not None:
+        for ref in (cfg.parent).rglob("ref_0001.json"):
+            data = json.loads(ref.read_text(encoding="utf-8"))
+            data["comparison"] = {"tolerance": ref_tol}
+            ref.write_text(json.dumps(data), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+def _leaves(view):
+    if view.get("kind") == "leaf":
+        return [view]
+    return [leaf for c in view.get("children") or [] for leaf in _leaves(c)]
+
+
+def test_a_leaf_without_a_tolerance_shows_the_tests(tmp_path):
+    s = _session(tmp_path, test_tol=0.01)
+    x, y = _leaves(s.tree_view(A))
+    assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
+
+
+def test_a_leaf_with_its_own_tolerance_has_none_in_effect(tmp_path):
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+            {"metric": "nrmse", "variable": "y"},
+        ],
+    }
+    s = _session(tmp_path, test_tol=0.01, metrics=tree)
+    x, y = _leaves(s.tree_view(A))
+    assert "in_effect" not in x
+    assert y["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
+
+
+@pytest.mark.parametrize(
+    ("kw", "value", "source"),
+    [
+        ({"ref_tol": 0.02}, 0.02, "reference"),
+        ({"cfg_tol": 0.03}, 0.03, "project"),
+        ({}, 1e-4, "project"),
+    ],
+)
+def test_each_source_is_named(tmp_path, kw, value, source):
+    s = _session(tmp_path, **kw)
+    x, _ = _leaves(s.tree_view(A))
+    assert x["in_effect"]["tolerance"] == {"value": value, "source": source}
+
+
+def test_a_scalar_with_bounds_and_a_tube_show_no_tolerance(tmp_path):
+    tree = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": {"reduce": "max"},
+                "min_value": 0,
+                "max_value": 5,
+            },
+            {"metric": "scalar", "variable": "y", "quantity": {"reduce": "max"}},
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "band",
+                "tube_abs": 1.0,
+            },
+        ],
+    }
+    s = _session(tmp_path, test_tol=0.01, metrics=tree)
+    bounded, scalar, tube = _leaves(s.tree_view(A))
+    assert "in_effect" not in bounded and "in_effect" not in tube
+    assert scalar["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
