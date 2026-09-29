@@ -357,3 +357,26 @@ class TestTreeVariablesAreTracked:
         assert any("b" in r.getMessage().split() for r in caplog.records) or any(
             "Variable b not found" in r.getMessage() for r in caplog.records
         )
+
+
+def test_tracked_results_warns_of_a_nameless_variable(caplog):
+    """A result variable with no name is a backend bug: nothing tracks it by
+    a name, so it is left out — and said, not dropped quietly."""
+    from dstf.backends.common.result_variables import tracked_results
+    from dstf.backends.types import TestResult
+
+    t = np.array([0.0, 1.0])
+    result = TestResult(
+        model_id="Lib.Examples.PatternTest",
+        success=True,
+        variables=[
+            VariableResult(index=1, time=t, values=t, name="a"),
+            VariableResult(index=2, time=t, values=t, name=""),
+        ],
+    )
+    with caplog.at_level(logging.WARNING):
+        tracked = tracked_results(_spec_test(["a"]), result)
+    assert [v.name for v in tracked] == ["a"]
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warned) == 1, warned
+    assert "Lib.Examples.PatternTest" in warned[0] and "2" in warned[0], warned

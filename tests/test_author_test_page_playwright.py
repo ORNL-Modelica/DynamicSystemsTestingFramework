@@ -3336,8 +3336,9 @@ def test_the_drawer_resizes_by_its_edge_and_keeps_its_width(
     """K5 in Chromium: the grip on the open drawer's right edge, dragged
     200 px right, makes the 320 px panel 520 px with no frame back at 320
     after the release, and a plot 200 px narrower; past the bounds it
-    clamps at 60% of the window and at 240 px; the width is the tab's, kept
-    on a switch of test."""
+    clamps at the smaller of 60% of the window and the window less the rail
+    and 480 px, and at 240 px; the width is the tab's, kept on a switch of
+    test."""
     with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
         _open_vars(page)
         expect(page.locator(".dstf-drawer-handle")).to_be_visible(
@@ -3356,7 +3357,9 @@ def test_the_drawer_resizes_by_its_edge_and_keeps_its_width(
         _shot(page, tmp_path, "drawer-520")
         _drag_grip(page, 2000)
         page.wait_for_timeout(400)
-        assert round(page.evaluate(WIDTHS)[0]) == round(0.6 * VIEWPORT["width"])
+        # at 1280 px the plots' 480 px bind before 60% of the window does
+        widest = min(0.6 * VIEWPORT["width"], VIEWPORT["width"] - 40 - 480)
+        assert round(page.evaluate(WIDTHS)[0]) == round(widest)
         _drag_grip(page, -2000)
         page.wait_for_timeout(400)
         assert round(page.evaluate(WIDTHS)[0]) == 240
@@ -3369,6 +3372,48 @@ def test_the_drawer_resizes_by_its_edge_and_keeps_its_width(
         )
         page.wait_for_timeout(600)
         assert round(page.evaluate(WIDTHS)[0]) == 440
+
+
+#: The page's plots column (`.q-page`, right of the drawer), each plot
+#: card's width, and each context chip's `×` against its card:
+#: ``[column width, card widths, [[x right, card right], ...]]``.
+CARD_ROOM = """() => {
+  const column = document.querySelector('.q-page').getBoundingClientRect().width;
+  const cards = [...document.querySelectorAll('.dstf-plot')];
+  const xs = [...document.querySelectorAll('.dstf-context-chip .q-btn')].map((b) => {
+    const card = b.closest('.dstf-plot');
+    return [b.getBoundingClientRect().right, card.getBoundingClientRect().right];
+  });
+  return [column, cards.map((c) => c.getBoundingClientRect().width), xs];
+}"""
+
+
+def test_the_drawer_leaves_the_plots_480_px_at_900(tmp_path, playwright_browser):
+    """At 900 px 60% of the window left the plots 320 px, and a context
+    chip's `×` past its card: the drawer's widest is also the window less
+    the rail and 480 px for the plots, so a drag to the far right stops at
+    380 px, the plots column keeps 480 px and the chip's `×` stays inside
+    its card. The Python side holds the same ceiling (`Rail.resize`)."""
+    with _served(tmp_path, playwright_browser, project=_long_names_project) as page:
+        page.set_viewport_size({"width": 900, "height": 900})
+        cards = page.locator(".dstf-plot")
+        expect(cards).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-context-chip")).to_have_count(1)
+        _open_vars(page)
+        expect(page.locator(".dstf-drawer-handle")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        _drag_grip(page, 2000)
+        page.wait_for_timeout(800)
+        panel = page.evaluate(WIDTHS)[0]
+        column, widths, xs = page.evaluate(CARD_ROOM)
+        _shot(page, tmp_path, "drawer-widest-900")
+        assert round(panel) == 900 - 40 - 480, panel
+        assert round(column) >= 480, column
+        assert len(widths) == 2, widths  # 416 px: the page's padding is 2 x 32
+        assert len(xs) == 1 and all(x <= card + 0.5 for x, card in xs), xs
+        _no_sideways_scroll(page)
 
 
 def test_a_long_label_has_the_drawer_rows_first_line(tmp_path, playwright_browser):

@@ -3691,3 +3691,102 @@ class TestACriterionOnAFileVariable:
         assert session.project.results[D] is before
         leaf = session.comparisons[D].metric_tree.children[-1]
         assert not leaf.passed
+
+    @staticmethod
+    def _with_w(tmp_path, *, tree: bool) -> tuple[Path, Path]:
+        """`_project` whose D result FILE holds ``w`` beside ``x``, and —
+        with ``tree`` — whose SAVED D entry is a tree scoring ``x``."""
+        cfg, work = _project(tmp_path)
+        if tree:
+            spec_path = cfg.parent / "test_spec.json"
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            for entry in spec["tests"]:
+                if entry["model"] == D:
+                    entry["metrics"] = {
+                        "combinator": "and",
+                        "children": [{"metric": "nrmse", "variable": "x"}],
+                    }
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        path = work / "test_0004" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["w"] = [0.5 for _ in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return cfg, work
+
+    def test_a_discarded_criterions_variable_is_not_tracked_after(self, tmp_path):
+        """The re-read w outlives its criterion in the result: a saved tree
+        does not then warn of it as a tracked variable without a criterion,
+        and the Variables drawer's Tracked group does not hold it."""
+        cfg, work = self._with_w(tmp_path, tree=True)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.comparisons[D].warnings == []
+        s.stage([self._leaf("w")])
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert s.comparisons[D].warnings == []
+        s.discard()
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert s.comparisons[D].warnings == []
+        assert s.tracked(D) == ["x"]
+        assert "w" in s.variable_names(D)  # still the file's
+
+    def test_the_saved_comparison_under_a_pending_criterion_does_not_warn(
+        self, tmp_path
+    ):
+        cfg, work = self._with_w(tmp_path, tree=True)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([self._leaf("w")])
+        assert s.saved_comparison(D).warnings == []
+
+    def test_a_flat_discard_leaves_the_plots_as_they_were(self, tmp_path):
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        before = [list(p.series) for p in s.plots(D)]
+        s.stage([self._leaf("w")])
+        s.discard()
+        assert [list(p.series) for p in s.plots(D)] == before
+        assert s.tracked(D) == ["x"]
+
+    def test_a_re_read_that_raises_leaves_the_result_and_the_reads(
+        self, tmp_path, monkeypatch
+    ):
+        """The re-read is atomic: a read that raises drops nothing — the
+        loaded result and the model's reads stand."""
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.variable_names(D)  # the model's reads, the file listed
+        before, reads = s.project.results[D], s._reads[D]
+
+        def boom(tests, **kw):
+            raise OSError("the disk went away")
+
+        monkeypatch.setattr(s.project.backend, "read_last_results", boom)
+        with pytest.raises(OSError, match="went away"):
+            s.stage([self._leaf("w")])
+        assert s.project.results[D] is before
+        assert s._reads[D] is reads
+
+    def test_a_re_read_keeps_the_files_listing(self, tmp_path, monkeypatch):
+        """The file did not change: the re-read keeps its listing, and the
+        next `variable_names` does not list it again."""
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        backend = type(s.project.backend)
+        real = backend.result_names
+        listed: list = []
+
+        def counting(test_dir):
+            listed.append(test_dir)
+            return real(test_dir)
+
+        monkeypatch.setattr(backend, "result_names", staticmethod(counting))
+        assert "w" in s.variable_names(D)
+        assert len(listed) == 1
+        s.stage([self._leaf("w")])
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert "w" in s.variable_names(D)
+        assert len(listed) == 1, listed

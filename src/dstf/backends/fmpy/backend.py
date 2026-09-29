@@ -174,6 +174,14 @@ class FmpyBackend(Backend):
                 available,
                 self.config.diagnostic_variables,
             )
+            if requested and not test.variable_patterns:
+                # No patterns: what fmpy records by default stays recorded
+                # beside the UnitTests and criteria variables — requesting
+                # those alone took the FMU's outputs off the plot. Only the
+                # tracked are read (`read_result`).
+                requested = list(
+                    dict.fromkeys([*_default_outputs(fmpy, md), *requested])
+                )
 
             solver = _SOLVER_MAP.get(test.method, "CVode")
             sim_kwargs = {
@@ -182,10 +190,10 @@ class FmpyBackend(Backend):
                 "stop_time": test.stop_time,
                 "solver": solver,
                 "relative_tolerance": test.tolerance,
-                # None records the FMU's OUTPUTS only (fmpy 0.3's
-                # `Recorder` -> `_get_output_variables`: outputs, else up to
-                # five states) — never every variable. Empty: nothing is
-                # compared, so what fmpy picks is only plotted.
+                # None records fmpy's default set (0.3.29's `Recorder` ->
+                # `_get_output_variables`: outputs, else up to five states,
+                # else local variables) — never every variable. Empty:
+                # nothing is compared, so what fmpy picks is only plotted.
                 "output": requested or None,
             }
             if test.output_interval is not None:
@@ -311,6 +319,21 @@ class FmpyBackend(Backend):
         requested = _tracked(
             test, requested, available, self.config.diagnostic_variables
         )
+        # Loud on every backend (`extract_variables`): a variable the
+        # UnitTests or a criterion names that the saved columns lack is a
+        # spec/model mismatch, not something to swallow.
+        for name in dict.fromkeys(
+            [
+                *(v.name for v in unit_test_variables(test)),
+                *criterion_variables(test, self.config.diagnostic_variables),
+            ]
+        ):
+            if name not in requested:
+                logger.warning(
+                    "Variable %s not found in simulation output for %s",
+                    name,
+                    test.model_id,
+                )
 
         time_arr = np.asarray(arr["time"], dtype=np.float64)
         variables = [
@@ -373,23 +396,31 @@ def _resolve_requested_outputs(test: TestModel, available: list[str]) -> list[st
     return resolve_variable_patterns(test.variable_patterns, available)
 
 
+def _default_outputs(fmpy, md) -> list[str]:
+    """What fmpy records for ``output=None``: its own rule
+    (`fmpy.simulation._get_output_variables`, private — asked, not copied,
+    so it cannot drift from what fmpy does)."""
+    return [v.name for v in fmpy.simulation._get_output_variables(md)]
+
+
 def _tracked(
     test: TestModel,
     requested: list[str],
     available: list[str],
     diagnostic_vars: list[str],
 ) -> list[str]:
-    """``requested`` (the resolved patterns), then the UnitTests variables
-    and the variables a criterion names that ``available`` has — APPENDED,
-    so the patterns' indices stay put. The simulate side (``available``:
-    the model description's variables) and the read side (the saved
-    columns) both go through it, so what is recorded is what is read."""
+    """The tracked names, in Dymola's and OpenModelica's order
+    (`extract_variables`): the UnitTests variables ``available`` has,
+    then ``requested`` (the resolved patterns), then the variables a
+    criterion names that ``available`` has — so a stored baseline and
+    `migrate_names` read indices 1..N as the UnitTests variables. The
+    simulate side (``available``: the model description's variables) and
+    the read side (the saved columns) both go through it, so what is
+    tracked is what is read."""
     have = set(available)
-    out = list(requested)
-    for name in (
-        *(v.name for v in unit_test_variables(test)),
-        *criterion_variables(test, diagnostic_vars),
-    ):
+    out = [v.name for v in unit_test_variables(test) if v.name in have]
+    out += [name for name in requested if name not in out]
+    for name in criterion_variables(test, diagnostic_vars):
         if name in have and name not in out:
             out.append(name)
     return out

@@ -7789,8 +7789,10 @@ class TestVariablesDrawerControls:
 async def test_a_resized_drawer_sets_the_drawer_the_panels_and_the_tab(extras_shell):
     """K5 on the server: the release's width (`Rail.resize`) is the drawer's
     `width` prop with the rail, every panel's width and the tab's — a new
-    page's drawer opens at it; below 240 px it is floored; a closed drawer
-    is the rail alone and the grip goes with the panel."""
+    page's drawer opens at it; below 240 px it is floored, and above 60% of
+    the window, or the window less the rail and 480 px for the plots, it is
+    held there; a closed drawer is the rail alone and the grip goes with the
+    panel."""
     from dstf.authoring.shell.rail import MIN_PANEL, RAIL
 
     shell = extras_shell
@@ -7801,7 +7803,7 @@ async def test_a_resized_drawer_sets_the_drawer_the_panels_and_the_tab(extras_sh
         rail.open("variables")
         assert rail.grip.visible
         assert rail.drawer.props["width"] == str(RAIL + 320)
-        rail.resize(517.4)
+        rail.resize(517.4, 1280)
         assert page.state.drawer_width == 517
         assert rail.drawer.props["width"] == str(RAIL + 517)
         assert all(p._style.get("width") == "517px" for p in rail.panels.values())
@@ -7810,9 +7812,19 @@ async def test_a_resized_drawer_sets_the_drawer_the_panels_and_the_tab(extras_sh
         assert other is not page and other.state.drawer == "variables"
         assert other.rail.drawer.props["width"] == str(RAIL + 517)
         assert other.rail.panels["variables"]._style.get("width") == "517px"
-        other.rail.resize(12)
+        other.rail.resize(12, 1280)
         assert other.state.drawer_width == MIN_PANEL
-        other.rail.resize("not a number")
+        other.rail.resize(3000, 2000)  # 60% of the window
+        assert other.state.drawer_width == 1200
+        other.rail.resize(2000, 1280)  # 1280 - 40 - 480 < 60% of it
+        assert other.state.drawer_width == 760
+        other.rail.resize(2000, 900)  # 900 - 40 - 480 for the plots
+        assert other.state.drawer_width == 380
+        other.rail.resize(2000, 600)  # the floor wins
+        assert other.state.drawer_width == MIN_PANEL
+        other.rail.resize("not a number", 1280)
+        assert other.state.drawer_width == MIN_PANEL
+        other.rail.resize(300, None)
         assert other.state.drawer_width == MIN_PANEL
         other.rail.open(None)
         assert other.rail.drawer.props["width"] == str(RAIL)

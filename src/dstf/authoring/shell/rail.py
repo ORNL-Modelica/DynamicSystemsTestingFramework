@@ -34,10 +34,20 @@ if TYPE_CHECKING:
     from .test_page import TestPage
 
 RAIL = 40
-#: A dragged panel's bounds (K5): at least this many px, at most this
-#: fraction of the window — the browser clamps to both, which only it
-#: can measure; the server holds the floor again.
-MIN_PANEL, MAX_FRACTION = 240, 0.6
+#: A dragged panel's bounds (K5): at least ``MIN_PANEL`` px, at most
+#: ``MAX_FRACTION`` of the window AND the window less the rail and
+#: ``MIN_PLOTS`` px for the page's plots column (at 900 px, 60% left the
+#: plots 320 px and a context chip's × past its card). The browser clamps
+#: to both, which only it can measure, and sends the window's width with
+#: the release; the server holds the same bounds again (`max_panel`).
+MIN_PANEL, MAX_FRACTION, MIN_PLOTS = 240, 0.6, 480
+
+
+def max_panel(window: float) -> float:
+    """The widest a dragged panel may be in a ``window`` px wide window —
+    `_DRAG`'s ``max``. The floor wins when a narrow window leaves less."""
+    return min(MAX_FRACTION * window, window - RAIL - MIN_PLOTS)
+
 
 #: The resize handle's drag (K5): the drawer's `width` prop and the panel's
 #: width follow the pointer in the BROWSER, on NiceGUI's own element store
@@ -58,7 +68,8 @@ _DRAG = """(e) => {
   if (!panel) return;
   const drawer = mounted_app.elements['__DRAWER__'];
   const x0 = e.clientX, w0 = panel.getBoundingClientRect().width;
-  const clamp = (w) => Math.round(Math.max(__MIN__, Math.min(w, __MAX__ * window.innerWidth)));
+  const max = () => Math.min(__MAX__ * window.innerWidth, window.innerWidth - __RAIL__ - __PLOTS__);
+  const clamp = (w) => Math.round(Math.max(__MIN__, Math.min(w, max())));
   let w = w0;
   handle.setPointerCapture(e.pointerId);
   const move = (m) => {
@@ -69,7 +80,7 @@ _DRAG = """(e) => {
   const up = () => {
     handle.removeEventListener('pointermove', move);
     handle.removeEventListener('pointerup', up);
-    emit(w);
+    emit(w, window.innerWidth);
   };
   handle.addEventListener('pointermove', move);
   handle.addEventListener('pointerup', up);
@@ -396,10 +407,11 @@ class Rail:
                 .mark("drawer-handle")
                 .on(
                     "pointerdown",
-                    lambda e: self.resize(e.args),
+                    lambda e: self.resize(*e.args),
                     js_handler=_DRAG.replace("__DRAWER__", str(self.drawer.id))
                     .replace("__MIN__", str(MIN_PANEL))
                     .replace("__MAX__", str(MAX_FRACTION))
+                    .replace("__PLOTS__", str(MIN_PLOTS))
                     .replace("__RAIL__", str(RAIL)),
                 )
             )
@@ -440,13 +452,15 @@ class Rail:
             panel.style(f"width: {width}px")
         self.grip.set_visibility(kind is not None)
 
-    def resize(self, width: Any) -> None:
-        """A drag's release (`_DRAG`): the width the browser clamped, held
-        to the floor again here, kept in `TabState`."""
+    def resize(self, width: Any, window: Any) -> None:
+        """A drag's release (`_DRAG`): the width the browser clamped and the
+        window's width, held to the same bounds again here (`max_panel`,
+        then the floor), kept in `TabState`."""
         try:
-            px = max(MIN_PANEL, int(round(float(width))))
-        except (TypeError, ValueError):
+            px = int(round(min(float(width), max_panel(float(window)))))
+        except (TypeError, ValueError, OverflowError):
             return
+        px = max(MIN_PANEL, px)
         self.page.state.drawer_width = px
         self._width(px)
 

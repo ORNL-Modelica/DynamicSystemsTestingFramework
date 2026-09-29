@@ -174,6 +174,27 @@ class TestFmpySimulation:
         assert x.time.dtype == np.float64
         assert x.values.dtype == np.float64
 
+    def test_a_criterion_with_no_patterns_keeps_the_fmus_outputs(self, tmp_path):
+        """BouncingBall with no patterns and a tree naming the parameter
+        ``g``: the file holds fmpy's default set (its outputs h and v) AND g
+        — requesting the tree's names alone took the outputs off the plot.
+        Only g is tracked."""
+        from dstf.backends.fmpy import FmpyBackend
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        fmu = REFERENCE_FMUS_DIR / "2.0" / "BouncingBall.fmu"
+        test = _make_test(fmu, variables=[], stop_time=1.0)
+        test.metric_tree_spec = parse_metric_tree(
+            {"metric": "range", "variable": "g", "max_value": 99}
+        )
+        backend = FmpyBackend(_make_config(tmp_path))  # type: ignore[arg-type]
+        run_result = backend.run_single_test(test, "test_0001", index=1, total=1)
+        assert run_result.success, run_result.error_message
+        names = FmpyBackend.result_names(tmp_path / "test_0001")
+        assert names is not None and sorted(names) == ["g", "h", "v"], names
+        result = backend.read_result(test, "test_0001", run_result)
+        assert [(v.index, v.name) for v in result.variables] == [(1, "g")]
+
 
 # ---------------------------------------------------------------------------
 # Helper-function tests (no FMU needed)
@@ -339,15 +360,27 @@ class TestFmpyMissingDependency:
 
 
 class TestFmpyTracksTheCriteriasVariables:
+    #: What the fake FMU declares, and what it records for ``output=None``
+    #: (fmpy's `_get_output_variables`: here, its one output ``h``).
+    DECLARED = ("h", "v", "g", "unitTests.x[1]")
+    DEFAULT = ("h",)
+
     def _backend(self, tmp_path, monkeypatch, captured):
         fake = types.ModuleType("fmpy")
         fake.read_model_description = lambda p: SimpleNamespace(
-            modelVariables=[SimpleNamespace(name=n) for n in ("h", "v", "g")]
+            modelVariables=[SimpleNamespace(name=n) for n in self.DECLARED]
+        )
+        fake.simulation = SimpleNamespace(
+            _get_output_variables=lambda md: [
+                SimpleNamespace(name=n) for n in self.DEFAULT
+            ]
         )
 
         def sim(**kw):
             captured.update(kw)
-            names = ["time", *(kw["output"] or ["h"])]
+            # fmpy 0.3's Recorder records only declared names
+            wanted = kw["output"] or self.DEFAULT
+            names = ["time", *(n for n in wanted if n in self.DECLARED)]
             arr = np.zeros(3, dtype=[(n, "f8") for n in names])
             arr["time"] = [0.0, 0.5, 1.0]
             return arr
@@ -366,41 +399,59 @@ class TestFmpyTracksTheCriteriasVariables:
         )
         return FmpyBackend(cfg)
 
-    def _test(self, tmp_path, patterns):
+    def _test(self, tmp_path, patterns, *, unit_tests=False, absent=False):
         from dstf.comparison.tree_spec import parse_metric_tree
 
         fmu = tmp_path / "Model.fmu"
         fmu.write_bytes(b"fake fmu")
+        children = [
+            {"metric": "range", "variable": "g", "max_value": 20},
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "max"},
+            },
+        ]
+        if absent:
+            children.append({"metric": "range", "variable": "nope", "max_value": 20})
+        kw = dict(source="both", n_vars=1, x_expressions=["h"]) if unit_tests else {}
         return _tm(
             "Model",
             source_file=fmu,
             variable_patterns=patterns,
             metric_tree_spec=parse_metric_tree(
-                {
-                    "combinator": "and",
-                    "children": [
-                        {"metric": "range", "variable": "g", "max_value": 20},
-                        {
-                            "metric": "scalar",
-                            "variable": "CPUtime",
-                            "quantity": {"reduce": "max"},
-                        },
-                    ],
-                }
+                {"combinator": "and", "children": children}
             ),
+            **kw,
         )
 
-    def test_no_patterns_records_and_reads_the_tree_variable(
+    def test_no_patterns_records_the_default_set_and_the_tree_variable(
         self, tmp_path, monkeypatch
     ):
+        """No patterns: fmpy's default set (``output=None``) is recorded
+        still, with the tree's variable — a criterion does not take the
+        FMU's outputs off the plot. Only the tracked are read."""
         captured: dict = {}
         backend = self._backend(tmp_path, monkeypatch, captured)
         test = self._test(tmp_path, [])
         rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success, rr.error_message
-        assert captured["output"] == ["g"]
+        assert captured["output"] == ["h", "g"]
         result = backend.read_result(test, "test_0001", rr)
         assert [(v.index, v.name) for v in result.variables] == [(1, "g")]
+
+    def test_no_patterns_and_nothing_tracked_records_fmpys_default(
+        self, tmp_path, monkeypatch
+    ):
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"fake fmu")
+        rr = backend.run_single_test(
+            _tm("Model", source_file=fmu, variable_patterns=[]), "test_0001", 1, 1
+        )
+        assert rr.success, rr.error_message
+        assert captured["output"] is None
 
     def test_patterns_first_then_the_tree_variable(self, tmp_path, monkeypatch):
         captured: dict = {}
@@ -410,3 +461,51 @@ class TestFmpyTracksTheCriteriasVariables:
         assert captured["output"] == ["h", "g"]
         result = backend.read_result(test, "test_0001", rr)
         assert [(v.index, v.name) for v in result.variables] == [(1, "h"), (2, "g")]
+
+    def test_the_unit_tests_variable_is_recorded_and_an_absent_name_is_not(
+        self, tmp_path, monkeypatch
+    ):
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        test = self._test(tmp_path, [], unit_tests=True, absent=True)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success, rr.error_message
+        assert "unitTests.x[1]" in captured["output"]
+        assert "nope" not in captured["output"]
+        result = backend.read_result(test, "test_0001", rr)
+        assert [v.name for v in result.variables] == ["unitTests.x[1]", "g"]
+
+    def test_the_index_order_is_unit_tests_then_patterns_then_tree(
+        self, tmp_path, monkeypatch
+    ):
+        """Dymola's and OpenModelica's order (`extract_variables`):
+        `migrate_names` reads indices 1..N as the UnitTests variables."""
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        test = self._test(tmp_path, ["h"], unit_tests=True)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert captured["output"][:3] == ["unitTests.x[1]", "h", "g"]
+        result = backend.read_result(test, "test_0001", rr)
+        assert [(v.index, v.name) for v in result.variables] == [
+            (1, "unitTests.x[1]"),
+            (2, "h"),
+            (3, "g"),
+        ]
+
+    def test_a_criterion_on_a_name_the_file_lacks_warns_on_read(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """As `extract_variables` warns for Dymola and OpenModelica."""
+        import logging
+
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        test = self._test(tmp_path, ["h"], absent=True)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            backend.read_result(test, "test_0001", rr)
+        warned = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert warned == ["Variable nope not found in simulation output for Model"]

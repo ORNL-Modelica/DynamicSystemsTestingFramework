@@ -76,8 +76,10 @@ def unrecorded_variables(
 ) -> list[str]:
     """The variables ``test``'s criteria name (`tree_variables`, the rule
     every backend tracks by) that ``result`` does not hold. ``[]`` without
-    a result: there is nothing to rerun FOR yet."""
-    if test is None or result is None:
+    a result: there is nothing to rerun FOR yet. ``[]`` for a FAILED one,
+    which holds no variables: every criterion's would count, and a rerun
+    asked for to score them over a simulation that fails."""
+    if test is None or result is None or not result.success:
         return []
     have = {v.name for v in result.variables}
     return [
@@ -91,7 +93,12 @@ def new_variables(
     """How many variables only a rerun records: those of
     :func:`unrecorded_variables`. A variable the result FILE holds is not
     one of them — `Session.stage` re-reads the model when a criterion names
-    it (the owner's O2), so the result holds it by the time this counts."""
+    it (the owner's O2), so the result holds it by the time this counts.
+    0 for a simulate-only test: nothing is ever scored there, so no
+    variable is one a rerun would score (never NEW_VARIABLES or
+    EDITS_NEW)."""
+    if test is not None and test.simulate_only:
+        return 0
     return len(unrecorded_variables(test, result, diagnostics))
 
 

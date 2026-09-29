@@ -3029,3 +3029,40 @@ class TestTheFlatPathScoresWhatTheTestTracks:
             test, _tracked_result("x", "w"), _tracked_reference("x", "w"), 1e-4
         )
         assert [vc.name for vc in comp.variables] == ["x", "w"]
+
+    def test_a_glob_tracks_whole_names_only(self):
+        """``pipe.T?`` is ``pipe.T1``, not a prefix of ``pipe.T12``."""
+        test = TestModel(
+            model_id="Test.Model",
+            source_file=Path(""),
+            source_package="Test",
+            short_name="Model",
+            n_vars=0,
+            source="spec",
+            variable_patterns=["pipe.T?"],
+        )
+        comp = compare_test(
+            test,
+            _tracked_result("pipe.T1", "pipe.T12"),
+            _tracked_reference("pipe.T1"),
+            1e-4,
+        )
+        assert [vc.name for vc in comp.variables] == ["pipe.T1"]
+        assert comp.passed
+
+
+def test_a_tree_warns_only_of_the_tracked_variables_it_does_not_score():
+    """ "Tracked variables without a criterion" names what the test TRACKS
+    and no leaf covers — never a variable the result merely holds (one a
+    discarded criterion had re-read, or a rerun with it pending recorded)."""
+    test = _make_test()
+    test.variable_patterns = ["x", "y"]
+    test.metric_tree_spec = parse_metric_tree(
+        {"combinator": "and", "children": [{"metric": "nrmse", "variable": "x"}]}
+    )
+    comp = compare_test(
+        test, _tracked_result("x", "y", "w"), _tracked_reference("x", "y"), 1e-4
+    )
+    assert [(w.field, w.current_value) for w in comp.warnings] == [
+        ("Tracked variables without a criterion", "y")
+    ]

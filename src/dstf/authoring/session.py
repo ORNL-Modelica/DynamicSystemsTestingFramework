@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
+from ..backends.common.result_variables import tracked_results
 from ..backends.progress import recorded_backend
 from ..backends.types import (
     DatasetType,
@@ -673,15 +674,22 @@ class Session:
 
     def tracked(self, model_id: str) -> list[str]:
         """The test's TRACKED names, in order: the scored variables first,
-        then the rest of the loaded result's (which holds exactly the spec's
-        tracked variables), through `tracked_names`, the one rule. With no
-        tree the plots derive from them; the Variables drawer groups them
-        "Tracked"; and a variable a criterion may be added for is one of
-        them — the scored names alone would lose a variable whose last
-        criterion was just removed, and with it the way back to one."""
+        then the rest of what the test tracks of the loaded result
+        (`tracked_results`: its UnitTests variables and patterns — not a
+        variable a discarded criterion had re-read, which the result keeps),
+        through `tracked_names`, the one rule. With no tree the plots derive
+        from them; the Variables drawer groups them "Tracked"; and a
+        variable a criterion may be added for is one of them — the scored
+        names alone would lose a variable whose last criterion was just
+        removed, and with it the way back to one."""
+        project = self._require_project()
         comp = self.comparisons.get(model_id)
         scored = [vc.name for vc in comp.variables] if comp is not None else []
-        return tracked_names(scored, self._require_project().results.get(model_id))
+        result = project.results.get(model_id)
+        test = project.test(model_id)
+        if result is not None and test is not None:
+            result = replace(result, variables=tracked_results(test, result))
+        return tracked_names(scored, result)
 
     def variable_texts(self, model_id: str) -> dict[str, VariableText]:
         """``{name: VariableText}`` for this test — both readings of every
@@ -761,11 +769,10 @@ class Session:
         project = self._require_project()
         out: set[str] = set()
         for model_id in models:
-            result = project.results.get(model_id)
-            if result is None or not result.success:
-                continue
             missing = unrecorded_variables(
-                project.test(model_id), result, project.config.diagnostic_variables
+                project.test(model_id),
+                project.results.get(model_id),
+                project.config.diagnostic_variables,
             )
             if missing and not set(missing).isdisjoint(self._file_names(model_id)):
                 out.add(model_id)
@@ -1327,18 +1334,31 @@ class Session:
         they are stored: ``read_results`` reports every manifest entry, and
         the others are not being re-read. A model with no manifest entry
         ends with no result and is scored NO_REF / SIM_FAIL by the caller,
-        as after a full reload."""
+        as after a full reload.
+
+        Atomic: the read goes into a dict of its own, swapped in only once
+        it returns — a read that raises leaves every result and read as it
+        was. The result FILE did not change, so its listing
+        (`_ModelReads.names`) is kept, and the next `variable_names` does
+        not list it again; what came from the old result goes."""
         project = self._require_project()
-        for model_id in models:
-            project.results.pop(model_id, None)
-            self._reads.pop(model_id, None)
         to_read = [t for t in project.tests if t.model_id in models]
+        fresh: dict[str, TestResult] = {}
 
         def on_result(model_id: str, result: TestResult) -> None:
             if model_id in models:
-                project.results[model_id] = result
+                fresh[model_id] = result
 
         project.backend.read_last_results(to_read, on_result=on_result)
+        for model_id in models:
+            if model_id in fresh:
+                project.results[model_id] = fresh[model_id]
+            else:
+                project.results.pop(model_id, None)
+            old = self._reads.pop(model_id, None)
+            if old is not None and old.names_read:
+                reads = self._reads_for(model_id)
+                reads.names, reads.names_read = old.names, True
 
     def _score(self, model_id: str) -> TestComparison:
         project = self._require_project()

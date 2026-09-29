@@ -257,3 +257,48 @@ def test_new_variables_counts_what_the_result_lacks():
     assert new_variables(test, result, ["CPUtime"]) == 1
     assert new_variables(test, None, ["CPUtime"]) == 0
     assert new_variables(None, result, ["CPUtime"]) == 0
+
+
+def test_a_failed_result_counts_nothing_new():
+    """A failed run's result holds no variables: without the guard every
+    criterion's variable counted as new, and the strip asked for a rerun to
+    score them over a simulation that fails."""
+    from conftest import make_test_model
+    from dstf.authoring.situation import new_variables
+    from dstf.backends.types import TestResult
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    test = make_test_model(
+        "L.A",
+        variable_patterns=["x"],
+        metric_tree_spec=parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "nrmse", "variable": "y"},
+                ],
+            }
+        ),
+    )
+    failed = TestResult(model_id="L.A", success=False, error_message="boom")
+    assert new_variables(test, failed, []) == 0
+
+
+def test_a_simulate_only_test_counts_nothing_new():
+    """Nothing is ever scored on a simulate-only test, so no variable is
+    one a rerun would score: never NEW_VARIABLES, never EDITS_NEW."""
+    from conftest import make_test_model
+    from dstf.authoring.situation import new_variables
+    from dstf.backends.types import TestResult
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    test = make_test_model(
+        "L.A",
+        simulate_only=True,
+        metric_tree_spec=parse_metric_tree(
+            {"metric": "range", "variable": "y", "max_value": 1}
+        ),
+    )
+    result = TestResult(model_id="L.A", success=True, variables=[])
+    assert new_variables(test, result, []) == 0

@@ -5,6 +5,9 @@ same ``<instance>.x[i]`` convention, so variable selection, extraction and the
 diagnostics/timing fold into ``statistics`` are one implementation here rather
 than a copy per backend. Backends keep their own MAT reading and their own
 timing computation — only what is genuinely identical lives here.
+
+Also here: :func:`tracked_results`, which of a read result's variables a test
+TRACKS — the rule the comparator and the authoring Session both ask.
 """
 
 from __future__ import annotations
@@ -17,7 +20,14 @@ import numpy as np
 
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
-from ..types import TestRunResult, VariableResult, resolve_variable_patterns
+from ..types import (
+    TestResult,
+    TestRunResult,
+    VariableResult,
+    _pattern_to_regex,
+    is_glob_pattern,
+    resolve_variable_patterns,
+)
 from .mat_reader import list_result_mat_variables
 
 logger = logging.getLogger(__name__)
@@ -34,6 +44,50 @@ def criterion_variables(test: TestModel, diagnostic_vars: Iterable[str]) -> list
     from ...comparison.tree_spec import tree_variables
 
     return tree_variables(test.metric_tree_spec, diagnostic_vars)
+
+
+def tracked_results(test: TestModel, result: TestResult) -> list[VariableResult]:
+    """The variables of ``result`` that ``test`` TRACKS: its UnitTests
+    variables and its ``variables`` patterns matched against the result's
+    names, ``"*"`` every one. What the flat path (no tree) scores, what a
+    tree warns of when no leaf covers it, and the Variables drawer's
+    Tracked group.
+
+    Never simply every variable the result holds. A tree names variables
+    too, and a backend records and extracts them beside the tracked ones:
+    a result read while a criterion was staged (a rerun runs with the
+    pending edits) keeps that variable after the criterion is discarded.
+    Scored, with no baseline, it failed the test for a variable the test
+    never asked about; under a saved tree it was named a tracked variable
+    without a criterion. On a result extracted for the test as it stands
+    with no tree this is every variable: extraction is exactly these two
+    groups.
+
+    Matched quietly: the backend that extracted the result already warned
+    about a pattern that matched nothing, and this runs on every rescore. A
+    variable with NO name is a backend bug: no name or pattern tracks it,
+    and leaving it out is said, not done quietly."""
+    if "*" in test.variable_patterns:
+        return list(result.variables)
+    for v in result.variables:
+        if not v.name:
+            logger.warning(
+                "%s: result variable %d has no name and is not tracked",
+                test.model_id,
+                v.index,
+            )
+    wanted = {v.name for v in unit_test_variables(test)}
+    globs = []
+    for pattern in test.variable_patterns:
+        if is_glob_pattern(pattern):
+            globs.append(_pattern_to_regex(pattern))
+        else:
+            wanted.add(pattern)
+    return [
+        v
+        for v in result.variables
+        if v.name in wanted or any(g.fullmatch(v.name) for g in globs)
+    ]
 
 
 def compute_needed_variables(
@@ -232,4 +286,5 @@ __all__ = [
     "fold_diagnostics_into_statistics",
     "merge_timing_stats",
     "run_timing",
+    "tracked_results",
 ]
