@@ -148,7 +148,7 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
     every series of theirs the page's scored and no-baseline entries do not
     answer — context series and watch plots.
 
-    The plots are :func:`~dstf.discovery.plots.test_plots`' — the ONE rule
+    The plots are :func:`~dstf.discovery.plots.plots_of_test`' — the ONE rule
     the authoring tool's `Session.plots` draws by, so both tiers draw the
     same plots: derived from the criteria tree, decorated by the entry's
     ``plots`` extras, none for a failed run.
@@ -160,13 +160,13 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
     plots can draw. An extra's series is taken from the result in memory
     when it is there, and read from the file only when it is not.
     """
-    from ..discovery.plots import test_plots
+    from ..discovery.plots import plots_of_test
 
     if test is None:
         return (), {}
     extras = tuple(test.plots or ())
     readable = bool(extras) and backend_cls is not None and test_dir is not None
-    plots = test_plots(
+    plots = plots_of_test(
         test,
         [v.name for v in comp_variables or ()],
         result,

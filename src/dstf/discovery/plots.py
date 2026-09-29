@@ -228,7 +228,7 @@ def derive_plots(
     )
 
 
-def test_plots(
+def plots_of_test(
     test: TestModel,
     compared: Sequence[str],
     result: TestResult | None,

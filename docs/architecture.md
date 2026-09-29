@@ -76,7 +76,7 @@ src/dstf/
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
 │   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
-│   ├── plots.py              # A test's plots, derived from its criteria (D140): test_plots — the ONE
+│   ├── plots.py              # A test's plots, derived from its criteria (D140): plots_of_test — the ONE
 │   │                         #   function both tiers call — runs derive_plots over plot_leaves (the
 │   │                         #   tree's leaves, in order) and the `plots` extras (context series,
 │   │                         #   watch plots); tracked_names, the plots of a test with no tree

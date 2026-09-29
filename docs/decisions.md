@@ -5477,7 +5477,7 @@ variable order (D133).
    ASCII digits) is a plot of its own whatever its expression reads.
    `Session.plots` never calls `Session.tree()` (which reads the
    baseline). Both tiers call ONE function over it,
-   `test_plots(test, compared, result, *, listed)` — `Session.plots` and
+   `plots_of_test(test, compared, result, *, listed)` — `Session.plots` and
    the report's `plot_inputs` alike: it asks which names are UnitTests
    elements of every leaf AND every tracked name (a leaf the result lacks
    is an element too), and says a name is missing when the plots cannot

@@ -35,7 +35,7 @@ from ..discovery.plots import (
     PlotExtra,
     ResolvedPlot,
     plot_leaves,
-    test_plots,
+    plots_of_test,
     tracked_names,
 )
 from ..discovery.scan_cache import load_scan, store_scan
@@ -743,7 +743,7 @@ class Session:
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         """The test's plots as the page draws them
-        (:func:`~dstf.discovery.plots.test_plots`, the rule the report draws
+        (:func:`~dstf.discovery.plots.plots_of_test`, the rule the report draws
         by): one per scored variable or array family, in the order the tree
         first names it, decorated by the effective ``plots`` extras. The
         leaves come from the tree SPEC with pending ops applied — never
@@ -756,7 +756,7 @@ class Session:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
         comp = self.comparisons.get(model_id)
-        return test_plots(
+        return plots_of_test(
             test,
             [vc.name for vc in comp.variables] if comp is not None else [],
             project.results.get(model_id),

@@ -2971,7 +2971,7 @@ class TestPlots:
         self, tmp_path, monkeypatch
     ):
         """No listing: what the result in memory carries is all the plots
-        can draw (`test_plots`, the report's rule too) — the tracked x is
+        can draw (`plots_of_test`, the report's rule too) — the tracked x is
         there, the file-only z is named missing rather than drawn blank."""
         from dstf.backends.python.backend import PythonBackend
 
