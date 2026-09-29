@@ -1814,3 +1814,14 @@ planning.
   Corrections 2), under which a real array folds onto one plot whatever its
   members' scales: on a linear y axis a family spanning decades draws its
   small members flat.
+- **Watch-only: the Julia drivers' result order (2026-09-29, from the U1
+  review)**: `run_test.jl` and `run_persistent.jl` collect a result's
+  variables in a `Dict{String, Vector{Float64}}`, so the `variables` object
+  they write — "the file's order" a glob's matches and a test with no tree
+  take their plot order from (D140 item 9) — is the Dict's hash order, not
+  the model's unknowns-then-observables order. An `OrderedDict`
+  (OrderedCollections; unverified whether `examples/julia/Project.toml`'s
+  environment already resolves it) would make it the model's. Not changed:
+  `julia` is not on PATH here, so the Julia-marked tests
+  (`tests/test_julia_backend.py`) cannot run, and a .jl edit nothing
+  executes is not verified. Change and run them where Julia is installed.

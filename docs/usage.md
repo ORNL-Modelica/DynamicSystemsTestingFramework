@@ -149,8 +149,9 @@ A test's plots are **derived from its criteria** (D140): one plot per scored
 variable or array family, in the order the metric tree first names it (a
 depth-first walk; a family sits where the tree first names any member). A
 test with no tree — nothing scored, no `metrics` — draws one plot per tracked
-variable or array, in the order the spec's `variables` wrote them (a glob's
-matches in the result file's order). A run that failed has no plots. The
+variable or array: the test's `UnitTests` elements first, then the spec's
+`variables` in the order they wrote them (a glob's matches in the result
+file's order). A run that failed has no plots. The
 report and `dstf author` draw the same plots. A criterion on a variable IS
 its plot: a plot goes when its last criterion goes.
 
@@ -567,13 +568,16 @@ markup the server rendered. It shows
 - one Plotly chart per plot of the test, the plots the authoring tool draws
   (see "Plot layout"): one per scored variable or family in the tree's order,
   then the watch plots; with nothing scored — no baseline, or simulate-only —
-  one per tracked variable; a run that failed, none. The entry's `plots` key
+  one per tracked variable or array, except that a test with no baseline and
+  an authored `metrics` tree plots the tree's variables; a run that failed,
+  none. The entry's `plots` key
   adds only extras: context series on those plots, and watch plots. Under
   each chart are its criteria in tree order, each led by its ancestors'
   kinds (`and › k-of-n ›`), its context series listed muted ("Context: …"),
   and a watch plot says "No criteria yet.". A family's badges name their
   members (`pipe.T[2] FAIL`); a variable the tree scores and the result
-  lacks keeps its badge and its plot says "Not in this result: …". Each
+  lacks keeps its badge and its plot says "Not in this result: …" — with no
+  chart when the plot's whole subject is missing. Each
   chart draws actual, reference and the criterion geometry
   the metrics emitted (a tube's band, a range's bounds, a points leaf's
   tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
@@ -868,10 +872,12 @@ watch plots go, the derived plots stay. Focus on the plot's own toolbar shows
 that plot alone — the focus bar reads "Showing 1 of N plots", and its select
 names the plot and switches to any other (a watch plot marked "watch") —
 until "Show all N plots". A long variable label is cut
-in its MIDDLE — its head, an ellipsis, its index (`cat(1, pipe2.mediums.T, …[3]`)
-— with the whole label as its tooltip; a model id is cut at its start.
+in its MIDDLE — its head, an ellipsis, its index (`cat(1, pipe2.mediums.T, …[3]`),
+or its last 12 characters when it has no index that near its end — with the
+whole label as its tooltip; a model id is cut at its start.
 
-A plot's legend holds its signals only — actual, reference and any overlays —
+A plot's legend holds its signals only — actual, reference, any overlays and
+its context series —
 on a line above the plot area, so it never sits on the trace or on a ring.
 Each criterion's drawing is shown or hidden by the swatch on its row, filled
 while it draws and an outline while it does not; Enter or Space on a focused
@@ -882,7 +888,7 @@ criterion draws. The open criterion always draws, since the plot is its
 editing surface, and its swatch is locked while its editor is open. A failing
 criterion's swatch hides it like any other: the failure still shows on the
 row's pill, the card's, the closed tree line, the header and the Suite page.
-The error series are one Error select per plot that draws one series, on the
+The error series are one Error select per plot whose subject is one variable, on the
 plot's toolbar — No error, or one of the signed, absolute and per-point NRMSE
 series, each on its labelled axis.
 Plotly's own toolbar stands vertically in a gutter right of the plot, clear of
@@ -895,6 +901,8 @@ this one highlighted (a click opens that test, and the drawer stays open), and
 selected plot as context series or takes them off (the plot's own variable is
 checked and grey), "+ new plot" makes a watch plot of one variable after the
 others (grey on a plot's variable, and on a family: open it and pick one).
+A run that failed has no plots: the drawer says "The run failed: no plots",
+and its checks and every "+ new plot" are grey.
 Rows fold as the plots do: an array by result-file name into one row, a
 `UnitTests` element always a row of its own. Both drawers carry one control set, and every setting is the tab's,
 so a switch of test keeps it:

@@ -749,19 +749,27 @@ class Session:
         leaves come from the tree SPEC with pending ops applied — never
         :meth:`tree`, which materializes the tree and reads the baseline;
         no tree is one plot per tracked name or array. A UnitTests element
-        never folds (O3); a failed run has none."""
+        never folds (O3); a failed run has none. While a job holds a model
+        whose names were never read, nothing is missing."""
         project = self._require_project()
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
+        reads = self._reads_for(model_id)
         comp = self.comparisons.get(model_id)
-        return plots_of_test(
+        plots = plots_of_test(
             test,
             [vc.name for vc in comp.variables] if comp is not None else [],
             project.results.get(model_id),
-            listed=self._reads_for(model_id).names,
+            listed=reads.names,
         )
+        if reads.names_read:
+            return plots
+        # A job holds the model and its names were never read: a listing
+        # not taken is not a file without the context and watch series, so
+        # nothing is missing until the job's reload lists it.
+        return tuple(replace(plot, missing=()) for plot in plots)
 
     def plot_figure(
         self,

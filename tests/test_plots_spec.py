@@ -15,6 +15,7 @@ from dstf.discovery.plots import (
     derive_plots,
     parse_plots,
     plot_leaves,
+    plots_of_test,
     plots_to_raw,
     tracked_names,
     tree_leaves,
@@ -425,3 +426,48 @@ def test_a_failed_simulations_partial_result_contributes_nothing():
 
 def test_no_result_leaves_the_scored_names_alone():
     assert tracked_names(["x"], None) == ["x"]
+
+
+# -- `plots_of_test`: the one function both tiers call -----------------------
+
+
+def test_a_failed_run_has_no_plots_whatever_its_tree_and_extras():
+    """O2, literally: a partial file is not the test's plots."""
+    test = make_test_model("Lib.T", plots=parse_plots([{"var": "w"}]))
+    test.metric_tree_spec = parse_metric_tree(_and("x"))
+    partial = _Result(_Var("x", 1), _Var("w", 2), success=False)
+    assert plots_of_test(test, ["x"], partial, listed=["x", "w"]) == ()
+
+
+def test_with_no_listing_what_the_result_carries_is_what_the_plots_can_draw():
+    """``listed=None`` (the report lists the file only for a test with
+    extras): the result's own names are all there is, so a leaf it lacks is
+    missing. A listing that leaves out a name the result carries does not
+    make it missing: the file's listing may be filtered."""
+    test = make_test_model("Lib.T")
+    test.metric_tree_spec = parse_metric_tree(_and("a", "gone"))
+    result = _Result(_Var("a", 1))
+    plots = plots_of_test(test, [], result, listed=None)
+    assert [(p.subject, p.missing) for p in plots] == [
+        (("a",), ()),
+        (("gone",), ("gone",)),
+    ]
+    plots = plots_of_test(test, [], result, listed=["other"])
+    assert [(p.subject, p.missing) for p in plots] == [
+        (("a",), ()),
+        (("gone",), ("gone",)),
+    ]
+
+
+def test_unit_tests_elements_are_asked_of_the_leaves_and_the_tracked_names():
+    """A tree's UnitTests leaves the result lacks never fold (they are
+    elements all the same), and neither do the tracked elements of a test
+    with no tree."""
+    test = make_test_model("Lib.T")
+    test.metric_tree_spec = parse_metric_tree(_and(*UT[:2]))
+    plots = plots_of_test(test, [], _Result(), listed=None)
+    assert [p.subject for p in plots] == [(UT[0],), (UT[1],)]
+    untreed = make_test_model("Lib.T")
+    result = _Result(_Var(UT[0], 1), _Var(UT[1], 2))
+    plots = plots_of_test(untreed, [], result, listed=None)
+    assert [p.subject for p in plots] == [(UT[0],), (UT[1],)]

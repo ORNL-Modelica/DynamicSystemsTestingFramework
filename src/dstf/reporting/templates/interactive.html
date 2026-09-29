@@ -125,12 +125,14 @@ details summary:hover { color: var(--dstf-text); }
    this plot — listed muted above the plot. */
 .plot-context { font-size: 0.85em; color: var(--dstf-text-muted); margin-bottom: 0.5em; }
 /* A plot's criteria, in tree order: each row led by its ancestors' kinds
-   (`and › k-of-n ›`), muted — where in the tree the leaf sits. The crumb
-   has a fixed minimum width, so a section's leaf names start in one column
-   whatever its rows' depths (the tool's `.dstf-crumb` keeps the same). */
+   (`and › k-of-n ›`), muted — where in the tree the leaf sits. Each crumb's
+   minimum width is its plot's longest crumb, in ch (the section's
+   `crumb_ch`), so a section's leaf names start in one column whatever its
+   rows' depths — a fixed width was outgrown by a fourth level (the tool's
+   `.dstf-crumb` keeps the same). */
 .criteria-row { display: flex; align-items: baseline; gap: 0.5em; }
 .criteria-row > .node { flex: 1; min-width: 0; }
-.node-crumbs { color: var(--dstf-text-muted); font-size: 0.8em; white-space: nowrap; min-width: 14ch; }
+.node-crumbs { color: var(--dstf-text-muted); font-size: 0.8em; white-space: nowrap; }
 /* A variable reads as the expression its model wrote (`pipe.T[1]`); its
    result-file name — what a criterion, an override or a --filter is written
    against — rides beside the title, muted. Absent when the two agree. */
@@ -367,11 +369,13 @@ details summary:hover { color: var(--dstf-text); }
   {% endif %}
   {% if plot.context %}<div class="plot-context">Context: {{ plot.context | join(", ") }}</div>{% endif %}
   {% if plot.missing %}<div class="plot-note">Not in this result: {{ plot.missing | join(", ") }}</div>{% endif %}
-  <div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>
+  {#- A subject the result lacks entirely draws no chart: an empty one
+      said nothing the note does not. #}
+  {% if plot.subject %}<div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>{% endif %}
   {% if plot.criteria %}
   <div class="node-tree plot-criteria" id="nodes-{{ plot.index }}">
     {%- for row in plot.criteria %}
-    <div class="criteria-row" data-variable="{{ row.variable }}">{% if row.crumbs %}<span class="node-crumbs">{{ row.crumbs }}</span>{% endif %}{{ node(row.leaf) }}</div>
+    <div class="criteria-row" data-variable="{{ row.variable }}">{% if row.crumbs %}<span class="node-crumbs" style="min-width: {{ plot.crumb_ch }}ch">{{ row.crumbs }}</span>{% endif %}{{ node(row.leaf) }}</div>
     {%- endfor %}
   </div>
   {% elif plot.watch %}

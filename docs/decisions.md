@@ -5483,8 +5483,12 @@ variable order (D133).
    is an element too), and says a name is missing when the plots cannot
    draw it — not in the file's listing nor in the result in memory, or,
    with no listing (the report lists the file only for a test with
-   extras), not in the result. A run that FAILED has no plots on either
-   tier, its extras included (O2, literally).
+   extras), not in the result. While a job holds a model whose names the
+   tool never read, `Session.plots` marks nothing missing: a listing not
+   taken is not a file without the series. A run that FAILED has no plots
+   on either tier, its extras included (O2, literally); the tool's count
+   line reads "no plots: the run failed", and its Variables drawer "The
+   run failed: no plots", its checks and "+ new plot" grey.
 2. *The new `plots` schema.* A list of extras `{"var", "context"?}`: an
    entry on a scored variable (or a member of its family) adds its
    `context` to that plot; any other entry is a watch plot. No glob, no
@@ -5513,8 +5517,10 @@ variable order (D133).
    first (`and › k-of-n ›`); a stored-scalar leaf is on no card and in no
    report section (`names_a_series`). Both tiers list them by one walk,
    `reporting/tree_rows.py::criteria_rows` (the tool imports it; the
-   report never imports the tool), and the crumb has a fixed minimum
-   width so a plot's leaf names start in one column.
+   report never imports the tool), and every crumb on a plot is as wide
+   as its longest, in ch (the report's `crumb_ch`, the tool's `PlotCard`),
+   so a plot's leaf names start in one column — a fixed 14ch was outgrown
+   by a fourth level.
 6. *The controller's calls* (said to the owner; reversible on the owner's
    word). C1: context series are listed in a row above the plot, each
    with a `×` ("Remove {text} from this plot") — Plotly's legend cannot
@@ -5537,11 +5543,13 @@ variable order (D133).
 7. *The Test page.* The selected plot follows its subject across a
    rebuild (a watch plot given a criterion moves up); the page reads the
    tracked names once and hands them to every card's `+`
-   (`Selection.tracked`). Focus gains a select (`focus-switch`, Q11 c)
+   (`Selection.tracked`), and they are part of the page's `shape`, so a
+   variable that becomes tracked rebuilds the cards. Focus gains a select (`focus-switch`, Q11 c)
    through the same path a card's Focus takes; it names the plot, so the
    bar beside it only counts: "Showing 1 of N plots". A variable label — a card's
    title, a criteria row's name, a drawer row — is a `MiddleCut`: the head
-   and the tail from the last `[` (else the last 12 characters) as two
+   and the tail from the last `[` (else, or when that `[` is more than 12
+   characters from the end, the last 12 characters) as two
    inline-blocks in an inline-block, never a flex pair, so innerText and a
    copy are the whole label; the head is capped at the width less the
    tail's `--tail` (its length in ch), the tail at least that wide.
@@ -5555,7 +5563,9 @@ variable order (D133).
    are under its first plot" and "plot only" notes go. A family's badges
    name their members (`pipe.T[2] FAIL`), as the tool's pills do. A tree
    leaf on a variable the result lacks keeps its FAIL badge and says "Not
-   in this result: …", with no chart curve and no error select. The
+   in this result: …", with no chart and no error select — a plot whose
+   subject is entirely missing is its heading, badges, note and criteria
+   rows, on both tiers. The
    sidecar's `plots` record gains `subject`, `context` and `watch`: it is
    what the report drew.
 9. *The pattern order.* `resolve_variable_patterns` returned its names
@@ -5563,8 +5573,13 @@ variable order (D133).
    them in pattern order (explicit names as written, a glob's matches in
    the file's order, the first occurrence kept). An accept now writes
    pattern-tracked `variables` in that order: a stored baseline's variable
-   index changes on its next accept; pairing is by name, so no score
-   moves.
+   index changes on its next accept. Pairing is by name, so no score
+   moves — and neither does a drawing: the report's and the tool's drawn
+   reference (and the error overlays taken from it,
+   `context_builder.build_trajectories`) paired by INDEX until the U1
+   review, so a baseline accepted under the old sorted order drew another
+   variable's reference under a name; it pairs by name now, as scoring
+   does.
 
 **Consequences.** The report and the tool draw the same plots from the
 same two functions, and a criterion added or removed moves a plot on both.

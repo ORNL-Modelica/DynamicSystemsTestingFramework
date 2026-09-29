@@ -58,6 +58,9 @@ _RAMP = HUES[0]
 
 _SPACE = re.compile(r"\s+")
 
+#: The target line and the grey "+ new plot"'s reason on a run that failed.
+RUN_FAILED = "The run failed: no plots"
+
 
 def marker(kind: str, row_id: str) -> str:
     """A row's ``var-*`` marker: ``kind:row_id`` with ALL whitespace taken
@@ -110,6 +113,8 @@ class VariablesDrawer:
         self.tracked: frozenset[str] = frozenset()
         #: The texts two or more of the drawn rows read as.
         self.alike: set[str] = set()
+        #: Whether the run failed, as the last build read it.
+        self.failed = False
         #: The filter and its toggles are the tab's (`TabState`): a switch
         #: of test builds a new drawer, and it starts from them.
         self.state = page.state
@@ -233,12 +238,13 @@ class VariablesDrawer:
 
     def _signature(self, reads: _Reads | None) -> object:
         """Everything a build draws from: the reads, the selected plot and
-        the number of plots, the filter and the menus, the families opened,
-        and the reason an empty result gives."""
+        the number of plots, whether the run failed, the filter and the
+        menus, the families opened, and the reason an empty result gives."""
         page = self.page
         head = (
             page.selected,
             len(page.cards),
+            page.run_failed(),
             self.state.vars_needle,
             self.state.vars_regex,
             self.state.vars_case,
@@ -276,9 +282,14 @@ class VariablesDrawer:
             self.target.set_text("")
             return
         n = len(page.cards)
+        # A failed run has no plots (O2): nothing to add context to, and a
+        # watch plot made on it would draw nothing.
+        self.failed = page.run_failed()
         self.target.set_text(
             f"Checkboxes add context to plot {page.selected + 1} of {n}"
             if n
+            else RUN_FAILED
+            if self.failed
             else "No plot yet: + new plot adds one"
         )
         try:
@@ -468,7 +479,9 @@ class VariablesDrawer:
             # at most: grey, with why, on a family's row (its members,
             # opened, each make one) and on any plot's subject.
             why = (
-                f"Already the subject of plot {row.subject_of + 1}"
+                RUN_FAILED
+                if self.failed
+                else f"Already the subject of plot {row.subject_of + 1}"
                 if row.subject_of is not None
                 else "A watch plot shows one variable: open the family"
                 if len(row.members) > 1
@@ -533,11 +546,15 @@ class VariablesDrawer:
         """A WATCH plot of the row's one variable, after every other plot,
         selected. Read NOW: a variable some plot has as its subject — a
         second click before the page caught up with the first — makes
-        none."""
+        none, and neither does a run that failed since the row was drawn."""
         page = self.page
         session = page.shell.session
         plots = session.plots(page.model_id)
-        if len(row.members) != 1 or any(row.members[0] in p.subject for p in plots):
+        if (
+            page.run_failed()
+            or len(row.members) != 1
+            or any(row.members[0] in p.subject for p in plots)
+        ):
             return
         extras = new_watch(session.layout(page.model_id), row.members[0])
         page.stage_layout(extras, select=len(plots))

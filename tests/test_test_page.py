@@ -1151,6 +1151,34 @@ async def test_a_layout_draws_its_context(plots_shell):
         assert _one(user, "plot-missing:0").text == "Not in this result: no.such"
 
 
+async def test_a_plot_whose_subject_the_result_lacks_draws_no_chart(shell):
+    """A tree leaf on `ghost`, which the result does not carry: its card is
+    the heading, its pill, the note and its criteria row — no empty chart,
+    and nothing for the browser's observer to ask to draw."""
+    _stage_tree(
+        shell,
+        A,
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "range", "variable": "ghost", "min_value": 0.0},
+            ],
+        },
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [("x",), ("ghost",)]
+        assert _one(user, "plot-missing:1").text == "Not in this result: ghost"
+        assert list(page.cards[1].rows) == ["/metrics/children/1"]
+        assert _none(user, "plot-slot:1") and not _none(user, "plot-slot:0")
+        with page.client:
+            page.on_visible("1")
+            page.cards[1].show()
+            page.cards[1].redraw()
+        assert page.cards[1].plot is None
+
+
 async def test_criteria_rows_follow_the_tree(shell):
     _stage_tree(shell)
     async with user_simulation(root=shell.index) as user:
@@ -1223,9 +1251,11 @@ async def test_the_plus_adds_a_criterion_for_the_variable(shell):
 
 
 async def test_a_test_with_no_result_has_no_cards(shell):
+    """C's run left no result file: the reader hands in a FAILED result
+    (the Suite row says sim failed), so the reason is the run."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, C)
-        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert _one(user, "plots:count").text == "no plots: the run failed"
         assert page.cards == []
 
 
@@ -1258,7 +1288,7 @@ async def test_a_failed_simulations_partial_result_draws_no_cards(shell):
         with page.client:
             page.sync()
         assert page.cards == []
-        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert _one(user, "plots:count").text == "no plots: the run failed"
 
 
 async def test_a_failed_run_draws_no_cards_whatever_its_tree_and_extras(shell):
@@ -1281,7 +1311,7 @@ async def test_a_failed_run_draws_no_cards_whatever_its_tree_and_extras(shell):
             page.sync()
         assert page.cards == []
         assert shell.session.plots(A) == ()
-        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert _one(user, "plots:count").text == "no plots: the run failed"
 
 
 async def test_watch_plots_with_no_derived_plot_say_so(shell):
@@ -1555,6 +1585,14 @@ async def test_the_cards_follow_the_tree_and_their_rows_are_in_tree_order(
         assert _one(user, f"crumb:0:{N_T2}").text == "and ›"
         assert _one(user, f"crumb:0:{N_KT1}").text == "and › k-of-n ›"
         assert "dstf-crumb" in _one(user, f"crumb:1:{N_KX}").classes
+        # A card's crumbs are as wide as its longest, so its leaf names
+        # start in one column whatever the rows' depths.
+        for path in (N_T2, N_KT1):
+            assert _one(user, f"crumb:0:{path}").style == {"min-width": "14ch"}
+        for path in (N_KX, N_X2):
+            assert _one(user, f"crumb:1:{path}").style == {"min-width": "14ch"}
+        # y's one row is at depth 1: "and ›", five characters.
+        assert _one(user, f"crumb:2:{N_Y}").style == {"min-width": "5ch"}
         assert _one(user, "plots:count").text == "3 plots · derived from the criteria"
         # The family's card names each pill's variable; a lone one does not.
         assert _one(user, "plot-pill:0:pipe.T[2]").text.startswith("pipe.T[2] ")
@@ -1675,6 +1713,33 @@ async def test_a_watch_card_says_no_criteria_and_its_remove_stages_the_rest(
         user.find(marker="remove-plot:3").click()
         assert _pending(shell, "/plots") == [{"var": "x", "context": ["z"]}]
         await _settled(lambda: len(page.cards) == 3)
+
+
+async def test_a_watch_cards_plus_follows_the_tracked_names(extras_shell):
+    """The tracked names are part of what the cards are built from: w
+    becoming tracked moves no plot — its watch plot stays a watch plot —
+    and a page that did not rebuild kept its `+` grey on a stale snapshot."""
+    import numpy as np
+
+    from dstf.backends.types import VariableResult
+
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (plus,) = _inside(user, "add-for:w", "criteria-header:3")
+        assert not plus.enabled
+        result = shell.session.project.results[A]
+        t = np.asarray(result.variables[0].time)
+        result.variables.append(
+            VariableResult(
+                index=len(result.variables) + 1, time=t, values=0 * t, name="w"
+            )
+        )
+        with page.client:
+            page.sync()
+        assert [c.resolved.watch for c in page.cards] == [False, False, False, True]
+        (plus,) = _inside(user, "add-for:w", "criteria-header:3")
+        assert plus.enabled
 
 
 async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):
@@ -5090,6 +5155,69 @@ def _tooltip_text(element) -> str:
     return tip.text
 
 
+async def test_a_selected_family_that_loses_a_member_keeps_the_selection(
+    nested_shell,
+):
+    """The selection follows its plot by ANY member of the subject, not the
+    exact subject: pipe.T[2]'s one criterion goes, the family's plot is
+    pipe.T[1]'s now and moves to where the tree first names pipe.T[1] — the
+    selection goes with it."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [
+            ("pipe.T[1]", "pipe.T[2]"),
+            ("x",),
+            ("y",),
+        ]
+        with page.client:
+            page.select(0)
+        shell.session.stage([PatchOp(A, "remove", N_T2)])
+        await _settled(
+            lambda: (
+                [c.resolved.subject for c in _page(shell, user).cards]
+                == [("x",), ("pipe.T[1]",), ("y",)]
+            )
+        )
+        page = _page(shell, user)
+        assert page.selected == 1 and _ringed(page) == [1]
+
+
+async def test_a_refused_placement_keeps_following_the_plot(nested_shell, monkeypatch):
+    """A `stage_layout(select=...)` the Session refuses restores the
+    selection AND what it follows: a later rebuild still moves the
+    selection with its plot."""
+    from dstf.authoring.layout import new_watch
+    from dstf.discovery.patch_apply import PatchError
+
+    shell = nested_shell
+    session = shell.session
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.select(1)  # x
+        real = session.stage
+
+        def refuse(ops):
+            raise PatchError("refused")
+
+        monkeypatch.setattr(session, "stage", refuse)
+        with page.client:
+            assert not page.stage_layout(new_watch(session.layout(A), "w"), select=3)
+        monkeypatch.setattr(session, "stage", real)
+        assert page.selected == 1 and page.follow == ("x",)
+        # x moves to the top when pipe.T[2]'s criterion goes; the selection
+        # goes with it.
+        session.stage([PatchOp(A, "remove", N_T2)])
+        await _settled(
+            lambda: (
+                [c.resolved.subject for c in _page(shell, user).cards]
+                == [("x",), ("pipe.T[1]",), ("y",)]
+            )
+        )
+        assert _page(shell, user).selected == 0
+
+
 class TestLayoutControls:
     """The plot the drawer's checkboxes act on (the owner's ruling, Q5 A),
     and the layout edits a card and the tree line make. `page_shell` is A
@@ -5571,6 +5699,64 @@ class TestVariablesDrawer:
             check.click()  # drawn for plot 1, which shows z
             assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0", "z")]
 
+    async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell):
+        """A failed run has no plots (O2), and a watch plot made on it
+        would draw nothing: the drawer says why, its checks and every
+        "+ new plot" are grey, and a click that reaches `_new` anyway —
+        drawn before the run failed — stages nothing."""
+        from dstf.authoring.variable_rows import VarRow
+        from dstf.backends.types import TestResult
+
+        shell = drawer_shell
+        result = shell.session.project.results[A]
+        shell.session.project.results[A] = TestResult(
+            model_id=A, success=False, variables=list(result.variables)
+        )
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            assert page.cards == []
+            assert _one(user, "var-target").text == "The run failed: no plots"
+            assert not _one(user, var_marker("var-new", ROW_Z)).enabled
+            assert _new_why(user, ROW_Z) == "The run failed: no plots"
+            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
+            drawer = page.rail.variables
+            assert drawer is not None
+            row = VarRow(
+                key="z",
+                id=ROW_Z,
+                members=("z",),
+                text="z",
+                file_text="z",
+                name=None,
+                on_selected=0,
+                elsewhere=(),
+                is_subject=False,
+                subject_of=None,
+            )
+            with page.client:
+                drawer._new(row)
+            assert shell.session.spec.pending == []
+
+    async def test_a_run_that_fails_moves_the_drawers_signature(self, drawer_shell):
+        """Whether the run failed is part of what the drawer is drawn from:
+        a test with no plot before and after (a statistics-only tree) moves
+        nothing else the rows read, and its "+ new plot" stayed live."""
+        from dstf.backends.types import TestResult
+
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            with page.client:
+                reads = drawer._read()
+                before = drawer._signature(reads)
+                result = shell.session.project.results[A]
+                shell.session.project.results[A] = TestResult(
+                    model_id=A, success=False, variables=list(result.variables)
+                )
+                assert drawer._signature(reads) != before
+
     async def test_new_plot_on_a_family_row_stages_nothing(self, drawer_shell):
         """C3: a watch plot shows ONE variable. The family row's button is
         grey; a click that reaches `_new` anyway — drawn before the row
@@ -5778,7 +5964,8 @@ class TestVariablesDrawer:
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user, B)
             assert _one(user, "var-empty").text == "this test has no result"
-            assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
+            # The reader hands a missing result file in as a failed run.
+            assert _one(user, "var-target").text == "The run failed: no plots"
 
     async def test_the_cap_line(self, tmp_path):
         from dstf.authoring.variable_rows import cap, variable_groups
@@ -7053,6 +7240,18 @@ def test_a_label_splits_at_its_last_index_or_twelve_from_its_end():
         "Q_flow_total",
     )
     assert middle_split("x") == ("", "x")
+    # An index more than twelve from the end is no tail: the tail from it
+    # took the width and hid the head.
+    assert middle_split("volume[1].medium.state.phase.somethingLonger.T") == (
+        "volume[1].medium.state.phase.somet",
+        "hingLonger.T",
+    )
+    assert middle_split("abs(a[1] - b.c.d.e.f.g.h.i.j.k.l.m.n.o)") == (
+        "abs(a[1] - b.c.d.e.f.g.h.i.",
+        "j.k.l.m.n.o)",
+    )
+    assert middle_split("a.b[1234567890]") == ("a.b", "[1234567890]")
+    assert middle_split("a.b[12345678901]") == ("a.b[", "12345678901]")
 
 
 async def test_variable_labels_are_cut_in_the_middle_the_switcher_is_not(

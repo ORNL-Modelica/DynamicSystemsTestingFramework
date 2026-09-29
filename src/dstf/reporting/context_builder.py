@@ -341,10 +341,6 @@ def build_trajectories(
     """
     trajectories = []
     ref_time_list = ref_data.get("time", []) if ref_data else []
-    ref_vars_by_idx = {}
-    if ref_data:
-        for rv in ref_data.get("variables", []):
-            ref_vars_by_idx[rv["index"]] = rv
 
     if result and result.variables:
         # One entry per variable NAME, not per comparison: several leaves may
@@ -352,25 +348,31 @@ def build_trajectories(
         # ``index=0`` (the evaluator never resolved a variable to pair with).
         # Pairing that by index finds nothing and emits an EMPTY entry under
         # the real name — a second, blank copy beside the healthy one, or the
-        # variable's only entry when every leaf on it is a sentinel. So: pair
-        # by index when any leaf on the name resolved one, else by name.
+        # variable's only entry when every leaf on it is a sentinel. So: the
+        # actual curve by index when any leaf on the name resolved one, else
+        # by name.
         by_name: dict[str, list] = {}
         for vc in comparisons:
             by_name.setdefault(vc.name, []).append(vc)
-        ref_vars_by_name = {}
+        # The REFERENCE always by name, as scoring pairs it: a baseline's
+        # indices are the order it was accepted in, and the pattern order
+        # (D140 item 9) moved them — by index, a baseline accepted under the
+        # old sorted order drew another variable's reference, and its error
+        # overlays, under this one's name. The first entry of a name wins,
+        # as it does for the comparator.
+        ref_vars_by_name: dict[str, dict] = {}
         if ref_data:
             for rv in ref_data.get("variables", []):
                 if rv.get("name"):
-                    ref_vars_by_name[rv["name"]] = rv
+                    ref_vars_by_name.setdefault(rv["name"], rv)
         for name, name_comparisons in by_name.items():
             index = next((vc.index for vc in name_comparisons if vc.index > 0), 0)
             if index > 0:
                 act_var = next((v for v in result.variables if v.index == index), None)
-                ref_var = ref_vars_by_idx.get(index)
             else:
                 act_var = next((v for v in result.variables if v.name == name), None)
-                ref_var = ref_vars_by_name.get(name)
                 index = act_var.index if act_var else 0
+            ref_var = ref_vars_by_name.get(name)
             trajectories.append(
                 {
                     "index": index,

@@ -154,10 +154,11 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 /* A row's breadcrumb — its ancestors' kinds, `and › k-of-n ›` — leads it,
    muted and on one line: a plot's rows are its variable's leaves from
-   anywhere in the tree, and the crumb says where each sits. A fixed
-   minimum width, so a plot's `and ›` and `and › k-of-n ›` rows start their
-   names in one column (the report's `.node-crumbs` keeps the same one). */
-.dstf-crumb { white-space: nowrap; min-width: 14ch; }
+   anywhere in the tree, and the crumb says where each sits. Its minimum
+   width is its card's longest crumb, in ch (`PlotCard`), so a plot's
+   `and ›` and `and › k-of-n ›` rows start their names in one column (the
+   report's `.node-crumbs` does the same). */
+.dstf-crumb { white-space: nowrap; }
 /* A plot's context series (grey on the plot, not scored), listed above it
    each with the × that takes it off: Plotly's legend cannot hold a
    button. */

@@ -2569,7 +2569,7 @@ class TestPlots:
         """A backend that stopped mid-run leaves what it had in the file.
         Listing those variables gave the page a card each for a run that
         produced nothing the test asked for (the final review); the page
-        says "no plots: this test has no result" instead."""
+        says "no plots: the run failed" instead."""
         s = self._open(tmp_path)
         assert s.tracked(B) == ["x", "y"]
         tt = np.asarray([i / 4 for i in range(5)])
@@ -2982,6 +2982,24 @@ class TestPlots:
         s._reload_results()
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         assert s.plots(A)[0].missing == ("z",)
+
+    def test_a_locked_model_whose_names_were_never_read_marks_nothing_missing(
+        self, tmp_path
+    ):
+        """While a job holds the model, the file is not listed — and a
+        listing never read is not a listing of nothing: the file-only z is
+        not named missing (it is, once the names are read)."""
+        from dstf.authoring.session import RunningJob
+
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s._reads.pop(A, None)
+        s.running = RunningJob(label="rerun", models=frozenset({A}))
+        assert [p.missing for p in s.plots(A)] == [(), ()]
+        assert not s._reads_for(A).names_read
+        s.running = None
+        assert [p.missing for p in s.plots(A)] == [(), ()]
+        assert s._reads_for(A).names_read
 
     def test_the_session_view_mirrors_the_three_reads(self, tmp_path):
         from dstf.authoring.session import Selection, SessionView

@@ -1192,6 +1192,13 @@ class TestServerRenderedTree:
             assert doc.by_id(mount).by_class("node-combinator") == [], mount
         assert crumbs(doc.by_id("nodes-0")) == ["and ›", "and › warn ›"]
         assert crumbs(doc.by_id("nodes-1")) == ["and ›"]
+        # Each plot's crumbs are as wide as its longest, so its leaf names
+        # start in one column: no fixed width that a deeper row outgrows.
+        widths = lambda mount: [  # noqa: E731
+            el.attrs.get("style") for el in mount.by_class("node-crumbs")
+        ]
+        assert widths(doc.by_id("nodes-0")) == ["min-width: 12ch"] * 2
+        assert widths(doc.by_id("nodes-1")) == ["min-width: 5ch"]
 
     def test_no_tree_mount_carries_a_form_control(self, tmp_path):
         page, _comp = self._render(tmp_path)
@@ -1914,6 +1921,10 @@ class TestPlotSections:
         notes = [" ".join(el.text().split()) for el in section.by_class("plot-note")]
         assert notes == ["Not in this result: gone"]
         assert [el.text().strip() for el in section.by_class("var-status")] == ["FAIL"]
+        # No empty chart: the heading, the badge, the note and the row.
+        assert section.by_class("plotly-chart") == []
+        assert len(section.by_class("criteria-row")) == 1
+        assert _parse(page).by_id("variable-section-0").by_class("plotly-chart")
         assert '<select class="error-overlay-select" data-plot="1">' not in page
         # The plots the result has keep theirs.
         assert '<select class="error-overlay-select" data-plot="0">' in page
@@ -2572,6 +2583,54 @@ class TestTheTrajectoriesCarryTheExpression:
 
         _traj, _diag, nobaseline = build_trajectories([], self._result(""), None)
         assert nobaseline[0]["expression"] == ""
+
+
+def test_the_drawn_reference_is_paired_by_name_not_by_index():
+    """A baseline accepted before the pattern-order change stored the spec's
+    `["b", "a"]` sorted — a at index 1, b at 2 — and the run now resolves
+    them in pattern order, b at 1. Scoring pairs by name; the DRAWN
+    reference (and the error overlays taken from it) paired by index, so b
+    drew a's reference. Both pair by name."""
+    import numpy as np
+
+    from conftest import make_test_model
+    from dstf.backends.types import (
+        TestResult,
+        VariableResult,
+        resolve_variable_patterns,
+    )
+    from dstf.comparison.comparator import compare_test
+    from dstf.reporting.context_builder import build_trajectories
+
+    t = np.linspace(0, 1, 11)
+    vals = {"a": np.full_like(t, 1.0), "b": np.full_like(t, 100.0)}
+    reference = {
+        "test_id": 1,
+        "time": t.tolist(),
+        "variables": [
+            {"index": 1, "name": "a", "expression": "", "values": vals["a"].tolist()},
+            {"index": 2, "name": "b", "expression": "", "values": vals["b"].tolist()},
+        ],
+    }
+    test = make_test_model("P.M", variable_patterns=["b", "a"])
+    order = resolve_variable_patterns(test.variable_patterns, ["a", "b"])
+    assert order == ["b", "a"]
+    result = TestResult(
+        model_id="P.M",
+        success=True,
+        variables=[
+            VariableResult(index=i + 1, time=t, values=vals[n], name=n)
+            for i, n in enumerate(order)
+        ],
+    )
+    comp = compare_test(test, result, reference)
+    assert comp.passed
+    trajectories, _diag, _nb = build_trajectories(
+        list(comp.variables), result, reference
+    )
+    by = {tr["name"]: tr for tr in trajectories}
+    assert by["b"]["ref_values"] == vals["b"].tolist()
+    assert by["a"]["ref_values"] == vals["a"].tolist()
 
 
 class TestAVariableReadsAsItsExpression:

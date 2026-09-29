@@ -151,8 +151,15 @@ class CriterionRow:
     `paint` writes a new verdict into the row that is already there."""
 
     def __init__(
-        self, card: PlotCard, leaf: dict, taker: str | None, crumb: str = ""
+        self,
+        card: PlotCard,
+        leaf: dict,
+        taker: str | None,
+        crumb: str = "",
+        crumb_ch: int = 0,
     ) -> None:
+        """``crumb_ch`` is the card's longest crumb, in characters: every
+        crumb on the card is that wide, so the names start in one column."""
         index, path = card.index, str(leaf["path"])
         self.card, self.leaf = card, leaf
         #: The parent's combinator the controls were built under: it takes
@@ -205,9 +212,9 @@ class CriterionRow:
             # card's rows come from anywhere in it (a plot is a view of the
             # tree), and their order alone does not say which is under what.
             if crumb:
-                ui.label(crumb).classes("dstf-crumb dstf-why").mark(
-                    f"crumb:{index}:{path}"
-                )
+                ui.label(crumb).classes("dstf-crumb dstf-why").style(
+                    f"min-width: {crumb_ch}ch"
+                ).mark(f"crumb:{index}:{path}")
             self.pill = Pill(leaf_status(leaf), f"criterion-pill:{index}:{path}")
             self.name = MiddleCut().classes(
                 "dstf-crit-name text-body2 text-weight-medium"
@@ -424,8 +431,13 @@ class PlotCard:
                 ).mark(f"plot-missing:{index}")
             if resolved.context:
                 self._context_row(index)
-            self.slot = ui.element("div").classes("dstf-plot-slot w-full")
-            self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
+            # A subject the result lacks entirely has no plot: an empty
+            # chart said nothing the note does not, and no slot is nothing
+            # for the browser's observer to ask to draw.
+            self.slot: ui.element | None = None
+            if not set(resolved.subject) <= set(resolved.missing):
+                self.slot = ui.element("div").classes("dstf-plot-slot w-full")
+                self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
             self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
             takers = parent_kinds(view)
@@ -434,10 +446,12 @@ class PlotCard:
                 # rows are where the tree has them, each with its crumb —
                 # the report's walk (`criteria_rows`), so both tiers lead a
                 # row the same way.
-                for row in criteria_rows(view, self.subject):
+                rows = criteria_rows(view, self.subject)
+                crumb_ch = max((len(row["crumbs"]) for row in rows), default=0)
+                for row in rows:
                     path = str(row["leaf"]["path"])
                     self.rows[path] = CriterionRow(
-                        self, row["leaf"], takers.get(path), row["crumbs"]
+                        self, row["leaf"], takers.get(path), row["crumbs"], crumb_ch
                     )
             if resolved.watch:
                 ui.label("No criteria yet.").classes("dstf-why").mark(
@@ -708,7 +722,7 @@ class PlotCard:
         viewport (or a test did). The card remembers it was asked, so a try
         that raised is retried by the next sync."""
         self.wanted = True
-        if self.plot is not None:
+        if self.plot is not None or self.slot is None:
             return
         view = self._view(view)
         # Whatever a previous try left: `show()` is called again on every

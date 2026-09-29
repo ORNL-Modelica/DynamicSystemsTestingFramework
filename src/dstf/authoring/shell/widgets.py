@@ -118,9 +118,10 @@ TAIL_CHARS = 12
 def middle_split(text: str) -> tuple[str, str]:
     """``(head, tail)``: the tail is the text from the last ``[`` — the
     index says which element — or its last `TAIL_CHARS` characters when it
-    has none (D140, Q20)."""
+    has none, or when that ``[`` is further back than that: a tail from
+    ``volume[1]`` on took the width and hid the head (D140, Q20)."""
     at = text.rfind("[")
-    if at == -1:
+    if at == -1 or len(text) - at > TAIL_CHARS:
         at = max(0, len(text) - TAIL_CHARS)
     return text[:at], text[at:]
 

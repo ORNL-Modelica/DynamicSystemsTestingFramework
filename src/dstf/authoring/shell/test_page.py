@@ -211,6 +211,13 @@ class TestPage:
             return SCORING_FAILED
         return "this test has no baseline"
 
+    def run_failed(self) -> bool:
+        """Whether the test's last run failed: it has no plots whatever its
+        tree and extras say (O2), and a plot made on it would draw
+        nothing."""
+        result = self._result()
+        return result is not None and not result.success
+
     def _no_plots_reason(self, from_tree: bool) -> str:
         """Why there is no PLOT, which is not why there is no tree: a test
         with no tree still draws one plot per tracked variable, so a page
@@ -221,12 +228,12 @@ class TestPage:
         test with no baseline has none, and its authored tree still names
         its plots."""
         # A failed run first: it has no plots whatever its tree says (O2).
-        result = self._result()
-        if result is not None and not result.success:
-            return "this test has no result"
+        # It has a result — a partial one — so not "no result".
+        if self.run_failed():
+            return "the run failed"
         if from_tree:
             return "this test's criteria score statistics, not signals"
-        if result is None:
+        if self._result() is None:
             return "this test has no result"
         return "the result has no variables"
 
@@ -701,16 +708,20 @@ class TestPage:
 
     def shape(self, view: dict | None) -> Any:
         """What the cards are BUILT from and cannot be repainted through:
-        the criteria and their variables, and the plots themselves — each
+        the criteria and their variables, the plots themselves — each
         one's subject, context, whether it is a watch plot, and what the
-        result lacks. NOT a leaf's metric — a mode switch repaints a row's
-        name in place."""
+        result lacks — and the tracked names every card's `+` was handed
+        (`Selection.tracked`): a variable that becomes tracked moves no
+        plot, and a `+` built before kept its stale snapshot. NOT a leaf's
+        metric — a mode switch repaints a row's name in place."""
+        session = self.shell.session
         return (
             tuple((leaf["path"], leaf.get("variable")) for leaf in leaves_of(view)),
             tuple(
                 (plot.subject, plot.context, plot.watch, plot.missing)
-                for plot in self.shell.session.plots(self.model_id)
+                for plot in session.plots(self.model_id)
             ),
+            frozenset(session.tracked(self.model_id)),
         )
 
     # -- following the Session -------------------------------------------------

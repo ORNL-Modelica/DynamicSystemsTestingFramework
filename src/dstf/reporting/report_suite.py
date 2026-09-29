@@ -342,6 +342,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
             if lone in nobaseline
             else None
         ) or []
+        criteria = criteria_rows(tree_view, plot.subject)
         records.append(
             {
                 "kind": plot.kind,
@@ -385,7 +386,10 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 "watch": plot.watch,
                 "variables": variables,
                 "overlays": [_overlay_row(ov) for ov in overlays],
-                "criteria": criteria_rows(tree_view, plot.subject),
+                "criteria": criteria,
+                # Every crumb as wide as the longest, in ch: the leaf names
+                # start in one column.
+                "crumb_ch": max((len(row["crumbs"]) for row in criteria), default=0),
                 # Read as the texts: no muted name rides beside them.
                 "context": [texts.get(n, n) for n in plot.context],
             }
