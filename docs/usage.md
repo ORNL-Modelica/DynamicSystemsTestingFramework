@@ -843,7 +843,16 @@ filled); "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
 and save opens the preview on this test, and Discard drops this test's edits
 only — the header's Discard drops every test's); "Passes against its
 baseline." (grey, Accept in the strip's ⋮ menu: there is nothing new to
-accept). The count is of pending ops, so a flat test's first criterion edit
+accept). A criterion on a variable the last run did not record scores "not
+found in the result" until a run records it, and the strip says so: with the
+edit unsaved, "1 unsaved edit · verdict stays FAIL · 1 new variable: rerun to
+score it", Rerun the one filled action (Preview and save and Discard quiet,
+Accept in the ⋮); saved without a rerun, "1 new variable the last run did not
+record: rerun to score it." (Rerun filled, Accept in the ⋮ — the baseline would
+not hold it yet). Where the result FILE already holds the variable — Dymola's
+and the JSON driver's (Julia, Python) record every variable — the tool reads it
+again the moment the criterion is staged and scores it at once; the strip asks
+for a rerun only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
 reads 2 — its tree written out, and the edit. Under the strip, the criteria tree is
 closed to a single line — the root's verdict, what the root is, the tally, and
 the first failures by name, each a button that jumps to its criterion — and
@@ -861,12 +870,12 @@ controls (Edit tree, below). Clicking a row opens that criterion's editor
 below it, one at a time, with the plot above as its editing surface — drag a
 ring to move a handle, or edit the fields; every change is staged, and Save
 writes them. The criteria rows' header carries one `+` ("Add a criterion for
-x", x the plot's variable, a family's first member; its form's select offers
-the test's other variables). Context series are listed in a row above the
+x", x the plot's variable, a family's first member; its form's picker offers
+every variable of the result — see Edit tree). Context series are listed in a row above the
 plot, each with a `×` that takes it off. A derived plot has no Remove — an
 icon says "This plot exists because of its criteria." — and goes when its
 last criterion goes; a watch plot reads "No criteria yet." and has **Remove
-plot** (its `+` is grey while its variable is not tracked). Reset layout, on
+plot**; its `+` adds a criterion on its variable, which tracks it. Reset layout, on
 the tree's line, stages removing the `plots` key: the context series and
 watch plots go, the derived plots stay. Focus on the plot's own toolbar shows
 that plot alone — the focus bar reads "Showing 1 of N plots", and its select
@@ -907,8 +916,16 @@ test (stopped before it) is no result, not a failed run: the drawer says "No
 result yet: no plots", as the strip, the count line and the tree line say the
 test has no result.
 Rows fold as the plots do: an array by result-file name into one row, a
-`UnitTests` element always a row of its own. Both drawers carry one control set, and every setting is the tab's,
-so a switch of test keeps it:
+`UnitTests` element always a row of its own. A row's label has its first line
+to itself; its result-file name (where the names menu shows it), "plot N" and
+"+ new plot" are on a smaller second line, which a row with nothing else on it
+drops ("+ new plot" then sits at the first line's right). The open drawer
+resizes by its right edge: drag it, or focus it (Tab) and press ← / → (16 px,
+64 with Shift), Home or End. It is 320 px at first, at least 240, and at most
+60% of the window and never so wide that the plots have less than 480 px; the
+width is the tab's, so a switch of test keeps it, and a narrower window
+narrows it to fit. Both drawers carry one control set, and every setting is
+the tab's, so a switch of test keeps it:
 
 - a filter box with **`.*`** (regular expression) and **`Aa`** (match case)
   beside it — a substring, or a glob with `*` / `?` matched against the whole
@@ -947,9 +964,14 @@ capabilities wrote.
 form derived from that metric's config dataclass, the window, and the baseline
 the leaf scores `against` — `primary`, plus the soft_checks when the leaf sits
 under a `warn`, since a soft_check anywhere else is what the validator
-refuses. A dataclass
-default is shown as a placeholder and never written, so an unset tolerance keeps
-falling back to the test's. Structured fields — tube control points,
+refuses. A criterion without a tolerance of its own is scored with the test's
+base one, and its Tolerance field says which on the line under it — "in
+effect: 0.01 (the test's tolerance)", or the baseline's, or the project's
+(`testing.json`'s, the CLI's, or the 1e-4 default) — and never writes it, so
+an unset tolerance keeps falling back; a typed value takes the line away, and
+clearing it brings it back. A field with nothing in effect shows its default
+as a placeholder, never written either. Every field of the row keeps that
+line, so their input lines sit level. Structured fields — tube control points,
 checkpoints, declared events and peaks — are shown read-only here and edited in
 Edit on plot. Every control change stages one `replace` of the whole leaf and
 rescores the test, so the figure and the verdicts follow the edit; consecutive
@@ -965,6 +987,29 @@ combinator's kind and its `k` / weights / threshold, add a leaf, remove a node
 right after it; on a combinator, as its last child; a plot's `+` adds under the
 root. A test the flat path scored gets its implicit tree materialized by the
 same op.
+
+The add form's **Variable** is a picker over every variable of the result
+file, tracked or not, in sections: *On this plot* (the plot's variable and its
+context), *Other variables*, and *Diagnostics* (what the run recorded as one,
+such as Dymola's `CPUtime` and `EventCounter`). Its box filters as the drawers'
+do — a substring, a glob, `.*`, `Aa` — on a row's label or its result-file
+name; at most 200 rows are listed ("Showing 200 of N — narrow the search").
+↑ and ↓ move a ring through the rows from the box, Enter chooses the ringed
+row, a click chooses a row; the line under the list, "Chosen: …", names the
+choice even when the filter hides it. The **Metric** select follows the
+choice: a diagnostic offers `scalar` only, anything else every metric that
+scores a time series (and the one chosen before a diagnostic comes back).
+A criterion on a variable the test did not track is what tracks it: every
+backend records, stores and scores a criterion's variables after the test's
+`UnitTests` variables and `variables` patterns, with no change to `variables`
+(see the strip, above, for the rerun). A diagnostic's criterion scores its
+stored final — `scalar` with `quantity: "<name>.final"` — exactly for a count
+(`EventCounter`, or a diagnostic of whole numbers) and within 10% otherwise;
+`CPUtime` is added inside a `warn`, since a run's CPU time moves with the
+machine's load. Such a criterion has no plot: after its Add the tree opens on
+its row, and its values are not yet edited on the Test page. On a
+simulate-only test the form says "This test is simulate-only: nothing is
+scored" and its Add is grey.
 
 A combinator's kind is a dropdown in its row — and, or, k-of-n, warn,
 weighted, and below a separator "unwrap — its children take its place" (left

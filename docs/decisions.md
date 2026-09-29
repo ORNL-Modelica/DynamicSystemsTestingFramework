@@ -5680,3 +5680,178 @@ longest stall 2.7 s. What remains of it is the Test page's first full
 sync after the open (the result file's names read for its plots, the
 header's `status.json`), not the scan steps. The sibling-backend overlays
 of a test read before the index is ready arrive in a second draw. `tests/test_cold_open.py`.
+
+## D142 — A criterion tracks its variable; one picker adds it; the editor says the values in effect (2026-09-29)
+
+**Context.** Before U2 a criterion could only be added on a variable the
+test already tracked — its `UnitTests` variables and its `variables`
+patterns — through a select of those names; a watch plot of any other
+variable had a grey `+` (D140 C2). What a run recorded, stored and scored
+was that tracked set on every backend. The owner ruled on a grill
+(2026-09-28, D140 "What U2-U4 will do"): Q8 — one searchable picker in the
+add form, with the drawers' filter rules (substring, glob, `.*`, `Aa`),
+in sections "On this plot", "Other variables" (every result-file name)
+and "Diagnostics"; Q2 — the metric list narrows to the variable, a
+diagnostic offering `scalar` only; Q7 + Q18 b — a variable is tracked
+because a criterion names it: runs record, store and score it beside the
+UnitTests variables and the patterns, with NO `spec-update` or whitelist
+change, and after adding one the strip says to rerun (then accept, for a
+metric that needs a baseline). The owner's feedback on the editor
+("shouldn't all these fields be prepopulated with the correct values? …
+tolerance is floating above the others") and on the drawers (2026-09-29:
+a row's result-file name and "plot N" on a second line under the label;
+the rail's drawers resizable by dragging, the width kept per tab) joined
+the step. Two executing reviews then built the plan in archives, and the
+owner ruled three more (O1-O3, the plan's Corrections 1): O1 — with pending
+edits that name a new variable only Rerun is filled; Preview and save and
+Discard are quiet, Accept is in the ⋮; O2 — where the result FILE already
+holds the variable (Dymola, the JSON driver — Julia, Python) staging the
+criterion re-reads that model's result and scores it at once, no rerun;
+O3 — after a Save without a rerun, the sentence "N new variable(s) the
+last run did not record: rerun to score it/them."
+
+**Decision.**
+
+1. *Tracking by criteria (Q7 + Q18 b).* `comparison/tree_spec.py::
+   tree_variables(spec, diagnostics)` names the variables a tree needs:
+   every leaf that resolves a variable, unique, in tree order, the
+   diagnostics out (a diagnostic is scored through a quantity path over
+   its stored summary, never extracted as a trajectory). Every backend
+   reads them through `result_variables.criterion_variables(test,
+   diagnostics)`:
+   - Dymola and OpenModelica, read side: `compute_needed_variables` names
+     them and `extract_variables` gains a third pass (before the
+     diagnostics); one the file lacks is warned about like a missing
+     UnitTests variable.
+   - OpenModelica, simulate side: `build_simulate_args` adds them to the
+     `variableFilter`'s literal names, so both lanes (batch `.mos`, the
+     persistent worker) record them.
+   - FMPy: `_tracked` on the simulate and the read side. With no pattern
+     it records fmpy's default set (`fmpy.simulation._get_output_variables`
+     in 0.3.29: the outputs, else up to five states, else local
+     variables) beside the UnitTests and criterion variables — `output=None`
+     records that set, not every variable, so the criterion names alone
+     would have taken the outputs off the plot. The read side warns of a
+     UnitTests or criterion variable the saved columns lack.
+   - The JSON driver (Julia, Python): the read appends them and warns of
+     one the payload lacks.
+2. *The index rule.* On every backend a result's variables are the
+   UnitTests variables, then the patterns', then the criteria's, each
+   group's names appended only if not already there. The first two
+   groups' indices are what they were, so a stored baseline and
+   `migrate_names`, which reads indices 1..N as the UnitTests variables,
+   stay valid. FMPy followed this order only after the Part A review.
+3. *What the test tracks is not everything the result holds.*
+   `backends/common/result_variables.py::tracked_results(test, result)` —
+   the UnitTests variables and the patterns matched against the result's
+   names (`"*"` every one) — is what the flat path (no `metrics` tree)
+   scores (b4a730d), what a tree's "Tracked variables without a criterion"
+   warning reads, and the Variables drawer's Tracked group
+   (`Session.tracked`). A result read while a criterion was staged (a
+   rerun runs with the pending edits, a re-read with the merged TestModel)
+   keeps that variable after the criterion is discarded; scored as tracked
+   it failed the test for want of a baseline. Checked over TRANSFORM's 331
+   tests: the flat path's scoring is identical before and after.
+4. *The re-read (O2).* `Session.stage` re-reads a model whose criteria
+   name a variable the loaded result lacks and its result FILE holds, with
+   the merged TestModel, and rescores it. The read happens before the spec
+   and the tests are replaced, into a dict of its own: a read that raises
+   leaves the Session as it was. The file's listing is kept (the file did
+   not change). A name the file lacks (OpenModelica, FMPy, a typo) only a
+   rerun records, and the strip asks for that: EDITS_NEW, "N unsaved edits
+   · <verdict> · N new variable(s): rerun to score it/them", Rerun the one
+   filled action (O1); NEW_VARIABLES, after SIM_FAIL and before NO_REF, O3's
+   sentence, Rerun next and Accept in the ⋮ — accepted now, the baseline
+   would not hold it. A simulate-only test never reaches either: nothing is
+   scored there, and its add form says so with a grey Add.
+5. *The picker (Q8).* `authoring/picker_rows.py::picker_rows` is the rows
+   as data: On this plot (the plot's subject and context), Other variables
+   (every name of the result file, `Session.variable_names`, tracked or
+   not), Diagnostics (what the run RECORDED, `result.diagnostics` — a JSON
+   driver run records none) — each name once, in the first section that
+   has it, so a diagnostic on the plot is under On this plot; filtered on
+   the label OR the result-file name. `shell/picker.py::VariablePicker` is
+   the drawers' filter box over a list filtered on the SERVER — never a
+   `ui.select` over every name: TRANSFORM has a test of 76,992. ↑/↓ move a
+   ring from the box, Enter chooses, a click chooses. A key carries the
+   box's text as typed: the filter reaches the server 250 ms after the
+   last keystroke, and ↓ Enter typed inside that chose a row of the list
+   before the filter, which the list then hid. The box is a combobox over
+   a listbox, the ring's row its active descendant. The Metric select
+   follows the choice (Q2): a diagnostic offers `scalar`, any other
+   variable every metric that scores a time series, and coming back from
+   a diagnostic restores the metric chosen before it.
+6. *Values in effect.* A leaf without a tolerance of its own is scored
+   with the test's base one; its editor says which on the field's hint
+   line — `in effect: 0.01 (the test's tolerance)` — and never writes it.
+   The source is carried from the one base-tolerance resolution in
+   `comparator.py` (tree and flat paths) as `TestComparison.
+   tolerance_source`: `test` ("the test's tolerance"), `reference` ("the
+   baseline's tolerance", the baseline JSON's) or `project` ("the
+   project's tolerance", `Config.tolerance`: the CLI's, `testing.json`'s
+   or 1e-4). It rides `Session.tree_view` into the leaf's `in_effect`
+   only: the tolerance, only when the leaf lacks its own, its metric's form
+   has the field and it has no `min_value` / `max_value`; the report's view
+   carries none. A leaf that returned before it scored (a variable the
+   result lacks, a baseline the test does not have) carries the tolerance
+   it would have applied, not the comparison's 0.0. A typed value takes
+   the hint away; cleared, the field says it again.
+7. *Aligned fields.* Every one-line field of the editor row — the form's
+   numbers, selects and inputs, and the mode, window and `against`
+   controls — carries Quasar's `bottom-slots`, so each reserves the hint
+   line and their input lines share one y (measured in Chromium at 1280
+   and 900: 0.0 px apart; before, a number with a validation rule sat
+   20 px above the rest).
+8. *The drawer.* A Variables-drawer row is two lines: the chevron, the
+   check, the ramp and the label with the row's whole width, then —
+   muted — the result-file name where the names mode shows it, "plot N"
+   and "+ new plot". The rail's drawer resizes by the panel's right edge,
+   a 6 px grip: 240 px at least, at most 60% of the window AND the window
+   less the rail and 480 px for the plots column (`rail.max_panel`),
+   default 320, kept in `TabState.drawer_width`, so a switch of test keeps
+   it. The drag runs in the browser — the panel and the drawer's `width`
+   prop follow the pointer through NiceGUI 3.16's internal element store,
+   guarded so a NiceGUI that renames it still moves the panel — and the
+   release sends the width once; the server holds the same bounds. A
+   width the window no longer holds (kept from a wider one) is clamped in
+   the browser on load and on a window resize, and sent once. The grip is
+   a focusable separator: ←/→ 16 px, with Shift 64, Home and End the
+   bounds, one send on the key's release.
+9. *The controller's calls* (said to the owner; reversible on the owner's
+   word). K1: a diagnostic criterion is `{"metric": "scalar", "variable":
+   <name>, "quantity": "<name>.final"}`, seeded `tolerance 0 abs` for a
+   count (`EventCounter`, or any diagnostic whose every finite sample is
+   whole) and `0.1 rel` otherwise; `CPUtime` is a time by name (a tiny
+   model's can end on a whole 0.0 or 1.0). Amended by the Part B review: a
+   time (`seeds.TIMES`, today `CPUtime`) is seeded INSIDE a `warn` — a
+   run's CPU time moves with the machine's load, under `--parallel` most of
+   all, and 10% failed tests whose model did not change; a count stays
+   bare. The Add still opens the leaf's row. K2: at most 200 rows, "Showing
+   200 of N — narrow the search" when capped. K3: the value in effect on
+   the hint line (item 6). K4: `bottom-slots` on every one-line field
+   (item 7). K5: the grip's bounds and default (item 8; its widest gained
+   the plots' 480 px in the Part A review). K6: a drawer row's second line
+   collapses when it holds nothing but the hover-only "+ new plot", which
+   then sits at line 1's right. K7: a `Chosen: <label>` line under the
+   picker's list, so a choice the filter hides is still named before Add.
+   K8: a field with a hint is at least as wide as the hint (Quasar's hint
+   line never widens its field; at 140 px it wrapped to three lines): 5.4
+   px a character of the 11 px hint font plus 24 px.
+
+**What it reverses.** D140's C2: a watch plot's `+` is live — a criterion
+on its variable is what tracks it — and with it went `edit_tree.
+_variable_names`, `Selection.tracked`, `PlotCard`'s `tracked` and the
+Test page's tracked reads. The plan's K1 said a diagnostic criterion is
+not wrapped in `warn`, leaving that default to U3; CPU time now is.
+
+**Consequences.** A result holds the criteria's variables after the
+tracked ones on every backend, so a rerun records a criterion's variable
+and an accept stores it; `test_spec.json`, the CLI and the reference-JSON
+layout do not change. Known gaps: a diagnostic's criterion has no plot,
+so after its Add the tree card opens on its row (B6), and nothing on the
+Test page edits its values until U3's Statistics card hosts that editor;
+on the flat path a baseline JSON's `variable_overrides` tolerance is the
+value shown in effect but is attributed to the base's source. Not
+measured here: the TRANSFORM gate over a copy (the picker over the
+76,992-name test, the hints on a real test, the drawer), which the plan
+leaves to its controller.

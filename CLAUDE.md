@@ -35,6 +35,7 @@ DynamicSystemsTestingFramework/
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
+│   │                             #      picker_rows.py (the add form's variable picker as data: sections, filter, cap),
 │   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
 │   │                             #      situation.py (a test's situation and the strip's sentence), spec_preview.py (an entry's
 │   │                             #      diff as test_spec.json would write it), needle.py (the drawers' budgeted filter matcher),
@@ -42,6 +43,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
 │   │                             #      test_list (the Tests drawer's list), tree_card + plot_card,
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
+│   │                             #      picker.py (the add form's variable picker over picker_rows),
 │   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
@@ -120,7 +122,11 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # a status strip under the test's row saying its situation and filling the one next action,
 # +/wrap/− on every tree node (edit on a k-of-n or weighted one), each form an inline row under its
 # node: a `+` adds right after a criterion, last under a combinator, or from a plot's criteria
-# header; a combinator's kind is a dropdown in its row (unwrap in it). Focus shows one plot alone,
+# header; a combinator's kind is a dropdown in its row (unwrap in it). The add form picks from
+# EVERY variable of the result file and the run's diagnostics (a searchable picker; the Metric
+# list follows the choice); a criterion's variable is tracked by that, and the strip asks for a
+# rerun where the last run did not record it. An editor's field says the tolerance in effect
+# (the test's / baseline's / project's) under it. Focus shows one plot alone,
 # a select switches plots. Variable labels are cut in the middle (head…[3]).
 # A plot's legend holds its signals, above the plot; a swatch on each criteria row shows or hides
 # that criterion's drawing; one Error select per plot of one variable picks the error series.
@@ -129,7 +135,7 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # series on the selected plot, or a watch plot); `×`, Remove plot and Reset layout take them
 # away. Both drawers carry one control set: filter with .* / Aa; Tests has sort and names menus,
 # a group toggle and status pills (a Full name is cut at its start); Variables has sort, group
-# and names menus.
+# and names menus. A drawer resizes by its right edge (drag, or ←/→ on the focused grip).
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs
@@ -219,7 +225,7 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 
 ### test_spec.json format
 
-Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
+Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. A variable a `metrics` leaf names is tracked too: every backend records, stores and scores it after the `UnitTests` variables and the `variables` patterns (D142), with no change to `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
 
 **A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
 
