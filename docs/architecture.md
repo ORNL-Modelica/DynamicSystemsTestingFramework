@@ -76,10 +76,10 @@ src/dstf/
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
 │   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
-│   ├── plots.py              # A test's plots, derived from its criteria (D140): derive_plots over
-│   │                         #   plot_leaves (the tree's leaves, in order) and the `plots` extras
-│   │                         #   (context series, watch plots) — the ONE rule both tiers draw by;
-│   │                         #   tracked_names, the plots of a test with no tree
+│   ├── plots.py              # A test's plots, derived from its criteria (D140): test_plots — the ONE
+│   │                         #   function both tiers call — runs derive_plots over plot_leaves (the
+│   │                         #   tree's leaves, in order) and the `plots` extras (context series,
+│   │                         #   watch plots); tracked_names, the plots of a test with no tree
 │   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
 │   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
 │   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree

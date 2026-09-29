@@ -154,8 +154,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 /* A row's breadcrumb — its ancestors' kinds, `and › k-of-n ›` — leads it,
    muted and on one line: a plot's rows are its variable's leaves from
-   anywhere in the tree, and the crumb says where each sits. */
-.dstf-crumb { white-space: nowrap; }
+   anywhere in the tree, and the crumb says where each sits. A fixed
+   minimum width, so a plot's `and ›` and `and › k-of-n ›` rows start their
+   names in one column (the report's `.node-crumbs` keeps the same one). */
+.dstf-crumb { white-space: nowrap; min-width: 14ch; }
 /* A plot's context series (grey on the plot, not scored), listed above it
    each with the × that takes it off: Plotly's legend cannot hold a
    button. */
@@ -213,9 +215,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    three lines with two single-line fields stranded below it. */
 .dstf-fields .dstf-field-wide { order: 1; }
 .dstf-field-wide { width: 100%; }
-/* Focus (board 5A): "Showing 1 of N plots: <name>" and the way back to all
-   of them, on the accent tint so the page says at a glance that what is
-   below it is one plot of several. */
+/* Focus (board 5A): "Showing 1 of N plots", the switcher naming it, and
+   the way back to all of them, on the accent tint so the page says at a
+   glance that what is below it is one plot of several. */
 .dstf-focus-bar {
   background: var(--dstf-selection); border: 1px solid var(--dstf-accent);
   border-radius: 4px; padding: 4px 12px;

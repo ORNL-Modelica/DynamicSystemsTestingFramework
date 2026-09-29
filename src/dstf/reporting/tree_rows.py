@@ -57,7 +57,9 @@ def criteria_rows(view: dict | None, subject: Collection[str]) -> list[dict]:
     ``subject``, in TREE order, each with ``crumbs`` — its ancestors'
     kinds, the root's first (``and › k-of-n ›``). The tree's structure is
     read off a row, not off the order of the rows: a family's rows are
-    where the tree has them."""
+    where the tree has them. A stored-scalar leaf is no row of any plot
+    (:func:`names_a_series`): its ``variable`` names the leaf, not a
+    series. Both tiers list a plot's criteria by this."""
     wanted = set(subject)
     kinds = ancestor_kinds(view)
     return [
@@ -67,5 +69,5 @@ def criteria_rows(view: dict | None, subject: Collection[str]) -> list[dict]:
             "crumbs": crumb_text(kinds.get(str(leaf.get("path")), ())),
         }
         for leaf in leaves_of(view)
-        if leaf.get("variable") in wanted
+        if leaf.get("variable") in wanted and names_a_series(leaf)
     ]

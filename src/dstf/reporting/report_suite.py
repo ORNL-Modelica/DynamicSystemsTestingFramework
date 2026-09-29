@@ -148,47 +148,29 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
     every series of theirs the page's scored and no-baseline entries do not
     answer — context series and watch plots.
 
-    The plots are DERIVED from the test's criteria tree, by the rule the
-    authoring tool's `Session.plots` draws by: the leaves are
-    :func:`~dstf.discovery.plots.plot_leaves` (the authored tree, else the
-    implicit tree of what was compared, else none — one plot per tracked
-    variable, the owner's ruling O2), folded into families by
-    :func:`~dstf.discovery.plots.derive_plots` with every UnitTests element
-    its own plot (O3), and decorated by the entry's ``plots`` extras. Both
-    tiers draw the same plots.
+    The plots are :func:`~dstf.discovery.plots.test_plots`' — the ONE rule
+    the authoring tool's `Session.plots` draws by, so both tiers draw the
+    same plots: derived from the criteria tree, decorated by the entry's
+    ``plots`` extras, none for a failed run.
 
     A test with no extras — or no backend class or test dir to read a
     result file through — opens no result FILE: every derived subject is a
     scored or tracked variable the render context already carries, so 331
-    TRANSFORM reports pay nothing. An extra's series is taken from the
-    result in memory when it is there, and read from the file only when it
-    is not.
+    TRANSFORM reports pay nothing, and what the result carries is what the
+    plots can draw. An extra's series is taken from the result in memory
+    when it is there, and read from the file only when it is not.
     """
-    from ..discovery.plots import derive_plots, plot_leaves, tracked_names
-    from ..discovery.unit_tests import is_unit_test_variable
+    from ..discovery.plots import test_plots
 
     if test is None:
         return (), {}
-    compared = [v.name for v in comp_variables or ()]
-    leaves = plot_leaves(test, compared)
-    tracked = tracked_names(compared, result)
-    names = [leaf.variable for leaf in leaves] if leaves is not None else tracked
     extras = tuple(test.plots or ())
     readable = bool(extras) and backend_cls is not None and test_dir is not None
-    # A name the RESULT carries is never missing: the file's listing may be
-    # filtered. A failed run's partial file carries nothing.
-    carried = (
-        [v.name for v in result.variables if v.name]
-        if result is not None and result.success
-        else []
-    )
-    listed = backend_cls.result_names(test_dir) if readable else None
-    plots = derive_plots(
-        leaves,
-        extras,
-        tracked=tracked,
-        unit_tests=[n for n in names if is_unit_test_variable(test, n)],
-        available=None if listed is None else [*listed, *carried],
+    plots = test_plots(
+        test,
+        [v.name for v in comp_variables or ()],
+        result,
+        listed=backend_cls.result_names(test_dir) if readable else None,
     )
     derived = {name for plot in plots if not plot.watch for name in plot.subject}
     wanted = [
@@ -246,7 +228,10 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     (``variables_by_name``), the no-baseline trajectories — a test with no
     reference scores nothing, so its curves live only there — and
     ``extra_series``, the context and watch series read out of the result.
-    A name in none of the three draws nothing and joins ``missing``.
+    A name in none of the three draws nothing and joins ``missing``; so does
+    one the plot already calls missing, even when a source answers it — a
+    tree leaf the result lacks is scored (and fails), and its entry has no
+    curve to draw.
 
     A SUBJECT draws as the variable it is — its reference, its criteria'
     geometry and its overlays; a CONTEXT series as its actual curve alone,
@@ -317,8 +302,9 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     series: list[list[str]] = []
     sections: list[dict] = []
     for position, plot in enumerate(plots):
-        subject = [n for n in plot.subject if drawable(n)]
-        context_names = [n for n in plot.context if drawable(n)]
+        gone = set(plot.missing)
+        subject = [n for n in plot.subject if n not in gone and drawable(n)]
+        context_names = [n for n in plot.context if n not in gone and drawable(n)]
         drawn = subject + context_names
         missing = list(
             dict.fromkeys([*plot.missing, *(n for n in plot.series if n not in drawn)])
@@ -339,12 +325,14 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                     _overlay_row(ov) for ov in by_name[n].get("overlays") or []
                 ],
             }
-            for n in subject
+            # Every scored member's verdict, drawn or not: a leaf on a
+            # variable the result lacks failed, and its badge says so.
+            for n in plot.subject
             if n in by_name
         ]
         # Overlays and the error select: a subject of ONE variable (the
-        # context does not count). A no-baseline variable has overlays and
-        # no reference to take an error against.
+        # context does not count), drawn. A no-baseline variable has
+        # overlays and no reference to take an error against.
         single = len(plot.subject) == 1
         lone = subject[0] if single and subject else None
         overlays = (
@@ -392,6 +380,8 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 "subject": subject,
                 "missing": missing,
                 "single": single,
+                # The error select: ONE scored variable, drawn.
+                "errors": lone in by_name,
                 "watch": plot.watch,
                 "variables": variables,
                 "overlays": [_overlay_row(ov) for ov in overlays],
@@ -464,12 +454,19 @@ def generate_comparison_plots(
 
     *plots* / *extra_series* are :func:`plot_inputs`' — the suite and the
     review path resolve them with the backend's result-file readers; a
-    direct caller that passes none gets them from the same function with
-    no file to read.
+    direct caller that passes none gets them from the same function over
+    *test_model*, with no file to read.
 
-    Returns the path to the rendered interactive.html.
+    Returns the path to the rendered interactive.html. With neither
+    *plots* nor *test_model* there is nothing to derive the plots from, and
+    a page with none would say nothing about it: ValueError.
     """
     if plots is None:
+        if test_model is None:
+            raise ValueError(
+                "generate_comparison_plots needs plots= or the test_model "
+                "they derive from"
+            )
         plots, extra_series = plot_inputs(test_model, comparisons, result, None, None)
     if plot_dir.exists():
         shutil.rmtree(plot_dir)

@@ -121,14 +121,16 @@ details summary:hover { color: var(--dstf-text); }
 /* A line the plot itself cannot say: a missing series, or a watch plot
    no criterion scores yet. */
 .plot-note { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 0.5em; }
-/* A plot's context series — drawn grey beside its subject, never scored —
-   listed muted above the plot. */
+/* A plot's context series — drawn grey beside its subject, never scored on
+   this plot — listed muted above the plot. */
 .plot-context { font-size: 0.85em; color: var(--dstf-text-muted); margin-bottom: 0.5em; }
 /* A plot's criteria, in tree order: each row led by its ancestors' kinds
-   (`and › k-of-n ›`), muted — where in the tree the leaf sits. */
+   (`and › k-of-n ›`), muted — where in the tree the leaf sits. The crumb
+   has a fixed minimum width, so a section's leaf names start in one column
+   whatever its rows' depths (the tool's `.dstf-crumb` keeps the same). */
 .criteria-row { display: flex; align-items: baseline; gap: 0.5em; }
 .criteria-row > .node { flex: 1; min-width: 0; }
-.node-crumbs { color: var(--dstf-text-muted); font-size: 0.8em; white-space: nowrap; }
+.node-crumbs { color: var(--dstf-text-muted); font-size: 0.8em; white-space: nowrap; min-width: 14ch; }
 /* A variable reads as the expression its model wrote (`pipe.T[1]`); its
    result-file name — what a criterion, an override or a --filter is written
    against — rides beside the title, muted. Absent when the two agree. */
@@ -328,19 +330,21 @@ details summary:hover { color: var(--dstf-text); }
    One per scored variable or array family, in the order the tree first
    names it, then the watch plots; nothing scored is one per tracked
    variable. Each lists the criteria on its subject in tree order, each led
-   by its ancestors' kinds, and its context series (drawn grey, not
-   scored). The error select shows when the subject is ONE scored
-   variable, the overlay picker when that one variable has overlays. #}
+   by its ancestors' kinds, and its context series (drawn grey; a
+   context series may be scored on a plot of its own). A family's badges
+   name their members, as the tool's pills do. The error select shows when
+   the subject is ONE scored variable the result carries, the overlay
+   picker when that one variable has overlays. #}
 {% if plot_sections %}
 {% for plot in plot_sections %}
-<div class="variable-section plot-section-block{% if plot.watch %} plot-watch{% endif %}" data-plot="{{ plot.index }}" id="variable-section-{{ plot.index }}">
+<div class="variable-section plot-section-block" data-plot="{{ plot.index }}" id="variable-section-{{ plot.index }}">
   <h2>
     {%- for v in plot.variables -%}
-    <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
+    <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{% if not plot.single %}{{ v.text or v.name }} {% endif %}{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
     {%- endfor %}
     {{ plot.title }}{% if plot.names %}<span class="dstf-varname">{{ plot.names }}</span>{% endif %}
   </h2>
-  {% if plot.single and plot.variables %}
+  {% if plot.errors %}
   <div class="plot-controls">
     <label class="error-overlay-control" title="Overlay an error trace on the secondary y-axis">
       Error overlay
@@ -361,7 +365,7 @@ details summary:hover { color: var(--dstf-text); }
     {% endfor %}
   </div>
   {% endif %}
-  {% if plot.context %}<div class="plot-context">Context · not scored: {{ plot.context | join(", ") }}</div>{% endif %}
+  {% if plot.context %}<div class="plot-context">Context: {{ plot.context | join(", ") }}</div>{% endif %}
   {% if plot.missing %}<div class="plot-note">Not in this result: {{ plot.missing | join(", ") }}</div>{% endif %}
   <div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>
   {% if plot.criteria %}

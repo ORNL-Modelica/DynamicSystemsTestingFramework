@@ -220,10 +220,13 @@ class TestPage:
         `Session.plots_from_tree`, never whether there is a tree VIEW: a
         test with no baseline has none, and its authored tree still names
         its plots."""
+        # A failed run first: it has no plots whatever its tree says (O2).
+        result = self._result()
+        if result is not None and not result.success:
+            return "this test has no result"
         if from_tree:
             return "this test's criteria score statistics, not signals"
-        result = self._result()
-        if result is None or not result.success:
+        if result is None:
             return "this test has no result"
         return "the result has no variables"
 
@@ -524,12 +527,16 @@ class TestPage:
         person's watch plots, which are neither."""
         if not plots:
             return f"no plots: {self._no_plots_reason(from_tree)}"
+        watch = sum(1 for plot in plots if plot.watch)
+        if watch == len(plots):
+            # Nothing derived: "0 plots · derived from the criteria" counted
+            # plots that are not there.
+            return f"{plural(watch, 'watch plot')} · no criteria on a signal yet"
         why = (
             "derived from the criteria"
             if from_tree
             else "one per tracked variable or array"
         )
-        watch = sum(1 for plot in plots if plot.watch)
         return f"{plural(len(plots) - watch, 'plot')} · {why}" + (
             f" · {watch} watch" if watch else ""
         )
@@ -676,11 +683,10 @@ class TestPage:
         if focused is None or self.focus_all is None:
             return
         plots = plural(len(self.cards), "plot")
-        # The plot named the way it names itself — its texts, not the keys
-        # underneath them, and a family folded as on its title.
-        card = self.cards[focused]
-        name = folded(card.resolved.subject, card.texts)
-        self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
+        # The sentence counts; the switcher beside it names the plot — the
+        # way the plot names itself, its texts, a family folded as on its
+        # title. The name in both said it twice.
+        self.focus_text.set_text(f"Showing 1 of {plots}")
         if self.focus_switch is not None:
             self.focus_switch.set_options(
                 {

@@ -84,6 +84,7 @@ class TestStrictJsonArtifacts:
     def test_comparison_data_json_is_strict(self, tmp_path):
         plot_dir = tmp_path / "report"
         generate_comparison_plots(
+            plots=(),  # no test to derive them from
             model_id="Fixture.Strict",
             ref_data=None,
             result=None,
@@ -98,6 +99,7 @@ class TestStrictJsonArtifacts:
     def test_embedded_html_context_is_strict(self, tmp_path):
         plot_dir = tmp_path / "report"
         generate_comparison_plots(
+            plots=(),  # no test to derive them from
             model_id="Fixture.Strict",
             ref_data=None,
             result=None,
@@ -117,6 +119,7 @@ class TestRunMetadataBanner:
     def test_banner_rendered_when_metadata_present(self, tmp_path):
         plot_dir = tmp_path / "report"
         generate_comparison_plots(
+            plots=(),  # no test to derive them from
             model_id="Fixture.Prov",
             ref_data=None,
             result=None,
@@ -140,6 +143,7 @@ class TestRunMetadataBanner:
     def test_no_banner_when_metadata_absent(self, tmp_path):
         plot_dir = tmp_path / "report"
         generate_comparison_plots(
+            plots=(),  # no test to derive them from
             model_id="Fixture.NoProv",
             ref_data=None,
             result=None,
@@ -316,6 +320,7 @@ class TestVendoredPlotly:
     @staticmethod
     def _render(plot_dir: Path, model_id: str = "Fixture.Vendor") -> None:
         generate_comparison_plots(
+            plots=(),  # no test to derive them from
             model_id=model_id,
             ref_data=None,
             result=None,
@@ -429,6 +434,7 @@ class TestWorstFiniteScore:
     def test_summary_sidecar_carries_both(self, tmp_path):
         plot_dir = tmp_path / "report"
         generate_comparison_plots(
+            plots=(),  # no test to derive them from
             model_id="Fixture.Worst",
             ref_data=None,
             result=None,
@@ -1565,6 +1571,9 @@ class TestPlotSections:
         assert "VARIABLE_ORDER" not in page and "  FIGURES:" not in page
         assert 'id="plot-0"' in page and 'id="plot-1"' in page
         assert page.count('class="error-overlay-select"') == 2
+        # ONE variable: its title names it, so its badge is the bare verdict.
+        badges = _parse(page).by_id("variable-section-0").by_class("var-status")
+        assert [el.text().strip() for el in badges] == ["PASS"]
         # The sidecar records what the page DREW: each plot's subject, its
         # context, whether it is a watch plot, and what the result lacked.
         assert sidecar["plots"] == [
@@ -1619,7 +1628,7 @@ class TestPlotSections:
         assert [tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"]
         section = _parse(page).by_id("variable-section-0")
         (context,) = section.by_class("plot-context")
-        assert " ".join(context.text().split()) == "Context · not scored: z"
+        assert " ".join(context.text().split()) == "Context: z"
         assert [
             el.attrs["data-variable"] for el in section.by_class("criteria-row")
         ] == ["x"]
@@ -1785,6 +1794,11 @@ class TestPlotSections:
             "2",
             "0",
         ]
+        # Each names its member, as the tool's family pills do: three bare
+        # "PASS" badges side by side said nothing about which is which.
+        assert [" ".join(el.text().split()) for el in h2.by_class("var-status")] == [
+            f"{n} PASS" for n in names
+        ]
         assert h2.text().split()[-1] == "pipe.T[1:3]"
         assert 'class="error-overlay-select"' not in page
         assert "Overlays and error traces show" not in page
@@ -1868,6 +1882,130 @@ class TestPlotSections:
         assert 'id="plot-0"' in page and 'id="plot-3"' not in page
         assert '<select class="error-overlay-select" data-plot="0">' in page
         assert 'id="nodes-0"' in page
+
+    #: A leaf on ``gone``, which neither the reference nor the result has,
+    #: under a k-of-n that x satisfies.
+    GONE = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "y", "tolerance": 0.5},
+            {
+                "combinator": "k-of-n",
+                "k": 1,
+                "children": [
+                    {"metric": "nrmse", "variable": "gone", "tolerance": 0.5},
+                    {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+                ],
+            },
+        ],
+    }
+
+    def test_a_tree_leaf_the_result_lacks_is_named_missing(self, tmp_path):
+        """The tree names ``gone`` and the result does not carry it: its plot
+        says so, as the tool's card does, and draws nothing — no empty
+        chart with an error select over a variable that is not there. Its
+        verdict still shows: the leaf failed."""
+        page, sidecar = self._render(tmp_path, metrics=self.GONE)
+        assert [p["subject"] for p in sidecar["plots"]] == [["y"], ["gone"], ["x"]]
+        assert sidecar["plots"][1]["missing"] == ["gone"]
+        assert sidecar["plots"][1]["series"] == []
+        assert _page_data(page, "PLOT_SERIES")[1] == []
+        section = _parse(page).by_id("variable-section-1")
+        notes = [" ".join(el.text().split()) for el in section.by_class("plot-note")]
+        assert notes == ["Not in this result: gone"]
+        assert [el.text().strip() for el in section.by_class("var-status")] == ["FAIL"]
+        assert '<select class="error-overlay-select" data-plot="1">' not in page
+        # The plots the result has keep theirs.
+        assert '<select class="error-overlay-select" data-plot="0">' in page
+        assert '<select class="error-overlay-select" data-plot="2">' in page
+
+    def test_a_statistics_leaf_is_no_criterion_of_its_variables_plot(self, tmp_path):
+        """A stored-scalar leaf's ``variable`` is free text naming the leaf,
+        not a series (`names_a_series`): x's plot lists its nrmse leaf and
+        not the leaf that happens to spell x — as the tool's card does."""
+        tree = {
+            "combinator": "and",
+            "children": [
+                *self.XY["children"],
+                {
+                    "metric": "scalar",
+                    "variable": "x",
+                    "quantity": "CPUtime.final",
+                    "max_value": 1e9,
+                },
+            ],
+        }
+        page, _ = self._render(tmp_path, metrics=tree)
+        assert self._rows(page, 0) == [("and ›", "x", "/metrics/children/0")]
+        full = _parse(page).by_id("nodes-full")
+        assert len([el for el in full.walk() if "node-leaf" in el.classes]) == 3
+
+    def test_a_plots_title_is_its_subject_never_its_context(self, tmp_path):
+        page, _ = self._render(
+            tmp_path,
+            metrics=self.XY,
+            extras=[{"var": "x", "context": ["z"]}],
+            extra_vars=("z",),
+        )
+        section = _parse(page).by_id("variable-section-0")
+        (h2,) = [el for el in section.walk() if el.tag == "h2"]
+        assert h2.text().split()[-1] == "x"
+        assert "z" not in h2.text().split()
+
+    def test_a_one_subject_plot_with_context_names_its_traces_in_the_banner(
+        self, tmp_path
+    ):
+        page, _ = self._render(
+            tmp_path,
+            metrics=self.XY,
+            extras=[{"var": "x", "context": ["z"]}],
+            extra_vars=("z",),
+            max_embedded_samples=10,
+        )
+        (banner,) = re.findall(r'<div id="decimation-banner">(.*?)</div>', page, re.S)
+        rows = [
+            " ".join(r.split())
+            for r in re.findall(r'<span class="dec-trace">([^<]*)</span>', banner)
+        ]
+        assert any(r.startswith("x Actual ") for r in rows), rows
+        assert any(r.startswith("x z · context ") for r in rows), rows
+
+    def test_a_caller_gives_the_plots_or_the_test_they_derive_from(self, tmp_path):
+        """With neither, the page would draw no plot at all and say
+        nothing: a caller must give one."""
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        with pytest.raises(ValueError, match="plots"):
+            generate_comparison_plots("M", None, None, [], tmp_path / "p")
+
+    def test_a_failed_run_has_no_plots_whatever_its_tree_and_extras(self):
+        """O2, literally: a run that failed has no plots on either tier —
+        not its tree's, not its extras' (the tool's twin is on the Test
+        page)."""
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.plots import parse_plots
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import plot_inputs
+
+        t = np.linspace(0.0, 1.0, 5)
+        result = TestResult(
+            model_id="M",
+            success=False,
+            variables=[VariableResult(index=1, name="x", time=t, values=t)],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=2,
+            metric_tree_spec=parse_metric_tree(self.XY),
+            plots=parse_plots([{"var": "x", "context": ["z"]}, {"var": "w"}]),
+        )
+        assert plot_inputs(test, [], result, None, None) == ((), {})
 
 
 class TestReviewPlotsPath:
@@ -1974,6 +2112,44 @@ def test_a_context_series_the_result_carries_is_read_from_memory(tmp_path):
     assert extra["y"][1].tolist() == (2 * t).tolist()
 
 
+def test_unit_tests_elements_the_result_lacks_never_fold():
+    """A tree naming two UnitTests elements the result does not carry (a
+    NO_REF test: nothing compared) still draws one plot per element (O3):
+    which names are elements is asked of every leaf, not only of the
+    tracked names."""
+    import numpy as np
+
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.tree_spec import parse_metric_tree
+    from dstf.discovery.test_registry import TestModel
+    from dstf.reporting.report_suite import plot_inputs
+
+    t = np.linspace(0.0, 1.0, 5)
+    result = TestResult(
+        model_id="M",
+        success=True,
+        variables=[VariableResult(index=1, name="unitTests.x[1]", time=t, values=t)],
+    )
+    test = TestModel(
+        model_id="M",
+        source_file=Path("fixture.mo"),
+        source_package="Fixture",
+        short_name="M",
+        n_vars=6,
+        metric_tree_spec=parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "unitTests.x[5]"},
+                    {"metric": "nrmse", "variable": "unitTests.x[6]"},
+                ],
+            }
+        ),
+    )
+    plots, _ = plot_inputs(test, [], result, None, None)
+    assert [p.subject for p in plots] == [("unitTests.x[5]",), ("unitTests.x[6]",)]
+
+
 class TestPerTestArgsReadTheLayout:
     """`_build_per_test_args` over a real work dir (the Session fixture's)."""
 
@@ -2038,12 +2214,13 @@ class TestPerTestArgsReadTheLayout:
     ):
         """M5.9 — the backend class is resolved ONCE per suite, wrapped; an
         unregistered backend leaves it ``None``, and every page then draws
-        its plots with nothing called missing instead of raising."""
+        its plots instead of raising. With no file to list, what the result
+        carries is what the plots can draw: a name it lacks is missing."""
         args = self._args(
             tmp_path, [{"var": "x", "context": ["gone"]}], backend_cls=None
         )
         plot = args["plots"][0]
-        assert plot.context == ("gone",) and plot.missing == ()
+        assert plot.context == ("gone",) and plot.missing == ("gone",)
         assert args["extra_series"] == {}
 
 
@@ -2481,11 +2658,24 @@ class TestAVariableReadsAsItsExpression:
         if plots is not None:
             test.plots = parse_plots(plots)
         comp = compare_test(test, result, ref)
+
         # Through the production producer, not a hand-rolled layout: the
         # page's plots are derived from the tree, and `plot_inputs` also
         # hands back the arrays of the series no scored entry carries.
-        resolved, from_memory = plot_inputs(test, comp.variables, result, None, None)
-        extra_series = {**from_memory, **{n: (t, np.cos(t)) for n in extra}}
+        class Files:
+            """The result FILE: the result's variables and ``extra``."""
+
+            @classmethod
+            def result_names(cls, test_dir):
+                return [*names, *extra]
+
+            @classmethod
+            def result_series(cls, test_dir, wanted):
+                return {n: (t, np.cos(t)) for n in wanted if n in extra}
+
+        resolved, extra_series = plot_inputs(
+            test, comp.variables, result, Files, tmp_path
+        )
         html = generate_comparison_plots(
             "M",
             ref,
@@ -2703,7 +2893,7 @@ class TestAVariableReadsAsItsExpression:
         assert by_id[f"context/{self.N2}"]["name"] == "a.Q · context"
         assert by_id["context/y"]["name"] == "y · context"
         (context,) = _parse(page).by_id("variable-section-0").by_class("plot-context")
-        assert " ".join(context.text().split()) == "Context · not scored: a.Q, y"
+        assert " ".join(context.text().split()) == "Context: a.Q, y"
         assert "(unitTests.x[" not in page
 
     def test_the_scope_is_the_test_not_the_scored_list(self, tmp_path):
@@ -2771,7 +2961,7 @@ class TestAVariableReadsAsItsExpression:
             extra=("z",),
         )
         (context,) = _parse(page).by_id("variable-section-0").by_class("plot-context")
-        assert " ".join(context.text().split()) == "Context · not scored: z"
+        assert " ".join(context.text().split()) == "Context: z"
         labels = [
             el.text()
             for el in _parse(page).by_id("nodes-full").walk()

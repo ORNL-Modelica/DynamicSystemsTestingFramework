@@ -150,9 +150,9 @@ variable or array family, in the order the metric tree first names it (a
 depth-first walk; a family sits where the tree first names any member). A
 test with no tree — nothing scored, no `metrics` — draws one plot per tracked
 variable or array, in the order the spec's `variables` wrote them (a glob's
-matches in the result file's order). The report and `dstf author` draw the
-same plots. A criterion on a variable IS its plot: a plot goes when its last
-criterion goes.
+matches in the result file's order). A run that failed has no plots. The
+report and `dstf author` draw the same plots. A criterion on a variable IS
+its plot: a plot goes when its last criterion goes.
 
 The optional `plots` key holds only what a person adds to that — its
 **extras**. Scoring ignores it.
@@ -567,10 +567,14 @@ markup the server rendered. It shows
 - one Plotly chart per plot of the test, the plots the authoring tool draws
   (see "Plot layout"): one per scored variable or family in the tree's order,
   then the watch plots; with nothing scored — no baseline, or simulate-only —
-  one per tracked variable. Under each chart are its criteria in tree order,
-  each led by its ancestors' kinds (`and › k-of-n ›`), its context series
-  listed muted ("Context · not scored: …"), and a watch plot says "No
-  criteria yet.". Each chart draws actual, reference and the criterion geometry
+  one per tracked variable; a run that failed, none. The entry's `plots` key
+  adds only extras: context series on those plots, and watch plots. Under
+  each chart are its criteria in tree order, each led by its ancestors'
+  kinds (`and › k-of-n ›`), its context series listed muted ("Context: …"),
+  and a watch plot says "No criteria yet.". A family's badges name their
+  members (`pipe.T[2] FAIL`); a variable the tree scores and the result
+  lacks keeps its badge and its plot says "Not in this result: …". Each
+  chart draws actual, reference and the criterion geometry
   the metrics emitted (a tube's band, a range's bounds, a points leaf's
   tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
   scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
@@ -582,7 +586,8 @@ markup the server rendered. It shows
 - an **overlay picker** above any plot of one variable a soft_check or
   companion carries data for — the overlay traces are already in the figure, and the
   checkbox toggles their visibility;
-- an **error-overlay** dropdown per plot of one scored variable: signed error,
+- an **error-overlay** dropdown per plot of one scored variable the result
+  carries: signed error,
   absolute error, or per-point NRMSE. Signed and absolute error share the right axis
   "Error [signal units]"; NRMSE, dimensionless, has its own, "NRMSE [–]". Each
   axis is shown while a series on it is visible, whether the select or a legend
@@ -841,8 +846,9 @@ the first failures by name, each a button that jumps to its criterion — and
 "Show tree" opens it to a row per node. Then come the test's plots — derived
 from its criteria, one per scored variable or family in the tree's order, then
 its watch plots (see "Plot layout"); a line above them says which ("3 plots ·
-derived from the criteria · 1 watch", or "one per tracked variable or array"
-with no tree) — each drawn as it scrolls into view. A plot's title is its
+derived from the criteria · 1 watch", "one per tracked variable or array"
+with no tree, or "2 watch plots · no criteria on a signal yet" with none
+derived) — each drawn as it scrolls into view. A plot's title is its
 variable's label, with the result-file name muted beside it where they differ.
 Under each plot are its variable's criteria rows, in TREE order, each led by
 its ancestors' kinds (`and › k-of-n ›`): a swatch, a verdict pill,
@@ -859,8 +865,9 @@ last criterion goes; a watch plot reads "No criteria yet." and has **Remove
 plot** (its `+` is grey while its variable is not tracked). Reset layout, on
 the tree's line, stages removing the `plots` key: the context series and
 watch plots go, the derived plots stay. Focus on the plot's own toolbar shows
-that plot alone, a select on the focus bar switches to any other (a watch
-plot marked "watch"), until "Show all N plots". A long variable label is cut
+that plot alone — the focus bar reads "Showing 1 of N plots", and its select
+names the plot and switches to any other (a watch plot marked "watch") —
+until "Show all N plots". A long variable label is cut
 in its MIDDLE — its head, an ellipsis, its index (`cat(1, pipe2.mediums.T, …[3]`)
 — with the whole label as its tooltip; a model id is cut at its start.
 

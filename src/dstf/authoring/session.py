@@ -34,8 +34,8 @@ from ..discovery.patch_apply import PatchError
 from ..discovery.plots import (
     PlotExtra,
     ResolvedPlot,
-    derive_plots,
     plot_leaves,
+    test_plots,
     tracked_names,
 )
 from ..discovery.scan_cache import load_scan, store_scan
@@ -743,38 +743,24 @@ class Session:
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         """The test's plots as the page draws them
-        (:func:`~dstf.discovery.plots.derive_plots`): one per scored
-        variable or array family, in the order the tree first names it,
-        decorated by the effective ``plots`` extras. The leaves are
-        :func:`~dstf.discovery.plots.plot_leaves` over the tree SPEC with
-        pending ops applied — never :meth:`tree`, which materializes the
-        tree and reads the baseline; no tree is one plot per tracked name
-        or array. A UnitTests element never folds (O3)."""
-        from ..discovery.unit_tests import is_unit_test_variable
-
+        (:func:`~dstf.discovery.plots.test_plots`, the rule the report draws
+        by): one per scored variable or array family, in the order the tree
+        first names it, decorated by the effective ``plots`` extras. The
+        leaves come from the tree SPEC with pending ops applied — never
+        :meth:`tree`, which materializes the tree and reads the baseline;
+        no tree is one plot per tracked name or array. A UnitTests element
+        never folds (O3); a failed run has none."""
         project = self._require_project()
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
-        leaves = self._plot_leaves(model_id)
-        tracked = self.tracked(model_id)
-        names = [leaf.variable for leaf in leaves] if leaves is not None else tracked
-        # A name the RESULT carries is never missing: the file's listing
-        # may be filtered. A failed run's partial file carries nothing.
-        listed = self._reads_for(model_id).names
-        result = project.results.get(model_id)
-        carried = (
-            [v.name for v in result.variables]
-            if result is not None and result.success
-            else []
-        )
-        return derive_plots(
-            leaves,
-            self.layout(model_id),
-            tracked=tracked,
-            unit_tests=[n for n in names if is_unit_test_variable(test, n)],
-            available=None if listed is None else [*listed, *carried],
+        comp = self.comparisons.get(model_id)
+        return test_plots(
+            test,
+            [vc.name for vc in comp.variables] if comp is not None else [],
+            project.results.get(model_id),
+            listed=self._reads_for(model_id).names,
         )
 
     def plot_figure(

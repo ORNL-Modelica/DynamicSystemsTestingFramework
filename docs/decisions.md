@@ -5476,7 +5476,15 @@ variable order (D133).
    test's UnitTests elements (`is_unit_test_variable`: `<instance>.x[i]`,
    ASCII digits) is a plot of its own whatever its expression reads.
    `Session.plots` never calls `Session.tree()` (which reads the
-   baseline); the report's `plot_inputs` calls the same two functions.
+   baseline). Both tiers call ONE function over it,
+   `test_plots(test, compared, result, *, listed)` — `Session.plots` and
+   the report's `plot_inputs` alike: it asks which names are UnitTests
+   elements of every leaf AND every tracked name (a leaf the result lacks
+   is an element too), and says a name is missing when the plots cannot
+   draw it — not in the file's listing nor in the result in memory, or,
+   with no listing (the report lists the file only for a test with
+   extras), not in the result. A run that FAILED has no plots on either
+   tier, its extras included (O2, literally).
 2. *The new `plots` schema.* A list of extras `{"var", "context"?}`: an
    entry on a scored variable (or a member of its family) adds its
    `context` to that plot; any other entry is a watch plot. No glob, no
@@ -5502,8 +5510,11 @@ variable order (D133).
    apply whenever the SUBJECT is one variable.
 5. *The rows (changes D133's).* A plot's criteria rows are the leaves on
    its subject in TREE order, each led by its ancestors' kinds, the root
-   first (`and › k-of-n ›`); a stored-scalar leaf is on no card
-   (`tree_text.names_a_series`).
+   first (`and › k-of-n ›`); a stored-scalar leaf is on no card and in no
+   report section (`names_a_series`). Both tiers list them by one walk,
+   `reporting/tree_rows.py::criteria_rows` (the tool imports it; the
+   report never imports the tool), and the crumb has a fixed minimum
+   width so a plot's leaf names start in one column.
 6. *The controller's calls* (said to the owner; reversible on the owner's
    word). C1: context series are listed in a row above the plot, each
    with a `×` ("Remove {text} from this plot") — Plotly's legend cannot
@@ -5513,8 +5524,10 @@ variable order (D133).
    switcher's options are plain labels. C5: the count line reads
    "N plots · one per tracked variable or array" with no tree, else
    "N plots · derived from the criteria[ · K watch]", the derived plots
-   counted apart from the watch plots; whether the plots come from a tree
-   is `Session.plots_from_tree`, not whether there is a tree view. C6: a
+   counted apart from the watch plots, and with no derived plot at all
+   "K watch plots · no criteria on a signal yet" (never "0 plots"); whether
+   the plots come from a tree is `Session.plots_from_tree`, not whether
+   there is a tree view. C6: a
    derived card's missing Remove is an info icon, "This plot exists
    because of its criteria." C7: Reset layout's tooltip says the context
    series and watch plots go. And O3 applied to the Variables drawer
@@ -5525,7 +5538,8 @@ variable order (D133).
    rebuild (a watch plot given a criterion moves up); the page reads the
    tracked names once and hands them to every card's `+`
    (`Selection.tracked`). Focus gains a select (`focus-switch`, Q11 c)
-   through the same path a card's Focus takes. A variable label — a card's
+   through the same path a card's Focus takes; it names the plot, so the
+   bar beside it only counts: "Showing 1 of N plots". A variable label — a card's
    title, a criteria row's name, a drawer row — is a `MiddleCut`: the head
    and the tail from the last `[` (else the last 12 characters) as two
    inline-blocks in an inline-block, never a flex pair, so innerText and a
@@ -5536,8 +5550,12 @@ variable order (D133).
    one plot per tracked variable, with its overlay picker); each plot
    section lists its criteria in tree order with their crumbs under a
    `nodes-{i}` mount per PLOT (was one per variable), its context muted
-   ("Context · not scored: …"), a watch plot "No criteria yet."; the
-   "criteria are under its first plot" and "plot only" notes go. The
+   ("Context: …" — a context series may be scored on a plot of its own,
+   so not "not scored"), a watch plot "No criteria yet."; the "criteria
+   are under its first plot" and "plot only" notes go. A family's badges
+   name their members (`pipe.T[2] FAIL`), as the tool's pills do. A tree
+   leaf on a variable the result lacks keeps its FAIL badge and says "Not
+   in this result: …", with no chart curve and no error select. The
    sidecar's `plots` record gains `subject`, `context` and `watch`: it is
    what the report drew.
 9. *The pattern order.* `resolve_variable_patterns` returned its names

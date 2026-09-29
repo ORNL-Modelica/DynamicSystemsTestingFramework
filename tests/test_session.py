@@ -2967,9 +2967,12 @@ class TestPlots:
         s.view(A, "z")
         assert calls == [("z",), ("z",)]
 
-    def test_a_backend_that_cannot_list_calls_nothing_missing(
+    def test_a_backend_that_cannot_list_draws_what_the_result_carries(
         self, tmp_path, monkeypatch
     ):
+        """No listing: what the result in memory carries is all the plots
+        can draw (`test_plots`, the report's rule too) — the tracked x is
+        there, the file-only z is named missing rather than drawn blank."""
         from dstf.backends.python.backend import PythonBackend
 
         s = self._open(tmp_path)
@@ -2978,7 +2981,7 @@ class TestPlots:
         )
         s._reload_results()
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
-        assert s.plots(A)[0].missing == ()
+        assert s.plots(A)[0].missing == ("z",)
 
     def test_the_session_view_mirrors_the_three_reads(self, tmp_path):
         from dstf.authoring.session import Selection, SessionView

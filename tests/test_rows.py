@@ -145,6 +145,7 @@ def test_summary_fields_are_the_sidecars_numbers(sample_comparison):
 def test_the_sidecar_carries_the_classifiers_word(tmp_path, sample_comparison):
     plot_dir = tmp_path / "report"
     generate_comparison_plots(
+        plots=(),  # no test to derive them from
         model_id="Lib.A",
         ref_data=None,
         result=None,
@@ -164,6 +165,7 @@ def test_a_sidecar_without_a_comparison_has_numbers_and_no_verdict(
 ):
     plot_dir = tmp_path / "report"
     generate_comparison_plots(
+        plots=(),  # no test to derive them from
         model_id="Lib.A",
         ref_data=None,
         result=None,

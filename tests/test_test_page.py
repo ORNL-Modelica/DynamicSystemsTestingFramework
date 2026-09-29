@@ -1261,6 +1261,65 @@ async def test_a_failed_simulations_partial_result_draws_no_cards(shell):
         assert _one(user, "plots:count").text == "no plots: this test has no result"
 
 
+async def test_a_failed_run_draws_no_cards_whatever_its_tree_and_extras(shell):
+    """O2, literally: a failed run has no plots — not its tree's, not its
+    extras' — as the report draws none. The reason is the run: a tree
+    that names signals is not one "of statistics"."""
+    from dstf.backends.types import TestResult
+
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}, {"var": "w"}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 3
+        result = shell.session.project.results[A]
+        shell.session.project.results[A] = TestResult(
+            model_id=A, success=False, variables=list(result.variables)
+        )
+        with page.client:
+            page.sync()
+        assert page.cards == []
+        assert shell.session.plots(A) == ()
+        assert _one(user, "plots:count").text == "no plots: this test has no result"
+
+
+async def test_watch_plots_with_no_derived_plot_say_so(shell):
+    """A tree whose every criterion scores a statistic derives no plot; a
+    watch plot beside it is counted as what it is, never "0 plots ·
+    derived from the criteria · 1 watch"."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": "CPUtime.final",
+                "max_value": 1e9,
+            }
+        ],
+    }
+    shell.session.stage(
+        [
+            PatchOp(A, "add", "/metrics", tree),
+            PatchOp(A, "add", "/plots", [{"var": "x"}]),
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [(c.resolved.subject, c.resolved.watch) for c in page.cards] == [
+            (("x",), True)
+        ]
+        assert _one(user, "plots:count").text == (
+            "1 watch plot · no criteria on a signal yet"
+        )
+        shell.session.stage([PatchOp(A, "add", "/plots", [{"var": "x"}, {"var": "y"}])])
+        await _settled(lambda: len(page.cards) == 2)
+        assert _one(user, "plots:count").text == (
+            "2 watch plots · no criteria on a signal yet"
+        )
+
+
 async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path):
     """The third reason: a successful result the test tracks nothing of.
     The tree's line is still the baseline's — the two sentences answer two
@@ -1509,6 +1568,72 @@ async def test_a_root_leafs_row_has_no_breadcrumb(shell):
         page = await _test_page(shell, user)
         assert list(page.cards[0].rows) == ["/metrics"]
         assert _none(user, "crumb:0:/metrics")
+
+
+async def test_both_tiers_lead_a_plots_rows_with_the_same_crumbs(tmp_path):
+    """The report's plot sections and the tool's cards list a plot's
+    criteria by ONE walk (`reporting.tree_rows.criteria_rows`): over the
+    report's nested tree, every plot's rows carry the same leaves, in the
+    same order, led by the same crumbs on both tiers."""
+    import re as _re
+
+    from dstf.backends.base import last_test_keys
+    from dstf.reporting.report_suite import _build_per_test_args, _render_one_test
+    from test_report_suite import TestPlotSections, _parse
+
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    next(e for e in spec["tests"] if e["model"] == A)["metrics"] = copy.deepcopy(
+        TestPlotSections.NESTED
+    )
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    shell = _opened(cfg, work)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        tool = [
+            [
+                (
+                    path,
+                    _one(user, f"crumb:{card.index}:{path}").text
+                    if not _none(user, f"crumb:{card.index}:{path}")
+                    else "",
+                )
+                for path in card.rows
+            ]
+            for card in page.cards
+        ]
+    session = shell.session
+    project = session.project
+    args = _build_per_test_args(
+        session.comparisons[A],
+        project.results,
+        {t.model_id: t for t in project.tests},
+        project.store,
+        project.config,
+        {A: {"test_key": last_test_keys(work).get(A), "last_run_at": None}},
+        backend_cls=type(project.backend),
+    )
+    out = tmp_path / "report"
+    entry = _render_one_test(args, out)
+    html = (out / entry["report_path"]).read_text(encoding="utf-8")
+    doc = _parse(html)
+    report = []
+    for i in range(len(_re.findall(r'id="variable-section-\d+"', html))):
+        rows = []
+        for row in doc.by_id(f"variable-section-{i}").by_class("criteria-row"):
+            crumbs = row.by_class("node-crumbs")
+            leaf = next(el for el in row.walk() if "node-leaf" in el.classes)
+            rows.append((leaf.attrs["data-path"], crumbs[0].text() if crumbs else ""))
+        report.append(rows)
+    assert tool == report
+    assert tool == [
+        [
+            ("/metrics/children/0", "and ›"),
+            ("/metrics/children/1/children/1", "and › k-of-n ›"),
+        ],
+        [("/metrics/children/1/children/0", "and › k-of-n ›")],
+    ]
 
 
 async def test_a_derived_card_has_no_remove_and_says_why(nested_shell):
@@ -3191,15 +3316,17 @@ async def test_a_form_edit_redraws_its_card_once_and_keeps_the_rings(shell):
 
 
 async def test_focus_hides_the_other_cards_and_the_bar_brings_them_back(shell):
-    """Board 5A: "Showing 1 of N plots: <name>", the focused plot's button
-    reading "Focused", and the bar's own way back to all of them."""
+    """Board 5A: "Showing 1 of N plots" — the switcher beside it names the
+    plot — the focused plot's button reading "Focused", and the bar's own
+    way back to all of them."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert page.focus_bar.visible is False
         user.find(marker="focus:0").click()
         await _settled(lambda: page.focused == 0)
         assert [c.card.visible for c in page.cards] == [True, False]
-        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots: x"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots"
+        assert _one(user, "focus-switch").value == 0
         assert _one(user, "focus-bar:all").text == "Show all 2 plots"
         assert _one(user, "focus:0").text == "Focused"
         user.find(marker="focus-bar:all").click()
@@ -3279,10 +3406,10 @@ async def test_a_mode_switch_keeps_the_editor_open(shell):
 async def test_the_focus_bar_and_a_jump_read_the_label(
     awkward_expression_shell, monkeypatch
 ):
-    """Two sentences about a variable, on the page whose titles already
-    read its expression: the focus bar's "Showing 1 of N plots: …", and the
-    jump's "is on no plot". Each said `unitTests.x[1]`, which names nothing
-    a person recognises."""
+    """Two places that name a variable, on the page whose titles already
+    read its expression: the focus switcher's option, and the jump's "is on
+    no plot". Each said `unitTests.x[1]`, which names nothing a person
+    recognises."""
     from dstf.authoring.shell import test_page as page_mod
     from test_session import AWKWARD_EXPRESSION, UT1
 
@@ -3292,10 +3419,8 @@ async def test_the_focus_bar_and_a_jump_read_the_label(
         assert _one(user, "plot-title:0").text == AWKWARD_EXPRESSION
         user.find(marker="focus:0").click()
         await _settled(lambda: page.focused == 0)
-        assert (
-            _one(user, "focus-bar:text").text
-            == f"Showing 1 of 2 plots: {AWKWARD_EXPRESSION}"
-        )
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots"
+        assert _one(user, "focus-switch").options[0] == AWKWARD_EXPRESSION
         # A criterion whose variable is on no plot: the same name, read the
         # same way. A stored-scalar leaf names a statistic and derives no
         # plot, and nothing else scores the UnitTests variable here.
@@ -5963,18 +6088,19 @@ async def test_unit_tests_elements_are_a_card_each_whatever_their_expressions(
         assert _one(user, "plot-title:1").text.startswith(second)
 
 
-async def test_the_focus_bar_names_the_plot_as_its_title_does(nested_shell):
-    """The bar names the focused plot "the way the plot names itself": a
-    family folds there as on the card's title (the executing review's
-    correction 8)."""
+async def test_the_focus_switch_names_the_plot_as_its_title_does(nested_shell):
+    """The switcher names the focused plot "the way the plot names itself":
+    a family folds there as on the card's title (the executing review's
+    correction 8). The sentence beside it counts, and names nothing — the
+    switcher already does, and a long family said it twice."""
     shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
         assert _one(user, "plot-title:0").text == "pipe.T[1:2]"
         user.find(marker="focus:0").click()
-        assert _one(user, "focus-bar:text").text == (
-            "Showing 1 of 3 plots: pipe.T[1:2]"
-        )
+        switch = _one(user, "focus-switch")
+        assert switch.options[switch.value] == "pipe.T[1:2]"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 3 plots"
 
 
 async def test_the_focus_switch_moves_focus_and_closes_the_old_editor(extras_shell):
@@ -6004,7 +6130,7 @@ async def test_the_focus_switch_moves_focus_and_closes_the_old_editor(extras_she
         assert page.open is None
         assert [c.card.visible for c in page.cards] == [False, False, False, True]
         assert _one(user, "focus-bar:all").text == "Show all 4 plots"
-        assert _one(user, "focus-bar:text").text == "Showing 1 of 4 plots: w"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 4 plots"
         # Its own repaint to the plot already focused focuses nothing else:
         # the card's Focus button still reads "Focused".
         assert page.cards[3].focus.text == "Focused"

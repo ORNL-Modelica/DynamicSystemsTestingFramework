@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from ..backends.types import is_glob_pattern
 
 if TYPE_CHECKING:
+    from ..backends.types import TestResult
     from ..comparison.tree_spec import LeafSpec, SpecNode
     from .test_registry import TestModel
 
@@ -224,6 +225,54 @@ def derive_plots(
             ),
         )
         for i, (subject, ctx, is_watch) in enumerate(rows)
+    )
+
+
+def test_plots(
+    test: TestModel,
+    compared: Sequence[str],
+    result: TestResult | None,
+    *,
+    listed: Iterable[str] | None,
+) -> tuple[ResolvedPlot, ...]:
+    """The plots of one test — ONE rule, called by the tool's
+    `Session.plots` and the report's `plot_inputs`, so both tiers draw the
+    same list.
+
+    The leaves are :func:`plot_leaves`', the tracked names
+    :func:`tracked_names`', the extras the entry's ``plots`` key. Which
+    names are UnitTests elements — never folded (O3) — is asked of every
+    leaf AND every tracked name: a leaf the result does not carry is an
+    element all the same.
+
+    ``listed`` is the result FILE's names, or ``None`` when it was not
+    listed (the report lists it only for a test with extras). A name the
+    result in memory carries is never missing — the file's listing may be
+    filtered; with no listing, what the result carries is all the plots can
+    draw, and a leaf it lacks is missing. With no result either, nothing is
+    missing.
+
+    A run that FAILED has no plots, extras included (O2, literally): what a
+    backend wrote before it stopped is a partial file, not the test's
+    plots."""
+    from .unit_tests import is_unit_test_variable
+
+    if result is not None and not result.success:
+        return ()
+    leaves = plot_leaves(test, compared)
+    tracked = tracked_names(compared, result)
+    names = [*(leaf.variable for leaf in leaves or ()), *tracked]
+    available: list[str] | None = None
+    if result is not None:
+        available = [v.name for v in result.variables if v.name]
+    if listed is not None:
+        available = [*listed, *(available or ())]
+    return derive_plots(
+        leaves,
+        tuple(test.plots or ()),
+        tracked=tracked,
+        unit_tests=[n for n in names if is_unit_test_variable(test, n)],
+        available=available,
     )
 
 

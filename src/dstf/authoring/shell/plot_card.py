@@ -31,12 +31,7 @@ from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
 from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Visibility
-from ...reporting.tree_rows import (
-    ancestor_kinds,
-    crumb_text,
-    leaves_of,
-    names_a_series,
-)
+from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
 from ..session import Selection
 from ..tree_text import leaf_name, parent_kinds
@@ -433,14 +428,16 @@ class PlotCard:
             self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
             self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
-            takers, crumbs = parent_kinds(view), ancestor_kinds(view)
+            takers = parent_kinds(view)
             with criteria.mark(f"criteria:{index}"):
                 # TREE order, never the subject's member order: a family's
-                # rows are where the tree has them, each with its crumb.
-                for leaf in self._leaves_all(view):
-                    path = str(leaf["path"])
+                # rows are where the tree has them, each with its crumb —
+                # the report's walk (`criteria_rows`), so both tiers lead a
+                # row the same way.
+                for row in criteria_rows(view, self.subject):
+                    path = str(row["leaf"]["path"])
                     self.rows[path] = CriterionRow(
-                        self, leaf, takers.get(path), crumb_text(crumbs.get(path, ()))
+                        self, row["leaf"], takers.get(path), row["crumbs"]
                     )
             if resolved.watch:
                 ui.label("No criteria yet.").classes("dstf-why").mark(
@@ -644,11 +641,7 @@ class PlotCard:
         variable scored on another plot draws nothing of its criteria here —
         and no stored-scalar leaf, whose ``variable`` names the leaf, not a
         series (`names_a_series`)."""
-        return [
-            leaf
-            for leaf in leaves_of(view)
-            if leaf.get("variable") in self.resolved.subject and names_a_series(leaf)
-        ]
+        return [row["leaf"] for row in criteria_rows(view, self.resolved.subject)]
 
     def is_open(self, path: str) -> bool:
         """Whether ``path`` is the open criterion — the page's word, the ONE
