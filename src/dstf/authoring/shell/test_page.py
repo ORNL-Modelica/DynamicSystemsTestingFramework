@@ -525,13 +525,11 @@ class TestPage:
         plots = session.plots(self.model_id)
         # The label scope too: it is one fact about the TEST, and a card
         # that read it for itself cost one `plots` + `tracked` read per
-        # plot — 35 for a five-plot test. And the tracked names, which each
-        # card's `+` asks about (`Selection.tracked`).
+        # plot — 35 for a five-plot test.
         scope = session.variable_texts(self.model_id)
-        tracked = frozenset(session.tracked(self.model_id))
         with self.column:
             self.cards = [
-                PlotCard(self, plot.index, plot, view, scope, tracked) for plot in plots
+                PlotCard(self, plot.index, plot, view, scope) for plot in plots
             ]
         for card in self.cards:
             # A rebuild must not blank what the user was looking at: the
@@ -740,9 +738,7 @@ class TestPage:
         """What the cards are BUILT from and cannot be repainted through:
         the criteria and their variables, the plots themselves — each
         one's subject, context, whether it is a watch plot, and what the
-        result lacks — and the tracked names every card's `+` was handed
-        (`Selection.tracked`): a variable that becomes tracked moves no
-        plot, and a `+` built before kept its stale snapshot. NOT a leaf's
+        result lacks. NOT a leaf's
         metric — a mode switch repaints a row's name in place."""
         session = self.shell.session
         return (
@@ -751,7 +747,6 @@ class TestPage:
                 (plot.subject, plot.context, plot.watch, plot.missing)
                 for plot in session.plots(self.model_id)
             ),
-            frozenset(session.tracked(self.model_id)),
         )
 
     # -- following the Session -------------------------------------------------

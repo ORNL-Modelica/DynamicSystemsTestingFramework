@@ -3171,3 +3171,35 @@ def test_a_plots_leaf_names_start_in_one_column(tmp_path, playwright_browser):
         assert max(names) - min(names) < 0.5, rows
         assert {r["pill"] for r in rows} == {"PASS", "FAIL"}, rows
         assert {r["swatch"] for r in rows} == {"visible", "hidden"}, rows
+
+
+def test_the_pickers_keyboard_chooses_a_variable_and_add_stages_it(
+    tmp_path, playwright_browser
+):
+    """U2's picker in Chromium: a glob typed in the Variable box narrows the
+    list on the server; ArrowDown moves the ring, Enter chooses (the row on
+    the selection tint, the focus still in the box, the Chosen line naming
+    it), and Add stages the leaf on the CHOSEN variable — a watch plot's
+    untracked `w3`."""
+    with _served(tmp_path, playwright_browser) as page:
+        head = page.locator(".dstf-plot").first.locator(".dstf-criteria-head")
+        expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
+        head.get_by_role("button", name="Add a criterion for x").click()
+        box = page.get_by_label("Variable")
+        expect(box).to_be_visible(timeout=EXPECT_TIMEOUT)
+        box.fill("w?")
+        rows = page.locator(".dstf-pick-row")
+        expect(rows).to_have_count(5, timeout=EXPECT_TIMEOUT)
+        for _ in range(3):
+            page.keyboard.press("ArrowDown")
+        expect(page.locator(".dstf-pick-cursor")).to_have_text("w3")
+        page.keyboard.press("Enter")
+        expect(page.locator(".dstf-pick-on")).to_have_text("w3")
+        expect(page.locator(".dstf-pick-chosen")).to_have_text("Chosen: w3")
+        assert page.evaluate("document.activeElement.tagName") == "INPUT"
+        _shot(page, tmp_path, "picker")
+        page.get_by_role("button", name="Add", exact=True).click()
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+        expect(page.get_by_text("nrmse · w3").first).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )

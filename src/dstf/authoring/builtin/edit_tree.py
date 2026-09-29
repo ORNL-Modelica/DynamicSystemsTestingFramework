@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
 from ...comparison.seeds import SeedData, seeded_leaf
-from ...discovery.plots import tracked_names
 from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
@@ -129,8 +128,9 @@ _NO_ADD = {
     "added alone",
 }
 _ROOT_UNWRAP = "the root has no parent to take its children"
-#: Why a watch plot's `+` is grey (the plan's call C2; U2 lifts it).
-_UNTRACKED = "Criteria on an untracked variable come with the next step (U2)"
+#: Why an add form's Add is grey on a simulate-only test: a criterion
+#: staged there is never scored (the comparator short-circuits it).
+_SIMULATE_ONLY = "This test is simulate-only: nothing is scored"
 #: Why a weighted form's action is grey: its threshold starts EMPTY, not 0
 #: (0 with `less` always fails), and has to be typed.
 _NO_THRESHOLD = "enter a threshold"
@@ -423,28 +423,38 @@ def _add_form(
     close: Callable[[], None],
     added: str,
 ) -> None:
-    """A form row's variable and metric selects, the sentence, Cancel and
-    Add (marked ``mark``), which stages and, once that went through, closes
-    the row and reveals ``added`` — the new criterion's path; a refused Add
-    keeps the row.
+    """A form row's variable picker and metric select, the sentence, Cancel
+    and Add (marked ``mark``), which stages and, once that went through,
+    closes the row and reveals ``added`` — the new criterion's path; a
+    refused Add keeps the row.
 
-    The variable select's VALUES are result-file names — a leaf is written
-    against the name — and its option TEXT reads the label, with the name
-    beside it when two of this test's variables share one. A list of
-    ``unitTests.x[1..12]`` named nothing a person could choose between."""
-    names = _variable_names(s, model_id)
+    The picker (Q8) offers EVERY variable of the result file, tracked or
+    not — a criterion on one is what tracks it (the next run records it) —
+    in sections: the plot's own series, the rest, the diagnostics the run
+    recorded. Its values are result-file names — a leaf is written against
+    the name — and a row reads the label, with the name beside it. A list
+    of ``unitTests.x[1..12]`` named nothing a person could choose between.
+    The names are read when the form OPENS, never when the `+` is drawn."""
+    from ..picker_rows import picker_rows
+    from ..shell.picker import VariablePicker
+
+    names = s.variable_names(model_id)
     if variable and variable not in names:
         names = [variable, *names]
+    on_plot = _plot_series(s, model_id, s.selection.variable)
+    diagnostics = list(_diagnostics(s, model_id))
     labels = s.labels(model_id)
-    var = (
-        ui.select(
-            {n: labels.get(n, n) for n in names} or {"": ""},
-            label="Variable",
-            value=variable if variable else (names[0] if names else ""),
-        )
-        .props("dense")
-        .classes("w-full")
-        .mark(f"{mark}:variable")
+    var = VariablePicker(
+        lambda keep: picker_rows(
+            on_plot=on_plot,
+            names=names,
+            diagnostics=diagnostics,
+            labels=labels,
+            keep=keep,
+        ),
+        value=variable or (on_plot or names or [""])[0],
+        text_of=lambda name: labels.get(name, name),
+        marker=f"{mark}:variable",
     )
     met = (
         ui.select([d.name for d in metrics()], label="Metric", value=DEFAULT_METRIC)
@@ -464,10 +474,19 @@ def _add_form(
         close()
         ui_panel.reveal(added)
 
-    ui.label(_ADD_SENTENCE).classes("dstf-why")
+    project = s.project
+    tests = project.tests if project is not None else ()
+    simulate_only = any(t.simulate_only for t in tests if t.model_id == model_id)
+    ui.label(_SIMULATE_ONLY if simulate_only else _ADD_SENTENCE).classes("dstf-why")
     with ui.row().classes("items-center gap-2"):
         _cancel(ui, close, under)
-        ui.button("Add", on_click=apply).props("dense no-caps").mark(mark)
+        # A disabled Quasar button takes no pointer events: the reason's
+        # tooltip is on a span around it.
+        with ui.element("span"):
+            add = ui.button("Add", on_click=apply).props("dense no-caps").mark(mark)
+            if simulate_only:
+                add.disable()
+                ui.tooltip(_SIMULATE_ONLY)
 
 
 def _cancel(ui: Any, close: Callable[[], None], path: str) -> None:
@@ -699,26 +718,18 @@ def _variable_plus(
     test's other variables too), landing at the end of the root combinator
     — or, under a root leaf, as ``and[leaf, new]`` — and revealing the new
     criterion's editor. Grey, with the reason, under a root that takes no
-    child alone, and on a variable the test does not track — a watch plot
-    of a name the result file has and the run did not record: its add
-    form's select could not offer it, and a criterion on it would score
-    nothing until the variable is tracked (U2).
+    child alone. A watch plot's variable the run did not record is offered
+    too: a criterion names it, and that tracks it (U2).
 
     It reads the variable as the PAGE does — the scope handed down with
     the selection (`Selection.texts`: the expression its model wrote, with
     the name beside it when another variable of that test shares it). The
     scope is not derived here: a caption per card that built it for itself
     was the page's whole rebuild cost. A selection carrying none reads the
-    name; the form still writes the leaf against the NAME. The tracked
-    names are handed down the same way (`Selection.tracked`)."""
+    name; the form still writes the leaf against the NAME."""
     entry = s.selection.texts.get(variable)
     text = variable if entry is None else entry.text
     no_add = _NO_ADD.get(str((s.tree(model_id) or {}).get("combinator")))
-    tracked = s.selection.tracked
-    if tracked is None:
-        tracked = frozenset(_variable_names(s, model_id))
-    if no_add is None and variable not in tracked:
-        no_add = _UNTRACKED
     tip = no_add or f"Add a criterion for {text}"
 
     def build_add(close: Callable[[], None]) -> None:
@@ -800,13 +811,24 @@ def _kind_select(
     select.on_value_change(chosen)
 
 
-def _variable_names(s: SessionView, model_id: str) -> list[str]:
-    """What a new leaf may score: the scored names, then the rest of the
-    result's — `Session.tracked`'s list, through the same function and for
-    the same reason. A variable whose last criterion was just removed is
-    still the test's, and the add forms are the way back to it."""
-    comp = s.comparisons.get(model_id)
-    scored = [vc.name for vc in comp.variables] if comp is not None else []
+def _diagnostics(s: SessionView, model_id: str) -> dict[str, Any]:
+    """``{name: values}`` of the diagnostics the last run RECORDED — the
+    picker's "Diagnostics" (B4). Not `diagnostic_variables` against the
+    file's names: a JSON-driver run records none, and a `CPUtime` column in
+    its file is a variable a `CPUtime.final` quantity path never reads."""
     project = s.project
     result = project.results.get(model_id) if project is not None else None
-    return tracked_names(scored, result)
+    if result is None:
+        return {}
+    return {d.name: d.values for d in result.diagnostics or [] if d.name}
+
+
+def _plot_series(s: SessionView, model_id: str, variable: str | None) -> list[str]:
+    """Every series of the plot ``variable`` is the subject of — the
+    picker's "On this plot" — or none, where no plot is (a tree row)."""
+    if not variable:
+        return []
+    for plot in s.plots(model_id):
+        if variable in plot.subject:
+            return list(plot.series)
+    return [variable]

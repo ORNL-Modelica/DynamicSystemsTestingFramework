@@ -321,6 +321,15 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   width: 12px; height: 9px; border-radius: 2px; flex: none;
   border: 2px solid var(--dstf-accent); box-sizing: content-box;
 }
+/* The add form's picker (U2): a list that scrolls inside the form row,
+   never a 200-row form; the chosen row on the selection tint, the
+   keyboard's cursor ringed; the Chosen line under it (K7). */
+.dstf-pick-list { max-height: 240px; overflow-y: auto; }
+.dstf-pick-row { cursor: pointer; min-height: 24px; padding: 0 4px; }
+.dstf-pick-row:hover { background: var(--dstf-surface-hover); }
+.dstf-pick-on { background: var(--dstf-selection); }
+.dstf-pick-cursor { box-shadow: inset 0 0 0 2px var(--dstf-accent); }
+.dstf-pick-chosen { color: var(--dstf-text-muted); padding: 2px 4px 0; }
 /* The drawers' one control set (Q7): a menu's current choice carries its
    check; a count pill is a status pill that is a button, ringed while it
    filters. */

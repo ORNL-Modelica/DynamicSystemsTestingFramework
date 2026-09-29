@@ -307,13 +307,11 @@ class PlotCard:
         resolved: ResolvedPlot,
         view: dict | None,
         scope: Mapping[str, VariableText],
-        tracked: frozenset[str],
     ) -> None:
-        """``view``, ``scope`` and ``tracked`` are the page's ONE read of
+        """``view`` and ``scope`` are the page's ONE read of
         each, handed to every card: a card that read them for itself cost
         one read per plot on every rebuild (the Task 5-6 review)."""
         self.page, self.index, self.resolved = page, index, resolved
-        self.tracked = tracked
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
         # subscribes before there is a plot to attach to.
@@ -496,9 +494,8 @@ class PlotCard:
                     variable=self.subject[0],
                     # The page's one read of the scope, so the `+` reads
                     # this variable's text without building it per card
-                    # (`Selection.texts`), and of the tracked names.
+                    # (`Selection.texts`).
                     texts=scope,
-                    tracked=self.tracked,
                 ),
                 figure=self.hook,
                 marker=f"variable:{index}",

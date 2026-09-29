@@ -125,12 +125,6 @@ class Selection:
     picks a test to read a label off, which is also why a selection of two
     tests (refused at VARIABLE anyway) cannot show one of them's
     expression.
-
-    ``tracked`` is the page's one read of the selected test's tracked names
-    (:meth:`Session.tracked`), for the same reason: a plot's ``+`` asks
-    whether its variable is one, and a card that read the list for itself
-    re-derived it once per card. ``None`` — a selection built with none —
-    reads it when asked.
     """
 
     tests: frozenset[str] = frozenset()
@@ -138,7 +132,6 @@ class Selection:
     leaf_path: str | None = None
     node_path: str | None = None
     texts: Mapping[str, VariableText] = MappingProxyType({})
-    tracked: frozenset[str] | None = None
 
 
 @dataclass

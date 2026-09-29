@@ -967,7 +967,9 @@ async def test_a_forms_controls_fill_its_row(session):
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
         user.find(marker=f"add:{leaf}").click()
         (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
-        assert "dense" in var.props and "w-full" in var.classes
+        # U2's picker: the column fills the row, its filter box the column
+        assert "w-full" in var.classes
+        assert "dense" in var.box.needle.props and "col" in var.box.needle.classes
 
 
 async def test_a_cluster_tooltip_sits_above_its_button(session):
@@ -2252,3 +2254,178 @@ def test_a_combinators_count_text_is_its_node_text_without_the_kind():
     assert node_text(w) == "weighted · 3 criteria · threshold 0.5"
     one = {**node, "children": [leaf]}
     assert count_text(one) == "1 criterion"
+
+
+# -- the add form's picker (U2, Task 3) ------------------------------------------
+
+
+def _wide_session(tmp_path, extra: int, columns=()):
+    """`two_var_session` with ``extra`` more names in A's result file
+    (``v0`` ...), untracked, and ``columns`` as result-file names too."""
+    import json
+
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for i in range(extra):
+        payload["variables"][f"v{i}"] = [float(i)] * len(payload["time"])
+    for name in columns:
+        payload["variables"][name] = [1.0, 2.0, 3.0, 4.0, 5.0]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+def _with_diagnostics(session, **finals):
+    """A's in-memory result carries these diagnostics (a Dymola run's
+    `CPUtime` / `EventCounter`); the JSON driver records none."""
+    import numpy as np
+
+    from dstf.backends.types import VariableResult
+
+    result = session.project.results[A]
+    t = np.asarray(result.variables[0].time)
+    result.diagnostics = [
+        VariableResult(index=0, time=t, values=np.linspace(0, v, len(t)), name=n)
+        for n, v in finals.items()
+    ]
+
+
+def _picker(user, mark):
+    (var,) = user.find(marker=f"{mark}:variable").elements
+    return var
+
+
+def _sections(picker) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for row in picker.shown:
+        out.setdefault(row.section, []).append(row.name)
+    return out
+
+
+async def _open_plus(user, variable: str):
+    user.find(marker=f"add-for:{variable}").click()
+    await user.should_see(marker=f"apply-add:{variable}:variable")
+    return _picker(user, f"apply-add:{variable}")
+
+
+async def test_the_picker_offers_every_result_name_in_sections(tmp_path):
+    """Q8: the plot's series, then every other name of the result FILE —
+    tracked or not — then the diagnostics the run RECORDED (B4): an
+    `EventCounter` column of the file that no run recorded as a diagnostic
+    is a variable like any other (a `.final` path would never read it)."""
+    session = _wide_session(tmp_path, 3, columns=("CPUtime", "EventCounter"))
+    _with_diagnostics(session, CPUtime=0.5)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        assert picker.value == "y"
+        assert _sections(picker) == {
+            "On this plot": ["y"],
+            "Other variables": ["x", "v0", "v1", "v2", "EventCounter"],
+            "Diagnostics": ["CPUtime"],
+        }
+
+
+async def test_a_run_that_records_no_diagnostics_has_no_diagnostics_section(tmp_path):
+    session = _wide_session(tmp_path, 0, columns=("CPUtime",))
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        assert "Diagnostics" not in _sections(await _open_plus(user, "y"))
+
+
+async def test_the_picker_filters_by_glob_regex_and_says_a_bad_one(tmp_path):
+    session = _wide_session(tmp_path, 12)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        picker.box.needle.set_value("v1*")
+        await _settled(lambda: list(picker.options) == ["v1", "v10", "v11"])
+        picker._filter("^v(2|3)$", True, False)
+        assert list(picker.options) == ["v2", "v3"]
+        picker._filter("v(", True, False)
+        assert picker.box.why.visible
+        assert "not a regular expression" in picker.box.why.text
+
+
+async def test_the_picker_filters_on_the_label_too(tmp_path):
+    """A row reads its label: what a person types is what they read."""
+    from test_session import with_expressions
+
+    session = _wide_session(tmp_path, 3)
+    with_expressions(session, A, {"x": "pipe.T[3]"})
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        picker._filter("pipe", False, False)
+        assert picker.options == {"x": "pipe.T[3]"}
+
+
+async def test_the_picker_caps_at_200_rows_and_says_so(tmp_path):
+    session = _wide_session(tmp_path, 400)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        assert len(picker.shown) == 200
+        assert picker.cap.visible
+        assert picker.cap.text == "Showing 200 of 402 — narrow the search"
+
+
+async def test_choosing_a_row_is_what_add_stages(tmp_path):
+    session = _wide_session(tmp_path, 3)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, errors, _figure):
+        await _open_plus(user, "y")
+        user.find(marker="apply-add:y:variable:pick:v1").click()
+        assert _picker(user, "apply-add:y").value == "v1"
+        user.find(marker="apply-add:y").click()
+        await _settled(lambda: len(session.tree(A)["children"]) == 3)
+        assert session.tree(A)["children"][-1]["variable"] == "v1"
+        assert errors == {}
+
+
+async def test_the_chosen_line_names_a_choice_the_filter_hides(tmp_path):
+    """K7: under the list, `Chosen: <label>` — a filter that hides the
+    chosen row still shows what Add will stage."""
+    from test_session import with_expressions
+
+    session = _wide_session(tmp_path, 3)
+    with_expressions(session, A, {"x": "pipe.T[3]"})
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        assert picker.chosen.text == "Chosen: y"
+        user.find(marker="apply-add:y:variable:pick:x").click()
+        assert picker.chosen.text == "Chosen: pipe.T[3]"
+        picker._filter("v2", False, False)
+        assert "x" not in picker.options
+        assert picker.chosen.text == "Chosen: pipe.T[3]"
+
+
+async def test_the_pickers_keys_move_and_choose(tmp_path):
+    session = _wide_session(tmp_path, 3)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        assert picker.cursor == 0  # the chosen row, y
+        picker._key(SimpleNamespace(args="ArrowDown"))
+        picker._key(SimpleNamespace(args="ArrowDown"))
+        picker._key(SimpleNamespace(args="Enter"))
+        assert picker.value == "v0"
+        picker._key(SimpleNamespace(args="ArrowUp"))
+        picker._key(SimpleNamespace(args="Enter"))
+        assert picker.value == "x"
+
+
+async def test_a_simulate_only_test_says_nothing_is_scored(tmp_path):
+    """A criterion staged on a simulate-only test is never scored: the add
+    form says so, and its Add is grey (A10)."""
+    session = _wide_session(tmp_path, 0)
+    session.project.test(A).simulate_only = True
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        await _open_plus(user, "y")
+        (add,) = user.find(marker="apply-add:y").elements
+        assert not add.enabled
+        await user.should_see("This test is simulate-only: nothing is scored")

@@ -1560,9 +1560,17 @@ async def test_a_family_card_has_one_plus_whose_form_offers_the_others(
         assert _inside(user, "add-for:pipe.T[2]", "criteria-header:0") == []
         _click_in(user, "add-for:pipe.T[1]", within="criteria-header:0")
         await _settled(lambda: not _none(user, "apply-add:pipe.T[1]:variable"))
-        select = _one(user, "apply-add:pipe.T[1]:variable")
-        assert select.value == "pipe.T[1]"
-        assert set(select.options) == {"x", "y", "pipe.T[1]", "pipe.T[2]"}
+        picker = _one(user, "apply-add:pipe.T[1]:variable")
+        assert picker.value == "pipe.T[1]"
+        # U2's picker: the plot's own series first, then every other name of
+        # the result file — tracked or not.
+        sections: dict[str, list[str]] = {}
+        for row in picker.shown:
+            sections.setdefault(row.section, []).append(row.name)
+        assert sections == {
+            "On this plot": ["pipe.T[1]", "pipe.T[2]"],
+            "Other variables": ["x", "y", "w", "z"],
+        }
 
 
 def test_worst_is_fail_then_warn_then_pass_then_queued():
@@ -1804,42 +1812,47 @@ async def test_a_watch_card_says_no_criteria_and_its_remove_stages_the_rest(
             _one(user, "plots:count").text
             == "3 plots · derived from the criteria · 1 watch"
         )
-        # w is not tracked: its `+` is there, grey, and says when (C2).
+        # w is not tracked, and its `+` is live (U2 lifted C2).
         (plus,) = _inside(user, "add-for:w", "criteria-header:3")
-        assert not plus.enabled
-        assert _plus_tips(plus) == [
-            "Criteria on an untracked variable come with the next step (U2)"
-        ]
+        assert plus.enabled
+        assert _plus_tips(plus) == ["Add a criterion for w"]
         user.find(marker="remove-plot:3").click()
         assert _pending(shell, "/plots") == [{"var": "x", "context": ["z"]}]
         await _settled(lambda: len(page.cards) == 3)
 
 
-async def test_a_watch_cards_plus_follows_the_tracked_names(extras_shell):
-    """The tracked names are part of what the cards are built from: w
-    becoming tracked moves no plot — its watch plot stays a watch plot —
-    and a page that did not rebuild kept its `+` grey on a stale snapshot."""
-    import numpy as np
-
-    from dstf.backends.types import VariableResult
-
+async def test_a_watch_cards_plus_adds_a_seeded_range_on_untracked_w(extras_shell):
+    """U2 lifts C2: w is not tracked, and its watch card's `+` adds a
+    criterion on it — the picker preselects w, the leaf is seeded from the
+    result FILE's series (`Session.view` falls back to it), and the watch
+    plot becomes w's derived plot. The file holds w (the JSON driver), so
+    the stage re-reads it and it scores at once: no rerun (the owner's
+    O2)."""
     shell = extras_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        (plus,) = _inside(user, "add-for:w", "criteria-header:3")
-        assert not plus.enabled
-        result = shell.session.project.results[A]
-        t = np.asarray(result.variables[0].time)
-        result.variables.append(
-            VariableResult(
-                index=len(result.variables) + 1, time=t, values=0 * t, name="w"
-            )
-        )
-        with page.client:
-            page.sync()
-        assert [c.resolved.watch for c in page.cards] == [False, False, False, True]
+        assert "w" not in shell.session.tracked(A)
         (plus,) = _inside(user, "add-for:w", "criteria-header:3")
         assert plus.enabled
+        user.find(marker="add-for:w").click()
+        await _settled(lambda: not _none(user, "apply-add:w:variable"))
+        picker = _one(user, "apply-add:w:variable")
+        assert picker.value == "w"
+        assert [r.name for r in picker.shown if r.section == "On this plot"] == ["w"]
+        metric = next(
+            e
+            for e in user.find(kind=ui.select).elements
+            if e.props.get("label") == "Metric"
+        )
+        metric.set_value("range")
+        user.find(marker="apply-add:w").click()
+        await _settled(lambda: bool(shell.session.spec.pending))
+        leaf = shell.session.tree(A)["children"][-1]
+        assert leaf["metric"] == "range" and leaf["variable"] == "w"
+        assert "min_value" in leaf and "max_value" in leaf  # seeded from the file
+        await _settled(lambda: not page.cards[-1].resolved.watch)
+        assert "w" in shell.session.tracked(A)
+        await _settled(lambda: page.strip.situation.value == "edits")
 
 
 async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):
@@ -2287,21 +2300,19 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(
     Drawing is not in the bound: `show()` is per card by nature — a figure
     is assembled for the card being drawn — and the page draws only what is
     scrolled to."""
-    from dstf.authoring.builtin import edit_tree
-
     shell = _watch_shell(tmp_path, n - 2)
     session = shell.session
     calls = _count_reads(session)
-    # A card's `+` asks whether its variable is tracked: it reads the list
-    # the page hands down (`Selection.tracked`), never its own.
+    # A card's `+` reads no name list when it is drawn: its add form reads
+    # the result file's names when it OPENS (U2's picker).
     listed = [0]
-    real_names = edit_tree._variable_names
+    real_names = session.variable_names
 
     def counting_names(*a, **k):
         listed[0] += 1
         return real_names(*a, **k)
 
-    monkeypatch.setattr(edit_tree, "_variable_names", counting_names)
+    monkeypatch.setattr(session, "variable_names", counting_names)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _settled(lambda: len(page.cards) == n)
@@ -2314,7 +2325,8 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(
         listed[0] = 0
         with page.column:
             page.rebuild(view)
-        assert listed[0] == 0, (listed, n)
+        # the page's own reads (the plots' `missing`), never one per card
+        assert listed[0] <= 2, (listed, n)
         rebuild = dict(calls)
         for key in calls:
             calls[key] = 0
