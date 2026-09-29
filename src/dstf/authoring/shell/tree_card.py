@@ -18,9 +18,10 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
+from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
-from ..tree_text import count_text, leaf_name, leaves_of, node_text, nodes_of
+from ..tree_text import count_text, leaf_name, node_text, nodes_of
 from .actions import InlineHost, RowTarget
 from .widgets import Pill
 

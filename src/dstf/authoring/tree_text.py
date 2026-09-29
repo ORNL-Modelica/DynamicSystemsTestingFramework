@@ -5,24 +5,7 @@ names its node the way the node's row does. Every function takes a
 
 from __future__ import annotations
 
-
-def leaves_of(view: dict | None) -> list[dict]:
-    """The leaf nodes of a `tree_view`, in tree order."""
-    if view is None:
-        return []
-    if view.get("kind") == "leaf":
-        return [view]
-    return [leaf for child in view.get("children") or [] for leaf in leaves_of(child)]
-
-
-def names_a_series(leaf: dict) -> bool:
-    """Does this leaf of a `tree_view` score a SERIES of the result?
-    `resolves_a_variable` over the view's dict: a stored-scalar leaf's
-    ``variable`` is free text naming the leaf, and a plot of a variable it
-    happens to spell showed that leaf as its criterion."""
-    from ..comparison.tree_spec import reads_a_statistic
-
-    return not reads_a_statistic(str(leaf.get("metric")), leaf.get("params") or {})
+from ..reporting.tree_rows import leaves_of
 
 
 def nodes_of(view: dict | None) -> list[dict]:
@@ -76,26 +59,3 @@ def parent_kinds(view: dict | None) -> dict[str, str | None]:
         for child in node.get("children") or []:
             kinds[str(child.get("path"))] = node.get("combinator")
     return kinds
-
-
-def ancestor_kinds(view: dict | None) -> dict[str, tuple[str, ...]]:
-    """Each node's path -> its ancestors' combinators, the root's first:
-    where in the tree a criteria row's leaf sits, which its row is led by
-    (``and › k-of-n ›``). A plot's rows are its subject's leaves, so the
-    tree's structure is read off the row, not off the order of the rows."""
-    out: dict[str, tuple[str, ...]] = {}
-
-    def walk(node: dict, above: tuple[str, ...]) -> None:
-        out[str(node.get("path"))] = above
-        kind = node.get("combinator")
-        for child in node.get("children") or []:
-            walk(child, above + ((str(kind),) if kind else ()))
-
-    if view is not None:
-        walk(view, ())
-    return out
-
-
-def crumb_text(kinds: tuple[str, ...]) -> str:
-    """``and › k-of-n ›`` — a row's breadcrumb; empty for a root leaf."""
-    return " ".join(f"{kind} ›" for kind in kinds)

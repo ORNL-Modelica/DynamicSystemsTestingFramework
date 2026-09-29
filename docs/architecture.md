@@ -145,6 +145,8 @@ src/dstf/
     ├── dashboard_render.py   # The one suite-wide HTML page (live + final + --report-format html)
     ├── context_builder.py    # Per-test results → template context (the pure half)
     ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
+    ├── tree_rows.py          # A plot's criteria rows off a tree view (leaves, crumbs): the one walk
+                              #   the report's sections and the tool's plot cards list criteria by
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
     ├── theme.py              # The token table — rendered to :root { --dstf-...: ... } for both

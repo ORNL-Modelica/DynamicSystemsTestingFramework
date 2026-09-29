@@ -22,6 +22,7 @@ from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
 from ...reporting.status import SCORING_FAILED, classify, classify_with_class
+from ...reporting.tree_rows import leaves_of
 from ...storage.batch_manifest import unfinished_run_models
 from ...storage.ref_index import RefIndex
 from ..capabilities import plural
@@ -30,7 +31,7 @@ from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..session import JobRunningError, LockedError
 from ..situation import Strip, strip_for
 from ..tree_pointer import node_or_none
-from ..tree_text import leaves_of, nodes_of
+from ..tree_text import nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard, folded

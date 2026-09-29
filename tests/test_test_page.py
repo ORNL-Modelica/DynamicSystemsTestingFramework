@@ -29,7 +29,7 @@ from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
 from dstf.authoring.shell.widgets import MiddleCut, middle_split  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
-from dstf.authoring.tree_text import leaves_of  # noqa: E402
+from dstf.reporting.tree_rows import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import (  # noqa: E402
     CASES_X,

@@ -22,6 +22,7 @@ from ..comparison.types import TestComparison
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class
+from .tree_rows import criteria_rows
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -234,35 +235,6 @@ def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
         name: entry.get(key) or name
         for name, entry in (context.get("variable_texts") or {}).items()
     }
-
-
-def criteria_rows(tree_view: dict | None, subject) -> list[dict]:
-    """A plot's criteria: the leaves of ``tree_view`` on a member of
-    ``subject``, in TREE order, each with ``crumbs`` — its ancestors'
-    kinds, the root's first (``and › k-of-n ›``), as the tool's rows are
-    led. The tree's structure is read off a row, not off the order of the
-    rows: a family's rows are where the tree has them."""
-    wanted = set(subject)
-    rows: list[dict] = []
-
-    def walk(node: dict, above: tuple[str, ...]) -> None:
-        if node.get("kind") == "leaf":
-            if node.get("variable") in wanted:
-                rows.append(
-                    {
-                        "leaf": node,
-                        "variable": node.get("variable"),
-                        "crumbs": " ".join(f"{kind} ›" for kind in above),
-                    }
-                )
-            return
-        kind = node.get("combinator")
-        for child in node.get("children") or []:
-            walk(child, above + ((str(kind),) if kind else ()))
-
-    if tree_view:
-        walk(tree_view, ())
-    return rows
 
 
 def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:

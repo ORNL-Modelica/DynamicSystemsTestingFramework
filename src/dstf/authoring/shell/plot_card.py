@@ -31,16 +31,15 @@ from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
 from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Visibility
-from ..capabilities import Placement
-from ..session import Selection
-from ..tree_text import (
+from ...reporting.tree_rows import (
     ancestor_kinds,
     crumb_text,
-    leaf_name,
     leaves_of,
     names_a_series,
-    parent_kinds,
 )
+from ..capabilities import Placement
+from ..session import Selection
+from ..tree_text import leaf_name, parent_kinds
 from .actions import InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status

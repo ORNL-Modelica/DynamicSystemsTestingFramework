@@ -783,7 +783,7 @@ def _build_tree_view_and_variables(
     one entry per unique variable — its trajectory + overlays + the leaf
     paths targeting it + its verdict — and a plot's section lists its
     subject's leaves of the same tree
-    (:func:`~dstf.reporting.report_suite.criteria_rows`).
+    (:func:`~dstf.reporting.tree_rows.criteria_rows`).
 
     When there are no comparisons the function returns ``(None, {})`` —
     sim-failed and no-baseline tests render without a tree view at all.
