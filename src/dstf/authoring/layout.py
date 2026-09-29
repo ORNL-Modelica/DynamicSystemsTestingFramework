@@ -48,18 +48,21 @@ def add_context(
 def remove_context(
     extras: Sequence[PlotExtra], plot: ResolvedPlot, name: str
 ) -> Extras:
-    """``plot`` without context ``name``. A derived plot's entry left with
-    no context goes — it records nothing; a watch plot's stays (it IS the
-    plot)."""
-    extras = tuple(extras)
-    at = _entry_of(extras, plot)
-    if at is None:
-        return extras
-    entry = extras[at]
-    new = PlotExtra(entry.var, tuple(n for n in entry.context if n != name))
-    if not new.context and not plot.watch:
-        return extras[:at] + extras[at + 1 :]
-    return extras[:at] + (new,) + extras[at + 1 :]
+    """``plot`` without context ``name``, off EVERY entry on its subject: a
+    family's plot draws the context of each member's entry — a watch plot
+    with context that later got a criterion (Q14) keeps its entry beside
+    the family's own — and a `×` that took it off one of them left it
+    drawn. A derived plot's entry left with no context goes — it records
+    nothing; a watch plot's stays (it IS the plot)."""
+    out: list[PlotExtra] = []
+    for entry in extras:
+        if entry.var in plot.subject:
+            kept = tuple(n for n in entry.context if n != name)
+            if not kept and entry.context and not plot.watch:
+                continue
+            entry = PlotExtra(entry.var, kept)
+        out.append(entry)
+    return tuple(out)
 
 
 def new_watch(extras: Sequence[PlotExtra], var: str) -> Extras:
@@ -80,12 +83,16 @@ def remove_watch(extras: Sequence[PlotExtra], var: str) -> Extras:
 
 def layout_op(
     model_id: str, entry: dict | None, extras: Sequence[PlotExtra]
-) -> PatchOp:
+) -> PatchOp | None:
     """The ONE op a gesture stages: ``add`` when the effective entry has no
     ``plots`` key (or no entry: the op creates it), ``replace`` when it has.
     No extras left is ``remove`` — the key goes rather than staying ``[]``,
-    so Reset layout hides again."""
+    so Reset layout hides again — and ``None`` when there is no key to
+    remove: nothing to stage (a `remove` of a member that is not there is
+    refused by the patch)."""
     if not extras:
+        if entry is None or "plots" not in entry:
+            return None
         return reset_op(model_id)
     verb = "replace" if entry is not None and "plots" in entry else "add"
     return PatchOp(model_id, verb, "/plots", plots_to_raw(extras))

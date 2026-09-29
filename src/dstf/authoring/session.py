@@ -35,9 +35,8 @@ from ..discovery.plots import (
     PlotExtra,
     ResolvedPlot,
     derive_plots,
-    result_magnitudes,
+    plot_leaves,
     tracked_names,
-    tree_leaves,
 )
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
@@ -610,16 +609,13 @@ class Session:
         return work_dir / key if key is not None and work_dir is not None else None
 
     def tracked(self, model_id: str) -> list[str]:
-        """The names the page plots by default, in its order: the scored
-        variables first, then the rest of the loaded result's (which holds
-        exactly the spec's tracked variables). It is also what tells a
-        plot's scored series from its plot-only ones.
-
-        The union, not the scored names alone: removing a variable's LAST
-        criterion would otherwise take its card, its "Add a criterion for
-        it" ``+`` and every way to add one back — a one-way door out of
-        which only Discard leads (the Task 5-6 review). The report's
-        default layout is the same list, through the same function."""
+        """The test's TRACKED names, in order: the scored variables first,
+        then the rest of the loaded result's (which holds exactly the spec's
+        tracked variables), through `tracked_names`, the one rule. With no
+        tree the plots derive from them; the Variables drawer groups them
+        "Tracked"; and a variable a criterion may be added for is one of
+        them — the scored names alone would lose a variable whose last
+        criterion was just removed, and with it the way back to one."""
         comp = self.comparisons.get(model_id)
         scored = [vc.name for vc in comp.variables] if comp is not None else []
         return tracked_names(scored, self._require_project().results.get(model_id))
@@ -721,17 +717,13 @@ class Session:
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         """The test's plots as the page draws them
         (:func:`~dstf.discovery.plots.derive_plots`): one per scored
-        variable or one-scale array family, in the order the tree first
-        names it, decorated by the effective ``plots`` extras. The leaves
-        come from the tree SPEC with pending ops applied — never
-        :meth:`tree`, which materializes the tree and reads the baseline —
-        else the implicit tree of what was compared; nothing compared and
-        no tree is one plot per tracked name.
-
-        The fold reads the PLAIN labels
-        (:func:`~dstf.reporting.context_builder.plain_labels`), not
-        :meth:`labels`: the label scope holds these plots' series."""
-        from ..reporting.context_builder import _spec_for, plain_labels
+        variable or array family, in the order the tree first names it,
+        decorated by the effective ``plots`` extras. The leaves are
+        :func:`~dstf.discovery.plots.plot_leaves` over the tree SPEC with
+        pending ops applied — never :meth:`tree`, which materializes the
+        tree and reads the baseline; no tree is one plot per tracked name
+        or array. A UnitTests element never folds (O3)."""
+        from ..discovery.unit_tests import is_unit_test_variable
 
         project = self._require_project()
         test = project.test(model_id)
@@ -739,20 +731,25 @@ class Session:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
         comp = self.comparisons.get(model_id)
-        compared = list(comp.variables) if comp is not None else []
+        compared = [vc.name for vc in comp.variables] if comp is not None else []
+        leaves = plot_leaves(test, compared)
+        tracked = self.tracked(model_id)
+        names = [leaf.variable for leaf in leaves] if leaves is not None else tracked
+        # A name the RESULT carries is never missing: the file's listing
+        # may be filtered. A failed run's partial file carries nothing.
+        listed = self._reads_for(model_id).names
         result = project.results.get(model_id)
-        spec = (
-            _spec_for(compared, test)
-            if test.metric_tree_spec is not None or compared
-            else None
+        carried = (
+            [v.name for v in result.variables]
+            if result is not None and result.success
+            else []
         )
         return derive_plots(
-            tree_leaves(spec),
-            plain_labels(compared, result),
+            leaves,
             self.layout(model_id),
-            tracked=self.tracked(model_id),
-            available=self._reads_for(model_id).names,
-            magnitudes=result_magnitudes(result),
+            tracked=tracked,
+            unit_tests=[n for n in names if is_unit_test_variable(test, n)],
+            available=None if listed is None else [*listed, *carried],
         )
 
     def plot_figure(

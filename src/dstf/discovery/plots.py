@@ -16,8 +16,7 @@ in.
 
 from __future__ import annotations
 
-import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,13 +25,6 @@ from ..backends.types import is_glob_pattern
 if TYPE_CHECKING:
     from ..comparison.tree_spec import LeafSpec, SpecNode
     from .test_registry import TestModel
-
-#: A family folds onto one plot only when its members' largest magnitudes
-#: are within this ratio of each other (the owner's ruling O1, 2026-09-28):
-#: TRANSFORM's `check_*` tests hold unrelated quantities in one local
-#: `x[i]` (`check_atm`: ~1e-5 beside ~1e5), and folding them by expression
-#: alone drew one of them as a flat line on the other's axis.
-ONE_SCALE_RATIO = 10.0
 
 
 class PlotsSpecError(ValueError):
@@ -145,84 +137,68 @@ def tree_leaves(spec: SpecNode | None) -> list[LeafSpec] | None:
     return out
 
 
-def result_magnitudes(result: object) -> dict[str, float]:
-    """``{name: max |v|}`` over each result variable's actual samples — what
-    :func:`derive_plots` folds a family by. A variable with no finite sample
-    reads NaN (its scale is unknown); it is still a key, because the keys
-    are also the names the result CARRIES. A failed run's partial file
-    contributes nothing, as in :func:`tracked_names`."""
-    import numpy as np
+def plot_leaves(test: TestModel, compared: Sequence[str]) -> list[LeafSpec] | None:
+    """The leaves a test's plots derive from, in tree order: its authored
+    ``metrics`` tree — even with nothing compared yet, a test with no
+    baseline: the tree names what will be scored — else the implicit tree of
+    what was ``compared``; ``None`` with neither (one plot per tracked
+    variable, the owner's ruling O2). ONE rule, for the tool's
+    `Session.plots` and the report."""
+    from ..comparison.tree_spec import synthesize_implicit_tree
 
-    if result is None or not getattr(result, "success", True):
-        return {}
-    out: dict[str, float] = {}
-    for var in getattr(result, "variables", None) or ():
-        if not var.name:
-            continue
-        values = np.abs(np.asarray(var.values, dtype=float))
-        finite = values[np.isfinite(values)]
-        out[var.name] = float(finite.max()) if finite.size else math.nan
-    return out
-
-
-def _one_scale(members: Sequence[str], magnitudes: Mapping[str, float]) -> bool:
-    """Do ``members`` share a scale (O1)? Every one must have a finite
-    magnitude; those above zero must lie within :data:`ONE_SCALE_RATIO` of
-    each other, and a member at zero folds with any."""
-    scales = [magnitudes.get(name) for name in members]
-    if any(m is None or not math.isfinite(m) for m in scales):
-        return False
-    positive = [m for m in scales if m is not None and m > 0]
-    return not positive or max(positive) <= ONE_SCALE_RATIO * min(positive)
+    if test.metric_tree_spec is not None:
+        return tree_leaves(test.metric_tree_spec)
+    if not compared:
+        return None
+    return tree_leaves(
+        synthesize_implicit_tree(
+            list(compared), variable_overrides=test.variable_overrides
+        )
+    )
 
 
 def derive_plots(
     leaves: Sequence[LeafSpec] | None,
-    labels: Mapping[str, str],
     extras: Sequence[PlotExtra],
     *,
     tracked: Sequence[str],
+    unit_tests: Collection[str] = (),
     available: Iterable[str] | None = None,
-    magnitudes: Mapping[str, float] | None = None,
 ) -> tuple[ResolvedPlot, ...]:
     """The plots both tiers draw for one test.
 
-    ``leaves`` are the tree's (:func:`tree_leaves`), in depth-first order.
-    Their variables fold into array families by LABEL (``labels``: name ->
-    its plain label, the expression for a UnitTests variable — the
-    :mod:`~dstf.figures.families` rule), and a family folds only when its
-    members share a scale by ``magnitudes`` (:func:`result_magnitudes`;
-    ``None``, no result, folds nothing). One plot per folded family or lone
-    variable, where the tree first names it — a family where the tree first
-    names any member, an unfolded member where the tree first names IT.
-    ``None`` leaves (no tree: nothing scored) derive one plot per
-    ``tracked`` name instead, unfolded.
+    ``leaves`` are the tree's (:func:`plot_leaves`), in depth-first order;
+    ``None`` (no tree: nothing scored) derives from the ``tracked`` names
+    instead. Their variables fold into array families by RESULT-FILE NAME
+    (the :mod:`~dstf.figures.families` rule over the names: ``pipe.T[1]`` ..
+    ``pipe.T[4]`` are one plot), with no scale check — except the
+    ``unit_tests`` names, each its own plot whatever its expression (the
+    owner's ruling O3: a UnitTests element is a test quantity of its own,
+    and `check_atm`'s local ``x`` holds 1 Pa in atm beside 1 atm in Pa).
+    One plot per family or lone variable, where the tree first names it — a
+    family where the tree first names any member.
 
     Each extra on a member of a derived subject adds its context there;
     every other extra is a watch plot, after the derived ones, in list
     order.
 
-    ``available`` is every name in the result file (``None`` when it
-    cannot be listed: nothing is missing then). A name the result carries
-    (a key of ``magnitudes``) is never missing — a listing of the file may
-    be filtered; a leaf's name the result lacks is."""
+    ``available`` is every name the plots can be drawn from — the result
+    file's listing and the result's own variables — or ``None`` when it
+    cannot be listed: nothing is missing then."""
     from ..figures.families import group_families
 
-    subjects: list[tuple[str, ...]]
     if leaves is None:
-        subjects = [(name,) for name in dict.fromkeys(n for n in tracked if n)]
+        order = list(dict.fromkeys(n for n in tracked if n))
     else:
         order = list(dict.fromkeys(leaf.variable for leaf in leaves if leaf.variable))
-        family_of: dict[str, tuple[str, ...]] = {}
-        for _, members in group_families(order, labels):
-            folds = (
-                len(members) > 1
-                and magnitudes is not None
-                and _one_scale(members, magnitudes)
-            )
-            for name in members:
-                family_of[name] = tuple(members) if folds else (name,)
-        subjects = list(dict.fromkeys(family_of[name] for name in order))
+    apart = set(unit_tests)
+    family_of: dict[str, tuple[str, ...]] = {
+        name: (name,) for name in order if name in apart
+    }
+    for _, members in group_families([n for n in order if n not in apart]):
+        for name in members:
+            family_of[name] = tuple(members)
+    subjects = list(dict.fromkeys(family_of[name] for name in order))
     member_of = {name: i for i, subject in enumerate(subjects) for name in subject}
     context: list[list[str]] = [[] for _ in subjects]
     watch: list[PlotExtra] = []
@@ -234,7 +210,7 @@ def derive_plots(
         for name in extra.context:
             if name not in subjects[at] and name not in context[at]:
                 context[at].append(name)
-    have = None if available is None else set(available) | set(magnitudes or ())
+    have = None if available is None else set(available)
     rows = [(s, tuple(c), False) for s, c in zip(subjects, context)]
     rows += [((e.var,), e.context, True) for e in watch]
     return tuple(
@@ -290,13 +266,15 @@ def resolved_plots(
     test: TestModel, tracked: Sequence[str], *, available: Sequence[str] | None
 ) -> tuple[ResolvedPlot, ...]:
     """Interim, until the report derives its plots from the tree (the
-    plan's Task 4): one plot per ``tracked`` name, the test's extras on
-    them. ``available`` as in :func:`derive_plots`; a tracked name is never
-    missing, as before."""
+    plan's Task 4): one plot per ``tracked`` name or array, the test's
+    extras on them. ``available`` as in :func:`derive_plots`; a tracked
+    name is never missing, as before."""
+    from .unit_tests import is_unit_test_variable
+
     return derive_plots(
         None,
-        {},
         test.plots or (),
         tracked=tracked,
+        unit_tests=[n for n in tracked if is_unit_test_variable(test, n)],
         available=None if available is None else [*available, *tracked],
     )

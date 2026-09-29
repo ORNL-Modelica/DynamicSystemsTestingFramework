@@ -105,3 +105,24 @@ def test_removing_the_last_extra_removes_the_key():
     entry = {"model": "M", "plots": [{"var": "x", "context": ["z"]}]}
     assert layout_op("M", entry, ()) == PatchOp("M", "remove", "/plots")
     assert reset_op("M") == PatchOp("M", "remove", "/plots")
+
+
+def test_removing_a_context_name_reaches_every_entry_on_the_family():
+    """p[2] was a watch plot with context w, then got a criterion (Q14):
+    the family's plot draws z and w from two entries, and the × on w takes
+    it off — the entry left with nothing on a derived plot goes."""
+    extras = (PlotExtra("p[1]", ("z",)), PlotExtra("p[2]", ("w", "z")))
+    family = _plot("p[1]", "p[2]", context=("z", "w"))
+    assert remove_context(extras, family, "w") == (
+        PlotExtra("p[1]", ("z",)),
+        PlotExtra("p[2]", ("z",)),
+    )
+    assert remove_context(extras, family, "z") == (PlotExtra("p[2]", ("w",)),)
+
+
+def test_no_extras_on_an_entry_with_no_key_is_no_op():
+    """Nothing to remove: an entry with no ``plots`` key — or no entry —
+    and no extras stage nothing (a `remove` of a member that is not there
+    is refused by the patch)."""
+    assert layout_op("M", {"model": "M"}, ()) is None
+    assert layout_op("M", None, ()) is None

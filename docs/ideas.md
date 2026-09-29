@@ -1808,3 +1808,9 @@ planning.
   - The Tests drawer's "Status, failures first" sorts within each package
     group when the list is grouped (the owner's Q1 A: "sorting sorts within
     each group"). Failures reach the top of the list only with Show flat.
+- **Per-plot log or linear axes (owner, 2026-09-28; future, not built)**: a
+  toggle on each plot for a log or a linear x axis, and one for its y axis.
+  Logged with the owner's ruling O3 (the plots-from-the-tree plan's
+  Corrections 2), under which a real array folds onto one plot whatever its
+  members' scales: on a linear y axis a family spanning decades draws its
+  small members flat.

@@ -17,6 +17,27 @@ if TYPE_CHECKING:
     from .test_registry import TestModel
 
 
+#: The array the component tracks, ``x={...}`` (see :func:`unit_test_variables`).
+_ARRAY = "x"
+
+
+def unit_test_name(instance: str, index: int) -> str:
+    """``<instance>.x[i]`` — the result-file name of element ``index``."""
+    return f"{instance}.{_ARRAY}[{index}]"
+
+
+def is_unit_test_variable(test: TestModel, name: str) -> bool:
+    """Whether ``name`` is an element of the test's UnitTests component,
+    ``<instance>.x[i]`` — declared through the component or tracked by that
+    name. Each is its own test quantity, whatever its expression reads as,
+    so no plot folds it into a family with another (the owner's ruling O3,
+    2026-09-28)."""
+    head = f"{test.unit_tests_instance}.{_ARRAY}["
+    return (
+        name.startswith(head) and name.endswith("]") and name[len(head) : -1].isdigit()
+    )
+
+
 @dataclass(frozen=True)
 class UnitTestVariable:
     """One tracked variable of the component: its result-file name and the
@@ -56,8 +77,15 @@ def unit_test_variables(test: TestModel) -> list[UnitTestVariable]:
             expression = f"{exprs[0]}[{i}]"
         else:
             expression = ""
-        out.append(UnitTestVariable(f"{test.unit_tests_instance}.x[{i}]", expression))
+        out.append(
+            UnitTestVariable(unit_test_name(test.unit_tests_instance, i), expression)
+        )
     return out
 
 
-__all__ = ["UnitTestVariable", "unit_test_variables"]
+__all__ = [
+    "UnitTestVariable",
+    "is_unit_test_variable",
+    "unit_test_name",
+    "unit_test_variables",
+]

@@ -2628,7 +2628,9 @@ class TestPlots:
             (("y",), False),
         ]
 
-    def test_a_family_folds_by_the_expression_on_one_scale(self, tmp_path):
+    def test_unit_tests_variables_never_fold_whatever_their_expressions(self, tmp_path):
+        """O3: `unitTests.x[i]` is its own test quantity — one plot each, in
+        tree order, even where the expressions read as one array."""
         cfg, work = _unit_tests_project(tmp_path)
         s = Session()
         s.open(cfg, work_dir=work)
@@ -2641,19 +2643,47 @@ class TestPlots:
         }
         s.stage([PatchOp(A, "add", "/metrics", tree)])
         with_expressions(s, A, {UT1: "pipe.T[1]", UT2: "pipe.T[2]"})
-        assert [p.subject for p in s.plots(A)] == [(UT1, UT2)]
-        with_expressions(s, A, {UT1: "a.T", UT2: "b.p"})
         assert [p.subject for p in s.plots(A)] == [(UT2,), (UT1,)]
 
-    def test_a_family_on_two_scales_does_not_fold(self, tmp_path):
-        cfg, work = _unit_tests_project(tmp_path)
+    def test_an_array_tracked_by_its_names_folds_on_any_scale(self, tmp_path):
+        """O3: any other array folds by its result-file names, with no
+        scale check — here nothing is scored (B has no baseline), and the
+        tracked array is still one plot."""
+        cfg, work = _two_var_project(tmp_path)
+        t = [i / 4 for i in range(5)]
+        (work / "test_0002" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {"p[1]": t, "p[2]": [1e5 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = ["p[1]", "p[2]"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
         s = Session()
         s.open(cfg, work_dir=work)
-        with_expressions(s, A, {UT1: "x[1]", UT2: "x[2]"})
-        assert [p.subject for p in s.plots(A)] == [(UT1, UT2)]
-        result = s.project.results[A]
-        result.variables[1].values = result.variables[1].values * 1e5
-        assert [p.subject for p in s.plots(A)] == [(UT1,), (UT2,)]
+        assert [p.subject for p in s.plots(B)] == [("p[1]", "p[2]")]
+
+    def test_a_no_baseline_test_with_a_tree_draws_the_trees_plots(self, tmp_path):
+        """A NO_REF test's `metrics` tree names what will be scored: its
+        plots are the tree's, in its order — not one per tracked name."""
+        s = self._open(tmp_path)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "y"},
+                {"metric": "nrmse", "variable": "x"},
+            ],
+        }
+        s.stage([PatchOp(B, "add", "/metrics", tree)])
+        assert [p.subject for p in s.plots(B)] == [("y",), ("x",)]
 
     def test_context_and_a_watch_plot_are_staged_extras(self, tmp_path):
         from dstf.authoring.layout import add_context, layout_op, new_watch

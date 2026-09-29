@@ -34,18 +34,6 @@ def test_texts(
     ``Session.variable_texts`` — so a variable reads the same in its card
     title, its criteria row, its pill and its legend entry.
     """
-    return variable_texts(plain_labels(comparisons, result), plot_series)
-
-
-def plain_labels(comparisons: Iterable, result) -> dict[str, str]:
-    """``{name: its plain label}`` — the expression, else the name — for the
-    result's variables and the scored comparisons, with no scope.
-
-    What an array family folds by
-    (:func:`~dstf.discovery.plots.derive_plots`). Not the scope's texts:
-    the scope holds every series of the test's plots, so the plots are
-    derived BEFORE it — `Session.variable_texts` calls `Session.plots` —
-    and a fold that read the scope would call itself."""
     labels: dict[str, str] = {}
     for var in getattr(result, "variables", None) or ():
         if var.name:
@@ -53,7 +41,7 @@ def plain_labels(comparisons: Iterable, result) -> dict[str, str]:
     for vc in comparisons:
         if vc.name:
             labels.setdefault(vc.name, display_label(vc.name, vc.expression))
-    return labels
+    return variable_texts(labels, plot_series)
 
 
 def _format_value(val) -> str:

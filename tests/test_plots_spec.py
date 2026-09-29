@@ -14,8 +14,8 @@ from dstf.discovery.plots import (
     PlotsSpecError,
     derive_plots,
     parse_plots,
+    plot_leaves,
     plots_to_raw,
-    result_magnitudes,
     tracked_names,
     tree_leaves,
 )
@@ -81,40 +81,40 @@ def _leaf(metric, var, **params):
     return {"metric": metric, "variable": var, **params}
 
 
+def _and(*names):
+    return {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
+
+
 NESTED = {
     "combinator": "and",
     "children": [
-        _leaf("nrmse", "unitTests.x[2]"),
+        _leaf("nrmse", "pipe.T[2]"),
         {
             "combinator": "k-of-n",
             "k": 1,
             "children": [
                 _leaf("nrmse", "a.Q"),
-                _leaf("tube", "unitTests.x[1]", tube_rel=0.1),
+                _leaf("tube", "pipe.T[1]", tube_rel=0.1),
             ],
         },
         _leaf("range", "b", min_value=0.0),
     ],
 }
-LABELS = {"unitTests.x[1]": "pipe.T[1]", "unitTests.x[2]": "pipe.T[2]"}
-#: Every member on one scale: a family folds (O1).
-ONE_SCALE = {"unitTests.x[1]": 301.0, "unitTests.x[2]": 305.0, "a.Q": 1e3, "b": 2.0}
 
 
 def _shape(plots):
     return [(p.subject, p.context, p.watch) for p in plots]
 
 
-def _derive(leaves, labels=LABELS, extras=(), **kw):
+def _derive(leaves, extras=(), **kw):
     kw.setdefault("tracked", ())
-    kw.setdefault("magnitudes", ONE_SCALE)
-    return derive_plots(leaves, labels, extras, **kw)
+    return derive_plots(leaves, extras, **kw)
 
 
 def test_derived_plots_follow_the_tree_and_fold_a_family_where_it_first_appears():
     plots = _derive(_leaves(NESTED))
     assert _shape(plots) == [
-        (("unitTests.x[1]", "unitTests.x[2]"), (), False),
+        (("pipe.T[1]", "pipe.T[2]"), (), False),
         (("a.Q",), (), False),
         (("b",), (), False),
     ]
@@ -122,21 +122,20 @@ def test_derived_plots_follow_the_tree_and_fold_a_family_where_it_first_appears(
     assert all(p.kind == "time" for p in plots)
 
 
-def test_the_tree_order_is_kept_not_sorted_by_label():
-    tree = {
-        "combinator": "and",
-        "children": [_leaf("nrmse", "z.b"), _leaf("nrmse", "a.a")],
-    }
-    assert [p.subject for p in _derive(_leaves(tree), {})] == [("z.b",), ("a.a",)]
+def test_the_tree_order_is_kept_not_sorted_by_name():
+    assert [p.subject for p in _derive(_leaves(_and("z.b", "a.a")))] == [
+        ("z.b",),
+        ("a.a",),
+    ]
 
 
 def test_an_extra_on_a_scored_variable_adds_context_and_an_unscored_one_is_watch():
     extras = parse_plots(
         [{"var": "c", "context": ["d"]}, {"var": "a.Q", "context": ["e", "f"]}]
     )
-    plots = _derive(_leaves(NESTED), extras=extras)
+    plots = _derive(_leaves(NESTED), extras)
     assert _shape(plots) == [
-        (("unitTests.x[1]", "unitTests.x[2]"), (), False),
+        (("pipe.T[1]", "pipe.T[2]"), (), False),
         (("a.Q",), ("e", "f"), False),
         (("b",), (), False),
         (("c",), ("d",), True),
@@ -145,162 +144,71 @@ def test_an_extra_on_a_scored_variable_adds_context_and_an_unscored_one_is_watch
 
 
 def test_an_extra_on_a_family_member_decorates_the_family():
-    extras = parse_plots([{"var": "unitTests.x[2]", "context": ["z"]}])
-    (fam, *_) = _derive(_leaves(NESTED), extras=extras)
+    extras = parse_plots([{"var": "pipe.T[2]", "context": ["z"]}])
+    (fam, *_) = _derive(_leaves(NESTED), extras)
     assert fam.context == ("z",) and not fam.watch
 
 
 def test_context_on_a_family_skips_its_members_and_repeats():
     extras = parse_plots(
         [
-            {"var": "unitTests.x[1]", "context": ["unitTests.x[2]", "z"]},
-            {"var": "unitTests.x[2]", "context": ["z", "w"]},
+            {"var": "pipe.T[1]", "context": ["pipe.T[2]", "z"]},
+            {"var": "pipe.T[2]", "context": ["z", "w"]},
         ]
     )
-    (fam, *_) = _derive(_leaves(NESTED), extras=extras)
+    (fam, *_) = _derive(_leaves(NESTED), extras)
     assert fam.context == ("z", "w")
 
 
 def test_watch_plots_keep_their_list_order_after_the_derived_ones():
     extras = parse_plots([{"var": "w2"}, {"var": "b"}, {"var": "w1"}])
-    plots = _derive(_leaves(NESTED), extras=extras)
+    plots = _derive(_leaves(NESTED), extras)
     assert _shape(plots)[:3] == _shape(_derive(_leaves(NESTED)))
     assert _shape(plots)[3:] == [(("w2",), (), True), (("w1",), (), True)]
 
 
-def test_branching_dynamic_pipes_folds_nothing():
-    """`cat(1, T, p)[i]` mixes temperatures and pressures: ten plots."""
-    names = [f"unitTests.x[{i}]" for i in range(1, 11)]
-    labels = {
-        n: f"cat(1, pipe2.mediums.T, pipe2.mediums.p)[{i}]"
-        for i, n in enumerate(names, 1)
-    }
-    tree = {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
-    plots = _derive(_leaves(tree), labels, magnitudes={n: 300.0 for n in names})
-    assert [p.subject for p in plots] == [(n,) for n in names]
+# -- O3: a UnitTests variable never folds; any other array always does -------
+
+UT = [f"unitTests.x[{i}]" for i in range(1, 5)]
 
 
-def test_a_family_folds_by_label_not_by_name():
-    """Two `unitTests.x[i]` whose expressions are unrelated names do not fold."""
-    tree = {
-        "combinator": "and",
-        "children": [
-            _leaf("nrmse", "unitTests.x[1]"),
-            _leaf("nrmse", "unitTests.x[2]"),
-        ],
-    }
-    labels = {"unitTests.x[1]": "a.T", "unitTests.x[2]": "b.p"}
-    assert len(_derive(_leaves(tree), labels)) == 2
+def test_unit_tests_variables_never_fold_whatever_their_expressions():
+    """`unitTests.x[1..4]` whose expressions read `pipe.T[1..4]`: each is
+    its own test quantity (the UnitTests contract) — four plots. The fold
+    reads NAMES, and a UnitTests name is kept out of it."""
+    plots = _derive(_leaves(_and(*UT)), unit_tests=UT)
+    assert [p.subject for p in plots] == [(n,) for n in UT]
 
 
-# -- O1: a family folds only on one scale -------------------------------------
-
-#: `check_atm`: a local `x[2]` holding 1 Pa in atm and 1 atm in Pa.
-CHECK_ATM = {
-    "combinator": "and",
-    "children": [_leaf("nrmse", "unitTests.x[1]"), _leaf("nrmse", "unitTests.x[2]")],
-}
-CHECK_ATM_LABELS = {"unitTests.x[1]": "x[1]", "unitTests.x[2]": "x[2]"}
-
-
-def test_a_check_atm_shaped_family_on_two_scales_is_two_plots():
-    magnitudes = {"unitTests.x[1]": 1 / 101325, "unitTests.x[2]": 101325.0}
-    plots = _derive(_leaves(CHECK_ATM), CHECK_ATM_LABELS, magnitudes=magnitudes)
-    assert [p.subject for p in plots] == [("unitTests.x[1]",), ("unitTests.x[2]",)]
-
-
-def test_a_pipe_temperature_family_on_one_scale_is_one_plot():
+def test_an_array_tracked_by_its_names_is_one_family_plot():
     names = [f"pipe.T[{i}]" for i in range(1, 5)]
-    tree = {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
-    magnitudes = dict(zip(names, (300.0, 310.0, 320.0, 330.0)))
-    plots = _derive(_leaves(tree), {}, magnitudes=magnitudes)
+    plots = _derive(_leaves(_and(*reversed(names))))
     assert [p.subject for p in plots] == [tuple(names)]
 
 
-def test_no_result_folds_nothing():
-    names = [f"pipe.T[{i}]" for i in range(1, 5)]
-    tree = {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
-    plots = _derive(_leaves(tree), {}, magnitudes=None)
-    assert [p.subject for p in plots] == [(n,) for n in names]
+def test_a_check_atm_shaped_unit_tests_pair_is_two_plots():
+    """`check_atm`: a local `x[2]` holding 1 Pa in atm and 1 atm in Pa, as
+    `unitTests.x[1]` and `unitTests.x[2]`."""
+    pair = UT[:2]
+    assert [p.subject for p in _derive(_leaves(_and(*pair)), unit_tests=pair)] == [
+        (UT[0],),
+        (UT[1],),
+    ]
 
 
-@pytest.mark.parametrize(
-    ("m1", "m2", "folds"),
-    [
-        (1.0, 10.0, True),  # the bound is inclusive
-        (1.0, 10.01, False),
-        (-0.0, 1e9, True),  # a member at zero folds with any
-        (0.0, 0.0, True),
-    ],
-)
-def test_the_scale_ratio_is_ten(m1, m2, folds):
-    names = ["p[1]", "p[2]"]
-    tree = {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
-    plots = _derive(_leaves(tree), {}, magnitudes={"p[1]": m1, "p[2]": m2})
-    assert len(plots) == (1 if folds else 2)
+def test_an_array_folds_whatever_its_members_scales():
+    """No scale rule (O3): a real array is one quantity, however far apart
+    its members' magnitudes are."""
+    plots = _derive(_leaves(_and("p[1]", "p[2]")))
+    assert [p.subject for p in plots] == [("p[1]", "p[2]")]
 
 
-def test_a_member_the_result_lacks_does_not_fold():
-    """Its scale is unknown, so nothing says the family shares one."""
-    names = ["p[1]", "p[2]"]
-    tree = {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
-    assert len(_derive(_leaves(tree), {}, magnitudes={"p[1]": 3.0})) == 2
-
-
-def test_an_unfolded_family_keeps_each_members_own_tree_position():
-    """Split, each member's plot sits where the tree first names it."""
-    tree = {
-        "combinator": "and",
-        "children": [
-            _leaf("nrmse", "p[2]"),
-            _leaf("nrmse", "a"),
-            _leaf("nrmse", "p[1]"),
-        ],
-    }
-    magnitudes = {"p[1]": 1.0, "p[2]": 1e6, "a": 1.0}
-    plots = _derive(_leaves(tree), {}, magnitudes=magnitudes)
-    assert [p.subject for p in plots] == [("p[2]",), ("a",), ("p[1]",)]
-
-
-class _Values:
-    def __init__(self, name, values):
-        import numpy as np
-
-        self.name = name
-        self.values = np.asarray(values, dtype=float)
-
-
-class _Run:
-    def __init__(self, *variables, success=True):
-        self.variables = list(variables)
-        self.success = success
-
-
-def test_result_magnitudes_read_the_largest_absolute_sample():
-    """Every named variable of the result is a key — no finite sample reads
-    NaN, an unknown scale — and a failed run's partial file has none."""
-    import math
-
-    result = _Run(
-        _Values("a", [1.0, -5.0, 2.0]),
-        _Values("b", [float("nan"), 3.0]),
-        _Values("c", []),
-        _Values("d", [float("nan")]),
-        _Values("", [7.0]),
+def test_only_the_named_unit_tests_variables_stay_apart():
+    """A family around a UnitTests variable still folds its other members."""
+    plots = _derive(
+        _leaves(_and("p[1]", UT[0], "p[2]", UT[1])), unit_tests=[UT[0], UT[1]]
     )
-    got = result_magnitudes(result)
-    assert set(got) == {"a", "b", "c", "d"}
-    assert (got["a"], got["b"]) == (5.0, 3.0)
-    assert math.isnan(got["c"]) and math.isnan(got["d"])
-    assert result_magnitudes(None) == {}
-    assert result_magnitudes(_Run(_Values("a", [1.0]), success=False)) == {}
-
-
-def test_a_member_with_no_finite_sample_does_not_fold():
-    names = ["p[1]", "p[2]"]
-    tree = {"combinator": "and", "children": [_leaf("nrmse", n) for n in names]}
-    magnitudes = {"p[1]": 3.0, "p[2]": float("nan")}
-    assert len(_derive(_leaves(tree), {}, magnitudes=magnitudes)) == 2
+    assert [p.subject for p in plots] == [("p[1]", "p[2]"), (UT[0],), (UT[1],)]
 
 
 # -- leaves, no tree, missing -------------------------------------------------
@@ -314,7 +222,7 @@ def test_a_string_quantity_scalar_leaf_adds_no_plot():
             _leaf("scalar", "CPUtime", quantity="CPUtime.final", tolerance=1.0),
         ],
     }
-    assert [p.subject for p in _derive(_leaves(tree), {})] == [("x",)]
+    assert [p.subject for p in _derive(_leaves(tree))] == [("x",)]
 
 
 def test_tree_leaves_of_no_tree_is_none_and_of_one_leaf_is_that_leaf():
@@ -324,60 +232,57 @@ def test_tree_leaves_of_no_tree_is_none_and_of_one_leaf_is_that_leaf():
 
 
 def test_no_tree_is_one_plot_per_tracked_name():
-    plots = derive_plots(None, {}, (), tracked=["b", "a", "b"])
+    plots = derive_plots(None, (), tracked=["b", "a", "b"])
     assert _shape(plots) == [(("b",), (), False), (("a",), (), False)]
 
 
-def test_no_tree_folds_nothing_even_on_one_scale():
-    """Nothing scored: one plot per tracked variable (O2)."""
-    names = ["p[1]", "p[2]"]
-    plots = derive_plots(
-        None, {}, (), tracked=names, magnitudes={n: 1.0 for n in names}
-    )
-    assert [p.subject for p in plots] == [("p[1]",), ("p[2]",)]
+def test_no_tree_folds_a_tracked_array_but_never_a_unit_tests_variable():
+    """Nothing scored: one plot per tracked variable or array (O2, O3)."""
+    plots = derive_plots(None, (), tracked=["p[1]", *UT[:2], "p[2]"], unit_tests=UT)
+    assert [p.subject for p in plots] == [("p[1]", "p[2]"), (UT[0],), (UT[1],)]
 
 
 def test_no_tree_still_takes_extras():
     extras = parse_plots([{"var": "a", "context": ["z"]}, {"var": "w"}])
-    plots = derive_plots(None, {}, extras, tracked=["a"])
+    plots = derive_plots(None, extras, tracked=["a"])
     assert _shape(plots) == [(("a",), ("z",), False), (("w",), (), True)]
 
 
 def test_a_name_the_result_lacks_is_missing():
     extras = parse_plots([{"var": "a.Q", "context": ["gone"]}])
-    plots = _derive(
-        _leaves(NESTED), extras=extras, available=["a.Q", "b"], magnitudes=None
-    )
+    plots = _derive(_leaves(NESTED), extras, available=["a.Q", "b"])
     by = {p.subject: p.missing for p in plots}
     assert by[("a.Q",)] == ("gone",)
-    assert by[("unitTests.x[1]",)] == ("unitTests.x[1]",)
-    assert by[("unitTests.x[2]",)] == ("unitTests.x[2]",)
+    assert by[("pipe.T[1]", "pipe.T[2]")] == ("pipe.T[1]", "pipe.T[2]")
     assert by[("b",)] == ()
     # `series` keeps a missing name: readers check `missing`
     (aq,) = [p for p in plots if p.subject == ("a.Q",)]
     assert aq.series == ("a.Q", "gone")
 
 
-def test_a_leaf_the_result_lacks_is_missing_though_tracked():
-    """Only a name the RESULT carries is exempt (a listing of the file may
-    be filtered); a leaf's name is tracked because the tree names it, and
-    the result may not carry it at all."""
-    tree = {"combinator": "and", "children": [_leaf("nrmse", "x"), _leaf("nrmse", "y")]}
-    plots = _derive(
-        _leaves(tree), {}, tracked=["x", "y"], available=[], magnitudes={"x": 1.0}
-    )
-    assert [p.missing for p in plots] == [(), ("y",)]
-
-
-def test_a_result_backed_name_is_never_missing():
-    plots = derive_plots(
-        None, {}, (), available=[], tracked=["x"], magnitudes={"x": float("nan")}
-    )
-    assert plots[0].missing == ()
-
-
 def test_with_no_name_list_nothing_is_missing():
     assert all(not p.missing for p in _derive(_leaves(NESTED)))
+
+
+# -- `plot_leaves`: which tree the plots derive from --------------------------
+
+
+def test_plot_leaves_are_the_authored_tree_even_with_nothing_compared():
+    """A NO_REF test with a `metrics` tree: the tree names what will be
+    scored, so its plots are the tree's (the controller's call on the
+    review's finding 7) — never one per tracked variable."""
+    test = make_test_model("Lib.T")
+    test.metric_tree_spec = parse_metric_tree(_and("y", "x"))
+    assert [leaf.variable for leaf in plot_leaves(test, [])] == ["y", "x"]
+
+
+def test_plot_leaves_are_the_implicit_tree_of_what_was_compared():
+    test = make_test_model("Lib.T")
+    assert [leaf.variable for leaf in plot_leaves(test, ["b", "a"])] == ["b", "a"]
+
+
+def test_plot_leaves_are_none_with_no_tree_and_nothing_compared():
+    assert plot_leaves(make_test_model("Lib.T"), []) is None
 
 
 def _doc(plots):

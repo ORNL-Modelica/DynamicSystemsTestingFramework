@@ -1423,8 +1423,9 @@ N_T2, N_KX, N_KT1, N_X2, N_Y = (
 
 def _nested_project(tmp_path, plots=None):
     """`_two_var_project` with A's result carrying `pipe.T[1]`, `pipe.T[2]`
-    (one scale, so they fold), and the untracked `w` and `z`; A tracks x, y
-    and the pipe and is scored by `NESTED`, with ``plots`` as its extras."""
+    (an array by name, so they fold), and the untracked `w` and `z`; A
+    tracks x, y and the pipe and is scored by `NESTED`, with ``plots`` as
+    its extras."""
     cfg, work = _two_var_project(tmp_path)
     path = work / "test_0001" / "result.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1600,6 +1601,30 @@ async def test_a_staged_context_rebuilds_the_card(nested_shell):
         )
         await _settled(lambda: page.cards[1].resolved.context == ("w",))
         assert _one(user, "context-name:1:w").text == "w"
+
+
+async def test_a_tree_of_statistics_alone_has_no_plots_and_says_so(shell):
+    """A stored-scalar leaf names a statistic, not a series: a tree of
+    nothing else derives no plot, and the page says why — not "the result
+    has no variables", which is false."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": "CPUtime.final",
+                "max_value": 1e9,
+            }
+        ],
+    }
+    _stage_tree(shell, A, tree)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards == []
+        assert _one(user, "plots:count").text == (
+            "no plots: this test's criteria score statistics, not signals"
+        )
 
 
 async def test_a_test_with_no_tree_has_one_card_per_tracked_variable(shell):
@@ -4915,10 +4940,30 @@ class TestLayoutControls:
             assert user.notify.messages == [str(error)]
             assert shell.session.spec.pending == []
             assert page.selected == 4 and len(page.cards) == 7
+            from dstf.authoring.layout import remove_watch
+
             with page.client:
-                assert page.stage_layout(shell.session.layout(A), select=6) is False
+                edit = remove_watch(shell.session.layout(A), "w5")
+                assert page.stage_layout(edit, select=5) is False
             assert page.selected == 4
             assert shell.session.spec.pending == []
+
+    async def test_an_edit_that_changes_nothing_stages_nothing(self, page_shell):
+        """A gesture whose extras are the ones in effect stages no op."""
+        async with user_simulation(root=page_shell.index) as user:
+            page = await _test_page(page_shell, user)
+            with page.client:
+                assert page.stage_layout(page_shell.session.layout(A)) is False
+            assert page_shell.session.spec.pending == []
+
+    async def test_no_extras_on_an_entry_with_no_key_stage_nothing(self, shell):
+        """Not a `remove` of a member that is not there."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            with page.client:
+                assert page.stage_layout(()) is False
+            assert shell.session.spec.pending == []
+            assert user.notify.messages == []
 
     async def test_reset_layout_follows_the_effective_entry(self, shell):
         """B has no ``plots`` key: a context series stages the key's add,
@@ -4979,10 +5024,13 @@ class TestLayoutControls:
             raise error
 
         async with user_simulation(root=shell.index) as user:
+            from dstf.authoring.layout import remove_watch
+
             page = await _test_page(shell, user)
             monkeypatch.setattr(shell.session, "stage", refuse)
             with page.client:
-                assert page.stage_layout(shell.session.layout(A)) is False
+                edit = remove_watch(shell.session.layout(A), "w5")
+                assert page.stage_layout(edit) is False
             await _settled(lambda: user.notify.messages != [])
             assert user.notify.messages == ["it refused"]
             assert shell.session.spec.pending == [] and len(page.cards) == 7
@@ -5722,21 +5770,14 @@ class TestVariablesDrawer:
             assert _one(user, "var-target").text == ""
 
 
-@pytest.mark.parametrize(
-    ("second", "title"),
-    [
-        ("pipe.T[2]", "pipe.T[1:2]"),
-        # One expression twice: the fold is over the TEXTS, which carry the
-        # names, so the two are no family — never `pipe.T[1,1]`.
-        ("pipe.T[1]", "pipe.T[1], pipe.T[1]"),
-    ],
-)
-async def test_a_card_folds_a_family_of_expressions_and_its_names(
-    tmp_path, second, title
+@pytest.mark.parametrize("second", ["pipe.T[2]", "pipe.T[1]"])
+async def test_unit_tests_elements_are_a_card_each_whatever_their_expressions(
+    tmp_path, second
 ):
-    """The report's title rule on a card (the executing review's correction
-    8): a family of expressions reads as one slice, and the muted line
-    folds the result-file names the same way."""
+    """O3: a UnitTests element is its own test quantity — expressions that
+    read as one array (`pipe.T[1]`, `pipe.T[2]`), or as one element twice,
+    fold nothing: one card each, titled by its expression, its name muted
+    beside it."""
     from test_session import UT1, UT2, _unit_tests_project, with_expressions
 
     cfg, work = _unit_tests_project(tmp_path)
@@ -5746,9 +5787,10 @@ async def test_a_card_folds_a_family_of_expressions_and_its_names(
     shell.load.phase = "done"
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert [c.resolved.subject for c in page.cards] == [(UT1, UT2)]
-        assert _one(user, "plot-title:0").text == title
-        assert _one(user, "plot-name:0").text == "unitTests.x[1:2]"
+        assert [c.resolved.subject for c in page.cards] == [(UT1,), (UT2,)]
+        assert [_one(user, f"plot-name:{i}").text for i in (0, 1)] == [UT1, UT2]
+        assert _one(user, "plot-title:0").text.startswith("pipe.T[1]")
+        assert _one(user, "plot-title:1").text.startswith(second)
 
 
 async def test_the_focus_bar_names_the_plot_as_its_title_does(nested_shell):
@@ -6826,12 +6868,10 @@ class TestVariablesDrawerControls:
             user.find(marker="var-needle").type(r"pipe\.T\[[12]\]")
             await _settled(lambda: page.state.vars_needle == r"pipe\.T\[[12]\]")
             row_of = var_marker("var-row", tracked)
-            # x and y are ONE plot's subject now — one family, one scale —
-            # the selected one, so no "plot k" rides beside the row.
             for mode, labels in (
-                ("both", ["pipe.T[1:2]", "x, y"]),
-                ("expression", ["pipe.T[1:2]", "x, y"]),
-                ("file", ["x, y"]),
+                ("both", ["pipe.T[1:2]", "x, y", "plot 2"]),
+                ("expression", ["pipe.T[1:2]", "x, y", "plot 2"]),
+                ("file", ["x, y", "plot 2"]),
             ):
                 await _pick(user, "var-names", mode)
                 await _settled(lambda m=mode: page.state.vars_names == m)
@@ -6863,7 +6903,8 @@ class TestVariablesDrawerControls:
             user.find(marker="var-needle").type("^[xy]$")
             await _settled(lambda: _none(user, var_marker("var-row", own)))
             assert _labels_in(_one(user, var_marker("var-row", tracked))) == [
-                "pipe.T[1:2]"
+                "pipe.T[1:2]",
+                "plot 2",
             ]
             check = _one(user, var_marker("var-check", tracked))
             assert check.props["aria-label"] == "pipe.T[1:2] (x, y)"

@@ -198,10 +198,14 @@ class TestPage:
             return SCORING_FAILED
         return "this test has no baseline"
 
-    def _no_plots_reason(self) -> str:
+    def _no_plots_reason(self, view: dict | None) -> str:
         """Why there is no PLOT, which is not why there is no tree: a test
         with no tree still draws one plot per tracked variable, so a page
-        with none has no result, or a result with nothing in it."""
+        with none has no result, a result with nothing in it — or a tree
+        whose every criterion scores a statistic (a stored-scalar leaf
+        names no series, so it derives no plot)."""
+        if view is not None:
+            return "this test's criteria score statistics, not signals"
         result = self._result()
         if result is None or not result.success:
             return "this test has no result"
@@ -485,7 +489,7 @@ class TestPage:
         scored — one per tracked variable; and how many of them are a
         person's watch plots."""
         if not plots:
-            return f"no plots: {self._no_plots_reason()}"
+            return f"no plots: {self._no_plots_reason(view)}"
         why = (
             "one per tracked variable" if view is None else "derived from the criteria"
         )
@@ -528,12 +532,18 @@ class TestPage:
         self, extras: Sequence[PlotExtra], select: int | None = None
     ) -> bool:
         """Stage ``extras`` — the test's plot extras after one gesture — as
-        the ONE op on `/plots`. ``select`` is set BEFORE the stage — the
-        rebuild its `spec` event causes reads it — and put back if the
-        Session refuses: a refused edit is said, and nothing else changes
-        (3c, planner's choice 10)."""
+        the ONE op on `/plots`, and say whether it was staged. An edit that
+        changes nothing stages nothing: extras equal to the ones in effect,
+        or none on an entry with no key (`layout_op`'s ``None``). ``select``
+        is set BEFORE the stage — the rebuild its `spec` event causes reads
+        it — and put back if the Session refuses: a refused edit is said,
+        and nothing else changes (3c, planner's choice 10)."""
         session = self.shell.session
+        if tuple(extras) == session.layout(self.model_id):
+            return False
         op = layout_op(self.model_id, session.spec.entry(self.model_id), extras)
+        if op is None:
+            return False
         before = self.selected
         if select is not None:
             self.selected = select
