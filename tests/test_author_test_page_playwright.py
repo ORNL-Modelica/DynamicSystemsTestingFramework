@@ -3404,8 +3404,11 @@ def test_the_drawer_leaves_the_plots_480_px_at_900(tmp_path, playwright_browser)
             timeout=EXPECT_TIMEOUT
         )
         page.wait_for_timeout(500)
-        _drag_grip(page, 2000)
-        page.wait_for_timeout(800)
+        # the browser's clamp, not the server's after the release: no frame
+        # from just before it on is wider
+        frames = _drag_grip(page, 2000, watch_ms=1000)
+        assert frames and all(w == 380 for w in frames), frames
+        page.wait_for_timeout(300)
         panel = page.evaluate(WIDTHS)[0]
         column, widths, xs = page.evaluate(CARD_ROOM)
         _shot(page, tmp_path, "drawer-widest-900")
