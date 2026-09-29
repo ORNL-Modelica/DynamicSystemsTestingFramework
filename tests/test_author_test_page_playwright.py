@@ -22,6 +22,7 @@ import math
 import os
 import re
 import shutil
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -44,6 +45,7 @@ from test_author_suite_playwright import (  # noqa: E402
 from test_interactive_figures import UNDER_TOOLBAR  # noqa: E402
 from test_session import (  # noqa: E402
     LONG,
+    LONG_WATCH,
     A,
     C,
     _drawer_project,
@@ -916,9 +918,21 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         expect(page.locator(".dstf-plot:visible")).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )
-        expect(page.locator(".dstf-focus-bar")).to_contain_text(
-            "Showing 1 of 7 plots: x"
+        expect(page.locator(".dstf-focus-bar")).to_contain_text("Showing 1 of 7 plots")
+        # The switcher names the plot; the sentence only counts.
+        expect(page.locator(".dstf-focus-bar")).not_to_contain_text("plots:")
+        # The switcher (Q11 c): every plot by name, a watch plot marked;
+        # choosing one shows it alone.
+        page.locator(".dstf-focus-bar .q-select").click()
+        menu = page.locator(".q-menu .q-item")
+        expect(menu).to_have_count(7, timeout=EXPECT_TIMEOUT)
+        assert menu.all_inner_texts()[:3] == ["x", "y", "w1 · watch"]
+        menu.nth(1).click()
+        expect(page.locator(".dstf-focus-bar .q-select")).to_contain_text(
+            "y", timeout=EXPECT_TIMEOUT
         )
+        expect(page.locator(".dstf-plot:visible")).to_have_count(1)
+        expect(page.locator(".dstf-plot:visible .dstf-card-title")).to_contain_text("y")
         page.get_by_role("button", name="Show all 7 plots").click()
         expect(page.locator(".dstf-plot:visible")).to_have_count(
             7, timeout=EXPECT_TIMEOUT
@@ -1062,7 +1076,20 @@ HOVER_TEXTS = (
 )
 
 
-def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_browser):
+def _context_page_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` with y drawn as CONTEXT on x's plot, and no watch
+    plots: x's card draws y grey beside it."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["plots"] = [{"var": "x", "context": ["y"]}]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def test_a_hover_over_a_context_series_reads_its_name(tmp_path, playwright_browser):
     """The hover box a person sees in the TOOL, under a real mouse.
 
     The tool re-hosts the figure the report draws, under NiceGUI's own
@@ -1071,12 +1098,13 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
     per-point array. Nothing but a rendered page says so — the figure dict
     carried the label all along.
 
-    A card drawing SEVERAL series is the one that always carries a hover:
-    a single-series card names its traces "Actual" / "Reference" and adds
-    one only when the label is not the name. Plot 2 of the fixture is
-    `[x, y]`; Focus is how it is drawn without scrolling to it."""
-    with _served(tmp_path, playwright_browser) as page:
-        page.locator(".dstf-plot").nth(2).get_by_role("button", name="Focus").click()
+    A context series always carries a hover — its variable's text — and
+    it is what a person reads to tell the grey line from the subject's.
+    Focus draws x's card without a scroll."""
+    with _served(tmp_path, playwright_browser, project=_context_page_project) as page:
+        card = page.locator(".dstf-plot").nth(0)
+        expect(card.locator(".dstf-context")).to_contain_text("y")
+        card.get_by_role("button", name="Focus").click()
         expect(page.locator(".dstf-plot:visible")).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )
@@ -1086,11 +1114,11 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
         plot = page.locator(".dstf-plot:visible .js-plotly-plot")
         pixel = None
         for _ in range(30):
-            pixel = plot.evaluate(POINT_PIXEL, ["actual/x", 3])
+            pixel = plot.evaluate(POINT_PIXEL, ["context/y", 3])
             if pixel is not None:
                 break
             page.wait_for_timeout(200)
-        assert pixel is not None, "the focused card never drew actual/x"
+        assert pixel is not None, "the focused card never drew context/y"
         x, y = pixel
         page.mouse.move(x - 40, y - 20)
         page.wait_for_timeout(100)
@@ -1099,7 +1127,7 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
         texts = page.evaluate(HOVER_TEXTS)
         _shot(page, tmp_path, "hover")
         assert texts, "no hover box under the mouse"
-        assert any(line.startswith("x: ") for line in texts), texts
+        assert any(line.startswith("y: ") for line in texts), texts
         assert not any("%{" in line for line in texts), texts
 
 
@@ -2096,7 +2124,8 @@ def test_a_click_selects_a_plot_outside_its_plot_area(tmp_path, playwright_brows
         _shot(page, tmp_path, "ring")
         cards.nth(3).locator(".text-subtitle2").first.click()
         _ring_is(page, 3)
-        cards.nth(1).get_by_role("button", name="Remove plot").click()
+        # Plot 2 is a watch plot (of w1): a derived one has no Remove.
+        cards.nth(2).get_by_role("button", name="Remove plot").click()
         expect(cards).to_have_count(6, timeout=EXPECT_TIMEOUT)
         _ring_is(page, 2)
 
@@ -2130,23 +2159,29 @@ def _var_row(page, text: str):
     )
 
 
-def test_the_variables_drawer_edits_the_layout_with_a_real_mouse(
+def _open_vars(page) -> None:
+    page.locator(".dstf-rail").get_by_role("button", name="Vars").click()
+
+
+def test_the_variables_drawer_edits_the_extras_with_a_real_mouse(
     tmp_path, playwright_browser
 ):
-    """The owner's rulings Q5-Q6 under a real mouse: Add series selects its
-    plot and opens the drawer on it, "+ new plot" is there on the hovered
-    row only, a check adds a series to the selected plot, and "+ new plot"
-    puts a family on a plot of its own below it, selected, as ONE legend
-    entry whose hover still names each member. Discard puts it all back;
-    `_served` checks the spec file never moved."""
+    """The owner's rulings Q5-Q6 and Q12-Q13 under a real mouse: a click on
+    a card selects its plot for the drawer, "+ new plot" is there on the
+    hovered row only, a check adds a CONTEXT series to the selected plot —
+    grey on the plot, named in its legend and listed above it — a family's
+    "+ new plot" is grey, and a lone variable's makes a watch plot after
+    the others, selected. Discard puts it all back; `_served` checks the
+    spec file never moved."""
     with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
         cards = page.locator(".dstf-plot")
         cards.nth(1).scroll_into_view_if_needed()
-        cards.nth(1).get_by_role("button", name="Add series").click()
+        cards.nth(1).locator(".dstf-card-title").click()
         _ring_is(page, 1)
+        _open_vars(page)
         target = page.locator(".dstf-var-target")
         expect(target).to_have_text(
-            "Checkboxes act on plot 2 of 2", timeout=EXPECT_TIMEOUT
+            "Checkboxes add context to plot 2 of 2", timeout=EXPECT_TIMEOUT
         )
 
         z = _var_row(page, "z")
@@ -2160,44 +2195,39 @@ def test_the_variables_drawer_edits_the_layout_with_a_real_mouse(
         expect(z.locator('[role="checkbox"]')).to_have_attribute(
             "aria-checked", "true", timeout=EXPECT_TIMEOUT
         )
+        expect(cards.nth(1).locator(".dstf-context")).to_contain_text(
+            "z", timeout=EXPECT_TIMEOUT
+        )
         cards.nth(1).scroll_into_view_if_needed()
-        legend = cards.nth(1).locator(".js-plotly-plot")
-        expect(legend).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(cards.nth(1).locator(".js-plotly-plot")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
         page.wait_for_function(
             "() => [...document.querySelectorAll('.dstf-plot')[1]"
-            ".querySelectorAll('.legendtext')].some(t => t.textContent === 'z')",
+            ".querySelectorAll('.legendtext')].some(t => t.textContent === "
+            "'z · context')",
             timeout=EXPECT_TIMEOUT,
         )
         _shot(page, tmp_path, "var-check")
 
         port = _var_row(page, "port[2, 1].C[1:3]")
         port.hover()
-        port.locator(".dstf-var-new").click()
+        expect(port.locator(".dstf-var-new")).to_be_disabled(timeout=EXPECT_TIMEOUT)
+
+        a0 = _var_row(page, "a0")
+        a0.hover()
+        a0.locator(".dstf-var-new").click()
         expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
         _ring_is(page, 2)
         expect(target).to_have_text(
-            "Checkboxes act on plot 3 of 3", timeout=EXPECT_TIMEOUT
+            "Checkboxes add context to plot 3 of 3", timeout=EXPECT_TIMEOUT
         )
         cards.nth(2).scroll_into_view_if_needed()
-        plot = cards.nth(2).locator(".js-plotly-plot")
-        expect(plot).to_be_visible(timeout=EXPECT_TIMEOUT)
-        page.wait_for_function(
-            "() => document.querySelectorAll('.dstf-plot')[2]"
-            ".querySelectorAll('.legendtext').length > 0",
-            timeout=EXPECT_TIMEOUT,
-        )
-        assert cards.nth(2).evaluate(LEGEND) == ["port[2, 1].C[1:3]"]
-        pixel = plot.evaluate(MID_PIXEL)
-        assert pixel is not None
-        page.mouse.move(pixel[0] - 60, pixel[1] - 20)
-        page.wait_for_timeout(150)
-        page.mouse.move(pixel[0], pixel[1], steps=4)
-        page.wait_for_timeout(400)
-        texts = page.evaluate(HOVER_TEXTS)
+        expect(cards.nth(2)).to_contain_text("No criteria yet.")
+        expect(cards.nth(2).get_by_role("button", name="Remove plot")).to_be_visible()
         _shot(page, tmp_path, "var-new-plot")
-        assert any("port[2, 1].C[2]" in line for line in texts), texts
-        assert not any("%{" in line for line in texts), texts
 
+        # One op on /plots: the check's and the new plot's are one edit.
         assert "1 pending edit" in _pending(page)
         page.locator(".dstf-header-row").get_by_role(
             "button", name=re.compile(r"^Discard")
@@ -2228,27 +2258,19 @@ def _tooltip_width(page, hover, text: str) -> float:
     return box["width"]
 
 
-def test_a_stranded_sentence_wraps_and_the_target_is_a_tag(
+def test_the_drawers_target_is_a_tag_and_a_subjects_check_says_why(
     tmp_path, playwright_browser
 ):
-    """The sentence a grey Remove plot or a grey check carries wraps at
-    320 px: unbounded, it ran as one line across the plot area at 1280 px.
-    The drawer's target line is a tag on the accent tint with the ring
+    """The drawer's target line is a tag on the accent tint with the ring
     inside it, as the owner's board drew it: a bare ring beside the text
-    read as an empty checkbox."""
+    read as an empty checkbox. The selected plot's subject is on and grey,
+    and its tooltip says why — on the span around it, since a disabled
+    Quasar button takes no pointer events."""
     with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
-        cards = page.locator(".dstf-plot")
-        remove = cards.nth(0).get_by_role("button", name="Remove plot")
-        expect(remove).to_be_disabled()
-        width = _tooltip_width(page, remove.locator(".."), "x is scored by 1")
-        _shot(page, tmp_path, "stranded-remove-plot")
-        assert width <= 330, width
-        page.mouse.move(5, 895)
-
-        cards.nth(0).get_by_role("button", name="Add series").click()
+        _open_vars(page)
         target = page.locator(".dstf-var-target")
         expect(target).to_have_text(
-            "Checkboxes act on plot 1 of 2", timeout=EXPECT_TIMEOUT
+            "Checkboxes add context to plot 1 of 2", timeout=EXPECT_TIMEOUT
         )
         background, token = target.evaluate(BACKGROUNDS)
         assert background == token and token != "rgba(0, 0, 0, 0)", background
@@ -2256,8 +2278,9 @@ def test_a_stranded_sentence_wraps_and_the_target_is_a_tag(
 
         check = _var_row(page, "x").locator('[role="checkbox"]')
         expect(check).to_be_disabled()
-        width = _tooltip_width(page, check.locator(".."), "x is scored by 1")
-        _shot(page, tmp_path, "stranded-check")
+        expect(check).to_have_attribute("aria-checked", "true")
+        width = _tooltip_width(page, check.locator(".."), "The plot's subject")
+        _shot(page, tmp_path, "subject-check")
         assert width <= 330, width
 
 
@@ -2271,11 +2294,9 @@ def test_a_drawer_row_answers_the_keyboard_and_a_screen_reader(
     takes no focus: Tab from a check skipped its own "+ new plot". It shows
     while anything in its row has focus, so Tab reaches it."""
     with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
-        page.locator(".dstf-plot").nth(0).get_by_role(
-            "button", name="Add series"
-        ).click()
+        _open_vars(page)
         expect(page.locator(".dstf-var-target")).to_have_text(
-            "Checkboxes act on plot 1 of 2", timeout=EXPECT_TIMEOUT
+            "Checkboxes add context to plot 1 of 2", timeout=EXPECT_TIMEOUT
         )
         drawer = page.locator(".dstf-drawer-panel")
         check = drawer.get_by_role("checkbox", name="z", exact=True)
@@ -2299,10 +2320,10 @@ def test_a_drawer_row_answers_the_keyboard_and_a_screen_reader(
         _shot(page, tmp_path, "var-keyboard")
 
 
-#: Every plot card's Remove plot: where its right edge is.
-REMOVE_RIGHTS = """() => [...document.querySelectorAll('.dstf-plot')].map(c =>
-  [...c.querySelectorAll('.q-btn')].find(b => b.textContent.includes('Remove plot'))
-    .getBoundingClientRect().right)"""
+#: Every plot card's toolbar — Focus, and Remove plot or the derived
+#: plot's icon: where its right edge is.
+TOOLS_RIGHTS = """() => [...document.querySelectorAll('.dstf-plot')].map(c =>
+  c.querySelector('.dstf-card-tools').getBoundingClientRect().right)"""
 
 #: Each element matching the selector: its height in its own line heights.
 LINES = """(sel) => [...document.querySelectorAll(sel)].map(e => {
@@ -2393,8 +2414,8 @@ def _no_sideways_scroll(page) -> None:
 def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser):
     """3c's gate over a real library: at 900 px with either drawer open the
     page scrolled sideways (1030 px, 1202 after an edit), because a card's
-    header row — its title, pill(s), error select, Focus, Add series and
-    Remove plot — neither wrapped nor shrank, on names as long as `LONG`;
+    header row — its title, pill(s), error select and toolbar — neither
+    wrapped nor shrank, on names as long as `LONG`;
     with that fixed, a criteria row's one-line name still pushed its node
     controls 54 px past the edge. Both rows now wrap, before and after an
     edit, and a card's title wraps rather than shrinks: with the header row
@@ -2414,7 +2435,10 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
     with _served(tmp_path, playwright_browser, project=_long_names_project) as page:
         page.set_viewport_size({"width": 900, "height": 900})
         cards = page.locator(".dstf-plot")
-        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        expect(cards).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        # The first name's card holds the second's long name as context.
+        expect(page.locator(".dstf-context")).to_have_count(1)
+        expect(page.locator(".dstf-context")).to_contain_text(LONG[1])
         rail = page.locator(".dstf-rail .q-btn")
         for i, drawer in enumerate(("tests", "variables")):
             rail.nth(i).click()
@@ -2422,31 +2446,32 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
                 re.compile(r"dstf-rail-on"), timeout=EXPECT_TIMEOUT
             )
             _no_sideways_scroll(page)
-            rights = page.evaluate(REMOVE_RIGHTS)
-            assert len(rights) == 3 and max(rights) <= 900, (drawer, rights)
+            rights = page.evaluate(TOOLS_RIGHTS)
+            assert len(rights) == 2 and max(rights) <= 900, (drawer, rights)
             titles = page.evaluate(LINES, TITLES)
-            assert len(titles) == 3 and all(n <= 2.5 for _, n in titles), (
+            assert len(titles) == 2 and all(n <= 2.5 for _, n in titles), (
                 drawer,
                 titles,
             )
-            _pushed_right(page, 3)
+            _pushed_right(page, 2)
             _shot(page, tmp_path, f"cards-900-{drawer}")
 
-        # A title with no place to break: it breaks inside itself rather
-        # than scrolling the page sideways (1477 px without that).
+        # A title with no place to break: it is cut (a variable label, cut
+        # in its middle) rather than scrolling the page sideways (1477 px
+        # without that).
         title = page.locator(TITLES).first
         kept = title.text_content()
         title.evaluate("(e, text) => { e.textContent = text; }", "Q" + "x" * 149)
         _no_sideways_scroll(page)
-        rights = page.evaluate(REMOVE_RIGHTS)
-        assert len(rights) == 3 and max(rights) <= 900, rights
+        rights = page.evaluate(TOOLS_RIGHTS)
+        assert len(rights) == 2 and max(rights) <= 900, rights
         title.evaluate("(e, text) => { e.textContent = text; }", kept)
         expect(title).to_have_text(kept)
 
         # The Variables drawer at 320 px, on names longer than it.
         rows = page.locator(".dstf-var-row")
-        expect(rows).to_have_count(2, timeout=EXPECT_TIMEOUT)
-        for text in LONG:
+        expect(rows).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        for text in (*LONG, LONG_WATCH):
             expect(_var_row(page, text).locator(".dstf-var-text")).to_have_attribute(
                 "title", text
             )
@@ -2454,17 +2479,20 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
             lines = page.evaluate(LINES, sel)
             assert lines and all(n <= 1.5 for _, n in lines), (sel, lines)
 
-        # After an edit: a fourth plot.
-        second = _var_row(page, LONG[1])
-        second.hover()
-        second.locator(".dstf-var-new").click()
-        expect(cards).to_have_count(4, timeout=EXPECT_TIMEOUT)
+        # After an edit: a third plot, a watch plot with Remove plot.
+        watch = _var_row(page, LONG_WATCH)
+        watch.hover()
+        watch.locator(".dstf-var-new").click()
+        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        expect(cards.nth(2).get_by_role("button", name="Remove plot")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
         _no_sideways_scroll(page)
-        rights = page.evaluate(REMOVE_RIGHTS)
-        assert len(rights) == 4 and max(rights) <= 900, rights
+        rights = page.evaluate(TOOLS_RIGHTS)
+        assert len(rights) == 3 and max(rights) <= 900, rights
         titles = page.evaluate(LINES, TITLES)
-        assert len(titles) == 4 and all(n <= 2.5 for _, n in titles), titles
-        _pushed_right(page, 4)
+        assert len(titles) == 3 and all(n <= 2.5 for _, n in titles), titles
+        _pushed_right(page, 3)
         _shot(page, tmp_path, "cards-900-edit")
 
         model = page.locator(".dstf-subheader").locator(".dstf-mono").first
@@ -2498,7 +2526,7 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
         page.locator(".dstf-header-row").get_by_role(
             "button", name=re.compile(r"^Discard")
         ).click()
-        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        expect(cards).to_have_count(2, timeout=EXPECT_TIMEOUT)
 
 
 # -- a combinator's kind is a dropdown in its row (Q3 A) --------------------
@@ -2673,26 +2701,28 @@ def _editor_in_view(page) -> None:
 def test_a_lower_plots_plus_opens_the_editor_on_that_plot_in_view(
     tmp_path, playwright_browser
 ):
-    """Plot 3 draws x and y: its `+` then Add opens the new editor on plot 3
-    and brings it into view — it opened on plot 0, ~855 px above the
-    click. From plot 0's form, choosing y (plot 0 draws x alone) opens the
-    editor on a plot that draws y, in view too."""
+    """Plot 1 (y's) with its criteria header at the window's foot: its `+`
+    then Add opens the new editor on plot 1 and brings it into view — the
+    editor opens under the plot's rows, below the fold, and it once opened
+    on plot 0, ~855 px from the click. From plot 0's form, choosing y (plot
+    0 is x's) opens the editor on the plot that draws y, in view too."""
     with _served(tmp_path, playwright_browser) as page:
         cards, editors = page.locator(".dstf-plot"), page.locator(".dstf-editor")
         expect(cards).to_have_count(7, timeout=EXPECT_TIMEOUT)
-        card = cards.nth(3)
-        card.scroll_into_view_if_needed()
+        card = cards.nth(1)
         head = card.locator(".dstf-criteria-head")
-        head.get_by_role("button", name="Add a criterion for x").click()
+        head.evaluate("e => e.scrollIntoView({block: 'end'})")
+        page.wait_for_timeout(300)
+        head.get_by_role("button", name="Add a criterion for y").click()
         add = page.get_by_role("button", name="Add", exact=True)
         expect(add).to_be_visible(timeout=EXPECT_TIMEOUT)
         add.click()
         expect(editors).to_have_count(1, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(600)
-        assert _editor_card(page) == 3
+        assert _editor_card(page) == 1
         _editor_in_view(page)
         page.mouse.move(5, 5)
-        _shot(page, tmp_path, "reveal-plot-3")
+        _shot(page, tmp_path, "reveal-plot-1")
         editors.get_by_role("button", name="Done").click()
         expect(editors).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
@@ -2985,3 +3015,159 @@ def test_the_tests_drawer_fits_long_ids_at_900_px(tmp_path, playwright_browser, 
             assert shown[0] != shown[1], shown
         page.mouse.move(600, 5)
         _shot(page, tmp_path, f"tests-drawer-900-{names.lower()}")
+
+
+# -- Q20: variable labels cut in the middle ------------------------------------
+
+#: A BranchingDynamicPipes-shaped UnitTests expression, x's here.
+CAT3 = "cat(1, pipe2.mediums.T, pipe2.mediums.p)[3]"
+
+#: One `.dstf-mid` element's cut: whether its head overflows and how, the
+#: head's characters shown whole (by range rects, as `NAME_CUTS` reads the
+#: Tests drawer), whether the tail shows whole inside the element and the
+#: open drawer's panel, its title and its innerText.
+MID_CUT = """(e) => {
+  const head = e.querySelector('.dstf-mid-head');
+  const tail = e.querySelector('.dstf-mid-tail');
+  const box = head.getBoundingClientRect(), outer = e.getBoundingClientRect();
+  const node = document.createTreeWalker(head, NodeFilter.SHOW_TEXT).nextNode();
+  const shown = [];
+  for (let i = 0; node && i < node.textContent.length; i++) {
+    const r = document.createRange();
+    r.setStart(node, i);
+    r.setEnd(node, i + 1);
+    const c = r.getBoundingClientRect();
+    if (c.width > 0 && c.left >= box.left - 0.5 && c.right <= box.right + 0.5)
+      shown.push(i);
+  }
+  const t = tail.getBoundingClientRect();
+  const panel = e.closest('.dstf-drawer-panel');
+  const edge = panel ? panel.getBoundingClientRect().right : window.innerWidth;
+  return {
+    cut: head.scrollWidth > head.clientWidth,
+    overflow: getComputedStyle(head).textOverflow,
+    head: node ? node.textContent : '',
+    shown,
+    tail: tail.textContent,
+    tailWhole: t.width > 0 && t.left >= box.right - 0.5
+      && t.right <= outer.right + 0.5 && t.right <= edge + 0.5,
+    title: e.getAttribute('title'),
+    inner: e.innerText,
+  };
+}"""
+
+
+def test_a_variable_label_is_cut_in_the_middle_at_900_px(tmp_path, playwright_browser):
+    """Q20 in Chromium: x reads a BranchingDynamicPipes expression, and in
+    the 320 px Variables drawer its row is cut in the MIDDLE — the head's
+    first characters, an ellipsis, the tail `[3]` whole — with the whole
+    label as its title; its innerText and a copied selection are the whole
+    label (two inline-blocks, never a flex pair: HIGH 6). The card's title
+    and the criteria row have the room: not cut."""
+    with _served(tmp_path, playwright_browser, hooks=True) as page:
+        base = page.url.split("test/")[0]
+        query = urllib.parse.urlencode({"name": "x", "expression": CAT3})
+        with urllib.request.urlopen(f"{base}__expression?{query}") as r:
+            assert json.loads(r.read()) == {"stamped": 1}
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _open_vars(page)
+        row = _var_row(page, CAT3)
+        expect(row).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        _no_sideways_scroll(page)
+        text = row.locator(".dstf-mid")
+        cut = text.evaluate(MID_CUT)
+        _shot(page, tmp_path, "mid-cut-900")
+        assert cut["cut"] and cut["overflow"] == "ellipsis", cut
+        head = "cat(1, pipe2.mediums.T, pipe2.mediums.p)"
+        assert cut["head"] == head and cut["tail"] == "[3]", cut
+        # the head's start, in order, and not all of it; the tail whole
+        assert cut["shown"] == list(range(len(cut["shown"]))), cut
+        assert 0 < len(cut["shown"]) < len(head), cut
+        assert cut["tailWhole"], cut
+        assert cut["title"] == f"{CAT3} (x)", cut
+        assert cut["inner"] == CAT3, cut
+        # a copy of the row's text is the whole label
+        page.context.grant_permissions(
+            ["clipboard-read", "clipboard-write"], origin=base.rstrip("/")
+        )
+        text.evaluate(
+            "(e) => { const r = document.createRange(); r.selectNodeContents(e);"
+            " const s = getSelection(); s.removeAllRanges(); s.addRange(r); }"
+        )
+        page.keyboard.press("Control+C")
+        assert page.evaluate("() => navigator.clipboard.readText()") == CAT3
+        # the card's title and x's criteria rows are not cut at this width
+        title = page.locator(".dstf-plot").first.locator(".dstf-card-title .dstf-mid")
+        assert not title.first.evaluate(MID_CUT)["cut"]
+        names = page.locator(".dstf-plot").first.locator(".dstf-crit-name")
+        expect(names.first).to_contain_text(CAT3)
+        for i in range(names.count()):
+            assert not names.nth(i).evaluate(MID_CUT)["cut"], i
+
+
+#: A tree whose x rows sit at three depths with both verdicts: the nrmse
+#: FAILs (x is 1.25t against t) and draws nothing, so its swatch is hidden;
+#: the two ranges pass and draw.
+_ALIGN_TREE = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        {
+            "combinator": "k-of-n",
+            "k": 1,
+            "children": [
+                {
+                    "combinator": "or",
+                    "children": [
+                        {
+                            "combinator": "warn",
+                            "children": [
+                                {"metric": "range", "variable": "x", "min_value": -1.0}
+                            ],
+                        },
+                        {"metric": "range", "variable": "y", "min_value": -1.0},
+                    ],
+                },
+                {"metric": "range", "variable": "x", "max_value": 100.0},
+            ],
+        },
+    ],
+}
+
+
+def _align_project(tmp_path: Path) -> tuple[Path, Path]:
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = _ALIGN_TREE
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def test_a_plots_leaf_names_start_in_one_column(tmp_path, playwright_browser):
+    """D140: every leaf name on a card starts in one column, whatever its
+    row's depth, its verdict and whether its swatch shows — a hidden swatch
+    keeps its box and a pill is as wide as PASS or FAIL."""
+    with _served(tmp_path, playwright_browser, project=_align_project) as page:
+        card = page.locator(".dstf-plot").first
+        expect(card.locator(".dstf-crit")).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        # Drawn: the swatches of the leaves that draw show.
+        expect(card.locator(".dstf-swatch >> visible=true").first).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        rows = card.evaluate(
+            """(card) => [...card.querySelectorAll('.dstf-crit')].map(r => ({
+                 pill: r.querySelector('.dstf-pill').innerText,
+                 swatch: getComputedStyle(r.querySelector('.dstf-swatch')).visibility,
+                 name: r.querySelector('.dstf-crit-name').getBoundingClientRect().left,
+               }))"""
+        )
+        _shot(page, tmp_path, "leaf-names-one-column")
+        names = [r["name"] for r in rows]
+        assert max(names) - min(names) < 0.5, rows
+        assert {r["pill"] for r in rows} == {"PASS", "FAIL"}, rows
+        assert {r["swatch"] for r in rows} == {"visible", "hidden"}, rows

@@ -257,12 +257,16 @@ def resolve_variable_patterns(
     - Wildcard: "*" — all non-internal variables
     - Empty list: [] — no variables (simulate-only mode)
 
-    Returns sorted list of resolved variable names.
+    Returns the resolved names in PATTERN order: explicit names as written,
+    each glob's matches in ``available_vars``' (the result file's) order, a
+    name matched twice where it was first. Sorted, ``x[10]`` came before
+    ``x[2]``: a test with no tree drew its plots alphabetically, and an
+    accept wrote its ``variables`` that way.
     """
     if not patterns:
         return []
 
-    resolved = set()
+    resolved: dict[str, None] = {}
     for pattern in patterns:
         if pattern == "*":
             # All non-internal variables
@@ -271,18 +275,19 @@ def resolve_variable_patterns(
                     continue
                 if any(var.startswith(p) for p in _EXCLUDE_PREFIXES):
                     continue
-                resolved.add(var)
+                resolved.setdefault(var)
         elif is_glob_pattern(pattern):
             regex = _pattern_to_regex(pattern)
             matched = [v for v in available_vars if regex.fullmatch(v)]
             if not matched:
                 logger.warning("Pattern '%s' matched no variables", pattern)
-            resolved.update(matched)
+            for var in matched:
+                resolved.setdefault(var)
         else:
             # Explicit name
             if pattern in available_vars:
-                resolved.add(pattern)
+                resolved.setdefault(pattern)
             else:
                 logger.warning("Variable '%s' not found in results", pattern)
 
-    return sorted(resolved)
+    return list(resolved)

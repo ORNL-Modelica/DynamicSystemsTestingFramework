@@ -1,11 +1,15 @@
 """One plot of the Test page (brief §3.2; DESIGN.md "Plots are modular",
-"Criteria rows"): its title and status pills, the slot the plot is drawn
-into when it scrolls into view, a criteria header holding what attaches
-at the VARIABLE placement (the plot's `+`), the criteria rows of its
-tracked series with each row's node controls, and the one open
-criterion's editor below its row. A card owns its
-`ui.plotly`, its `FigureHook` and its snap-back; the card knows no
-capability by name.
+"Criteria rows"): its title and status pills, its context series, the slot
+the plot is drawn into when it scrolls into view, a criteria header holding
+what attaches at the VARIABLE placement (the plot's `+`), the criteria rows
+of its SUBJECT in tree order with each row's node controls, and the one
+open criterion's editor below its row. A card owns its `ui.plotly`, its
+`FigureHook` and its snap-back; the card knows no capability by name.
+
+A plot is a view of the criteria tree (`derive_plots`): a DERIVED card
+exists because criteria name its subject and goes when the last of them
+goes — it has no Remove; a WATCH card is a person's unscored plot of one
+variable, and has.
 
 A card is a 320 px slot until `show()` is called — by the browser's
 `dstf_plot_visible`, by an opening editor, or by a test. Nothing on the
@@ -27,14 +31,14 @@ from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
 from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Visibility
+from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
-from ..layout import Layout, remove_plot, stranded, stranded_sentence
 from ..session import Selection
-from ..tree_text import leaf_name, leaves_of, parent_kinds
+from ..tree_text import leaf_name, parent_kinds
 from .actions import InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status
-from .widgets import Pill
+from .widgets import MiddleCut, Pill
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -107,8 +111,8 @@ def folded(
     (`report_suite`): each array family one entry, READ through ``labels``
     (``pipe.T[1:3]``), the fold taken over ``by`` — ``labels`` when not
     given — so two series whose texts collide are no family. The card's
-    title, its muted names line, its plot-only line and the focus bar all
-    name a plot through this, so they fold alike: the focus bar read the
+    title, its muted names line and the focus bar all name a plot through
+    this, so they fold alike: the focus bar read the
     unfolded texts while the title above it folded them."""
     fold_over = labels if by is None else by
     return ", ".join(
@@ -124,8 +128,13 @@ _SWATCH_TIPS = {
     False: "Show this criterion's drawing",
 }
 _SWATCH_STATES = " ".join(
-    f"dstf-swatch-{s}"
-    for s in ("on", "off", "locked", "pass", "fail", "warn", "queued")
+    [
+        *(
+            f"dstf-swatch-{s}"
+            for s in ("on", "off", "locked", "pass", "fail", "warn", "queued")
+        ),
+        "invisible",
+    ]
 )
 
 
@@ -146,7 +155,16 @@ class CriterionRow:
     the CLI's readout, and that node's controls — whatever attaches at NODE.
     `paint` writes a new verdict into the row that is already there."""
 
-    def __init__(self, card: PlotCard, leaf: dict, taker: str | None) -> None:
+    def __init__(
+        self,
+        card: PlotCard,
+        leaf: dict,
+        taker: str | None,
+        crumb: str = "",
+        crumb_ch: int = 0,
+    ) -> None:
+        """``crumb_ch`` is the card's longest crumb, in characters: every
+        crumb on the card is that wide, so the names start in one column."""
         index, path = card.index, str(leaf["path"])
         self.card, self.leaf = card, leaf
         #: The parent's combinator the controls were built under: it takes
@@ -193,10 +211,19 @@ class CriterionRow:
             with self.swatch:
                 self.swatch_tip = ui.tooltip("")
             # Hidden until the plot is drawn: which leaves draw anything is
-            # known only from the figure (`PlotCard.drawable`).
-            self.swatch.set_visibility(False)
+            # known only from the figure (`PlotCard.drawable`). INVISIBLE,
+            # never display:none — a hidden swatch keeps its box, so every
+            # row's name starts in one column (D140).
+            self.swatch.classes("invisible")
+            # Its ancestors' kinds, muted: where in the tree it sits. The
+            # card's rows come from anywhere in it (a plot is a view of the
+            # tree), and their order alone does not say which is under what.
+            if crumb:
+                ui.label(crumb).classes("dstf-crumb dstf-why").style(
+                    f"min-width: {crumb_ch}ch"
+                ).mark(f"crumb:{index}:{path}")
             self.pill = Pill(leaf_status(leaf), f"criterion-pill:{index}:{path}")
-            self.name = ui.label().classes(
+            self.name = MiddleCut().classes(
                 "dstf-crit-name text-body2 text-weight-medium"
             )
             self.readout = ui.label().classes("dstf-mono text-xs")
@@ -245,13 +272,14 @@ class CriterionRow:
         card = self.card
         is_open = card.is_open(self.path)
         on = drawn(leaf, card.choices.get(self.path), is_open)
-        self.swatch.set_visibility(self.path in card.drawable)
-        # ONE call: a remove and then an add are two changes to the element
-        # even when they cancel, and a no-op sync re-sent every swatch.
+        # ONE call, its visibility too: a remove and then an add are two
+        # changes to the element even when they cancel, and a no-op sync
+        # re-sent every swatch.
         self.swatch.classes(
             remove=_SWATCH_STATES,
             add=f"dstf-swatch-{'on' if on else 'off'} dstf-swatch-{leaf_status(leaf)}"
-            + (" dstf-swatch-locked" if is_open else ""),
+            + (" dstf-swatch-locked" if is_open else "")
+            + ("" if self.path in card.drawable else " invisible"),
         )
         if is_open:
             self.swatch.props("aria-disabled=true")
@@ -278,16 +306,14 @@ class PlotCard:
         index: int,
         resolved: ResolvedPlot,
         view: dict | None,
-        tracked: Sequence[str],
         scope: Mapping[str, VariableText],
-        layout: Layout,
-        scored: Mapping[str, int],
+        tracked: frozenset[str],
     ) -> None:
-        """``view``, ``tracked``, ``scope``, ``layout`` and ``scored`` (a
-        variable's number of criteria) are the page's ONE read of each,
-        handed to every card: a card that read them for itself cost one read
-        per plot on every rebuild (the Task 5-6 review)."""
+        """``view``, ``scope`` and ``tracked`` are the page's ONE read of
+        each, handed to every card: a card that read them for itself cost
+        one read per plot on every rebuild (the Task 5-6 review)."""
         self.page, self.index, self.resolved = page, index, resolved
+        self.tracked = tracked
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
         # subscribes before there is a plot to attach to.
@@ -328,17 +354,14 @@ class PlotCard:
         self.drawable: frozenset[str] = frozenset()
         self.error_select: ui.select | None = None
         model = page.model_id
-        known = set(tracked)
-        #: This plot's TRACKED series — the ones that carry criteria rows and
-        #: the header's "Add a criterion for x" `+`. Not "scored": a tracked
-        #: variable no criterion covers is still the test's, and the `+` is
-        #: the way back to one. The rest of the series are drawn and nothing
-        #: more.
-        self.tracked = [name for name in resolved.series if name in known]
-        #: A card drawing ONE series has its variable in its title, so its
-        #: pill is the bare status; several pills side by side read "FAIL
-        #: FAIL" and look like the plot's verdict said twice (the board).
-        self.named_pills = len(resolved.series) > 1
+        #: The plot's SUBJECT — one variable, or the members of one family —
+        #: whose criteria are its rows and whose first member the header's
+        #: `+` adds for. Its context is drawn and nothing more.
+        self.subject = list(resolved.subject)
+        #: A card of ONE variable has it in its title, so its pill is the
+        #: bare status; several pills side by side read "FAIL FAIL" and look
+        #: like the plot's verdict said twice (the board).
+        self.named_pills = len(resolved.subject) > 1
         with (
             ui.card()
             .classes("dstf-card dstf-plot w-full")
@@ -369,31 +392,30 @@ class PlotCard:
                 # `x` would otherwise say `x x`. The muted name is what
                 # tells two series sharing one expression apart HERE, so
                 # the title does not also carry it in parentheses.
-                labels = {
-                    n: scope[n].label if n in scope else n for n in resolved.series
-                }
+                labels = {n: scope[n].label if n in scope else n for n in self.subject}
                 #: What each of this card's series READS as everywhere the
                 #: name is NOT beside it — its pill, the focus bar, its
-                #: plot-only line, its "Add a criterion for x" `+`.
-                #: Disambiguated over the whole TEST, so all of those agree.
-                self.texts = {
-                    n: scope[n].text if n in scope else n for n in resolved.series
-                }
+                #: "Add a criterion for x" `+`, and the context row, which
+                #: is why the context is in it too. Disambiguated over the
+                #: whole TEST, so all of those agree.
+                names = (*self.subject, *resolved.context)
+                self.texts = {n: scope[n].text if n in scope else n for n in names}
                 # Array families fold, as the report's plot titles do
                 # (`report_suite`): the fold over the texts, so two series
                 # whose labels collide are no family; each family READS its
                 # labels' slice (`pipe.T[1:3]`), and the muted line folds
-                # the names the same way.
-                series = list(resolved.series)
+                # the names the same way. The title is the SUBJECT's: the
+                # context is listed under it.
+                series = self.subject
                 with ui.row().classes("dstf-card-title items-center gap-3"):
-                    ui.label(folded(series, labels, self.texts)).classes(
+                    MiddleCut(folded(series, labels, self.texts)).classes(
                         "text-subtitle2"
                     ).mark(f"plot-title:{index}")
                     if any(labels[n] != n for n in series):
                         ui.label(folded(series)).classes("dstf-varname").mark(
                             f"plot-name:{index}"
                         )
-                    for variable in self.tracked:
+                    for variable in self.subject:
                         if self._leaves(view, variable):
                             pill = Pill("queued", f"plot-pill:{index}:{variable}")
                             if self.named_pills:
@@ -410,39 +432,38 @@ class PlotCard:
                     self.error_slot = ui.row().classes("items-center gap-0")
                     self.focus = ui.button("Focus", on_click=partial(page.focus, index))
                     self.focus.props("flat dense no-caps").mark(f"focus:{index}")
-                    ui.button("Add series", on_click=self._add_series).props(
-                        "flat dense no-caps"
-                    ).mark(f"add-series:{index}")
-                    self._remove_button(index, tuple(layout), scored)
+                    self._remove_button(index)
             if resolved.missing:
                 ui.label(f"Not in this result: {', '.join(resolved.missing)}").classes(
                     "dstf-why"
                 ).mark(f"plot-missing:{index}")
-            self.slot = ui.element("div").classes("dstf-plot-slot w-full")
-            self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
-            if self.tracked:
-                self._criteria_header(index, model, scope, view)
+            if resolved.context:
+                self._context_row(index)
+            # A subject the result lacks entirely has no plot: an empty
+            # chart said nothing the note does not, and no slot is nothing
+            # for the browser's observer to ask to draw.
+            self.slot: ui.element | None = None
+            if not set(resolved.subject) <= set(resolved.missing):
+                self.slot = ui.element("div").classes("dstf-plot-slot w-full")
+                self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
+            self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
             takers = parent_kinds(view)
             with criteria.mark(f"criteria:{index}"):
-                for variable in self.tracked:
-                    for leaf in self._leaves(view, variable):
-                        path = str(leaf["path"])
-                        self.rows[path] = CriterionRow(self, leaf, takers.get(path))
-            only = [name for name in resolved.series if name not in known]
-            if only:
-                verb = (
-                    "is plot only: it has"
-                    if len(only) == 1
-                    else "are plot only: they have"
-                )
-                # Read as the texts: a plot-only variable NAMED like a
-                # tracked one's expression must not read the same as the
-                # criteria row above it. A family is one entry, as in the
-                # report's plot-only lines.
-                texts = folded(only, self.texts)
-                ui.label(f"{texts} {verb} no criteria.").classes("dstf-why").mark(
-                    f"plot-only:{index}"
+                # TREE order, never the subject's member order: a family's
+                # rows are where the tree has them, each with its crumb —
+                # the report's walk (`criteria_rows`), so both tiers lead a
+                # row the same way.
+                rows = criteria_rows(view, self.subject)
+                crumb_ch = max((len(row["crumbs"]) for row in rows), default=0)
+                for row in rows:
+                    path = str(row["leaf"]["path"])
+                    self.rows[path] = CriterionRow(
+                        self, row["leaf"], takers.get(path), row["crumbs"], crumb_ch
+                    )
+            if resolved.watch:
+                ui.label("No criteria yet.").classes("dstf-why").mark(
+                    f"plot-empty:{index}"
                 )
         self.paint(view)
 
@@ -454,7 +475,7 @@ class PlotCard:
         view: dict | None,
     ) -> None:
         """A muted "Criteria" and, at its right, whatever attaches at
-        VARIABLE — inline, for the plot's FIRST tracked variable, its forms
+        VARIABLE — inline, for the FIRST member of the plot's subject, its forms
         opening as a row under the header (Q3 A; the dialog and the footer
         per variable are gone: one per line pushed the next plot off the
         screen, and a form's select offers the test's other variables)."""
@@ -472,11 +493,12 @@ class PlotCard:
                 partial(
                     Selection,
                     tests=frozenset({model}),
-                    variable=self.tracked[0],
+                    variable=self.subject[0],
                     # The page's one read of the scope, so the `+` reads
                     # this variable's text without building it per card
-                    # (`Selection.texts`).
+                    # (`Selection.texts`), and of the tracked names.
                     texts=scope,
+                    tracked=self.tracked,
                 ),
                 figure=self.hook,
                 marker=f"variable:{index}",
@@ -490,48 +512,66 @@ class PlotCard:
         self.root_kind = _root_kind(view)
         self.variable_host.build()
 
-    def _remove_button(
-        self, index: int, layout: Layout, scored: Mapping[str, int]
-    ) -> None:
-        """Remove plot, grey with the reason when it would leave a scored
-        variable on no plot (the owner's ruling, Q7 A; 3c, planner's choice 9).
-        A disabled Quasar button takes no pointer events, so the reason's
-        tooltip is on a span around it."""
-        after = remove_plot(layout, index)
-        stuck = stranded(layout, after, list(scored))
-        with ui.element("span").mark(f"remove-plot:{index}:why"):
-            # Its click stops in the BROWSER: bubbling to the card selected
-            # it, and after the rebuild the ring sat on whichever plot moved
-            # into the removed one's place.
-            button = (
-                ui.button("Remove plot")
-                .props("flat dense no-caps")
-                .mark(f"remove-plot:{index}")
-                .on(
-                    "click",
-                    partial(self.page.remove_plot, index, after),
-                    js_handler="(e) => { e.stopPropagation(); emit(); }",
-                )
-            )
-            if stuck:
-                button.disable()
-                # Wrapped at 320 px: unbounded, the sentence ran as one line
-                # across the plot area (3c's LOOK, at 1280 px).
-                ui.tooltip(
-                    stranded_sentence(
-                        [self.texts.get(v, v) for v in stuck],
-                        sum(scored[v] for v in stuck),
-                    )
-                ).props("max-width=320px")
+    def _remove_button(self, index: int) -> None:
+        """Remove plot, on a WATCH card only: a derived plot exists because
+        of its criteria and goes when the last of them goes (Q16) — in its
+        place an icon says so."""
+        if not self.resolved.watch:
+            with (
+                ui.icon("info_outline", size="xs")
+                .classes("text-secondary")
+                .mark(f"plot-derived:{index}")
+            ):
+                ui.tooltip("This plot exists because of its criteria.")
+            return
+        # Its click stops in the BROWSER: bubbling to the card selected it,
+        # and after the rebuild the ring sat on whichever plot moved into
+        # the removed one's place.
+        ui.button("Remove plot").props("flat dense no-caps").mark(
+            f"remove-plot:{index}"
+        ).on(
+            "click",
+            partial(self.page.remove_watch, index, self.subject[0]),
+            js_handler="(e) => { e.stopPropagation(); emit(); }",
+        )
 
-    def _add_series(self) -> None:
-        """Select this plot and open the Variables drawer on it (Q5 A)."""
-        self.page.select(self.index)
-        self.page.rail.open("variables")
+    def _context_row(self, index: int) -> None:
+        """The context series, each with a `×` that takes it off this plot
+        — one op. Drawn grey on the plot; listed here because Plotly's
+        legend cannot hold a button. Read as the test's texts, like the
+        title."""
+        with (
+            ui.row()
+            .classes("dstf-context items-center gap-2 w-full")
+            .mark(f"context:{index}")
+        ):
+            ui.label("Context").classes("text-secondary text-xs")
+            for name in self.resolved.context:
+                text = self.texts.get(name, name)
+                with ui.row().classes("dstf-context-chip items-center no-wrap gap-0"):
+                    ui.label(text).classes("dstf-mono text-xs").mark(
+                        f"context-name:{index}:{name}"
+                    )
+                    button = (
+                        ui.button(icon="close")
+                        .props("flat dense round size=xs")
+                        .mark(f"context-remove:{index}:{name}")
+                        .on(
+                            "click",
+                            partial(self.page.remove_context, index, name),
+                            js_handler="(e) => { e.stopPropagation(); emit(); }",
+                        )
+                    )
+                    # On the props dict: a name can hold a `"`.
+                    button.props["aria-label"] = f"Remove {text} from this plot"
 
     @staticmethod
     def _leaves(view: dict | None, variable: str) -> list[dict]:
-        return [leaf for leaf in leaves_of(view) if leaf.get("variable") == variable]
+        return [
+            leaf
+            for leaf in leaves_of(view)
+            if leaf.get("variable") == variable and names_a_series(leaf)
+        ]
 
     def _view(self, view: Any = UNREAD) -> dict | None:
         """The page's read of this sync, or one of this card's own when it
@@ -618,12 +658,12 @@ class PlotCard:
     # -- the plot ------------------------------------------------------------------
 
     def _leaves_all(self, view: dict | None) -> list[dict]:
-        """Every leaf on this plot's series, tracked or not."""
-        return [
-            leaf
-            for leaf in leaves_of(view)
-            if leaf.get("variable") in self.resolved.series
-        ]
+        """Every leaf on this plot's SUBJECT, in tree order: its rows, what
+        it draws, what its signature signs. Not its context — a context
+        variable scored on another plot draws nothing of its criteria here —
+        and no stored-scalar leaf, whose ``variable`` names the leaf, not a
+        series (`names_a_series`)."""
+        return [row["leaf"] for row in criteria_rows(view, self.resolved.subject)]
 
     def is_open(self, path: str) -> bool:
         """Whether ``path`` is the open criterion — the page's word, the ONE
@@ -690,7 +730,7 @@ class PlotCard:
         viewport (or a test did). The card remembers it was asked, so a try
         that raised is retried by the next sync."""
         self.wanted = True
-        if self.plot is not None:
+        if self.plot is not None or self.slot is None:
             return
         view = self._view(view)
         # Whatever a previous try left: `show()` is called again on every
@@ -717,7 +757,7 @@ class PlotCard:
 
     def _error_select(self, figure: dict) -> None:
         """One select for the error series (legend b), on a plot whose
-        figure has any; a plot of several series has none. Asked of every
+        figure has any; a family's plot has none. Asked of every
         figure sent, so a redraw that gains error traces gains the select."""
         ids = [
             tr["meta"]["id"]
@@ -773,14 +813,13 @@ class PlotCard:
 
     def signature(self, view: Any = UNREAD) -> str:
         """What this plot draws that an edit can move: which criterion is
-        open — its rings, and only its — every leaf on this plot's series,
+        open — its rings, and only its — every leaf on this plot's subject,
         which leaves are hidden and which error series shows. Comparing it
         to what was last sent is the ONE thing that decides a redraw."""
         view = self._view(view)
         leaves = [
             [leaf.get("path"), *(leaf.get(key) for key in _SIGNED)]
-            for leaf in leaves_of(view)
-            if leaf.get("variable") in self.resolved.series
+            for leaf in self._leaves_all(view)
         ]
         return json.dumps(
             [

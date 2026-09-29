@@ -762,16 +762,14 @@ def test_plots_is_a_whitelisted_subtree():
     from dstf.discovery.patch_apply import apply_patch_to_document
 
     data = {"tests": [{"model": "M", "variables": ["x"]}]}
-    layout = [{"kind": "time", "series": [{"var": "x"}]}]
+    extras = [{"var": "x", "context": []}]
     apply_patch_to_document(
-        data, "M", [{"op": "add", "path": "/plots", "value": layout}]
+        data, "M", [{"op": "add", "path": "/plots", "value": extras}]
     )
     apply_patch_to_document(
-        data, "M", [{"op": "add", "path": "/plots/0/series/-", "value": {"var": "y"}}]
+        data, "M", [{"op": "add", "path": "/plots/0/context/-", "value": "y"}]
     )
-    assert data["tests"][0]["plots"] == [
-        {"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}
-    ]
+    assert data["tests"][0]["plots"] == [{"var": "x", "context": ["y"]}]
 
 
 def test_variables_is_still_outside_the_whitelist(tmp_path):

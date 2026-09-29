@@ -303,7 +303,9 @@ def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
             continue
         name = entry.get("name")
         values = entry.get("values")
-        if not name or not isinstance(values, list):
+        # A name stored twice draws its FIRST entry, the one the
+        # comparator scores and the context builder draws.
+        if not name or not isinstance(values, list) or name in out:
             continue
         out[name] = OverlayVariable(
             time=list(time),
@@ -334,7 +336,9 @@ def _baseline_to_overlay_vars(baseline) -> dict[str, OverlayVariable]:
     out: dict[str, OverlayVariable] = {}
     for var in baseline.variables or []:
         name = var.get("name")
-        if not name:
+        # A name stored twice draws its FIRST entry, the one the
+        # comparator scores and the context builder draws.
+        if not name or name in out:
             continue
         values = var.get("values")
         if not isinstance(values, list):
@@ -462,7 +466,9 @@ def _load_json(path: Path) -> dict[str, OverlayVariable]:
             continue
         name = entry.get("name")
         values = entry.get("values")
-        if not name or not isinstance(values, list):
+        # A name stored twice draws its FIRST entry, the one the
+        # comparator scores and the context builder draws.
+        if not name or not isinstance(values, list) or name in out:
             continue
         out[name] = OverlayVariable(
             time=list(time),

@@ -80,9 +80,7 @@ def lib(tmp_path):
                     "combinator": "and",
                     "children": [{"metric": "nrmse", "variable": "a"}],
                 },
-                "plots": [
-                    {"kind": "time", "series": [{"var": "a"}, {"var": "b[2,2]"}]}
-                ],
+                "plots": [{"var": "a"}, {"var": "b[2,2]", "context": ["a"]}],
             },
             {
                 "model": "MyLib.Twice",
@@ -362,13 +360,14 @@ def test_spec_keys_that_name_an_expression_become_the_name(lib):
         "other": {"tolerance": 1},
     }
     assert plain["metrics"]["children"][0]["variable"] == "unitTests.x[1]"
-    assert [s["var"] for s in plain["plots"][0]["series"]] == [
-        "unitTests.x[1]",
-        "b[2,2]",
+    assert plain["plots"] == [
+        {"var": "unitTests.x[1]"},
+        {"var": "b[2,2]", "context": ["unitTests.x[1]"]},
     ]
-    # 'a' is reached twice — the metrics leaf and the plot series — and is
-    # ONE decision a reader checks, carrying its occurrence count.
-    assert ("MyLib.Plain", "a", "unitTests.x[1]", 2) in report.spec_rewritten
+    # 'a' is reached three times — the metrics leaf, a plot entry's var and
+    # another's context — and is ONE decision a reader checks, carrying its
+    # occurrence count.
+    assert ("MyLib.Plain", "a", "unitTests.x[1]", 3) in report.spec_rewritten
     # An expression two indices share: which one the key meant is the user's
     # call, so it is reported and left.
     assert twice["comparison"]["variable_overrides"] == {"a": {"tolerance": 0.5}}
@@ -386,7 +385,7 @@ def test_a_pattern_tracked_key_is_not_touched(lib):
     migrate(_cfg(lib), apply=True)
     plain = json.loads(spec_path.read_text())["tests"][0]
     assert plain["metrics"]["children"][0]["variable"] == "a"
-    assert [s["var"] for s in plain["plots"][0]["series"]] == ["a", "b[2,2]"]
+    assert plain["plots"] == [{"var": "a"}, {"var": "b[2,2]", "context": ["a"]}]
 
 
 def test_a_variable_that_loses_its_baseline_entry_is_listed_for_re_accept(lib):
@@ -996,8 +995,9 @@ def test_a_spec_entry_nothing_was_considered_for_is_mentioned_not_skipped(lib):
 
 
 def test_a_spec_key_is_counted_once_per_model_and_key(lib):
-    """'a' reached through an override, a leaf and a plot series is ONE
-    decision to check, carrying how many places it moved."""
+    """'a' reached through an override, a leaf, a plot entry's var and
+    another's context is ONE decision to check, carrying how many places it
+    moved."""
     spec_path = lib / "test_spec.json"
     spec = json.loads(spec_path.read_text())
     spec["tests"][0]["comparison"]["variable_overrides"]["a"] = {"tolerance": 0.1}
@@ -1005,4 +1005,4 @@ def test_a_spec_key_is_counted_once_per_model_and_key(lib):
     report = migrate(_cfg(lib), apply=True)
     moved = [(m, old) for m, old, _, _ in report.spec_rewritten]
     assert len(moved) == len(set(moved))
-    assert ("MyLib.Plain", "a", "unitTests.x[1]", 3) in report.spec_rewritten
+    assert ("MyLib.Plain", "a", "unitTests.x[1]", 4) in report.spec_rewritten

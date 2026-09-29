@@ -27,8 +27,9 @@ from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
+from dstf.authoring.shell.widgets import MiddleCut, middle_split  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
-from dstf.authoring.tree_text import leaves_of  # noqa: E402
+from dstf.reporting.tree_rows import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import (  # noqa: E402
     CASES_X,
@@ -532,10 +533,6 @@ def _range(lo):
     return {"metric": "range", "variable": "x", "min_value": lo}
 
 
-def _plot(*names):
-    return {"series": [{"var": n} for n in names]}
-
-
 async def _open_form(user, marker: str, within: str) -> None:
     """Click the cluster's icon marked ``marker`` and wait for its form: an
     Edit tree form is built on the icon's click, into a row under its host's
@@ -934,7 +931,9 @@ def test_the_readout_says_the_criterion_once():
 async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(shell):
     """A leaf the scorer could not score carries its reason IN the
     criterion ("scalar leaf not scored — …"), so the error is not a branch
-    of its own: reading it there said the reason without the mode."""
+    of its own: reading it there said the reason without the mode. A
+    stored-scalar leaf names a statistic, not a series: it is read on the
+    tree's row, and x's card has no row of it."""
     sentinel = {
         "combinator": "and",
         "children": [
@@ -956,8 +955,10 @@ async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(sh
         assert leaf_readout(unscorable).startswith("scalar leaf not scored — ")
         assert unscorable["error"] not in ("", None)
         assert leaf_readout(unscorable) == unscorable["criterion"]
-        assert _one(user, f"criterion-readout:0:{T1}").text == leaf_readout(unscorable)
         assert leaf_readout(scored) == scored["criterion"]
+        assert _none(user, f"criterion:0:{T1}")
+        await _open_tree(user)
+        assert leaf_readout(unscorable) in _labels_in(_one(user, f"tree-row:{T1}"))
 
 
 # -- the plot cards ----------------------------------------------------------
@@ -991,12 +992,12 @@ def _sans_rev(figure: dict) -> dict:
     }
 
 
-async def test_a_test_shows_one_card_per_tracked_variable(shell):
+async def test_a_test_shows_one_card_per_scored_variable(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert _one(user, "plot-title:0").text == "x"
         assert _one(user, "plot-title:1").text == "y"
-        assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
+        assert _one(user, "plots:count").text == "2 plots · derived from the criteria"
         # Nothing is drawn until the browser says a slot is near the viewport.
         assert [c.plot for c in page.cards] == [None, None]
         assert _plotlys(page) == []
@@ -1039,7 +1040,7 @@ async def test_an_awkward_expression_gets_one_card_not_two(awkward_expression_sh
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert [c.resolved.series for c in page.cards] == [("unitTests.x[1]",), ("y",)]
-        assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
+        assert _one(user, "plots:count").text == "2 plots · derived from the criteria"
         # Two cards, each with its header; one `+` for the name, not two.
         assert [c.variable_host.marker for c in page.cards] == [
             "variable:0",
@@ -1129,26 +1130,79 @@ async def test_the_browser_event_shows_the_named_card(shell):
         assert page.cards[0].plot is None
 
 
-async def test_a_layout_draws_its_plots(plots_shell):
+async def test_a_layout_draws_its_context(plots_shell):
+    """The key's entry on x adds z to x's plot as context: listed above the
+    plot, no criterion of its own and no `+`; the title is the subject's."""
     shell = plots_shell
     shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert len(page.cards) == 1 and _one(user, "plot-title:0").text == "x, z"
-        assert _one(user, "plots:count").text == "1 plot · from this test's plots key"
-        assert _one(user, "plot-only:0").text == "z is plot only: it has no criteria."
+        assert len(page.cards) == 2 and _one(user, "plot-title:0").text == "x"
+        assert _one(user, "plots:count").text == "2 plots · derived from the criteria"
+        assert _one(user, "context-name:0:z").text == "z"
         assert list(page.cards[0].rows) == [T0]  # x's leaf only
+        assert _none(user, "add-for:z")
         assert _none(user, "plot-missing:0")
         shell.session.discard()
         shell.session.stage(
-            [
-                PatchOp(
-                    A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "no.such"}]}]
-                )
-            ]
+            [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["no.such"]}])]
         )
         await _test_page(shell, user)
         assert _one(user, "plot-missing:0").text == "Not in this result: no.such"
+
+
+async def test_a_plot_whose_subject_the_result_lacks_draws_no_chart(shell):
+    """A tree leaf on `ghost`, which the result does not carry: its card is
+    the heading, its pill, the note and its criteria row — no empty chart,
+    and nothing for the browser's observer to ask to draw."""
+    _stage_tree(
+        shell,
+        A,
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "range", "variable": "ghost", "min_value": 0.0},
+            ],
+        },
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [("x",), ("ghost",)]
+        assert _one(user, "plot-missing:1").text == "Not in this result: ghost"
+        assert list(page.cards[1].rows) == ["/metrics/children/1"]
+        assert _none(user, "plot-slot:1") and not _none(user, "plot-slot:0")
+        with page.client:
+            page.on_visible("1")
+            page.cards[1].show()
+            page.cards[1].redraw()
+        assert page.cards[1].plot is None
+
+
+async def test_a_missing_subject_with_a_drawable_context_draws_no_chart(shell):
+    """The report draws no chart when no SUBJECT is drawable, whatever the
+    context; the tool agrees — `y`, drawable, is context on the plot of
+    `ghost`, which the result lacks."""
+    _stage_tree(
+        shell,
+        A,
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "range", "variable": "ghost", "min_value": 0.0},
+            ],
+        },
+    )
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"var": "ghost", "context": ["y"]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (card,) = [c for c in page.cards if c.resolved.subject == ("ghost",)]
+        assert card.resolved.context == ("y",)
+        assert card.resolved.missing == ("ghost",)
+        assert _none(user, f"plot-slot:{card.index}")
 
 
 async def test_criteria_rows_follow_the_tree(shell):
@@ -1223,25 +1277,96 @@ async def test_the_plus_adds_a_criterion_for_the_variable(shell):
 
 
 async def test_a_test_with_no_result_has_no_cards(shell):
+    """C's last run never finished it (its manifest entry is still
+    pending): the reader hands in a failed result, but there is no result
+    to read, so the reason is the result, as the strip says — not the
+    run."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, C)
         assert _one(user, "plots:count").text == "no plots: this test has no result"
         assert page.cards == []
 
 
-async def test_an_empty_plots_key_does_not_blame_the_baseline(shell):
-    """The plots bar says why there is no PLOT, which is not the tree's
-    reason: a scored, baselined test with `"plots": []` asked for none, and
-    reading the tree's reason there said "no baseline" about a test whose
-    baseline is right beside it in the header."""
+def _c_run(tmp_path, status: str | None) -> Shell:
+    """`shell` with C's manifest entry reading ``status`` — `pending` is a
+    run that never finished C, `failed` one that finished it, failed — or,
+    with None, gone: C was never run. C has no result file either way."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if status is None:
+        del manifest["test_0003"]
+    else:
+        manifest["test_0003"]["last_run_status"] = status
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+#: The lines of the Test page that say why a test has nothing to show.
+_RUN_LINES = ("strip-text", "plots:count", "tree:summary", "var-target")
+
+
+async def test_an_unfinished_run_says_no_result_on_every_line(tmp_path):
+    """ONE run-state rule (`TestPage.run_state`): the strip said "No result
+    yet" for C's unfinished run while the count, the tree and the drawer
+    said the run failed."""
+    shell = _c_run(tmp_path, "pending")
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert page.run_state() == "none"
+        said = {m: _one(user, m).text for m in _RUN_LINES}
+        assert said == {
+            "strip-text": "No result yet — rerun to simulate it.",
+            "plots:count": "no plots: this test has no result",
+            "tree:summary": "nothing scored: this test has no result",
+            "var-target": "No result yet: no plots",
+        }
+        assert _one(user, "var-empty").text == "this test has no result"
+
+
+async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
+    """C's run finished and failed: every line says the run failed — the
+    tree's too, which said "this test has no result"."""
+    shell = _c_run(tmp_path, "failed")
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert page.run_state() == "failed"
+        said = {m: _one(user, m).text for m in _RUN_LINES}
+        assert said["strip-text"].startswith("The simulation failed.")
+        assert {m: t for m, t in said.items() if m != "strip-text"} == {
+            "plots:count": "no plots: the run failed",
+            "tree:summary": "nothing scored: the run failed",
+            "var-target": "The run failed: no plots",
+        }
+        assert _one(user, "var-empty").text == "the run failed"
+
+
+async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):
+    """C is in no manifest and has no result at all: nothing on the page
+    says the run failed — there was none."""
+    shell = _c_run(tmp_path, None)
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert shell.session.project.results.get(C) is None
+        assert page.run_state() == "none"
+        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert _one(user, "tree:summary").text == (
+            "nothing scored: this test has no result"
+        )
+        assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
+
+
+async def test_an_empty_plots_key_is_no_extras(shell):
+    """`"plots": []` asks for no context and no watch plot: the derived
+    plots are the tree's, and stay."""
     shell.session.stage([PatchOp(A, "add", "/plots", [])])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert page.cards == []
-        assert (
-            _one(user, "plots:count").text == "no plots: this test's plots key is empty"
-        )
-        assert _one(user, "tree:summary").text == "0 pass · 2 fail"
+        assert [c.resolved.subject for c in page.cards] == [("x",), ("y",)]
+        assert _one(user, "plots:count").text == "2 plots · derived from the criteria"
 
 
 async def test_a_failed_simulations_partial_result_draws_no_cards(shell):
@@ -1263,7 +1388,66 @@ async def test_a_failed_simulations_partial_result_draws_no_cards(shell):
         with page.client:
             page.sync()
         assert page.cards == []
-        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert _one(user, "plots:count").text == "no plots: the run failed"
+
+
+async def test_a_failed_run_draws_no_cards_whatever_its_tree_and_extras(shell):
+    """O2, literally: a failed run has no plots — not its tree's, not its
+    extras' — as the report draws none. The reason is the run: a tree
+    that names signals is not one "of statistics"."""
+    from dstf.backends.types import TestResult
+
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}, {"var": "w"}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 3
+        result = shell.session.project.results[A]
+        shell.session.project.results[A] = TestResult(
+            model_id=A, success=False, variables=list(result.variables)
+        )
+        with page.client:
+            page.sync()
+        assert page.cards == []
+        assert shell.session.plots(A) == ()
+        assert _one(user, "plots:count").text == "no plots: the run failed"
+
+
+async def test_watch_plots_with_no_derived_plot_say_so(shell):
+    """A tree whose every criterion scores a statistic derives no plot; a
+    watch plot beside it is counted as what it is, never "0 plots ·
+    derived from the criteria · 1 watch"."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": "CPUtime.final",
+                "max_value": 1e9,
+            }
+        ],
+    }
+    shell.session.stage(
+        [
+            PatchOp(A, "add", "/metrics", tree),
+            PatchOp(A, "add", "/plots", [{"var": "x"}]),
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [(c.resolved.subject, c.resolved.watch) for c in page.cards] == [
+            (("x",), True)
+        ]
+        assert _one(user, "plots:count").text == (
+            "1 watch plot · no criteria on a signal yet"
+        )
+        shell.session.stage([PatchOp(A, "add", "/plots", [{"var": "x"}, {"var": "y"}])])
+        await _settled(lambda: len(page.cards) == 2)
+        assert _one(user, "plots:count").text == (
+            "2 watch plots · no criteria on a signal yet"
+        )
 
 
 async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path):
@@ -1327,63 +1511,58 @@ async def test_a_plot_that_could_not_draw_says_so_once_and_retries(shell, monkey
         ]
 
 
-async def test_a_variable_keeps_its_card_when_its_last_criterion_goes(shell):
-    """A one-way door (the review): the cards, the `+`s and the add forms
-    all came from what was SCORED, so removing y's only criterion took y's
-    card, its `+` and every way to add a criterion back — until Discard.
-    A tracked variable is the test's, staged edit or not."""
+async def test_a_variable_whose_last_criterion_goes_is_still_offered(shell):
+    """Its card goes with its last criterion (Q16) — a derived plot is the
+    tree's view — but the variable is still TRACKED, and the add forms are
+    the way back to it: removing y's only criterion must not take every
+    way to add one back (the one-way door the Task 5-6 review found)."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         _click_in(user, f"remove:{T1}", within=f"node:1:{T1}")
-        await _settled(lambda: len(page.cards) == 2 and not page.cards[1].rows)
-        card = page.cards[1]
-        assert card.resolved.series == ("y",) and card.rows == {}
-        assert card.pills == {} and _none(user, "plot-pill:1:y")
-        (plus,) = _inside(user, "add-for:y", "criteria-header:1")
-        assert _plus_tips(plus) == ["Add a criterion for y"] and plus.enabled
+        await _settled(lambda: len(page.cards) == 1)
+        assert page.cards[0].resolved.subject == ("x",)
         await _open_form(user, f"add:{T0}", within=f"node:0:{T0}")
         # Dict options: name → what to read it as (neither has an
         # expression here, so the two agree).
         assert _one(user, f"apply-add:{T0}:variable").options == {"x": "x", "y": "y"}
 
 
-async def test_a_multi_series_card_names_the_variable_of_each_pill(shell):
-    """Board: two pills reading "FAIL FAIL" look like the plot's verdict said
-    twice. A card drawing one series keeps the bare status — its title
+async def test_a_family_card_names_the_variable_of_each_pill(nested_shell):
+    """Board: two pills reading "PASS PASS" look like the plot's verdict
+    said twice. A card of one variable keeps the bare status — its title
     already names the variable."""
-    shell.session.stage(
-        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
-    )
+    shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert _one(user, "plot-title:0").text == "x, y"
-        assert [_one(user, f"plot-pill:0:{v}").text for v in ("x", "y")] == [
-            "x FAIL",
-            "y FAIL",
-        ]
-        shell.session.stage([PatchOp(A, "add", f"{T0}/tolerance", 0.5)])
-        await _settled(lambda: _one(user, "plot-pill:0:x").text == "x PASS")
-        assert page.cards[0].pills["x"].label.classes.count("dstf-pill-pass") == 1
-        shell.session.discard()
-        await _settled(lambda: len(_page(shell, user).cards) == 2)
-        assert _one(user, "plot-pill:0:x").text == "fail"  # one series: the status
+        assert _one(user, "plot-title:0").text == "pipe.T[1:2]"
+        assert [
+            _one(user, f"plot-pill:0:{v}").text for v in ("pipe.T[1]", "pipe.T[2]")
+        ] == ["pipe.T[1] PASS", "pipe.T[2] PASS"]
+        shell.session.stage([PatchOp(A, "replace", f"{N_T2}/min_value", 100.0)])
+        await _settled(
+            lambda: _one(user, "plot-pill:0:pipe.T[2]").text == "pipe.T[2] FAIL"
+        )
+        pill = page.cards[0].pills["pipe.T[2]"]
+        assert pill.label.classes.count("dstf-pill-fail") == 1
+        assert _one(user, "plot-pill:1:x").text == "pass"  # one variable: the status
 
 
-async def test_a_card_of_two_variables_has_one_plus_whose_form_offers_both(shell):
-    """Q3 A: ONE `+` in the criteria header, for the plot's first tracked
-    variable — one per variable pushed the next plot off the screen (the
-    board) — and its form's select offers the test's others."""
-    shell.session.stage(
-        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
-    )
+async def test_a_family_card_has_one_plus_whose_form_offers_the_others(
+    nested_shell,
+):
+    """Q3 A: ONE `+` in the criteria header, for the subject's first member
+    — one per member pushed the next plot off the screen (the board) — and
+    its form's select offers the test's other variables."""
+    shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert page.cards[0].variable_host.marker == "variable:0"
-        assert _inside(user, "add-for:y", "criteria-header:0") == []
-        _click_in(user, "add-for:x", within="criteria-header:0")
-        await _settled(lambda: not _none(user, "apply-add:x:variable"))
-        assert _one(user, "apply-add:x:variable").value == "x"
-        assert set(_one(user, "apply-add:x:variable").options) == {"x", "y"}
+        assert _inside(user, "add-for:pipe.T[2]", "criteria-header:0") == []
+        _click_in(user, "add-for:pipe.T[1]", within="criteria-header:0")
+        await _settled(lambda: not _none(user, "apply-add:pipe.T[1]:variable"))
+        select = _one(user, "apply-add:pipe.T[1]:variable")
+        assert select.value == "pipe.T[1]"
+        assert set(select.options) == {"x", "y", "pipe.T[1]", "pipe.T[2]"}
 
 
 def test_worst_is_fail_then_warn_then_pass_then_queued():
@@ -1406,24 +1585,484 @@ async def test_every_slot_names_its_own_index(shell):
         assert _one(user, "plot-slot:1").props["data-plot"] == "1"
 
 
-async def test_two_plot_only_series_say_so_in_the_plural_and_get_no_plus(
-    plots_shell,
+# -- the cards are the tree's views ------------------------------------------
+
+#: ``and[range·pipe.T[2], k-of-n[range·x, range·pipe.T[1]], range·x, nrmse·y]``:
+#: a family whose members the tree names out of index order and at two
+#: depths, a variable named twice, and a leaf under a nested combinator.
+NESTED = {
+    "combinator": "and",
+    "children": [
+        {"metric": "range", "variable": "pipe.T[2]", "min_value": -1.0},
+        {
+            "combinator": "k-of-n",
+            "k": 1,
+            "children": [
+                {"metric": "range", "variable": "x", "min_value": -1.0},
+                {"metric": "range", "variable": "pipe.T[1]", "min_value": -1.0},
+            ],
+        },
+        {"metric": "range", "variable": "x", "max_value": 100.0},
+        {"metric": "nrmse", "variable": "y"},
+    ],
+}
+N_T2, N_KX, N_KT1, N_X2, N_Y = (
+    "/metrics/children/0",
+    "/metrics/children/1/children/0",
+    "/metrics/children/1/children/1",
+    "/metrics/children/2",
+    "/metrics/children/3",
+)
+
+
+def _nested_project(tmp_path, plots=None):
+    """`_two_var_project` with A's result carrying `pipe.T[1]`, `pipe.T[2]`
+    (an array by name, so they fold), and the untracked `w` and `z`; A
+    tracks x, y and the pipe and is scored by `NESTED`, with ``plots`` as
+    its extras."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for k, name in enumerate(["pipe.T[1]", "pipe.T[2]", "w", "z"], start=3):
+        payload["variables"][name] = [k * v for v in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = ["x", "y", "pipe.T[1]", "pipe.T[2]"]
+            entry["metrics"] = copy.deepcopy(NESTED)
+            if plots is not None:
+                entry["plots"] = plots
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def _opened(cfg, work) -> Shell:
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+@pytest.fixture
+def nested_shell(tmp_path):
+    return _opened(*_nested_project(tmp_path))
+
+
+@pytest.fixture
+def extras_shell(tmp_path):
+    """`nested_shell` with z as context on x's plot and a watch plot of w."""
+    return _opened(
+        *_nested_project(tmp_path, [{"var": "x", "context": ["z"]}, {"var": "w"}])
+    )
+
+
+def _tips(element) -> list[str]:
+    return [e.text for e in element.descendants() if isinstance(e, ui.tooltip)]
+
+
+async def test_the_cards_follow_the_tree_and_their_rows_are_in_tree_order(
+    nested_shell,
 ):
-    """A plot-only series has no criteria and no "Add a criterion for it"
-    `+` — the header's `+` is the plot's first TRACKED series'."""
-    shell = plots_shell
-    layout = [{"series": [{"var": "x"}, {"var": "z"}, {"var": "a0"}]}]
-    shell.session.stage([PatchOp(A, "add", "/plots", layout)])
+    """One card per scored variable or family, where the tree first names
+    it; a card's rows are its subject's leaves in TREE order — pipe.T[2]'s
+    before pipe.T[1]'s — each led by its ancestors' kinds."""
+    shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [
+            ("pipe.T[1]", "pipe.T[2]"),
+            ("x",),
+            ("y",),
+        ]
+        assert _one(user, "plot-title:0").text == "pipe.T[1:2]"
+        assert [list(c.rows) for c in page.cards] == [
+            [N_T2, N_KT1],
+            [N_KX, N_X2],
+            [N_Y],
+        ]
+        assert _one(user, f"crumb:0:{N_T2}").text == "and ›"
+        assert _one(user, f"crumb:0:{N_KT1}").text == "and › k-of-n ›"
+        assert "dstf-crumb" in _one(user, f"crumb:1:{N_KX}").classes
+        # A card's crumbs are as wide as its longest, so its leaf names
+        # start in one column whatever the rows' depths.
+        for path in (N_T2, N_KT1):
+            assert _one(user, f"crumb:0:{path}").style == {"min-width": "14ch"}
+        for path in (N_KX, N_X2):
+            assert _one(user, f"crumb:1:{path}").style == {"min-width": "14ch"}
+        # y's one row is at depth 1: "and ›", five characters.
+        assert _one(user, f"crumb:2:{N_Y}").style == {"min-width": "5ch"}
+        assert _one(user, "plots:count").text == "3 plots · derived from the criteria"
+        # The family's card names each pill's variable; a lone one does not.
+        assert _one(user, "plot-pill:0:pipe.T[2]").text.startswith("pipe.T[2] ")
+        assert _one(user, "plot-pill:1:x").text in ("pass", "fail")
+
+
+async def test_a_root_leafs_row_has_no_breadcrumb(shell):
+    """A leaf with no ancestor has nothing to lead its row with."""
+    _stage_tree(shell, A, {"metric": "nrmse", "variable": "x"})
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert list(page.cards[0].rows) == ["/metrics"]
+        assert _none(user, "crumb:0:/metrics")
+
+
+async def test_both_tiers_lead_a_plots_rows_with_the_same_crumbs(tmp_path):
+    """The report's plot sections and the tool's cards list a plot's
+    criteria by ONE walk (`reporting.tree_rows.criteria_rows`): over the
+    report's nested tree, every plot's rows carry the same leaves, in the
+    same order, led by the same crumbs on both tiers."""
+    import re as _re
+
+    from dstf.backends.base import last_test_keys
+    from dstf.reporting.report_suite import _build_per_test_args, _render_one_test
+    from test_report_suite import TestPlotSections, _parse
+
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    next(e for e in spec["tests"] if e["model"] == A)["metrics"] = copy.deepcopy(
+        TestPlotSections.NESTED
+    )
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    shell = _opened(cfg, work)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        tool = [
+            [
+                (
+                    path,
+                    _one(user, f"crumb:{card.index}:{path}").text
+                    if not _none(user, f"crumb:{card.index}:{path}")
+                    else "",
+                )
+                for path in card.rows
+            ]
+            for card in page.cards
+        ]
+    session = shell.session
+    project = session.project
+    args = _build_per_test_args(
+        session.comparisons[A],
+        project.results,
+        {t.model_id: t for t in project.tests},
+        project.store,
+        project.config,
+        {A: {"test_key": last_test_keys(work).get(A), "last_run_at": None}},
+        backend_cls=type(project.backend),
+    )
+    out = tmp_path / "report"
+    entry = _render_one_test(args, out)
+    html = (out / entry["report_path"]).read_text(encoding="utf-8")
+    doc = _parse(html)
+    report = []
+    for i in range(len(_re.findall(r'id="variable-section-\d+"', html))):
+        rows = []
+        for row in doc.by_id(f"variable-section-{i}").by_class("criteria-row"):
+            crumbs = row.by_class("node-crumbs")
+            leaf = next(el for el in row.walk() if "node-leaf" in el.classes)
+            rows.append((leaf.attrs["data-path"], crumbs[0].text() if crumbs else ""))
+        report.append(rows)
+    assert tool == report
+    assert tool == [
+        [
+            ("/metrics/children/0", "and ›"),
+            ("/metrics/children/1/children/1", "and › k-of-n ›"),
+        ],
+        [("/metrics/children/1/children/0", "and › k-of-n ›")],
+    ]
+
+
+async def test_a_derived_card_has_no_remove_and_says_why(nested_shell):
+    """Q16: a derived plot goes when its last criterion goes; in Remove's
+    place an info icon says so (C6). Add series is gone."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 3
+        for i in range(3):
+            assert _none(user, f"remove-plot:{i}"), i
+            assert _none(user, f"add-series:{i}"), i
+            assert _tips(_one(user, f"plot-derived:{i}")) == [
+                "This plot exists because of its criteria."
+            ]
+
+
+async def test_a_watch_card_says_no_criteria_and_its_remove_stages_the_rest(
+    extras_shell,
+):
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.watch for c in page.cards] == [False, False, False, True]
+        assert _one(user, "plot-empty:3").text == "No criteria yet."
+        assert _one(user, "plot-title:3").text == "w"
+        assert _none(user, "plot-derived:3") and _none(user, "plot-empty:1")
+        # the derived plots counted apart from the watch plot
         assert (
-            _one(user, "plot-only:0").text
-            == "z, a0 are plot only: they have no criteria."
+            _one(user, "plots:count").text
+            == "3 plots · derived from the criteria · 1 watch"
         )
-        assert page.cards[0].variable_host.marker == "variable:0"
-        assert len(_inside(user, "add-for:x", "criteria-header:0")) == 1
-        for name in ("z", "a0"):
-            assert _none(user, f"add-for:{name}"), name
+        # w is not tracked: its `+` is there, grey, and says when (C2).
+        (plus,) = _inside(user, "add-for:w", "criteria-header:3")
+        assert not plus.enabled
+        assert _plus_tips(plus) == [
+            "Criteria on an untracked variable come with the next step (U2)"
+        ]
+        user.find(marker="remove-plot:3").click()
+        assert _pending(shell, "/plots") == [{"var": "x", "context": ["z"]}]
+        await _settled(lambda: len(page.cards) == 3)
+
+
+async def test_a_watch_cards_plus_follows_the_tracked_names(extras_shell):
+    """The tracked names are part of what the cards are built from: w
+    becoming tracked moves no plot — its watch plot stays a watch plot —
+    and a page that did not rebuild kept its `+` grey on a stale snapshot."""
+    import numpy as np
+
+    from dstf.backends.types import VariableResult
+
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (plus,) = _inside(user, "add-for:w", "criteria-header:3")
+        assert not plus.enabled
+        result = shell.session.project.results[A]
+        t = np.asarray(result.variables[0].time)
+        result.variables.append(
+            VariableResult(
+                index=len(result.variables) + 1, time=t, values=0 * t, name="w"
+            )
+        )
+        with page.client:
+            page.sync()
+        assert [c.resolved.watch for c in page.cards] == [False, False, False, True]
+        (plus,) = _inside(user, "add-for:w", "criteria-header:3")
+        assert plus.enabled
+
+
+async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):
+    """C1: the context sits in a row above the plot, each name with a `×`;
+    it is no criterion. x's entry holds nothing else, so it goes."""
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards[1].resolved.context == ("z",)
+        assert _one(user, "context-name:1:z").text == "z"
+        assert _inside(user, "context-name:1:z", "context:1")
+        assert _none(user, "context:0") and _none(user, "context:3")
+        remove = _one(user, "context-remove:1:z")
+        assert remove.props["aria-label"] == "Remove z from this plot"
+        assert list(page.cards[1].rows) == [N_KX, N_X2]
+        user.find(marker="context-remove:1:z").click()
+        assert _pending(shell, "/plots") == [{"var": "w"}]
+        await _settled(lambda: page.cards[1].resolved.context == ())
+        assert _none(user, "context:1")
+
+
+async def test_removing_a_variables_last_criterion_takes_its_card(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        shell.session.stage([PatchOp(A, "remove", N_Y)])
+        await _settled(lambda: len(page.cards) == 2)
+        assert [c.resolved.subject for c in page.cards][-1] == ("x",)
+
+
+async def test_with_an_extra_the_card_stays_as_a_watch_card(tmp_path):
+    """A watch plot is what a derived plot with an extra becomes when its
+    last criterion goes (Q14), its context kept. y is still tracked — the
+    result carries it — so its `+` is live: the way back to a criterion."""
+    shell = _opened(*_nested_project(tmp_path, [{"var": "y", "context": ["z"]}]))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards[2].resolved.watch is False
+        shell.session.stage([PatchOp(A, "remove", N_Y)])
+        await _settled(lambda: page.cards[2].resolved.watch)
+        card = page.cards[2]
+        assert (card.resolved.subject, card.resolved.context) == (("y",), ("z",))
+        assert _one(user, "plot-empty:2").text == "No criteria yet."
+        assert _one(user, "remove-plot:2")
+        (plus,) = _inside(user, "add-for:y", "criteria-header:2")
+        assert plus.enabled and _plus_tips(plus) == ["Add a criterion for y"]
+
+
+async def test_a_staged_context_rebuilds_the_card(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        shell.session.stage(
+            [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["w"]}])]
+        )
+        await _settled(lambda: page.cards[1].resolved.context == ("w",))
+        assert _one(user, "context-name:1:w").text == "w"
+
+
+async def test_a_tree_of_statistics_alone_has_no_plots_and_says_so(shell):
+    """A stored-scalar leaf names a statistic, not a series: a tree of
+    nothing else derives no plot, and the page says why — not "the result
+    has no variables", which is false."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": "CPUtime.final",
+                "max_value": 1e9,
+            }
+        ],
+    }
+    _stage_tree(shell, A, tree)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards == []
+        assert _one(user, "plots:count").text == (
+            "no plots: this test's criteria score statistics, not signals"
+        )
+
+
+async def test_a_test_with_no_tree_has_one_card_per_tracked_variable(shell):
+    """C5: nothing scored derives nothing; the count line says what the
+    cards are then — an array folds there too — and counts a watch plot
+    apart."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert [c.resolved.subject for c in page.cards] == [("x",), ("y",)]
+        assert _one(user, "plots:count").text == (
+            "2 plots · one per tracked variable or array"
+        )
+        shell.session.stage([PatchOp(B, "add", "/plots", [{"var": "z"}])])
+        await _settled(lambda: len(page.cards) == 3)
+        assert _one(user, "plots:count").text == (
+            "2 plots · one per tracked variable or array · 1 watch"
+        )
+
+
+async def test_a_tree_on_a_test_with_no_baseline_derives_its_plots(shell):
+    """B has no baseline, so nothing is compared and there is no tree VIEW;
+    an authored tree still names what its plots are (`plot_leaves`), and
+    the count line says so — it branched on the view."""
+    shell.session.stage(
+        [
+            PatchOp(
+                B,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "y"}],
+                },
+            )
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert shell.session.tree_view(B) is None
+        assert [c.resolved.subject for c in page.cards] == [("y",)]
+        assert _one(user, "plots:count").text == "1 plot · derived from the criteria"
+
+
+async def test_a_statistics_leaf_draws_no_row_on_its_variables_card(shell):
+    """A stored-scalar leaf's ``variable`` is free text naming the leaf, not
+    a series (`resolves_a_variable`): a watch plot of a variable that
+    spelling matches has no criteria, and its card shows none — no row, no
+    pill, nothing it draws."""
+    stats = {
+        "metric": "scalar",
+        "variable": "x",
+        "quantity": "CPUtime.final",
+        "max_value": 1e9,
+    }
+    tree = {
+        "combinator": "and",
+        "children": [{"metric": "nrmse", "variable": "y"}, stats],
+    }
+    shell.session.stage(
+        [
+            PatchOp(A, "add", "/metrics", tree),
+            PatchOp(A, "add", "/plots", [{"var": "x"}]),
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[-1]
+        assert (card.resolved.subject, card.resolved.watch) == (("x",), True)
+        assert card.rows == {} and card.pills == {}
+        assert card._leaves_all(shell.session.tree_view(A)) == []
+        assert _one(user, "plot-empty:1").text == "No criteria yet."
+
+
+async def test_a_watch_plot_turning_derived_keeps_the_selection(tmp_path):
+    """A watch plot selected, then given a criterion: it becomes its
+    variable's derived plot and MOVES — to where the tree names it — and
+    the selection moves with it, by its subject; the index it had names
+    another plot now."""
+    shell = _opened(
+        *_nested_project(tmp_path, [{"var": "w"}, {"var": "y", "context": ["z"]}])
+    )
+    shell.session.stage([PatchOp(A, "remove", N_Y)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [(c.resolved.subject, c.resolved.watch) for c in page.cards][-2:] == [
+            (("w",), True),
+            (("y",), True),
+        ]
+        with page.client:
+            page.select(3)
+        _click_in(user, "add-for:y", within="criteria-header:3")
+        await user.should_see(marker="apply-add:y")
+        user.find(marker="apply-add:y").click()
+        await _settled(lambda: not _page(shell, user).cards[2].resolved.watch)
+        page = _page(shell, user)
+        card = page.cards[2]
+        assert (card.resolved.subject, card.resolved.context) == (("y",), ("z",))
+        assert page.selected == 2 and _ringed(page) == [2]
+        await _settled(lambda: page.open is not None and page.open[0] == 2)
+
+
+async def test_an_edit_to_a_context_variables_criterion_resends_only_its_card(
+    tmp_path,
+):
+    """x's card draws y as CONTEXT; y's criterion, on y's own card, is
+    edited: only y's card is re-sent. A context variable's leaves sign
+    nothing onto a card (`PlotCard.signature` reads the SUBJECT)."""
+    cfg, work = _two_var_project(tmp_path)
+    shell = _opened(cfg, work)
+    shell.session.stage(
+        [
+            PatchOp(A, "add", "/metrics", copy.deepcopy(TWO_RANGES)),
+            PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}]),
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards[0].resolved.context == ("y",)
+        with page.client:
+            page.cards[0].show()
+            page.cards[1].show()
+        on_x, on_y = _counted(page.cards[0]), _counted(page.cards[1])
+        shell.session.stage(
+            [PatchOp(A, "replace", "/metrics/children/1/min_value", -5)]
+        )
+        await _settled(lambda: on_y[0] >= 1)
+        assert on_x[0] == 0
+
+
+async def test_reset_layout_says_the_extras_go(extras_shell):
+    """C7: what Reset layout takes away is the context and the watch plots;
+    the derived plots stay."""
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _tips(_one(user, "tree:reset-layout")) == [
+            "Stage removing this test's plots key: its context series and "
+            "watch plots go"
+        ]
+        user.find(marker="tree:reset-layout").click()
+        await _settled(lambda: len(page.cards) == 3)
+        assert all(not c.resolved.context for c in page.cards)
 
 
 async def test_a_variable_with_no_criteria_has_no_header_pill(shell):
@@ -1460,30 +2099,25 @@ async def test_a_layout_staged_under_the_open_page_rebuilds_the_cards(plots_shel
     shell = plots_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert len(page.cards) == 2
+        old = page.cards[0]
+        assert _none(user, "context:0")
         shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
-        await _settled(lambda: len(page.cards) == 1)
-        assert _one(user, "plot-title:0").text == "x, z"
+        await _settled(lambda: page.cards[0] is not old)
+        assert page.cards[0].resolved.context == ("z",)
+        assert _one(user, "context-name:0:z").text == "z"
 
 
 async def test_a_leaf_that_changes_variable_moves_to_the_other_card(shell):
     """A leaf's variable is part of the shape: its row belongs to another
-    card now, and no repaint moves a row between cards."""
-    shell.session.stage(
-        [
-            PatchOp(
-                A,
-                "add",
-                "/plots",
-                [{"series": [{"var": "x"}]}, {"series": [{"var": "y"}]}],
-            )
-        ]
-    )
+    card now, and no repaint moves a row between cards. x's card goes with
+    its last criterion."""
+    _stage_tree(shell, A, TWO_RANGES)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert [list(c.rows) for c in page.cards] == [[T0], [T1]]
         shell.session.stage([PatchOp(A, "replace", f"{T0}/variable", "y")])
-        await _settled(lambda: [list(c.rows) for c in page.cards] == [[], [T0, T1]])
+        await _settled(lambda: [list(c.rows) for c in page.cards] == [[T0, T1]])
+        assert page.cards[0].resolved.subject == ("y",)
 
 
 async def test_the_plots_plus_follows_the_job_that_locked_the_test(shell):
@@ -1565,11 +2199,30 @@ async def test_a_rebuilt_card_gives_up_its_hook(shell):
         assert _inside(user, "probe:sub", "criteria-header:0")
         assert [o for entries in old.hook._handlers.values() for o, _ in entries]
         shell.session.stage(
-            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 3)]
+            [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}])]
         )
-        await _settled(lambda: len(page.cards) == 3)
-        assert page.cards[0] is not old
+        await _settled(lambda: page.cards[0] is not old)
         assert not [e for entries in old.hook._handlers.values() for e in entries]
+
+
+def _watch_shell(tmp_path, n: int) -> Shell:
+    """`_two_var_project` with ``n`` untracked variables `v0`, `v1`, ... in
+    A's result, each a WATCH plot: a page of ``n + 2`` cards — x and y
+    derived, the rest watched."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    names = [f"v{i}" for i in range(n)]
+    for k, name in enumerate(names, start=3):
+        payload["variables"][name] = [k * v for v in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["plots"] = [{"var": name} for name in names]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return _opened(cfg, work)
 
 
 def _count_reads(session, names=("tree_view", "tracked", "variable_texts", "plots")):
@@ -1587,11 +2240,11 @@ def _count_reads(session, names=("tree_view", "tracked", "variable_texts", "plot
     return calls
 
 
-async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
+async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(tmp_path):
     """The cost the review measured: every card read `tree_view` and
     `tracked` for itself, so a rebuild cost one read per plot. The page
     reads and hands them in, so no CARD grows the count."""
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 5)])
+    shell = _watch_shell(tmp_path, 3)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert len(page.cards) == 5
@@ -1609,9 +2262,12 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
         # scope builds per card, each re-resolving the test's plots and
         # tracked names (80 of them on a 40-card page).
         assert calls["tree_view"] == 0
-        assert calls["variable_texts"] <= 2, calls
-        # Bounded, and by the page — not by how many cards it has.
-        assert calls["plots"] <= 4 and calls["tracked"] <= 8, calls
+        assert calls["variable_texts"] <= 1, calls
+        # Bounded, and by the page — not by how many cards it has. Measured
+        # with the plots derived from the tree: 2 plot resolutions (the
+        # rebuild's and the label scope's) and 5 tracked-name reads (one of
+        # them the page's, handed to every card's `+`).
+        assert calls["plots"] <= 2 and calls["tracked"] <= 5, calls
         calls["tracked"] = 0
         with page.client:
             page.sync()
@@ -1619,7 +2275,9 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
 
 
 @pytest.mark.parametrize("n", [5, 40])
-async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(shell, n):
+async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(
+    tmp_path, monkeypatch, n
+):
     """The guard the review's cost probe is: a build, a rebuild and a sync
     read the Session a bounded number of times, and the bound does not move
     between five cards and forty. It was O(cards) with a factor of two —
@@ -1629,9 +2287,21 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(shell,
     Drawing is not in the bound: `show()` is per card by nature — a figure
     is assembled for the card being drawn — and the page draws only what is
     scrolled to."""
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * n)])
+    from dstf.authoring.builtin import edit_tree
+
+    shell = _watch_shell(tmp_path, n - 2)
     session = shell.session
     calls = _count_reads(session)
+    # A card's `+` asks whether its variable is tracked: it reads the list
+    # the page hands down (`Selection.tracked`), never its own.
+    listed = [0]
+    real_names = edit_tree._variable_names
+
+    def counting_names(*a, **k):
+        listed[0] += 1
+        return real_names(*a, **k)
+
+    monkeypatch.setattr(edit_tree, "_variable_names", counting_names)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _settled(lambda: len(page.cards) == n)
@@ -1641,18 +2311,23 @@ async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(shell,
         view = session.tree_view(A)
         for key in calls:
             calls[key] = 0
+        listed[0] = 0
         with page.column:
             page.rebuild(view)
+        assert listed[0] == 0, (listed, n)
         rebuild = dict(calls)
         for key in calls:
             calls[key] = 0
         with page.client:
             page.sync()
         sync = dict(calls)
+    # Measured with the plots derived from the tree, the same at 5 and 40:
+    # the build 2 scope builds, 4 plot resolutions and 9 tracked-name reads;
+    # a rebuild or a sync about half that.
     for phase in (build, rebuild, sync):
         assert phase["variable_texts"] <= 2, (phase, n)
         assert phase["plots"] <= 4, (phase, n)
-        assert phase["tracked"] <= 10, (phase, n)
+        assert phase["tracked"] <= 9, (phase, n)
 
 
 # -- the editor: below its row, one at a time, the plot as its surface ------
@@ -2062,26 +2737,27 @@ async def test_swapping_two_rows_on_one_card_sends_its_figure_once(shell):
         assert sent[0] == 2
 
 
-async def test_a_layout_that_drops_the_open_editors_card_rebuilds_the_page(
-    plots_shell, caplog
+async def test_an_edit_that_drops_the_open_editors_card_rebuilds_the_page(
+    shell, caplog
 ):
     """The rebuild closed the editor, which redrew the card it was about to
-    drop: with the editor open on the last card and a `/plots` that leaves
+    drop: with the editor open on the last card and an edit that leaves
     ONE plot, that redraw asked the Session for a plot that no longer
     exists, the rebuild died half-done with the shape already recorded, and
-    the page never rebuilt again."""
+    the page never rebuilt again. x's last criterion goes, and with it x's
+    plot: y's card, the open one, moves up."""
     import logging
 
-    shell = plots_shell
+    _stage_tree(shell, A, TWO_RANGES)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         user.find(marker=f"criterion:1:{T1}").click()
         await _settled(lambda: page.open == (1, T1))
         with caplog.at_level(logging.ERROR, logger="dstf"):
-            shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+            shell.session.stage([PatchOp(A, "remove", T0)])
             await _settled(lambda: len(page.cards) == 1)
         assert page.open is None
-        assert _one(user, "plot-title:0").text == "x, z"
+        assert _one(user, "plot-title:0").text == "y"
         assert [
             r.getMessage() for r in caplog.records if r.name.startswith("dstf")
         ] == []
@@ -2395,10 +3071,12 @@ async def test_only_a_job_that_moved_the_data_re_sends_the_plots(shell):
         assert sent[0] == 3
 
 
-async def test_a_row_click_reads_the_tree_once_however_many_plots_are_drawn(shell):
+async def test_a_row_click_reads_the_tree_once_however_many_plots_are_drawn(
+    tmp_path,
+):
     """`_redraw_moved`, `show` and the signature each read `tree_view` for
     themselves: one row click on a twelve-plot page cost fourteen reads."""
-    shell.session.stage([PatchOp(A, "add", "/plots", [_plot("x")] * 12)])
+    shell = _watch_shell(tmp_path, 10)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)
         with page.client:
@@ -2538,13 +3216,32 @@ async def test_a_raising_rebuild_is_tried_again_by_the_next_sync(
 
         monkeypatch.setattr(page, "rebuild", flaky)
         with caplog.at_level(logging.ERROR, logger="dstf"):
-            shell.session.stage([PatchOp(A, "add", "/plots", [_plot("x")])])
+            shell.session.stage(
+                [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}])]
+            )
             await asyncio.sleep(0.4)
-        assert len(page.cards) == 2  # every try raised; the old cards stand
+        # every try raised; the old cards stand
+        assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
         boom["on"] = False
         with page.client:
             page.sync()
-        assert [c.resolved.series for c in page.cards] == [("x",)]
+        assert [c.resolved.series for c in page.cards] == [("x", "y"), ("y",)]
+
+
+#: A stored-scalar leaf on y: it names a statistic, not a series, so it
+#: derives no plot — y, scored by nothing else, is on no plot.
+ON_NO_PLOT = {
+    "combinator": "and",
+    "children": [
+        {"metric": "range", "variable": "x", "min_value": -1},
+        {
+            "metric": "scalar",
+            "variable": "y",
+            "quantity": "CPUtime.final",
+            "max_value": 1e9,
+        },
+    ],
+}
 
 
 async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
@@ -2553,49 +3250,32 @@ async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
     THAT row instead."""
     from dstf.authoring.shell import test_page as page_mod
 
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}])])
+    _stage_tree(shell, A, ON_NO_PLOT)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert len(page.cards) == 1
+        assert [c.resolved.subject for c in page.cards] == [("x",)]
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: page.open == (0, T0))
         scrolled: list[str] = []
         monkeypatch.setattr(page_mod.ui, "run_javascript", scrolled.append)
-        (jump,) = [
-            j for j in user.find(marker="tree:jump").elements if j.text == "nrmse · y"
-        ]
-        _click(user, jump)
+        with page.client:
+            page.jump_to(T1)
         await _settled(lambda: user.notify.messages != [])
         assert user.notify.messages == ["y is on no plot of this test"]
         assert scrolled == []  # never the OTHER editor's row
         assert page.open == (0, T0)
 
 
-async def test_the_same_criterion_on_two_cards_swaps_the_editor(shell):
-    """The open editor is (card, path), never the path alone: one variable
-    drawn on two plots has the same criterion row on both."""
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 2)])
-    async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user)
-        assert [list(c.rows) for c in page.cards] == [[T0], [T0]]
-        user.find(marker=f"criterion:1:{T0}").click()
-        await _settled(lambda: page.open == (1, T0))
-        _click(user, page.cards[0].rows[T0].row)
-        await _settled(lambda: page.open == (0, T0))
-        assert _none(user, f"editor:1:{T0}")
-
-
-async def test_a_jump_opens_the_first_card_holding_the_row(shell):
-    """With no card named, the jump takes the first plot that draws it."""
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 2)])
+async def test_a_jump_opens_the_card_holding_the_row(shell):
+    """With no card named, the jump takes the plot that draws it."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         (jump,) = [
-            j for j in user.find(marker="tree:jump").elements if j.text == "nrmse · x"
+            j for j in user.find(marker="tree:jump").elements if j.text == "nrmse · y"
         ]
         _click(user, jump)
         await _settled(lambda: page.open is not None)
-        assert page.open == (0, T0)
+        assert page.open == (1, T1)
 
 
 # -- following the Session plot by plot, and Focus --------------------------
@@ -2801,15 +3481,17 @@ async def test_a_form_edit_redraws_its_card_once_and_keeps_the_rings(shell):
 
 
 async def test_focus_hides_the_other_cards_and_the_bar_brings_them_back(shell):
-    """Board 5A: "Showing 1 of N plots: <name>", the focused plot's button
-    reading "Focused", and the bar's own way back to all of them."""
+    """Board 5A: "Showing 1 of N plots" — the switcher beside it names the
+    plot — the focused plot's button reading "Focused", and the bar's own
+    way back to all of them."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert page.focus_bar.visible is False
         user.find(marker="focus:0").click()
         await _settled(lambda: page.focused == 0)
         assert [c.card.visible for c in page.cards] == [True, False]
-        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots: x"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots"
+        assert _one(user, "focus-switch").value == 0
         assert _one(user, "focus-bar:all").text == "Show all 2 plots"
         assert _one(user, "focus:0").text == "Focused"
         user.find(marker="focus-bar:all").click()
@@ -2836,8 +3518,11 @@ async def test_focus_survives_an_edit_and_ends_on_a_rebuild(shell):
         _points(shell, T0, WIDE)
         await _settled(lambda: "100.0%" in readout.text)
         assert page.focused == 0 and page.cards[1].card.visible is False
-        shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "y"}]}])])
-        await _settled(lambda: len(page.cards) == 1)
+        old = page.cards[0]
+        shell.session.stage(
+            [PatchOp(A, "add", "/plots", [{"var": "y", "context": ["x"]}])]
+        )
+        await _settled(lambda: page.cards[0] is not old)
         assert page.focused is None
         assert page.cards[0].card.visible is True
         assert page.focus_bar.visible is False
@@ -2883,51 +3568,47 @@ async def test_a_mode_switch_keeps_the_editor_open(shell):
         await _settled(lambda: not _none(user, f"{T1}:tube_points:add"))
 
 
-async def test_a_named_pill_the_focus_bar_and_a_jump_all_read_the_label(
+async def test_the_focus_bar_and_a_jump_read_the_label(
     awkward_expression_shell, monkeypatch
 ):
-    """Three sentences about a variable, on the page whose titles already
-    read its expression: the named pill on a multi-series card, the focus
-    bar's "Showing 1 of N plots: …", and the jump's "is on no plot". Each
-    said `unitTests.x[1]`, which names nothing a person recognises."""
+    """Two places that name a variable, on the page whose titles already
+    read its expression: the focus switcher's option, and the jump's "is on
+    no plot". Each said `unitTests.x[1]`, which names nothing a person
+    recognises."""
     from dstf.authoring.shell import test_page as page_mod
     from test_session import AWKWARD_EXPRESSION, UT1
 
     shell = awkward_expression_shell
-    shell.session.stage(
-        [PatchOp(A, "add", "/plots", [{"series": [{"var": UT1}, {"var": "y"}]}])]
-    )
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert _one(user, "plot-title:0").text == f"{AWKWARD_EXPRESSION}, y"
-        # The pill's MARKER is the name; its text is the label.
-        assert _one(user, f"plot-pill:0:{UT1}").text == f"{AWKWARD_EXPRESSION} PASS"
-        assert _one(user, "plot-pill:0:y").text == "y PASS"
+        assert _one(user, "plot-title:0").text == AWKWARD_EXPRESSION
         user.find(marker="focus:0").click()
         await _settled(lambda: page.focused == 0)
-        assert (
-            _one(user, "focus-bar:text").text
-            == f"Showing 1 of 1 plot: {AWKWARD_EXPRESSION}, y"
-        )
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots"
+        assert _one(user, "focus-switch").options[0] == AWKWARD_EXPRESSION
         # A criterion whose variable is on no plot: the same name, read the
-        # same way. The tree line offers a jump for a FAILING leaf, so the
-        # UnitTests variable's criterion is tightened until it fails.
-        shell.session.stage(
-            [
-                PatchOp(A, "add", "/plots", [{"series": [{"var": "y"}]}]),
-                PatchOp(A, "add", f"{T0}/tolerance", 0.0),
-            ]
-        )
+        # same way. A stored-scalar leaf names a statistic and derives no
+        # plot, and nothing else scores the UnitTests variable here.
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "range", "variable": "y", "min_value": -1},
+                {
+                    "metric": "scalar",
+                    "variable": UT1,
+                    "quantity": "CPUtime.final",
+                    "max_value": 1e9,
+                },
+            ],
+        }
+        _stage_tree(shell, A, tree)
         await _settled(
             lambda: [c.resolved.series for c in _page(shell, user).cards] == [("y",)]
         )
         monkeypatch.setattr(page_mod.ui, "run_javascript", lambda *a, **k: None)
-        (jump,) = [
-            j
-            for j in user.find(marker="tree:jump").elements
-            if j.text == f"nrmse \u00b7 {AWKWARD_EXPRESSION}"
-        ]
-        _click(user, jump)
+        page = _page(shell, user)
+        with page.client:
+            page.jump_to(T1)
         await _settled(lambda: user.notify.messages != [])
         assert user.notify.messages == [
             f"{AWKWARD_EXPRESSION} is on no plot of this test"
@@ -2946,10 +3627,11 @@ async def test_the_scope_is_the_test_not_what_is_scored(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         _click_in(user, f"remove:{T1}", within=f"node:1:{T1}")
-        await _settled(lambda: len(page.cards) == 2 and not page.cards[1].rows)
+        # y's card goes with its last criterion; y is still TRACKED.
+        await _settled(lambda: len(page.cards) == 1)
         assert [r.name.text for r in page.cards[0].rows.values()] == ["nrmse · a.Q (x)"]
-        assert [_one(user, f"plot-title:{i}").text for i in (0, 1)] == ["a.Q", "a.Q"]
-        assert [_one(user, f"plot-name:{i}").text for i in (0, 1)] == ["x", "y"]
+        assert _one(user, "plot-title:0").text == "a.Q"
+        assert _one(user, "plot-name:0").text == "x"
 
 
 async def test_a_legend_reads_the_tests_scope_not_the_plots(shell):
@@ -2960,9 +3642,9 @@ async def test_a_legend_reads_the_tests_scope_not_the_plots(shell):
 
     with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
     shell.session._score(A)
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}])])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
+        assert page.cards[0].resolved.series == ("x",)
         with page.client:
             page.cards[0].show()
         names = [
@@ -2980,68 +3662,62 @@ async def test_a_legend_reads_the_tests_scope_not_the_plots(shell):
         assert [r.name.text for r in page.cards[0].rows.values()] == ["nrmse · a.Q (x)"]
 
 
-async def test_a_plot_only_variable_named_like_an_expression(plots_shell):
+async def test_a_context_variable_named_like_an_expression(plots_shell):
     """Case (c): A's result file holds a variable genuinely NAMED `z`, and
-    `x` carries the EXPRESSION `z`. The plot-only one keeps its plain `z`
-    — its label IS its name — and the one carrying the expression reads
-    its name beside it. Both read `z`, one line apart on the same card."""
+    `x` carries the EXPRESSION `z`. The context one keeps its plain `z` —
+    its label IS its name — and the one carrying the expression reads its
+    name beside it. Both read `z`, one line apart on the same card."""
     from test_session import with_expressions
 
     shell = plots_shell
     with_expressions(shell.session, A, {"x": "z"})
     shell.session._score(A)
-    shell.session.stage(
-        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "z"}]}])]
-    )
+    shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert _one(user, "plot-title:0").text == "z, z"
-        assert _one(user, "plot-name:0").text == "x, z"
-        assert _one(user, "plot-only:0").text == "z is plot only: it has no criteria."
+        assert _one(user, "plot-title:0").text == "z"
+        assert _one(user, "plot-name:0").text == "x"
+        assert _one(user, "context-name:0:z").text == "z"
         assert [r.name.text for r in page.cards[0].rows.values()] == ["nrmse · z (x)"]
         with page.client:
             page.cards[0].show()
-        names = [
-            tr["name"]
+        # Each trace's hover reads its variable's text.
+        labels = {
+            tr["meta"]["kind"]: tr["meta"]["label"]
             for tr in page.cards[0].plot.figure["data"]
-            if tr.get("meta", {}).get("kind") == "act"
-        ]
-        assert names == ["z (x)", "z"]
+            if tr.get("meta", {}).get("kind") in ("act", "context")
+        }
+        assert labels == {"act": "z (x)", "context": "z"}
 
 
 async def test_two_variables_sharing_one_expression_stay_tellable_apart(shell):
     """`x={a.Q, a.Q}` is legal Modelica: one expression, two result-file
-    variables. Read as the label alone, the card's title said "a.Q, a.Q",
-    both pills said "a.Q FAIL", and the figure gave both one legend entry."""
+    variables. Read as the label alone, both cards were titled "a.Q", both
+    criteria rows said "nrmse · a.Q", and the `+`'s form offered two "a.Q".
+    Two labels that collide fold into no family: one card each."""
     from test_session import with_expressions
 
     with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
     shell.session._score(A)
-    shell.session.stage(
-        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
-    )
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        # The TITLE reads the plain labels: the names ride beside it,
-        # muted, so repeating them in parentheses said each variable twice.
-        assert _one(user, "plot-title:0").text == "a.Q, a.Q"
-        assert _one(user, "plot-name:0").text == "x, y"
-        assert [_one(user, f"plot-pill:0:{v}").text for v in ("x", "y")] == [
-            "a.Q (x) FAIL",
-            "a.Q (y) FAIL",
-        ]
+        assert [c.resolved.subject for c in page.cards] == [("x",), ("y",)]
+        # The TITLE reads the plain label: the name rides beside it, muted,
+        # so repeating it in parentheses said each variable twice.
+        assert [_one(user, f"plot-title:{i}").text for i in (0, 1)] == ["a.Q", "a.Q"]
+        assert [_one(user, f"plot-name:{i}").text for i in (0, 1)] == ["x", "y"]
         with page.client:
             page.cards[0].show()
-        names = [
-            tr["name"]
+        (label,) = [
+            tr["meta"]["label"]
             for tr in page.cards[0].plot.figure["data"]
             if tr.get("meta", {}).get("kind") == "act"
         ]
-        assert names == ["a.Q (x)", "a.Q (y)"]
+        assert label == "a.Q (x)"
         # The criteria rows and the `+` too — the disambiguation is scoped
         # to the TEST, so every surface of its page agrees; the `+`'s form
         # offers both, told apart the same way.
-        assert [r.name.text for r in page.cards[0].rows.values()] == [
+        assert [r.name.text for card in page.cards for r in card.rows.values()] == [
             "nrmse · a.Q (x)",
             "nrmse · a.Q (y)",
         ]
@@ -3066,7 +3742,7 @@ RANGE_Y = "/metrics/children/2"
 def page_shell(tmp_path):
     """`_page_project`: A is `and[tube · x, range · x, range · y]` — the tube
     and range·y FAIL, range·x passes — drawn as seven plots (0: x, 1: y,
-    2..6: x and y)."""
+    2..6: WATCH plots of w1..w5, untracked variables of A's result)."""
     from test_session import _page_project
 
     cfg, work = _page_project(tmp_path)
@@ -3236,10 +3912,14 @@ async def test_a_swatch_is_there_once_the_plot_is(page_shell):
         card = page.cards[0]
         # Nothing is known of what a leaf draws before its figure exists.
         assert card.plot is None
-        assert not any(row.swatch.visible for row in card.rows.values())
+        # Invisible, never display:none: a hidden swatch keeps its box.
+        assert all("invisible" in row.swatch.classes for row in card.rows.values())
+        assert all(row.swatch.visible for row in card.rows.values())
         with page.client:
             card.show()
-        assert {p for p, row in card.rows.items() if row.swatch.visible} == {
+        assert {
+            p for p, row in card.rows.items() if "invisible" not in row.swatch.classes
+        } == {
             TUBE,
             RANGE_X,
         }
@@ -3279,7 +3959,7 @@ async def test_a_criterion_that_draws_only_a_shape_has_a_swatch(page_shell):
             s["name"].startswith(windowed + "/") for s in figure["layout"]["shapes"]
         )
         assert windowed in card.drawable
-        assert card.rows[windowed].swatch.visible
+        assert "invisible" not in card.rows[windowed].swatch.classes
 
 
 def _count_sends(card) -> list[int]:
@@ -4561,7 +5241,7 @@ def test_the_current_row_is_emitted_after_the_row_hover():
     assert STYLE.index(".dstf-row.dstf-row-current") > STYLE.index(".dstf-row:hover")
 
 
-# -- 3c: the selected plot, Add series, Remove plot, Reset layout -------------
+# -- 3c: the selected plot, Remove plot, Reset layout -------------------------
 
 
 def _ringed(page) -> list[int]:
@@ -4579,11 +5259,74 @@ def _tooltip_text(element) -> str:
     return tip.text
 
 
+async def test_a_selected_family_that_loses_a_member_keeps_the_selection(
+    nested_shell,
+):
+    """The selection follows its plot by ANY member of the subject, not the
+    exact subject: pipe.T[2]'s one criterion goes, the family's plot is
+    pipe.T[1]'s now and moves to where the tree first names pipe.T[1] — the
+    selection goes with it."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [
+            ("pipe.T[1]", "pipe.T[2]"),
+            ("x",),
+            ("y",),
+        ]
+        with page.client:
+            page.select(0)
+        shell.session.stage([PatchOp(A, "remove", N_T2)])
+        await _settled(
+            lambda: (
+                [c.resolved.subject for c in _page(shell, user).cards]
+                == [("x",), ("pipe.T[1]",), ("y",)]
+            )
+        )
+        page = _page(shell, user)
+        assert page.selected == 1 and _ringed(page) == [1]
+
+
+async def test_a_refused_placement_keeps_following_the_plot(nested_shell, monkeypatch):
+    """A `stage_layout(select=...)` the Session refuses restores the
+    selection AND what it follows: a later rebuild still moves the
+    selection with its plot."""
+    from dstf.authoring.layout import new_watch
+    from dstf.discovery.patch_apply import PatchError
+
+    shell = nested_shell
+    session = shell.session
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.select(1)  # x
+        real = session.stage
+
+        def refuse(ops):
+            raise PatchError("refused")
+
+        monkeypatch.setattr(session, "stage", refuse)
+        with page.client:
+            assert not page.stage_layout(new_watch(session.layout(A), "w"), select=3)
+        monkeypatch.setattr(session, "stage", real)
+        assert page.selected == 1 and page.follow == ("x",)
+        # x moves to the top when pipe.T[2]'s criterion goes; the selection
+        # goes with it.
+        session.stage([PatchOp(A, "remove", N_T2)])
+        await _settled(
+            lambda: (
+                [c.resolved.subject for c in _page(shell, user).cards]
+                == [("x",), ("pipe.T[1]",), ("y",)]
+            )
+        )
+        assert _page(shell, user).selected == 0
+
+
 class TestLayoutControls:
     """The plot the drawer's checkboxes act on (the owner's ruling, Q5 A),
     and the layout edits a card and the tree line make. `page_shell` is A
-    drawn as seven plots (0: x, 1: y, 2..6: x and y) from a `plots` key;
-    `shell` is A drawn one plot per tracked variable, no key."""
+    drawn as seven plots (0: x, 1: y, 2..6: watch plots of w1..w5, from a
+    `plots` key); `shell` is A drawn one plot per scored variable, no key."""
 
     async def test_the_first_plot_is_selected_and_select_moves_the_ring(
         self, page_shell
@@ -4599,23 +5342,12 @@ class TestLayoutControls:
                 page.select(99)  # clamped to the cards
             assert page.selected == 6 and _ringed(page) == [6]
 
-    async def test_add_series_selects_its_plot_and_opens_the_variables_drawer(
-        self, page_shell
-    ):
-        async with user_simulation(root=page_shell.index) as user:
-            page = await _test_page(page_shell, user)
-            assert _none(user, "drawer:variables")
-            user.find(marker="add-series:2").click()
-            assert page.selected == 2 and _ringed(page) == [2]
-            assert not _none(user, "drawer:variables")
-            assert page.state.drawer == "variables"
-
-    async def test_remove_plot_stages_one_op_without_that_plot(self, page_shell):
+    async def test_remove_plot_stages_one_op_without_that_watch_plot(self, page_shell):
         shell = page_shell
         plots = copy.deepcopy(shell.session.spec.entry(A)["plots"])
         async with user_simulation(root=shell.index) as user:
             page = await _test_page(shell, user)
-            user.find(marker="remove-plot:0").click()
+            user.find(marker="remove-plot:2").click()
             assert shell.session.spec.pending == [
                 PatchOp(A, "replace", "/plots", plots[1:])
             ]
@@ -4629,46 +5361,31 @@ class TestLayoutControls:
         async with user_simulation(root=shell.index) as user:
             page = await _test_page(shell, user)
             with page.client:
-                page.select(3)
-            user.find(marker="remove-plot:1").click()
-            await _settled(lambda: len(page.cards) == 6)
-            assert page.selected == 2 and _ringed(page) == [2]
+                page.select(4)
             user.find(marker="remove-plot:2").click()
+            await _settled(lambda: len(page.cards) == 6)
+            assert page.selected == 3 and _ringed(page) == [3]
+            user.find(marker="remove-plot:3").click()
             await _settled(lambda: len(page.cards) == 5)
-            assert page.selected == 2 and _ringed(page) == [2]
+            assert page.selected == 3 and _ringed(page) == [3]
             with page.client:
                 page.select(4)
             user.find(marker="remove-plot:4").click()
             await _settled(lambda: len(page.cards) == 4)
             assert page.selected == 3 and _ringed(page) == [3]
 
-    async def test_remove_plot_is_grey_when_it_strands_a_scored_variable(self, shell):
+    async def test_a_stale_remove_removes_nothing(self, page_shell):
+        """A card drawn before the last change can name a watch plot that
+        has gone: its Remove reads the extras NOW, and does nothing."""
+        shell = page_shell
         async with user_simulation(root=shell.index) as user:
             page = await _test_page(shell, user)
-            assert len(page.cards) == 2  # x, y: each the only plot showing it
-            assert not _one(user, "remove-plot:0").enabled
-            assert _tooltip_text(_one(user, "remove-plot:0:why")) == (
-                "x is scored by 1 criterion and this is the only plot that shows "
-                "it. Add it to another plot first, or remove its criteria."
-            )
-            assert not _one(user, "remove-plot:1").enabled
-            assert _tooltip_text(_one(user, "remove-plot:1:why")).startswith(
-                "y is scored by 1 criterion"
-            )
-
-    async def test_remove_plot_says_the_plural_for_several_stranded_variables(
-        self, shell
-    ):
-        shell.session.stage([PatchOp(A, "add", "/plots", [_plot("x", "y")])])
-        async with user_simulation(root=shell.index) as user:
-            page = await _test_page(shell, user)
-            assert len(page.cards) == 1
-            assert not _one(user, "remove-plot:0").enabled
-            assert _tooltip_text(_one(user, "remove-plot:0:why")) == (
-                "x, y are scored by 2 criteria and this is the only plot that "
-                "shows them. Add them to another plot first, or remove their "
-                "criteria."
-            )
+            with page.client:
+                page.remove_watch(2, "w1")
+                page.remove_watch(2, "w1")
+            assert [op.value for op in shell.session.spec.pending] == [
+                [{"var": name} for name in ("w2", "w3", "w4", "w5")]
+            ]
 
     async def test_reset_layout_shows_while_the_entry_has_plots_and_stages_its_removal(
         self, page_shell
@@ -4682,7 +5399,7 @@ class TestLayoutControls:
             await _settled(lambda: len(page.cards) == 2)
             assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
             assert _one(user, "plots:count").text == (
-                "2 plots · one per tracked variable"
+                "2 plots · derived from the criteria"
             )
 
     async def test_reset_layout_is_absent_without_a_plots_key_and_on_an_unscored_test(
@@ -4694,7 +5411,7 @@ class TestLayoutControls:
             await _test_page(shell, user)
             assert _none(user, "tree:reset-layout")
             shell.session.stage(
-                [PatchOp(B, "add", "/plots", [{"series": [{"var": "x"}]}])]
+                [PatchOp(B, "add", "/plots", [{"var": "x", "context": ["y"]}])]
             )
             await _test_page(shell, user, B)
             assert shell.session.tree_view(B) is None
@@ -4716,27 +5433,50 @@ class TestLayoutControls:
             with page.client:
                 page.select(4)
             monkeypatch.setattr(shell.session, "stage", refuse)
-            user.find(marker="remove-plot:1").click()
+            user.find(marker="remove-plot:2").click()
             await _settled(lambda: user.notify.messages != [])
             assert user.notify.messages == [str(error)]
             assert shell.session.spec.pending == []
             assert page.selected == 4 and len(page.cards) == 7
+            from dstf.authoring.layout import remove_watch
+
             with page.client:
-                assert page.stage_layout(shell.session.layout(A), select=6) is False
+                edit = remove_watch(shell.session.layout(A), "w5")
+                assert page.stage_layout(edit, select=5) is False
             assert page.selected == 4
             assert shell.session.spec.pending == []
 
+    async def test_an_edit_that_changes_nothing_stages_nothing(self, page_shell):
+        """A gesture whose extras are the ones in effect stages no op."""
+        async with user_simulation(root=page_shell.index) as user:
+            page = await _test_page(page_shell, user)
+            with page.client:
+                assert page.stage_layout(page_shell.session.layout(A)) is False
+            assert page_shell.session.spec.pending == []
+
+    async def test_no_extras_on_an_entry_with_no_key_stage_nothing(self, shell):
+        """Not a `remove` of a member that is not there."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            with page.client:
+                assert page.stage_layout(()) is False
+            assert shell.session.spec.pending == []
+            assert user.notify.messages == []
+
     async def test_reset_layout_follows_the_effective_entry(self, shell):
-        """B has no ``plots`` key: Remove plot stages the key's add, Reset
-        stages its removal after it — two ops, since a remove after an add
-        is kept as two — and the button goes again, because the EFFECTIVE
-        entry has no key, whatever the pending list still holds."""
+        """B has no ``plots`` key: a context series stages the key's add,
+        Reset stages its removal after it — two ops, since a remove after an
+        add is kept as two — and the button goes again, because the
+        EFFECTIVE entry has no key, whatever the pending list still holds."""
+        from dstf.authoring.layout import add_context
+
         async with user_simulation(root=shell.index) as user:
             page = await _test_page(shell, user, B)
             assert _none(user, "tree:reset-layout")
-            user.find(marker="remove-plot:0").click()
+            with page.client:
+                page.stage_layout(add_context((), page.cards[0].resolved, ["y"]))
             assert shell.session.spec.pending == [
-                PatchOp(B, "add", "/plots", _raw(["y"]))
+                PatchOp(B, "add", "/plots", [{"var": "x", "context": ["y"]}])
             ]
             await _settled(lambda: not _none(user, "tree:reset-layout"))
             user.find(marker="tree:reset-layout").click()
@@ -4747,7 +5487,7 @@ class TestLayoutControls:
                 (B, "remove", "/plots"),
             ]
             await _settled(lambda: _none(user, "tree:reset-layout"))
-            await _settled(lambda: len(page.cards) == 2)
+            await _settled(lambda: page.cards[0].resolved.context == ())
 
     async def test_a_refused_reset_is_said_and_changes_nothing(
         self, page_shell, monkeypatch
@@ -4782,10 +5522,13 @@ class TestLayoutControls:
             raise error
 
         async with user_simulation(root=shell.index) as user:
+            from dstf.authoring.layout import remove_watch
+
             page = await _test_page(shell, user)
             monkeypatch.setattr(shell.session, "stage", refuse)
             with page.client:
-                assert page.stage_layout(shell.session.layout(A)) is False
+                edit = remove_watch(shell.session.layout(A), "w5")
+                assert page.stage_layout(edit) is False
             await _settled(lambda: user.notify.messages != [])
             assert user.notify.messages == ["it refused"]
             assert shell.session.spec.pending == [] and len(page.cards) == 7
@@ -4807,8 +5550,9 @@ ROW_PORT3 = "1/port/port[2, 3, 1].C[]"
 PORT3 = ["port[2, 3, 1].C[1]", "port[2, 3, 1].C[2]"]
 
 
-def _raw(*plots):
-    return [{"kind": "time", "series": [{"var": v} for v in p]} for p in plots]
+def _ctx(var: str, *context: str) -> dict:
+    """One entry of the ``plots`` key as a writer stores it."""
+    return {"var": var, **({"context": list(context)} if context else {})}
 
 
 @pytest.fixture
@@ -4830,6 +5574,9 @@ def _labels_in(element) -> list[str]:
     out: list[str] = []
     for slot in element.slots.values():
         for child in slot.children:
+            if isinstance(child, MiddleCut):
+                out.append(child.text)  # one label, cut in two spans
+                continue
             if isinstance(child, ui.label):
                 out.append(child.text)
             out.extend(_labels_in(child))
@@ -4852,6 +5599,11 @@ def _op_value(shell) -> list:
     return op.value
 
 
+def _new_why(user, row_id: str) -> str:
+    """The tooltip on a row's grey "+ new plot"."""
+    return _tooltip_text(_one(user, var_marker("var-new-why", row_id)))
+
+
 def _raised(caplog) -> list[str]:
     """The exceptions a click's handler raised: NiceGUI logs them and the
     click returns as if nothing happened."""
@@ -4866,10 +5618,10 @@ async def _drawer(shell, user, model=A) -> TestPage:
 
 
 class TestVariablesDrawer:
-    """The drawer does every layout edit on the selected plot (the owner's
-    rulings Q5-Q7): a check adds a row's members or takes them off, a
-    scored variable keeps its last plot, "+ new plot" puts a row on a plot
-    of its own below the selected one and selects it."""
+    """The drawer edits the plot extras on the selected plot (the owner's
+    rulings Q5-Q7, Q12-Q14): a check adds a row's members to its CONTEXT or
+    takes them off — its subject's check is on and grey — and "+ new plot"
+    makes a WATCH plot of one variable, after the others, and selects it."""
 
     async def test_the_filter_and_its_toggles_survive_a_switch_of_test(
         self, drawer_shell
@@ -4906,140 +5658,283 @@ class TestVariablesDrawer:
                 "var-group:2-top-level",
                 "var-group:3-Diagnostics",
             ]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 1 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 1 of 2"
+            )
             assert "pipe.T[1:3]" in _labels_in(
                 _one(user, var_marker("var-row", ROW_PIPE))
             )
             assert "port[2, 1].C[1:3]" in _labels_in(
                 _one(user, var_marker("var-row", ROW_PORT))
             )
+            # x is plot 1's subject: its check is on, and grey.
             assert _checked(user, ROW_X) == "true"
+            assert not _one(user, var_marker("var-check", ROW_X)).enabled
+            assert _tooltip_text(_one(user, var_marker("var-why", ROW_X))) == (
+                "The plot's subject"
+            )
             assert _checked(user, ROW_Y) == "false"
+            assert _one(user, var_marker("var-check", ROW_Y)).enabled
 
-    async def test_a_checkbox_adds_a_series_to_the_selected_plot_as_one_op(
+    async def test_a_checkbox_adds_context_to_the_selected_plot_as_one_op(
         self, drawer_shell
     ):
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             user.find(marker=var_marker("var-check", ROW_Z)).click()
-            assert _op_value(shell) == _raw(["x", "z"], ["y"])
+            assert _op_value(shell) == [_ctx("x", "z")]
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             user.find(marker=var_marker("var-check", ROW_PIPE)).click()
-            assert _op_value(shell) == _raw(["x", "z", *PIPE], ["y"])
-            await _settled(lambda: len(page.cards[0].resolved.series) == 5)
+            assert _op_value(shell) == [_ctx("x", "z", *PIPE)]
+            await _settled(lambda: page.cards[0].resolved.context == ("z", *PIPE))
             await _settled(lambda: _checked(user, ROW_PIPE) == "true")
-            # The card folds the family as the report does (the executing
-            # review's correction 8): the title, and the plot-only line.
-            assert _one(user, "plot-title:0").text == "x, z, pipe.T[1:3]"
-            assert _one(user, "plot-only:0").text == (
-                "z, pipe.T[1:3] are plot only: they have no criteria."
-            )
+            # Context, not a criterion: the card's rows and title are x's.
+            assert _one(user, "plot-title:0").text == "x"
+            assert list(page.cards[0].rows) == [T0]
+            assert _one(user, f"context-name:0:{PIPE[0]}").text == PIPE[0]
 
-    async def test_a_family_partly_on_the_plot_is_mixed_and_a_click_adds_the_rest(
+    async def test_a_family_partly_in_the_context_is_mixed_and_a_click_adds_the_rest(
         self, drawer_shell
     ):
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", PIPE[1]], ["y"]))])
+        shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", PIPE[1])])])
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             assert _checked(user, ROW_PIPE) == "mixed"
             user.find(marker=var_marker("var-check", ROW_PIPE)).click()
-            assert _op_value(shell) == _raw(["x", PIPE[1], PIPE[0], PIPE[2]], ["y"])
+            assert _op_value(shell) == [_ctx("x", PIPE[1], PIPE[0], PIPE[2])]
 
-    async def test_unchecking_removes_and_a_scored_last_plot_refuses(
+    async def test_unchecking_takes_the_context_off_and_the_emptied_entry_goes(
         self, drawer_shell
     ):
+        """x's entry held z alone: with z off it records nothing, and the
+        key goes with it (`layout_op`: no extras is a remove)."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             user.find(marker=var_marker("var-check", ROW_Z)).click()
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             user.find(marker=var_marker("var-check", ROW_Z)).click()
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            assert [op.op for op in shell.session.spec.pending] == ["add", "remove"]
+            assert "plots" not in shell.session.spec.entry(A)
             await _settled(lambda: _checked(user, ROW_Z) == "false")
-            assert not _one(user, var_marker("var-check", ROW_X)).enabled
-            assert _tooltip_text(_one(user, var_marker("var-why", ROW_X))) == (
-                "x is scored by 1 criterion and this is the only plot that shows "
-                "it. Add it to another plot first, or remove its criteria."
-            )
-            # A row with nothing to strand says nothing.
             assert _one(user, var_marker("var-check", ROW_Z)).enabled
 
-    async def test_new_plot_goes_below_the_selected_one_and_is_selected(
+    async def test_new_plot_makes_a_watch_plot_after_the_others_and_selects_it(
         self, drawer_shell
     ):
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
-            user.find(marker=var_marker("var-new", ROW_PORT)).click()
-            assert _op_value(shell) == _raw(["x"], PORT, ["y"])
+            user.find(marker=var_marker("var-new", ROW_Z)).click()
+            assert _op_value(shell) == [_ctx("z")]
             await _settled(lambda: len(page.cards) == 3)
-            assert page.selected == 1 and _ringed(page) == [1]
+            assert page.cards[2].resolved.watch
+            assert page.selected == 2 and _ringed(page) == [2]
             await _settled(
-                lambda: _one(user, "var-target").text == "Checkboxes act on plot 2 of 3"
+                lambda: (
+                    _one(user, "var-target").text
+                    == "Checkboxes add context to plot 3 of 3"
+                )
             )
-            assert _checked(user, ROW_PORT) == "true"
+            # z is that plot's subject now: on and grey, and no second plot.
+            assert _checked(user, ROW_Z) == "true"
+            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
+            assert not _one(user, var_marker("var-new", ROW_Z)).enabled
+            assert _new_why(user, ROW_Z) == "Already the subject of plot 3"
 
-    async def test_a_double_click_on_the_last_plots_only_series(
+    async def test_new_plot_is_grey_on_a_subject_and_on_a_family(self, drawer_shell):
+        """A watch plot is of ONE variable (C3): a family's row makes none,
+        its members, opened, each do. A plot's subject has its plot."""
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            assert not _one(user, var_marker("var-new", ROW_X)).enabled
+            assert _new_why(user, ROW_X) == "Already the subject of plot 1"
+            assert _new_why(user, ROW_Y) == "Already the subject of plot 2"
+            assert not _one(user, var_marker("var-new", ROW_PIPE)).enabled
+            assert _new_why(user, ROW_PIPE) == (
+                "A watch plot shows one variable: open the family"
+            )
+            assert _one(user, var_marker("var-new", ROW_Z)).enabled
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            member = f"{ROW_PIPE}/{PIPE[0]}"
+            await _settled(lambda: not _none(user, var_marker("var-new", member)))
+            assert _one(user, var_marker("var-new", member)).enabled
+
+    async def test_a_check_on_a_plot_that_has_just_gone_does_nothing(
         self, drawer_shell, caplog
     ):
-        """A real double-click: the second click lands on the row drawn
-        BEFORE the first one's edit, while the selection names a plot the
-        layout no longer has. It raised IndexError; it does nothing."""
+        """A check clicked after the selected watch plot was removed, before
+        the page caught up: the selection names a plot there is no longer,
+        and the check does nothing — never an IndexError."""
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x"], ["y"], ["z"]))])
+        shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("z")])])
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             with page.client:
                 page.select(2)
             await _settled(lambda: _checked(user, ROW_Z) == "true")
-            check = user.find(marker=var_marker("var-check", ROW_Z))
-            check.click()
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            check = user.find(marker=var_marker("var-check", ROW_A0))
+            with page.client:
+                page.remove_watch(2, "z")
+            (op,) = [op for op in shell.session.spec.pending if op.op == "remove"]
             with caplog.at_level(logging.ERROR):
-                check.click()  # the same row, before any rebuild
+                check.click()  # the row drawn for plot 3, before any rebuild
             assert _raised(caplog) == []
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            assert shell.session.spec.pending[-1] == op
 
     async def test_a_stale_check_acts_on_what_the_selected_plot_holds_now(
         self, drawer_shell
     ):
         """ "+ new plot" selects its plot at once; the rows follow on the
         next cycle. A click on z's check in between read "all on" from the
-        row drawn for plot 1 and took z off plot 2, which never had it; it
-        reads plot 2 as it is, and adds z there."""
+        row drawn for plot 1 and took z off plot 3, which never had it; it
+        reads plot 3 as it is, and adds z there."""
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+        shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             check = user.find(marker=var_marker("var-check", ROW_Z))
             user.find(marker=var_marker("var-new", ROW_A0)).click()
-            assert page.selected == 1
-            assert _op_value(shell) == _raw(["x", "z"], ["a0"], ["y"])
+            assert page.selected == 2
+            assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0")]
             check.click()  # drawn for plot 1, which shows z
-            assert _op_value(shell) == _raw(["x", "z"], ["a0", "z"], ["y"])
+            assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0", "z")]
 
-    async def test_new_plot_from_a_stale_row_after_its_plot_went(
-        self, drawer_shell, caplog
-    ):
-        """ "+ new plot" clicked after a check removed the selected plot, and
-        before the page caught up: the selection names no plot, and
-        `new_plot` raised IndexError for it. Nothing is staged instead."""
+    @pytest.mark.parametrize(
+        ("status", "why"),
+        [
+            ("passed", "The run failed: no plots"),
+            # A run that never finished A: its partial result is no result.
+            ("pending", "No result yet: no plots"),
+        ],
+    )
+    async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell, status, why):
+        """A result that is not a success has no plots (O2), and a watch
+        plot made on it would draw nothing: the drawer says why — worded
+        by the run state — its checks and every "+ new plot" are grey, and
+        a click that reaches `_new` anyway — drawn before the run failed —
+        stages nothing."""
+        from dstf.authoring.variable_rows import VarRow
+        from dstf.backends.types import TestResult
+
         shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x"], ["y"], ["z"]))])
+        path = shell.session.project.config.work_dir / "batch_manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["test_0001"]["last_run_status"] = status
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        result = shell.session.project.results[A]
+        shell.session.project.results[A] = TestResult(
+            model_id=A, success=False, variables=list(result.variables)
+        )
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
+            assert page.cards == []
+            assert _one(user, "var-target").text == why
+            assert not _one(user, var_marker("var-new", ROW_Z)).enabled
+            assert _new_why(user, ROW_Z) == why
+            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
+            drawer = page.rail.variables
+            assert drawer is not None
+            row = VarRow(
+                key="z",
+                id=ROW_Z,
+                members=("z",),
+                text="z",
+                file_text="z",
+                name=None,
+                on_selected=0,
+                elsewhere=(),
+                is_subject=False,
+                subject_of=None,
+            )
             with page.client:
-                page.select(2)
-            await _settled(lambda: _checked(user, ROW_Z) == "true")
-            new = user.find(marker=var_marker("var-new", ROW_PORT))
-            user.find(marker=var_marker("var-check", ROW_Z)).click()
+                drawer._new(row)
+            assert shell.session.spec.pending == []
+
+    async def test_an_unfinished_run_with_a_whole_result_keeps_new_plot(
+        self, drawer_shell
+    ):
+        """O2's gate — a result that is not a success — greys "+ new
+        plot", not the run state: a run that never finished A, whose result
+        file still reads as a success, is no result on the page's lines and
+        still has its plots and a live "+ new plot"."""
+        shell = drawer_shell
+        path = shell.session.project.config.work_dir / "batch_manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["test_0001"]["last_run_status"] = "pending"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            assert page.run_state() == "none"
+            assert len(page.cards) == 2
+            assert _one(user, var_marker("var-new", ROW_Z)).enabled
+
+    async def test_a_run_that_fails_moves_the_drawers_signature(self, drawer_shell):
+        """Whether the run failed is part of what the drawer is drawn from:
+        a test with no plot before and after (a statistics-only tree) moves
+        nothing else the rows read, and its "+ new plot" stayed live."""
+        from dstf.backends.types import TestResult
+
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            with page.client:
+                reads = drawer._read()
+                before = drawer._signature(reads)
+                result = shell.session.project.results[A]
+                shell.session.project.results[A] = TestResult(
+                    model_id=A, success=False, variables=list(result.variables)
+                )
+                assert drawer._signature(reads) != before
+
+    async def test_new_plot_on_a_family_row_stages_nothing(self, drawer_shell):
+        """C3: a watch plot shows ONE variable. The family row's button is
+        grey; a click that reaches `_new` anyway — drawn before the row
+        folded — makes no plot of the array."""
+        from dstf.authoring.variable_rows import VarRow
+
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            row = VarRow(
+                key="pipe.T[]",
+                id=ROW_PIPE,
+                members=tuple(PIPE),
+                text="pipe.T[1:3]",
+                file_text="pipe.T[1:3]",
+                name=None,
+                on_selected=0,
+                elsewhere=(),
+                is_subject=False,
+                subject_of=None,
+            )
+            with page.client:
+                drawer._new(row)
+            assert shell.session.spec.pending == []
+
+    async def test_new_plot_twice_from_one_row_makes_one_plot(
+        self, drawer_shell, caplog
+    ):
+        """A real double-click on "+ new plot": the second click lands on the
+        row drawn BEFORE the first one's edit, whose variable is a watch
+        plot's subject by then. It makes no second plot — and never the
+        ValueError of a second entry on one variable."""
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            new = user.find(marker=var_marker("var-new", ROW_Z))
+            new.click()
             with caplog.at_level(logging.ERROR):
-                new.click()
+                new.click()  # the same row, before any rebuild
             assert _raised(caplog) == []
-            assert _op_value(shell) == _raw(["x"], ["y"])
+            assert _op_value(shell) == [_ctx("z")]
 
     async def test_the_filter_globs_regexes_and_says_a_bad_regex(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:
@@ -5126,6 +6021,8 @@ class TestVariablesDrawer:
             ] == ["a.Q (x)", "a.Q (y)", "z"]
 
     async def test_a_family_opens_to_its_members(self, drawer_shell):
+        """Each member a row of its own: its check and its "+ new plot" act
+        on that one variable."""
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
             assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
@@ -5146,15 +6043,16 @@ class TestVariablesDrawer:
     async def test_the_drawer_follows_the_selected_plot(self, drawer_shell):
         """`select` moves the drawer's target and its checks, and a repaint
         stages nothing and says nothing. A check that were a `ui.checkbox`
-        repainted by `set_value` (mutation (a)) stages nothing here either
-        — y is refused as stranded — so it is the refusal's notification
-        that kills it here; the checkbox tests see the op it stages."""
+        repainted by `set_value` (mutation (a)) would stage x as context on
+        plot 2 here as its check turned off."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             with page.client:
                 page.select(1)
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
             assert _checked(user, ROW_Y) == "true"
             assert _checked(user, ROW_X) == "false"
             assert not _one(user, var_marker("var-check", ROW_Y)).enabled
@@ -5166,7 +6064,7 @@ class TestVariablesDrawer:
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
-            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: _checked(user, ROW_Z) == "true")
 
     async def test_a_closed_drawer_is_not_rebuilt(self, drawer_shell):
@@ -5181,12 +6079,14 @@ class TestVariablesDrawer:
             drawer.rebuild = lambda: (built.append(1), real())
             with page.client:
                 page.select(1)
-            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: len(page.cards[0].resolved.series) == 2)
             assert built == []
             user.find(marker="rail:variables").click()
             assert built == [1]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
 
     async def test_a_test_with_no_result_says_so(self, tmp_path):
         from test_session import _drawer_project
@@ -5198,8 +6098,10 @@ class TestVariablesDrawer:
         shell.load.phase = "done"
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user, B)
-            assert _one(user, "var-empty").text == "this test has no result"
-            assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
+            # The reader hands a missing result file in as a failed run,
+            # and B's manifest says the run finished: the run failed.
+            assert _one(user, "var-empty").text == "the run failed"
+            assert _one(user, "var-target").text == "The run failed: no plots"
 
     async def test_the_cap_line(self, tmp_path):
         from dstf.authoring.variable_rows import cap, variable_groups
@@ -5217,10 +6119,8 @@ class TestVariablesDrawer:
                 tracked=session.tracked(A),
                 diagnostics=session.project.config.diagnostic_variables,
                 labels={n: t.label for n, t in scope.items()},
-                texts={n: t.text for n, t in scope.items()},
-                layout=session.layout(A),
+                plots=session.plots(A),
                 selected=0,
-                scored={"x": 1, "y": 1},
                 keep=lambda text: True,
             ),
             200,
@@ -5250,14 +6150,16 @@ class TestVariablesDrawer:
                 for state in ("started", "running", "finished"):
                     page.handle({"event": "job", "state": state})
             assert built == []
-            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             await asyncio.sleep(0.3)  # the rescore the stage started, and its events
             assert built == [1]
             with page.client:
                 page.select(1)
             assert built == [1, 1]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
 
     async def test_a_draw_that_raised_is_drawn_again_by_the_next_refresh(
         self, drawer_shell, monkeypatch
@@ -5288,14 +6190,12 @@ class TestVariablesDrawer:
                 drawer.refresh()
             assert not _none(user, var_marker("var-row", ROW_X))
 
-    async def test_a_select_or_an_add_series_builds_the_open_drawer_at_most_once(
+    async def test_a_click_on_a_card_builds_the_open_drawer_at_most_once(
         self, drawer_shell
     ):
-        """Add series with the drawer open built it more than once — the
-        select's refresh, then `Rail.open`'s own rebuild of a drawer that
-        was already open — and a click on the selected card went through a
-        refresh too. A build clears the body first: that is what is
-        counted."""
+        """A click on the selected card went through a refresh, and a click
+        selecting another builds the open drawer once. A build clears the
+        body first: that is what is counted."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
@@ -5304,13 +6204,14 @@ class TestVariablesDrawer:
             built = []
             clear = drawer.body.clear
             drawer.body.clear = lambda: (built.append(1), clear())[1]
-            with page.client:
-                page.select(0)  # the selected card, clicked again
+            user.find(marker="plot:0").click()  # the selected card, again
             assert built == []
-            user.find(marker="add-series:1").click()
+            user.find(marker="plot:1").click()
             assert page.selected == 1 and built == [1]
-            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
-            user.find(marker="add-series:1").click()  # its plot, selected
+            assert (
+                _one(user, "var-target").text == "Checkboxes add context to plot 2 of 2"
+            )
+            user.find(marker="plot:1").click()  # its plot, selected
             assert built == [1]
 
     async def test_a_row_names_the_other_plots_that_show_it_counting_from_1(
@@ -5362,7 +6263,7 @@ class TestVariablesDrawer:
             titles = {
                 e.text: e.props.get("title")
                 for e in _one(user, "drawer:variables").descendants()
-                if isinstance(e, ui.label) and "dstf-var-text" in e.classes
+                if isinstance(e, MiddleCut) and "dstf-var-text" in e.classes
             }
             assert titles == {"a.Q": f"a.Q ({UT1})", UT2: UT2}
 
@@ -5396,22 +6297,33 @@ class TestVariablesDrawer:
             assert _groups_shown(user) == ["var-group:2-top-level"]
 
     async def test_with_no_plot_the_checks_are_grey_and_new_plot_makes_plot_1(
-        self, drawer_shell
+        self, tmp_path
     ):
-        """An empty ``plots`` key: nothing for a check to act on, so each is
-        disabled; "+ new plot" makes the first plot and selects it."""
-        shell = drawer_shell
-        shell.session.stage([PatchOp(A, "add", "/plots", [])])
+        """B tracks nothing its result file holds, and has no tree: no plot
+        for a check to act on, so each is disabled; "+ new plot" makes the
+        first plot — a watch plot — and selects it."""
+        from test_session import _drawer_project
+
+        cfg, work = _drawer_project(tmp_path)
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = ["not.in.the.file"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        shell = _opened(cfg, work)
         async with user_simulation(root=shell.index) as user:
-            page = await _drawer(shell, user)
+            page = await _drawer(shell, user, B)
             assert page.cards == []
             assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
-            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
-            user.find(marker=var_marker("var-new", ROW_Z)).click()
-            assert _op_value(shell) == _raw(["z"])
+            row = "2/(top level)/x"
+            assert not _one(user, var_marker("var-check", row)).enabled
+            user.find(marker=var_marker("var-new", row)).click()
+            (op,) = shell.session.spec.pending
+            assert (op.model_id, op.op, op.value) == (B, "add", [_ctx("x")])
             await _settled(lambda: len(page.cards) == 1)
             assert page.selected == 0 and _ringed(page) == [0]
-            await _settled(lambda: _checked(user, ROW_Z) == "true")
+            await _settled(lambda: _checked(user, row) == "true")
 
     async def test_a_result_with_no_variables_says_so(self, tmp_path):
         from test_session import _drawer_project
@@ -5476,21 +6388,14 @@ class TestVariablesDrawer:
             assert _one(user, "var-target").text == ""
 
 
-@pytest.mark.parametrize(
-    ("second", "title"),
-    [
-        ("pipe.T[2]", "pipe.T[1:2]"),
-        # One expression twice: the fold is over the TEXTS, which carry the
-        # names, so the two are no family — never `pipe.T[1,1]`.
-        ("pipe.T[1]", "pipe.T[1], pipe.T[1]"),
-    ],
-)
-async def test_a_card_folds_a_family_of_expressions_and_its_names(
-    tmp_path, second, title
+@pytest.mark.parametrize("second", ["pipe.T[2]", "pipe.T[1]"])
+async def test_unit_tests_elements_are_a_card_each_whatever_their_expressions(
+    tmp_path, second
 ):
-    """The report's title rule on a card (the executing review's correction
-    8): a family of expressions reads as one slice, and the muted line
-    folds the result-file names the same way."""
+    """O3: a UnitTests element is its own test quantity — expressions that
+    read as one array (`pipe.T[1]`, `pipe.T[2]`), or as one element twice,
+    fold nothing: one card each, titled by its expression, its name muted
+    beside it."""
     from test_session import UT1, UT2, _unit_tests_project, with_expressions
 
     cfg, work = _unit_tests_project(tmp_path)
@@ -5498,26 +6403,79 @@ async def test_a_card_folds_a_family_of_expressions_and_its_names(
     shell.session.open(cfg, work_dir=work)
     with_expressions(shell.session, A, {UT1: "pipe.T[1]", UT2: second})
     shell.load.phase = "done"
-    shell.session.stage([PatchOp(A, "add", "/plots", _raw([UT1, UT2]))])
     async with user_simulation(root=shell.index) as user:
-        await _test_page(shell, user)
-        assert _one(user, "plot-title:0").text == title
-        assert _one(user, "plot-name:0").text == "unitTests.x[1:2]"
+        page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [(UT1,), (UT2,)]
+        assert [_one(user, f"plot-name:{i}").text for i in (0, 1)] == [UT1, UT2]
+        assert _one(user, "plot-title:0").text.startswith("pipe.T[1]")
+        assert _one(user, "plot-title:1").text.startswith(second)
 
 
-async def test_the_focus_bar_names_the_plot_as_its_title_does(drawer_shell):
-    """The bar names the focused plot "the way the plot names itself": a
-    family folds there as on the card's title (the executing review's
-    correction 8)."""
-    shell = drawer_shell
-    shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z", *PIPE], ["y"]))])
+async def test_the_focus_switch_names_the_plot_as_its_title_does(nested_shell):
+    """The switcher names the focused plot "the way the plot names itself":
+    a family folds there as on the card's title (the executing review's
+    correction 8). The sentence beside it counts, and names nothing — the
+    switcher already does, and a long family said it twice."""
+    shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
-        assert _one(user, "plot-title:0").text == "x, z, pipe.T[1:3]"
+        assert _one(user, "plot-title:0").text == "pipe.T[1:2]"
         user.find(marker="focus:0").click()
-        assert _one(user, "focus-bar:text").text == (
-            "Showing 1 of 2 plots: x, z, pipe.T[1:3]"
-        )
+        switch = _one(user, "focus-switch")
+        assert switch.options[switch.value] == "pipe.T[1:2]"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 3 plots"
+
+
+async def test_the_focus_switch_moves_focus_and_closes_the_old_editor(extras_shell):
+    """Q11 c: Focus has a variable switcher — every plot by its folded
+    subject, as plain text (C4), a watch plot marked. Choosing one focuses
+    it through the same path a card's Focus takes: the editor open on the
+    card it hides closes."""
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.open_criterion(N_KX, 1)
+            page.focus(1)
+        assert page.open == (1, N_KX)
+        switch = _one(user, "focus-switch")
+        assert switch.props["aria-label"] == "Plot"
+        assert list(switch.options.values()) == [
+            "pipe.T[1:2]",
+            "x",
+            "y",
+            "w · watch",
+        ]
+        assert switch.value == 1
+        with page.client:
+            switch.set_value(3)
+        await _settled(lambda: page.focused == 3)
+        assert page.open is None
+        assert [c.card.visible for c in page.cards] == [False, False, False, True]
+        assert _one(user, "focus-bar:all").text == "Show all 4 plots"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 4 plots"
+        # Its own repaint to the plot already focused focuses nothing else:
+        # the card's Focus button still reads "Focused".
+        assert page.cards[3].focus.text == "Focused"
+
+
+async def test_the_focus_switch_closes_a_form_on_the_card_it_hides(page_shell):
+    """A form row under a criteria row goes with its card, as a card's
+    Focus closes it."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        assert page.form is not None
+        with page.client:
+            _one(user, "focus-switch").set_value(1)
+        await _settled(lambda: page.focused == 1)
+        assert page.form is None
+        assert _none(user, f"form-row:crit:0:{RANGE_X}")
 
 
 # -- the status strip (Q2 A) -------------------------------------------------
@@ -6226,48 +7184,37 @@ async def test_the_plots_plus_follows_the_roots_kind(page_shell):
         assert page.cards[0] is card  # repainted, never rebuilt
 
 
-async def test_a_plot_of_plot_only_series_has_no_criteria_header(plots_shell):
-    shell = plots_shell
-    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "z"}]}])])
-    async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user, A)
-        assert _none(user, "criteria-header:0") and _none(user, "add-for:z")
-        assert page.cards[0].variable_host is None
-
-
 # -- the Part 2 review's corrections ------------------------------------------
 
 
 async def test_the_plus_on_a_lower_plot_opens_the_editor_on_that_plot(page_shell):
-    """Plot 3 holds x and y: its `+` then Add opens the new criterion's
-    editor on plot 3, where it was asked — not on plot 0, the first card
-    holding x, far above the click."""
+    """Plot 1 is y's: its `+` then Add opens the new criterion's editor on
+    plot 1, where it was asked — not on plot 0, above the click."""
     shell = page_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)
-        _click_in(user, "add-for:x", within="criteria-header:3")
-        await _settled(lambda: not _none(user, "form-row:plot:3"))
-        user.find(marker="apply-add:x").click()
+        _click_in(user, "add-for:y", within="criteria-header:1")
+        await _settled(lambda: not _none(user, "form-row:plot:1"))
+        user.find(marker="apply-add:y").click()
         await _settled(lambda: len(shell.session.spec.pending) == 1)
         await _settled(lambda: page.open is not None)
-        assert page.open == (3, "/metrics/children/3")
-        assert not _none(user, "editor:3:/metrics/children/3")
+        assert page.open == (1, "/metrics/children/3")
+        assert not _none(user, "editor:1:/metrics/children/3")
 
 
 async def test_a_criteria_rows_plus_on_a_lower_plot_opens_the_editor_there(
     page_shell,
 ):
-    """`+` on the tube's row of plot 3 — not plot 0, the first card holding
-    x — and Add open the new criterion's editor on plot 3, under the row
-    the click was on."""
+    """`+` on range·y's row of plot 1 and Add open the new criterion's
+    editor on plot 1, under the row the click was on."""
     shell = page_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)
-        await _open_form(user, f"add:{TUBE}", within=f"node:3:{TUBE}")
-        user.find(marker=f"apply-add:{TUBE}").click()
+        await _open_form(user, f"add:{RANGE_Y}", within=f"node:1:{RANGE_Y}")
+        user.find(marker=f"apply-add:{RANGE_Y}").click()
         await _settled(lambda: len(shell.session.spec.pending) == 1)
         await _settled(lambda: page.open is not None)
-        assert page.open == (3, "/metrics/children/1")
+        assert page.open == (1, "/metrics/children/3")
 
 
 async def test_the_plots_plus_for_another_variable_opens_where_it_is_drawn(
@@ -6416,6 +7363,72 @@ def _var_rows(user) -> list[list[str]]:
     ]
 
 
+#: A BranchingDynamicPipes-shaped UnitTests expression: its head says what
+#: it is, its tail which element (Q20).
+CAT3 = "cat(1, pipe2.mediums.T, pipe2.mediums.p)[3]"
+
+
+def test_a_label_splits_at_its_last_index_or_twelve_from_its_end():
+    assert middle_split(CAT3) == ("cat(1, pipe2.mediums.T, pipe2.mediums.p)", "[3]")
+    assert middle_split("pipe.medium[2].T[10]") == ("pipe.medium[2].T", "[10]")
+    assert middle_split("condenser.heatTransfer.Q_flow_total") == (
+        "condenser.heatTransfer.",
+        "Q_flow_total",
+    )
+    assert middle_split("x") == ("", "x")
+    # An index more than twelve from the end is no tail: the tail from it
+    # took the width and hid the head.
+    assert middle_split("volume[1].medium.state.phase.somethingLonger.T") == (
+        "volume[1].medium.state.phase.somet",
+        "hingLonger.T",
+    )
+    assert middle_split("abs(a[1] - b.c.d.e.f.g.h.i.j.k.l.m.n.o)") == (
+        "abs(a[1] - b.c.d.e.f.g.h.i.",
+        "j.k.l.m.n.o)",
+    )
+    assert middle_split("a.b[1234567890]") == ("a.b", "[1234567890]")
+    assert middle_split("a.b[12345678901]") == ("a.b[", "12345678901]")
+
+
+async def test_variable_labels_are_cut_in_the_middle_the_switcher_is_not(
+    drawer_shell,
+):
+    """Q20: a card's title, a criteria row's name and a Variables-drawer
+    row read a variable through a `MiddleCut` — the head, the tail from the
+    last `[`, the tail's width as `--tail`, the whole text as its title and
+    as its `.text`. The Focus switcher's options stay plain text (C4)."""
+    from test_session import with_expressions
+
+    shell = drawer_shell
+    with_expressions(shell.session, A, {"x": CAT3})
+    shell.session._score(A)
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user)
+        title = _one(user, "plot-title:0")
+        assert isinstance(title, MiddleCut)
+        assert (title.text, title.props["title"]) == (CAT3, CAT3)
+        assert (title.head.text, title.tail.text) == (
+            "cat(1, pipe2.mediums.T, pipe2.mediums.p)",
+            "[3]",
+        )
+        assert title.style["--tail"] == "3ch"
+        (row,) = page.cards[0].rows.values()
+        assert isinstance(row.name, MiddleCut)
+        assert (row.name.text, row.name.tail.text) == (f"nrmse · {CAT3}", "[3]")
+        (text,) = [
+            e
+            for e in _one(user, var_marker("var-row", ROW_X)).descendants()
+            if isinstance(e, MiddleCut)
+        ]
+        assert "dstf-var-text" in text.classes
+        assert (text.text, text.tail.text) == (CAT3, "[3]")
+        # the drawer's title says the muted name too, as it did
+        assert text.props["title"] == f"{CAT3} (x)"
+        with page.client:
+            page.focus(0)
+        assert list(_one(user, "focus-switch").options.values())[0] == CAT3
+
+
 class TestVariablesDrawerControls:
     """The Variables drawer's sort, group and names menus (the owner's
     ruling Q7), each the tab's."""
@@ -6542,96 +7555,31 @@ class TestVariablesDrawerControls:
     async def test_expression_names_count_the_members_an_opened_family_draws(
         self, drawer_shell
     ):
-        """x={pipe.T[1], pipe.T[2]} beside the result's own pipe.T[1:3]: the
-        two family rows read apart, but opened, the tracked member x and
-        the result's pipe.T[1] both read "pipe.T[1]" — x keeps its name."""
+        """x={pipe.T[1]} beside the result's own pipe.T[1:3]: x is a row of
+        its own — rows fold by NAME, as the plots do — reading "pipe.T[1]"
+        alone while the family is shut; opened, the result's pipe.T[1] reads
+        "pipe.T[1]" too, and x keeps its name."""
         from test_session import with_expressions
 
         shell = drawer_shell
-        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
+        with_expressions(shell.session, A, {"x": "pipe.T[1]"})
         shell.session._score(A)
-        tracked = "0/Tracked/pipe.T[]"
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
             await _pick(user, "var-names", "expression")
             await _settled(lambda: page.state.vars_names == "expression")
-            user.find(marker=var_marker("var-open", tracked)).click()
-            await _settled(
-                lambda: not _none(user, var_marker("var-row", f"{tracked}/x"))
-            )
-            member = var_marker("var-row", f"{tracked}/x")
-            assert _labels_in(_one(user, member)) == ["pipe.T[1]"]
+            row = var_marker("var-row", ROW_X)
+            await _settled(lambda: _labels_in(_one(user, row)) == ["pipe.T[1]"])
+            assert _labels_in(_one(user, var_marker("var-row", ROW_PIPE))) == [
+                "pipe.T[1:3]"
+            ]
             user.find(marker=var_marker("var-open", ROW_PIPE)).click()
             await _settled(
                 lambda: not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
             )
-            assert _labels_in(_one(user, member)) == ["pipe.T[1]", "x"]
+            assert _labels_in(_one(user, row)) == ["pipe.T[1]", "x"]
             result = _one(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
             assert _labels_in(result) == ["pipe.T[1]"]
-
-    async def test_flat_draws_a_tracked_family_and_the_results_own_apart(
-        self, drawer_shell
-    ):
-        """x={pipe.T[1], pipe.T[2]} beside the result's own pipe.T[1:2],
-        under Flat and filtered to those two: both rows read "pipe.T[1:2]"
-        (TRANSFORM's `batemanEquations.Ns[1:4]` twice, alike titles and
-        alike checks). The tracked one carries its folded names, "x, y" —
-        muted beside it under Both and Expression, and in its check's and
-        its chevron's labels and its title under every names setting; the
-        result's own, whose names read as it does, carries none."""
-        from test_session import with_expressions
-
-        shell = drawer_shell
-        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
-        shell.session._score(A)
-        tracked, own = "1/All variables/tracked:pipe.T[]", "1/All variables/pipe.T[]"
-        async with user_simulation(root=shell.index) as user:
-            page = await _drawer(shell, user)
-            await _pick(user, "var-group-by", "flat")
-            user.find(marker="var-regex").click()
-            user.find(marker="var-needle").type(r"pipe\.T\[[12]\]")
-            await _settled(lambda: page.state.vars_needle == r"pipe\.T\[[12]\]")
-            row_of = var_marker("var-row", tracked)
-            for mode, labels in (
-                ("both", ["pipe.T[1:2]", "x, y", "plot 2"]),
-                ("expression", ["pipe.T[1:2]", "x, y", "plot 2"]),
-                ("file", ["x, y", "plot 2"]),
-            ):
-                await _pick(user, "var-names", mode)
-                await _settled(lambda m=mode: page.state.vars_names == m)
-                await _settled(lambda w=labels: _labels_in(_one(user, row_of)) == w)
-                checks = {
-                    row: _one(user, var_marker("var-check", row)).props["aria-label"]
-                    for row in (tracked, own)
-                }
-                assert checks == {
-                    tracked: "pipe.T[1:2] (x, y)",
-                    own: "pipe.T[1:2]",
-                }, mode
-                opener = _one(user, var_marker("var-open", tracked))
-                assert opener.props["aria-label"] == "Open pipe.T[1:2] (x, y)", mode
-                titles = [
-                    e.props.get("title")
-                    for e in _one(user, var_marker("var-row", tracked)).descendants()
-                    if isinstance(e, ui.label) and "dstf-var-text" in e.classes
-                ]
-                assert titles == ["pipe.T[1:2] (x, y)"], mode
-                own_labels = _labels_in(_one(user, var_marker("var-row", own)))
-                assert "x, y" not in own_labels, mode
-            # Drawn alone, the tracked family reads like no other row: under
-            # Expression its names are not muted beside it (a lone
-            # variable's rule), and its check still says them.
-            await _pick(user, "var-names", "expression")
-            await _settled(lambda: page.state.vars_names == "expression")
-            user.find(marker="var-needle").clear()
-            user.find(marker="var-needle").type("^[xy]$")
-            await _settled(lambda: _none(user, var_marker("var-row", own)))
-            assert _labels_in(_one(user, var_marker("var-row", tracked))) == [
-                "pipe.T[1:2]",
-                "plot 2",
-            ]
-            check = _one(user, var_marker("var-check", tracked))
-            assert check.props["aria-label"] == "pipe.T[1:2] (x, y)"
 
     async def test_an_opened_family_stays_open_across_a_switch_of_group(
         self, drawer_shell
@@ -6674,25 +7622,34 @@ class TestVariablesDrawerControls:
             assert not _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[1]}"))
             assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[2]}"))
 
-    async def test_a_tracked_family_and_the_results_own_open_apart(self, drawer_shell):
-        """x={pipe.T[1], pipe.T[2]} folds the tracked x, y to `pipe.T[]`,
-        the key the result's own pipe.T[1:3] folds to: opening the tracked
+    async def test_a_tracked_family_and_the_results_own_open_apart(self, tmp_path):
+        """A tracks pipe.T[1:2]; the result carries pipe.T[3:4] besides. Both
+        fold to `pipe.T[]`, one tracked and one not: opening the tracked
         one leaves the result's closed."""
-        from test_session import with_expressions
+        from test_session import _drawer_project
 
-        shell = drawer_shell
-        with_expressions(shell.session, A, {"x": "pipe.T[1]", "y": "pipe.T[2]"})
-        shell.session._score(A)
+        cfg, work = _drawer_project(tmp_path)
+        path = work / "test_0001" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["pipe.T[4]"] = [9 * v for v in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["variables"] = ["x", "y", *PIPE[:2]]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        shell = _opened(cfg, work)
         tracked = "0/Tracked/pipe.T[]"
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             user.find(marker=var_marker("var-open", tracked)).click()
             await _settled(
-                lambda: not _none(user, var_marker("var-row", f"{tracked}/x"))
+                lambda: not _none(user, var_marker("var-row", f"{tracked}/{PIPE[0]}"))
             )
             opener = _one(user, var_marker("var-open", ROW_PIPE))
             assert opener.props["aria-expanded"] == "false"
-            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[2]}"))
 
     async def test_the_menus_survive_a_switch_of_test(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:

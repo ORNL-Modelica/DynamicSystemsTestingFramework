@@ -31,7 +31,13 @@ from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.patch_apply import PatchError
-from ..discovery.plots import PlotSpec, ResolvedPlot, resolved_plots, tracked_names
+from ..discovery.plots import (
+    PlotExtra,
+    ResolvedPlot,
+    plot_leaves,
+    plots_of_test,
+    tracked_names,
+)
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
@@ -61,12 +67,12 @@ from .capabilities import (
     Patch,
     StoreWrite,
 )
-from .layout import current_layout
 from .spec_document import PatchOp, SpecDocument
 
 if TYPE_CHECKING:
     import numpy as np
 
+    from ..comparison.tree_spec import LeafSpec
     from ..figures.plotly import Visibility
 
 Event = Literal["spec", "results", "job", "loading", "known"]
@@ -113,6 +119,12 @@ class Selection:
     picks a test to read a label off, which is also why a selection of two
     tests (refused at VARIABLE anyway) cannot show one of them's
     expression.
+
+    ``tracked`` is the page's one read of the selected test's tracked names
+    (:meth:`Session.tracked`), for the same reason: a plot's ``+`` asks
+    whether its variable is one, and a card that read the list for itself
+    re-derived it once per card. ``None`` — a selection built with none —
+    reads it when asked.
     """
 
     tests: frozenset[str] = frozenset()
@@ -120,6 +132,7 @@ class Selection:
     leaf_path: str | None = None
     node_path: str | None = None
     texts: Mapping[str, VariableText] = MappingProxyType({})
+    tracked: frozenset[str] | None = None
 
 
 @dataclass
@@ -604,16 +617,13 @@ class Session:
         return work_dir / key if key is not None and work_dir is not None else None
 
     def tracked(self, model_id: str) -> list[str]:
-        """The names the page plots by default, in its order: the scored
-        variables first, then the rest of the loaded result's (which holds
-        exactly the spec's tracked variables). It is also what tells a
-        plot's scored series from its plot-only ones.
-
-        The union, not the scored names alone: removing a variable's LAST
-        criterion would otherwise take its card, its "Add a criterion for
-        it" ``+`` and every way to add one back — a one-way door out of
-        which only Discard leads (the Task 5-6 review). The report's
-        default layout is the same list, through the same function."""
+        """The test's TRACKED names, in order: the scored variables first,
+        then the rest of the loaded result's (which holds exactly the spec's
+        tracked variables), through `tracked_names`, the one rule. With no
+        tree the plots derive from them; the Variables drawer groups them
+        "Tracked"; and a variable a criterion may be added for is one of
+        them — the scored names alone would lose a variable whose last
+        criterion was just removed, and with it the way back to one."""
         comp = self.comparisons.get(model_id)
         scored = [vc.name for vc in comp.variables] if comp is not None else []
         return tracked_names(scored, self._require_project().results.get(model_id))
@@ -703,27 +713,63 @@ class Session:
             reads.series[variable] = got.get(variable)
         return reads.series[variable]
 
-    def layout(self, model_id: str) -> tuple[PlotSpec, ...]:
-        """The layout a gesture edits (`authoring.layout`): the effective
-        ``plots`` key with pending ops applied, else one plot per tracked
-        variable. Unlike :meth:`plots` it keeps a series the result lacks —
-        it is what the spec says, not what a page can draw."""
+    def layout(self, model_id: str) -> tuple[PlotExtra, ...]:
+        """The extras a gesture edits (`authoring.layout`): the effective
+        ``plots`` key with pending ops applied, ``()`` without one. It keeps
+        a name the result lacks — it is what the spec says."""
         test = self._require_project().test(model_id)
         if test is None:
             raise KeyError(model_id)
-        return current_layout(test.plots, self.tracked(model_id))
+        return tuple(test.plots or ())
+
+    def _plot_leaves(self, model_id: str) -> list[LeafSpec] | None:
+        """:func:`~dstf.discovery.plots.plot_leaves` for this test: the
+        leaves its plots derive from, ``None`` for one plot per tracked
+        name. From the tree SPEC and what was compared — no baseline read."""
+        test = self._require_project().test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        comp = self.comparisons.get(model_id)
+        compared = [vc.name for vc in comp.variables] if comp is not None else []
+        return plot_leaves(test, compared)
+
+    def plots_from_tree(self, model_id: str) -> bool:
+        """Whether the test's plots derive from a tree — the authored one,
+        or the implicit tree of what was compared — rather than one per
+        tracked variable or array. NOT whether there is a tree VIEW: a test
+        with no baseline compares nothing, and an authored tree still says
+        what its plots are."""
+        return self._plot_leaves(model_id) is not None
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
-        """The test's plots as the page draws them: the entry's ``plots``
-        with pending ops applied, else one per tracked variable."""
+        """The test's plots as the page draws them
+        (:func:`~dstf.discovery.plots.plots_of_test`, the rule the report draws
+        by): one per scored variable or array family, in the order the tree
+        first names it, decorated by the effective ``plots`` extras. The
+        leaves come from the tree SPEC with pending ops applied — never
+        :meth:`tree`, which materializes the tree and reads the baseline;
+        no tree is one plot per tracked name or array. A UnitTests element
+        never folds (O3); a failed run has none. While a job holds a model
+        whose names were never read, nothing is missing."""
         project = self._require_project()
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
-        return resolved_plots(
-            test, self.tracked(model_id), available=self._reads_for(model_id).names
+        reads = self._reads_for(model_id)
+        comp = self.comparisons.get(model_id)
+        plots = plots_of_test(
+            test,
+            [vc.name for vc in comp.variables] if comp is not None else [],
+            project.results.get(model_id),
+            listed=reads.names,
         )
+        if reads.names_read:
+            return plots
+        # A job holds the model and its names were never read: a listing
+        # not taken is not a file without the context and watch series, so
+        # nothing is missing until the job's reload lists it.
+        return tuple(replace(plot, missing=()) for plot in plots)
 
     def plot_figure(
         self,
@@ -734,20 +780,28 @@ class Session:
         visibility: Visibility | None = None,
     ) -> dict:
         """The editable figure of plot ``index`` (IndexError past the end).
-        One series is :meth:`figure`; several are drawn over the same cached
-        bases. ``editing`` and ``visibility`` as in :meth:`figure`."""
+        A subject of one variable with no context is :meth:`figure`; a
+        family, or context, is drawn over the same cached bases. A context
+        view draws as a trace only — a context variable scored on another
+        plot signs no leaf onto this one. ``editing`` and ``visibility`` as
+        in :meth:`figure`."""
         from ..figures.plotly import plot_figure
 
         if index < 0:
             raise IndexError(index)
         plot = self.plots(model_id)[index]
-        if len(plot.series) == 1:
+        if len(plot.subject) == 1 and not plot.context:
             return self.figure(
-                model_id, plot.series[0], editing=editing, visibility=visibility
+                model_id, plot.subject[0], editing=editing, visibility=visibility
             )
         return plot_figure(
-            [self._editable_view(model_id, name) for name in plot.series],
+            [self._editable_view(model_id, name) for name in plot.subject],
             None,
+            context=[
+                self._editable_view(model_id, name)
+                for name in plot.context
+                if name not in plot.missing
+            ],
             editable=True,
             rings_for=editing,
             visibility=visibility,

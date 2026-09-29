@@ -341,10 +341,6 @@ def build_trajectories(
     """
     trajectories = []
     ref_time_list = ref_data.get("time", []) if ref_data else []
-    ref_vars_by_idx = {}
-    if ref_data:
-        for rv in ref_data.get("variables", []):
-            ref_vars_by_idx[rv["index"]] = rv
 
     if result and result.variables:
         # One entry per variable NAME, not per comparison: several leaves may
@@ -352,25 +348,31 @@ def build_trajectories(
         # ``index=0`` (the evaluator never resolved a variable to pair with).
         # Pairing that by index finds nothing and emits an EMPTY entry under
         # the real name — a second, blank copy beside the healthy one, or the
-        # variable's only entry when every leaf on it is a sentinel. So: pair
-        # by index when any leaf on the name resolved one, else by name.
+        # variable's only entry when every leaf on it is a sentinel. So: the
+        # actual curve by index when any leaf on the name resolved one, else
+        # by name.
         by_name: dict[str, list] = {}
         for vc in comparisons:
             by_name.setdefault(vc.name, []).append(vc)
-        ref_vars_by_name = {}
+        # The REFERENCE always by name, as scoring pairs it: a baseline's
+        # indices are the order it was accepted in, and the pattern order
+        # (D140 item 9) moved them — by index, a baseline accepted under the
+        # old sorted order drew another variable's reference, and its error
+        # overlays, under this one's name. The first entry of a name wins,
+        # as it does for the comparator.
+        ref_vars_by_name: dict[str, dict] = {}
         if ref_data:
             for rv in ref_data.get("variables", []):
                 if rv.get("name"):
-                    ref_vars_by_name[rv["name"]] = rv
+                    ref_vars_by_name.setdefault(rv["name"], rv)
         for name, name_comparisons in by_name.items():
             index = next((vc.index for vc in name_comparisons if vc.index > 0), 0)
             if index > 0:
                 act_var = next((v for v in result.variables if v.index == index), None)
-                ref_var = ref_vars_by_idx.get(index)
             else:
                 act_var = next((v for v in result.variables if v.name == name), None)
-                ref_var = ref_vars_by_name.get(name)
                 index = act_var.index if act_var else 0
+            ref_var = ref_vars_by_name.get(name)
             trajectories.append(
                 {
                     "index": index,
@@ -662,32 +664,6 @@ def _mark_advisory(node: dict, *, under_warn: bool = False) -> None:
         _mark_advisory(child, under_warn=warn)
 
 
-def tree_for_variable(view: dict | None, name: str) -> dict | None:
-    """``view`` filtered to the leaves scoring ``name``, ancestors kept.
-
-    Returns ``None`` when no leaf under ``view`` targets the variable, which
-    is what drops a combinator whose whole subtree belongs to some other
-    variable. Leaves and combinators are shallow-copied: the per-variable
-    mount renders the same leaf dicts the full tree does.
-    """
-    if not view:
-        return None
-    if view.get("kind") == "leaf":
-        return dict(view) if view.get("variable") == name else None
-    kept = [
-        sub
-        for sub in (
-            tree_for_variable(child, name) for child in view.get("children") or []
-        )
-        if sub is not None
-    ]
-    if not kept:
-        return None
-    out = dict(view)
-    out["children"] = kept
-    return out
-
-
 def _tree_summary(view: dict | None) -> dict | None:
     """The pieces the summary line is built from: the leaf tally, the ROOT
     verdict, and how many advisory leaves failed.
@@ -713,7 +689,7 @@ def _tree_summary(view: dict | None) -> dict | None:
 def _spec_for(comparisons: list, test_model):
     """The tree the view walks: the authored one, else the implicit tree
     synthesized from what was scored. Both the tree view and the
-    per-variable mounts read it, so they agree by construction."""
+    per-variable entries read it, so they agree by construction."""
     from ..comparison.tree_spec import (
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
@@ -787,9 +763,8 @@ def build_tree_view(
             ", ".join(missing),
         )
     _augment_tree_view(tree_view, comparisons_by_path, texts)
-    # Must run before the per-variable subtrees are cut: they shallow-copy
-    # the leaf dicts, so a flag stamped afterwards would reach the full-tree
-    # mount only.
+    # Before the per-variable pills read it (`_build_tree_view_and_variables`)
+    # and before a plot's criteria rows share these leaf dicts.
     _mark_advisory(tree_view)
     return tree_view
 
@@ -808,8 +783,9 @@ def _build_tree_view_and_variables(
     (a serialized SpecNode tree with per-node paths + evaluation results,
     leaves augmented with render artifacts). ``variables_by_name`` carries
     one entry per unique variable — its trajectory + overlays + the leaf
-    paths targeting it — so per-variable plot sections mount a filtered
-    view of the same tree.
+    paths targeting it + its verdict — and a plot's section lists its
+    subject's leaves of the same tree
+    (:func:`~dstf.reporting.tree_rows.criteria_rows`).
 
     When there are no comparisons the function returns ``(None, {})`` —
     sim-failed and no-baseline tests render without a tree view at all.
@@ -851,8 +827,6 @@ def _build_tree_view_and_variables(
             "trajectory": match_traj or {},
             "overlays": (match_traj or {}).get("overlays", []),
             "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
-            # The tree as this variable's mount renders it.
-            "tree": tree_for_variable(tree_view, vn),
             "passed": bool(var_leaves)
             and all(bool(leaf.get("passed")) for leaf in gating),
             "n_advisory_failed": sum(

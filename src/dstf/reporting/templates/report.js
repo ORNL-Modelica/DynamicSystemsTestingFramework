@@ -20,7 +20,6 @@ const PLOT_FIGURES = MT_REPORT.PLOT_FIGURES || [];
 // Each plot's series names, in order (the browser tests read it).
 const PLOT_SERIES = MT_REPORT.PLOT_SERIES || [];
 const DIAG_FIGURES = MT_REPORT.DIAG_FIGURES || [];
-const NB_FIGURES = MT_REPORT.NB_FIGURES || [];
 
 // ---- Plotly rendering ----
 const PLOT_CFG = {
@@ -45,15 +44,11 @@ function renderAllPlots() {
   DIAG_FIGURES.forEach((fig, idx) => {
     paintFigure(document.getElementById(`diag-plot-${idx}`), fig);
   });
-  NB_FIGURES.forEach((fig, idx) => {
-    paintFigure(document.getElementById(`nb-plot-${idx}`), fig);
-  });
 }
 
 // ---- Overlay picker ----
 // Each .overlay-picker div declares which Plotly chart it drives via its
-// data-plot-id attribute, so the single handler works for both the
-// comparison plots (plot-N) and the no-baseline plots (nb-plot-N).
+// data-plot-id attribute (plot-N), so one handler serves every plot.
 function overlayTraceName(role, name) {
   return `Overlay: ${role}/${name}`;
 }
@@ -91,8 +86,8 @@ function wireErrorOverlays() {
   document.querySelectorAll('.error-overlay-select').forEach(sel => {
     sel.addEventListener('change', (e) => {
       // `data-plot`, not `data-vidx`: the select belongs to a PLOT. On this
-      // page `data-vidx` means a variable's index (var-status, nodes-N),
-      // and on a one-series plot the two only happen to coincide.
+      // page `data-vidx` means a variable's index (var-status), and on a
+      // plot of one subject the two only happen to coincide.
       const plotIdx = parseInt(e.target.dataset.plot);
       if (isNaN(plotIdx)) return;
       setErrorOverlay(plotIdx, e.target.value);

@@ -22,6 +22,9 @@ from ..comparison.registry import combinator_names, metric_names, metrics
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 
+#: One variable of the result: not blank, not a pattern.
+_PLOT_NAME = {"type": "string", "pattern": "^[^*?]*[^*?\\s][^*?]*$"}
+
 
 def _field_to_schema(field) -> dict:
     """Translate a 6.1.1 FieldSpec into a JSON-Schema property dict."""
@@ -267,33 +270,25 @@ def build_schema() -> dict:
             "plots": {
                 "type": "array",
                 "description": (
-                    "The test's plot layout, read by the report and the authoring "
-                    "tool and ignored by scoring. Absent: one plot per tracked variable."
+                    "A person's plot extras, read by the report and the authoring "
+                    "tool and ignored by scoring. A test's plots are derived from "
+                    "its criteria tree; an entry on a scored variable adds grey "
+                    "context series to its plot, an entry on an unscored one is a "
+                    "watch plot. Absent or []: no extras."
                 ),
                 "items": {
                     "type": "object",
                     "properties": {
-                        "kind": {"enum": ["time"]},
-                        "series": {
+                        # One variable, not blank, not a pattern — what
+                        # `parse_plots` accepts.
+                        "var": _PLOT_NAME,
+                        "context": {
                             "type": "array",
-                            "minItems": 1,
                             "uniqueItems": True,
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    # One variable, not blank, not a
-                                    # pattern — what `parse_plots` accepts.
-                                    "var": {
-                                        "type": "string",
-                                        "pattern": "^[^*?]*[^*?\\s][^*?]*$",
-                                    }
-                                },
-                                "required": ["var"],
-                                "additionalProperties": False,
-                            },
+                            "items": _PLOT_NAME,
                         },
                     },
-                    "required": ["series"],
+                    "required": ["var"],
                     "additionalProperties": False,
                 },
             },

@@ -1265,6 +1265,12 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
     (its ancestor check), not here."""
     cfg, work = _project(tmp_path)
     _sleeping(cfg)
+    # An untracked variable in A's result: what the one pending edit makes
+    # a watch plot of (x, the tracked one, has its plot already).
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["variables"]["w"] = [2 * v for v in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log)
     try:
@@ -1307,11 +1313,13 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
         page.keyboard.press("Escape")
         expect(menu).to_be_hidden(timeout=EXPECT_TIMEOUT)
 
-        # One edit pending: x on a plot of its own.
+        # One edit pending: a watch plot of w.
         page.set_viewport_size({"width": 1280, "height": 900})
-        x = page.locator(".dstf-var-row").filter(has_text="x").first
-        x.hover()
-        x.locator(".dstf-var-new").click()
+        w = page.locator(".dstf-var-row").filter(
+            has=page.locator(".dstf-var-text", has_text=re.compile("^w$"))
+        )
+        w.hover()
+        w.locator(".dstf-var-new").click()
         header = page.locator(".dstf-header-row")
         expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
         for width in (1280, 900):

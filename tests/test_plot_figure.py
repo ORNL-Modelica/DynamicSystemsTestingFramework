@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 
 from dstf.figures.families import HUES, family_of, group_families, ramp, slice_text
-from dstf.figures.plotly import PLOT_CONFIG, plot_figure, variable_figure
+from dstf.figures.plotly import (
+    CONTEXT_COLOR,
+    PLOT_CONFIG,
+    plot_figure,
+    variable_figure,
+)
 from dstf.figures.view import build_view
 
 T = np.linspace(0.0, 1.0, 5)
@@ -787,3 +792,83 @@ def test_a_plot_of_several_takes_visibility():
     one = plot_figure([vx], visibility=Visibility(hidden=frozenset({RANGE_P})))
     own = [tr for tr in one["data"] if (tr.get("meta") or {}).get("leaf") == RANGE_P]
     assert own and all(tr["visible"] is False for tr in own)
+
+
+# -- context series: grey, on the subject's y axis, not scored ----------------
+
+
+def _one_with_overlay():
+    return build_view(
+        "x",
+        act_time=T,
+        act_values=T,
+        ref_time=T,
+        ref_values=T * 1.1,
+        overlays=[{"name": "om", "role": "soft_check", "time": T, "values": T}],
+    )
+
+
+def _contexts(fig):
+    return [tr for tr in fig["data"] if tr["meta"].get("kind") == "context"]
+
+
+def test_a_one_variable_subject_keeps_its_overlays_and_errors_beside_context():
+    alone = plot_figure([_one_with_overlay()])
+    fig = plot_figure([_one_with_overlay()], context=[_labelled("z", "a.Q", 2.0)])
+    assert fig["data"][: len(alone["data"])] == alone["data"]
+    assert fig["layout"] == alone["layout"]
+    (ctx,) = _contexts(fig)
+    assert ctx["yaxis"] == "y" and ctx["xaxis"] == "x"
+    assert ctx["name"] == "a.Q · context"
+    assert ctx["meta"]["id"] == "context/z"
+    assert ctx["line"]["color"] == CONTEXT_COLOR and ctx["line"]["width"] < 1.5
+    assert ctx["y"] == (T * 2.0).tolist()
+    kinds = {tr["meta"]["kind"] for tr in fig["data"]}
+    assert {"error", "overlay"} <= kinds
+
+
+def test_a_family_subject_with_context():
+    fam = [_view("p.T[1]"), _view("p.T[2]", 2.0)]
+    alone = plot_figure(fam)
+    fig = plot_figure(fam, context=[_view("z", 3.0, ref=True)])
+    assert fig["data"][: len(alone["data"])] == alone["data"]
+    (ctx,) = _contexts(fig)
+    assert ctx["y"] == (T * 3.0).tolist() and ctx["yaxis"] == "y"
+    # no reference trace for a context series
+    assert [tr["meta"]["kind"] for tr in fig["data"]].count("ref") == 0
+    assert [tr["meta"]["kind"] for tr in fig["data"]].count("act") == 2
+
+
+def test_the_context_hover_substitutes_only_meta_and_y():
+    """plotly.js substitutes `%{text}` only for a per-point array: the label
+    rides in `meta`, as every other trace's does."""
+    import re
+
+    fig = plot_figure([_view("x")], context=[_labelled("z", "%{x}oops", 2.0)])
+    (ctx,) = _contexts(fig)
+    assert set(re.findall(r"%\{([^}:]*)", ctx["hovertemplate"])) <= {
+        "meta.label",
+        "x",
+        "y",
+    }
+    assert ctx["meta"]["label"] == "%{x}oops"
+    assert "oops" not in ctx["hovertemplate"]
+
+
+def test_context_is_decimated_by_the_budget():
+    long_t = np.linspace(0.0, 1.0, 400)
+    z = build_view("z", act_time=long_t, act_values=long_t)
+    (ctx,) = _contexts(plot_figure([_view("x")], 50, context=[z]))
+    assert len(ctx["x"]) <= 50
+    assert ctx["meta"]["full_samples"] == 400
+
+
+def test_a_context_series_the_result_lacks_draws_nothing():
+    fig = plot_figure([_view("x")], context=[build_view("gone")])
+    assert _contexts(fig) == []
+
+
+def test_the_context_colour_is_the_themes_muted_text():
+    from dstf.reporting.theme import DEFAULT_THEME
+
+    assert CONTEXT_COLOR == DEFAULT_THEME["text-muted"]

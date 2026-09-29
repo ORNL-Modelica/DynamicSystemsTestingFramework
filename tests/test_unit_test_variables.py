@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dstf.discovery.test_registry import TestModel
-from dstf.discovery.unit_tests import unit_test_variables
+from dstf.discovery.unit_tests import is_unit_test_variable, unit_test_variables
 
 
 def _test(n_vars, x_expressions, instance="unitTests", source="unit_tests", **kw):
@@ -87,3 +87,27 @@ def test_a_both_sourced_test_has_them():
 
 def test_no_variables_is_no_variables():
     assert unit_test_variables(_test(0, [])) == []
+
+
+def test_a_unit_tests_element_is_told_by_the_tests_instance():
+    """What never folds into a family (O3): an element of the component's
+    array under THIS test's instance name — however the test declared it."""
+    test = _test(0, [], instance="ut", source="spec")
+    assert is_unit_test_variable(test, "ut.x[1]")
+    assert is_unit_test_variable(test, "ut.x[12]")
+    for name in (
+        "unitTests.x[1]",
+        "ut.x",
+        "ut.x[]",
+        "ut.x[1].y",
+        "ut.y[1]",
+        "a.ut.x[1]",
+        # a digit to `str.isdigit`, never an index of an array
+        "ut.x[\u00b2]",
+        "ut.x[\u0661]",
+    ):
+        assert not is_unit_test_variable(test, name), name
+    assert all(
+        is_unit_test_variable(test, v.name)
+        for v in unit_test_variables(_test(3, ["a"], instance="ut"))
+    )

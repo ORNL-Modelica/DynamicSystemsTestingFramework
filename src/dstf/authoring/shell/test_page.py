@@ -13,22 +13,25 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
+from ...discovery.plots import PlotExtra, ResolvedPlot
 from ...reporting.status import SCORING_FAILED, classify, classify_with_class
+from ...reporting.tree_rows import leaves_of
 from ...storage.batch_manifest import unfinished_run_models
 from ...storage.ref_index import RefIndex
 from ..capabilities import plural
 from ..errors import user_text
-from ..layout import Layout, layout_op, reset_op
+from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..session import JobRunningError, LockedError
 from ..situation import Strip, strip_for
 from ..tree_pointer import node_or_none
-from ..tree_text import leaves_of, nodes_of
+from ..tree_text import nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard, folded
@@ -102,10 +105,15 @@ class TestPage:
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
         self.focus_all: ui.button | None = None
+        self.focus_switch: ui.select | None = None
         #: The plot the Variables drawer's checkboxes act on (the owner's
-        #: ruling, Q5 A): the first until a click on a card, or its Add
-        #: series, selects another. Its card wears `dstf-plot-selected`.
+        #: ruling, Q5 A): the first until a click on a card, or the
+        #: drawer's "+ new plot", selects another. Its card wears
+        #: `dstf-plot-selected`.
         self.selected = 0
+        #: The selected plot's subject, which a rebuild re-selects wherever
+        #: it moved; None when a gesture placed the selection by index.
+        self.follow: tuple[str, ...] | None = None
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
@@ -132,6 +140,14 @@ class TestPage:
             ).mark("focus-bar")
             with self.focus_bar:
                 self.focus_text = ui.label().mark("focus-bar:text")
+                # Every plot by its subject (Q11 c), plain text (C4):
+                # choosing one focuses it.
+                self.focus_switch = (
+                    ui.select({}, on_change=lambda e: self.focus_to(e.value))
+                    .props("dense options-dense")
+                    .mark("focus-switch")
+                )
+                self.focus_switch.props["aria-label"] = "Plot"
                 ui.space()
                 self.focus_all = (
                     ui.button(on_click=self.show_all)
@@ -177,34 +193,76 @@ class TestPage:
         self.strip = StatusStrip(self)
         self.actions = self.strip.actions
 
-    def _result(self) -> Any:
+    def result(self) -> Any:
         project = self.shell.session.project
         return project.results.get(self.model_id) if project is not None else None
 
+    def run_state(self) -> str:
+        """The ONE run-state rule every line of the page words its reason
+        by: "none" — no result, or the last run never finished the test
+        (its manifest entry still pending: what the reader handed in is
+        not a result, as Accept's "re-run before accepting" reads it) —
+        "failed" when the run finished and failed, else "ok". The strip
+        said "No result yet" for an unfinished run while the count, the
+        tree and the drawer said the run failed."""
+        result = self.result()
+        project = self.shell.session.project
+        if result is None or project is None:
+            return "none"
+        work_dir = project.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        if self.model_id in unfinished_run_models(work_dir):
+            return "none"
+        return "ok" if result.success else "failed"
+
+    def plots_withheld(self) -> bool:
+        """O2's gate: a result that is not a success has no plots whatever
+        its tree and extras say, and a watch plot made on it would draw
+        nothing — a run that failed, or one that never finished the test
+        and left a partial result. `run_state` words it."""
+        result = self.result()
+        return result is not None and not result.success
+
+    def _state_reason(self) -> str | None:
+        """The clause a run state that is not "ok" gives every line, or
+        None."""
+        state = self.run_state()
+        if state == "failed":
+            return "the run failed"
+        if state == "none":
+            return "this test has no result"
+        return None
+
     def unscored_reason(self) -> str:
         """Why this test has no tree, as a clause the line it is read into
-        completes ("nothing scored: this test has no baseline"): it never
-        ran, its scoring raised, or it has no baseline to be scored
-        against. A model whose scoring raised keeps its result and has no
-        comparison at all — the Suite row says `scoring failed` for the
-        same state — so "no baseline" would name the wrong cause."""
-        result = self._result()
-        if result is None or not result.success:
-            return "this test has no result"
+        completes ("nothing scored: this test has no baseline"): its run
+        failed or it has no result (`run_state`, first), its scoring
+        raised, or it has no baseline to be scored against. A model whose
+        scoring raised keeps its result and has no comparison at all — the
+        Suite row says `scoring failed` for the same state — so "no
+        baseline" would name the wrong cause."""
+        reason = self._state_reason()
+        if reason is not None:
+            return reason
         if self.shell.session.comparisons.get(self.model_id) is None:
             return SCORING_FAILED
         return "this test has no baseline"
 
-    def _no_plots_reason(self, test: Any) -> str:
-        """Why there is no PLOT, which is not why there is no tree: a
-        scored, baselined test whose `plots` key is an empty list asked for
-        none, and reading the tree's reason there blamed a baseline sitting
-        right beside it in the header (the Task 5-6 review)."""
-        if test is not None and test.plots is not None and not test.plots:
-            return "this test's plots key is empty"
-        result = self._result()
-        if result is None or not result.success:
-            return "this test has no result"
+    def _no_plots_reason(self, from_tree: bool) -> str:
+        """Why there is no PLOT, which is not why there is no tree: a test
+        with no tree still draws one plot per tracked variable, so a page
+        with none has a failed run or no result (`run_state`, first: a
+        failed run has no plots whatever its tree says, O2), a result with
+        nothing in it — or a tree whose every criterion scores a statistic
+        (a stored-scalar leaf names no series, so it derives no plot).
+        ``from_tree`` is `Session.plots_from_tree`, never whether there is
+        a tree VIEW: a test with no baseline has none, and its authored
+        tree still names its plots."""
+        reason = self._state_reason()
+        if reason is not None:
+            return reason
+        if from_tree:
+            return "this test's criteria score statistics, not signals"
         return "the result has no variables"
 
     # -- the one open editor ---------------------------------------------------
@@ -436,10 +494,11 @@ class TestPage:
     # -- the cards -------------------------------------------------------------
 
     def rebuild(self, view: dict | None) -> None:
-        """The cards, from the plots as they are now: one per plot of the
-        test's ``plots`` key, else one per tracked variable. ``view`` and
-        the tracked names are read ONCE here and handed to every card — a
-        card that read them for itself cost one read per plot (the Task 5-6
+        """The cards, from the plots as they are now (`Session.plots`: one
+        per scored variable or family in tree order, then the watch plots;
+        one per tracked variable with no tree). ``view`` and the label
+        scope are read ONCE here and handed to every card — a card that
+        read them for itself cost one read per plot (the Task 5-6
         review)."""
         assert self.column is not None and self.count is not None
         session = self.shell.session
@@ -452,25 +511,25 @@ class TestPage:
         # Focus names an INDEX, and after this the indices may name other
         # plots; the plots a user had drawn are re-drawn where they are left.
         self.focused = None
+        # The selection follows its PLOT, by subject: a watch plot given a
+        # criterion becomes derived and moves to where the tree names it,
+        # and the index it had names another plot. A gesture that placed
+        # the selection itself (`stage_layout`'s ``select``) left none.
+        follow = self.follow
         shown = {card.index for card in self.cards if card.plot is not None}
         for card in self.cards:
             card.dispose()
         self.column.clear()
         plots = session.plots(self.model_id)
-        tracked = session.tracked(self.model_id)
         # The label scope too: it is one fact about the TEST, and a card
         # that read it for itself cost one `plots` + `tracked` read per
-        # plot — 35 for a five-plot test.
+        # plot — 35 for a five-plot test. And the tracked names, which each
+        # card's `+` asks about (`Selection.tracked`).
         scope = session.variable_texts(self.model_id)
-        # The layout and the scored counts too, for every card's Remove
-        # plot: a card that asked for them read the layout and the tree
-        # once per plot (3c's executing review).
-        layout = session.layout(self.model_id)
-        scored = self.scored(view)
+        tracked = frozenset(session.tracked(self.model_id))
         with self.column:
             self.cards = [
-                PlotCard(self, plot.index, plot, view, tracked, scope, layout, scored)
-                for plot in plots
+                PlotCard(self, plot.index, plot, view, scope, tracked) for plot in plots
             ]
         for card in self.cards:
             # A rebuild must not blank what the user was looking at: the
@@ -479,23 +538,43 @@ class TestPage:
             if card.index in shown:
                 card.show(view)
         self._paint_focus(view)
-        # The selection names an INDEX too; it is kept, clamped to the cards
-        # there are now, and its ring painted on the new cards. The drawer
-        # follows at the end of the sync that called this, once.
-        self._ring(self.selected)
-        project = session.project
-        test = project.test(self.model_id) if project is not None else None
-        if not plots:
-            self.count.set_text(f"no plots: {self._no_plots_reason(test)}")
-        elif test is not None and test.plots is not None:
-            self.count.set_text(
-                f"{plural(len(plots), 'plot')} · from this test's plots key"
-            )
-        else:
-            self.count.set_text(
-                f"{plural(len(plots), 'plot')} · one per tracked variable"
-            )
+        # The selection names an INDEX too; it is kept — on the plot it
+        # followed, else clamped to the cards there are now — and its ring
+        # painted on the new cards. The drawer follows at the end of the
+        # sync that called this, once.
+        moved = next(
+            (
+                plot.index
+                for plot in plots
+                if follow and any(name in plot.subject for name in follow)
+            ),
+            None,
+        )
+        self._ring(self.selected if moved is None else moved)
+        self.count.set_text(
+            self._count_text(session.plots_from_tree(self.model_id), plots)
+        )
         self._observe()
+
+    def _count_text(self, from_tree: bool, plots: Sequence[ResolvedPlot]) -> str:
+        """What the cards are: derived from the criteria, or — nothing
+        scored — one per tracked variable or array; counted apart from a
+        person's watch plots, which are neither."""
+        if not plots:
+            return f"no plots: {self._no_plots_reason(from_tree)}"
+        watch = sum(1 for plot in plots if plot.watch)
+        if watch == len(plots):
+            # Nothing derived: "0 plots · derived from the criteria" counted
+            # plots that are not there.
+            return f"{plural(watch, 'watch plot')} · no criteria on a signal yet"
+        why = (
+            "derived from the criteria"
+            if from_tree
+            else "one per tracked variable or array"
+        )
+        return f"{plural(len(plots) - watch, 'plot')} · {why}" + (
+            f" · {watch} watch" if watch else ""
+        )
 
     def on_visible(self, arg: Any) -> None:
         """The browser's `dstf_plot_visible`: the slot's index, as a string.
@@ -521,50 +600,67 @@ class TestPage:
 
     def _ring(self, index: int) -> None:
         self.selected = max(0, min(index, len(self.cards) - 1))
+        self.follow = self.cards[self.selected].resolved.subject if self.cards else None
         for card in self.cards:
             if card.index == self.selected:
                 card.card.classes(add="dstf-plot-selected")
             else:
                 card.card.classes(remove="dstf-plot-selected")
 
-    def scored(self, view: dict | None) -> dict[str, int]:
-        """``{variable: its number of criteria}`` over ``view``, the caller's
-        ONE read of the tree — this never reads one itself."""
-        out: dict[str, int] = {}
-        for leaf in leaves_of(view):
-            name = leaf.get("variable")
-            if name:
-                out[str(name)] = out.get(str(name), 0) + 1
-        return out
-
-    def stage_layout(self, layout: Layout, select: int | None = None) -> bool:
-        """Stage ``layout`` as the ONE op on `/plots`. ``select`` is set
-        BEFORE the stage — the rebuild its `spec` event causes reads it —
-        and put back if the Session refuses: a refused edit is said, and
-        nothing else changes (3c, planner's choice 10)."""
+    def stage_layout(
+        self, extras: Sequence[PlotExtra], select: int | None = None
+    ) -> bool:
+        """Stage ``extras`` — the test's plot extras after one gesture — as
+        the ONE op on `/plots`, and say whether it was staged. An edit that
+        changes nothing stages nothing: extras equal to the ones in effect,
+        or none on an entry with no key (`layout_op`'s ``None``). ``select``
+        is set BEFORE the stage — the rebuild its `spec` event causes reads
+        it — and put back if the Session refuses: a refused edit is said,
+        and nothing else changes (3c, planner's choice 10)."""
         session = self.shell.session
-        op = layout_op(self.model_id, session.spec.entry(self.model_id), layout)
-        before = self.selected
+        if tuple(extras) == session.layout(self.model_id):
+            return False
+        op = layout_op(self.model_id, session.spec.entry(self.model_id), extras)
+        if op is None:
+            return False
+        before = self.selected, self.follow
         if select is not None:
-            self.selected = select
+            self.selected, self.follow = select, None
         try:
             session.stage([op])
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
-            self.selected = before
+            self.selected, self.follow = before
             ui.notify(user_text(e), type="warning")
             return False
         return True
 
-    def remove_plot(self, index: int, layout: Layout) -> None:
-        """Stage ``layout`` (plot ``index`` gone) with the selection kept on
-        the SAME plot: a removal above it shifts it up by one; the selected
-        plot removed selects the one now at its index, the last if it was
-        the last (the rebuild clamps)."""
-        self.stage_layout(layout, select=self.selected - (index < self.selected))
+    def remove_watch(self, index: int, var: str) -> None:
+        """A watch card's Remove plot: watch plot ``index`` (of ``var``)
+        gone, the selection kept on the SAME plot — a removal above it
+        shifts it up by one; the selected plot removed selects the one now
+        at its index, the last if it was the last (the rebuild clamps). The
+        extras are read NOW: a card drawn before the last change may name
+        an entry that has gone, and that removes nothing."""
+        try:
+            extras = remove_watch(self.shell.session.layout(self.model_id), var)
+        except KeyError:
+            return
+        self.stage_layout(extras, select=self.selected - (index < self.selected))
+
+    def remove_context(self, index: int, name: str) -> None:
+        """A context series' `×`: ``name`` off plot ``index``, as the plots
+        are NOW — a card drawn before the last change may name a plot that
+        has moved."""
+        plots = self.shell.session.plots(self.model_id)
+        if not 0 <= index < len(plots) or name not in plots[index].context:
+            return
+        extras = self.shell.session.layout(self.model_id)
+        self.stage_layout(remove_context(extras, plots[index], name))
 
     def reset_layout(self) -> None:
-        """Stage removing the entry's ``plots`` key: one plot per tracked
-        variable again. Refused, it is said, like any layout edit."""
+        """Stage removing the entry's ``plots`` key: every context series
+        and watch plot goes; the derived plots stay. Refused, it is said,
+        like any layout edit."""
         try:
             self.shell.session.stage([reset_op(self.model_id)])
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
@@ -594,6 +690,14 @@ class TestPage:
                         self.drop_row(row.target)
         self._paint_focus()
 
+    def focus_to(self, index: Any) -> None:
+        """The switcher's choice: focus that plot — the same `focus` path,
+        so an editor or a form row on the card it hides closes. Its own
+        repaint (`set_options` to the plot already focused) does nothing:
+        `focus` on the focused plot would END the focus."""
+        if isinstance(index, int) and index != self.focused:
+            self.focus(index)
+
     def show_all(self) -> None:
         self.focused = None
         self._paint_focus()
@@ -614,24 +718,38 @@ class TestPage:
         if focused is None or self.focus_all is None:
             return
         plots = plural(len(self.cards), "plot")
-        # The plot named the way it names itself — its texts, not the keys
-        # underneath them, and a family folded as on its title.
-        card = self.cards[focused]
-        name = folded(card.resolved.series, card.texts)
-        self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
+        # The sentence counts; the switcher beside it names the plot — the
+        # way the plot names itself, its texts, a family folded as on its
+        # title. The name in both said it twice.
+        self.focus_text.set_text(f"Showing 1 of {plots}")
+        if self.focus_switch is not None:
+            self.focus_switch.set_options(
+                {
+                    c.index: folded(c.resolved.subject, c.texts)
+                    + (" · watch" if c.resolved.watch else "")
+                    for c in self.cards
+                },
+                value=focused,
+            )
         self.focus_all.set_text(f"Show all {plots}")
         self.cards[focused].show(view)
 
     def shape(self, view: dict | None) -> Any:
         """What the cards are BUILT from and cannot be repainted through:
-        the criteria and their variables, and the plots themselves. NOT a
-        leaf's metric — a mode switch repaints a row's name in place."""
+        the criteria and their variables, the plots themselves — each
+        one's subject, context, whether it is a watch plot, and what the
+        result lacks — and the tracked names every card's `+` was handed
+        (`Selection.tracked`): a variable that becomes tracked moves no
+        plot, and a `+` built before kept its stale snapshot. NOT a leaf's
+        metric — a mode switch repaints a row's name in place."""
+        session = self.shell.session
         return (
             tuple((leaf["path"], leaf.get("variable")) for leaf in leaves_of(view)),
             tuple(
-                (plot.series, plot.missing)
-                for plot in self.shell.session.plots(self.model_id)
+                (plot.subject, plot.context, plot.watch, plot.missing)
+                for plot in session.plots(self.model_id)
             ),
+            frozenset(session.tracked(self.model_id)),
         )
 
     # -- following the Session -------------------------------------------------
@@ -693,13 +811,7 @@ class TestPage:
                 saved_status = classify(saved) if saved is not None else None
         running = session.running
         loading = self.shell.load.in_progress
-        # A test whose last run never finished it has a result that is not
-        # one (what Accept's "re-run before accepting" reads).
-        work_dir = project.config.work_dir
-        assert work_dir is not None  # resolved in Config.__post_init__
-        has_result = self._result() is not None and (
-            model_id not in unfinished_run_models(work_dir)
-        )
+        has_result = self.run_state() != "none"
         statuses = [leaf_status(leaf) for leaf in leaves_of(view)]
         return strip_for(
             running=(

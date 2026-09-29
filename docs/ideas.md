@@ -1808,3 +1808,30 @@ planning.
   - The Tests drawer's "Status, failures first" sorts within each package
     group when the list is grouped (the owner's Q1 A: "sorting sorts within
     each group"). Failures reach the top of the list only with Show flat.
+- **Per-plot log or linear axes (owner, 2026-09-28; future, not built)**: a
+  toggle on each plot for a log or a linear x axis, and one for its y axis.
+  Logged with the owner's ruling O3 (the plots-from-the-tree plan's
+  Corrections 2), under which a real array folds onto one plot whatever its
+  members' scales: on a linear y axis a family spanning decades draws its
+  small members flat.
+- **Watch-only: the Julia drivers' result order (2026-09-29, from the U1
+  review)**: `run_test.jl` and `run_persistent.jl` collect a result's
+  variables in a `Dict{String, Vector{Float64}}`, so the `variables` object
+  they write — "the file's order" a glob's matches and a test with no tree
+  take their plot order from (D140 item 9) — is the Dict's hash order, not
+  the model's unknowns-then-observables order. An `OrderedDict`
+  (OrderedCollections; unverified whether `examples/julia/Project.toml`'s
+  environment already resolves it) would make it the model's. Not changed:
+  `julia` is not on PATH here, so the Julia-marked tests
+  (`tests/test_julia_backend.py`) cannot run, and a .jl edit nothing
+  executes is not verified. Change and run them where Julia is installed.
+- **Watch-only: a result file deleted after a passed run reads as failed
+  (2026-09-29, from the U1 review)**: the result reader hands a missing
+  result file in as a failed `TestResult`, and `TestPage.run_state` reads a
+  manifest entry that is not `pending` as a run that finished. So a test
+  whose run passed, and whose `result.json` / `.mat` was deleted from the
+  work dir afterwards, says "the run failed" on every line of its Test page
+  (the strip, the count, the tree and the Variables drawer) — as the Suite
+  row says sim failed. Not changed: nothing deletes a result file but a
+  person, and telling the two apart needs the reader to say "no file"
+  rather than "failed".

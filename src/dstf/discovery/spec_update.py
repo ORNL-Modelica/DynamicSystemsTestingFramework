@@ -168,7 +168,7 @@ def validate_entry_metric_tree(
 
 
 def validate_entry_plots(data: dict, model_id: str) -> None:
-    """The patched entry's ``plots`` key, when it has one, parses."""
+    """The patched entry's ``plots`` extras, when it has the key, parse."""
     from .plots import PlotsSpecError, parse_plots
 
     entry = spec_entry(data, model_id)

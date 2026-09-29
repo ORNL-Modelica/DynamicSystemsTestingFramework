@@ -22,6 +22,7 @@ from ..comparison.types import TestComparison
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class
+from .tree_rows import criteria_rows
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -143,70 +144,53 @@ def _sanitize_filename(name: str) -> str:
 
 
 def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
-    """``(plots, extra_series)`` for one test's page: the plots the page
-    draws and every series of theirs the scored variables do not answer.
+    """``(plots, extra_series)`` for one test's page: the plots it draws and
+    every series of theirs the page's scored and no-baseline entries do not
+    answer — context series and watch plots.
 
-    The tracked list — what the page HAS a section for by default — comes
-    from :func:`discovery.plots.tracked_names`, the ONE rule the authoring
-    tool's `Session.tracked` draws by: the scored variables in order, then
-    the rest of the loaded result's. The report drew one plot per variable
-    the TREE scored, so a tracked variable no criterion covers had no plot
-    on this tier and a plot on the other (the owner's ruling: both tiers
-    draw the same plots).
+    The plots are :func:`~dstf.discovery.plots.plots_of_test`' — the ONE rule
+    the authoring tool's `Session.plots` draws by, so both tiers draw the
+    same plots: derived from the criteria tree, decorated by the entry's
+    ``plots`` extras, none for a failed run.
 
-    A test with no ``plots`` key — or no backend class or test dir to read
-    a result file through — still opens no result FILE: the default layout
-    is one plot per tracked name and ``result`` already holds every one of
-    them in memory, so 331 TRANSFORM reports pay nothing.
-
-    Nothing scored and no ``plots`` key is the one case with NO default
-    layout: the page's "Simulated Variables (No Baseline)" block already
-    draws the whole result, so a section per tracked name drew every
-    variable of that page twice (the final review). A test that ASKED for a
-    layout still gets it, drawn from the same no-baseline trajectories.
+    A test with no extras — or no backend class or test dir to read a
+    result file through — opens no result FILE: every derived subject is a
+    scored or tracked variable the render context already carries, so 331
+    TRANSFORM reports pay nothing, and what the result carries is what the
+    plots can draw. An extra's series is taken from the result in memory
+    when it is there, and read from the file only when it is not.
     """
-    from ..discovery.plots import resolved_plots, tracked_names
+    from ..discovery.plots import plots_of_test
 
     if test is None:
-        return None, {}
-    if test.plots is None and not comp_variables:
-        return None, {}
-    tracked = tracked_names([v.name for v in (comp_variables or [])], result)
-    if test.plots is None or backend_cls is None or test_dir is None:
-        plots = resolved_plots(test, tracked, available=None)
-        return plots, _tracked_series(result, comp_variables, test, tracked)
-    available = backend_cls.result_names(test_dir)
-    plots = resolved_plots(test, tracked, available=available)
-    wanted = sorted({n for p in plots for n in p.series} - set(tracked))
-    return plots, {
-        **_tracked_series(result, comp_variables, test, tracked),
-        **backend_cls.result_series(test_dir, wanted),
+        return (), {}
+    extras = tuple(test.plots or ())
+    readable = bool(extras) and backend_cls is not None and test_dir is not None
+    plots = plots_of_test(
+        test,
+        [v.name for v in comp_variables or ()],
+        result,
+        listed=backend_cls.result_names(test_dir) if readable else None,
+    )
+    derived = {name for plot in plots if not plot.watch for name in plot.subject}
+    wanted = [
+        name
+        for plot in plots
+        for name in plot.series
+        if name not in derived and name not in plot.missing
+    ]
+    in_memory = {
+        var.name: (var.time, var.values)
+        for var in getattr(result, "variables", None) or ()
+        if var.name in wanted
     }
-
-
-def _tracked_series(result, comp_variables, test, tracked):
-    """The trajectories of the tracked variables the page's per-variable
-    sections do NOT carry — the ones no leaf of the tree scores. They have
-    a plot (they are tracked) and no criteria, so `plot_page_keys` finds
-    them in neither ``variables_by_name`` nor the no-baseline list; without
-    them the section says the series is missing while the variable sits in
-    the test's spec. Read from ``result``, never from disk."""
-    from ..comparison.tree_spec import collect_variables
-    from .context_builder import _spec_for
-
-    # Nothing scored: the page's no-baseline trajectories already carry
-    # every variable of the result, under the same names.
-    if result is None or not getattr(result, "variables", None) or not comp_variables:
-        return {}
-    covered = set(collect_variables(_spec_for(list(comp_variables), test)))
-    wanted = {name for name in tracked if name not in covered}
-    if not wanted:
-        return {}
-    series = {}
-    for var in result.variables:
-        if var.name in wanted:
-            series[var.name] = (var.time, var.values)
-    return series
+    extra_series = {
+        name: in_memory[name] for name in dict.fromkeys(wanted) if name in in_memory
+    }
+    unread = [name for name in dict.fromkeys(wanted) if name not in in_memory]
+    if readable and unread:
+        extra_series.update(backend_cls.result_series(test_dir, unread))
+    return plots, extra_series
 
 
 def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
@@ -237,23 +221,27 @@ def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
 
 def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:
     """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
-    and ``plot_sections`` from a render context. ``plots=None`` is one plot
-    per key of ``variables_by_name``, in its order.
+    and ``plot_sections`` from a render context, one of each per plot of
+    ``plots`` (:func:`plot_inputs`), in order.
 
     THREE sources answer a series name, in order: the scored variables
-    (``variables_by_name``), the no-baseline trajectories the same context
-    carries — a test with no reference scores nothing, so its tracked
-    curves live only there, and reading the first two sources alone called
-    every series of its layout missing while the same curve painted below
-    — and ``extra_series``, the plot-only names a backend read out of the
-    result file. A name in none of the three draws nothing and joins
-    ``missing``.
+    (``variables_by_name``), the no-baseline trajectories — a test with no
+    reference scores nothing, so its curves live only there — and
+    ``extra_series``, the context and watch series read out of the result.
+    A name in none of the three draws nothing and joins ``missing``; so does
+    one the plot already calls missing, even when a source answers it — a
+    tree leaf the result lacks is scored (and fails), and its entry has no
+    curve to draw.
+
+    A SUBJECT draws as the variable it is — its reference, its criteria'
+    geometry and its overlays; a CONTEXT series as its actual curve alone,
+    grey, even when it is scored on a plot of its own (its criteria are
+    there).
 
     The ONE producer of the page's plot keys: the template loops over plot
     sections, so a caller or a fixture that hand-rolled them would be a
     second layout nobody renders through.
     """
-    from ..discovery.plots import ResolvedPlot
     from ..figures.assemble import leaves_by_variable, view_from_trajectory
     from ..figures.families import family_label, group_families
     from ..figures.plotly import plot_figure
@@ -261,20 +249,11 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
 
     by_name = context.get("variables_by_name") or {}
     nobaseline = {
-        t["name"]: (t.get("time") or [], t.get("values") or [])
+        t["name"]: t
         for t in context.get("nobaseline_trajectories") or []
         if t.get("name")
     }
-    # Disjoint by construction: no-baseline trajectories exist only when
-    # nothing was scored, and then `plot_inputs` resolves a layout only for
-    # a test that DECLARED one — taking the result's own list as tracked and
-    # reading only what is not in it.
-    arrays = {**(extra_series or {}), **nobaseline}
-    if plots is None:
-        plots = tuple(
-            ResolvedPlot(index=i, kind="time", series=(n,), missing=())
-            for i, n in enumerate(by_name)
-        )
+    arrays = extra_series or {}
     vidx = {n: i for i, n in enumerate(by_name)}
     # Two readings of the same scope: `labels` where the muted name rides
     # beside (the section heading), `texts` everywhere else.
@@ -282,51 +261,104 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     texts = _context_labels(context, "text")
     leaves_by_var = leaves_by_variable(metric_tree)
     budget = max_samples if max_samples and max_samples > 0 else None
+    tree_view = context.get("tree_view")
 
-    records: list[dict] = []
-    figures: list[dict] = []
-    series: list[list[str]] = []
-    sections: list[dict] = []
-    # A variable may sit on several plots; its criteria tree is rendered
-    # under the FIRST one, or the page carries the same element id twice.
-    tree_rendered: set[str] = set()
-    for position, plot in enumerate(plots):
-        drawn = [n for n in plot.series if n in by_name or n in arrays]
-        missing = [*plot.missing, *(n for n in plot.series if n not in drawn)]
-        views = [
-            view_from_trajectory(
+    def curve(n: str) -> tuple:
+        """``(time, values)`` of a series' actual curve, from whichever
+        source answers it."""
+        if n in by_name:
+            traj = by_name[n].get("trajectory") or {}
+            return traj.get("act_time"), traj.get("act_values")
+        if n in nobaseline:
+            return nobaseline[n].get("time"), nobaseline[n].get("values")
+        return arrays[n][0], arrays[n][1]
+
+    def subject_view(n: str):
+        if n in by_name:
+            return view_from_trajectory(
                 n, by_name[n].get("trajectory") or {}, leaves_by_var.get(n, [])
             )
-            if n in by_name
-            else build_view(
+        if n in nobaseline:
+            t = nobaseline[n]
+            return build_view(
                 n,
                 label=texts.get(n, n),
-                act_time=arrays[n][0],
-                act_values=arrays[n][1],
+                act_time=t.get("time"),
+                act_values=t.get("values"),
+                overlays=t.get("overlays") or [],
             )
-            for n in drawn
+        time, values = curve(n)
+        return build_view(n, label=texts.get(n, n), act_time=time, act_values=values)
+
+    def context_view(n: str):
+        time, values = curve(n)
+        return build_view(n, label=texts.get(n, n), act_time=time, act_values=values)
+
+    def drawable(n: str) -> bool:
+        return n in by_name or n in nobaseline or n in arrays
+
+    records: list[dict] = []
+    figures: list[dict | None] = []
+    series: list[list[str]] = []
+    sections: list[dict] = []
+    for position, plot in enumerate(plots):
+        gone = set(plot.missing)
+        subject = [n for n in plot.subject if n not in gone and drawable(n)]
+        context_names = [n for n in plot.context if n not in gone and drawable(n)]
+        drawn = subject + context_names
+        missing = list(
+            dict.fromkeys([*plot.missing, *(n for n in plot.series if n not in drawn)])
+        )
+        # No drawable SUBJECT, no chart (the template's `plot.subject`),
+        # whatever the context: no figure either. The null keeps the
+        # section's place — report.js paints `PLOT_FIGURES[idx]` into
+        # `plot-${idx}`.
+        figures.append(
+            plot_figure(
+                [subject_view(n) for n in subject],
+                budget,
+                context=[context_view(n) for n in context_names],
+            )
+            if subject
+            else None
+        )
+        variables = [
+            {
+                "name": n,
+                "vidx": vidx[n],
+                **{k: v for k, v in by_name[n].items() if k != "trajectory"},
+                "overlays": [
+                    _overlay_row(ov) for ov in by_name[n].get("overlays") or []
+                ],
+            }
+            # Every scored member's verdict, drawn or not: a leaf on a
+            # variable the result lacks failed, and its badge says so.
+            for n in plot.subject
+            if n in by_name
         ]
-        variables: list[dict] = []
-        for n in drawn:
-            if n not in by_name:
-                continue
-            variables.append(
-                {
-                    "name": n,
-                    "vidx": vidx[n],
-                    **{k: v for k, v in by_name[n].items() if k != "trajectory"},
-                    "overlays": [
-                        _overlay_row(ov) for ov in by_name[n].get("overlays") or []
-                    ],
-                    # After the spread: this is the SECTION's fact, not the
-                    # variable's, and the context must not be able to set it.
-                    "tree_here": n not in tree_rendered,
-                }
-            )
-            tree_rendered.add(n)
-        untracked = [n for n in drawn if n not in by_name]
-        records.append({"kind": plot.kind, "series": drawn, "missing": missing})
-        figures.append(plot_figure(views, budget))
+        # Overlays and the error select: a subject of ONE variable (the
+        # context does not count), drawn. A no-baseline variable has
+        # overlays and no reference to take an error against.
+        single = len(plot.subject) == 1
+        lone = subject[0] if single and subject else None
+        overlays = (
+            by_name[lone].get("overlays")
+            if lone in by_name
+            else nobaseline[lone].get("overlays")
+            if lone in nobaseline
+            else None
+        ) or []
+        criteria = criteria_rows(tree_view, plot.subject)
+        records.append(
+            {
+                "kind": plot.kind,
+                "series": drawn,
+                "subject": list(plot.subject),
+                "context": list(plot.context),
+                "watch": plot.watch,
+                "missing": missing,
+            }
+        )
         series.append(drawn)
         sections.append(
             {
@@ -334,50 +366,38 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 # ``PLOT_FIGURES[idx]`` into ``plot-${idx}``, so a section
                 # numbered by anything else renders a blank chart.
                 "index": position,
-                # The title READS the plain labels; the names ride muted
-                # beside it, and only when one of them differs from its
-                # label — otherwise every title on every existing report
-                # would say its variable twice. The muted name is what
-                # tells two series sharing one expression apart here, so
-                # the title does not repeat it.
-                #
-                # The FOLD is over the texts: two series whose labels
-                # collide belong to no family (their texts carry a name in
-                # parentheses), so `pipe.T[1]` tracked beside an `x[1]`
-                # whose expression is `pipe.T[1]` cannot read `pipe.T[1,1]`.
-                # Within any family of several, text and label agree — a
-                # colliding label folds into nothing — so the rendered
-                # slice is the same either way.
+                # The title READS the plain labels of the SUBJECT; the
+                # names ride muted beside it, and only when one of them
+                # differs from its label — otherwise every title would say
+                # its variable twice. The muted name is what tells two
+                # series sharing one expression apart here, so the title
+                # does not repeat it. The fold is over the texts, as the
+                # tool's card title folds (`plot_card.folded`).
                 "title": ", ".join(
                     family_label(key, members, labels)
-                    for key, members in group_families(drawn, texts)
+                    for key, members in group_families(list(plot.subject), texts)
                 ),
                 "names": ""
-                if all(labels.get(n, n) == n for n in drawn)
+                if all(labels.get(n, n) == n for n in plot.subject)
                 else ", ".join(
-                    family_label(key, members) for key, members in group_families(drawn)
+                    family_label(key, members)
+                    for key, members in group_families(list(plot.subject))
                 ),
                 "series": drawn,
+                "subject": subject,
                 "missing": missing,
-                "single": len(drawn) == 1,
+                "single": single,
+                # The error select: ONE scored variable, drawn.
+                "errors": lone in by_name,
+                "watch": plot.watch,
                 "variables": variables,
-                # The heading's tail: every untracked name on the plot,
-                # array families folded to one label. No muted name rides
-                # beside these, so they read the texts.
-                "plot_only_label": ", ".join(
-                    family_label(key, members, texts)
-                    for key, members in group_families(untracked, texts)
-                ),
-                # One "…is plot only" line per FAMILY — four members used
-                # to print four sentences. A no-baseline series is left
-                # out: it has no criteria because it has no baseline, and
-                # the no-baseline block below already says so.
-                "plot_only_lines": [
-                    family_label(key, members, texts)
-                    for key, members in group_families(
-                        [n for n in untracked if n not in nobaseline], texts
-                    )
-                ],
+                "overlays": [_overlay_row(ov) for ov in overlays],
+                "criteria": criteria,
+                # Every crumb as wide as the longest, in ch: the leaf names
+                # start in one column.
+                "crumb_ch": max((len(row["crumbs"]) for row in criteria), default=0),
+                # Read as the texts: no muted name rides beside them.
+                "context": [texts.get(n, n) for n in plot.context],
             }
         )
     return {
@@ -388,17 +408,15 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     }
 
 
-def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
-    """The page's diagnostic and no-baseline figures. The plots a test
-    declares — one per tracked variable by default — are
-    :func:`plot_page_keys`'. Built from the FULL-resolution context — the
-    view decimates under ``max_samples`` — and after the sidecar write, so
+def _build_figures(context: dict, max_samples: int | None) -> dict:
+    """The page's diagnostic figures; the plots' are :func:`plot_page_keys`'.
+    Built from the FULL-resolution context — the view decimates under
+    ``max_samples`` — and after the sidecar write, so
     ``comparison_data.json`` keeps its trajectory shape and no figure."""
     from ..figures.plotly import variable_figure
     from ..figures.view import build_view
 
     budget = max_samples if max_samples and max_samples > 0 else None
-
     diag = [
         variable_figure(
             build_view(
@@ -412,23 +430,7 @@ def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
         )
         for t in context.get("diag_trajectories") or []
     ]
-    nb = [
-        variable_figure(
-            build_view(
-                t["name"],
-                # The heading above this figure reads the plain label with
-                # the muted name beside it; the hover has no name beside
-                # it, so it reads the text.
-                label=t.get("text") or t.get("label") or t["name"],
-                act_time=t.get("time"),
-                act_values=t.get("values"),
-                overlays=t.get("overlays") or [],
-            ),
-            budget,
-        )
-        for t in context.get("nobaseline_trajectories") or []
-    ]
-    return {"diag_figures": diag, "nb_figures": nb}
+    return {"diag_figures": diag}
 
 
 def generate_comparison_plots(
@@ -460,8 +462,22 @@ def generate_comparison_plots(
     comes from it. Without one (a direct caller holding only the leaves)
     the sidecar carries the numbers and no verdict.
 
-    Returns the path to the rendered interactive.html.
+    *plots* / *extra_series* are :func:`plot_inputs`' — the suite and the
+    review path resolve them with the backend's result-file readers; a
+    direct caller that passes none gets them from the same function over
+    *test_model*, with no file to read.
+
+    Returns the path to the rendered interactive.html. With neither
+    *plots* nor *test_model* there is nothing to derive the plots from, and
+    a page with none would say nothing about it: ValueError.
     """
+    if plots is None:
+        if test_model is None:
+            raise ValueError(
+                "generate_comparison_plots needs plots= or the test_model "
+                "they derive from"
+            )
+        plots, extra_series = plot_inputs(test_model, comparisons, result, None, None)
     if plot_dir.exists():
         shutil.rmtree(plot_dir)
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -482,10 +498,12 @@ def generate_comparison_plots(
         artifact_files=artifact_files,
         overlays=overlays,
         run_metadata=run_metadata,
-        # The page's label scope takes the plots too: a plot-only series
-        # named like another variable's expression is what decides whether
-        # that other one reads its name beside its label.
-        plot_series=[n for p in plots or () for n in p.series],
+        # The page's label scope takes the plots too: a context or watch
+        # series named like another variable's expression is what decides
+        # whether that other one reads its name beside its label. Missing
+        # names included, as the tool's `Session.variable_texts` includes
+        # them: the plot still names them ("Not in this result: z").
+        plot_series=[n for p in plots for n in p.series],
     )
 
     # The page's plot keys, from the full-resolution context. Only the
@@ -548,7 +566,7 @@ def generate_comparison_plots(
     # they are added AFTER the sidecar write so the sidecar's shape (the
     # handoff artifact dashboard_render reads) does not change.
     context.update(page_keys)
-    context.update(_build_figures(context, metric_tree, max_embedded_samples))
+    context.update(_build_figures(context, max_embedded_samples))
 
     # ORDER CONSTRAINT: the page context is built LAST — after the sidecar
     # write (which needs the full-resolution arrays) and after the figure
@@ -594,13 +612,11 @@ def _page_context(context: dict) -> dict:
     COPY, after the sidecar write — ``comparison_data.json`` is the
     documented downstream artifact and keeps its trajectory shape.
 
-    ``variables_by_name`` is dropped whole: the page is laid out per PLOT
-    now, and each section already carries its variables' trees, verdicts
-    and overlay rows (:func:`plot_page_keys`). What survives per
-    no-baseline trajectory is its name, its LABEL — the heading above its
-    figure reads it, and cutting it left every NEW heading spelling the
-    name with an empty label beside it — and each overlay's name / role
-    for the picker checkbox.
+    ``variables_by_name`` is dropped whole: the page is laid out per PLOT,
+    and each section already carries its variables' verdicts, criteria and
+    overlay rows (:func:`plot_page_keys`). A no-baseline trajectory keeps
+    only its name: the summary line counts them, and its plot's section
+    carries the rest.
     """
     page = dict(context)
     page.pop("trajectories", None)
@@ -609,12 +625,7 @@ def _page_context(context: dict) -> dict:
         {"name": t.get("name")} for t in context.get("diag_trajectories") or []
     ]
     page["nobaseline_trajectories"] = [
-        {
-            "name": t.get("name"),
-            "label": t.get("label") or t.get("name"),
-            "overlays": [_overlay_row(ov) for ov in t.get("overlays") or []],
-        }
-        for t in context.get("nobaseline_trajectories") or []
+        {"name": t.get("name")} for t in context.get("nobaseline_trajectories") or []
     ]
     return page
 
@@ -622,9 +633,9 @@ def _page_context(context: dict) -> dict:
 def _trace_label(tr: dict, texts: Mapping[str, str] | None) -> str | None:
     """What the banner calls one trace.
 
-    On a one-series plot the trace's own name is right, and the banner has
-    always printed it; ``texts`` is None there. On a plot of SEVERAL series
-    it is not: a family's lead member carries the family's LEGEND label, so
+    On a plot of one subject the trace's own name is right, and the banner
+    has always printed it; ``texts`` is None there. On a FAMILY's plot it
+    is not: a family's lead member carries the family's LEGEND label, so
     the banner read ``pipe.T[1:4]`` where one member belonged, and a family
     of one printed its name twice (once as the plot's title, once as the
     trace). There the series comes off ``meta.id`` — the NAME — and
@@ -632,7 +643,7 @@ def _trace_label(tr: dict, texts: Mapping[str, str] | None) -> str | None:
     banner line does not pair a plot full of expressions with a trace
     spelled as a result-file name. ``texts`` is the TEST's scope, like the
     plot's own name in the row beside it. A derived trace — a band, an
-    error series, a spectrum — has no such id and keeps its own name.
+    error series, a spectrum — and a context trace keep their own names.
     """
     name = tr.get("name")
     if texts is None:
@@ -658,10 +669,11 @@ def _decimated_traces(context: dict) -> list[dict]:
     embedded side reads ``meta.samples`` and falls back to the x length
     only for a trace the figure layer does not decimate. The template
     renders this list as the banner, so the reader sees WHICH curves were
-    thinned rather than a page-wide total. A comparison trace is placed by
-    its PLOT, folded the way the section heading folds it but read as the
-    TEXTS: the banner shows no muted name, so two plots of two variables
-    sharing one expression would otherwise be two identical rows.
+    thinned rather than a page-wide total. A plot's trace is placed by its
+    PLOT's SUBJECT, folded the way the section heading folds it but read as
+    the TEXTS: the banner shows no muted name, so two plots of two
+    variables sharing one expression would otherwise be two identical rows.
+    A context trace is a trace of that plot, under its own name.
     """
     out: list[dict] = []
     texts = _context_labels(context, "text")
@@ -687,21 +699,19 @@ def _decimated_traces(context: dict) -> list[dict]:
     for section, fig in zip(
         context.get("plot_sections") or [], context.get("plot_figures") or []
     ):
-        series = section.get("series") or []
+        if fig is None:
+            continue  # a section with no chart
+        subject = section.get("subject") or []
         scan(
             ", ".join(
                 family_label(key, members, texts)
-                for key, members in group_families(series, texts)
+                for key, members in group_families(subject, texts)
             ),
             fig,
-            texts=texts if len(series) > 1 else None,
+            texts=texts if len(subject) > 1 else None,
         )
     for traj, fig in zip(
         context.get("diag_trajectories") or [], context.get("diag_figures") or []
-    ):
-        scan(traj.get("name"), fig)
-    for traj, fig in zip(
-        context.get("nobaseline_trajectories") or [], context.get("nb_figures") or []
     ):
         scan(traj.get("name"), fig)
     return out
@@ -762,8 +772,8 @@ def _build_per_test_args(
 
     test_dir = config.work_dir / test_key if test_key else None
 
-    # The page's layout, through the one helper (it derives the tracked
-    # list itself, so this path and cli/review.py cannot drift).
+    # The page's plots, through the one helper (it derives them from the
+    # tree itself, so this path and cli/review.py cannot drift).
     plots, extra_series = plot_inputs(
         test, comp.variables, result, backend_cls, test_dir
     )
@@ -887,7 +897,7 @@ def generate_report_suite(
     test_lookup = {t.model_id: t for t in tests}
 
     # Resolve the backend CLASS once up front — its artifact file list and
-    # the result-file readers a declared plot layout needs are both class
+    # the result-file readers a test's plot extras need are both class
     # attributes, so no backend is instantiated (which would trigger the
     # fmpy import if the extra isn't installed). An unregistered backend
     # leaves both at their empty defaults rather than raising per test.

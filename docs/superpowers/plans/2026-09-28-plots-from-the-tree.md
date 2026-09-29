@@ -173,3 +173,10 @@ Two executing reviews built the plan in archives: Tasks 1-4 in `/tmp/claude-1000
 **LOW**
 14. The TRANSFORM gate (T9) counts plots per test before/after over the copy and reports the tests whose count changed with the reason (a fold on one scale, a variable scored twice…), not only "cat does not fold".
 15. The constant context line on a plot's edge is hard to see (review a's LOOK): acceptable; no change.
+
+---
+
+## Corrections 2 (owner, 2026-09-28) — OVERRIDES Corrections 1 O1
+
+**O3 — families: UnitTests variables never fold; every other array always folds; no scale rule.** A UnitTests variable (`<instance>.x[i]`, named by `discovery/unit_tests.py`) is its own test quantity, defined by the UnitTests contract, and always gets its own plot — whatever its expression looks like (`x[1]`, `pipe.T[3]`, `cat(...)[i]`). Any other tracked or scored array element folds by its RESULT-FILE NAME into one family plot (`pipe.T[1]..pipe.T[n]` → one plot), with no scale check. The O1 scale rule, `magnitudes` / `result_magnitudes` / `ONE_SCALE_RATIO`, and the review's name-vs-expression guard (a name and an expression spelling it) are deleted — folding reads names, never labels, so the collision cannot arise. The owner's reason: the scale question only existed because the fold read UnitTests expressions as arrays. Measured before this ruling (for the record): the scale rule changed 62 of 331 TRANSFORM tests; a log-axis tier would mostly have folded `check_*` unit-conversion pairs.
+**Future (not built):** per-plot toggles for a log or linear x axis and y axis — logged in `docs/ideas.md` by T9.

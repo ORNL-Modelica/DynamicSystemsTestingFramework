@@ -23,7 +23,9 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
 
@@ -167,11 +169,17 @@ def resolves_a_variable(leaf: LeafSpec) -> bool:
     ``CPUtime`` for the expression soft-check, which then compared a
     baseline's recorded expression against a quantity nothing measured.
     """
-    desc = metric(leaf.metric)
-    return not (
+    return not reads_a_statistic(leaf.metric, leaf.params)
+
+
+def reads_a_statistic(metric_name: str, params: Mapping[str, Any]) -> bool:
+    """The rule under :func:`resolves_a_variable`, over a metric's name and
+    its params — what a leaf and a leaf's `spec_to_view` dict both carry."""
+    desc = metric(metric_name)
+    return (
         desc is not None
         and desc.accepts_quantity
-        and isinstance(leaf.params.get("quantity"), str)
+        and isinstance(params.get("quantity"), str)
     )
 
 

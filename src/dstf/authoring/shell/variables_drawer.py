@@ -1,13 +1,15 @@
 """The Variables drawer (the roadmap's 3c; DESIGN.md "The Variables drawer";
-the owner's rulings Q5-Q7, 2026-09-25): every variable of the last result
-in `variable_rows`' groups, folded and filtered, each row checked against
-the selected plot. Its filter and its sort, group and names menus are the
-tab's (`TabState`), drawn by `drawer_controls` as the Tests drawer's are.
-It does every layout edit (Q6 A): a check adds a row's members to the
-selected plot or takes them off, "+ new plot" puts them on a plot of their
-own below it. The rules are not here: the rows are data
-(`authoring.variable_rows`), the edits pure functions (`authoring.layout`),
-and the page stages what they return (`TestPage.stage_layout`).
+the owner's rulings Q5-Q7, 2026-09-25, and Q12-Q14, 2026-09-28): every
+variable of the last result in `variable_rows`' groups, folded and
+filtered, each row checked against the selected plot. Its filter and its
+sort, group and names menus are the tab's (`TabState`), drawn by
+`drawer_controls` as the Tests drawer's are. It edits the plot extras: a
+check adds a row's members to the selected plot's CONTEXT or takes them
+off (the plot's subject is on and grey — a derived plot's subject is the
+tree's), "+ new plot" makes a WATCH plot of one variable after the others.
+The rules are not here: the rows are data (`authoring.variable_rows`), the
+edits pure functions (`authoring.layout`), and the page stages what they
+return (`TestPage.stage_layout`).
 
 Rebuilt whole when it opens, and when what it draws moved under the page
 it sits on (`Rail.refresh`: a select, a sync), never while closed. So its
@@ -28,18 +30,14 @@ import regex
 from nicegui import ui
 
 from ...backends.types import VariableText
+from ...discovery.plots import PlotExtra, ResolvedPlot
+from ...discovery.unit_tests import is_unit_test_variable
 from ...figures.families import HUES
-from ..layout import (
-    Layout,
-    add_series,
-    new_plot,
-    remove_series,
-    stranded,
-    stranded_sentence,
-)
+from ..layout import add_context, new_watch, remove_context
 from ..needle import matcher
 from ..variable_rows import VarGroup, VarRow, cap, variable_groups
 from .drawer_controls import filter_box, menu_button
+from .widgets import MiddleCut
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -60,6 +58,11 @@ _RAMP = HUES[0]
 
 _SPACE = re.compile(r"\s+")
 
+#: The target line and the grey "+ new plot"'s reason on a run that failed,
+#: and on one that never finished the test (`TestPage.run_state`).
+RUN_FAILED = "The run failed: no plots"
+NO_RESULT = "No result yet: no plots"
+
 
 def marker(kind: str, row_id: str) -> str:
     """A row's ``var-*`` marker: ``kind:row_id`` with ALL whitespace taken
@@ -77,8 +80,10 @@ class _Reads:
     names: list[str]
     tracked: list[str]
     scope: dict[str, VariableText]
-    layout: Layout
-    scored: dict[str, int]
+    plots: tuple[ResolvedPlot, ...]
+    #: the names that are the test's UnitTests elements: rows of their own,
+    #: as they are plots of their own (O3)
+    unit_tests: frozenset[str]
 
 
 def _slug(title: str) -> str:
@@ -88,9 +93,10 @@ def _slug(title: str) -> str:
 
 
 def _state(row: VarRow) -> tuple[str, str]:
-    """``(aria-checked, icon)``: all, some or none of the row's members on
-    the selected plot."""
-    if row.on_selected == len(row.members):
+    """``(aria-checked, icon)``: all, some or none of the row's members in
+    the selected plot's context — or the plot's subject, which it always
+    shows."""
+    if row.is_subject or row.on_selected == len(row.members):
         return "true", "check_box"
     if row.on_selected:
         return "mixed", "indeterminate_check_box"
@@ -109,6 +115,9 @@ class VariablesDrawer:
         self.tracked: frozenset[str] = frozenset()
         #: The texts two or more of the drawn rows read as.
         self.alike: set[str] = set()
+        #: Why "+ new plot" is grey on every row — O2's gate, worded by the
+        #: run state — as the last build read it, or None.
+        self.withheld: str | None = None
         #: The filter and its toggles are the tab's (`TabState`): a switch
         #: of test builds a new drawer, and it starts from them.
         self.state = page.state
@@ -210,29 +219,38 @@ class VariablesDrawer:
             self._draw(reads)
 
     def _read(self) -> _Reads | None:
-        """ONE read of each — the names, the texts, the layout, the tree —
-        or None on a page whose test is gone: every read raises for a model
-        the open project does not have."""
+        """ONE read of each — the names, the tracked names, the texts, the
+        plots — or None on a page whose test is gone: every read raises for
+        a model the open project does not have."""
         page = self.page
         if page.gone:
             return None
         session, model_id = page.shell.session, page.model_id
+        names = session.variable_names(model_id)
+        project = session.project
+        test = project.test(model_id) if project is not None else None
         return _Reads(
-            names=session.variable_names(model_id),
+            names=names,
             tracked=session.tracked(model_id),
             scope=session.variable_texts(model_id),
-            layout=session.layout(model_id),
-            scored=page.scored(session.tree_view(model_id)),
+            plots=session.plots(model_id),
+            unit_tests=frozenset(
+                n for n in names if test is not None and is_unit_test_variable(test, n)
+            ),
         )
 
     def _signature(self, reads: _Reads | None) -> object:
         """Everything a build draws from: the reads, the selected plot and
-        the number of plots, the filter and the menus, the families opened,
-        and the reason an empty result gives."""
+        the number of plots, the run state and O2's gate, the filter and
+        the menus, the families opened, and the reason an empty result
+        gives."""
         page = self.page
         head = (
             page.selected,
             len(page.cards),
+            page.run_state(),
+            page.plots_withheld(),
+            page.result() is None,
             self.state.vars_needle,
             self.state.vars_regex,
             self.state.vars_case,
@@ -247,8 +265,8 @@ class VariablesDrawer:
             tuple(reads.names),
             tuple(reads.tracked),
             tuple((n, t.label, t.text) for n, t in reads.scope.items()),
-            reads.layout,
-            tuple(reads.scored.items()),
+            reads.plots,
+            reads.unit_tests,
             "" if reads.names else page.unscored_reason(),
         )
 
@@ -270,9 +288,22 @@ class VariablesDrawer:
             self.target.set_text("")
             return
         n = len(page.cards)
+        # O2's gate: a result that is not a success has no plots — nothing
+        # to add context to, and a watch plot made on it would draw nothing
+        # — worded by the run state, as every line of the page is.
+        run = page.run_state()
+        self.withheld = (
+            (RUN_FAILED if run == "failed" else NO_RESULT)
+            if page.plots_withheld()
+            else None
+        )
         self.target.set_text(
-            f"Checkboxes act on plot {page.selected + 1} of {n}"
+            f"Checkboxes add context to plot {page.selected + 1} of {n}"
             if n
+            else RUN_FAILED
+            if run == "failed"
+            else NO_RESULT
+            if run == "none" and page.result() is not None
             else "No plot yet: + new plot adds one"
         )
         try:
@@ -288,10 +319,9 @@ class VariablesDrawer:
         project = page.shell.session.project
         with self.body:
             if not names:
-                reason = page.unscored_reason()
                 ui.label(
-                    reason
-                    if reason == "this test has no result"
+                    page.unscored_reason()
+                    if run != "ok"
                     else "the result has no variables"
                 ).classes("dstf-why").mark("var-empty")
                 return
@@ -306,10 +336,9 @@ class VariablesDrawer:
                     project.config.diagnostic_variables if project is not None else ()
                 ),
                 labels={name: t.label for name, t in scope.items()},
-                texts=self.texts,
-                layout=reads.layout,
+                plots=reads.plots,
+                unit_tests=reads.unit_tests,
                 selected=page.selected if n else None,
-                scored=reads.scored,
                 group=self.state.vars_group,
                 order=self.state.vars_sort,
                 read=self.state.vars_names,
@@ -372,15 +401,10 @@ class VariablesDrawer:
 
     def _row(self, row: VarRow, *, member: bool = False) -> None:
         page, key = self.page, row.id
-        # What is muted beside the row's text: a lone variable's name, or a
-        # family's names folded (`file_text`) when they read otherwise.
-        # Under Flat a tracked x={pipe.T[1], pipe.T[2]} and the result's own
-        # pipe.T[1:2] both read "pipe.T[1:2]" — on TRANSFORM two rows of
-        # `batemanEquations.Ns[1:4]` with alike titles and alike checks —
-        # and a family has no one name to say which is which.
+        # What is muted beside the row's text: a lone variable's name. A
+        # family has none to mute: rows fold by NAME, so its text is its
+        # names folded (`file_text`).
         muted = row.name
-        if muted is None and row.file_text != row.text:
-            muted = row.file_text
         said = row.text if muted is None else f"{row.text} ({muted})"
         with (
             ui.row()
@@ -407,7 +431,7 @@ class VariablesDrawer:
                 chevron.props["aria-expanded"] = "true" if opened else "false"
             checked, icon = _state(row)
             # A disabled Quasar button takes no pointer events: the reason's
-            # tooltip is on a span around it, as on Remove plot.
+            # tooltip is on a span around it.
             with ui.element("span").mark(marker("var-why", key)):
                 check = (
                     ui.button(icon=icon, on_click=partial(self._check, row))
@@ -421,12 +445,11 @@ class VariablesDrawer:
                 check.props["aria-label"] = said
                 if not page.cards:
                     check.disable()  # no plot to act on: "+ new plot" makes one
-                elif row.stranded:
+                elif row.is_subject:
+                    # A plot cannot lose its subject: a derived plot's is the
+                    # tree's, a watch plot's is the plot.
                     check.disable()
-                    # Wrapped, as Remove plot's: one line ran over the plots.
-                    ui.tooltip(self._sentence(row.stranded, row.criteria)).props(
-                        "max-width=320px"
-                    )
+                    ui.tooltip("The plot's subject")
             if len(row.members) > 1:
                 with ui.element("span").classes("dstf-var-ramp"):
                     for stop in _RAMP:
@@ -442,7 +465,7 @@ class VariablesDrawer:
             # reading "a.Q" said nothing of which was which.
             names = self.state.vars_names
             shown = row.file_text if names == "file" else row.text
-            text = ui.label(shown).classes("dstf-var-text dstf-mono text-xs")
+            text = MiddleCut(shown).classes("dstf-var-text dstf-mono text-xs")
             text.props["title"] = said
             # A family has no one name for the scope test: `alike` is what
             # says it reads as another drawn row does.
@@ -465,12 +488,28 @@ class VariablesDrawer:
                 ui.label(
                     "plot " + ", ".join(str(i + 1) for i in row.elsewhere)
                 ).classes("dstf-why dstf-var-where")
-            ui.button("+ new plot", on_click=partial(self._new, row)).props(
-                "flat dense no-caps size=sm"
-            ).classes("dstf-var-new").mark(marker("var-new", key))
-
-    def _sentence(self, names: tuple[str, ...] | list[str], criteria: int) -> str:
-        return stranded_sentence([self.texts.get(n, n) for n in names], criteria)
+            # A watch plot is of ONE variable, and a variable has one plot
+            # at most: grey, with why, on a family's row (its members,
+            # opened, each make one) and on any plot's subject.
+            why = (
+                self.withheld
+                if self.withheld is not None
+                else f"Already the subject of plot {row.subject_of + 1}"
+                if row.subject_of is not None
+                else "A watch plot shows one variable: open the family"
+                if len(row.members) > 1
+                else None
+            )
+            with ui.element("span").mark(marker("var-new-why", key)):
+                new = (
+                    ui.button("+ new plot", on_click=partial(self._new, row))
+                    .props("flat dense no-caps size=sm")
+                    .classes("dstf-var-new")
+                    .mark(marker("var-new", key))
+                )
+                if why is not None:
+                    new.disable()
+                    ui.tooltip(why)
 
     # -- the edits -----------------------------------------------------------------
 
@@ -490,45 +529,46 @@ class VariablesDrawer:
         self.rebuild()
 
     def _check(self, row: VarRow) -> None:
-        """All of the row on the selected plot: take it off, unless that
-        leaves a scored variable on no plot (the owner's ruling, Q7 A — the
-        row is already grey then; this is the belt to its braces). Otherwise
-        add what is missing.
+        """The row as CONTEXT on the selected plot: all of its members
+        there take them off, else the missing ones are added — never the
+        plot's subject.
 
         ``row`` was drawn before the last change, and the selection may name
-        a plot the layout no longer has: a real double-click on the last
-        plot's only series raised IndexError on its second click. So the
-        layout is read NOW, a selection outside it does nothing, and on or
-        off is what that plot holds now — never ``row.on_selected``."""
+        a plot there no longer is: a real double-click raised IndexError on
+        its second click once. So the plots are read NOW, a selection
+        outside them does nothing, and on or off is what that plot holds
+        now — never ``row.on_selected``."""
         page = self.page
-        if not page.cards:
-            return
         session = page.shell.session
-        layout = session.layout(page.model_id)
-        if not 0 <= page.selected < len(layout):
+        plots = session.plots(page.model_id)
+        if not 0 <= page.selected < len(plots):
             return
-        holds = {s.var for s in layout[page.selected].series}
-        if all(m in holds for m in row.members):
-            new = remove_series(layout, page.selected, row.members)
-            scored = page.scored(session.tree_view(page.model_id))
-            stuck = stranded(layout, new, list(scored))
-            if stuck:
-                ui.notify(
-                    self._sentence(stuck, sum(scored[v] for v in stuck)),
-                    type="warning",
-                )
-                return
+        plot = plots[page.selected]
+        members = [m for m in row.members if m not in plot.subject]
+        if not members:
+            return  # the plot's subject: its check is grey
+        extras: tuple[PlotExtra, ...] = session.layout(page.model_id)
+        if all(m in plot.context for m in members):
+            for name in members:
+                extras = remove_context(extras, plot, name)
         else:
-            new = add_series(layout, page.selected, row.members)
-        page.stage_layout(new)
+            extras = add_context(extras, plot, members)
+        page.stage_layout(extras)
 
     def _new(self, row: VarRow) -> None:
-        """A plot of the row's members below the selected one, selected
-        (planner's choice 1); the members stay where they were. A selection
-        the layout no longer has does nothing, as in `_check`."""
+        """A WATCH plot of the row's one variable, after every other plot,
+        selected. Read NOW: a variable some plot has as its subject — a
+        second click before the page caught up with the first — makes
+        none, and neither does a result that is not a success (O2's gate)
+        since the row was drawn."""
         page = self.page
-        layout = page.shell.session.layout(page.model_id)
-        if page.cards and not 0 <= page.selected < len(layout):
+        session = page.shell.session
+        plots = session.plots(page.model_id)
+        if (
+            page.plots_withheld()
+            or len(row.members) != 1
+            or any(row.members[0] in p.subject for p in plots)
+        ):
             return
-        new, at = new_plot(layout, page.selected if page.cards else None, row.members)
-        page.stage_layout(new, select=at)
+        extras = new_watch(session.layout(page.model_id), row.members[0])
+        page.stage_layout(extras, select=len(plots))

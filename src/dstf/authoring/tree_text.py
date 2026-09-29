@@ -5,14 +5,7 @@ names its node the way the node's row does. Every function takes a
 
 from __future__ import annotations
 
-
-def leaves_of(view: dict | None) -> list[dict]:
-    """The leaf nodes of a `tree_view`, in tree order."""
-    if view is None:
-        return []
-    if view.get("kind") == "leaf":
-        return [view]
-    return [leaf for child in view.get("children") or [] for leaf in leaves_of(child)]
+from ..reporting.tree_rows import leaves_of
 
 
 def nodes_of(view: dict | None) -> list[dict]:

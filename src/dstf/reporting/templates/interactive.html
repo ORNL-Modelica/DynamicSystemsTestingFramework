@@ -18,7 +18,7 @@ h1 { margin-bottom: 0.2em; }
 h2 { color: var(--dstf-text-secondary); border-bottom: 1px solid var(--dstf-border); padding-bottom: 0.3em; }
 
 .summary { font-size: 1.1em; margin-bottom: 0.5em; }
-.pass { color: var(--dstf-pass-fill); } .fail { color: var(--dstf-fail-fill); } .new { color: var(--dstf-no-ref-fill); } .info { color: var(--dstf-pending-fill); }
+.pass { color: var(--dstf-pass-fill); } .fail { color: var(--dstf-fail-fill); } .info { color: var(--dstf-pending-fill); }
 /* Neutral headline for a root with no verdict to show — matches its pill,
    which reads "—". */
 .summary .pending { color: var(--dstf-pending-fill); }
@@ -99,7 +99,10 @@ details summary:hover { color: var(--dstf-text); }
 .node-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4em; font-size: 0.9em; }
 .node-label { font-weight: 500; color: var(--dstf-text); }
 .node-score { font-size: 0.85em; color: var(--dstf-text-secondary); font-family: var(--dstf-mono); }
-.node-status { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; }
+/* One width, its text centred: PASS, FAIL and the pending dash, so a plot
+   section's leaf names start in one column (D140; the tool's `.dstf-pill`
+   keeps the same). */
+.node-status { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; min-width: 4em; text-align: center; }
 .node-status.pass { background: var(--dstf-pass-pill); color: var(--dstf-pass-dark); }
 .node-status.fail { background: var(--dstf-fail-pill); color: var(--dstf-fail-dark); }
 .node-status.pending { background: var(--dstf-pending-pill); color: var(--dstf-pending-fill); }
@@ -118,12 +121,21 @@ details summary:hover { color: var(--dstf-text); }
 .plot-controls { display: flex; gap: 1em; align-items: center; margin-bottom: 0.5em; font-size: 0.85em; color: var(--dstf-text-secondary); }
 .plot-controls label { display: inline-flex; align-items: center; gap: 0.4em; }
 .error-overlay-select { padding: 0.15em 0.3em; border: 1px solid var(--dstf-border); border-radius: 3px; font-family: inherit; font-size: 0.85em; }
-/* A line the plot itself cannot say: a missing series, a plot-only series,
-   or why a multi-series plot has no overlay controls. */
+/* A line the plot itself cannot say: a missing series, or a watch plot
+   no criterion scores yet. */
 .plot-note { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 0.5em; }
-/* The untracked names in a multi-series heading — no badge before them,
-   because nothing scored them. */
-.plot-only-names { color: var(--dstf-text-secondary); font-weight: 400; }
+/* A plot's context series — drawn grey beside its subject, never scored on
+   this plot — listed muted above the plot. */
+.plot-context { font-size: 0.85em; color: var(--dstf-text-muted); margin-bottom: 0.5em; }
+/* A plot's criteria, in tree order: each row led by its ancestors' kinds
+   (`and › k-of-n ›`), muted — where in the tree the leaf sits. Each crumb's
+   minimum width is its plot's longest crumb, in ch (the section's
+   `crumb_ch`), so a section's leaf names start in one column whatever its
+   rows' depths — a fixed width was outgrown by a fourth level (the tool's
+   `.dstf-crumb` keeps the same). */
+.criteria-row { display: flex; align-items: baseline; gap: 0.5em; }
+.criteria-row > .node { flex: 1; min-width: 0; }
+.node-crumbs { color: var(--dstf-text-muted); font-size: 0.8em; white-space: nowrap; }
 /* A variable reads as the expression its model wrote (`pipe.T[1]`); its
    result-file name — what a criterion, an override or a --filter is written
    against — rides beside the title, muted. Absent when the two agree. */
@@ -319,32 +331,25 @@ details summary:hover { color: var(--dstf-text); }
 </details>
 {% endif %}
 
-{# === PLOT SECTIONS — one section per plot the test declares === #}
-{# With no ``plots`` key that is one plot per tracked variable, in order,
-   with the element ids the page has always used. A plot of several series
-   draws no overlays and no error traces (both are per-variable pickers
-   keyed by trace name), and says so. #}
+{# === PLOT SECTIONS — one per plot, derived from the criteria tree ===
+   One per scored variable or array family, in the order the tree first
+   names it, then the watch plots; nothing scored is one per tracked
+   variable. Each lists the criteria on its subject in tree order, each led
+   by its ancestors' kinds, and its context series (drawn grey; a
+   context series may be scored on a plot of its own). A family's badges
+   name their members, as the tool's pills do. The error select shows when
+   the subject is ONE scored variable the result carries, the overlay
+   picker when that one variable has overlays. #}
 {% if plot_sections %}
 {% for plot in plot_sections %}
 <div class="variable-section plot-section-block" data-plot="{{ plot.index }}" id="variable-section-{{ plot.index }}">
-  {%- if plot.single %}
   <h2>
     {%- for v in plot.variables -%}
-    <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
+    <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{% if not plot.single %}{{ v.text or v.name }} {% endif %}{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
     {%- endfor %}
     {{ plot.title }}{% if plot.names %}<span class="dstf-varname">{{ plot.names }}</span>{% endif %}
   </h2>
-  {%- else %}
-  {# Several series: one badge before the plot's whole title read as the
-     PLOT's verdict, and two badges read as neither variable's. Each badge
-     sits immediately before the variable it scores; the untracked names
-     follow, folded by family, with no badge at all. #}
-  <h2>
-    {%- for v in plot.variables %}<span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %} {{ v.label or v.name }}{% if (v.label or v.name) != v.name %}<span class="dstf-varname">{{ v.name }}</span>{% endif %} {% endfor %}
-    {%- if plot.plot_only_label %}<span class="plot-only-names">{{ plot.plot_only_label }}</span>{% endif %}
-  </h2>
-  {%- endif %}
-  {% if plot.single and plot.variables %}
+  {% if plot.errors %}
   <div class="plot-controls">
     <label class="error-overlay-control" title="Overlay an error trace on the secondary y-axis">
       Error overlay
@@ -356,52 +361,29 @@ details summary:hover { color: var(--dstf-text); }
       </select>
     </label>
   </div>
-  {% if plot.variables[0].overlays %}
+  {% endif %}
+  {% if plot.overlays %}
   <div class="overlay-picker" data-plot-id="plot-{{ plot.index }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
     <span class="ov-label">Overlays:</span>
-    {% for ov in plot.variables[0].overlays %}
+    {% for ov in plot.overlays %}
     <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
     {% endfor %}
   </div>
   {% endif %}
-  {% elif plot.variables and plot.series | length > 1 %}
-  {# Only a plot of SEVERAL series, at least one of them SCORED, is missing
-     controls it could have had: a plot-only series has no reference to
-     overlay or take an error against — alone or among others — and a plot
-     whose every series is missing draws nothing at all. #}
-  <div class="plot-note">Overlays and error traces show on a plot with one series.</div>
-  {% endif %}
+  {% if plot.context %}<div class="plot-context">Context: {{ plot.context | join(", ") }}</div>{% endif %}
   {% if plot.missing %}<div class="plot-note">Not in this result: {{ plot.missing | join(", ") }}</div>{% endif %}
-  <div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>
-  {#- A variable may sit on several plots (a legal layout): its tree is
-     rendered under the FIRST, or the page carries `nodes-N` twice. #}
-  {% for v in plot.variables %}{% if v.tree_here %}
-  <div class="node-tree" id="nodes-{{ v.vidx }}" data-variable="{{ v.name }}">{% if v.tree %}{{ node(v.tree) }}{% endif %}</div>
-  {% else %}
-  <div class="plot-note">{{ v.text or v.name }}: criteria are under its first plot.</div>
-  {% endif %}{% endfor %}
-  {% for label in plot.plot_only_lines %}
-  <div class="plot-note">{{ label }} is plot only: no criterion scores it.</div>
-  {% endfor %}
-</div>
-{% endfor %}
-{% endif %}
-
-{# === NO-BASELINE PLOTS === #}
-{% if nobaseline_trajectories %}
-<h2>Simulated Variables (No Baseline)</h2>
-{% for traj in nobaseline_trajectories %}
-<div class="plot-section">
-  <h3><span class="new">NEW</span> {{ traj.label or traj.name }}{% if (traj.label or traj.name) != traj.name %}<span class="dstf-varname">{{ traj.name }}</span>{% endif %}</h3>
-  {% if traj.overlays %}
-  <div class="overlay-picker" data-plot-id="nb-plot-{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
-    <span class="ov-label">Overlays:</span>
-    {% for ov in traj.overlays %}
-    <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
-    {% endfor %}
+  {#- A subject the result lacks entirely draws no chart: an empty one
+      said nothing the note does not. #}
+  {% if plot.subject %}<div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>{% endif %}
+  {% if plot.criteria %}
+  <div class="node-tree plot-criteria" id="nodes-{{ plot.index }}">
+    {%- for row in plot.criteria %}
+    <div class="criteria-row" data-variable="{{ row.variable }}">{% if row.crumbs %}<span class="node-crumbs" style="min-width: {{ plot.crumb_ch }}ch">{{ row.crumbs }}</span>{% endif %}{{ node(row.leaf) }}</div>
+    {%- endfor %}
   </div>
+  {% elif plot.watch %}
+  <div class="plot-note">No criteria yet.</div>
   {% endif %}
-  <div class="plotly-chart" id="nb-plot-{{ loop.index0 }}"></div>
 </div>
 {% endfor %}
 {% endif %}
@@ -417,7 +399,6 @@ window.MT_REPORT = {
   {# Figure dicts from dstf.figures — one per plot section, verbatim. #}
   PLOT_FIGURES: {{ (plot_figures or []) | tojson }},
   DIAG_FIGURES: {{ (diag_figures or []) | tojson }},
-  NB_FIGURES: {{ (nb_figures or []) | tojson }},
 };
 </script>
 <script src="interactive.js"></script>
