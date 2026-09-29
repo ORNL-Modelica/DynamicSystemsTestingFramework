@@ -920,6 +920,18 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         expect(page.locator(".dstf-focus-bar")).to_contain_text(
             "Showing 1 of 7 plots: x"
         )
+        # The switcher (Q11 c): every plot by name, a watch plot marked;
+        # choosing one shows it alone.
+        page.locator(".dstf-focus-bar .q-select").click()
+        menu = page.locator(".q-menu .q-item")
+        expect(menu).to_have_count(7, timeout=EXPECT_TIMEOUT)
+        assert menu.all_inner_texts()[:3] == ["x", "y", "w1 · watch"]
+        menu.nth(1).click()
+        expect(page.locator(".dstf-focus-bar")).to_contain_text(
+            "Showing 1 of 7 plots: y", timeout=EXPECT_TIMEOUT
+        )
+        expect(page.locator(".dstf-plot:visible")).to_have_count(1)
+        expect(page.locator(".dstf-plot:visible .dstf-card-title")).to_contain_text("y")
         page.get_by_role("button", name="Show all 7 plots").click()
         expect(page.locator(".dstf-plot:visible")).to_have_count(
             7, timeout=EXPECT_TIMEOUT

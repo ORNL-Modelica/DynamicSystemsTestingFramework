@@ -104,6 +104,7 @@ class TestPage:
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
         self.focus_all: ui.button | None = None
+        self.focus_switch: ui.select | None = None
         #: The plot the Variables drawer's checkboxes act on (the owner's
         #: ruling, Q5 A): the first until a click on a card, or the
         #: drawer's "+ new plot", selects another. Its card wears
@@ -138,6 +139,14 @@ class TestPage:
             ).mark("focus-bar")
             with self.focus_bar:
                 self.focus_text = ui.label().mark("focus-bar:text")
+                # Every plot by its subject (Q11 c), plain text (C4):
+                # choosing one focuses it.
+                self.focus_switch = (
+                    ui.select({}, on_change=lambda e: self.focus_to(e.value))
+                    .props("dense options-dense")
+                    .mark("focus-switch")
+                )
+                self.focus_switch.props["aria-label"] = "Plot"
                 ui.space()
                 self.focus_all = (
                     ui.button(on_click=self.show_all)
@@ -638,6 +647,14 @@ class TestPage:
                         self.drop_row(row.target)
         self._paint_focus()
 
+    def focus_to(self, index: Any) -> None:
+        """The switcher's choice: focus that plot — the same `focus` path,
+        so an editor or a form row on the card it hides closes. Its own
+        repaint (`set_options` to the plot already focused) does nothing:
+        `focus` on the focused plot would END the focus."""
+        if isinstance(index, int) and index != self.focused:
+            self.focus(index)
+
     def show_all(self) -> None:
         self.focused = None
         self._paint_focus()
@@ -663,6 +680,15 @@ class TestPage:
         card = self.cards[focused]
         name = folded(card.resolved.subject, card.texts)
         self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
+        if self.focus_switch is not None:
+            self.focus_switch.set_options(
+                {
+                    c.index: folded(c.resolved.subject, c.texts)
+                    + (" · watch" if c.resolved.watch else "")
+                    for c in self.cards
+                },
+                value=focused,
+            )
         self.focus_all.set_text(f"Show all {plots}")
         self.cards[focused].show(view)
 

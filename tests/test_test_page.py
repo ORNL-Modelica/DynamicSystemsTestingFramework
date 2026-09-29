@@ -5973,6 +5973,58 @@ async def test_the_focus_bar_names_the_plot_as_its_title_does(nested_shell):
         )
 
 
+async def test_the_focus_switch_moves_focus_and_closes_the_old_editor(extras_shell):
+    """Q11 c: Focus has a variable switcher — every plot by its folded
+    subject, as plain text (C4), a watch plot marked. Choosing one focuses
+    it through the same path a card's Focus takes: the editor open on the
+    card it hides closes."""
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.open_criterion(N_KX, 1)
+            page.focus(1)
+        assert page.open == (1, N_KX)
+        switch = _one(user, "focus-switch")
+        assert switch.props["aria-label"] == "Plot"
+        assert list(switch.options.values()) == [
+            "pipe.T[1:2]",
+            "x",
+            "y",
+            "w · watch",
+        ]
+        assert switch.value == 1
+        with page.client:
+            switch.set_value(3)
+        await _settled(lambda: page.focused == 3)
+        assert page.open is None
+        assert [c.card.visible for c in page.cards] == [False, False, False, True]
+        assert _one(user, "focus-bar:all").text == "Show all 4 plots"
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 4 plots: w"
+        # Its own repaint to the plot already focused focuses nothing else:
+        # the card's Focus button still reads "Focused".
+        assert page.cards[3].focus.text == "Focused"
+
+
+async def test_the_focus_switch_closes_a_form_on_the_card_it_hides(page_shell):
+    """A form row under a criteria row goes with its card, as a card's
+    Focus closes it."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        assert page.form is not None
+        with page.client:
+            _one(user, "focus-switch").set_value(1)
+        await _settled(lambda: page.focused == 1)
+        assert page.form is None
+        assert _none(user, f"form-row:crit:0:{RANGE_X}")
+
+
 # -- the status strip (Q2 A) -------------------------------------------------
 
 
