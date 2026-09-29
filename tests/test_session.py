@@ -2356,6 +2356,9 @@ class TestSessionView:
             # ("Add a criterion for pipe.T[1]") reads what the page's titles
             # read, and nothing is keyed by it (Task 4).
             "labels",
+            # both readings: the add form's rows show the plain label with
+            # the muted name beside it, and say the name once
+            "variable_texts",
             "tree_view",
             "tree",
             "is_locked",

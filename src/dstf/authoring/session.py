@@ -979,13 +979,18 @@ class Session:
         comp = self.comparisons.get(model_id)
         if comp is None or not comp.evaluated:
             return None
+        base = (
+            (comp.base_tolerance, comp.tolerance_source)
+            if comp.base_tolerance is not None and comp.tolerance_source is not None
+            else None
+        )
         return build_tree_view(
             list(comp.variables),
             test,
             comp.metric_tree,
             self.variable_texts(model_id),
             # the editor's "in effect" hints (K3); the report shows none
-            comp.tolerance_source,
+            base,
         )
 
     def tree(self, model_id: str) -> dict | None:
@@ -1684,6 +1689,12 @@ class SessionView:
 
     def variable_names(self, model_id: str) -> list[str]:
         return self._session.variable_names(model_id)
+
+    def variable_texts(self, model_id: str) -> dict[str, VariableText]:
+        """Both readings of every variable of the test's page
+        (:meth:`Session.variable_texts`): a control that shows the muted
+        name beside a variable reads the ``label``, as the card title does."""
+        return self._session.variable_texts(model_id)
 
     def labels(self, model_id: str) -> dict[str, str]:
         """``{name: what a capability's own text reads for it}`` —

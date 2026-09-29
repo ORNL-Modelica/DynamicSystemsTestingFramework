@@ -30,10 +30,15 @@ _SPACE = re.compile(r"\s+")
 #: every other key (a caret move, a typed character). Each carries the
 #: box's text AS TYPED: the filter reaches the server 250 ms after the last
 #: keystroke (`debounce`), and ↓ Enter typed inside that moved the cursor
-#: on the list before the filter and chose a row the list then hid.
+#: on the list before the filter and chose a row the list then hid. The
+#: `change` first flushes Quasar's debounce, so its model value is that
+#: text too: left at "" while `T_amb` ↓ drew T_amb's rows, the text then
+#: deleted inside the debounce emitted nothing (the value never moved)
+#: and the list stayed T_amb's under an empty box.
 _KEYS = """(e) => {
   if (['ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) {
     e.preventDefault();
+    e.target.dispatchEvent(new Event('change'));
     emit({key: e.key, needle: e.target.value || ''});
   }
 }"""
@@ -86,14 +91,19 @@ class VariablePicker(ui.column):
             # A combobox over a listbox (WAI-ARIA): the box keeps the focus
             # and names the cursor's row as its active descendant.
             self.list.props["role"] = "listbox"
-            # Not "Variables": a label lookup of the box's "Variable" (the
-            # tests', a screen reader's jump) would find both.
+            # Not "Variables", which reads as the box's "Variable". A lookup
+            # of the box goes by its role: a label lookup of "Variable" also
+            # finds the "Other variables" group.
             self.list.props["aria-label"] = "Matching names"
             needle = self.box.needle.props
             needle["role"] = "combobox"
             needle["aria-controls"] = self.list.html_id
             needle["aria-expanded"] = "true"
             needle["aria-autocomplete"] = "list"
+            # Outside the list: a listbox holds options and groups of them.
+            self.none = ui.label("no variable matches").classes("dstf-why")
+            self.none.props["role"] = "status"
+            self.none.set_visibility(False)
             self.cap = ui.label().classes("dstf-why").mark(f"{marker}:pick-cap")
             self.chosen = (
                 ui.label()
@@ -127,21 +137,27 @@ class VariablePicker(ui.column):
         except regex.error as e:
             self.box.say(f"not a regular expression: {e}")
             self.cap.set_visibility(False)
+            self.none.set_visibility(False)
             return
         except TimeoutError:
             self.box.say("the pattern took too long; simplify it")
             self.cap.set_visibility(False)
+            self.none.set_visibility(False)
             return
         self.box.say(None)
         with self.list:
             for title, rows in picked.sections:
-                ui.label(title).classes("dstf-group").mark(
-                    f"{self._marker}:pick-section:{_mark(title)}"
-                )
-                for row in rows:
-                    self._row(row)
-            if not picked.sections:
-                ui.label("no variable matches").classes("dstf-why")
+                # A named group of options (WAI-ARIA): its title is the
+                # group's name, so it is not read a second time.
+                with ui.column().classes("w-full gap-0") as group:
+                    head = ui.label(title).classes("dstf-group")
+                    head.mark(f"{self._marker}:pick-section:{_mark(title)}")
+                    head.props["aria-hidden"] = "true"
+                    for row in rows:
+                        self._row(row)
+                group.props["role"] = "group"
+                group.props["aria-label"] = title
+        self.none.set_visibility(not picked.sections)
         self.cap.set_text(picked.capped or "")
         self.cap.set_visibility(picked.capped is not None)
         if self.value in self._drawn:
@@ -155,15 +171,18 @@ class VariablePicker(ui.column):
             .mark(f"{self._marker}:pick:{_mark(row.name)}")
             .on("click", lambda _e, n=row.name: self.set_value(n))
         ) as element:
-            text = MiddleCut(row.text).classes("dstf-var-text dstf-mono text-xs")
+            # The plain label: the muted name beside it names the row, and
+            # the scope's text would say the name twice, `a.Q (y) y`.
+            text = MiddleCut(row.label).classes("dstf-var-text dstf-mono text-xs")
             text.props["title"] = row.name
-            if row.text != row.name:
+            if row.label != row.name:
                 ui.label(row.name).classes("dstf-varname dstf-var-text")
         element.props["role"] = "option"
         # Its accessible name is said, not read off the row: the middle
-        # cut's two parts read as "…T_very_long_co mponent_name".
+        # cut's two parts read as "…T_very_long_co mponent_name". The name
+        # once — from the scope's text it read `a.Q (y) (y)`.
         element.props["aria-label"] = (
-            row.text if row.text == row.name else f"{row.text} ({row.name})"
+            row.label if row.label == row.name else f"{row.label} ({row.name})"
         )
         element.props["aria-selected"] = "true" if row.name == self.value else "false"
         if row.name == self.value:
@@ -183,8 +202,9 @@ class VariablePicker(ui.column):
         )
 
     def set_value(self, name: str) -> None:
-        """Choose ``name``: its row is highlighted, the Chosen line names
-        it, ``on_change`` hears it."""
+        """Choose ``name``: its row is highlighted and carries the cursor
+        (a click's row is the one ↓ moves from), the Chosen line names it,
+        ``on_change`` hears it."""
         old = self._drawn.get(self.value)
         if old is not None:
             old.classes(remove="dstf-pick-on")
@@ -196,7 +216,7 @@ class VariablePicker(ui.column):
             new.classes(add="dstf-pick-on")
             new.props["aria-selected"] = "true"
             new.update()
-            self.cursor = [r.name for r in self.shown].index(name)
+            self._move([r.name for r in self.shown].index(name))
         self._say_chosen()
         if self._on_change is not None:
             self._on_change(name)

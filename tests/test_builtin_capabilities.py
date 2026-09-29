@@ -2466,6 +2466,77 @@ async def test_the_picker_is_a_combobox_over_a_listbox(tmp_path):
         assert "aria-activedescendant" not in box  # its row is gone
 
 
+async def test_a_clicked_row_is_the_one_cursor(tmp_path):
+    """A click moves the cursor with the choice: one row carries the ring,
+    and the box's active descendant is that row. A click set the cursor's
+    index alone, and the ring stayed on the row the keys had left it on —
+    the next ↓ moved from one row while another showed the ring."""
+    session = _wide_session(tmp_path, 3)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        _press(picker, "ArrowDown")
+        _press(picker, "ArrowDown")
+        user.find(marker="apply-add:y:variable:pick:v2").click()
+        box = picker.box.needle.props
+        assert box.get("aria-activedescendant") == picker._drawn["v2"].html_id
+        rings = [n for n, e in picker._drawn.items() if "dstf-pick-cursor" in e.classes]
+        assert rings == ["v2"]
+        _press(picker, "ArrowDown")
+        rings = [n for n, e in picker._drawn.items() if "dstf-pick-cursor" in e.classes]
+        assert rings == ["y"]  # from v2, the last row, round to the first
+
+
+async def test_an_options_accessible_name_says_the_name_once(tmp_path):
+    """Two variables whose expressions collide read `a.Q (y)` in the test's
+    scope. A row shows the plain label with the muted name beside it, and
+    its accessible name is the label and the name once — it said the
+    scope's text and the name again, `a.Q (y) (y)`."""
+    from test_session import with_expressions
+
+    session = _wide_session(tmp_path, 1)
+    with_expressions(session, A, {"x": "a.Q", "y": "a.Q"})
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        labels = {n: e.props["aria-label"] for n, e in picker._drawn.items()}
+        assert labels == {"y": "a.Q (y)", "x": "a.Q (x)", "v0": "v0"}, labels
+        from dstf.authoring.shell.widgets import MiddleCut
+
+        cuts = [
+            e.text for e in picker._drawn["y"].descendants() if isinstance(e, MiddleCut)
+        ]
+        assert cuts == ["a.Q"], cuts  # the muted `y` beside it names it
+
+
+async def test_the_pickers_sections_are_named_groups_and_no_match_is_a_status(
+    tmp_path,
+):
+    """WAI-ARIA: a listbox holds options and groups of them. Each section
+    is a group named by its title, holding its options; "no variable
+    matches" is no option — a status line outside the list."""
+    session = _wide_session(tmp_path, 1)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        picker = await _open_plus(user, "y")
+        groups = list(picker.list.default_slot.children)
+        assert [(g.props.get("role"), g.props.get("aria-label")) for g in groups] == [
+            ("group", "On this plot"),
+            ("group", "Other variables"),
+        ]
+        for name, row in picker._drawn.items():
+            (holder,) = [g for g in groups if row in g.descendants()]
+            assert holder.props["aria-label"] == next(
+                r.section for r in picker.shown if r.name == name
+            )
+        picker._filter("nothing-is-named-this", False, False)
+        (none,) = user.find(content="no variable matches").elements
+        assert none.props.get("role") == "status" and none.visible
+        assert none not in picker.list.descendants()
+        picker._filter("", False, False)
+        assert not none.visible
+
+
 async def test_a_simulate_only_test_says_nothing_is_scored(tmp_path):
     """A criterion staged on a simulate-only test is never scored: the add
     form says so, and its Add is grey (A10)."""
@@ -2526,6 +2597,25 @@ async def test_a_diagnostic_offers_scalar_only_and_seeds_a_quantity_path(tmp_pat
         # diagnostics, not the list's first
         user.find(marker="apply-add:y:variable:pick:x").click()
         assert list(met.options) == everything and met.value == "tube"
+
+
+async def test_a_metric_kept_across_a_diagnostic_is_restored_once(tmp_path):
+    """The metric kept over a diagnostic comes back ONCE, on the first
+    ordinary variable after it; a metric chosen after that is the one kept
+    when the choice moves to another ordinary variable, not the old one."""
+    session = _wide_session(tmp_path, 1)
+    _with_diagnostics(session, CPUtime=0.37)
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        await _open_plus(user, "y")
+        met = _metric_select(user)
+        met.set_value("tube")
+        user.find(marker="apply-add:y:variable:pick:CPUtime").click()
+        user.find(marker="apply-add:y:variable:pick:x").click()
+        assert met.value == "tube"
+        met.set_value("points")
+        user.find(marker="apply-add:y:variable:pick:v0").click()
+        assert met.value == "points"
 
 
 async def test_cpu_time_is_seeded_relative(tmp_path):
@@ -2706,3 +2796,28 @@ async def test_the_editor_says_the_tolerance_in_effect_until_the_mode_moves(sess
         mode.set_value("points")
         await user.should_see("Default tolerance")
         await _settled(lambda: not _hints(user))
+
+
+async def test_an_own_tolerance_cleared_says_the_base_in_effect(session):
+    """K3: the hint names what applies while the field is EMPTY. A leaf
+    with its own 0.5 opens with no hint; cleared, the field says the base
+    the leaf would be scored with — it said nothing, because the view
+    carried the base only for a leaf without its own."""
+    base = session.comparisons[A].variables[0].tolerance_used  # none of its own
+    session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 0.5)])
+    async with host(session, EditCriteria(), LEAF0) as (user, _errors, _):
+        await user.should_see("Tolerance")
+        assert _hints(user) == {}
+        (tol,) = [
+            e
+            for e in user.find(kind=ui.number).elements
+            if e.props.get("label") == "Tolerance"
+        ]
+        assert tol.value == 0.5
+        tol.set_value(None)
+        await _settled(
+            lambda: (
+                _hints(user)
+                == {"Tolerance": f"in effect: {base:g} (the project's tolerance)"}
+            )
+        )

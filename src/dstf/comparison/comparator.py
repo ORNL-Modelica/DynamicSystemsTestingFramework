@@ -494,6 +494,7 @@ def compare_test(
             warnings=structural_warnings + ([unscored] if unscored else []),
             metric_tree=tree,
             tolerance_source=tolerance_source,
+            base_tolerance=base_tolerance,
         )
 
     # Merge variable overrides: spec overrides take precedence over reference
@@ -581,8 +582,8 @@ def compare_test(
                     reference_final=float("nan"),
                     actual_final=float("nan"),
                     mode=mode.name,
-                    # As on the no-baseline comparison below: the editor
-                    # shows it as in effect, and the default 0.0 read "0".
+                    # As on the no-baseline comparison below: the one it
+                    # would have applied, not the default 0.0.
                     tolerance_used=tolerance,
                     diagnostics={
                         "error": (
@@ -623,8 +624,8 @@ def compare_test(
                     actual_final=float(var_result.values[-1])
                     if len(var_result.values) > 0
                     else float("nan"),
-                    # The tolerance it would have applied: the editor shows
-                    # it as in effect, and the default 0.0 read "0" there.
+                    # The tolerance it would have applied, not the
+                    # default 0.0.
                     tolerance_used=tolerance,
                 )
             )
@@ -662,6 +663,7 @@ def compare_test(
         warnings=structural_warnings,
         metric_tree=tree,
         tolerance_source=tolerance_source,
+        base_tolerance=base_tolerance,
     )
 
 

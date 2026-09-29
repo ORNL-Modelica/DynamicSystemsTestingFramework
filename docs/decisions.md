@@ -5754,13 +5754,19 @@ last run did not record: rerun to score it/them."
    unchanged on TRANSFORM, measured by the Part A mutation review
    (2026-09-29): all 331 TRANSFORM results scored with 493d1b7 and with
    7234ec8 — 0 differences in verdict, scored lists (873 variables) or
-   NRMSE; TRANSFORM has no `variables` patterns and no trees, so the glob
-   branch is unit-tested only.
+   NRMSE. That is measured at 7234ec8; 8d017cf's move of `tracked_results`
+   (behaviour-identical, unit-tested) is not re-measured over TRANSFORM.
+   TRANSFORM has no `variables` patterns and no trees, so the glob branch
+   is unit-tested only.
 4. *The re-read (O2).* `Session.stage` re-reads a model whose criteria
    name a variable the loaded result lacks and its result FILE holds, with
    the merged TestModel, and rescores it. The read happens before the spec
    and the tests are replaced, into a dict of its own: a read that raises
-   leaves the Session as it was. The file's listing is kept (the file did
+   leaves the Session as it was. The background rescan re-reads the same
+   way, before it replaces the scan, the tests and the comparisons
+   (`_rebuild_tests(scanned=...)`). On both, a scoring that raises after
+   the swap (`_score_all`) is not rolled back: the new spec and tests
+   stand, scored as far as the raise. The file's listing is kept (the file did
    not change). A name the file lacks (OpenModelica, FMPy, a typo) only a
    rerun records, and the strip asks for that: EDITS_NEW, "N unsaved edits
    · <verdict> · N new variable(s): rerun to score it/them", Rerun the one
@@ -5777,29 +5783,40 @@ last run did not record: rerun to score it/them."
    the label OR the result-file name. `shell/picker.py::VariablePicker` is
    the drawers' filter box over a list filtered on the SERVER — never a
    `ui.select` over every name: TRANSFORM has a test of 76,992. ↑/↓ move a
-   ring from the box, Enter chooses, a click chooses. A key carries the
-   box's text as typed: the filter reaches the server 250 ms after the
-   last keystroke, and ↓ Enter typed inside that chose a row of the list
-   before the filter, which the list then hid. The box is a combobox over
-   a listbox, the ring's row its active descendant. The Metric select
+   ring from the box, Enter chooses, a click chooses and moves the ring to
+   its row. A key carries the box's text as typed: the filter reaches the
+   server 250 ms after the last keystroke, and ↓ Enter typed inside that
+   chose a row of the list before the filter, which the list then hid. It
+   flushes the box's debounced value first, so text deleted inside the
+   debounce still redraws the list. The box is a combobox over a listbox,
+   the ring's row its active descendant; each section a group named by its
+   title, and "no variable matches" a status line outside the list. A row
+   shows the plain label with the muted name beside it, and its accessible
+   name is `label (name)` — the name once. The Metric select
    follows the choice (Q2): a diagnostic offers `scalar`, any other
    variable every metric that scores a time series, and coming back from
    a diagnostic restores the metric chosen before it.
 6. *Values in effect.* A leaf without a tolerance of its own is scored
    with the test's base one; its editor says which on the field's hint
-   line — `in effect: 0.01 (the test's tolerance)` — and never writes it.
+   line — `in effect: 0.01 (the test's tolerance)` — whenever the field is
+   EMPTY (at open, after a typed value is cleared, after the leaf's own is
+   cleared), and never writes it: the hint names what applies with the
+   field empty, the base.
    The source is carried from the one base-tolerance resolution in
    `comparator.py` (tree and flat paths) as `TestComparison.
    tolerance_source`: `test` ("the test's tolerance"), `reference` ("the
    baseline's tolerance", the baseline JSON's) or `project` ("the
    project's tolerance", `Config.tolerance`: the CLI's, `testing.json`'s
-   or 1e-4). It rides `Session.tree_view` into the leaf's `in_effect`
-   only: the tolerance, only when the leaf lacks its own, its metric's form
-   has the field and it has no `min_value` / `max_value`; the report's view
-   carries none. A leaf that returned before it scored (a variable the
-   result lacks, a baseline the test does not have) carries the tolerance
-   it would have applied, not the comparison's 0.0. A typed value takes
-   the hint away; cleared, the field says it again.
+   or 1e-4). The value and the source ride `TestComparison.base_tolerance`
+   and `tolerance_source` through `Session.tree_view` into the leaf's
+   `in_effect` only: the base tolerance, on every leaf whose metric's form
+   has the field and that has no `min_value` / `max_value` — a leaf with
+   its own tolerance carries the base too, shown once that value is
+   cleared; the report's view carries none. A leaf that returned before it
+   scored (a variable the result lacks, a baseline the test does not have)
+   reports the tolerance it would have applied (`tolerance_used`), not the
+   comparison's 0.0. A value in the field takes the hint away; cleared,
+   the field says it again.
 7. *Aligned fields.* Every one-line field of the editor row — the form's
    numbers, selects and inputs, and the mode, window and `against`
    controls — carries Quasar's `bottom-slots`, so each reserves the hint
@@ -5820,7 +5837,8 @@ last run did not record: rerun to score it/them."
    width the window no longer holds (kept from a wider one) is clamped in
    the browser on load and on a window resize, and sent once. The grip is
    a focusable separator: ←/→ 16 px, with Shift 64, Home and End the
-   bounds, one send on the key's release.
+   bounds, one send on the key's release — or, when a key moved it and the
+   focus left before the release (→ held, Tab), one send on leaving it.
 9. *The controller's calls* (said to the owner; reversible on the owner's
    word). K1: a diagnostic criterion is `{"metric": "scalar", "variable":
    <name>, "quantity": "<name>.final"}`, seeded `tolerance 0 abs` for a
@@ -5832,9 +5850,10 @@ last run did not record: rerun to score it/them."
    all, and 10% failed tests whose model did not change; a count stays
    bare. Only where it lands in an `and` (an `and` node, or beside a root
    leaf, which makes the root one): a `warn` child passes whatever it
-   scores, so under an `or`, a `k-of-n` or a `weighted` parent it is added
-   bare, with its `0.1 rel` — a warn there would pass an `or` or a
-   `k-of-n` with nothing else passing. `EditTree.act("add")` hands
+   scores, so under an `or` or a `k-of-n` parent it is added bare, with its
+   `0.1 rel` — a warn there would pass an `or` or a `k-of-n` with nothing
+   else passing. (Under a `weighted` one the `+` is grey: a child cannot
+   be added alone.) `EditTree.act("add")` hands
    `seed_diagnostic` the landing combinator's kind. The Add still opens
    the leaf's row. K2: at most 200 rows, "Showing
    200 of N — narrow the search" when capped. K3: the value in effect on
@@ -5861,8 +5880,8 @@ and an accept stores it; `test_spec.json`, the CLI and the reference-JSON
 layout do not change. Known gaps: a diagnostic's criterion has no plot,
 so after its Add the tree card opens on its row (B6), and nothing on the
 Test page edits its values until U3's Statistics card hosts that editor;
-on the flat path a baseline JSON's `variable_overrides` tolerance is the
-value shown in effect but is attributed to the base's source. Not
+on the flat path a baseline JSON's `variable_overrides` tolerance scores
+its variable, while the hint names the test's base. Not
 measured here: the TRANSFORM gate over a copy (the picker over the
 76,992-name test, the hints on a real test, the drawer), which the plan
 leaves to its controller.

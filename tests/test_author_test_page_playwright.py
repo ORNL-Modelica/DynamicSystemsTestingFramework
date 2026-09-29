@@ -3185,7 +3185,7 @@ def test_the_pickers_keyboard_chooses_a_variable_and_add_stages_it(
         head = page.locator(".dstf-plot").first.locator(".dstf-criteria-head")
         expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
         head.get_by_role("button", name="Add a criterion for x").click()
-        box = page.get_by_label("Variable")
+        box = page.get_by_role("combobox", name="Variable")
         expect(box).to_be_visible(timeout=EXPECT_TIMEOUT)
         box.fill("w?")
         rows = page.locator(".dstf-pick-row")
@@ -3300,6 +3300,43 @@ def test_the_editors_fields_line_up_and_say_the_value_in_effect(
             expect(page.locator(".dstf-editor")).to_have_count(
                 0, timeout=EXPECT_TIMEOUT
             )
+
+
+def _own_tolerance_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_tolerance_project` with the nrmse leaf's own tolerance 0.5."""
+    cfg, work = _tolerance_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"]["children"][0]["tolerance"] = 0.5
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_an_own_tolerance_cleared_says_the_base_in_effect(tmp_path, playwright_browser):
+    """K3: the hint names what applies while the field is EMPTY. The
+    leaf's own 0.5 shows no hint; cleared, the field says the test's 0.01
+    on its hint line — it said nothing, the base being carried only for a
+    leaf without its own."""
+    with _served(tmp_path, playwright_browser, project=_own_tolerance_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "nrmse · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)
+        fields = {f[0]: f for f in page.evaluate(READ_FIELDS)}
+        assert fields["Tolerance"][3] == "", fields
+        tolerance = page.locator(".dstf-editor").get_by_label("Tolerance")
+        assert tolerance.input_value() == "0.5"
+        tolerance.fill("")
+        tolerance.press("Tab")
+        page.wait_for_timeout(800)
+        cleared = {f[0]: f for f in page.evaluate(READ_FIELDS)}
+        assert cleared["Tolerance"][3:] == [
+            "in effect: 0.01 (the test's tolerance)",
+            1,
+        ], cleared
+        _shot(page, tmp_path, "editor-own-tolerance-cleared")
 
 
 #: The open drawer's panel width, and the first plot's svg width.
@@ -3486,7 +3523,7 @@ def test_keys_typed_inside_the_filters_debounce_act_on_the_list_shown(
         head = page.locator(".dstf-plot").first.locator(".dstf-criteria-head")
         expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
         head.get_by_role("button", name="Add a criterion for x").click()
-        box = page.get_by_label("Variable")
+        box = page.get_by_role("combobox", name="Variable")
         expect(box).to_be_visible(timeout=EXPECT_TIMEOUT)
         box.click()
         box.press_sequentially("T_amb", delay=20)
@@ -3513,6 +3550,57 @@ def test_keys_typed_inside_the_filters_debounce_act_on_the_list_shown(
             "listbox"
         ).get_attribute("id")
         expect(page.get_by_role("option", name="system.T_amb")).to_have_count(1)
+
+
+def test_a_needle_undone_inside_the_debounce_redraws_the_list(
+    tmp_path, playwright_browser
+):
+    """`T_amb`, ↓ — drawn for `T_amb` by the key — then the text deleted
+    inside the filter's 250 ms debounce. Quasar's model value had never
+    left "", so the debounce emitted nothing and the list stayed at
+    T_amb's rows under an empty box: the key now flushes the box's value
+    first. The list is the box's."""
+    with _served(tmp_path, playwright_browser, project=_amb_project) as page:
+        head = page.locator(".dstf-plot").first.locator(".dstf-criteria-head")
+        expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
+        head.get_by_role("button", name="Add a criterion for x").click()
+        box = page.get_by_role("combobox", name="Variable")
+        expect(box).to_be_visible(timeout=EXPECT_TIMEOUT)
+        rows = page.locator(".dstf-pick-row")
+        page.wait_for_timeout(500)
+        full = rows.count()
+        assert full > 2
+        box.click()
+        box.press_sequentially("T_amb", delay=20)
+        page.keyboard.press("ArrowDown")
+        for _ in range(5):
+            page.keyboard.press("Backspace")
+        page.wait_for_timeout(1200)
+        assert box.input_value() == ""
+        expect(rows).to_have_count(full)
+
+
+def test_a_clicked_row_carries_the_one_ring(tmp_path, playwright_browser):
+    """A click moves the ring with the choice: after ↓ ↓ from the box and a
+    click on another row, one row has the ring — the clicked one — and it
+    is the box's active descendant."""
+    with _served(tmp_path, playwright_browser, project=_amb_project) as page:
+        head = page.locator(".dstf-plot").first.locator(".dstf-criteria-head")
+        expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
+        head.get_by_role("button", name="Add a criterion for x").click()
+        box = page.get_by_role("combobox", name="Variable")
+        expect(box).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(500)
+        box.click()
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("ArrowDown")
+        target = page.get_by_role("option", name="a3", exact=True)
+        target.click()
+        cursor = page.locator(".dstf-pick-cursor")
+        expect(cursor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(cursor).to_have_attribute("aria-label", "a3")
+        assert box.get_attribute("aria-activedescendant") == target.get_attribute("id")
+        _shot(page, tmp_path, "picker-click-ring")
 
 
 #: The open drawer's panel width and the drawer's (`.dstf-rail-drawer`,
@@ -3632,3 +3720,27 @@ def test_the_grip_answers_the_keyboard(tmp_path, playwright_browser):
         expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(800)
         assert page.evaluate(PANEL_AND_DRAWER) == [744, 784]
+
+
+def test_a_grip_key_the_focus_left_before_its_release_sends_the_width(
+    tmp_path, playwright_browser
+):
+    """The key's release sends the width — but a key held while the focus
+    moves away (→ held, Tab) is released on another element, and the
+    width the panel took never reached the server: a reload drew the old
+    one. Leaving the grip sends what a key moved and nothing sent."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        _open_vars(page)
+        grip = page.locator(".dstf-drawer-handle")
+        expect(grip).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(500)
+        grip.focus()
+        page.keyboard.down("ArrowRight")
+        page.keyboard.press("Tab")
+        page.keyboard.up("ArrowRight")
+        assert page.evaluate(PANEL_AND_DRAWER)[0] == 336
+        page.wait_for_timeout(400)
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        assert page.evaluate(PANEL_AND_DRAWER) == [336, 376]

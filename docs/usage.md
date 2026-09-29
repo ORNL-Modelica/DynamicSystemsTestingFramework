@@ -965,12 +965,14 @@ form derived from that metric's config dataclass, the window, and the baseline
 the leaf scores `against` — `primary`, plus the soft_checks when the leaf sits
 under a `warn`, since a soft_check anywhere else is what the validator
 refuses. A criterion without a tolerance of its own is scored with the test's
-base one, and its Tolerance field says which on the line under it — "in
-effect: 0.01 (the test's tolerance)", or the baseline's, or the project's
-(`testing.json`'s, the CLI's, or the 1e-4 default) — and never writes it, so
-an unset tolerance keeps falling back; a typed value takes the line away, and
-clearing it brings it back. A field with nothing in effect shows its default
-as a placeholder, never written either. Every field of the row keeps that
+base one, and its Tolerance field says which on the line under it whenever the
+field is empty — "in effect: 0.01 (the test's tolerance)", or the baseline's,
+or the project's (`testing.json`'s, the CLI's, or the 1e-4 default) — and
+never writes it, so an unset tolerance keeps falling back; a value in the
+field, typed or the criterion's own, takes the line away, and clearing it
+brings the line back, naming the base the criterion would then be scored
+with. A field with nothing in effect shows its default as a placeholder,
+never written either. Every field of the row keeps that
 line, so their input lines sit level. Structured fields — tube control points,
 checkpoints, declared events and peaks — are shown read-only here and edited in
 Edit on plot. Every control change stages one `replace` of the whole leaf and
@@ -995,7 +997,7 @@ such as Dymola's `CPUtime` and `EventCounter`). Its box filters as the drawers'
 do — a substring, a glob, `.*`, `Aa` — on a row's label or its result-file
 name; at most 200 rows are listed ("Showing 200 of N — narrow the search").
 ↑ and ↓ move a ring through the rows from the box, Enter chooses the ringed
-row, a click chooses a row; the line under the list, "Chosen: …", names the
+row, a click chooses a row and moves the ring to it; the line under the list, "Chosen: …", names the
 choice even when the filter hides it. The **Metric** select follows the
 choice: a diagnostic offers `scalar` only, anything else every metric that
 scores a time series (and the one chosen before a diagnostic comes back).
@@ -1005,8 +1007,10 @@ backend records, stores and scores a criterion's variables after the test's
 (see the strip, above, for the rerun). A diagnostic's criterion scores its
 stored final — `scalar` with `quantity: "<name>.final"` — exactly for a count
 (`EventCounter`, or a diagnostic of whole numbers) and within 10% otherwise;
-`CPUtime` is added inside a `warn`, since a run's CPU time moves with the
-machine's load. Such a criterion has no plot: after its Add the tree opens on
+`CPUtime` is added inside a `warn` where it lands in an `and` (beside a root
+criterion too, which makes the root one), since a run's CPU time moves with
+the machine's load; under an `or` or a `k-of-n` it is added bare, because a
+warn there would pass its parent. Such a criterion has no plot: after its Add the tree opens on
 its row, and its values are not yet edited on the Test page. On a
 simulate-only test the form says "This test is simulate-only: nothing is
 scored" and its Add is grey.

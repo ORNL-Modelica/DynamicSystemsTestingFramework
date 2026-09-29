@@ -1,6 +1,6 @@
 """A criterion's values in effect (the plan's Task 5, K3): the tree view's
-leaf carries ``in_effect`` — the tolerance the evaluation applied, and
-where it came from — for a leaf that does not set its own."""
+leaf carries ``in_effect`` — the test's base tolerance, and where it came
+from: what a leaf is scored with while its tolerance field is empty."""
 
 from __future__ import annotations
 
@@ -51,7 +51,10 @@ def test_a_leaf_without_a_tolerance_shows_the_tests(tmp_path):
     assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
 
 
-def test_a_leaf_with_its_own_tolerance_has_none_in_effect(tmp_path):
+def test_a_leaf_with_its_own_tolerance_carries_the_base_too(tmp_path):
+    """The hint names what applies with the field EMPTY: a leaf whose own
+    0.5 is cleared in the editor is scored with the base, so the view
+    carries the base (not the 0.5 the leaf applies now) for it too."""
     tree = {
         "combinator": "and",
         "children": [
@@ -61,7 +64,7 @@ def test_a_leaf_with_its_own_tolerance_has_none_in_effect(tmp_path):
     }
     s = _session(tmp_path, test_tol=0.01, metrics=tree)
     x, y = _leaves(s.tree_view(A))
-    assert "in_effect" not in x
+    assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
     assert y["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
 
 

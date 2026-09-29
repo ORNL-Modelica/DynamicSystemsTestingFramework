@@ -141,7 +141,9 @@ async def test_a_typed_value_takes_the_hint_away_and_clearing_it_brings_it_back(
         assert forms["f"].values() == {}
 
 
-async def test_a_field_with_its_own_value_shows_no_hint():
+async def test_a_field_with_its_own_value_shows_no_hint_until_it_is_cleared():
+    """The hint names what applies while the field is empty: an own 0.5
+    shows none, and cleared the field says the base."""
     forms = {}
 
     def root():
@@ -157,6 +159,11 @@ async def test_a_field_with_its_own_value_shows_no_hint():
         tol = forms["f"].controls["tolerance"]
         assert not tol.props.get("hint")
         assert forms["f"].values() == {"tolerance": 0.5}
+        tol.set_value(None)
+        assert tol.props.get("hint") == "in effect: 0.01 (the test's tolerance)"
+        assert forms["f"].values() == {}
+        tol.set_value(0.2)
+        assert not tol.props.get("hint")
 
 
 async def test_every_one_line_field_reserves_the_bottom_line():

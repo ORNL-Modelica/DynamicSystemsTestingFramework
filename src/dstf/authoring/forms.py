@@ -87,11 +87,11 @@ def render_form(
     each control needs a width of its own. A multi-line control (a list
     shown as JSON) takes the whole line instead, whatever ``classes`` says.
 
-    ``in_effect`` (the tree view leaf's, K3) names the value the evaluation
-    applied to a field the leaf does not set: that field's hint line says
-    it, in place of the dataclass default as a placeholder — which is not
-    what was applied — and ``values()`` never writes it. A field with a
-    value of its own shows no hint.
+    ``in_effect`` (the tree view leaf's, K3) names the value a field
+    applies while it is EMPTY: its hint line says it whenever the field is
+    empty — at open, and after an own value is cleared — in place of the
+    dataclass default as a placeholder, which is not what applies, and
+    ``values()`` never writes it. A field holding a value shows no hint.
     """
     in_effect = in_effect or {}
     form = Form()
@@ -114,7 +114,7 @@ def render_form(
             continue
         if spec.name in values:
             form._values[spec.name] = current
-        effect = in_effect.get(spec.name) if current is None else None
+        effect = in_effect.get(spec.name)
         hint = in_effect_hint(effect) if effect is not None else None
         control = _control(
             spec,
@@ -124,7 +124,10 @@ def render_form(
             ),
         )
         if hint is not None:
-            control.props["hint"] = hint
+            if current is None:
+                control.props["hint"] = hint
+            # Wide enough for it with a value too: clearing one does not
+            # reflow the row.
             control.style(
                 f"min-width: {math.ceil(len(hint) * HINT_PX_PER_CHAR) + HINT_PADDING_PX}px"
             )

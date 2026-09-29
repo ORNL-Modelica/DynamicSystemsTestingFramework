@@ -113,33 +113,36 @@ def _text_of(texts: dict[str, VariableText] | None, name: str, expression: str) 
     return entry.text if entry is not None else display_label(name, expression)
 
 
-def _in_effect(view: dict, vc: VariableComparison, source: str | None) -> dict:
-    """``{field: {"value", "source"}}`` for the values the evaluation
-    applied that the leaf does not set (K3): today the tolerance, on a
-    metric whose form has one and where it is not ignored — a scalar with
-    bounds ignores it. ``source`` names the test's base (`TestComparison.
-    tolerance_source`); None — a caller that has none — shows nothing.
-    Known gap: on the flat path a baseline JSON's ``variable_overrides``
-    tolerance is the value shown (``tolerance_used``) but is attributed to
-    the base's source."""
+def _in_effect(view: dict, base: tuple[float, str] | None) -> dict:
+    """``{field: {"value", "source"}}`` for what a leaf is scored with while
+    its field is EMPTY (K3): today the test's base tolerance and its source
+    (``base``, `TestComparison.base_tolerance` / ``tolerance_source``), on
+    every leaf whose metric's form has the field and does not ignore it — a
+    scalar with bounds does. A leaf with a tolerance of its own carries it
+    too: its editor shows no hint until that value is cleared, and cleared,
+    the base is what applies. None — a caller that has none — shows
+    nothing. Known gap: on the flat path a baseline JSON's
+    ``variable_overrides`` tolerance scores its variable, while the hint
+    names the base."""
     from ..comparison.mode_schema import derive_schema
     from ..comparison.registry import metric
 
     params = view.get("params") or {}
     desc = metric(view.get("metric", ""))
-    if source is None or desc is None or "tolerance" in params:
+    if base is None or desc is None:
         return {}
     fields = {f.name for f in derive_schema(desc.config_cls, mode=desc.name).fields}
     if "tolerance" not in fields or {"min_value", "max_value"} & set(params):
         return {}
-    return {"tolerance": {"value": vc.tolerance_used, "source": source}}
+    value, source = base
+    return {"tolerance": {"value": float(value), "source": source}}
 
 
 def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
     texts: dict[str, VariableText] | None = None,
-    tolerance_source: str | None = None,
+    base_tolerance: tuple[float, str] | None = None,
 ) -> None:
     """Walk ``view`` in place, enriching leaf nodes with what the page shows.
 
@@ -184,12 +187,12 @@ def _augment_tree_view(
                 "error": (vc.diagnostics or {}).get("error"),
             }
         )
-        in_effect = _in_effect(view, vc, tolerance_source)
+        in_effect = _in_effect(view, base_tolerance)
         if in_effect:
             view["in_effect"] = in_effect
         return
     for child in view.get("children", []):
-        _augment_tree_view(child, comparisons_by_path, texts, tolerance_source)
+        _augment_tree_view(child, comparisons_by_path, texts, base_tolerance)
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +742,7 @@ def build_tree_view(
     test_model,
     metric_tree,
     texts: dict[str, VariableText] | None = None,
-    tolerance_source: str | None = None,
+    base_tolerance: tuple[float, str] | None = None,
 ) -> dict | None:
     """The read-only metric tree as the report renders it — the spec's shape
     (the authored tree, else the implicit one synthesized from what was
@@ -789,7 +792,7 @@ def build_tree_view(
             len(missing),
             ", ".join(missing),
         )
-    _augment_tree_view(tree_view, comparisons_by_path, texts, tolerance_source)
+    _augment_tree_view(tree_view, comparisons_by_path, texts, base_tolerance)
     # Before the per-variable pills read it (`_build_tree_view_and_variables`)
     # and before a plot's criteria rows share these leaf dicts.
     _mark_advisory(tree_view)

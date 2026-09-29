@@ -7,6 +7,7 @@ import pytest
 
 from dstf.authoring.needle import matcher
 from dstf.authoring.picker_rows import CAP, SECTIONS, picker_rows
+from dstf.backends.types import VariableText
 
 
 def _all(_text: str) -> bool:
@@ -21,7 +22,7 @@ def test_three_sections_in_order_and_each_name_once():
         on_plot=["x", "z"],
         names=["x", "y", "z", "w", "CPUtime"],
         diagnostics=["CPUtime", "EventCounter"],
-        labels={"x": "a.Q"},
+        texts={"x": VariableText("a.Q", "a.Q (x)")},
         keep=_all,
     )
     assert [title for title, _ in got.sections] == list(SECTIONS)
@@ -30,23 +31,26 @@ def test_three_sections_in_order_and_each_name_once():
         ["y", "w"],
         ["CPUtime", "EventCounter"],
     ]
-    (x, _z), _, _ = (rows for _, rows in got.sections)
-    assert (x.text, x.name) == ("a.Q", "x")
+    (x, z), _, _ = (rows for _, rows in got.sections)
+    # the scope's text (the Chosen line's) and the plain label the row
+    # shows beside its muted name
+    assert (x.text, x.label, x.name) == ("a.Q (x)", "a.Q", "x")
+    assert (z.text, z.label) == ("z", "z")
 
 
 def test_an_empty_section_is_absent():
-    got = picker_rows(on_plot=[], names=["y"], diagnostics=[], labels={}, keep=_all)
+    got = picker_rows(on_plot=[], names=["y"], diagnostics=[], texts={}, keep=_all)
     assert [title for title, _ in got.sections] == ["Other variables"]
 
 
 def test_the_filter_reads_the_label_and_the_name():
-    labels = {"unitTests.x[1]": "pipe.T[3]"}
+    texts = {"unitTests.x[1]": VariableText("pipe.T[3]", "pipe.T[3]")}
     keep = matcher("pipe.T*", regex=False, case=False)
     got = picker_rows(
         on_plot=[],
         names=["unitTests.x[1]", "q"],
         diagnostics=[],
-        labels=labels,
+        texts=texts,
         keep=keep,
     )
     assert [r.name for _, rows in got.sections for r in rows] == ["unitTests.x[1]"]
@@ -55,7 +59,7 @@ def test_the_filter_reads_the_label_and_the_name():
         on_plot=[],
         names=["unitTests.x[1]", "q"],
         diagnostics=[],
-        labels=labels,
+        texts=texts,
         keep=keep,
     )
     assert [r.name for _, rows in got.sections for r in rows] == ["unitTests.x[1]"]
@@ -63,7 +67,7 @@ def test_the_filter_reads_the_label_and_the_name():
 
 def test_at_most_cap_rows_and_the_cap_line_counts_all():
     names = [f"v{i}" for i in range(77_000)]
-    got = picker_rows(on_plot=["v0"], names=names, diagnostics=[], labels={}, keep=_all)
+    got = picker_rows(on_plot=["v0"], names=names, diagnostics=[], texts={}, keep=_all)
     assert got.shown == CAP == 200
     assert got.total == 77_000
     assert sum(len(rows) for _, rows in got.sections) == CAP
@@ -71,7 +75,7 @@ def test_at_most_cap_rows_and_the_cap_line_counts_all():
 
 
 def test_under_the_cap_there_is_no_cap_line():
-    got = picker_rows(on_plot=[], names=["a"], diagnostics=[], labels={}, keep=_all)
+    got = picker_rows(on_plot=[], names=["a"], diagnostics=[], texts={}, keep=_all)
     assert got.capped is None
 
 
@@ -80,4 +84,4 @@ def test_a_regex_that_runs_out_raises_for_the_caller_to_say():
         raise TimeoutError("the pattern took too long")
 
     with pytest.raises(TimeoutError):
-        picker_rows(on_plot=[], names=["a"], diagnostics=[], labels={}, keep=slow)
+        picker_rows(on_plot=[], names=["a"], diagnostics=[], texts={}, keep=slow)

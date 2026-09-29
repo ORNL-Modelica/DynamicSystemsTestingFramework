@@ -466,7 +466,7 @@ def _add_form(
         names = [variable, *names]
     on_plot = _plot_series(s, model_id, s.selection.variable)
     diagnostics = list(_diagnostics(s, model_id))
-    labels = s.labels(model_id)
+    texts = s.variable_texts(model_id)
     first = variable or (on_plot or names or [""])[0]
 
     #: The metric chosen on an ordinary variable while a diagnostic —
@@ -490,11 +490,11 @@ def _add_form(
             on_plot=on_plot,
             names=names,
             diagnostics=diagnostics,
-            labels=labels,
+            texts=texts,
             keep=keep,
         ),
         value=first,
-        text_of=lambda name: labels.get(name, name),
+        text_of=lambda name: texts[name].text if name in texts else name,
         on_change=follow,
         marker=f"{mark}:variable",
     )

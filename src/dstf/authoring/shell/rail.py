@@ -136,7 +136,11 @@ _DRAG = """(e) => {
 #: The grip from the keyboard (a focusable `separator`, WAI-ARIA's window
 #: splitter): ←/→ 16 px, with Shift 64, Home the narrowest, End the
 #: widest; the panel follows each key, and the key's release sends the
-#: width once — a held → sends one width, not one per repeat.
+#: width once — a held → sends one width, not one per repeat. A key moves
+#: the grip's `dirty` mark and a send clears it; leaving the grip sends a
+#: width still marked: a key held while the focus moves (→ held, Tab) is
+#: released on another element, and the width it left never reached the
+#: server.
 _STEP, _BIG_STEP = 16, 64
 _GRIP_KEYS = ("ArrowLeft", "ArrowRight", "Home", "End")
 _KEYDOWN = """(e) => {
@@ -147,9 +151,17 @@ _KEYDOWN = """(e) => {
   if (to === undefined) return;
   e.preventDefault();
   d.apply(panel, d.clamp(to));
+  e.currentTarget.dataset.dirty = '1';
 }"""
 _KEYUP = """(e) => {
   if (!__KEYS__.includes(e.key)) return;
+  const d = window.__dstfDrawer, panel = d?.panel();
+  delete e.currentTarget.dataset.dirty;
+  if (panel) emit(d.width(panel), window.innerWidth);
+}"""
+_BLUR = """(e) => {
+  if (!e.currentTarget.dataset.dirty) return;
+  delete e.currentTarget.dataset.dirty;
   const d = window.__dstfDrawer, panel = d?.panel();
   if (panel) emit(d.width(panel), window.innerWidth);
 }"""
@@ -489,6 +501,7 @@ class Rail:
                     lambda e: self.resize(*e.args),
                     js_handler=_KEYUP.replace("__KEYS__", json.dumps(_GRIP_KEYS)),
                 )
+                .on("blur", lambda e: self.resize(*e.args), js_handler=_BLUR)
             )
             # A window splitter (WAI-ARIA): focusable, its value the panel's
             # width — the most is the browser's (`_WIDTH`'s `bounds`).

@@ -130,6 +130,8 @@ class TestComparison:
     #: else testing.json's, else 1e-4 — the comparator is handed one number
     #: and cannot tell those apart). None where nothing was scored.
     tolerance_source: str | None = None
+    #: That base tolerance: what a leaf without its own is scored with.
+    base_tolerance: float | None = None
 
     @property
     def evaluated(self) -> bool:
