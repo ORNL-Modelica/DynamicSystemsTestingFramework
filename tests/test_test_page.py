@@ -8674,3 +8674,70 @@ async def test_a_criterion_on_a_list_statistic_has_a_home_on_the_card(
             page.jump_to(T1)
         await _settled(lambda: page.open == (STATS, T1))
         assert user.notify.messages == []
+
+
+# -- the mutation review's survivors (U3 fix batch 2) -------------------------
+
+
+async def test_a_reduce_scalar_on_a_plotted_variable_is_a_row_of_its_plot(
+    stats_shell,
+):
+    """The page's shape leaves out STATISTICS leaves only: a `scalar` that
+    reduces a variable (`{"reduce": "max"}` on x) is a criterion of x's
+    plot, and staging one reshapes that plot's rows."""
+    shell = stats_shell
+    _stage_tree(shell, A, {"combinator": "and", "children": [
+        {"metric": "nrmse", "variable": "x"}]})  # fmt: skip
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.subject for c in page.cards] == [("x",)]
+        shell.session.stage([PatchOp(A, "add", "/metrics/children/-", {
+            "metric": "scalar", "variable": "x", "quantity": {"reduce": "max"},
+            "tolerance": 0.1})])  # fmt: skip
+        await _settled(lambda: "/metrics/children/1" in page.cards[0].rows)
+        assert "/metrics/children/1" in page.cards[0].rows
+
+
+async def test_a_sync_with_no_lock_moved_keeps_the_plus(stats_shell):
+    """The `+`s are redrawn only when a job's lock comes or goes; a sync
+    with nothing moved follows them in place — the same element."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        with page.client:
+            page.sync()
+            page.sync()
+        assert _one(user, f"add-statistic:{NONLINEAR}") is plus
+
+
+async def test_the_lock_is_the_pluss_reason_before_simulate_only(stats_shell):
+    """Both apply: the `+` names the job holding the test — the add form's
+    `available` puts the lock first too."""
+    from dstf.authoring.capabilities import Job
+
+    shell = stats_shell
+    shell.session.project.test(A).simulate_only = True
+    gate = _Gate()
+    plus = f"add-statistic:{NONLINEAR}"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await _settled(
+            lambda: _one(user, plus).props["aria-label"] == f"rerun is running on {A}"
+        )
+        assert not _one(user, plus).enabled
+        gate.release.set()
+
+
+async def test_a_side_with_no_value_reads_a_dash(stats_shell):
+    """B has no baseline: its Baseline column reads `—`, never blank."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, model=B)
+        page.stats.toggle()
+        texts = [e.text for e in _one(user, f"stats:row:{NONLINEAR}").descendants()
+                 if isinstance(e, ui.label)]  # fmt: skip
+        assert texts[1:3] == ["3", "—"]

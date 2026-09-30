@@ -3915,6 +3915,14 @@ def _stats_session(tmp_path: Path, *, result: bool = True) -> Session:
 
 
 class TestTheStatisticsRows:
+    def test_an_unknown_models_statistic_leaves_are_a_key_error(self, tmp_path):
+        """As for `statistics` and `tree`: a model the project does not
+        have is a caller's error, not a test with no criteria."""
+        s = _stats_session(tmp_path)
+        with pytest.raises(KeyError):
+            s.statistic_leaves("No.Such.Model")
+        assert s.statistic_leaves(A) == []
+
     def test_the_run_beside_the_baseline_in_the_reports_order(self, tmp_path):
         s = _stats_session(tmp_path)
         rows = s.statistics(A)
