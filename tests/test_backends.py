@@ -1191,3 +1191,84 @@ class TestDymolaStatisticsFromLogs:
         assert result.success is True
         assert "continuous_time_states" in result.statistics["translation"]
         assert "cpu_time_integration" in result.statistics["simulation"]
+
+    def _completed_test_dir(self, work_dir):
+        """A test Dymola finished — its result reaches stop_time 1.0 and
+        dsfinal.txt exists — with both logs beside it."""
+        import shutil
+
+        test_dir = work_dir / "test_0001"
+        test_dir.mkdir()
+        t = np.linspace(0.0, 1.0, 5)
+        _write_mat4(test_dir / "dsres.mat", [("data_2", np.vstack([t, 2 * t]), 0)])
+        (test_dir / "dsfinal.txt").write_text("done")
+        for name in ("dslog.txt", "translation_log.txt"):
+            shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, test_dir / name)
+        return test_dir
+
+    def test_the_batch_timeout_salvage_merges_both_logs(self, tmp_path, monkeypatch):
+        """The batch timed out, and the test had finished before it: the
+        salvaged result carries both logs' statistics — the salvage read
+        dslog.txt alone."""
+        from dstf.backends.dymola import backend as dr
+
+        backend = self._backend(tmp_path)
+        self._completed_test_dir(tmp_path)
+
+        class _SlowProc:
+            pid = 1
+            calls = 0
+
+            def communicate(self, timeout=None):
+                _SlowProc.calls += 1
+                if _SlowProc.calls == 1:
+                    raise dr.subprocess.TimeoutExpired("dymola", timeout)
+                return (b"", b"")
+
+            def poll(self):
+                return 0
+
+        monkeypatch.setattr(dr.subprocess, "Popen", lambda *a, **kw: _SlowProc())
+        monkeypatch.setattr(dr, "kill_process_tree", lambda *a, **kw: None)
+        startup = tmp_path / "startup.mos"
+        shutdown = tmp_path / "shutdown.mos"
+        startup.write_text("// stub")
+        shutdown.write_text("// stub")
+
+        items = [(_tm("Lib.A", stop_time=1.0), "test_0001")]
+        (result,) = backend._run_batch(items, startup, shutdown, 0, 1)
+        assert _SlowProc.calls == 2  # it did time out
+        assert result.success is True
+        assert "continuous_time_states" in result.statistics["translation"]
+        assert "cpu_time_integration" in result.statistics["simulation"]
+
+    def test_the_persistent_workers_disk_rescue_merges_both_logs(self, tmp_path):
+        """The worker's interface died after Dymola finished the test: the
+        result rescued from disk carries both logs' statistics."""
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
+
+        self._completed_test_dir(tmp_path)
+        worker = DymolaWorker(
+            worker_id=0,
+            config=SimpleNamespace(
+                work_dir=tmp_path,
+                backend_path=None,
+                dependencies=[],
+                library_dir=tmp_path,
+            ),
+            dymola_config=SimpleNamespace(
+                show_ide=False, backend_setup=[], diagnostic_variables=[]
+            ),
+            dymola_interface_cls=object,
+        )
+
+        def run_test(test, test_key, progress=None):
+            raise ConnectionError("interface dropped")
+
+        worker.run_test = run_test  # type: ignore[method-assign]
+        result = worker.run_test_with_timeout(
+            _tm("Lib.A", stop_time=1.0), "test_0001", timeout=10
+        )
+        assert result.success is True
+        assert "continuous_time_states" in result.statistics["translation"]
+        assert "cpu_time_integration" in result.statistics["simulation"]
