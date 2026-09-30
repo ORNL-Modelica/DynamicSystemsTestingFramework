@@ -494,14 +494,14 @@ def _scalar_path_arrays(
     from. The reference side is left empty when the leaf scores against
     declared bounds (baseline-free) — there may be no baseline at all.
     """
-    act = _resolve_scalar_path(path, scalars.statistics, scalars.diagnostics)
+    act = resolve_scalar_path(path, scalars.statistics, scalars.diagnostics)
     if act is None:
         return _missing_scalar_path_comparison(leaf, path, "current run")
 
     empty = np.array([])
     ref_time, ref_values = empty, empty
     if baseline is not None:
-        ref = _resolve_scalar_path(path, baseline.statistics, baseline.diagnostics)
+        ref = resolve_scalar_path(path, baseline.statistics, baseline.diagnostics)
         if ref is None:
             if not mode.is_baseline_free():
                 return _missing_scalar_path_comparison(
@@ -512,7 +512,7 @@ def _scalar_path_arrays(
     return ref_time, ref_values, np.array([0.0]), np.array([act])
 
 
-def _resolve_scalar_path(
+def resolve_scalar_path(
     path: str,
     statistics: dict,
     diagnostics: list,

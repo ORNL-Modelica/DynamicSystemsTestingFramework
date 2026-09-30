@@ -366,7 +366,7 @@ class ScalarConfig:
     * ``"<dotted.path>"`` — a stored scalar: a dotted lookup into the run's
       ``statistics``, falling back to a diagnostics summary field
       (``"CPUtime.final"``). Resolved by
-      :func:`~.tree_eval._resolve_scalar_path`; the leaf window does not
+      :func:`~.tree_eval.resolve_scalar_path`; the leaf window does not
       apply because a stored scalar is not a time series.
 
     The object shape is what keeps the field extensible: a later
