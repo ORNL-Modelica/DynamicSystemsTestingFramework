@@ -28,7 +28,7 @@ class Placement(Enum):
     """Where a capability attaches (brief §3.2; D129): the Suite page's
     batch bar, the Test page's status strip, a plot card's criteria header,
     the open criterion's editor, a tree node's place in the tree, a row of
-    the Statistics card. A capability
+    the Statistics card and a statistics criterion's editor there. A capability
     names the frozenset it attaches at; the shell draws it at each and knows
     no capability by name. The tab strip this replaces listed one tab per
     ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
@@ -40,9 +40,12 @@ class Placement(Enum):
     plot's first tracked variable, its rows opening under the header), the
     criterion's editor, beside a tree node as that node's controls, or at
     the end of a Statistics row no criterion reads yet (the selection's
-    ``quantity`` is the row's), with no button and no heading. At VARIABLE
-    and CRITERION ``Panel.figure`` is the plot's hook, subscribed for as
-    long as the panel is drawn; elsewhere a subscription raises."""
+    ``quantity`` is the row's), with no button and no heading.
+    STATISTIC_CRITERION is the editor of a criterion scored through a
+    statistic, under its Statistics row: CRITERION's with no plot, so a
+    capability that needs one is not offered there. At VARIABLE and
+    CRITERION ``Panel.figure`` is the plot's hook, subscribed for as long as
+    the panel is drawn; elsewhere a subscription raises."""
 
     SUITE = "suite"
     TEST = "test"
@@ -50,6 +53,7 @@ class Placement(Enum):
     CRITERION = "criterion"
     NODE = "node"
     STATISTIC = "statistic"
+    STATISTIC_CRITERION = "statistic-criterion"
 
 
 class Emphasis(Enum):

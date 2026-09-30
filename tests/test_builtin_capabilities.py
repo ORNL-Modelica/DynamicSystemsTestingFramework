@@ -1954,7 +1954,7 @@ def test_the_builtins_declare_their_placements():
     assert Accept.placements == {S, T} and Rerun.placements == {S, T}
     assert EditTree.placements == {Placement.NODE, V, Placement.STATISTIC}
     assert EditOnPlot.placements == {C_}
-    assert EditCriteria.placements == {C_}
+    assert EditCriteria.placements == {C_, Placement.STATISTIC_CRITERION}
     at_test = {c.name for c in caps.registered_capabilities() if T in c.placements}
     assert at_test == {"accept", "rerun"}
 
@@ -2923,3 +2923,70 @@ async def test_a_quantity_and_a_variable_together_raise(tmp_path):
             variable="y",
             metric="scalar",
         )
+
+
+_STATS_LEAF = {
+    "metric": "scalar",
+    "quantity": "translation.nonlinear_after_manipulation_count",
+    "tolerance": 0,
+    "tolerance_mode": "abs",
+}
+
+
+def _labels(user) -> list[str]:
+    return [
+        str(e.props.get("label"))
+        for e in user.client.layout.descendants()
+        if isinstance(e, (ui.select, ui.number, ui.input, ui.textarea))
+    ]
+
+
+async def test_a_statistics_leafs_editor_has_no_mode_window_or_quantity(session):
+    """U3 Task 6: the card's row names the quantity and only `scalar` scores
+    it; a stored number has no window. Tolerance stays — and an edit keeps
+    the quantity the form does not show (B3): without it the replace
+    staged a scalar that reads no statistic."""
+    session.stage([PatchOp(A, "add", "/metrics/children/-", dict(_STATS_LEAF))])
+    sel = Selection(tests=frozenset({A}), leaf_path="/metrics/children/1")
+    async with host(session, EditCriteria(), sel) as (user, errors, _):
+        await user.should_see("Tolerance")
+        labels = _labels(user)
+        assert "mode" not in labels and "Quantity" not in labels
+        assert "window start" not in labels and "window end" not in labels
+        assert "Tolerance" in labels and "against" in labels
+        (tol,) = [
+            c
+            for c in user.find(ui.number).elements
+            if c.props.get("label") == "Tolerance"
+        ]
+        tol.set_value(1)
+        assert not errors
+        op = session.spec.pending[-1]
+        assert (op.op, op.path) == ("replace", "/metrics/children/1")
+        assert op.value["quantity"] == _STATS_LEAF["quantity"]
+        assert op.value["tolerance"] == 1
+
+
+async def test_a_reduce_scalar_keeps_its_mode_window_and_quantity(session):
+    leaf = {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}}
+    session.stage([PatchOp(A, "add", "/metrics/children/-", leaf)])
+    sel = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/1")
+    async with host(session, EditCriteria(), sel) as (user, _errors, _):
+        await user.should_see("Tolerance")
+        labels = _labels(user)
+        assert "mode" in labels and "window start" in labels and "Quantity" in labels
+
+
+def test_a_statistics_criterion_is_edited_at_its_own_placement():
+    """B2: Edit criteria alone attaches where the Statistics card hosts a
+    criterion's editor; Edit on plot, which needs a plot, does not."""
+    from dstf.authoring.builtin.edit_on_plot import EditOnPlot
+    from dstf.authoring.capabilities import Placement
+
+    at = {
+        c.name
+        for c in caps.registered_capabilities()
+        if Placement.STATISTIC_CRITERION in c.placements
+    }
+    assert at == {EditCriteria.name}
+    assert Placement.STATISTIC_CRITERION not in EditOnPlot.placements

@@ -1,5 +1,7 @@
 """Edit criteria (§4.6 table, §4.7): the CRITERION placement; a mode switch,
-the mode's form, the window, the ``against`` selector. Each change stages one
+the mode's form, the window, the ``against`` selector — and the
+STATISTIC_CRITERION one, a statistics criterion's editor under its
+Statistics row, where the mode, the window and the quantity are no fields. Each change stages one
 ``replace`` of the whole leaf and the test rescores. The Session collapses
 consecutive replaces of one leaf into one pending op, so the pending count
 and the exported envelope carry one edit, never a keystroke log (the
@@ -10,10 +12,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...comparison.mode_schema import derive_schema
+from ...comparison.mode_schema import Schema, derive_schema
 from ...comparison.registry import metric, metrics
 from ...comparison.seeds import seeded_leaf
-from ...comparison.tree_spec import LeafSpec, spec_to_raw
+from ...comparison.tree_spec import LeafSpec, reads_a_statistic, spec_to_raw
 from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
@@ -44,7 +46,7 @@ class EditCriteria:
 
     name = "edit-criteria"
     label = "Edit criteria"
-    placements = frozenset({Placement.CRITERION})
+    placements = frozenset({Placement.CRITERION, Placement.STATISTIC_CRITERION})
 
     def caption(self, s: SessionView) -> str:
         return self.label
@@ -80,6 +82,11 @@ class EditCriteria:
             "against": leaf.get("against") or "primary",
             "window": dict(leaf.get("window") or {}),
         }
+        # A statistics criterion (U3): only `scalar` scores a stored number
+        # (no mode select, and `set_metric`'s reseed never runs on one), a
+        # stored number has no window, and the Statistics row the editor
+        # sits under names the quantity — none of the three is a field.
+        statistic = reads_a_statistic(state["metric"], state["params"])
         # No heading: the criterion's own row sits directly above this panel
         # and names it, and a second name there made the editor read as two
         # panels rather than one (brief §3.2).
@@ -98,8 +105,13 @@ class EditCriteria:
                 if desc is None:
                     ui.label(f"unknown metric {state['metric']!r}")
                     return
+                schema = derive_schema(desc.config_cls, mode=desc.name)
+                if statistic:
+                    schema = Schema(
+                        schema.mode, [f for f in schema.fields if f.name != "quantity"]
+                    )
                 render_form(
-                    derive_schema(desc.config_cls, mode=desc.name),
+                    schema,
                     state["params"],
                     on_change=set_params,
                     classes="dstf-field",
@@ -113,6 +125,11 @@ class EditCriteria:
                 )
 
         def set_params(values: dict) -> None:
+            if statistic:
+                # The form's values ARE the params: with its quantity field
+                # left out, the path goes back in, or the replace staged a
+                # scalar that reads no statistic — which the Session takes.
+                values = {**values, "quantity": state["params"]["quantity"]}
             state["params"] = values
             emit()
 
@@ -156,23 +173,25 @@ class EditCriteria:
         # controls. `dstf-form` hands the mode's own fields straight to this
         # row rather than stacking them in a column of its own.
         with ui.row().classes("dstf-fields items-end gap-3 wrap w-full"):
-            ui.select(
-                [d.name for d in metrics()],
-                label="mode",
-                value=state["metric"],
-                on_change=lambda e: set_metric(e.value),
-            ).props(f"dense {BOTTOM}").classes("dstf-field")
+            if not statistic:
+                ui.select(
+                    [d.name for d in metrics()],
+                    label="mode",
+                    value=state["metric"],
+                    on_change=lambda e: set_metric(e.value),
+                ).props(f"dense {BOTTOM}").classes("dstf-field")
             form_slot = ui.column().classes("dstf-form")
-            ui.number(
-                label="window start",
-                value=state["window"].get("start"),
-                on_change=lambda e: set_window("start", e.value),
-            ).props(f"dense {BOTTOM}").classes("dstf-field")
-            ui.number(
-                label="window end",
-                value=state["window"].get("end"),
-                on_change=lambda e: set_window("end", e.value),
-            ).props(f"dense {BOTTOM}").classes("dstf-field")
+            if not statistic:
+                ui.number(
+                    label="window start",
+                    value=state["window"].get("start"),
+                    on_change=lambda e: set_window("start", e.value),
+                ).props(f"dense {BOTTOM}").classes("dstf-field")
+                ui.number(
+                    label="window end",
+                    value=state["window"].get("end"),
+                    on_change=lambda e: set_window("end", e.value),
+                ).props(f"dense {BOTTOM}").classes("dstf-field")
             ui.select(
                 names or ["primary"],
                 label="against",

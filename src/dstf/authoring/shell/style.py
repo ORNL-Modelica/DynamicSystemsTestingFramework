@@ -291,6 +291,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   justify-content: flex-end; gap: 6px;
 }
 .dstf-stat-changed { background: var(--dstf-warn-tint); }
+/* The editor under a Statistics row keeps inside the card: `w-full` plus
+   the editor's 16 px indent ran 16 px past its right edge (B12). */
+.dstf-stats .dstf-editor { width: calc(100% - 16px); }
 /* The Tests drawer's rows at a real library's lengths: the name takes what
    the badge and the edits pill leave it and is cut with an ellipsis (the
    whole id is its title), and they never shrink. A TRANSFORM id in Full,

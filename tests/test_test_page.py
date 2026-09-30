@@ -25,7 +25,7 @@ from dstf.authoring.shell import plot_card  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
-from dstf.authoring.shell.test_page import TestPage  # noqa: E402
+from dstf.authoring.shell.test_page import STATS, TestPage  # noqa: E402
 from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
 from dstf.authoring.shell.widgets import MiddleCut, middle_split  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
@@ -1855,10 +1855,13 @@ async def test_a_watch_cards_plus_adds_a_seeded_range_on_untracked_w(extras_shel
         await _settled(lambda: page.strip.situation.value == "edits")
 
 
-async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_tree(extras_shell):
-    """B6: a diagnostic's criterion is scored through a quantity path and has
-    no plot, so an Add from a plot's `+` has no row there to open: the tree
-    card opens instead, on the new criterion's row."""
+async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_statistics_card(
+    extras_shell,
+):
+    """B6, closed by U3: a diagnostic's criterion is scored through a
+    quantity path and has no plot, so an Add from a plot's `+` has no row
+    there to open: the Statistics card opens, with the new criterion's
+    editor under the CPUtime row."""
     import numpy as np
 
     from dstf.backends.types import VariableResult
@@ -1873,13 +1876,10 @@ async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_tree(extras_shell)
     ]
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert page.tree is not None and not page.tree.is_open
+        assert page.stats is not None and not page.stats.is_open
         before = len(shell.session.tree(A)["children"])
         _click_in(user, "add-for:x", within="criteria-header:1")
         await _settled(lambda: not _none(user, "apply-add:x:variable"))
-        revealed: list[str] = []
-        in_tree = page._reveal_in_tree
-        page._reveal_in_tree = lambda path: (revealed.append(path), in_tree(path))
         user.find(marker="apply-add:x:variable:pick:CPUtime").click()
         user.find(marker="apply-add:x").click()
         # CPU time is seeded inside a warn: the reveal is its LEAF's row
@@ -1888,10 +1888,12 @@ async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_tree(extras_shell)
         assert shell.session.tree(A)["children"][-1]["combinator"] == "warn"
         leaf = shell.session.tree(A)["children"][-1]["children"][0]
         assert leaf["quantity"] == "CPUtime.final"
-        await _settled(lambda: page.tree.is_open)
-        await _settled(lambda: not _none(user, f"tree-row:{added}"))
-        assert revealed == [added]
-        assert page.open is None  # no plot holds it: no plot's editor opened
+        await _settled(lambda: page.open == (STATS, added))
+        assert page.stats.is_open and not page.tree.is_open
+        editor = _one(user, f"stats-editor:{added}")
+        # FakeLib folds no diagnostic into its statistics: the criterion's
+        # home is the "Other scored quantities" row (S4, B14).
+        assert page.stats.slots["CPUtime.final"] in list(_ancestors(editor))
 
 
 async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):
@@ -3295,26 +3297,54 @@ ON_NO_PLOT = {
 }
 
 
-async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
-    """A criterion whose variable is on no plot of this test has no row to
-    open: the jump said nothing and — with another editor open — scrolled to
-    THAT row instead."""
-    from dstf.authoring.shell import test_page as page_mod
-
+async def test_a_jump_to_a_statistics_criterion_opens_it_in_the_card(shell):
+    """A criterion scored through a statistic is on no plot: its jump opens
+    the Statistics card with its editor under its row (U3) — and the
+    plot editor that was open goes, one editor page-wide."""
     _stage_tree(shell, A, ON_NO_PLOT)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert [c.resolved.subject for c in page.cards] == [("x",)]
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: page.open == (0, T0))
+        with page.client:
+            page.jump_to(T1)
+        await _settled(lambda: page.open == (STATS, T1))
+        assert page.stats.is_open
+        assert _none(user, f"editor:0:{T0}")
+        assert page.stats.slots["CPUtime.final"] in list(
+            _ancestors(_one(user, f"stats-editor:{T1}"))
+        )
+        assert user.notify.messages == []
+
+
+async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
+    """A criterion whose variable is on no plot — the run failed while its
+    jump was on screen, so no plot is drawn — has no row to open: the jump
+    said nothing and — with another editor open — scrolled to THAT row
+    instead. With no tree view left it names the criterion by its path."""
+    from dstf.authoring.shell import test_page as page_mod
+    from dstf.backends.types import TestResult
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker=f"criterion:1:{T1}").click()
+        await _settled(lambda: page.open == (1, T1))
+        result = shell.session.project.results[A]
+        shell.session.project.results[A] = TestResult(
+            model_id=A, success=False, variables=list(result.variables)
+        )
+        _stage_tree(shell, A, TWO_RANGES)
+        await _settled(lambda: _page(shell, user).cards == [])
+        page = _page(shell, user)
         scrolled: list[str] = []
         monkeypatch.setattr(page_mod.ui, "run_javascript", scrolled.append)
         with page.client:
             page.jump_to(T1)
         await _settled(lambda: user.notify.messages != [])
-        assert user.notify.messages == ["y is on no plot of this test"]
-        assert scrolled == []  # never the OTHER editor's row
-        assert page.open == (0, T0)
+        assert user.notify.messages == [f"{T1} is on no plot of this test"]
+        assert scrolled == []
+        assert page.open is None
 
 
 async def test_a_jump_opens_the_card_holding_the_row(shell):
@@ -3619,15 +3649,14 @@ async def test_a_mode_switch_keeps_the_editor_open(shell):
         await _settled(lambda: not _none(user, f"{T1}:tube_points:add"))
 
 
-async def test_the_focus_bar_and_a_jump_read_the_label(
-    awkward_expression_shell, monkeypatch
-):
-    """Two places that name a variable, on the page whose titles already
-    read its expression: the focus switcher's option, and the jump's "is on
-    no plot". Each said `unitTests.x[1]`, which names nothing a person
-    recognises."""
-    from dstf.authoring.shell import test_page as page_mod
-    from test_session import AWKWARD_EXPRESSION, UT1
+async def test_the_focus_bar_reads_the_label(awkward_expression_shell):
+    """A place that names a variable, on the page whose titles already read
+    its expression: the focus switcher's option said `unitTests.x[1]`,
+    which names nothing a person recognises. (The jump's "is on no plot"
+    read it too until U3: every leaf of a tree view is now on a plot or in
+    the Statistics card, and only a test with no tree view — no jumps —
+    draws no plot.)"""
+    from test_session import AWKWARD_EXPRESSION
 
     shell = awkward_expression_shell
     async with user_simulation(root=shell.index) as user:
@@ -3637,33 +3666,6 @@ async def test_the_focus_bar_and_a_jump_read_the_label(
         await _settled(lambda: page.focused == 0)
         assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots"
         assert _one(user, "focus-switch").options[0] == AWKWARD_EXPRESSION
-        # A criterion whose variable is on no plot: the same name, read the
-        # same way. A stored-scalar leaf names a statistic and derives no
-        # plot, and nothing else scores the UnitTests variable here.
-        tree = {
-            "combinator": "and",
-            "children": [
-                {"metric": "range", "variable": "y", "min_value": -1},
-                {
-                    "metric": "scalar",
-                    "variable": UT1,
-                    "quantity": "CPUtime.final",
-                    "max_value": 1e9,
-                },
-            ],
-        }
-        _stage_tree(shell, A, tree)
-        await _settled(
-            lambda: [c.resolved.series for c in _page(shell, user).cards] == [("y",)]
-        )
-        monkeypatch.setattr(page_mod.ui, "run_javascript", lambda *a, **k: None)
-        page = _page(shell, user)
-        with page.client:
-            page.jump_to(T1)
-        await _settled(lambda: user.notify.messages != [])
-        assert user.notify.messages == [
-            f"{AWKWARD_EXPRESSION} is on no plot of this test"
-        ]
 
 
 async def test_the_scope_is_the_test_not_what_is_scored(shell):
@@ -8139,3 +8141,117 @@ async def test_fakelibs_own_statistics_render(tmp_path):
         page.stats.toggle()
         _one(user, "stats:row:simulation.wall_time")
         _one(user, "stats:row:timing.total_wall")
+
+
+def _stats_leaf_staged(shell, quantity=NONLINEAR) -> str:
+    """A count requirement on ``quantity`` at the end of A's root; its path."""
+    leaf = {"metric": "scalar", "quantity": quantity, "tolerance": 0}
+    shell.session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(
+        {"combinator": "and", "children": [
+            {"metric": "nrmse", "variable": "x"}, leaf]}))])  # fmt: skip
+    return "/metrics/children/1"
+
+
+async def test_a_click_on_a_scored_statistic_opens_its_editor_under_it(stats_shell):
+    """Task 6: the card hosts a statistics criterion's editor, at its own
+    placement — EditOnPlot, a CRITERION capability, says nothing there
+    (B2) — and an edit keeps the quantity the form does not show (B3)."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        editor = _one(user, f"stats-editor:{leaf}")
+        assert page.stats.slots[NONLINEAR] in list(_ancestors(editor))
+        assert "dstf-crit-open" in _one(user, f"stats:row:{NONLINEAR}").classes
+        assert "why:edit-on-plot" not in _marks(editor)
+        (tolerance,) = [e for e in editor.descendants() if isinstance(e, ui.number)
+                        and e.props.get("label") == "Tolerance"]  # fmt: skip
+        n = len(shell.session.spec.pending)
+        tolerance.set_value(2)
+        assert len(shell.session.spec.pending) == n + 1
+        op = shell.session.spec.pending[-1]
+        assert (op.op, op.path) == ("replace", leaf)
+        assert op.value["quantity"] == NONLINEAR and op.value["tolerance"] == 2
+        assert page.open == (STATS, leaf)  # the editor stays for the next edit
+        user.find(marker=f"stats-editor-done:{leaf}").click()
+        await _settled(lambda: page.open is None)
+        assert _none(user, f"stats-editor:{leaf}")
+        # the row's own click toggles it, as a criteria row's does
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open is None)
+
+
+async def test_one_editor_page_wide_across_the_card_and_the_plots(stats_shell):
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        assert _none(user, f"stats-editor:{leaf}")
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        assert _none(user, f"editor:0:{T0}")
+        # a form row is the same one thing
+        _click_in(user, f"wrap:{T0}", within=f"node:0:{T0}")
+        await _settled(lambda: page.form is not None)
+        assert page.open is None and _none(user, f"stats-editor:{leaf}")
+        # Focus shows one plot: the card's editor goes (B9)
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        assert page.open is None and _none(user, f"stats-editor:{leaf}")
+        # closing the card closes its editor
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        _click(user, _one(user, "stats:toggle"))
+        await _settled(lambda: page.open is None)
+
+
+async def test_a_plus_opens_the_new_criterions_editor_under_its_row(stats_shell):
+    """A time lands inside a `warn` under an `and` root: the editor opens on
+    the LEAF, under the CPUtime row; the card stays open."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        before = len(shell.session.tree(A)["children"])
+        _click(user, _one(user, "add-statistic:CPUtime"))
+        leaf = f"/metrics/children/{before}/children/0"
+        await _settled(lambda: page.open == (STATS, leaf))
+        assert page.stats.is_open
+        assert page.stats.slots["CPUtime"] in list(
+            _ancestors(_one(user, f"stats-editor:{leaf}"))
+        )
+
+
+async def test_the_card_editor_follows_an_edit_staged_elsewhere(stats_shell):
+    """A Discard under the open editor: its fields show what the leaf holds
+    now, never the value the Discard undid."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+
+        def tolerance():
+            editor = _one(user, f"stats-editor:{leaf}")
+            (field,) = [e for e in editor.descendants() if isinstance(e, ui.number)
+                        and e.props.get("label") == "Tolerance"]  # fmt: skip
+            return field
+
+        tolerance().set_value(2)
+        shell.session.stage([PatchOp(A, "replace", f"{leaf}/tolerance", 5)])
+        await _settled(lambda: tolerance().value == 5)
+        assert page.open == (STATS, leaf)

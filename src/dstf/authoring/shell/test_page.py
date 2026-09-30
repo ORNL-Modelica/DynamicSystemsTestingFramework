@@ -72,6 +72,11 @@ OBSERVE = """
 #: first `sync`.
 NOT_A_TEST = "{} is not a test of this project"
 
+#: `TestPage.open`'s index for a criterion edited in the Statistics card
+#: (U3): the page's one editor is `(plot index, leaf path)`, or `(STATS,
+#: leaf path)` — no plot is ever at index -1.
+STATS = -1
+
 
 def _raw(node: dict | None) -> str:
     """A raw node as the form row records it, to tell whether it moved."""
@@ -97,7 +102,9 @@ class TestPage:
         #: Whether the page is showing "… is not a test of this project"
         #: instead of a test (`_gone`).
         self.gone = False
-        self.open: tuple[int, str] | None = None  # (plot index, leaf path)
+        #: The one open editor: (plot index, leaf path), or (STATS, leaf
+        #: path) for a statistics criterion's, in the Statistics card.
+        self.open: tuple[int, str] | None = None
         #: The one open form row: its target, its title, its build, its
         #: column, and the node's raw JSON it was last built from.
         self.form: tuple[RowTarget, str, RowBuild, ui.column, str] | None = None
@@ -407,7 +414,13 @@ class TestPage:
         ):
             index = None
         if not any(path in card.rows for card in self.cards):
-            self._reveal_in_tree(path)
+            # A statistics criterion has no plot: the card is its home.
+            self.open_criterion(path, None)
+            if self.open == (STATS, path):
+                self.client.run_javascript(
+                    'document.querySelector(".dstf-stats .dstf-editor")'
+                    '?.scrollIntoView({block: "nearest"})'
+                )
             return
         self.open_criterion(path, index)
         if self.open is not None and self.open[1] == path:
@@ -416,26 +429,6 @@ class TestPage:
                 '?.scrollIntoView({block: "nearest"});'
                 'document.querySelector(".dstf-editor")'
                 '?.scrollIntoView({block: "nearest"})'
-            )
-
-    def _reveal_in_tree(self, path: str) -> None:
-        """A criterion no plot holds — a diagnostic's, scored through a
-        quantity path (B6) — is revealed where it is: the tree card opens
-        and its row is brought into view. Its values are edited nowhere on
-        this page yet: a tree row hosts the node's controls, not the
-        criterion editor."""
-        tree = self.tree
-        if tree is None:
-            return
-        if not tree.is_open:
-            tree.toggle()
-        row = tree.rows_by_path.get(path)
-        if row is not None:
-            self.client.run_javascript(
-                f'document.getElementById("{row.html_id}")'
-                # centred, as a jump is: "nearest" left it under the sticky
-                # header (Chromium, 900 px)
-                '?.scrollIntoView({block: "center"})'
             )
 
     def toggle_criterion(self, index: int, path: str) -> None:
@@ -451,7 +444,17 @@ class TestPage:
         its editing surface, so it is drawn if it was not. ONE `tree_view`
         read, handed to every card this touches: reading it per shown card
         cost fourteen reads for one row click on a twelve-plot page (the 3b
-        review)."""
+        review). A statistics criterion's editor is the Statistics card's
+        (U3): it has no plot."""
+        if index is None and self.stats is not None:
+            view = self._view()
+            if self.stats.row_for(path, view) is not None:
+                self._close_row()
+                self._close()
+                if self.stats.open_editor(path, view):
+                    self.open = (STATS, path)
+                self._redraw_moved(view)
+                return
         if index is None:
             index = next((card.index for card in self.cards if path in card.rows), None)
         if index is None or not 0 <= index < len(self.cards):
@@ -472,6 +475,14 @@ class TestPage:
         card.open_editor(path, view)
         self._redraw_moved(view)
 
+    def toggle_stats_editor(self, path: str, *_: Any) -> None:
+        """A scored Statistics row's own click: its criterion's editor
+        opens under it, or closes if it was the open one."""
+        if self.open == (STATS, path):
+            self.close_editor()
+        else:
+            self.open_criterion(path)
+
     def close_editor(self) -> None:
         view = self._view()
         self._close()
@@ -486,9 +497,12 @@ class TestPage:
         already recorded (the Task 6 review)."""
         if self.open is None:
             return
-        card = self.cards[self.open[0]]
-        self.open = None
-        card.close_editor()
+        index, self.open = self.open[0], None
+        if index == STATS:
+            if self.stats is not None:
+                self.stats.close_editor()
+            return
+        self.cards[index].close_editor()
 
     def _redraw_moved(self, view: Any) -> None:
         """The signature is the one thing that decides a redraw: only the
@@ -537,8 +551,10 @@ class TestPage:
         # The rows the editor hangs under go with the cards: the criterion
         # it was open on may not even exist after this. Closed WITHOUT a
         # redraw — these cards are about to be dropped, and one of them may
-        # be a plot the staged layout no longer has.
-        self._close()
+        # be a plot the staged layout no longer has. The Statistics card's
+        # editor hangs under none of them.
+        if self.open is not None and self.open[0] != STATS:
+            self._close()
         # Focus names an INDEX, and after this the indices may name other
         # plots; the plots a user had drawn are re-drawn where they are left.
         self.focused = None

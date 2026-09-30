@@ -3753,6 +3753,20 @@ def test_a_grip_key_the_focus_left_before_its_release_sends_the_width(
         assert page.evaluate(PANEL_AND_DRAWER) == [336, 376]
 
 
+def _plots_mounted(page) -> None:
+    """Every plot on the page drawn, and a beat for its resize observer: a
+    rebuild (a `+` stages a criterion) that unmounts a plot still awaiting
+    its own mount leaves NiceGUI's observer on a detached div, and the
+    page raises "Resize must be passed a displayed plot div element" — a
+    `+` clicked within the page's first second did."""
+    page.wait_for_function(
+        "() => { const p = [...document.querySelectorAll('.js-plotly-plot')];"
+        " return p.length > 0 && p.every(e => e.querySelector('.main-svg')); }",
+        timeout=EXPECT_TIMEOUT,
+    )
+    page.wait_for_timeout(300)
+
+
 def test_the_statistics_cards_plus_adds_a_criterion_to_the_tree(
     tmp_path, playwright_browser
 ):
@@ -3766,6 +3780,7 @@ def test_the_statistics_cards_plus_adds_a_criterion_to_the_tree(
         )
         tree = page.locator(".dstf-tree-line")
         expect(tree).to_contain_text("and · 2 criteria")
+        _plots_mounted(page)
         card.get_by_role("button", name="Statistics").click()
         rows = card.locator(".dstf-stat-row:not(.dstf-stat-head)")
         expect(rows).to_have_count(20, timeout=EXPECT_TIMEOUT)
@@ -3774,3 +3789,36 @@ def test_the_statistics_cards_plus_adds_a_criterion_to_the_tree(
         expect(tree).to_contain_text("and · 3 criteria", timeout=EXPECT_TIMEOUT)
         expect(row.locator(".dstf-pill")).to_have_text("fail", timeout=EXPECT_TIMEOUT)
         expect(row.get_by_role("button")).to_have_count(0)
+
+
+def test_a_statistics_criterion_is_edited_under_its_row(tmp_path, playwright_browser):
+    """U3 Task 6: after a `+` the new criterion's editor opens under its
+    row, inside the card at both widths (B12: the editor's indent ran it
+    16 px past the card's edge); a typed tolerance stages; Done closes it.
+    (The add form's diagnostic add lands here too — in the user simulation:
+    a JSON-driver run records no diagnostic to pick.)"""
+    with _served(tmp_path, playwright_browser, project=_stats_project) as page:
+        card = page.locator(".dstf-stats")
+        _plots_mounted(page)
+        card.get_by_role("button", name="Statistics").click()
+        rows = card.locator(".dstf-stat-row:not(.dstf-stat-head)")
+        row = rows.filter(has_text=re.compile(r"^Nonlinear count"))
+        row.get_by_role("button", name="Add a requirement: exact match").click()
+        editor = card.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(row).to_have_class(re.compile(r"dstf-crit-open"))
+        for width in (1280, 900):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.wait_for_timeout(300)
+            outer, inner = card.bounding_box(), editor.bounding_box()
+            assert outer is not None and inner is not None
+            assert inner["x"] + inner["width"] <= outer["x"] + outer["width"], width
+        expect(editor.get_by_label("mode", exact=True)).to_have_count(0)
+        expect(row).to_contain_text("exact")
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        tolerance.fill("2")
+        tolerance.press("Tab")
+        # staged and rescored: the row says the new requirement
+        expect(row).to_contain_text("±2", timeout=EXPECT_TIMEOUT)
+        editor.get_by_role("button", name="Done").click()
+        expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)

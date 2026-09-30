@@ -4,7 +4,8 @@ naming the rows that changed; open, a row per count or time under its
 section, each ending in whatever attaches at STATISTIC (a `+` that adds a
 requirement on it) — or, for a row a criterion reads, that criterion's
 pill and its requirement in a word or two. The card is a VIEW of the one
-tree (Q1 b); it knows no capability by name.
+tree (Q1 b): a statistics criterion is edited under its row, by whatever
+attaches at STATISTIC_CRITERION. It knows no capability by name.
 
 The rows are `Session.statistics` (`reporting.stats_rows`), the row model
 the report renders too: a row is "changed" when the criterion its `+`
@@ -14,6 +15,7 @@ lands in (the `TreeCard` rule); a value or a verdict repaints in place."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -28,6 +30,7 @@ from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
 from .actions import InlineHost, RowTarget
+from .plot_card import _EDITED
 from .tree_card import leaf_status
 from .widgets import Pill
 
@@ -171,6 +174,12 @@ class StatsCard:
         self._shape: tuple = ()
         self._toggle: ui.button | None = None
         self._summary: ui.label | None = None
+        #: The one open editor: its leaf, its host and box, and the leaf as
+        #: its fields show it (an edit staged ELSEWHERE rebuilds them).
+        self.open_path: str | None = None
+        self.editor: InlineHost | None = None
+        self.editor_box: ui.column | None = None
+        self._edited: tuple | None = None
         with ui.card().classes("dstf-card dstf-stats w-full gap-1").mark("stats"):
             self.line = ui.row().classes("dstf-stats-line items-center gap-3 w-full")
             self.line.mark("stats:line")
@@ -181,10 +190,14 @@ class StatsCard:
 
     def toggle(self) -> None:
         self.is_open = not self.is_open
+        if not self.is_open and self.open_path is not None:
+            # An editor nobody can see is no editor.
+            self.page.close_editor()
         self.refresh(self.page._view())
 
     def forget(self) -> None:
         """The page's test is gone: the card says nothing (`TreeCard.forget`)."""
+        self.close_editor()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters = [], {}
@@ -221,6 +234,10 @@ class StatsCard:
         )
         if shape != self._shape or not self.painters:
             self._shape = shape
+            if self.open_path is not None:
+                # The rows its editor hangs under go, as a plot card's
+                # rebuild takes its editor: the page's one editor with them.
+                self.page._close()
             self._build(shown, reads)
             return
         for host in self.hosts:
@@ -228,6 +245,15 @@ class StatsCard:
             host.follow()
         for stat in shown:
             self.painters[stat.path].paint(stat, reads.get(stat.path, []))
+        if self.editor is not None:
+            edited = self._edited_now(view)
+            if edited != self._edited:
+                # The leaf moved by an edit staged ELSEWHERE (a Discard):
+                # fields showing the undone value would stage it back.
+                self.editor.build()
+                self._edited = edited
+            else:
+                self.editor.follow()
 
     # -- the closed line -------------------------------------------------------
 
@@ -253,6 +279,7 @@ class StatsCard:
     # -- the rows ----------------------------------------------------------------
 
     def _build(self, shown: list[StatRow], reads: dict[str, list[dict]]) -> None:
+        self.close_editor()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters = [], {}
@@ -314,6 +341,14 @@ class StatsCard:
                         row=target,
                     )
                     host.column.classes(remove="w-full", add="dstf-node-host")
+        if leaves:
+            # A scored row's own click opens its (first) criterion's editor
+            # under it, or closes it, as a criteria row's does.
+            row.classes(add="cursor-pointer")
+            row.on(
+                "click",
+                partial(self.page.toggle_stats_editor, str(leaves[0]["path"])),
+            )
         # The row's slot: a refused add's error, and the editor.
         slot = ui.column().classes("w-full gap-0")
         self.slots[path] = slot
@@ -323,3 +358,86 @@ class StatsCard:
             self.hosts.append(host)
         self.painters[path] = _Row(row, run, base, delta, pill, rule, more)
         self.painters[path].paint(stat, leaves)
+
+    # -- the one open editor -------------------------------------------------
+
+    def row_for(self, leaf_path: str, view: dict | None) -> str | None:
+        """The row a statistics criterion is shown on, or None — a leaf
+        that reads no statistic, or none at that path."""
+        leaf = next((n for n in leaves_of(view) if str(n["path"]) == leaf_path), None)
+        params = (leaf or {}).get("params") or {}
+        if leaf is None or not reads_a_statistic(str(leaf.get("metric")), params):
+            return None
+        paths = [r.path for r in self.page.shell.session.statistics(self.page.model_id)]
+        return row_of(str(params["quantity"]), paths)
+
+    def open_editor(self, leaf_path: str, view: dict | None) -> bool:
+        """The criterion's editor under its row (the `PlotCard.open_editor`
+        pattern, with no plot), the card opened if it was closed. The page
+        keeps the one-editor rule: it closes what else is open first."""
+        key = self.row_for(leaf_path, view)
+        if key is None:
+            return False
+        if not self.is_open:
+            self.is_open = True
+            self.refresh(view)
+        slot = self.slots.get(key)
+        if slot is None:
+            return False
+        self.close_editor()
+        model = self.page.model_id
+        self.open_path = leaf_path
+        self.rows_by_path[key].classes(add="dstf-crit-open")
+        with slot:
+            self.editor_box = ui.column().classes("dstf-editor gap-2")
+        with self.editor_box:
+            with ui.row().classes("items-center no-wrap gap-3 w-full"):
+                ui.label(
+                    "Edits are staged as you make them; Save writes them."
+                ).classes("dstf-why")
+                ui.space()
+                ui.button("Done", on_click=self.page.close_editor).props(
+                    "flat dense no-caps"
+                ).mark(f"stats-editor-done:{leaf_path}")
+            self.editor = InlineHost(
+                self.page.shell,
+                Placement.STATISTIC_CRITERION,
+                partial(Selection, tests=frozenset({model}), leaf_path=leaf_path),
+                figure=None,
+                marker=f"stats-editor:{leaf_path}",
+                on_applied=self._applied,
+            )
+            self.editor.build()
+        self._edited = self._edited_now(view)
+        return True
+
+    def _applied(self, name: str) -> None:
+        """A panel's own submit rebuilds every OTHER panel, leaving the one
+        being typed in; recorded from a FRESH view, so its own edit is not
+        read as one staged elsewhere."""
+        if self.editor is None:
+            return
+        self.editor.build(skip=name)
+        self._edited = self._edited_now(self.page._view())
+
+    def _edited_now(self, view: dict | None) -> tuple | None:
+        leaf = next(
+            (n for n in leaves_of(view) if str(n["path"]) == self.open_path), None
+        )
+        if leaf is None:
+            return None
+        return tuple(
+            json.dumps(leaf.get(k), sort_keys=True, default=str) for k in _EDITED
+        )
+
+    def close_editor(self) -> None:
+        """The editor goes — its column only: the row's slot also holds
+        nothing else a close may take."""
+        if self.editor is not None:
+            self.editor.clear()
+        if self.editor_box is not None and not self.editor_box.is_deleted:
+            self.editor_box.delete()
+        for row in self.rows_by_path.values():
+            row.classes(remove="dstf-crit-open")
+        self.editor, self.editor_box = None, None
+        self.open_path, self._edited = None, None
