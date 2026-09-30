@@ -25,6 +25,7 @@ from ...reporting.rows import COLUMNS, EDITS, FILTER_HINTS, Column, TestRow
 from ...reporting.status import (
     FAIL,
     NO_REF,
+    NOT_RUN,
     PASS,
     RUNNING,
     SIM_FAIL,
@@ -63,7 +64,10 @@ FILTER_NOTE = {"model": "Reads the full test name. "}
 #: runs or it filters). The words are ``reporting.status``'s: the script
 #: reads this table (``window.DstfSuitePills``) and spells none of them.
 PILLS: tuple[tuple[str, str], ...] = (
-    *((STATUS_CLASSES[s], STATUS_LABELS[s]) for s in (PASS, FAIL, SIM_FAIL, NO_REF)),
+    *(
+        (STATUS_CLASSES[s], STATUS_LABELS[s])
+        for s in (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN)
+    ),
     ("edited", "EDITED"),
     (STATUS_CLASSES[RUNNING], STATUS_LABELS[RUNNING]),
 )

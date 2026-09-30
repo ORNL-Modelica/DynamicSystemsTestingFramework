@@ -30,7 +30,7 @@ from dstf.discovery.patch_apply import PatchError
 from dstf.discovery.plots import PlotExtra, parse_plots
 from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
 from dstf.discovery.test_registry import TestModel
-from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify
+from dstf.reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL, classify
 from dstf.storage.reference_store import ReferenceStore
 
 A, B, C, D, G = "FakeLib.A", "FakeLib.B", "FakeLib.C", "FakeLib.D", "FakeLib.G"
@@ -39,7 +39,7 @@ A, B, C, D, G = "FakeLib.A", "FakeLib.B", "FakeLib.C", "FakeLib.D", "FakeLib.G"
 def _project(tmp_path: Path) -> tuple[Path, Path]:
     """testing.json + work dir. A: baseline x=t, result x=1.25t — nrmse 0.153,
     FAIL at the config tolerance 0.01. B: no baseline (NO_REF). C: no result
-    (SIM_FAIL). D: baseline x=t, result x=1.001t — nrmse 6e-4, PASS at 0.01
+    — its manifest entry is still pending (NOT RUN, D145). D: baseline x=t, result x=1.001t — nrmse 6e-4, PASS at 0.01
     and FAIL at the 1e-4 default, so a scorer that drops config.tolerance is
     caught. G: like D but tracked as ["*"] — a glob spec whose verdict is
     PASS as loaded, so a `*` sentinel leaf would flip it (Conventions #7)."""
@@ -274,7 +274,7 @@ CASES_X = "FakeLib.Cases.X"
 
 def _two_package_project(tmp_path: Path) -> tuple[Path, Path]:
     """`_project` with a second package: `FakeLib.Cases.X` (tracks x, no
-    result, so SIM_FAIL). The project lists its tests by model id, so X
+    result, so NOT RUN). The project lists its tests by model id, so X
     stands between C and D; a grouped list sorts by package first, so X
     comes last under its own label. Every other id shares FakeLib, which is
     why only this fixture tells the two orders apart: grouped reads A, B, C,
@@ -427,7 +427,7 @@ class TestOpen:
     def test_loaded_verdicts_match_the_cli_classifier(self, session):
         assert classify(session.comparisons[A]) == FAIL
         assert classify(session.comparisons[B]) == NO_REF
-        assert classify(session.comparisons[C]) == SIM_FAIL
+        assert classify(session.comparisons[C]) == NOT_RUN  # never finished (D145)
         assert (
             classify(session.comparisons[D]) == PASS
         )  # config tolerance 0.01, not the 1e-4 default
@@ -654,7 +654,7 @@ class TestOpen:
         self, tmp_path
     ):
         """FakeLib.E is in the spec and has no manifest entry: it is scored
-        after the per-result loop (SIM_FAIL, no result). It must be
+        after the per-result loop (NOT RUN, no result). It must be
         announced like the others — a page filling rows per event has no
         row for it otherwise — and the last announcement is done == total."""
         cfg, work = _project(tmp_path)
@@ -681,7 +681,7 @@ class TestOpen:
         assert {e["model"] for e in announced} == {A, B, C, D, G, e_id}
         assert [e["done"] for e in announced] == list(range(1, 7))
         assert announced[-1]["done"] == announced[-1]["total"] == 6
-        assert classify(s.comparisons[e_id]) == SIM_FAIL
+        assert classify(s.comparisons[e_id]) == NOT_RUN  # never run (D145)
 
     def test_one_models_scoring_failure_leaves_the_results_complete_and_is_raised(
         self, session, monkeypatch
@@ -708,7 +708,8 @@ class TestOpen:
             session._reload_results()
         assert isinstance(exc_info.value.__cause__, ValueError)
         assert D in str(exc_info.value)
-        assert {A, B, C, D, G} <= set(session.project.results)
+        # C's run never finished it: the reader hands in no result (D145).
+        assert {A, B, D, G} <= set(session.project.results)
         assert D not in session.comparisons
         assert classify(session.comparisons[A]) == FAIL
         announced = [e for e in events if e.get("phase") == "results"]
@@ -764,7 +765,7 @@ class TestOpen:
             s.open(cfg, work_dir=work)
         assert events[-1]["phase"] == "done"
         assert s.rescan_done.wait(5)  # a Python project scans nothing: set at once
-        assert s.project is not None and {A, B, C, D, G} <= set(s.project.results)
+        assert s.project is not None and {A, B, D, G} <= set(s.project.results)
         assert D not in s.comparisons
 
     def test_a_model_under_two_manifest_keys_is_one_failure(self, session, monkeypatch):
@@ -1408,7 +1409,7 @@ class TestRescoreAndStage:
 
     def test_no_result_and_no_baseline_rescore_to_the_cli_states(self, session):
         assert classify(session.rescore(B)) == NO_REF
-        assert classify(session.rescore(C)) == SIM_FAIL
+        assert classify(session.rescore(C)) == NOT_RUN
 
     def test_consecutive_replaces_of_one_path_collapse(self, session):
         """Edit criteria stages on every control change; the drawer and the

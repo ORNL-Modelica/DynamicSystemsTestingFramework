@@ -77,6 +77,86 @@ def test_read_results_applies_the_run_verdict_before_storing_and_before_the_call
     assert seen == [(CONSTANT_CSV, False)]
 
 
+def _compare(config, backend, store, tests, results):
+    from dstf.backends import dataset_kind_for
+    from dstf.comparison.comparator import compare_all
+
+    return {
+        c.model_id: c
+        for c in compare_all(
+            tests,
+            results,
+            store,
+            config.tolerance,
+            config.default_points,
+            dataset_kind=dataset_kind_for(backend),
+        )
+    }
+
+
+def test_a_pending_entry_has_no_result_and_reads_not_run(example):
+    """D145: a manifest entry the last run stamped pending and never
+    finished is not a result, whatever its result file holds — the reader
+    hands back nothing for it (neither in the dict nor to the callback),
+    and the test reads NOT RUN. Here the file is a whole, green one: the
+    reader must not even look."""
+    from dstf.reporting.status import NOT_RUN, classify
+
+    config, all_tests, backend, store = example
+    constant = _pick(all_tests, CONSTANT_CSV)
+    run_pipeline(config, constant, backend=backend, store=store)
+    _stamp(config.work_dir, CONSTANT_CSV, "pending")
+
+    manifests = [BatchManifest.load(config.work_dir / "batch_manifest.json")]
+    seen = []
+    results = backend.read_results(
+        manifests, constant, on_result=lambda m, r: seen.append(m)
+    )
+
+    assert results == {} and seen == []
+    comps = _compare(config, backend, store, constant, results)
+    assert classify(comps[CONSTANT_CSV]) == NOT_RUN
+
+
+def test_a_pending_entry_whose_run_recorded_a_failure_is_sim_fail(example):
+    """The other side of D145's line: the run REACHED a verdict for this
+    test — status.json, the fallback a pending entry falls through to,
+    records it failed — so it ran and failed: SIM_FAIL, never NOT RUN."""
+    from dstf.reporting.status import SIM_FAIL, classify
+
+    config, all_tests, backend, store = example
+    constant = _pick(all_tests, CONSTANT_CSV)
+    run_pipeline(config, constant, backend=backend, store=store)
+    _stamp(config.work_dir, CONSTANT_CSV, "pending")
+    snap = json.loads((config.work_dir / "status.json").read_text(encoding="utf-8"))
+    for row in snap["tests"]:
+        if row["model_id"] == CONSTANT_CSV:
+            row["status"] = "failed"
+    (config.work_dir / "status.json").write_text(json.dumps(snap), encoding="utf-8")
+
+    results = backend.read_last_results(constant)
+
+    assert results[CONSTANT_CSV].success is False
+    comps = _compare(config, backend, store, constant, results)
+    assert classify(comps[CONSTANT_CSV]) == SIM_FAIL
+
+
+def test_a_recorded_failed_run_is_sim_fail(example):
+    """A run that finished the test and recorded it failed is SIM_FAIL —
+    the result file it left behind notwithstanding."""
+    from dstf.reporting.status import SIM_FAIL, classify
+
+    config, all_tests, backend, store = example
+    constant = _pick(all_tests, CONSTANT_CSV)
+    run_pipeline(config, constant, backend=backend, store=store)
+    _stamp(config.work_dir, CONSTANT_CSV, "failed")
+
+    results = backend.read_last_results(constant)
+
+    comps = _compare(config, backend, store, constant, results)
+    assert classify(comps[CONSTANT_CSV]) == SIM_FAIL
+
+
 def test_run_pipeline_runs_a_test_and_leaves_the_run_on_disk(example):
     """One test in, one result out — and the work dir a UI (or a later
     ``compare``) can read the run back from."""

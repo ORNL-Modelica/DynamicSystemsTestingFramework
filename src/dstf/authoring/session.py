@@ -1466,9 +1466,9 @@ class Session:
 
     def _keep_read(self, models: set[str], fresh: dict[str, TestResult]) -> None:
         """``fresh`` (`_read_again`) in place of what an earlier read stored
-        for ``models``. A model it has no result for (no manifest entry)
-        ends with none and is scored NO_REF / SIM_FAIL by the caller, as
-        after a full reload. The result FILE did not change, so its listing
+        for ``models``. A model it has no result for (no manifest entry, or
+        one its last run never finished) ends with none and is scored NOT
+        RUN by the caller (D145), as after a full reload. The result FILE did not change, so its listing
         (`_ModelReads.names`) is kept, and the next `variable_names` does
         not list it again; what came from the old result goes."""
         project = self._require_project()
@@ -1569,8 +1569,8 @@ class Session:
                 score_and_announce(model_id)
 
         project.backend.read_last_results(to_read, on_result=on_result)
-        # Tests with no result at all (never run, or dropped from the
-        # manifest) are scored now — NO_REF / SIM_FAIL states.
+        # Tests with no result at all (never run, never finished, or
+        # dropped from the manifest) are scored now — NOT RUN (D145).
         for test in to_read:
             if test.model_id not in project.results:
                 score_and_announce(test.model_id)
@@ -1608,7 +1608,7 @@ class Session:
         entry already has a tree (`has_metrics`: a null ``metrics`` is
         none). Otherwise ``(None, why)`` — and ``rescore`` stages nothing:
         :data:`SIMULATE_ONLY` or :data:`NOTHING_SCORED` when nothing was
-        scored (NO_REF, SIM_FAIL, simulate-only; and a model not in the
+        scored (NO_REF, SIM_FAIL, NOT RUN, simulate-only; and a model not in the
         project, which `stage` refuses with it as a patch — `tree_or_reason`
         raises a KeyError for one before asking); :data:`STALE` when a scored variable's name is not one the
         loaded result carries (a comparison from a run the results no

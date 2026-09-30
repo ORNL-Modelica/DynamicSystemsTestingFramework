@@ -49,6 +49,20 @@ ROWS = [
         "grey",
         "No result yet — rerun to simulate it.",
     ),
+    # D145: the classifier's NOT RUN is this strip's "No result yet", and
+    # only it is: the header's badge and the strip say one thing.
+    (
+        dict(status="NOT RUN", has_result=False),
+        S.NO_RESULT,
+        "grey",
+        "No result yet — rerun to simulate it.",
+    ),
+    (
+        dict(status="NOT RUN", has_result=True),
+        S.NO_RESULT,
+        "grey",
+        "No result yet — rerun to simulate it.",
+    ),
     (
         dict(status="SIM_FAIL", has_result=False),
         S.NO_RESULT,

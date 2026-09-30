@@ -203,7 +203,7 @@ async def test_the_suite_page_draws_known_rows_waiting_then_the_scans(
             assert _final(sent) == {
                 A: "FAIL",
                 B: "NO_REF",
-                C: "SIM_FAIL",
+                C: "NOT RUN",  # its run never finished it (D145)
                 D: "PASS",
                 G: "PASS",
             }
@@ -297,7 +297,7 @@ async def test_a_failed_reopen_draws_the_old_projects_rows_again(tmp_path, monke
             assert initial == {
                 A: "FAIL",
                 B: "NO_REF",
-                C: "SIM_FAIL",
+                C: "NOT RUN",  # its run never finished it (D145)
                 D: "PASS",
                 G: "PASS",
             }

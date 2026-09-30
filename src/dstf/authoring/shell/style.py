@@ -13,7 +13,7 @@ from ...reporting.theme import STATUS
 _PILLS = "".join(
     f".dstf-pill-{status} {{ background: var(--dstf-{status}-pill); "
     f"color: var(--dstf-{status}-dark); border-color: var(--dstf-{status}-border); }}\n"
-    for status in ("pass", "fail", "sim-fail", "no-ref", "warn", "queued")
+    for status in ("pass", "fail", "sim-fail", "no-ref", "not-run", "warn", "queued")
 )
 
 #: A criterion's swatch (legend b) in the colour its pill's border uses:

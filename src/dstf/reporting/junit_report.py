@@ -9,6 +9,7 @@ from ..comparison.comparator import TestComparison
 from .status import (
     FAIL,
     NO_REF,
+    NOT_RUN,
     SIM_FAIL,
     classify,
     count_by_status,
@@ -42,7 +43,7 @@ def generate_junit_report(
         counts = count_by_status(suite_comps)
         n_failures = counts[FAIL]
         n_errors = counts[SIM_FAIL]
-        n_skipped = counts[NO_REF]
+        n_skipped = counts[NO_REF] + counts[NOT_RUN]
 
         suite_elem = ET.SubElement(
             root,
@@ -67,7 +68,11 @@ def generate_junit_report(
             )
 
             state = classify(comp)
-            if state == SIM_FAIL:
+            if state == NOT_RUN:
+                # No result: the test was never run, or its run never
+                # finished it. Not a failure and not an error (D145).
+                ET.SubElement(tc, "skipped", {"message": "not run"})
+            elif state == SIM_FAIL:
                 ET.SubElement(
                     tc,
                     "error",

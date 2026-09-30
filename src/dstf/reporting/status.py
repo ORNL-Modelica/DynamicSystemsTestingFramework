@@ -8,6 +8,9 @@ exists to make impossible.
 
 Ordering, and why:
 
+0. ``NOT RUN`` — there is no result: the last run never ran the test, or
+   never finished it (D145). Nothing ran, so nothing failed, and no verdict
+   about the trajectories exists.
 1. ``SIM_FAIL`` — the simulation never produced data, so no verdict
    about the trajectories is meaningful.
 2. ``FAIL`` — a failing verdict outranks a missing baseline: baseline-free
@@ -29,6 +32,7 @@ copy — are gone. Every surface classifies here.
 """
 
 from collections import Counter
+from collections.abc import Iterable
 
 from ..comparison.types import TestComparison, VariableComparison
 
@@ -36,6 +40,14 @@ PASS = "PASS"
 FAIL = "FAIL"
 SIM_FAIL = "SIM_FAIL"
 NO_REF = "NO_REF"
+#: No result exists (D145): no manifest entry, or one the last run left
+#: ``pending``. The key is the word a person reads, so a surface that shows
+#: the classifier's key reads it. Not a failure (``FAILURES``).
+NOT_RUN = "NOT RUN"
+
+#: The statuses that fail a run: what ``compare`` and ``run`` exit on
+#: (``exit_code``). NO_REF and NOT RUN are not in it.
+FAILURES = frozenset({FAIL, SIM_FAIL})
 
 #: The states a test is in before it has a verdict, from a live run's
 #: status.json. A test that simulated and is not yet scored has no word of
@@ -51,7 +63,7 @@ TIMED_OUT = "TIMED_OUT"
 SCORING_FAILED = "scoring failed"
 
 #: Every status, in the order the count pills and a sort by status use.
-STATUS_ORDER = (QUEUED, RUNNING, PASS, FAIL, SIM_FAIL, NO_REF, TIMED_OUT)
+STATUS_ORDER = (QUEUED, RUNNING, PASS, FAIL, SIM_FAIL, NO_REF, TIMED_OUT, NOT_RUN)
 
 #: Status → the CSS class both HTML surfaces style it with. One table, so
 #: the dashboard, the report header and the tool cannot drift into two
@@ -64,6 +76,7 @@ STATUS_CLASSES = {
     QUEUED: "queued",
     RUNNING: "running",
     TIMED_OUT: "timed-out",
+    NOT_RUN: "not-run",
 }
 
 #: Status → the word a person reads. Only TIMED_OUT differs from its key.
@@ -89,7 +102,9 @@ def live_status(raw: str) -> str | None:
 
 
 def classify(comp: TestComparison) -> str:
-    """Return this test's status: one of PASS / FAIL / SIM_FAIL / NO_REF."""
+    """Return this test's status: NOT RUN / PASS / FAIL / SIM_FAIL / NO_REF."""
+    if not comp.ran:
+        return NOT_RUN
     if not comp.sim_success:
         return SIM_FAIL
     if not comp.passed:
@@ -110,12 +125,18 @@ def classify_with_class(comp: TestComparison) -> tuple[str, str]:
 
 
 def count_by_status(comparisons: list[TestComparison]) -> Counter[str]:
-    """Count *comparisons* into the four mutually-exclusive status buckets.
+    """Count *comparisons* into the mutually-exclusive status buckets.
 
-    Missing buckets read 0 (``Counter``), so callers can index all four
+    Missing buckets read 0 (``Counter``), so callers can index every one
     without guarding.
     """
     return Counter(classify(c) for c in comparisons)
+
+
+def exit_code(comparisons: Iterable[TestComparison]) -> int:
+    """1 when any test FAILED or failed to simulate, else 0: a test NOT RUN
+    or with no baseline does not fail a run (D145)."""
+    return 1 if any(classify(c) in FAILURES for c in comparisons) else 0
 
 
 def not_scored_reason(var: VariableComparison) -> str | None:

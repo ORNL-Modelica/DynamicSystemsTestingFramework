@@ -959,6 +959,7 @@ class _FakeComp:
     variables: list = field(default_factory=list)
     test_id: int | None = None
     metric_tree: object = None
+    ran: bool = True
 
 
 def _review_env(tmp_path, statuses=None):
@@ -1021,6 +1022,17 @@ class TestInteractiveReviewExitCode:
         comps = [_FakeComp("Lib.A", passed=False, sim_success=False)]
         rc = _interactive_review([], {}, comps, store, config)
         assert rc == 1
+
+    def test_a_test_not_run_is_not_a_failure(self, tmp_path, capsys):
+        """D145: `run -i` exits as `run` does — a test with no result reads
+        NOT RUN, is passed over, and is not left failing."""
+        config, store = _review_env(tmp_path)
+        comps = [_FakeComp("Lib.A", passed=False, sim_success=False, ran=False)]
+        rc = _interactive_review([], {}, comps, store, config)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Status: NOT RUN" in out and "SIM_FAIL" not in out
+        assert "Skipping (not run)" in out
 
     def test_accepting_the_failure_resolves_it(self, monkeypatch, tmp_path, capsys):
         config, store = _review_env(tmp_path)

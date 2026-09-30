@@ -177,24 +177,39 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
         expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
         badges = page.locator(".dstf-badge-cell")
         expect(badges.filter(has_text="PASS")).to_have_count(2, timeout=EXPECT_TIMEOUT)
-        for word, n in (("^FAIL$", 1), ("SIM_FAIL", 1), ("NO_REF", 1)):
+        # C's run never finished it: NOT RUN (D145), not SIM_FAIL.
+        for word, n in (
+            ("^FAIL$", 1),
+            ("^NOT RUN$", 1),
+            ("NO_REF", 1),
+            ("SIM_FAIL", 0),
+        ):
             expect(badges.filter(has_text=re.compile(word))).to_have_count(
                 n, timeout=EXPECT_TIMEOUT
             )
         # Each badge carries its verdict's fill (`theme.STATUS`: fail
-        # #f44336, pass #4CAF50).
+        # #f44336, pass #4CAF50, NOT RUN the neutral grey #888888).
         fill = "e => getComputedStyle(e).backgroundColor"
         assert (
             badges.filter(has_text=re.compile("^FAIL$")).first.evaluate(fill)
             == "rgb(244, 67, 54)"
         )
         assert badges.filter(has_text="PASS").first.evaluate(fill) == "rgb(76, 175, 80)"
-        # The pills carry the classifier's counts.
+        assert (
+            badges.filter(has_text="NOT RUN").first.evaluate(fill)
+            == "rgb(136, 136, 136)"
+        )
+        # The pills carry the classifier's counts; NOT RUN has its own.
         pills = page.locator("#dstf-suite-tools button[data-pill]")
         expect(pills.filter(has_text="PASS 2")).to_have_count(1, timeout=EXPECT_TIMEOUT)
         expect(pills.filter(has_text=re.compile(r"^FAIL 1$"))).to_have_count(
             1, timeout=EXPECT_TIMEOUT
         )  # not SIM_FAIL 1
+        not_run = page.locator("#dstf-suite-tools button[data-pill='not-run']")
+        expect(not_run).to_have_text("NOT RUN 1", timeout=EXPECT_TIMEOUT)
+        not_run.click()
+        _shown(page, "G:FakeLib C")
+        not_run.click()
 
         # The font token reaches the body (roadmap §1 predicate 2's last gap):
         # the computed stack STARTS with the token's first family — Quasar's
@@ -543,9 +558,9 @@ def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
     proc, url, page, context, errors, cfg = _served(tmp_path, playwright_browser)
     try:
         _box(page, D).click()
-        # C and FakeLib.Cases.X: the SIM_FAIL pill and "C" in Test; FakeLib
+        # C and FakeLib.Cases.X: the NOT RUN pill and "C" in Test; FakeLib
         # collapsed, so C is under a closed header.
-        page.locator("button[data-pill='sim-fail']").click()
+        page.locator("button[data-pill='not-run']").click()
         _filter(page, "model").fill("C")
         page.locator(".ag-row[row-id='g:FakeLib'] .dstf-grp").click()
         page.locator(".ag-header-cell[col-id='nrmse'] .ag-header-cell-label").click()
@@ -563,7 +578,7 @@ def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
         expect(page.locator(ROWS).first).to_be_attached(timeout=EXPECT_TIMEOUT)
         _shown(page, "G:FakeLib G:FakeLib.Cases X")
         expect(_filter(page, "model")).to_have_value("C")
-        expect(page.locator("button[data-pill='sim-fail']")).to_have_attribute(
+        expect(page.locator("button[data-pill='not-run']")).to_have_attribute(
             "aria-pressed", "true"
         )
         expect(page.locator(".ag-header-cell[col-id='detail']")).to_have_count(0)
@@ -852,8 +867,8 @@ def test_the_header_checkbox_selects_only_the_rows_shown(tmp_path, playwright_br
     — and never a group row."""
     proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
     try:
-        # SIM_FAIL: C and FakeLib.Cases.X; the Cases group closed hides X.
-        page.locator("button[data-pill='sim-fail']").click()
+        # NOT RUN: C and FakeLib.Cases.X; the Cases group closed hides X.
+        page.locator("button[data-pill='not-run']").click()
         page.locator(".ag-row[row-id='g:FakeLib.Cases'] .dstf-grp").click()
         _shown(page, "G:FakeLib C G:FakeLib.Cases")
         page.locator(".ag-header-select-all input").click()
@@ -972,7 +987,13 @@ LONG_NAME = (
 
 def _with_long_name(cfg: Path) -> None:
     """One more test, named as long as TRANSFORM's longest (no result:
-    SIM_FAIL, with a message)."""
+    NOT RUN, with a message) — and C's run recorded failed, so its row
+    carries the reader's long message (a pending C is NOT RUN, with the
+    short one, D145)."""
+    manifest_path = cfg.parents[2] / "work" / "batch_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["test_0003"]["last_run_status"] = "failed"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     spec_path = cfg.parent / "test_spec.json"
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     spec["tests"].append(

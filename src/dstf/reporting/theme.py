@@ -40,6 +40,19 @@ DEFAULT_THEME: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#: The neutral grey: a live row still queued, and a test with no result
+#: (NOT RUN, D145) — one token under two classes, so a pill and a filter
+#: can still tell them apart.
+_NEUTRAL: Mapping[str, str] = MappingProxyType(
+    {
+        "fill": "#888888",
+        "dark": "#555555",
+        "tint": "#f5f5f5",
+        "pill": "#f5f5f5",
+        "border": "#dddddd",
+    }
+)
+
 #: fill: the filled badge and bar segment; dark: text on a tint; tint: the
 #: row background; pill: the tinted pill's background; border: its border.
 STATUS: Mapping[str, Mapping[str, str]] = MappingProxyType(
@@ -98,15 +111,8 @@ STATUS: Mapping[str, Mapping[str, str]] = MappingProxyType(
                 "border": "#e1bee7",
             }
         ),
-        "queued": MappingProxyType(
-            {
-                "fill": "#888888",
-                "dark": "#555555",
-                "tint": "#f5f5f5",
-                "pill": "#f5f5f5",
-                "border": "#dddddd",
-            }
-        ),
+        "queued": _NEUTRAL,
+        "not-run": _NEUTRAL,
         "running": MappingProxyType(
             {
                 "fill": "#2196F3",

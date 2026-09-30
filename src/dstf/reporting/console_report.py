@@ -4,12 +4,22 @@ import sys
 
 from ..backends.types import label_with_name
 from ..comparison.comparator import TestComparison, VariableComparison
-from .status import FAIL, NO_REF, SIM_FAIL, classify, not_scored_reason
+from .status import (
+    FAIL,
+    NO_REF,
+    NOT_RUN,
+    SIM_FAIL,
+    STATUS_LABELS,
+    classify,
+    exit_code,
+    not_scored_reason,
+)
 
 # ANSI color codes
 _GREEN = "\033[92m"
 _RED = "\033[91m"
 _YELLOW = "\033[93m"
+_GREY = "\033[90m"
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 
@@ -22,7 +32,8 @@ def _color(text: str, code: str) -> str:
 
 
 def print_report(comparisons: list[TestComparison]) -> int:
-    """Print a console report and return exit code (0=all passed, 1=failures)."""
+    """Print a console report and return exit code (0 when nothing FAILED or
+    failed to simulate — NOT RUN and NO_REF do not fail it — else 1)."""
     if not comparisons:
         print("No comparisons to report.")
         return 1
@@ -31,6 +42,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
     n_failed = 0
     n_no_ref = 0
     n_sim_fail = 0
+    n_not_run = 0
     failures: list[TestComparison] = []
     warned: list[TestComparison] = []
 
@@ -38,7 +50,11 @@ def print_report(comparisons: list[TestComparison]) -> int:
         # Ordering (SIM_FAIL > FAIL > NO_REF > PASS) and its rationale live
         # in reporting.status — this is one of its call sites, not a copy.
         state = classify(comp)
-        if state == SIM_FAIL:
+        if state == NOT_RUN:
+            # No result: nothing ran, so nothing failed (D145).
+            n_not_run += 1
+            status = _color(STATUS_LABELS[NOT_RUN], _GREY)
+        elif state == SIM_FAIL:
             n_sim_fail += 1
             status = _color("SIM_FAIL", _RED)
         elif state == FAIL:
@@ -78,6 +94,8 @@ def print_report(comparisons: list[TestComparison]) -> int:
         print(_color(f"  Simulation errors: {n_sim_fail}", _RED))
     if n_no_ref:
         print(_color(f"  No baseline: {n_no_ref}", _YELLOW))
+    if n_not_run:
+        print(_color(f"  {STATUS_LABELS[NOT_RUN]}: {n_not_run}", _GREY))
     if warned:
         print(_color(f"  Structural warnings: {len(warned)}", _YELLOW))
 
@@ -105,7 +123,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
             for w in comp.warnings:
                 print(f"    {w.field}: {w.reference_value} -> {w.current_value}")
 
-    return 0 if n_failed == 0 and n_sim_fail == 0 else 1
+    return exit_code(comparisons)
 
 
 def _print_var_failure(var: VariableComparison):

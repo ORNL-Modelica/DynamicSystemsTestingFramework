@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import json
 import logging
 
@@ -1331,19 +1332,22 @@ _RUN_LINES = ("strip-text", "plots:count", "tree:summary", "var-target")
 async def test_an_unfinished_run_says_no_result_on_every_line(tmp_path):
     """ONE run-state rule (`TestPage.run_state`): the strip said "No result
     yet" for C's unfinished run while the count, the tree and the drawer
-    said the run failed."""
+    said the run failed. Since D145 the reader hands in no result for it,
+    so every line reads as for a test never run."""
     shell = _c_run(tmp_path, "pending")
     async with user_simulation(root=shell.index) as user:
         page = await _drawer(shell, user, C)
         assert page.run_state() == "none"
+        # D145: the header's badge agrees with the strip — NOT RUN, grey.
+        assert page.badge.text == "NOT RUN"
+        assert page.badge._style["background-color"] == "var(--dstf-not-run-fill)"
         said = {m: _one(user, m).text for m in _RUN_LINES}
         assert said == {
             "strip-text": "No result yet — rerun to simulate it.",
             "plots:count": "no plots: this test has no result",
             "tree:summary": "nothing scored: this test has no result",
-            "var-target": "No result yet: no plots",
+            "var-target": "No plot yet: + new plot adds one",
         }
-        assert _one(user, "var-empty").text == "this test has no result"
 
 
 async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
@@ -1353,6 +1357,7 @@ async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
     async with user_simulation(root=shell.index) as user:
         page = await _drawer(shell, user, C)
         assert page.run_state() == "failed"
+        assert page.badge.text == "SIM_FAIL"  # it ran, and failed (D145)
         said = {m: _one(user, m).text for m in _RUN_LINES}
         assert said["strip-text"].startswith("The simulation failed.")
         assert {m: t for m, t in said.items() if m != "strip-text"} == {
@@ -1371,6 +1376,8 @@ async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):
         page = await _drawer(shell, user, C)
         assert shell.session.project.results.get(C) is None
         assert page.run_state() == "none"
+        assert page.badge.text == "NOT RUN"  # D145
+        assert _one(user, "strip-text").text == "No result yet — rerun to simulate it."
         assert _one(user, "plots:count").text == "no plots: this test has no result"
         assert _one(user, "tree:summary").text == (
             "nothing scored: this test has no result"
@@ -5015,15 +5022,15 @@ async def _pick(user, menu: str, value: str) -> None:
 class TestTestsDrawerControls:
     """The Tests drawer's control set (the owner's ruling Q7): the filter
     with `.*` / `Aa`, sort, group, names and status pills with EDITED, each
-    the tab's. The fixture's verdicts: A FAIL, B NO_REF, C SIM_FAIL, D PASS,
-    G PASS."""
+    the tab's. The fixture's verdicts: A FAIL, B NO_REF, C NOT RUN (its run
+    never finished it, D145), D PASS, G PASS."""
 
     async def test_sort_by_name_and_by_status_failures_first(self, shell):
         async with user_simulation(root=shell.index) as user:
             page = await _tests_drawer(shell, user)
             assert _shown(shell, user) == [A, B, C, D, G]
             await _pick(user, "tests-drawer:sort", "status")
-            await _settled(lambda: _shown(shell, user) == [A, C, B, D, G])
+            await _settled(lambda: _shown(shell, user) == [A, B, D, G, C])
             assert page.state.tests_sort == "status"
             item = _one(user, "tests-drawer:sort:status")
             assert item.props["role"] == "menuitemradio"
@@ -5036,26 +5043,26 @@ class TestTestsDrawerControls:
             assert _shown(shell, user) == [A, B, C, D, G]
 
     async def test_scoring_failed_sorts_after_sim_fail_and_unscored_last(self, shell):
-        """FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, then a test with no
-        verdict yet — not `STATUS_ORDER`, which lists PASS first."""
+        """FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, NOT RUN, then a test
+        with no verdict yet — not `STATUS_ORDER`, which lists PASS first."""
         async with user_simulation(root=shell.index) as user:
             await _tests_drawer(shell, user)
             shell.load.failed_models.append(G)
             del shell.session.comparisons[G]
             shell.session.comparisons.pop(D)
             await _pick(user, "tests-drawer:sort", "status")
-            await _settled(lambda: _shown(shell, user) == [A, C, G, B, D])
+            await _settled(lambda: _shown(shell, user) == [A, G, B, C, D])
 
     async def test_the_status_sort_follows_a_rescore(self, shell):
         async with user_simulation(root=shell.index) as user:
             page = await _tests_drawer(shell, user)
             await _pick(user, "tests-drawer:sort", "status")
-            await _settled(lambda: _shown(shell, user) == [A, C, B, D, G])
+            await _settled(lambda: _shown(shell, user) == [A, B, D, G, C])
             # D's nrmse 6e-4 fails at 1e-5: D moves up among the failures
             shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
             drawer = page.rail.tests
             await _settled(lambda: drawer.list.rows[D].verdict == "FAIL")
-            await _settled(lambda: _shown(shell, user) == [A, D, C, B, G])
+            await _settled(lambda: _shown(shell, user) == [A, D, B, G, C])
 
     async def test_flat_and_full_names(self, shell):
         async with user_simulation(root=shell.index) as user:
@@ -5085,8 +5092,11 @@ class TestTestsDrawerControls:
             await _settled(lambda: _shown(shell, user) == [A])
             assert _one(user, "tests-drawer:pill:PASS").text == "PASS 2"
             assert _one(user, "tests-drawer:pill:FAIL").text == "FAIL 1"
-            assert _one(user, "tests-drawer:pill:SIM_FAIL").text == "SIM_FAIL 1"
+            assert _one(user, "tests-drawer:pill:SIM_FAIL").text == "SIM_FAIL 0"
             assert _one(user, "tests-drawer:pill:NO_REF").text == "NO_REF 1"
+            not_run = _one(user, "tests-drawer:pill:NOT_RUN")  # D145
+            assert not_run.text == "NOT RUN 1"
+            assert "dstf-pill-not-run" in not_run.classes
             edited = _one(user, "tests-drawer:pill:EDITED")
             assert edited.text == "EDITED 0" and not edited.enabled
             assert "dstf-pill-pass" in _one(user, "tests-drawer:pill:PASS").classes
@@ -5254,6 +5264,10 @@ class TestTestsDrawerControls:
         here, comes before C in package order."""
         async with user_simulation(root=shell.index) as user:
             page = await _tests_drawer(shell, user)
+            # C ran and failed here (the fixture's C never finished: NOT
+            # RUN, D145), so there is a SIM_FAIL to sort after.
+            comp = shell.session.comparisons[C]
+            shell.session.comparisons[C] = dataclasses.replace(comp, ran=True)
             shell.load.failed_models.append(B)
             del shell.session.comparisons[B]
             page.rail.tests._rebuild()
@@ -5288,11 +5302,11 @@ class TestTestsDrawerControls:
             await _pick(user, "tests-drawer:sort", "status")
             user.find(marker="tests-drawer:needle").type("FakeLib")
             await _settled(lambda: asked != [])
-            await _settled(lambda: _shown(shell, user) == [A, C, B, D, G])
+            await _settled(lambda: _shown(shell, user) == [A, B, D, G, C])
             asked.clear()
             # D's nrmse 6e-4 fails at 1e-5: D moves up among the failures
             shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
-            await _settled(lambda: _shown(shell, user) == [A, D, C, B, G])
+            await _settled(lambda: _shown(shell, user) == [A, D, B, G, C])
             assert asked == []
 
 
@@ -6616,10 +6630,10 @@ async def test_the_strip_on_a_test_with_no_baseline_fills_accept(shell):
 
 async def test_the_strip_on_an_unfinished_run_fills_rerun(shell):
     """C's last run never finished it (its manifest entry is still pending):
-    there is no result to read, whatever the loaded TestResult says."""
+    there is no result to read, and the reader hands in none (D145)."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, C)
-        assert shell.session.project.results.get(C) is not None
+        assert shell.session.project.results.get(C) is None
         assert _one(user, "strip-text").text == (
             "No result yet — rerun to simulate it."
         )

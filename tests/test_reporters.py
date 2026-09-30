@@ -66,6 +66,15 @@ def _no_ref(model_id="Lib.Examples.D"):
     return TestComparison(model_id=model_id, passed=True, has_reference=False)
 
 
+def _not_run(model_id="Lib.Examples.N"):
+    """A test with no result — never run, or its run never finished it —
+    as the comparator builds it (D145). The store is never consulted."""
+    from conftest import make_test_model
+    from dstf.comparison.comparator import compare_one
+
+    return compare_one(make_test_model(model_id), None, None)
+
+
 def _sentinel_var(
     name="h",
     error=(
@@ -180,6 +189,20 @@ class TestJUnitReport:
         assert root.get("failures") == "0"
         assert root.get("errors") == "0"
 
+    def test_a_test_not_run_is_skipped_not_run(self, tmp_path):
+        """D145: no result is not a failure. The testcase carries
+        ``<skipped message="not run"/>`` — never <failure>, never <error>
+        — and the suite counts it skipped."""
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_not_run(), _passing()], out)
+        root = ET.parse(out).getroot()
+        case = root.find(".//testcase[@name='Lib.Examples.N']")
+        assert case is not None
+        assert [c.tag for c in case] == ["skipped"]
+        assert case.find("skipped").get("message") == "not run"
+        assert root.get("failures") == "0" and root.get("errors") == "0"
+        assert root.find("testsuite").get("skipped") == "1"
+
     def test_suites_grouped_by_first_two_model_id_parts(self, tmp_path):
         out = tmp_path / "junit.xml"
         generate_junit_report(
@@ -257,6 +280,17 @@ class TestConsoleReport:
         assert print_report([_no_ref()]) == 0
         assert "No baseline: 1" in capsys.readouterr().out
 
+    def test_a_test_not_run_does_not_fail_the_run(self, capsys):
+        """D145: NOT RUN + PASS exits 0; the line says NOT RUN."""
+        assert print_report([_not_run(), _passing()]) == 0
+        out = capsys.readouterr().out
+        assert "  NOT RUN  Lib.Examples.N\n" in out
+        assert "NOT RUN: 1" in out
+        assert "SIM_FAIL" not in out and "Simulation errors" not in out
+
+    def test_a_failure_beside_a_test_not_run_still_fails(self, capsys):
+        assert print_report([_not_run(), _failing()]) == 1
+
     def test_structural_warning_section(self, capsys):
         assert print_report([_warned()]) == 0
         out = capsys.readouterr().out
@@ -326,6 +360,21 @@ class TestReportFormatRouting:
             _output_report([_passing(), _failing()], args, _fake_config(work_dir), {})
             == 1
         )
+
+    def test_every_route_exits_zero_over_not_run_and_pass(self, tmp_path, capsys):
+        """D145: `compare` and `run` exit by what ran — a test NOT RUN is
+        not a failure on any route; a FAIL beside it still is."""
+        from dstf.cli.run_cmds import _output_report
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        for fmt in ("console", "junit", "html"):
+            args = types.SimpleNamespace(
+                report_format=fmt, output=str(tmp_path / f"r.{fmt}")
+            )
+            config = _fake_config(work_dir)
+            assert _output_report([_not_run(), _passing()], args, config, {}) == 0, fmt
+            assert _output_report([_not_run(), _failing()], args, config, {}) == 1, fmt
 
     def test_junit_route_unchanged(self, tmp_path):
         from dstf.cli.run_cmds import _output_report

@@ -119,6 +119,11 @@ class TestComparison:
     # reporting.status is the one classifier, and this is the input it
     # used to be missing (D117).
     simulate_only: bool = False
+    #: False when there is no result to compare (D145): the last run never
+    #: ran this test, or never finished it. ``reporting.status`` reads it
+    #: first — NOT RUN, which is not a failure. ``sim_success`` is False
+    #: beside it: nothing succeeded.
+    ran: bool = True
     # Phase 3.1: MetricTree root for this test. Today populated as the
     # implicit flat-AND over per-variable comparisons (matches `passed`
     # exactly). Phase 3.2+ replaces with user-authored trees from

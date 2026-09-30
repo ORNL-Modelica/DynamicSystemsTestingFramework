@@ -24,7 +24,11 @@ import numpy as np
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..storage.batch_manifest import RECORDED_RUN_STATUSES, BatchManifest
+from ..storage.batch_manifest import (
+    PENDING_RUN_STATUS,
+    RECORDED_RUN_STATUSES,
+    BatchManifest,
+)
 from ..storage.run_stats import read_run_stats
 from .common.result_variables import merge_timing_stats, run_timing
 from .types import Capability, DatasetType, TestResult, TestRunResult
@@ -670,6 +674,15 @@ class Backend(ABC):
         out while ``compare`` on the same work dir reported SIM_FAIL, and
         ``run --rerun failed -i`` then offered that partial run for
         acceptance as the primary baseline.
+
+        An entry the last run left :data:`PENDING_RUN_STATUS` — it started
+        the test and never finished it — with no result from this process's
+        run and no recorded failure (:func:`run_verdicts`) yields NO result:
+        its result file is not read, whatever it holds. This is the one
+        place "no result exists" is told from "the simulation failed"
+        (D145): the comparator reads a test with no result as NOT RUN, and a
+        test whose run recorded a failure — here, or in ``status.json`` for a
+        pending entry — as SIM_FAIL.
         """
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
@@ -708,6 +721,13 @@ class Backend(ABC):
                         ),
                     )
                     continue
+
+                if (
+                    rr is None
+                    and entry.get("last_run_status") == PENDING_RUN_STATUS
+                    and model_id not in verdicts
+                ):
+                    continue  # never finished: no result (D145)
 
                 if test_model is None:
                     _store(

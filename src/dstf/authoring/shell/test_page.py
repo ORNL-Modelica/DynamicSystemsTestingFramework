@@ -215,11 +215,12 @@ class TestPage:
     def run_state(self) -> str:
         """The ONE run-state rule every line of the page words its reason
         by: "none" — no result, or the last run never finished the test
-        (its manifest entry still pending: what the reader handed in is
-        not a result, as Accept's "re-run before accepting" reads it) —
-        "failed" when the run finished and failed, else "ok". The strip
-        said "No result yet" for an unfinished run while the count, the
-        tree and the drawer said the run failed."""
+        (its manifest entry still pending: the reader hands in no result
+        for it, D145, unless status.json recorded it failed, and then what
+        it hands in is not this run's result, as Accept's "re-run before
+        accepting" reads it) — "failed" when the run finished and failed,
+        else "ok". The strip said "No result yet" for an unfinished run
+        while the count, the tree and the drawer said the run failed."""
         result = self.result()
         project = self.shell.session.project
         if result is None or project is None:

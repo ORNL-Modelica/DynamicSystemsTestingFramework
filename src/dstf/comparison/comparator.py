@@ -757,24 +757,29 @@ def compare_one(
     default_points: bool = False,
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
 ) -> TestComparison:
-    """One test's comparison, short-circuits included: no result and a
-    failed simulation are SIM_FAIL; no baseline is NO_REF unless the test is
-    simulate-only or every leaf scores without a reference. ``compare_all``
-    is this per test; the authoring Session's rescore is this for one."""
+    """One test's comparison, short-circuits included: no result is NOT RUN
+    (``ran=False``, D145) and a failed simulation SIM_FAIL; no baseline is
+    NO_REF unless the test is simulate-only or every leaf scores without a
+    reference. ``compare_all`` is this per test; the authoring Session's
+    rescore is this for one."""
     if result is None:
+        # No result exists: the reader hands back none for a test with no
+        # manifest entry or one its last run never finished
+        # (`Backend.read_results`). Nothing ran, so nothing failed.
         return TestComparison(
             model_id=test.model_id,
             passed=False,
             sim_success=False,
+            ran=False,
             error_message="No simulation results found",
         )
 
     # A simulation that FAILED is SIM_FAIL regardless of whether a baseline
     # exists — this check MUST precede the no-baseline short-circuit below.
-    # Backends differ in how they signal failure: Dymola omits the test
-    # (caught by `result is None` above), but OpenModelica's read_result
-    # returns a success=False TestResult (missing .mat) that is NOT None,
-    # so without this it fell through to the no-baseline branch and was
+    # A backend signals a failed run with a success=False TestResult: the
+    # reader builds one from a failed run result, and OpenModelica's
+    # read_result returns one for a missing .mat. Before this check it
+    # fell through to the no-baseline branch and was
     # mislabeled NO_REF with passed=True. Surfaced 2026-07-07 across 91
     # OM/TRANSFORM compile/solver failures on models that never got OM
     # baselines (mirrors compare_test's own `not result.success` guard).

@@ -2004,19 +2004,26 @@ class TestCompareOne:
     `_mk_result`, `_make_test`, `_make_result_and_ref` and `_NoRefStore` are
     this module's helpers (model ids "MyLib.Test" and "Test.Model")."""
 
-    def test_no_result_is_sim_fail(self):
+    def test_no_result_is_not_run(self):
+        """D145: no result — no manifest entry, or one the last run never
+        finished (the reader hands back nothing for it) — is NOT RUN, not
+        SIM_FAIL, and not a failure."""
         from dstf.comparison.comparator import compare_one
+        from dstf.reporting.status import FAILURES, NOT_RUN, classify
 
         comp = compare_one(_mk_test(), None, _NoRefStore())
-        assert comp.sim_success is False
+        assert classify(comp) == NOT_RUN
+        assert NOT_RUN not in FAILURES
         assert comp.error_message == "No simulation results found"
 
     def test_failed_result_is_sim_fail_before_the_baseline_check(self):
         from dstf.comparison.comparator import compare_one
+        from dstf.reporting.status import SIM_FAIL, classify
 
         result = TestResult(model_id="MyLib.Test", success=False, error_message="boom")
         comp = compare_one(_mk_test(), result, _NoRefStore())
         assert comp.sim_success is False and comp.error_message == "boom"
+        assert classify(comp) == SIM_FAIL
 
     def test_no_baseline_is_no_ref(self):
         from dstf.comparison.comparator import compare_one

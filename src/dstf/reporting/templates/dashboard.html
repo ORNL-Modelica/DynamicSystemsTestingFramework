@@ -40,6 +40,7 @@ h1 { margin-bottom: 0.2em; font-size: 1.4em; }
 .counter.no-ref     { border-left-color: var(--dstf-no-ref-fill); } .counter.no-ref .value     { color: var(--dstf-no-ref-dark); }
 .counter.warnings   { border-left-color: var(--dstf-warn-fill); } .counter.warnings .value   { color: var(--dstf-warn-dark); }
 .counter.timed-out  { border-left-color: var(--dstf-timed-out-fill); } .counter.timed-out .value  { color: var(--dstf-timed-out-dark); }
+.counter.not-run    { border-left-color: var(--dstf-not-run-fill); } .counter.not-run .value    { color: var(--dstf-text-secondary); }
 .counter.total      { border-left-color: var(--dstf-text-secondary); }
 .bar { height: 14px; background: var(--dstf-border-hairline); border-radius: 7px; overflow: hidden; margin-bottom: 1em; display: flex; }
 .bar span { display: block; height: 100%; }
@@ -91,6 +92,7 @@ tr.fail td      { background: var(--dstf-fail-tint); }
 tr.sim-fail td  { background: var(--dstf-fail-tint); }
 tr.no-ref td    { background: var(--dstf-no-ref-tint); }
 tr.timed-out td { background: var(--dstf-timed-out-tint); }
+tr.not-run td   { background: var(--dstf-not-run-tint); color: var(--dstf-text-muted); }
 tr.pending td   { background: var(--dstf-pending-tint); }
 .status-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; letter-spacing: 0.03em; color: white; white-space: nowrap; }
 .status-badge.pass      { background: var(--dstf-pass-fill); }
@@ -99,6 +101,7 @@ tr.pending td   { background: var(--dstf-pending-tint); }
 .status-badge.no-ref    { background: var(--dstf-no-ref-fill); }
 .status-badge.timed-out { background: var(--dstf-timed-out-fill); }
 .status-badge.queued    { background: var(--dstf-queued-fill); }
+.status-badge.not-run   { background: var(--dstf-not-run-fill); }
 .status-badge.running   { background: var(--dstf-running-fill); }
 .status-badge.pending   { background: var(--dstf-pending-fill); }
 .warn { color: var(--dstf-warn-dark); font-weight: 600; }

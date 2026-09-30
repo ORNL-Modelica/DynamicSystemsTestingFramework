@@ -2787,8 +2787,8 @@ def test_the_tests_drawers_menus_answer_a_mouse_and_the_keyboard(
         items.nth(2).click()
         expect(items).to_have_count(0, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(300)
-        # A FAIL, C SIM_FAIL, B NO_REF, then the passes in package order.
-        assert page.evaluate(DRAWER_NAMES) == ["A", "C", "B", "D", "G"]
+        # A FAIL, B NO_REF, the passes in package order, then C NOT RUN.
+        assert page.evaluate(DRAWER_NAMES) == ["A", "B", "D", "G", "C"]
 
         names = drawer.get_by_role("button", name="Names", exact=True)
         names.focus()

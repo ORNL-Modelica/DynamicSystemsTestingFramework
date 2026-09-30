@@ -1011,6 +1011,7 @@ def test_the_pills_are_the_statuses(tmp_path):
         ["sim-fail", "SIM_FAIL"],
         ["no-ref", "NO_REF"],
         ["timed-out", "TIMED OUT"],
+        ["not-run", "NOT RUN"],
     ]
     assert "['warnings', 'warnings']" in html  # the cross-cut pill
 
@@ -1056,6 +1057,45 @@ def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     statuses = [_attrs(tr)["data-status"] for tr in _body_rows(html)]
     assert statuses == ["pass", "fail", "pass"]
+
+
+def test_a_test_with_no_result_reads_not_run_in_grey(tmp_path):
+    """D145: a test the last run never finished (a status.json row still
+    queued, as an aborted run leaves it) and one it never ran (no row at
+    all) read NOT RUN on the final page: the row's class and badge, a
+    style for each, and a pill of its own counted by that class."""
+    from conftest import make_test_model
+    from dstf.comparison.comparator import compare_one
+    from dstf.comparison.types import TestComparison
+
+    snapshot = {
+        "total": 2,
+        "elapsed": 5.0,
+        "counts": {"passed": 1, "queued": 1},
+        "tests": [
+            {"test_key": "test_0001", "model_id": "Lib.A", "status": "passed"},
+            {"test_key": "test_0002", "model_id": "Lib.B", "status": "queued"},
+        ],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    comparisons = [
+        TestComparison(model_id="Lib.A", passed=True, test_id="0001"),
+        compare_one(make_test_model("Lib.B"), None, None),
+        compare_one(make_test_model("Lib.C"), None, None),
+    ]
+    render_final(tmp_path, comparisons=comparisons)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    rows = _body_rows(html)
+    assert [_attrs(tr)["data-status"] for tr in rows] == [
+        "pass",
+        "not-run",
+        "not-run",
+    ]
+    assert rows[1].count('<span class="status-badge not-run">NOT RUN</span>') == 1
+    for rule in (".counter.not-run", "tr.not-run td", ".status-badge.not-run"):
+        assert rule in html, rule
+    assert "var(--dstf-not-run-fill)" in html
 
 
 def _warning():

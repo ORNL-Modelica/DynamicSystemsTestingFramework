@@ -2,6 +2,7 @@
 
 from ..backends.types import label_with_name
 from ..discovery.test_registry import TestModel
+from ..reporting.status import NOT_RUN, STATUS_LABELS
 from ..storage.accept import accept_run_results
 from .common import _parse_review_filter, _should_review
 
@@ -44,7 +45,8 @@ def _interactive_review(
     n_unresolved = 0
 
     def _still_failing(c) -> bool:
-        return (not c.sim_success) or not c.passed
+        # A test NOT RUN has no result: it fails nothing (D145).
+        return c.ran and ((not c.sim_success) or not c.passed)
 
     n_total = len(comparisons)
 
@@ -69,7 +71,9 @@ def _interactive_review(
         model_id = comp.model_id
 
         # Status line
-        if not comp.sim_success:
+        if not comp.ran:
+            status = STATUS_LABELS[NOT_RUN]
+        elif not comp.sim_success:
             status = f"{RED}SIM_FAIL{RESET}"
         elif not comp.has_reference:
             status = f"{YELLOW}NO BASELINE{RESET}"
@@ -105,11 +109,11 @@ def _interactive_review(
                     f"  Variables: {n_vars_pass}/{n_vars_total} passed, {n_vars_total - n_vars_pass} failed"
                 )
 
-        # Can't accept if simulation failed
+        # Can't accept if simulation failed, or never ran
         if not comp.sim_success:
-            print("  Skipping (simulation failed)\n")
+            print(f"  Skipping ({'simulation failed' if comp.ran else 'not run'})\n")
             n_skipped += 1
-            n_unresolved += 1
+            n_unresolved += _still_failing(comp)
             continue
 
         # Prompt

@@ -37,6 +37,18 @@ def test_no_baseline_has_no_ref_id(session):
     assert row.ref_id is None  # never "ref_None"
 
 
+def test_a_test_its_run_never_finished_is_not_run(session):
+    """D145: C's manifest entry is still pending — the last run never
+    finished it — so it has no result: NOT RUN, in the grey token's class,
+    not SIM_FAIL."""
+    row = suite_row(session, C)
+    assert (row.status, row.status_text, row.status_class) == (
+        "NOT RUN",
+        "NOT RUN",
+        "not-run",
+    )
+
+
 def test_walls_from_the_results_timing(session):
     session.project.results[D].statistics = {
         "timing": {"sim_wall": 1.5, "total_wall": 2.0}

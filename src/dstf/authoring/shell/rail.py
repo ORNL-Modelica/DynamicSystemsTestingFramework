@@ -20,6 +20,7 @@ from nicegui import ui
 from ...reporting.status import (
     FAIL,
     NO_REF,
+    NOT_RUN,
     PASS,
     SCORING_FAILED,
     SIM_FAIL,
@@ -169,13 +170,14 @@ _BLUR = """(e) => {
 
 EDITED = "EDITED"
 #: The Tests drawer's status pills, in the Suite's order, and EDITED.
-PILLS = (PASS, FAIL, SIM_FAIL, NO_REF, EDITED)
+PILLS = (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN, EDITED)
 #: Each pill's `.dstf-pill-<status>` tokens; EDITED reads as the Suite's
 #: Edits cell and the rows' ``N unsaved`` pill do.
 PILL_CSS = {**{s: STATUS_CLASSES[s] for s in PILLS if s != EDITED}, EDITED: "warn"}
 #: "Status, failures first": FAIL, SIM_FAIL, scoring failed, NO_REF, PASS,
-#: then no verdict yet — NOT `STATUS_ORDER`, which lists PASS first.
-FAILURES_FIRST = (FAIL, SIM_FAIL, SCORING_FAILED, NO_REF, PASS, "")
+#: NOT RUN (no result, D145), then no verdict yet — NOT `STATUS_ORDER`,
+#: which lists PASS first.
+FAILURES_FIRST = (FAIL, SIM_FAIL, SCORING_FAILED, NO_REF, PASS, NOT_RUN, "")
 SORTS = (
     ("package", "Package order"),
     ("name", "Name A→Z"),
@@ -242,7 +244,9 @@ class TestsDrawer:
                         .classes(
                             f"dstf-count-pill dstf-pill dstf-pill-{PILL_CSS[word]}"
                         )
-                        .mark(f"tests-drawer:pill:{word}")
+                        # One word: NiceGUI splits a marker on whitespace,
+                        # and "NOT RUN" has a space.
+                        .mark(f"tests-drawer:pill:{word.replace(' ', '_')}")
                     )
             self.list = TestList(
                 page.shell,

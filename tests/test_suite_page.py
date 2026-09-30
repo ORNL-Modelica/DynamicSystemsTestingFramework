@@ -100,7 +100,8 @@ async def test_the_rows_python_sends_carry_every_columns_text_and_sort(shell):
         assert a["nrmse__sort"] > 0.1 and a["nrmse"] == format(a["nrmse__sort"], ".4e")
         assert a["edits"] == "" and a["edits__sort"] is None
         assert {rows[m]["status"] for m in (D, G)} == {"PASS"}
-        assert (rows[B]["status"], rows[C]["status"]) == ("NO_REF", "SIM_FAIL")
+        # C's run never finished it: NOT RUN (D145).
+        assert (rows[B]["status"], rows[C]["status"]) == ("NO_REF", "NOT RUN")
         # A text column with no value filters as empty (S1's filter_text).
         assert rows[B]["ref"] == "—" and rows[B]["ref__sort"] is None
 
@@ -376,7 +377,7 @@ async def test_rows_fill_in_as_results_are_scored(tmp_path, monkeypatch, sent):
             gate.set()
         await _settled(lambda: shell.load.phase == "done")
         await _settled(lambda: (D, "PASS", 0) in _updates(sent))
-        assert (C, "SIM_FAIL", 0) in _updates(sent)
+        assert (C, "NOT RUN", 0) in _updates(sent)
 
 
 def _updates(sent: list[dict]) -> list[tuple]:
@@ -445,6 +446,26 @@ async def test_rows_dropped_and_named_again_in_one_tick_are_repainted(shell, sen
         assert len(sent) == 1
         assert sent[0]["add"] == [] and sent[0]["remove"] == []
         assert [m for m, _, _ in sent[0]["update"]] == [A, B, C, D, G]
+
+
+def test_the_count_pills_are_the_status_tables_and_include_not_run():
+    """The Suite's pills are handed to its script from Python, in the words
+    of `reporting.status` (the script spells none); NOT RUN has its own
+    (D145), after NO_REF."""
+    from dstf.authoring.shell.suite_grid import PILLS, scripts_html
+
+    assert [k for k, _ in PILLS] == [
+        "pass",
+        "fail",
+        "sim-fail",
+        "no-ref",
+        "not-run",
+        "edited",
+        "running",
+    ]
+    assert dict(PILLS)["not-run"] == "NOT RUN"
+    assert 'window.DstfSuitePills = [["pass", "PASS"]' in scripts_html("k")
+    assert '["not-run", "NOT RUN"]' in scripts_html("k")
 
 
 def test_the_views_storage_key_is_the_same_before_and_after_the_open(

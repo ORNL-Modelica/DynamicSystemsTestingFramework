@@ -20,7 +20,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from ..comparison.tree_spec import tree_variables
-from ..reporting.status import FAIL, NO_REF, PASS, SIM_FAIL
+from ..reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL
 from .capabilities import plural
 
 if TYPE_CHECKING:
@@ -146,7 +146,9 @@ def strip_for(
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")
     if status is None and (has_result or loading):
         return Strip(S.WAITING, "grey", "Scoring…")
-    if not has_result and status in (None, SIM_FAIL):
+    # NOT RUN is the classifier's word for this situation (D145): the
+    # header's badge and the strip say one thing.
+    if status == NOT_RUN or (not has_result and status in (None, SIM_FAIL)):
         return Strip(S.NO_RESULT, "grey", "No result yet — rerun to simulate it.")
     if status == SIM_FAIL:
         return Strip(

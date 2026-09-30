@@ -33,7 +33,7 @@ from dstf.authoring.session import (
 )
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.progress import read_status
-from dstf.reporting.status import PASS, SIM_FAIL, classify
+from dstf.reporting.status import NOT_RUN, PASS, classify
 
 CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
 SIMPLE_RAMP = "PythonTestingLib.Examples.SimpleRamp"
@@ -56,7 +56,8 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     project = session.project
 
     # Nothing ran, so `read_last_results` is empty and every test is scored
-    # with no result at all — SIM_FAIL, not NO_REF (which needs a result).
+    # with no result at all — NOT RUN (D145), not NO_REF (which needs a
+    # result) and not SIM_FAIL (nothing ran to fail).
     assert {t.model_id for t in project.tests} == {
         CONSTANT_CSV,
         SIMPLE_RAMP,
@@ -64,7 +65,7 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     }
     for model_id in (CONSTANT_CSV, SIMPLE_RAMP, POINTS_CHECK):
         comp = session.comparisons[model_id]
-        assert classify(comp) == SIM_FAIL, model_id
+        assert classify(comp) == NOT_RUN, model_id
         assert comp.error_message == "No simulation results found"
     assert project.backend.quiet is True
     _assert_silent(capsys)
@@ -117,7 +118,7 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
     assert '<meta http-equiv="refresh"' not in page
     for model_id in (SIMPLE_RAMP, POINTS_CHECK):
-        assert classify(session.comparisons[model_id]) == SIM_FAIL, model_id
+        assert classify(session.comparisons[model_id]) == NOT_RUN, model_id
     _assert_silent(capsys)
 
     # 3. Accept stores the baseline through the shared accept function and
