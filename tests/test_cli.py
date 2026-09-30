@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -944,6 +945,128 @@ class TestAcceptExitCodeAndScope:
 
 
 # ---------------------------------------------------------------------------
+# The exit code at the seam. TRANSFORM-UnitTests drives `dstf` by its exit
+# code and its JUnit file, so every route is pinned: a test NOT RUN beside
+# a PASS exits 0, a FAIL exits 1, and a command in which nothing ran exits 1
+# (D145 §5).
+# ---------------------------------------------------------------------------
+
+#: Each report route's extra arguments; `{out}` is a file under tmp_path.
+_ROUTES = {
+    "console": [],
+    "junit": ["--report-format", "junit", "--output", "{out}.xml"],
+    "html": ["--report-format", "html", "--output", "{out}.html"],
+    "report": ["--report"],
+    "interactive": ["-i"],
+}
+
+_T1, _T2 = "Lib.T1", "Lib.T2"
+
+#: T1 has a baseline, T2 has none; neither has a result unless one is named.
+_SITUATIONS = {
+    "not run + pass": ({_T1: None}, 0),
+    "not run + fail": ({_T1: np.cos(np.linspace(0.0, 1.0, 11))}, 1),
+    "nothing ran": ({}, 1),
+}
+
+
+class TestTheExitCodeOnEveryRoute:
+    @pytest.fixture
+    def routed(self, run_env, monkeypatch, tmp_path):
+        """Store T1's baseline, then return a runner of one command over one
+        situation: T2 is NOT RUN in every one."""
+        run_env.make([_mk_test(_T1)], results={_T1: _mk_result(_T1)})
+        assert cmd_run(_run_args(run_env, "--accept")) == 0
+        # The review skips whatever it is offered: skipping a FAIL leaves it
+        # failing, skipping a PASS leaves nothing failing.
+        monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+
+        def dstf(command: str, route: str, situation: str) -> int:
+            values, _ = _SITUATIONS[situation]
+            results = {m: _mk_result(m, values=v) for m, v in values.items()}
+            run_env.make(
+                [_mk_test(_T1), _mk_test(_T2)],
+                results=results,
+                prior_results=results,
+            )
+            extra = [a.format(out=tmp_path / route) for a in _ROUTES[route]]
+            args = build_arg_parser().parse_args(
+                ["--config", str(run_env.config_dir), command]
+                + ["--work-dir", str(run_env.work_dir), *extra]
+            )
+            return (cmd_run if command == "run" else cmd_compare)(args)
+
+        return dstf
+
+    @pytest.mark.parametrize("situation", list(_SITUATIONS))
+    @pytest.mark.parametrize(
+        "command,route",
+        [("run", r) for r in _ROUTES]
+        + [("compare", r) for r in _ROUTES if r != "interactive"],
+    )
+    def test_the_exit_code(self, routed, command, route, situation):
+        assert routed(command, route, situation) == _SITUATIONS[situation][1]
+
+
+class TestNothingRanOverTheRealLibrary:
+    """The same seam over the Python example library, as the owner's suite
+    meets it: a compare over a work dir nothing ran in, and a compare after
+    a run whose worker pool never started (every test stamped pending)."""
+
+    ROUTES = ("console", "junit", "html", "report")
+
+    @pytest.fixture
+    def lib(self, tmp_path, monkeypatch):
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path)
+        monkeypatch.setattr(
+            "dstf.reporting.report_suite.open_in_browser", lambda p: None
+        )
+
+        def dstf(command: str, *extra: str) -> int:
+            return main(
+                ["--config", str(config.config_file), command]
+                + ["--work-dir", str(config.work_dir), *extra]
+            )
+
+        return dstf, tmp_path
+
+    @staticmethod
+    def _route(tmp_path, route: str) -> list[str]:
+        return [a.format(out=tmp_path / route) for a in _ROUTES[route]]
+
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_a_compare_over_a_work_dir_nothing_ran_in(self, lib, route):
+        dstf, tmp_path = lib
+        assert dstf("compare", *self._route(tmp_path, route)) == 1
+
+    def test_a_compare_after_a_pool_that_never_started(self, lib, monkeypatch):
+        from dstf.backends.python.backend import PythonBackend
+
+        dstf, tmp_path = lib
+
+        def never_started(self, tests):
+            # What a persistent pool does when no worker starts: the tests
+            # are stamped pending, then the run raises.
+            self._prepare_run(tests).progress.finalize()
+            raise RuntimeError("All workers failed to start")
+
+        with monkeypatch.context() as m:
+            m.setattr(PythonBackend, "run_tests", never_started)
+            assert dstf("run") == 1
+        for route in self.ROUTES:
+            assert dstf("compare", *self._route(tmp_path, route)) == 1, route
+        # The JUnit file says why: every test skipped, not run.
+        root = ET.parse(tmp_path / "junit.xml").getroot()
+        cases = list(root.iter("testcase"))
+        assert cases and all(
+            [(c.tag, c.get("message")) for c in tc] == [("skipped", "not run")]
+            for tc in cases
+        )
+
+
+# ---------------------------------------------------------------------------
 # Finding 62 — interactive review exit code
 # ---------------------------------------------------------------------------
 
@@ -1023,16 +1146,29 @@ class TestInteractiveReviewExitCode:
         rc = _interactive_review([], {}, comps, store, config)
         assert rc == 1
 
-    def test_a_test_not_run_is_not_a_failure(self, tmp_path, capsys):
+    def test_a_test_not_run_is_not_a_failure(self, monkeypatch, tmp_path, capsys):
         """D145: `run -i` exits as `run` does — a test with no result reads
         NOT RUN, is passed over, and is not left failing."""
         config, store = _review_env(tmp_path)
-        comps = [_FakeComp("Lib.A", passed=False, sim_success=False, ran=False)]
+        _feed_inputs(monkeypatch, ["s"])
+        comps = [
+            _FakeComp("Lib.A", passed=False, sim_success=False, ran=False),
+            _FakeComp("Lib.B"),
+        ]
         rc = _interactive_review([], {}, comps, store, config)
         assert rc == 0
         out = capsys.readouterr().out
         assert "Status: NOT RUN" in out and "SIM_FAIL" not in out
         assert "Skipping (not run)" in out
+
+    def test_a_review_in_which_nothing_ran_exits_one(self, tmp_path):
+        """D145 §5: `run -i` exits as `run` does — nothing ran is not a
+        green run. (A review is quit only at a prompt, which only a test
+        that ran is offered.)"""
+        config, store = _review_env(tmp_path)
+        not_run = _FakeComp("Lib.A", passed=False, sim_success=False, ran=False)
+        assert _interactive_review([], {}, [not_run], store, config) == 1
+        assert _interactive_review([], {}, [], store, config) == 1
 
     def test_accepting_the_failure_resolves_it(self, monkeypatch, tmp_path, capsys):
         config, store = _review_env(tmp_path)

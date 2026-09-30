@@ -6208,13 +6208,22 @@ from drawn options: such a test gets a status of its own, **NOT RUN**.
    interactive review (`run -i`), which says `NOT RUN` and passes the test
    over. JUnit writes the testcase with `<skipped message="not run"/>` and
    counts it skipped, never a failure or an error.
-5. *Not a failure.* `reporting.status.FAILURES` (FAIL, SIM_FAIL) is what
-   `compare` and `run` exit on (`exit_code`), and what the console and the
-   review count as still failing: exit 0 when everything that ran passed.
-   A persistent backend whose worker pool dies records every test it
-   could not reach as failed (`_drain_remaining`), so a crashed pool still
-   exits 1; NOT RUN arises from a run aborted by its process ending, or
-   from a test never in a run.
+5. *Not a failure — unless nothing ran.* `reporting.status.FAILURES`
+   (FAIL, SIM_FAIL) is what `compare` and `run` exit on (`exit_code`),
+   and what the console and the review count as still failing: exit 0
+   when everything that ran passed. A command in which NOTHING ran — no
+   comparison, or every one NOT RUN (`nothing_ran`) — exits 1 on every
+   route (console, `--report-format junit`, `--report-format html`,
+   `--report`, `run -i`), as the console's "No comparisons to report"
+   always did. NOT RUN arises four ways, and the exit code in each:
+   a test never in a run, beside tests that ran — 0 when those passed;
+   a run aborted by its process ending (Ctrl+C, a crash) — a later
+   `compare` exits by what that run finished, 1 when it finished nothing;
+   a persistent pool whose workers ALL fail to start — every test is
+   stamped `pending`, `run` itself exits 1 ("Run aborted"), and a later
+   `compare` exits 1 (nothing ran); and a `compare` over an empty or wrong
+   work dir — 1. A pool that dies mid-run records every test it could not
+   reach as failed (`_drain_remaining`): SIM_FAIL, exit 1.
 
 **Consequences.** A pending test's partial result is no longer read by
 `compare` or the tool: it has no plots, and the Variables drawer says

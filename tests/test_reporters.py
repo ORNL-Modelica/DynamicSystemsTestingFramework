@@ -376,6 +376,26 @@ class TestReportFormatRouting:
             assert _output_report([_not_run(), _passing()], args, config, {}) == 0, fmt
             assert _output_report([_not_run(), _failing()], args, config, {}) == 1, fmt
 
+    def test_every_route_exits_one_when_nothing_ran(self, tmp_path, capsys):
+        """D145 §5: a compare over an empty or wrong work dir, or after a
+        pool whose workers all failed to start, has no comparison or none
+        that ran — that is not a green run, on any route."""
+        from dstf.cli.run_cmds import _output_report
+        from dstf.reporting.status import exit_code
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        for fmt in ("console", "junit", "html"):
+            args = types.SimpleNamespace(
+                report_format=fmt, output=str(tmp_path / f"r.{fmt}")
+            )
+            config = _fake_config(work_dir)
+            assert _output_report([], args, config, {}) == 1, fmt
+            assert _output_report([_not_run(), _not_run("L.M")], args, config, {}) == 1
+        assert exit_code([]) == 1
+        assert exit_code(iter([_not_run()])) == 1
+        assert exit_code([_not_run(), _passing()]) == 0
+
     def test_junit_route_unchanged(self, tmp_path):
         from dstf.cli.run_cmds import _output_report
 

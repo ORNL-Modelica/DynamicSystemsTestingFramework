@@ -2,7 +2,7 @@
 
 from ..backends.types import label_with_name
 from ..discovery.test_registry import TestModel
-from ..reporting.status import NOT_RUN, STATUS_LABELS
+from ..reporting.status import NOT_RUN, STATUS_LABELS, nothing_ran
 from ..storage.accept import accept_run_results
 from .common import _parse_review_filter, _should_review
 
@@ -41,7 +41,9 @@ def _interactive_review(
     # passed over (reviewed, user-skipped, or auto-skipped) is still
     # failing/sim-failed and was not accepted during this session; else 0.
     # Tests never reached before a quit were neither reviewed nor skipped,
-    # so they don't count.
+    # so they don't count. A review in which nothing ran exits 1, as `run`
+    # does (D145 §5); it can only complete, since only a test that ran is
+    # offered a prompt to quit at.
     n_unresolved = 0
 
     def _still_failing(c) -> bool:
@@ -238,7 +240,7 @@ def _interactive_review(
     auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
     print(f"\nDone. Accepted {n_accepted}, skipped {n_skipped}{auto}.")
     # review 2026-07-06 finding 62: see n_unresolved above.
-    return 1 if n_unresolved else 0
+    return 1 if n_unresolved or nothing_ran(comparisons) else 0
 
 
 def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -> None:

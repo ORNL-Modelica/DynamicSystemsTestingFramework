@@ -10,7 +10,8 @@ Ordering, and why:
 
 0. ``NOT RUN`` — there is no result: the last run never ran the test, or
    never finished it (D145). Nothing ran, so nothing failed, and no verdict
-   about the trajectories exists.
+   about the trajectories exists. (A run in which NO test ran still exits
+   1: ``exit_code``.)
 1. ``SIM_FAIL`` — the simulation never produced data, so no verdict
    about the trajectories is meaningful.
 2. ``FAIL`` — a failing verdict outranks a missing baseline: baseline-free
@@ -46,7 +47,8 @@ NO_REF = "NO_REF"
 NOT_RUN = "NOT RUN"
 
 #: The statuses that fail a run: what ``compare`` and ``run`` exit on
-#: (``exit_code``). NO_REF and NOT RUN are not in it.
+#: (``exit_code``), beside a run in which nothing ran. NO_REF and NOT RUN
+#: are not in it.
 FAILURES = frozenset({FAIL, SIM_FAIL})
 
 #: The states a test is in before it has a verdict, from a live run's
@@ -133,10 +135,23 @@ def count_by_status(comparisons: list[TestComparison]) -> Counter[str]:
     return Counter(classify(c) for c in comparisons)
 
 
+def nothing_ran(comparisons: Iterable[TestComparison]) -> bool:
+    """True when no test ran: no comparisons at all, or every one NOT RUN.
+
+    A compare over an empty or wrong work dir, or after a run whose worker
+    pool never started (every test stamped pending), is here. That is not a
+    green run, though no test in it failed (D145 §5)."""
+    return not any(c.ran for c in comparisons)
+
+
 def exit_code(comparisons: Iterable[TestComparison]) -> int:
-    """1 when any test FAILED or failed to simulate, else 0: a test NOT RUN
-    or with no baseline does not fail a run (D145)."""
-    return 1 if any(classify(c) in FAILURES for c in comparisons) else 0
+    """1 when any test FAILED or failed to simulate, or when nothing ran
+    (:func:`nothing_ran`), else 0: a test NOT RUN beside tests that ran, or
+    one with no baseline, does not fail a run (D145)."""
+    comps = list(comparisons)
+    if nothing_ran(comps):
+        return 1
+    return 1 if any(classify(c) in FAILURES for c in comps) else 0
 
 
 def not_scored_reason(var: VariableComparison) -> str | None:

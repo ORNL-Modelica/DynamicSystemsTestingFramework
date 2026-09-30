@@ -408,7 +408,8 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     print(f"Report: {dashboard_path}")
     open_in_browser(dashboard_path)
 
-    # A test NOT RUN, or with no baseline, does not fail the run (D145).
+    # A test NOT RUN, or with no baseline, does not fail the run; a run in
+    # which nothing ran does (D145).
     return exit_code(comparisons)
 
 

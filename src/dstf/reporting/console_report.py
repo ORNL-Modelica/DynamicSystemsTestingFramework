@@ -33,7 +33,8 @@ def _color(text: str, code: str) -> str:
 
 def print_report(comparisons: list[TestComparison]) -> int:
     """Print a console report and return exit code (0 when nothing FAILED or
-    failed to simulate — NOT RUN and NO_REF do not fail it — else 1)."""
+    failed to simulate — NOT RUN and NO_REF do not fail it — and something
+    ran, else 1: ``exit_code``)."""
     if not comparisons:
         print("No comparisons to report.")
         return 1
