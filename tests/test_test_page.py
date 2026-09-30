@@ -5920,8 +5920,10 @@ class TestVariablesDrawer:
         ("status", "why"),
         [
             ("passed", "The run failed: no plots"),
-            # A run that never finished A: its partial result is no result.
-            ("pending", "No result yet: no plots"),
+            # A run left A pending and status.json recorded it failed: the
+            # reader hands in this failed result, the badge says SIM_FAIL,
+            # and so does every line (D145).
+            ("pending", "The run failed: no plots"),
         ],
     )
     async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell, status, why):
@@ -5966,24 +5968,6 @@ class TestVariablesDrawer:
             with page.client:
                 drawer._new(row)
             assert shell.session.spec.pending == []
-
-    async def test_an_unfinished_run_with_a_whole_result_keeps_new_plot(
-        self, drawer_shell
-    ):
-        """O2's gate — a result that is not a success — greys "+ new
-        plot", not the run state: a run that never finished A, whose result
-        file still reads as a success, is no result on the page's lines and
-        still has its plots and a live "+ new plot"."""
-        shell = drawer_shell
-        path = shell.session.project.config.work_dir / "batch_manifest.json"
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-        manifest["test_0001"]["last_run_status"] = "pending"
-        path.write_text(json.dumps(manifest), encoding="utf-8")
-        async with user_simulation(root=shell.index) as user:
-            page = await _drawer(shell, user)
-            assert page.run_state() == "none"
-            assert len(page.cards) == 2
-            assert _one(user, var_marker("var-new", ROW_Z)).enabled
 
     async def test_a_run_that_fails_moves_the_drawers_signature(self, drawer_shell):
         """Whether the run failed is part of what the drawer is drawn from:
