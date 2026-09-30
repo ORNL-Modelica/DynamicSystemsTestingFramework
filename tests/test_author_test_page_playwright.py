@@ -22,6 +22,7 @@ import math
 import os
 import re
 import shutil
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -3765,6 +3766,38 @@ def _plots_mounted(page) -> None:
         timeout=EXPECT_TIMEOUT,
     )
     page.wait_for_timeout(300)
+
+
+def test_a_statistics_plus_while_plotly_loads_raises_nothing(
+    tmp_path, playwright_browser
+):
+    """A `+` on a Statistics row rebuilt every plot, and a plot unmounted
+    while plotly.js was still loading left NiceGUI's resize observer on a
+    detached div: the console said "Resize must be passed a displayed plot
+    div element" (`_served` fails on it). A statistics criterion changes no
+    plot, so nothing is unmounted. plotly.js is held back 2.5 s so the
+    click lands before any plot is drawn."""
+    with _served(tmp_path, playwright_browser, project=_stats_project) as page:
+        held: list[str] = []
+
+        def slow(route) -> None:
+            held.append(route.request.url)
+            time.sleep(2.5)
+            route.continue_()
+
+        page.route(re.compile(r".*plotly.*\.js.*"), slow)
+        page.reload()
+        card = page.locator(".dstf-stats")
+        card.get_by_role("button", name="Statistics").click()
+        row = card.locator(".dstf-stat-row").filter(
+            has_text=re.compile(r"^Nonlinear count")
+        )
+        drawn = page.evaluate("() => document.querySelectorAll('.main-svg').length")
+        row.get_by_role("button", name="Add a requirement: exact match").click()
+        expect(row.locator(".dstf-pill")).to_have_text("fail", timeout=EXPECT_TIMEOUT)
+        _plots_mounted(page)
+        page.wait_for_timeout(1000)
+        assert held and drawn == 0
 
 
 def test_the_statistics_cards_plus_adds_a_criterion_to_the_tree(

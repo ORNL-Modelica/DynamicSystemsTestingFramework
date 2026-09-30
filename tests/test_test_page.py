@@ -8255,3 +8255,31 @@ async def test_the_card_editor_follows_an_edit_staged_elsewhere(stats_shell):
         shell.session.stage([PatchOp(A, "replace", f"{leaf}/tolerance", 5)])
         await _settled(lambda: tolerance().value == 5)
         assert page.open == (STATS, leaf)
+
+
+# -- U3 fix batch 2 -----------------------------------------------------------
+
+
+async def test_a_statistics_plus_rebuilds_no_plot(stats_shell, monkeypatch):
+    """A statistics criterion changes no plot: a `+` in the card rebuilt
+    every plot card all the same — the page's shape keyed on every leaf —
+    which ended Focus, lost a zoom and re-sent every figure."""
+    shell = stats_shell
+    built: list = []
+    init = plot_card.PlotCard.__init__
+
+    def counted(self, *a, **k):
+        built.append(self)
+        return init(self, *a, **k)
+
+    monkeypatch.setattr(plot_card.PlotCard, "__init__", counted)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="focus:1").click()
+        await _settled(lambda: page.focused == 1)
+        cards, n = list(page.cards), len(built)
+        page.stats.toggle()
+        _click(user, _one(user, f"add-statistic:{NONLINEAR}"))
+        await _settled(lambda: page.open is not None and page.open[0] == STATS)
+        assert page.focused == 1
+        assert page.cards == cards and len(built) == n
