@@ -3921,11 +3921,17 @@ class TestTheStatisticsRows:
         assert [r.path for r in rows] == [
             "translation.nonlinear",
             "translation.nonlinear_count",
+            # the list's other summaries: 0 on the baseline's empty list,
+            # nothing on a run that wrote only the count
+            "translation.nonlinear_max",
+            "translation.nonlinear_total",
             "CPUtime",
             "simulation.state_events",
             "timing.total_wall",
         ]
         by = {r.path: r for r in rows}
+        assert by["translation.nonlinear_max"].baseline == 0
+        assert by["translation.nonlinear_max"].run is None
         assert by["translation.nonlinear_count"].baseline == 0
         assert by["translation.nonlinear_count"].delta == "0→3"
         assert by["translation.nonlinear_count"].changed

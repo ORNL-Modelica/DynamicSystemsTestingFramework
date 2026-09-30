@@ -235,6 +235,10 @@ def test_a_leaf_reading_a_list_statistic_gets_its_own_row():
     rows = statistics_rows(stats, stats, extra_paths=["translation.nonlinear"])
     assert [(r.section, r.path, r.kind) for r in rows] == [
         ("translation", "translation.nonlinear", "text"),
+        # the list's summaries (K4); its count unwritten, so read as none
+        ("translation", "translation.nonlinear_count", "count"),
+        ("translation", "translation.nonlinear_max", "count"),
+        ("translation", "translation.nonlinear_total", "count"),
         ("other scored", "translation.nonlinear", "count"),
     ]
 
@@ -315,3 +319,32 @@ def test_a_time_under_a_twentieth_of_a_percent_off_reads_under_a_tenth():
     )
     assert rows["timing.total_wall"].delta == "+<0.1%"
     assert rows["timing.sim_wall"].delta == "-<0.1%"
+
+
+def test_a_system_size_list_on_either_side_gives_its_summaries_on_both():
+    """The zero rule surfaces: a baseline written before `summaries` holds
+    `nonlinear: []` and no count; a run with no translation statistics
+    gave no "Nonlinear count" row, so nothing said the count stays 0 and
+    no `+` could require it. The list's three summaries are rows on both
+    sides — a side with no list reads nothing (`—` on the card)."""
+    rows = _by_path(statistics_rows({}, {"translation": {"nonlinear": []}}))
+    for field in ("count", "total", "max"):
+        row = rows[f"translation.nonlinear_{field}"]
+        assert (row.kind, row.baseline, row.run) == ("count", 0, None)
+        assert not row.changed and row.delta == ""
+    assert rows["translation.nonlinear_count"].label == "Nonlinear count"
+    assert rows["translation.nonlinear"].kind == "text"
+    # The other side's list: its values, read as a scalar leaf reads them.
+    rows = _by_path(
+        statistics_rows(
+            {"translation": {"nonlinear": [3, 5], "nonlinear_count": 2}},
+            {"translation": {"nonlinear": []}},
+        )
+    )
+    assert (rows["translation.nonlinear_count"].run,
+            rows["translation.nonlinear_count"].baseline) == (2, 0)  # fmt: skip
+    assert rows["translation.nonlinear_max"].baseline == 0
+    assert rows["translation.nonlinear_max"].run is None
+    # A list of names sizes no system: no summary rows.
+    rows = _by_path(statistics_rows({"translation": {"state_names": ["a.x"]}}, {}))
+    assert "translation.state_names_count" not in rows

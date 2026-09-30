@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ..backends.common.statistics import read_summary
+from ..backends.common.statistics import SUMMARIES, read_summary, sizes_systems
 from ..comparison.modes import ScalarConfig, ScalarMode
 from ..comparison.seeds import quantity_kind, seed_quantity
 from ..comparison.tree_eval import resolve_scalar_path
@@ -226,6 +226,21 @@ def _summary_or_none(category: Mapping, key: str) -> object:
     return read_summary(dict(category), key)
 
 
+def _summary_keys(*categories: Mapping) -> set[str]:
+    """``<list>_count`` / ``_total`` / ``_max`` of every system-size list
+    either side holds: the zero rule surfaces. A baseline written before
+    `summaries` holds ``nonlinear: []`` and no count; beside a run that
+    recorded none either, no row said the count stays 0, and no `+` could
+    require it."""
+    return {
+        f"{key}_{field}"
+        for category in categories
+        for key, value in category.items()
+        if sizes_systems(value)
+        for field in SUMMARIES
+    }
+
+
 def statistics_rows(
     run: Mapping | None,
     baseline: Mapping | None,
@@ -236,8 +251,9 @@ def statistics_rows(
 ) -> list[StatRow]:
     """Every statistic the run or its baseline recorded, in the report's
     order (the module docstring), then a row per ``extra_paths`` entry no
-    row holds (S4: a leaf's quantity always has a home). A summary key a
-    side lacks reads through :func:`read_summary` (a baseline's empty
+    row holds (S4: a leaf's quantity always has a home). A system-size
+    list on either side gives its three summary rows on both; a summary
+    key a side lacks reads through :func:`read_summary` (a baseline's empty
     ``nonlinear`` gives ``nonlinear_count`` 0). Never writes into its
     inputs."""
     run, baseline = run or {}, baseline or {}
@@ -271,7 +287,8 @@ def statistics_rows(
     rows: list[StatRow] = []
     for name in ordered:
         r_cat, b_cat = _section(run, name), _section(baseline, name)
-        keyed: list[tuple[str, str]] = [(k, f"{name}.{k}") for k in {*r_cat, *b_cat}]
+        keys = {*r_cat, *b_cat, *_summary_keys(r_cat, b_cat)}
+        keyed: list[tuple[str, str]] = [(k, f"{name}.{k}") for k in keys]
         if name == "simulation":
             keyed += [(k, k) for k in top if k not in r_cat and k not in b_cat]
         keyed.sort()

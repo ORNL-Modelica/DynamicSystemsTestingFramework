@@ -17,6 +17,15 @@ def summaries(key: str, values: list[int]) -> dict[str, int]:
     }
 
 
+def sizes_systems(value: object) -> bool:
+    """Is ``value`` a system-size list — the sizes the parser summarizes
+    (``nonlinear: [3, 5, 1]``, or ``[]``)? A list of whole numbers; a list
+    of names (``state_names``) is not one."""
+    return isinstance(value, list) and all(
+        isinstance(v, int) and not isinstance(v, bool) for v in value
+    )
+
+
 def read_summary(category: dict, key: str) -> int | None:
     """A summary a baseline written before `summaries` lacks: 0 where
     `key` is `<list>_count|_total|_max` and `<list>` is present AND EMPTY in

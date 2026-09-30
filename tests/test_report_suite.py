@@ -3264,7 +3264,10 @@ class TestTheStatisticsTable:
         assert [
             (s["title"], [r["label"] for r in s["rows"]]) for s in self._sections()
         ] == [
-            ("Translation Statistics", ["Nonlinear", "Nonlinear count"]),
+            (
+                "Translation Statistics",
+                ["Nonlinear", "Nonlinear count", "Nonlinear max", "Nonlinear total"],
+            ),
             ("Simulation Statistics", ["CPUtime", "State events"]),
             ("Timing", ["Total wall"]),
         ]
