@@ -3483,6 +3483,26 @@ class TestStageCollapses:
         )
         assert len(session.spec.pending) == 3
 
+    def test_an_add_after_an_add_of_one_member_is_the_second_add(self, session):
+        """Two whole trees in a row (two moves): an add on an object member
+        replaces what the first add put there, so it is one pending op."""
+        tree = session.tree(A)
+        other = copy.deepcopy(tree)
+        other["children"][0]["tolerance"] = 0.5
+        session.stage([PatchOp(A, "add", "/metrics", tree)])
+        session.stage([PatchOp(A, "add", "/metrics", other)])
+        assert session.spec.pending == [PatchOp(A, "add", "/metrics", other)]
+        assert session.tree(A) == other
+
+    def test_an_add_after_an_add_at_one_list_index_is_kept(self, session):
+        """An add at a list index INSERTS: both criteria are there."""
+        leaf = {"metric": "range", "variable": "x", "max_value": 9.0}
+        session.stage([PatchOp(A, "add", "/metrics/children/0", leaf)])
+        session.stage([PatchOp(A, "add", "/metrics/children/0", leaf)])
+        assert len(session.spec.pending) == 3  # the materialization first
+        assert session.tree(A)["children"][:2] == [leaf, leaf]
+        assert len(session.tree(A)["children"]) == 3
+
     def test_a_replace_at_an_append_path_is_not_collapsed(self, session):
         """``/-`` names no member a replace could land on: the add appended
         one, and the replace is refused rather than folded into the add."""

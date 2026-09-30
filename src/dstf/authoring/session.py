@@ -1157,9 +1157,12 @@ class Session:
         # Convention 8: an edit that lands on the path the last pending op
         # wrote supersedes it, so the pending count and the envelope carry
         # one op, never a keystroke log (the drawer shows the entry's diff
-        # either way): a replace after an add or a
-        # replace of the same path is that op with the new value, and a
-        # remove after a replace is the remove. A remove after an ADD is
+        # either way): a replace after an add or a replace of the same path
+        # is that op with the new value, a remove after a replace is the
+        # remove, and an add after an add on an OBJECT member is the second
+        # add — it replaces what the first put there (two moves in a row:
+        # two whole trees). An add after an add at a list INDEX inserts
+        # again, and both stay. A remove after an ADD is
         # kept as two: when the member existed, the add replaced it, and
         # dropping both would leave it. A batch is never collapsed: its ops
         # belong together. A replace at an append path (``/-``) names no
@@ -1174,7 +1177,10 @@ class Session:
                 if new.op == "replace" and last.op in ("add", "replace"):
                     pending.pop()
                     staged = [PatchOp(new.model_id, last.op, new.path, new.value)]
-                elif new.op == "remove" and last.op == "replace":
+                elif (new.op, last.op) == ("remove", "replace") or (
+                    (new.op, last.op) == ("add", "add")
+                    and not new.path.rsplit("/", 1)[-1].isdigit()
+                ):
                     pending.pop()
         candidate = SpecDocument(
             self.spec.path,
