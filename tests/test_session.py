@@ -1189,8 +1189,8 @@ class TestRescoreAndStage:
         whatever the spec's own variable list says (for a test tracked by its
         .mo annotation the spec lists none). An unnamed comparison cannot
         become a leaf, so nothing is staged for it."""
-        op = session._materialization(D)
-        assert op is not None
+        op, why = session._materialization(D)
+        assert op is not None and why is None
         assert [leaf["variable"] for leaf in op["value"]["children"]] == [
             vc.name for vc in session.comparisons[D].variables
         ]
@@ -1198,9 +1198,9 @@ class TestRescoreAndStage:
         # is not one of them — or no name at all — resolves to nothing on the
         # tree path, so nothing is staged.
         session.comparisons[D].variables[0].name = "x[1]"
-        assert session._materialization(D) is None
+        assert session._materialization(D)[0] is None
         session.comparisons[D].variables[0].name = ""
-        assert session._materialization(D) is None
+        assert session._materialization(D)[0] is None
 
     def test_a_unit_tests_test_materializes_and_the_tree_scores_what_the_flat_did(
         self, tmp_path
@@ -1235,7 +1235,7 @@ class TestRescoreAndStage:
             return [{k: asdict(vc)[k] for k in keep} for vc in comp.variables]
 
         flat_status, flat_numbers = classify(flat), numbers(flat)
-        op = session._materialization(A)
+        op, _why = session._materialization(A)
         assert op is not None
         assert [leaf["variable"] for leaf in op["value"]["children"]] == [UT1, UT2]
 
@@ -1300,7 +1300,7 @@ class TestRescoreAndStage:
                 )
             ]
         )
-        assert s._materialization(A) is not None
+        assert s._materialization(A)[0] is not None
 
     def test_an_unknown_mode_rescores_without_staging(self, tmp_path):
         """The flat path fails a variable whose override names an unknown
@@ -1446,16 +1446,53 @@ class TestRescoreAndStage:
         # member that existed, and dropping both would leave that member.
         assert len(session.spec.pending) == m + 7
 
-    def test_no_tree_reason_is_the_one_why(self, session):
-        """None where there is a tree to edit; "nothing is scored" where no
-        comparison scored a variable (B: no baseline; C: no result)."""
-        assert session.tree(A) is not None
-        assert session.no_tree_reason(A) is None
-        assert session.tree(B) is None
-        assert session.no_tree_reason(B) == NOTHING_SCORED
-        assert session.no_tree_reason(C) == NOTHING_SCORED
+    def test_tree_or_reason_is_the_one_why(self, session):
+        """The tree, or why there is none — one short line each, true of the
+        test it is said of: nothing scored (B: no baseline; C: no result), a
+        simulate-only test, a last run the loaded result no longer matches
+        (a scored name it does not carry), and every other refusal of
+        `_materialization` (an unnamed comparison)."""
+        from dstf.authoring.session import NO_TREE, SIMULATE_ONLY, STALE
+
+        tree, why = session.tree_or_reason(A)
+        assert tree == session.tree(A) and tree is not None and why is None
+        assert session.tree_or_reason(B) == (None, NOTHING_SCORED)
+        assert session.tree_or_reason(C) == (None, NOTHING_SCORED)
+        assert NOTHING_SCORED == "nothing is scored"
+        session.project.test(B).simulate_only = True
+        assert session.tree_or_reason(B) == (None, SIMULATE_ONLY)
+        assert SIMULATE_ONLY == "simulate-only: nothing is scored"
+        assert session.tree_or_reason(D)[1] is None
+        session.comparisons[D].variables[0].name = "x[1]"
+        assert session.tree_or_reason(D) == (None, STALE)
+        assert STALE == "its last run no longer holds what it scored — rerun it"
+        with pytest.raises(PatchError, match=f"{D}: {STALE}$"):
+            session.stage([PatchOp(D, "add", "/metrics/children/0/tolerance", 0.5)])
+        session.comparisons[D].variables[0].name = ""
+        assert session.tree_or_reason(D) == (None, NO_TREE)
+        assert all(
+            len(why) <= 110 for why in (NOTHING_SCORED, SIMULATE_ONLY, STALE, NO_TREE)
+        )
         with pytest.raises(KeyError):
-            session.no_tree_reason("FakeLib.Examples.Nope")
+            session.tree_or_reason("FakeLib.Examples.Nope")
+
+    def test_the_baseline_is_read_once_for_the_tree_and_its_reason(self, session):
+        """`tree_or_reason` asks `_materialization` once: the tree and the
+        reason come from one reading of the baseline JSON."""
+        calls = []
+        read = session.project.store.get_reference
+        session.project.store.get_reference = lambda m: calls.append(m) or read(m)
+        session.tree_or_reason(D)
+        assert calls == [D]
+
+    def test_stage_on_a_model_not_in_the_project_is_a_patch_error(self, session):
+        """A per-leaf op on a model the project does not have is refused as
+        a patch, never a KeyError out of the reason's lookup."""
+        with pytest.raises(PatchError, match="^FakeLib.Nope: "):
+            session.stage(
+                [PatchOp("FakeLib.Nope", "add", "/metrics/children/0/tolerance", 1)]
+            )
+        assert session.spec.pending == []
 
     def test_a_null_metrics_is_no_tree(self, tmp_path):
         """`"metrics": null` is no tree: spec_parser scores the flat path, so
@@ -1475,7 +1512,7 @@ class TestRescoreAndStage:
         assert s.tree_view(A) is not None
         assert needs_materialization(s.spec.entry(A), [LOOSEN.raw()])
         assert [c["variable"] for c in s.tree(A)["children"]] == ["x"]
-        assert s.no_tree_reason(A) is None
+        assert s.tree_or_reason(A)[1] is None
         s.stage([PatchOp(A, "add", "/comparison", {"tolerance": 0.01})])
         s.stage([LOOSEN])
         assert [op.path for op in s.spec.pending] == [
@@ -2402,8 +2439,9 @@ class TestSessionView:
             "variable_texts",
             "tree_view",
             "tree",
-            # why `tree` is None, in the one text every surface says it with
-            "no_tree_reason",
+            # the tree or why there is none, in the one text every surface
+            # says it with
+            "tree_or_reason",
             "is_locked",
         }
         assert not public & {

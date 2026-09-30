@@ -79,6 +79,19 @@ class TestMaterialization:
         entry = {**FLAT, "metrics": {"metric": "nrmse", "variable": "x"}}
         assert materialize_implicit_metrics(entry, [LEAF_OP]) == [LEAF_OP]
 
+    def test_only_a_null_metrics_is_no_tree(self):
+        """`has_metrics` asks for a value, not a truthy one: an EMPTY tree is
+        a tree (the validator refuses it by name), a null is none."""
+        from dstf.discovery.spec_update import has_metrics
+
+        assert has_metrics({**FLAT, "metrics": {}})
+        assert has_metrics({**FLAT, "metrics": []})
+        assert not has_metrics({**FLAT, "metrics": None})
+        assert not has_metrics(dict(FLAT)) and not has_metrics(None)
+        assert materialize_implicit_metrics({**FLAT, "metrics": {}}, [LEAF_OP]) == [
+            LEAF_OP
+        ]
+
     def test_ops_outside_metrics_need_nothing(self):
         op = {"op": "replace", "path": "/comparison/tolerance", "value": 1.0}
         assert materialize_implicit_metrics(dict(FLAT), [op]) == [op]

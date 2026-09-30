@@ -30,6 +30,7 @@ from ...comparison.seeds import (
     seeded_leaf,
 )
 from ..capabilities import Panel, Patch, Placement
+from ..session import SIMULATE_ONLY, no_tree_error
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -137,9 +138,6 @@ _NO_ADD = {
     "added alone",
 }
 _ROOT_UNWRAP = "the root has no parent to take its children"
-#: Why an add form's Add is grey on a simulate-only test: a criterion
-#: staged there is never scored (the comparator short-circuits it).
-_SIMULATE_ONLY = "This test is simulate-only: nothing is scored"
 #: Why a weighted form's action is grey: its threshold starts EMPTY, not 0
 #: (0 with `less` always fails), and has to be typed.
 _NO_THRESHOLD = "enter a threshold"
@@ -206,9 +204,8 @@ class EditTree:
         locked = _locked_by(s, model_id)
         if locked is not None:
             return locked
-        tree = s.tree(model_id)
+        tree, why = s.tree_or_reason(model_id)
         if tree is None:
-            why = s.no_tree_reason(model_id)
             assert why is not None  # `tree` is None
             return why
         if sel.node_path is not None and node_or_none(tree, sel.node_path) is None:
@@ -237,9 +234,10 @@ class EditTree:
         action, model_id, path = inputs["action"], inputs["model_id"], inputs["path"]
         if action == "remove":
             return Patch(ops=[PatchOp(model_id, "remove", path)])
-        tree = s.tree(model_id)
+        tree, why = s.tree_or_reason(model_id)
         if tree is None:
-            raise ValueError(f"{model_id} has no tree to edit")
+            assert why is not None  # `tree` is None
+            raise no_tree_error(model_id, why)
         node = node_or_none(tree, path)
         if node is None:
             raise ValueError(f"{path} names no node of {model_id}")
@@ -536,8 +534,10 @@ def _add_form(
         close()
         ui_panel.reveal(_first_leaf(s.tree(model_id), added))
 
+    # A criterion staged on a simulate-only test is never scored (the
+    # comparator short-circuits it): Add is grey there, tree or not.
     simulate_only = _simulate_only(s, model_id)
-    ui.label(_SIMULATE_ONLY if simulate_only else _ADD_SENTENCE).classes("dstf-why")
+    ui.label(SIMULATE_ONLY if simulate_only else _ADD_SENTENCE).classes("dstf-why")
     with ui.row().classes("items-center gap-2"):
         _cancel(ui, close, under)
         # A disabled Quasar button takes no pointer events: the reason's
@@ -546,7 +546,7 @@ def _add_form(
             add = ui.button("Add", on_click=apply).props("dense no-caps").mark(mark)
             if simulate_only:
                 add.disable()
-                ui.tooltip(_SIMULATE_ONLY)
+                ui.tooltip(SIMULATE_ONLY)
 
 
 def _simulate_only(s: SessionView, model_id: str) -> bool:
@@ -893,17 +893,19 @@ def _statistic_plus(
     ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
     after it. Grey with the add form's reason where nothing can take it:
     a job holding the test, a simulate-only test, a test with no tree to
-    add to (the Session's `no_tree_reason`), a root that takes no child
+    add to (the Session's `tree_or_reason`), a root that takes no child
     alone."""
-    tree = s.tree(model_id)
+    tree, why = s.tree_or_reason(model_id)
     locked = _locked_by(s, model_id)
     if locked is not None:
         reason: str | None = locked
     elif _simulate_only(s, model_id):
-        reason = _SIMULATE_ONLY
+        # Tree or not: the comparator scores nothing on it.
+        reason = SIMULATE_ONLY
     elif tree is None:
-        # The Session's one reason: nothing scored, or a tree it refuses.
-        reason = s.no_tree_reason(model_id)
+        # The Session's one reason: nothing scored, a stale run, or a tree
+        # it refuses.
+        reason = why
     else:
         reason = _NO_ADD.get(str(tree.get("combinator")))
     tip = reason

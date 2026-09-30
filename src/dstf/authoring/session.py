@@ -89,18 +89,23 @@ logger = logging.getLogger(__name__)
 #: dir with --report sidecars). Past it the run starts and one line says so.
 BACKGROUND_WAIT = 60.0
 
-#: Why a test has no tree to edit when no comparison scored a variable
-#: (no baseline, a failed run, simulate-only): `Session.no_tree_reason`.
+# Why a test has no tree to edit — `Session.tree_or_reason`, from
+# `_materialization`'s refusal. Each is one short line: a Statistics row's
+# `+` says it as its tooltip, a criterion's editor in its row.
+#: No comparison scored a variable (no baseline, a failed run, no result).
 NOTHING_SCORED = "nothing is scored"
-#: Why a SCORED test with no ``metrics`` of its own has no tree to edit
-#: (`_materialization` refused — each refusal is a flat setting of the
-#: spec or the baseline, or a last run the loaded result no longer
-#: matches): `Session.no_tree_reason`.
+#: A simulate-only test: the comparator scores nothing on it. Also why an
+#: add form's Add is grey there, tree or not.
+SIMULATE_ONLY = "simulate-only: nothing is scored"
+#: A scored name the loaded result does not carry: the comparison is from
+#: a run the results no longer match, and a leaf on it would resolve to
+#: nothing.
+STALE = "its last run no longer holds what it scored — rerun it"
+#: Every other refusal: a flat setting of the spec or the baseline that a
+#: tree would score differently.
 NO_TREE = (
-    "this test's criteria cannot become a tree here without changing what "
-    "it scores (its flat settings, its baseline's settings or its last run "
-    "differ from what a tree would score) — write a metrics tree for it in "
-    "test_spec.json to edit its criteria"
+    "its flat criteria can't become a tree without changing its scores — "
+    "write a metrics tree in test_spec.json"
 )
 
 
@@ -220,6 +225,14 @@ class RunningJob:
     #: results' rows only then: a job that asked for no reload, or one that
     #: failed, would otherwise show the previous run's rows as its own.
     reloaded: bool = False
+
+
+def no_tree_error(model_id: str, why: str) -> PatchError:
+    """The refusal of an edit that needs ``model_id``'s tree where there is
+    none (`Session.tree_or_reason`'s ``why``): a patch the Session will not
+    take, so the tool shows ``why`` alone beside the edit it came from, and
+    the CLI's text keeps the model."""
+    return PatchError(f"{model_id}: {why}", reason=why)
 
 
 class LockedError(RuntimeError):
@@ -577,7 +590,7 @@ class Session:
         exactly what the flat path scored (Conventions #7); otherwise the
         test is scored as loaded and nothing is staged."""
         self._refuse_if_locked([model_id])
-        op = self._materialization(model_id)
+        op, _why = self._materialization(model_id)
         if op is not None:
             # Marked as `stage` marks its own: the drawer previews it as
             # nothing changed, with the note that Save writes it.
@@ -1074,32 +1087,27 @@ class Session:
         return parse_metric_tree(raw) if raw is not None else None
 
     def tree(self, model_id: str) -> dict | None:
-        """The raw tree a Patch edits: the entry's ``metrics`` block, else the
-        tree ``rescore`` would materialize (the report's leaves), else None.
-        A copy: a capability may build its next op from it without touching
-        the document. An unknown model is a KeyError, as for ``tree_view``."""
+        """The raw tree a Patch edits (:meth:`tree_or_reason`'s tree)."""
+        return self.tree_or_reason(model_id)[0]
+
+    def tree_or_reason(self, model_id: str) -> tuple[dict | None, str | None]:
+        """``(tree, None)`` — the raw tree a Patch edits: the entry's
+        ``metrics`` block, else the tree ``rescore`` would materialize (the
+        report's leaves) — or ``(None, why)``: why there is none, the ONE
+        text every surface says it with (`stage`'s refusal, a criterion's
+        editor, Edit tree, Edit on plot, a Statistics row's `+`), from
+        `_materialization`'s own refusal, so the baseline is read once for
+        both. The tree is a copy: a capability may build its next op from it
+        without touching the document. An unknown model is a KeyError, as
+        for ``tree_view``."""
         if self._require_project().test(model_id) is None:
             raise KeyError(model_id)
         entry = self.spec.entry(model_id)
         if has_metrics(entry):
             assert entry is not None  # `has_metrics` said so
-            return copy.deepcopy(entry["metrics"])
-        op = self._materialization(model_id)
-        return op["value"] if op is not None else None
-
-    def no_tree_reason(self, model_id: str) -> str | None:
-        """Why ``model_id`` has no tree to edit — the ONE text every surface
-        says it with (`stage`'s refusal, a criterion's editor, Edit tree,
-        a Statistics row's `+`): ``None`` when :meth:`tree` is not None;
-        :data:`NOTHING_SCORED` when no comparison scored a variable;
-        :data:`NO_TREE` when one did and `_materialization` refused. An
-        unknown model is a KeyError, as for :meth:`tree`."""
-        if self.tree(model_id) is not None:
-            return None
-        comp = self.comparisons.get(model_id)
-        if comp is None or not comp.variables:
-            return NOTHING_SCORED
-        return NO_TREE
+            return copy.deepcopy(entry["metrics"]), None
+        op, why = self._materialization(model_id)
+        return (op["value"], None) if op is not None else (None, why)
 
     # -- the spec ----------------------------------------------------------
 
@@ -1119,9 +1127,10 @@ class Session:
                 # The same tree rescore stages — from what the flat path
                 # scored — never one from the entry's list: on both tiers
                 # leaf i is /metrics/children/i of the report's tree.
-                tree_op = self._materialization(model_id)
+                tree_op, why = self._materialization(model_id)
                 if tree_op is None:
-                    raise PatchError(f"{model_id}: {self.no_tree_reason(model_id)}")
+                    assert why is not None  # the entry has no tree
+                    raise no_tree_error(model_id, why)
                 # Marked: the drawer diffs against the saved entry with this
                 # tree in it (`SpecDocument.preview_base`) — but only when it
                 # is the tree the SAVED entry scores. Built from overrides an
@@ -1589,43 +1598,50 @@ class Session:
             return False
         return overrides(saved) == overrides(self.spec.entry(model_id) or {})
 
-    def _materialization(self, model_id: str) -> dict | None:
-        """The ``add /metrics`` op for a test the flat path scored, built
-        from the variables it scored — the leaves the report shows, in the
-        report's order, so leaf ``i`` is ``/metrics/children/i`` on both
-        tiers. For a test tracked by its ``.mo`` annotation those names are
-        in no spec entry (and the entry may not exist yet: the op creates
-        it). ``None`` — and ``rescore`` stages nothing — when the entry
-        already has a tree (`has_metrics`: a null ``metrics`` is none),
-        when nothing was scored (NO_REF, SIM_FAIL,
-        simulate-only), or when a tree would not score what the flat path
-        scored: a scored variable whose name is not one the result carries
-        (a comparison from a run the results no longer match), a string
-        ``quantity`` in
-        an override (the flat path refuses it, a tree would score it), an
-        override naming an
-        unregistered mode (the flat path fails it; a tree would score
-        nrmse), or a reference-JSON override the spec does not shadow (the
-        flat path merges it; a tree ignores it). Each case has its
-        negative test in tests/test_session.py."""
+    def _materialization(self, model_id: str) -> tuple[dict | None, str | None]:
+        """``(op, None)``: the ``add /metrics`` op for a test the flat path
+        scored, built from the variables it scored — the leaves the report
+        shows, in the report's order, so leaf ``i`` is
+        ``/metrics/children/i`` on both tiers. For a test tracked by its
+        ``.mo`` annotation those names are in no spec entry (and the entry
+        may not exist yet: the op creates it). ``(None, None)`` when the
+        entry already has a tree (`has_metrics`: a null ``metrics`` is
+        none). Otherwise ``(None, why)`` — and ``rescore`` stages nothing:
+        :data:`SIMULATE_ONLY` or :data:`NOTHING_SCORED` when nothing was
+        scored (NO_REF, SIM_FAIL, simulate-only, a model not in the
+        project); :data:`STALE` when a scored variable's name is not one the
+        loaded result carries (a comparison from a run the results no
+        longer match); :data:`NO_TREE` when a tree would not score what the
+        flat path scored: an unnamed or non-literal scored name, a string
+        ``quantity`` in an override (the flat path refuses it, a tree would
+        score it), an override naming an unregistered mode (the flat path
+        fails it; a tree would score nrmse), or a reference-JSON override
+        the spec does not shadow (the flat path merges it; a tree ignores
+        it). Each case has its negative test in tests/test_session.py."""
         project = self._require_project()
         entry = self.spec.entry(model_id) or {"model": model_id}
         comp = self.comparisons.get(model_id)
-        if has_metrics(entry) or comp is None or not comp.variables:
-            return None
+        if has_metrics(entry):
+            return None, None
+        if comp is None or not comp.variables:
+            test = project.test(model_id)
+            simulate_only = test is not None and test.simulate_only
+            return None, SIMULATE_ONLY if simulate_only else NOTHING_SCORED
         # A pattern-tracked spec materializes from the names the pattern
         # resolved today (owner ruling, D126): the pattern keeps tracking,
         # the tree scores what it names, and a variable that later matches
         # without a leaf raises the "tracked but not scored" warning.
         names = [vc.name for vc in comp.variables]
+        if not all(n and is_literal_variable(n) for n in names):
+            return None, NO_TREE
         result = project.results.get(model_id)
         resolved = {v.name for v in result.variables} if result is not None else set()
-        if not all(n and n in resolved and is_literal_variable(n) for n in names):
+        if not all(n in resolved for n in names):
             # A leaf must name a variable the loaded result carries, or the
             # tree path resolves it to nothing.
-            return None
+            return None, STALE
         if unknown_override_modes(entry):
-            return None
+            return None, NO_TREE
         spec_overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
         if any(
             isinstance(ov, dict) and isinstance(ov.get("quantity"), str)
@@ -1634,12 +1650,12 @@ class Session:
             # The flat path refuses a stats-path quantity ("needs a metrics
             # tree"); the tree path would score it — a FAIL that becomes a
             # PASS on a look. Authoring the tree is the user's act, not ours.
-            return None
+            return None, NO_TREE
         ref = project.store.get_reference(model_id) or {}
         ref_overrides = (ref.get("comparison") or {}).get("variable_overrides") or {}
         if any(n in ref_overrides and n not in spec_overrides for n in names):
-            return None
-        return implicit_tree_op(entry, variables=names)
+            return None, NO_TREE
+        return implicit_tree_op(entry, variables=names), None
 
     def _refuse_if_busy(self) -> None:
         self._refuse_if_running()
@@ -1815,8 +1831,8 @@ class SessionView:
     def tree(self, model_id: str) -> dict | None:
         return self._session.tree(model_id)
 
-    def no_tree_reason(self, model_id: str) -> str | None:
-        return self._session.no_tree_reason(model_id)
+    def tree_or_reason(self, model_id: str) -> tuple[dict | None, str | None]:
+        return self._session.tree_or_reason(model_id)
 
 
 def _known_models(config: Config, document: object) -> list[str]:

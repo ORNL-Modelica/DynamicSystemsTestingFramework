@@ -2574,7 +2574,7 @@ async def test_a_simulate_only_test_says_nothing_is_scored(tmp_path):
         await _open_plus(user, "y")
         (add,) = user.find(marker="apply-add:y").elements
         assert not add.enabled
-        await user.should_see("This test is simulate-only: nothing is scored")
+        await user.should_see("simulate-only: nothing is scored")
 
 
 # -- the metric list follows the variable (U2, Task 4) ---------------------------

@@ -8386,24 +8386,38 @@ def _stats_tolerance(user, leaf: str):
     return field
 
 
-def _ref_override_project(tmp_path):
+def _ref_override_project(tmp_path, on="x"):
     """`_two_var_project` with A's baseline carrying a reference-JSON
-    override the spec does not shadow: A is compared, has a tree view, and
-    the Session will not materialize its flat entry's tree."""
+    override on ``on`` the spec does not shadow: A is compared, has a tree
+    view, and the Session will not materialize its flat entry's tree. A's
+    run and baseline carry `_stats_project`'s statistics, so its Statistics
+    rows have a `+`."""
     import numpy as np
 
     from dstf.backends.types import TestResult, VariableResult
     from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
-    from test_session import make_test_model
+    from test_session import DYMOLA_BASE, DYMOLA_RUN, make_test_model
 
     cfg, work = _two_var_project(tmp_path, ref_models=())
+    (work / "test_0001" / "run_stats.json").write_text(
+        json.dumps(
+            {
+                "model_id": A,
+                "translation_wall": None,
+                "sim_wall": None,
+                "elapsed": 0.0,
+                "statistics": DYMOLA_RUN,
+            }
+        ),
+        encoding="utf-8",
+    )
     t = np.asarray([i / 4 for i in range(5)])
     ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
         make_test_model(
             A,
             variable_patterns=["x", "y"],
-            variable_overrides={"x": {"tolerance": 0.5}},
+            variable_overrides={on: {"tolerance": 0.5}},
         ),
         TestResult(
             model_id=A,
@@ -8412,6 +8426,7 @@ def _ref_override_project(tmp_path):
                 VariableResult(index=1, time=t, values=t, name="x"),
                 VariableResult(index=2, time=t, values=2.1 * t, name="y"),
             ],
+            statistics=copy.deepcopy(DYMOLA_BASE),
         ),
     )
     return cfg, work
@@ -8461,12 +8476,76 @@ def test_edit_tree_says_the_sessions_reason_for_no_tree(tmp_path):
             SessionView(session, Selection(tests=frozenset({model_id})))
         )
 
-    assert session.no_tree_reason(A) == NO_TREE
+    assert session.tree_or_reason(A) == (None, NO_TREE)
     assert available(A) == NO_TREE
     with pytest.raises(PatchError, match=f"{A}: {re.escape(NO_TREE)}$"):
         session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 1)])
-    assert session.no_tree_reason(B) == NOTHING_SCORED
+    assert session.tree_or_reason(B) == (None, NOTHING_SCORED)
     assert available(B) == NOTHING_SCORED
+
+
+def test_edit_on_plot_says_the_sessions_reason_for_no_tree(tmp_path):
+    """A final-value check on x in the spec and a baseline override on y
+    the spec does not shadow: x's check is on the plot with its handle, but
+    the Session will not materialize the tree. Edit on plot read the comparison's tree
+    and offered the handles, whose every edit raised "has no tree to edit";
+    it says the Session's reason, and an edit reaching it is refused with
+    that reason as a patch — as Edit tree's add is."""
+    from dstf.authoring.builtin.edit_on_plot import EditOnPlot, _leaf_paths
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import NO_TREE, SessionView
+    from dstf.discovery.patch_apply import PatchError
+
+    cfg, work = _ref_override_project(tmp_path, on="y")
+    spec = cfg.parent / "test_spec.json"
+    doc = json.loads(spec.read_text(encoding="utf-8"))
+    points = {"mode": "points", "points": []}
+    for entry in doc["tests"]:
+        if entry["model"] == A:
+            entry["comparison"] = {"variable_overrides": {"x": points}}
+    spec.write_text(json.dumps(doc), encoding="utf-8")
+    session = _opened(cfg, work).session
+    assert session.tree_or_reason(A) == (None, NO_TREE)
+    ((path, mode),) = _leaf_paths(
+        SessionView(session, Selection(tests=frozenset({A}))), A, "x"
+    )
+    assert mode == "points"
+    sel = Selection(tests=frozenset({A}), variable="x", leaf_path=path)
+    view = SessionView(session, sel)
+    assert EditOnPlot().available(view) == NO_TREE
+    (leaf,) = [lv for lv in session.view(A, "x").leaves if lv.path == path]
+    handle = next(p.id for p in leaf.geometry if p.kind == "handle")
+    for inputs in (
+        {"kind": "rows", "field": "points", "rows": []},
+        {"kind": "handle", "variable": "x", "handle": handle, "shape": {}},
+    ):
+        with pytest.raises(PatchError) as refused:
+            EditOnPlot().act(view, model_id=A, path=path, **inputs)
+        assert refused.value.reason == NO_TREE
+    with pytest.raises(PatchError) as refused:
+        EditTree().act(
+            view, action="add", model_id=A, path=T0, variable="y", metric="nrmse"
+        )
+    assert refused.value.reason == NO_TREE
+    assert session.spec.pending == []
+
+
+async def test_a_statistics_plus_says_the_sessions_reason_for_no_tree(tmp_path):
+    """A is scored but the Session will not materialize its tree: a
+    Statistics row's `+` is grey, and its accessible name and its tooltip
+    are the Session's reason, not "nothing is scored"."""
+    from dstf.authoring.session import NO_TREE
+
+    shell = _opened(*_ref_override_project(tmp_path))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        assert not plus.enabled
+        assert plus.props["aria-label"] == NO_TREE
+        tips = [e for e in plus.parent_slot.parent.descendants()
+                if isinstance(e, ui.tooltip)]  # fmt: skip
+        assert [t.text for t in tips] == [NO_TREE]
 
 
 async def test_a_plus_on_a_test_with_no_baseline_opens_a_usable_editor(stats_shell):
@@ -8671,9 +8750,7 @@ async def test_a_plus_is_grey_on_a_simulate_only_test(stats_shell):
         page.stats.toggle()
         plus = _one(user, f"add-statistic:{NONLINEAR}")
         assert not plus.enabled
-        assert (
-            plus.props["aria-label"] == "This test is simulate-only: nothing is scored"
-        )
+        assert plus.props["aria-label"] == "simulate-only: nothing is scored"
 
 
 async def test_a_plus_is_grey_under_a_weighted_root(stats_shell):
@@ -8716,9 +8793,7 @@ async def test_a_simulate_only_test_with_no_tree_says_simulate_only(stats_shell)
         page.stats.toggle()
         plus = _one(user, f"add-statistic:{NONLINEAR}")
         assert not plus.enabled
-        assert (
-            plus.props["aria-label"] == "This test is simulate-only: nothing is scored"
-        )
+        assert plus.props["aria-label"] == "simulate-only: nothing is scored"
 
 
 async def test_opening_the_cards_editor_closes_a_form_row(stats_shell):

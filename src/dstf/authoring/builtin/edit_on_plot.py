@@ -23,6 +23,7 @@ from ...comparison.handles import HandleEdit, HandleEditError
 from ...comparison.registry import DEFAULT_METRIC, metric
 from ...figures.assemble import leaves_by_variable
 from ..capabilities import Panel, Patch, Placement
+from ..session import no_tree_error
 from ..spec_document import PatchOp
 from ..tree_pointer import node_at
 
@@ -82,13 +83,15 @@ def _field_label(name: str, field: str) -> str:
 
 def _leaf_at(s: SessionView, model_id: str, path: str) -> dict:
     """The raw leaf at ``path`` of ``model_id``'s tree, or a ValueError
-    naming what ``path`` or ``model_id`` is instead."""
+    naming what ``path`` or ``model_id`` is instead — the Session's refusal
+    (`no_tree_error`) where it has no tree."""
     try:
-        tree = s.tree(model_id)
+        tree, why = s.tree_or_reason(model_id)
     except KeyError:
         raise ValueError(f"{model_id} is not a test of this project") from None
     if tree is None:
-        raise ValueError(f"{model_id} has no tree to edit")
+        assert why is not None  # `tree` is None
+        raise no_tree_error(model_id, why)
     tokens = [t for t in path.split("/") if t]
     node: Any = None
     if tokens[:1] == ["metrics"]:
@@ -221,6 +224,12 @@ class EditOnPlot:
         running = s.running
         if running is not None and s.is_locked(model_id):
             return f"{running.label} is running on {model_id}"
+        # The handles are drawn from the comparison's tree; every edit of
+        # one goes through the Session's, which may have none.
+        tree, why = s.tree_or_reason(model_id)
+        if tree is None:
+            assert why is not None  # `tree` is None
+            return why
         metric_name = dict(_leaf_paths(s, model_id, variable)).get(leaf_path)
         if metric_name is None:
             return f"{leaf_path} is not a criterion on {variable}"
@@ -315,9 +324,10 @@ class EditOnPlot:
                 f"{handle} is not a handle of {open_leaf}",
                 reason="Open that criterion to drag its lines.",
             )
-        tree = s.tree(model_id)
+        tree, why = s.tree_or_reason(model_id)
         if tree is None:
-            raise ValueError(f"{model_id} has no tree to edit")
+            assert why is not None  # `tree` is None
+            raise no_tree_error(model_id, why)
         raw = node_at(tree, path)
         name = raw.get("metric", DEFAULT_METRIC)
         desc = metric(name)
