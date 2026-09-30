@@ -8,8 +8,9 @@
   // Per project (the page sets it before this script): two tabs on one
   // project share a view, two projects do not.
   const KEY = window.DstfSuiteKey || 'dstf-suite-v1';
-  const PILLS = [['pass', 'PASS'], ['fail', 'FAIL'], ['sim-fail', 'SIM_FAIL'],
-                 ['no-ref', 'NO_REF'], ['edited', 'EDITED'], ['running', 'RUNNING']];
+  // The count pills, [key, word] (suite_grid.py's PILLS): the words are
+  // reporting.status's, so this script spells none of them.
+  const PILLS = window.DstfSuitePills;
   const S = {
     grouped: true, short: true, regex: false, case: false,
     pills: [], filters: {}, collapsed: [], columns: null, sort: null,

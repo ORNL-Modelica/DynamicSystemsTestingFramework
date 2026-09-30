@@ -22,6 +22,15 @@ from typing import Any
 from nicegui import ui
 
 from ...reporting.rows import COLUMNS, EDITS, FILTER_HINTS, Column, TestRow
+from ...reporting.status import (
+    FAIL,
+    NO_REF,
+    PASS,
+    RUNNING,
+    SIM_FAIL,
+    STATUS_CLASSES,
+    STATUS_LABELS,
+)
 
 HERE = Path(__file__).parent
 #: The typed filters, one module for the dashboard and this table.
@@ -48,6 +57,16 @@ ORDER = (*VISIBLE, "ref", "resolution", "translate", "total")
 #: dashboard's words): the Test column shows short names and filters the
 #: full one.
 FILTER_NOTE = {"model": "Reads the full test name. "}
+#: The count pills, ``[key, word]`` in the order the toolbar draws them: a
+#: status by its class (a row's ``status_class``), EDITED (a row with
+#: staged edits, whatever its status) and RUNNING (drawn only while a job
+#: runs or it filters). The words are ``reporting.status``'s: the script
+#: reads this table (``window.DstfSuitePills``) and spells none of them.
+PILLS: tuple[tuple[str, str], ...] = (
+    *((STATUS_CLASSES[s], STATUS_LABELS[s]) for s in (PASS, FAIL, SIM_FAIL, NO_REF)),
+    ("edited", "EDITED"),
+    (STATUS_CLASSES[RUNNING], STATUS_LABELS[RUNNING]),
+)
 
 
 def row_json(row: TestRow) -> dict[str, Any]:
@@ -252,14 +271,19 @@ class SuiteGrid(ui.aggrid):
 
 
 def scripts_html(key: str) -> str:
-    """The head of the Suite page: the table's localStorage key, then the
-    typed filters and the table's script. It must be in the page's FIRST
-    HTML: after the handshake NiceGUI inserts head HTML with
-    insertAdjacentHTML, which never runs a <script>."""
+    """The head of the Suite page: the table's localStorage key and its
+    count pills (`PILLS`), then the typed filters and the table's script.
+    It must be in the page's FIRST HTML: after the handshake NiceGUI
+    inserts head HTML with insertAdjacentHTML, which never runs a
+    <script>."""
+
     # "</" would end the inline script early; JSON may escape it.
-    literal = json.dumps(key).replace("</", "<\\/")
+    def literal(value: object) -> str:
+        return json.dumps(value).replace("</", "<\\/")
+
     return (
-        f"<script>window.DstfSuiteKey = {literal};</script>\n"
+        f"<script>window.DstfSuiteKey = {literal(key)};\n"
+        f"window.DstfSuitePills = {literal(PILLS)};</script>\n"
         f'<script src="{ASSETS}/filters.js"></script>\n'
         f'<script src="{ASSETS}/suite_grid.js"></script>\n'
     )
