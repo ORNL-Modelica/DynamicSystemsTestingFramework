@@ -443,9 +443,10 @@ class StatsCard:
         if not self.is_open:
             self.is_open = True
             self.refresh(view)
-        slot = self.slots.get(key)
-        if slot is None:
-            return False
+        # Every row a statistics leaf is shown on is built — `row_for` and
+        # `statistics_rows` agree on it (S4: a leaf's quantity always has
+        # a row) — so its slot exists.
+        slot = self.slots[key]
         self.close_editor()
         model = self.page.model_id
         self.open_path = leaf_path
