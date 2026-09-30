@@ -9,6 +9,7 @@ import copy
 import numpy as np
 
 from dstf.backends.types import VariableResult
+from dstf.reporting.context_builder import _build_statistics_sections
 from dstf.reporting.stats_rows import changed, statistics_rows
 
 RUN = {
@@ -65,6 +66,20 @@ def test_a_time_is_changed_beyond_the_seeded_tolerance_only():
     assert not rows["timing.total_wall"].changed
     assert rows["timing.total_wall"].delta == "+3%"
     assert rows["EventCounter"].kind == "count"
+
+
+def test_a_time_under_one_percent_off_reads_one_decimal():
+    """Never `+0%` for a time that moved: under 1% the delta keeps one
+    decimal; an equal time still says nothing."""
+    rows = _by_path(
+        statistics_rows(
+            {"timing": {"total_wall": 3.92, "sim_wall": 3.90, "other_wall": 1.0}},
+            {"timing": {"total_wall": 3.91, "sim_wall": 3.91, "other_wall": 1.0}},
+        )
+    )
+    assert rows["timing.total_wall"].delta == "+0.3%"
+    assert rows["timing.sim_wall"].delta == "-0.3%"
+    assert rows["timing.other_wall"].delta == ""
 
 
 def test_a_time_over_a_zero_baseline_reads_in_seconds():
@@ -180,8 +195,11 @@ def test_a_top_level_statistic_naming_a_diagnostic_takes_its_kind():
     )
     assert rows["Wall"].kind == "time"
     assert not rows["Wall"].changed  # 4% off: within the time's 10%
-    rows = _by_path(statistics_rows({"Wall": 2.5}, {"Wall": 2.4}))
-    assert rows["Wall"].kind == "count" and rows["Wall"].changed
+    # The report reads the same run's samples: its row is not tinted either.
+    (section,) = _build_statistics_sections(
+        {"Wall": 2.4}, {"Wall": 2.5}, run_diagnostics=[wall]
+    )
+    assert [(r["label"], r["changed"]) for r in section["rows"]] == [("Wall", False)]
 
 
 def test_extra_paths_become_other_scored_rows():
@@ -193,6 +211,32 @@ def test_extra_paths_become_other_scored_rows():
     assert rows[-1] is other[0]
     assert other[0].run is None and other[0].baseline is None
     assert not other[0].changed
+
+
+def test_only_a_top_level_row_holds_a_final_leaf():
+    """`X.final` is the row `X` only for a top-level `X` (S2): a leaf
+    reading `timing.total_wall.final` is no leaf of the `total_wall` row,
+    so it gets its own "other scored" row (S4)."""
+    rows = statistics_rows(
+        {"timing": {"total_wall": 1.0}},
+        {"timing": {"total_wall": 1.0}},
+        extra_paths=["timing.total_wall.final"],
+    )
+    assert [(r.section, r.path) for r in rows] == [
+        ("timing", "timing.total_wall"),
+        ("other scored", "timing.total_wall.final"),
+    ]
+
+
+def test_a_leaf_reading_a_list_statistic_gets_its_own_row():
+    """A text row holds no leaf (the card never shows one, S1): a leaf
+    reading `translation.nonlinear` gets an "other scored" row (S4)."""
+    stats = {"translation": {"nonlinear": [1]}}
+    rows = statistics_rows(stats, stats, extra_paths=["translation.nonlinear"])
+    assert [(r.section, r.path, r.kind) for r in rows] == [
+        ("translation", "translation.nonlinear", "text"),
+        ("other scored", "translation.nonlinear", "count"),
+    ]
 
 
 def test_an_extra_diagnostic_path_no_row_holds_reads_the_diagnostics():

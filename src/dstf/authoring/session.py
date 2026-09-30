@@ -1016,8 +1016,9 @@ class Session:
         statistics_rows`): the last run's statistics beside its baseline's,
         plus a row for every quantity a statistics leaf of the entry's tree
         reads that no recorded statistic holds. The baseline's rows alone
-        with no result; ``[]`` with neither. Reads the CACHED reference,
-        which `statistics_rows` never writes. An unknown model is a
+        with no result; with neither, only those leaves' "other scored"
+        rows (``[]`` when the tree reads no statistic). Reads the CACHED
+        reference, which `statistics_rows` never writes. An unknown model is a
         KeyError, as for :meth:`tree`."""
         from ..comparison.tree_spec import statistic_paths
         from ..reporting.stats_rows import statistics_rows

@@ -481,6 +481,13 @@ def test_a_top_level_statistic_naming_a_diagnostic_is_its_kind():
     assert quantity_kind("CPUtime", np.array([0.0, 1.0, 1.0])) == "time"
 
 
+@pytest.mark.parametrize(
+    ("path", "kind"), [("EventCounter.max", "count"), ("CPUtime.min", "time")]
+)
+def test_a_diagnostics_min_and_max_take_its_kind(path, kind):
+    assert quantity_kind(path) == kind
+
+
 def test_a_count_is_seeded_exact_and_bare():
     assert seed_quantity("translation.nonlinear_count", "count", into="and") == {
         "metric": "scalar",

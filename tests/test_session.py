@@ -3983,6 +3983,41 @@ class TestTheStatisticsRows:
         s.statistics(A)
         assert s._reads_for(A).ref == before
 
+    def test_the_rows_take_each_diagnostics_own_samples(self, tmp_path):
+        s = _stats_session(tmp_path)
+        tt = np.asarray([i / 4 for i in range(5)])
+        res = s.project.results[A]
+        res.statistics = {**res.statistics, "Steps": 4.0, "Wall": 2.5}
+        res.diagnostics = [
+            VariableResult(index=0, time=tt, values=4 * tt, name="Steps"),  # whole
+            VariableResult(
+                index=0, time=tt, values=2.5 * tt, name="Wall"
+            ),  # fractional
+        ]
+        by = {r.path: r for r in s.statistics(A)}
+        assert by["Wall"].kind == "time"
+        assert by["Steps"].kind == "count"
+
+    def test_a_diagnostic_max_leaf_gets_its_own_row_from_both_sides(self, tmp_path):
+        s = _stats_session(tmp_path)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {
+                    "metric": "scalar",
+                    "variable": "CPUtime",
+                    "quantity": "CPUtime.max",
+                    "tolerance": 0.1,
+                    "tolerance_mode": "rel",
+                },
+            ],
+        }
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        row = s.statistics(A)[-1]
+        assert (row.path, row.section) == ("CPUtime.max", "other scored")
+        assert row.run == pytest.approx(1.12) and row.baseline == pytest.approx(0.80)
+
     def test_a_statistics_leaf_is_no_tracked_variable(self, tmp_path):
         """A statistics leaf scores a stored number, not a variable: its
         parsed `variable` (its path, or a diagnostic's name) is never one of

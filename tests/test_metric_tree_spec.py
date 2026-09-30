@@ -423,3 +423,40 @@ class TestTreeVariables:
         from dstf.comparison.tree_spec import tree_variables
 
         assert tree_variables(None) == []
+
+
+class TestStatisticPaths:
+    def test_reads_leaves_under_nested_combinators(self):
+        from dstf.comparison.tree_spec import statistic_paths
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "scalar",
+                                "quantity": "CPUtime",
+                                "tolerance": 0.1,
+                                "tolerance_mode": "rel",
+                            }
+                        ],
+                    },
+                    {
+                        "combinator": "or",
+                        "children": [
+                            {
+                                "metric": "scalar",
+                                "quantity": "translation.typo",
+                                "tolerance": 0,
+                            },
+                            {"metric": "scalar", "quantity": "CPUtime", "tolerance": 0},
+                        ],
+                    },
+                ],
+            }
+        )
+        assert statistic_paths(spec) == ["CPUtime", "translation.typo"]

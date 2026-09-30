@@ -3259,6 +3259,32 @@ class TestTheStatisticsTable:
             ("Timing", ["Total wall"]),
         ]
 
+    def test_a_folded_diagnostic_takes_its_kind_from_the_runs_samples(self):
+        """A user-configured diagnostic folded into the statistics (`Wall`):
+        the report reads the run's samples as the tool's card does —
+        fractional, so a time, and 2.4 -> 2.5 is inside its 10%: untinted."""
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.reporting.context_builder import _build_template_context
+
+        t = np.array([0.0, 1.0, 2.0])
+        wall = VariableResult(
+            index=0, time=t, values=np.array([0.0, 1.5, 2.5]), name="Wall"
+        )
+        run = {"Wall": 2.5, "simulation": {"state_events": 1}}
+        ref = {"statistics": {"Wall": 2.4, "simulation": {"state_events": 1}}}
+        ctx = _build_template_context(
+            "M",
+            [],
+            ref,
+            run,
+            None,
+            result=TestResult("M", True, diagnostics=[wall], statistics=run),
+        )
+        rows = {r["label"]: r for s in ctx["statistics_sections"] for r in s["rows"]}
+        assert not rows["Wall"]["changed"]
+
     def test_the_inputs_are_never_written(self):
         from dstf.reporting.context_builder import (
             _build_key_stats,
@@ -3280,4 +3306,11 @@ class TestTheStatisticsTable:
         assert stats["CPU Time"]["changed"]
         run = {**self.RUN, "CPUtime": 0.82}
         stats = {s["label"]: s for s in _build_key_stats([], self.BASE, run)}
+        assert not stats["CPU Time"]["changed"]
+
+    def test_key_stats_a_side_not_recorded_reads_blank(self):
+        from dstf.reporting.context_builder import _build_key_stats
+
+        stats = {s["label"]: s for s in _build_key_stats([], {}, {"CPUtime": 1.12})}
+        assert stats["CPU Time"]["reference"] == ""
         assert not stats["CPU Time"]["changed"]

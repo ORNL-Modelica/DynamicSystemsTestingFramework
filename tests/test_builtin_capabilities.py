@@ -2897,6 +2897,13 @@ async def test_a_diagnostic_final_goes_through_its_seed(tmp_path):
     }
 
 
+async def test_a_diagnostic_max_is_added_on_its_own_path(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, EventCounter=4.0)
+    (op,) = _add_quantity(session, "EventCounter.max")
+    assert op.value["quantity"] == "EventCounter.max"
+
+
 async def test_a_top_level_statistic_naming_a_diagnostic_takes_its_kind(tmp_path):
     """A user-configured diagnostic folded into the statistics: its row's
     `+` reads the run's samples, as the add form's `Wall.final` does — a

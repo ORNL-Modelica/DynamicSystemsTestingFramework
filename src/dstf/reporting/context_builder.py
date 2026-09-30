@@ -8,7 +8,7 @@ this module touches Jinja, the filesystem, or the decimation pass.
 
 import logging
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -258,14 +258,20 @@ def _build_sim_params(test_model, ref_sim: dict) -> list:
     return sim_params
 
 
-def _build_statistics_sections(ref_stats: dict, cur_stats: dict) -> list:
+def _build_statistics_sections(
+    ref_stats: dict,
+    cur_stats: dict,
+    *,
+    run_diagnostics: Sequence = (),
+) -> list:
     """The Statistics table: :func:`~.stats_rows.statistics_rows` rendered
     into the template's ``{title, rows: [{label, current, reference,
     changed}]}`` sections — the rows the tool's Statistics card shows, in
     the report's order, under one "changed" rule for both. A section with
-    no key is no section."""
+    no key is no section. ``run_diagnostics`` are the run's samples: a
+    folded diagnostic's row takes its kind from them, as the card's does."""
     sections: dict[str, dict] = {}
-    for row in statistics_rows(cur_stats, ref_stats):
+    for row in statistics_rows(cur_stats, ref_stats, run_diagnostics=run_diagnostics):
         if row.section not in sections:
             title = (
                 SECTION_TITLES.get(row.section) or row.section.replace("_", " ").title()
@@ -479,6 +485,8 @@ def _build_key_stats(
     comparisons: list,
     ref_stats: dict,
     cur_stats: dict,
+    *,
+    run_diagnostics: Sequence = (),
 ) -> list:
     """Top-level summary row: worst score across leaves, plus a small
     fixed pick of structural stats (continuous states, nonlinear
@@ -488,7 +496,12 @@ def _build_key_stats(
 
     # A statistics pick reads its row: its values (a baseline's empty list
     # reads its count as 0) and the one "changed" rule.
-    rows = {row.path: row for row in statistics_rows(cur_stats, ref_stats)}
+    rows = {
+        row.path: row
+        for row in statistics_rows(
+            cur_stats, ref_stats, run_diagnostics=run_diagnostics
+        )
+    }
 
     def _pick(path: str, label: str) -> None:
         row = rows.get(path)
@@ -820,7 +833,10 @@ def _build_template_context(
 
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
     sim_params = _build_sim_params(test_model, ref_sim)
-    statistics_sections = _build_statistics_sections(ref_stats, cur_stats)
+    run_diagnostics = (result.diagnostics or []) if result is not None else []
+    statistics_sections = _build_statistics_sections(
+        ref_stats, cur_stats, run_diagnostics=run_diagnostics
+    )
     texts = test_texts(comparisons, result, plot_series)
     trajectories, diag_trajectories, nobaseline_trajectories = build_trajectories(
         comparisons,
@@ -835,7 +851,9 @@ def _build_template_context(
         result,
         test_model,
     )
-    key_stats = _build_key_stats(comparisons, ref_stats, cur_stats)
+    key_stats = _build_key_stats(
+        comparisons, ref_stats, cur_stats, run_diagnostics=run_diagnostics
+    )
     warning_rows = _build_warning_rows(warnings)
 
     last_run_str = ""

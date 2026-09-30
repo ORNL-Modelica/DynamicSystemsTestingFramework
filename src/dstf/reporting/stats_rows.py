@@ -96,14 +96,16 @@ def _count_text(v: float) -> str:
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     """S6: a count reads ``0→3``, a time ``+38%`` (``+0.12 s`` over a zero
     baseline) — whenever both sides are present and differ, changed or
-    not."""
+    not. Under 1% a time keeps one decimal (``+0.3%``): a time that moved
+    never reads ``+0%``."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
         return f"{run - baseline:+.2g} s"
-    return f"{(run - baseline) / baseline:+.0%}"
+    ratio = (run - baseline) / baseline
+    return f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
 
 
 def _text(v: object) -> str:
@@ -244,10 +246,12 @@ def statistics_rows(
     if "simulation" not in names:
         rows += [top_row(key) for key in top]
 
-    held = {row.path for row in rows}
+    # A text row holds no leaf: the card never shows one (S1). `X.final`
+    # is the row `X` only for a top-level `X` (S2).
+    held = {row.path for row in rows if row.kind != "text"}
     for path in dict.fromkeys(extra_paths):
         name, _, field = path.rpartition(".")
-        if path in held or (field == "final" and name in held):
+        if path in held or (field == "final" and "." not in name and name in held):
             continue
         r = resolve_scalar_path(path, dict(run), list(run_diagnostics))
         b = resolve_scalar_path(path, dict(baseline), list(baseline_diagnostics))

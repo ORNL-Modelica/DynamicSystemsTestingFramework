@@ -94,6 +94,47 @@ class TestLogParser:
             assert t[f"{key}_total"] == 0
             assert t[f"{key}_max"] == 0
 
+    def test_every_empty_list_kind_writes_zero_summaries(self):
+        """Both extractors write the summaries of BOTH lists of a pair — the
+        original and the after-manipulation one — even when empty."""
+        from dstf.backends.dymola.log_parser import (
+            _extract_system_pair,
+            _extract_system_pair_simple,
+        )
+
+        stats: dict = {}
+        _extract_system_pair_simple(
+            "Sizes of nonlinear systems of equations: { }\n"
+            "Sizes after manipulation of the nonlinear systems: { }\n",
+            "nonlinear",
+            stats,
+            "translation",
+            "nonlinear",
+        )
+        _extract_system_pair(
+            "Sizes of simplified homotopy nonlinear systems of equations: { }\n"
+            "Sizes after manipulation of the simplified homotopy nonlinear "
+            "systems: { }\n",
+            r"Sizes of simplified homotopy nonlinear systems of equations",
+            r"Sizes after manipulation of the simplified homotopy nonlinear systems",
+            stats,
+            "translation",
+            "init_homotopy_nonlinear",
+        )
+        t = stats["translation"]
+        for key in (
+            "nonlinear",
+            "nonlinear_after_manipulation",
+            "init_homotopy_nonlinear",
+            "init_homotopy_nonlinear_after_manipulation",
+        ):
+            assert t[key] == []
+            assert (t[f"{key}_count"], t[f"{key}_total"], t[f"{key}_max"]) == (
+                0,
+                0,
+                0,
+            ), key
+
     def test_translation_log_complex(self):
         """Parse a complex translation log with init section and system sizes."""
         stats = parse_dslog(FIXTURES_DIR / "results_additional" / "translation_log.txt")
