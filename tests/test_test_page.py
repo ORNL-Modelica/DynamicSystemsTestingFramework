@@ -8353,3 +8353,228 @@ async def test_a_job_lock_greys_the_plus_with_no_why_line(stats_shell):
         gate.release.set()
         await _settled(lambda: _plus_state(user, plus) is True)
         assert _one(user, f"stats:row:{NONLINEAR}") is row
+
+
+# -- the mutation review's survivors (U3 Part B) ------------------------------
+
+
+def test_the_closed_line_counts_changes_when_one_side_lacks_a_statistic():
+    """A baseline written before a statistic existed (no `timing`) still has
+    statistics: the line names what changed, not "no baseline"."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    rows = [
+        _stat("translation.nonlinear_count", 3, 0, True, "0→3"),
+        _stat("timing.total_wall", 4.0, None, kind="time"),
+    ]
+    assert line_text(rows, has_run=True) == "1 changed: Nonlinear count 0→3"
+
+
+def test_a_zero_bound_is_a_bound():
+    """`min_value: 0` is the commonest bound on a count."""
+    from dstf.authoring.shell.stats_card import summary
+
+    def leaf(**params):
+        return {"params": {"quantity": NONLINEAR, **params}}
+
+    assert summary(leaf(min_value=0, max_value=4)) == "in [0, 4]"
+    assert summary(leaf(min_value=0)) == "≥ 0"
+    assert summary(leaf(max_value=0)) == "≤ 0"
+
+
+def test_only_a_final_folds_onto_its_statistics_row():
+    """S2: `CPUtime.final` is the CPUtime row; `CPUtime.max` is not the
+    number that row shows — it is its own row (S4)."""
+    from dstf.authoring.shell.stats_card import row_of
+
+    assert row_of("CPUtime.final", ["CPUtime"]) == "CPUtime"
+    assert row_of("CPUtime.max", ["CPUtime"]) == "CPUtime.max"
+
+
+async def test_a_row_that_stops_changing_loses_its_tint(stats_shell):
+    """The tint repaints in place both ways (an accept or a rerun makes the
+    run match; the row stands)."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        row = _one(user, f"stats:row:{NONLINEAR}")
+        assert "dstf-stat-changed" in row.classes
+        result = shell.session.project.results[A]
+        stats = copy.deepcopy(result.statistics)
+        stats["translation"].update(
+            nonlinear=[], nonlinear_count=0, nonlinear_total=0, nonlinear_max=0
+        )
+        result.statistics = stats
+        with page.client:
+            page.sync()
+        assert _one(user, f"stats:row:{NONLINEAR}") is row
+        assert "dstf-stat-changed" not in row.classes
+
+
+async def test_removing_the_edited_statistics_criterion_closes_its_editor(
+    stats_shell,
+):
+    """The rows rebuild; the page's one editor goes with them."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        shell.session.stage([PatchOp(A, "remove", leaf)])
+        await _settled(lambda: _none(user, f"stats-editor:{leaf}"))
+        assert page.open is None
+
+
+async def test_the_card_editors_own_edit_keeps_its_field(stats_shell):
+    """The field being typed in survives its own edit's sync."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+
+        def tolerance():
+            editor = _one(user, f"stats-editor:{leaf}")
+            (field,) = [e for e in editor.descendants() if isinstance(e, ui.number)
+                        and e.props.get("label") == "Tolerance"]  # fmt: skip
+            return field
+
+        field = tolerance()
+        field.set_value(2)
+        await asyncio.sleep(0.3)
+        assert tolerance() is field
+
+
+async def test_a_plot_rebuild_leaves_the_cards_editor_open(stats_shell):
+    """The Statistics card's editor hangs under no plot card."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        shell.session.stage(
+            [PatchOp(A, "add", "/plots", [{"var": "x", "context": ["y"]}])]
+        )
+        await _settled(
+            lambda: page.cards and page.cards[0].resolved.series == ("x", "y")
+        )
+        assert page.open == (STATS, leaf)
+        assert not _none(user, f"stats-editor:{leaf}")
+
+
+async def test_a_plus_is_grey_on_a_simulate_only_test(stats_shell):
+    """A criterion staged there is never scored."""
+    shell = stats_shell
+    shell.session.project.test(A).simulate_only = True
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        assert not plus.enabled
+        assert (
+            plus.props["aria-label"] == "This test is simulate-only: nothing is scored"
+        )
+
+
+async def test_a_plus_is_grey_under_a_weighted_root(stats_shell):
+    """A weighted node takes no child alone."""
+    shell = stats_shell
+    shell.session.stage([PatchOp(A, "add", "/metrics", {
+        "combinator": "weighted", "weights": [1.0, 1.0], "threshold": 0.5,
+        "children": [{"metric": "range", "variable": "x", "min_value": -1},
+                     {"metric": "range", "variable": "y", "min_value": -1}]})])  # fmt: skip
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        assert not plus.enabled
+        assert plus.props["aria-label"].startswith("a weighted node")
+
+
+async def test_a_gone_test_empties_the_statistics_card(stats_shell, tmp_path):
+    """The card says nothing for a test the project no longer has."""
+    shell = stats_shell
+    cfg2, work2 = _project_without(tmp_path, A)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        assert not _none(user, f"add-statistic:{NONLINEAR}")
+        shell.session.open(cfg2, work_dir=work2)
+        await _settled(lambda: page.gone)
+        assert _none(user, "stats:summary")
+        assert _none(user, f"add-statistic:{NONLINEAR}")
+        assert not page.stats.is_open
+
+
+async def test_a_simulate_only_test_with_no_tree_says_simulate_only(stats_shell):
+    """The specific cause first — B has no baseline (no tree) AND is
+    simulate-only; the add form says simulate-only, so does the `+`."""
+    shell = stats_shell
+    shell.session.project.test(B).simulate_only = True
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, model=B)
+        page.stats.toggle()
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        assert not plus.enabled
+        assert (
+            plus.props["aria-label"] == "This test is simulate-only: nothing is scored"
+        )
+
+
+async def test_opening_the_cards_editor_closes_a_form_row(stats_shell):
+    """One thing open page-wide, in this direction too."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click_in(user, f"wrap:{T0}", within=f"node:0:{T0}")
+        await _settled(lambda: page.form is not None)
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        assert page.form is None
+
+
+async def test_a_plus_scrolls_the_new_editor_into_view(stats_shell, monkeypatch):
+    """The reveal brings the card's editor into view, as a plot's does."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        sent: list[str] = []
+        monkeypatch.setattr(
+            page.client, "run_javascript", lambda code, *a, **k: sent.append(code)
+        )
+        _click(user, _one(user, f"add-statistic:{NONLINEAR}"))
+        await _settled(lambda: page.open is not None and page.open[0] == STATS)
+        assert any(
+            ".dstf-stats .dstf-editor" in c and "scrollIntoView" in c for c in sent
+        )
+
+
+async def test_a_criterion_on_a_list_statistic_has_a_home_on_the_card(
+    stats_shell, monkeypatch
+):
+    """S4: every statistics criterion has a row on the card — one reading
+    `translation.nonlinear` (a list: a text row, which the card skips)
+    too: its jump opens its editor there."""
+    from dstf.authoring.shell import test_page as page_mod
+
+    shell = stats_shell
+    _stage_tree(shell, A, {"combinator": "and", "children": [
+        {"metric": "nrmse", "variable": "x"},
+        {"metric": "scalar", "quantity": "translation.nonlinear", "tolerance": 0}]})  # fmt: skip
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        monkeypatch.setattr(page_mod.ui, "run_javascript", lambda *a, **k: None)
+        with page.client:
+            page.jump_to(T1)
+        await _settled(lambda: page.open == (STATS, T1))
+        assert user.notify.messages == []
