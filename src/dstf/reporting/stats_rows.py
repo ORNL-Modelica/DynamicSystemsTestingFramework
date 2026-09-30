@@ -19,7 +19,7 @@ at the end.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -93,24 +93,38 @@ def _count_text(v: float) -> str:
     return str(int(v)) if float(v).is_integer() else f"{v:g}"
 
 
-def _time_text(v: float) -> str:
+def _rounded(v: float) -> str:
     """3 significant figures KEEPING zeros (``0.800``, ``2.10``): ``0.8``
-    beside ``1.12`` read as a coarser number. ``100.`` loses its point."""
-    return f"{float(v):#.3g}".rstrip(".")
+    beside ``1.12`` read as a coarser number. ``100.`` loses its point, and
+    from 999.5 a time is whole seconds (``1234``): ``#.3g`` wrote
+    ``1.00e+03``."""
+    return f"{v:.0f}" if abs(v) >= 999.5 else f"{v:#.3g}".rstrip(".")
 
 
-def value_text(kind: str, value: Any) -> str:
-    """A row's value as BOTH tiers print it — the report's table and the
-    tool's card: a time with its unit (``0.800 s``), a count whole
-    (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a side
-    that recorded none."""
+def _value_text(kind: str, value: Any, time: Callable[[float], str]) -> str:
     if value is None:
         return ""
     if kind == "text" or not _is_number(value):
         return _text(value)
     if kind == "time":
-        return f"{_time_text(value)} s"
+        return f"{time(float(value))} s"
     return _count_text(value)
+
+
+def report_text(kind: str, value: Any) -> str:
+    """A row's value as the REPORT prints it, in full: a time with its unit
+    (``0.045845 s``, ``99.96 s``, ``1234.5 s``), a count whole (``1234567``,
+    never ``1.23457e+06``), a list joined; ``""`` for a side that recorded
+    none. The report is where a number is read to its last digit."""
+    return _value_text(kind, value, lambda v: f"{v:g}")
+
+
+def card_text(kind: str, value: Any) -> str:
+    """A row's value as the tool's CARD prints it, rounded to be compared
+    at a glance: a time to 3 significant figures keeping its zeros
+    (``0.800 s``), whole seconds from 999.5 s (``1234 s``); otherwise as
+    :func:`report_text`."""
+    return _value_text(kind, value, _rounded)
 
 
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:

@@ -27,7 +27,7 @@ from nicegui import ui
 
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
-from ...reporting.stats_rows import SECTION_TITLES, StatRow, value_text
+from ...reporting.stats_rows import SECTION_TITLES, StatRow, card_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
@@ -125,9 +125,9 @@ def summary(leaf: dict) -> str:
 
 
 def cell_text(row: StatRow, value: Any) -> str:
-    """A value as the report's table prints it (`value_text`); `—` for a
+    """A value as the card prints it, rounded (`card_text`); `—` for a
     side that recorded none."""
-    return value_text(row.kind, value) or "—"
+    return card_text(row.kind, value) or "—"
 
 
 def row_of(quantity: str, paths: Sequence[str] | set[str]) -> str:

@@ -271,19 +271,38 @@ def test_changed_reads_the_seeds_tolerance():
     assert not changed("CPUtime", "time", 1.0, None)
 
 
-def test_a_value_reads_the_same_on_both_tiers():
-    """A time to 3 significant figures KEEPING its zeros (`0.800 s`, never
-    `0.8 s`) and no bare trailing point; a count whole, however large."""
-    from dstf.reporting.stats_rows import value_text
+def test_the_card_rounds_a_value():
+    """The card: a time to 3 significant figures KEEPING its zeros
+    (`0.800 s`, never `0.8 s`), no bare trailing point, and whole seconds
+    from 999.5 s — never `1.00e+03 s`; a count whole, however large."""
+    from dstf.reporting.stats_rows import card_text
 
-    assert value_text("time", 0.8) == "0.800 s"
-    assert value_text("time", 2.1) == "2.10 s"
-    assert value_text("time", 1.2345) == "1.23 s"
-    assert value_text("time", 100.0) == "100 s"
-    assert value_text("count", 1234567) == "1234567"
-    assert value_text("count", 102.0) == "102"
-    assert value_text("count", None) == ""
-    assert value_text("text", ["a", "b"]) == "a, b"
+    assert card_text("time", 0.8) == "0.800 s"
+    assert card_text("time", 2.1) == "2.10 s"
+    assert card_text("time", 1.2345) == "1.23 s"
+    assert card_text("time", 100.0) == "100 s"
+    assert card_text("time", 999.4) == "999 s"
+    assert card_text("time", 999.6) == "1000 s"
+    assert card_text("time", 1234.5) == "1234 s"
+    assert card_text("count", 1234567) == "1234567"
+    assert card_text("count", 102.0) == "102"
+    assert card_text("count", None) == ""
+    assert card_text("text", ["a", "b"]) == "a, b"
+
+
+def test_the_report_keeps_full_precision():
+    """The report is read to the last digit: a time as recorded, with its
+    unit; a count whole."""
+    from dstf.reporting.stats_rows import report_text
+
+    assert report_text("time", 0.045845) == "0.045845 s"
+    assert report_text("time", 99.96) == "99.96 s"
+    assert report_text("time", 1234.5) == "1234.5 s"
+    assert report_text("time", 0.8) == "0.8 s"
+    assert report_text("count", 1234567) == "1234567"
+    assert report_text("count", 102.0) == "102"
+    assert report_text("count", None) == ""
+    assert report_text("text", ["a", "b"]) == "a, b"
 
 
 def test_a_time_under_a_twentieth_of_a_percent_off_reads_under_a_tenth():
