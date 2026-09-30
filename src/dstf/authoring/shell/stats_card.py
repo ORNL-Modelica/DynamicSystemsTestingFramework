@@ -72,7 +72,8 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
     """The closed line after "run vs baseline ·": the changed COUNTS — in
     section order, at most `NAMED` named, then `+N more` — or `no count
     changed`; then, after a `·`, the changed times, the farthest moved
-    first, at most `TIMES`. Or why it names none. The owner's ruling
+    first, at most `TIMES`. `all match` where no count and no time
+    changed; or why it names none. The owner's ruling
     (2026-09-30): over TRANSFORM CPUtime ran ~2.2x its baseline on 324 of
     331 tests, so a line naming times among the counts named CPUtime on
     every test; the open table still tints a changed time."""
@@ -95,13 +96,15 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
         (row for _, row in entries.values()),
         key=lambda r: sections.index(r.section),
     )
+    times = sorted(
+        (r for r in shown if r.changed and r.kind == "time"), key=_moved, reverse=True
+    )
+    if not counts and not times:
+        return "all match"
     text = (
         f"{len(counts)} changed: {_more(counts, NAMED)}"
         if counts
         else "no count changed"
-    )
-    times = sorted(
-        (r for r in shown if r.changed and r.kind == "time"), key=_moved, reverse=True
     )
     return f"{text} · {_more(times, TIMES)}" if times else text
 

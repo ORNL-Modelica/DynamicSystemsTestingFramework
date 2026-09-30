@@ -7962,10 +7962,10 @@ def test_the_closed_line_names_no_time_among_the_counts():
     assert line_text(rows, has_run=True) == (
         "1 changed: Nonlinear count 0→3 · CPUtime +116%"
     )
-    # Nothing changed: the counts part alone.
+    # Nothing changed, no count and no time: `all match`.
     same = [_stat("simulation.state_events", 2, 2),
             _stat("CPUtime", 0.81, 0.8, False, "+1%", kind="time", key="CPUtime")]  # fmt: skip
-    assert line_text(same, has_run=True) == "no count changed"
+    assert line_text(same, has_run=True) == "all match"
 
 
 def test_the_closed_line_names_two_times_largest_move_first():
@@ -7990,7 +7990,7 @@ def test_the_closed_line_says_why_it_names_nothing():
     from dstf.authoring.shell.stats_card import line_text
 
     same = [_stat("simulation.state_events", 2, 2)]
-    assert line_text(same, has_run=True) == "no count changed"
+    assert line_text(same, has_run=True) == "all match"
     assert line_text([], has_run=True) == "nothing recorded"
     text = StatRow("translation", "nonlinear", "translation.nonlinear", "N",
                    "text", [1], [], True, "")  # fmt: skip
@@ -8387,11 +8387,18 @@ def _ref_override_project(tmp_path):
     t = np.asarray([i / 4 for i in range(5)])
     ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
         make_test_model(
-            A, variable_patterns=["x", "y"], variable_overrides={"x": {"tolerance": 0.5}}
+            A,
+            variable_patterns=["x", "y"],
+            variable_overrides={"x": {"tolerance": 0.5}},
         ),
-        TestResult(model_id=A, success=True, variables=[
-            VariableResult(index=1, time=t, values=t, name="x"),
-            VariableResult(index=2, time=t, values=2.1 * t, name="y")]),  # fmt: skip
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=t, values=t, name="x"),
+                VariableResult(index=2, time=t, values=2.1 * t, name="y"),
+            ],
+        ),
     )
     return cfg, work
 
