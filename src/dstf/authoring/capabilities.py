@@ -250,15 +250,16 @@ class Capability(Protocol):
         """``True``, or ``False`` / the sentence saying why it is unavailable
         and what would enable it ("Accept needs a selection", "rerun is
         running on FakeLib.A"). The greyed button carries it where the
-        placement draws one; at CRITERION and NODE it is shown in the
-        panel's place."""
+        placement draws one; at CRITERION, NODE, STATISTIC and
+        STATISTIC_CRITERION it is shown in the panel's place."""
         ...
 
     def caption(self, s: SessionView) -> str:
         """The button's label: its object, its effect and a count
         ("Rerun 2 selected tests"). At zero it still says what it
         would do; ``available`` then carries the sentence. The inline
-        placements (CRITERION, NODE) draw no button and never read it."""
+        placements (CRITERION, NODE, STATISTIC, STATISTIC_CRITERION) draw
+        no button and never read it."""
         ...
 
     def panel(self, s: SessionView, ui: Panel) -> None: ...

@@ -25,7 +25,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
-│   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base, result_files (any variable of a result file)
+│   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
+│   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place)
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
@@ -41,7 +42,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      diff as test_spec.json would write it), needle.py (the drawers' budgeted filter matcher),
 │   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages,
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
-│   │                             #      test_list (the Tests drawer's list), tree_card + plot_card,
+│   │                             #      test_list (the Tests drawer's list), tree_card + plot_card, stats_card.py (the Statistics card),
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      picker.py (the add form's variable picker over picker_rows),
 │   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
@@ -50,6 +51,7 @@ DynamicSystemsTestingFramework/
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py (the classifier + every status word and class) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
+│       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
 │       │                         #      + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)

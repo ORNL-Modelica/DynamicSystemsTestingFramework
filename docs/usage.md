@@ -861,13 +861,15 @@ reads 2 — its tree written out, and the edit.
 Under the strip, the **Statistics card** shows every statistic the run and its
 baseline recorded, side by side — the rows the report's Statistics table
 shows, under one rule. Closed, as on every page open, it is one line naming
-what changed (`2 changed: Nonlinear count 0→3, CPUtime +40%`; a list's
-count, total and max are one entry; counts first, at most three, then `+N
-more`), or `all match`, `no run result`, `no baseline statistics`, `nothing
-recorded`. A statistic has **changed** when the criterion its `+` would add
+the counts that changed (`1 changed: Nonlinear count 0→3`; a list's count,
+total and max are one entry; at most three, then `+N more`) or `no count
+changed`, then, after a `·`, at most two changed times, the one that moved
+most first (`· CPUtime +40%`); or `no run result`, `no baseline
+statistics`, `nothing recorded`. A statistic has **changed** when the criterion its `+` would add
 would fail: a count on any difference, a time beyond 10%. Open, every count
 and time is a row under Translation / Simulation / Timing, with its run and
-baseline values (a time to 3 significant figures, `0.800 s`) and the
+baseline values (a time to 3 significant figures, `0.800 s`; the report's
+table prints it in full, `0.8 s`) and the
 difference; a changed row is tinted. Lists and names are left out: nothing
 scores them. A row no criterion reads ends in a `+` — "Add a requirement:
 exact match" for a count, "…within 10%, as a warning" for a time — that adds
@@ -875,7 +877,7 @@ a `scalar` criterion on it at the end of the tree (a time inside a `warn`
 where it lands in an `and`) and opens its editor under the row. A row a
 criterion reads shows that criterion's pill and its requirement (`exact`,
 `±10%`, `in [a, b]`) instead; click the row to edit it there — tolerance,
-its mode, bounds; there is no plot. A criterion reading a quantity no
+the tolerance mode, bounds; there is no plot. A criterion reading a quantity no
 statistic holds gets a row under "Other scored quantities". The `+` is grey,
 with the reason as its tooltip, while a job holds the test, on a
 simulate-only test, where nothing is scored yet, and under a `warn` or

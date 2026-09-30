@@ -5927,7 +5927,15 @@ fix batches from the mutation reviews.
    Dymola baseline that holds an empty list writes up to three more keys
    per list into its reference JSON (Corrections A10; additive). The
    report now shows an empty list's summaries as 0, in its table and in
-   Key stats.
+   Key stats. And the rule SURFACES (fix batch 3): a system-size list —
+   whole numbers, `statistics.sizes_systems`; `state_names` is none — on
+   EITHER side gives its three summary rows on both, each side read as a
+   leaf reads it (`read_summary`; nothing, `—` on the card, where a side
+   has no list). A row existed only where a side already held the key, so
+   289 of TRANSFORM's stored baselines, holding `nonlinear: []` and no
+   count, beside a run that recorded no count either, showed no "Nonlinear
+   count" row: nothing said the count stays 0, and no `+` could require
+   it.
 2. *A quantity's kind by its path (S5).* `comparison/seeds.py::
    quantity_kind` says count or time by the PATH, never the value's type
    (a Dymola `result_points` can be written as a float): the `timing`
@@ -5954,9 +5962,14 @@ fix batches from the mutation reviews.
    (or a Simulation section of their own at the end). Its LABELS become
    the row model's — `Nonlinear count`, `CPU time integration` (`cpu`
    spelled `CPU`), a top-level name as is: `CPUtime`, where the report
-   said `Cputime`. Its VALUES are printed as the card prints them
-   (`stats_rows.value_text`): a time to 3 significant figures keeping its
-   zeros, with its unit (`0.800 s`), a count whole (`1234567`). A delta
+   said `Cputime`. Its VALUES keep their precision (`stats_rows.
+   report_text`): a time as recorded, with its unit (`0.045845 s`,
+   `99.96 s`, `1234.5 s` — `:g`, so at most six significant figures), a
+   count whole (`1234567`). Only the card rounds (`card_text`): a time to
+   3 significant figures keeping its zeros (`0.800 s`), and whole seconds
+   from 999.5 s (`1234 s` — `#.3g` wrote `1.00e+03 s`). Fix batch 3 split
+   the two (a controller's call, reversible); before it both tiers printed
+   the card's rounding. A delta
    (S6) reads `0→3` for a count and `+40%` for a time — one decimal under
    1% (`+0.3%`), `+<0.1%` under 0.05%, `+0.12 s` over a zero baseline —
    whenever both sides differ, changed or not (A7). A leaf reading a path
@@ -5976,10 +5989,18 @@ fix batches from the mutation reviews.
    one's verdict, "pending" where it has none. `Session.tracked` skips the
    names statistics leaves score (B5).
 5. *The card.* `authoring/shell/stats_card.py::StatsCard`, above the
-   tree card, closed on every page open to one line: the changed entries
-   — a list's `_count` / `_total` / `_max` are one entry, counts before
-   times, at most three named, then `+N more` (B6) — or `all match`, `no
-   run result`, `no baseline statistics`, `nothing recorded`. Open, every
+   tree card, closed on every page open to one line: the changed COUNTS
+   — a list's `_count` / `_total` / `_max` are one entry, in section
+   order, at most three named, then `+N more` (B6) — or `no count
+   changed`; then, after a `·`, at most two changed times, the farthest
+   moved (|relative change|) first, then `+N more` (`1 changed: Nonlinear
+   count 0→3 · CPUtime +116%`). That is the owner's ruling of 2026-09-30,
+   on the TRANSFORM gate's measurement: CPUtime ran about 2.2x its
+   baseline (median 2.24x) on 324 of 331 tests, so a line naming times
+   among the counts named CPUtime on every test. `all match` is gone —
+   nothing changed reads `no count changed`; the line otherwise says `no
+   run result`, `no baseline statistics` or `nothing recorded`. The open
+   table still tints a changed time (the seed's 10%). Open, every
    count and time under Translation / Simulation / Timing (then any other
    section), columns Statistic / Run / Baseline; a changed row wears the
    report's warn tint, and the open row the selection. A scored row shows
@@ -6003,7 +6024,14 @@ fix batches from the mutation reviews.
    editor is hosted at the new `Placement.STATISTIC_CRITERION`, where only
    `EditCriteria` attaches (at CRITERION, Edit on plot answered with a
    why-line). There `EditCriteria` draws no mode select, no window and no
-   quantity field, and puts the quantity back on every edit (B3).
+   quantity field, and puts the quantity back on every edit (B3). At both
+   placements it reads the leaf from the tree as AUTHORED (`SessionView.
+   tree`, staged edits included), and the values-in-effect hints only
+   where a tree view says what the leaf was scored with; the card's open
+   editor redraws when the authored leaf moves. Read from the view (fix
+   batch 3), a `+` on a test with no baseline — nothing compared, no view
+   — opened an editor with no field, and an open editor there never
+   followed an edit staged elsewhere.
 7. *One editor page-wide.* `TestPage.open` keeps its shape with a
    sentinel: `(STATS, leaf path)`, `STATS = -1` (B9). Opening the card's
    editor closes a plot's and a form row, and they close it; Focus and
@@ -6017,7 +6045,12 @@ diagnostic's criterion has a home on the Test page — its row — where its
 values are edited.
 
 **What it reverses.** The report's any-difference tint on the Statistics
-table and Key stats (item 3). `TestPage._reveal_in_tree` is deleted: its
+table and Key stats (item 3). The report's statistics labels, to the row
+model's (`CPUtime`, where it said `Cputime` — Corrections A2), and Key
+stats' values, now read from the row (a baseline's empty list reads its
+count as 0, not blank — Corrections A4). The report's value formats: it
+printed a value bare (`str(v)`); a time now carries its unit and a count
+is whole (item 3). `TestPage._reveal_in_tree` is deleted: its
 one case (a criterion with no plot) now opens in the card. So is the
 jump's "… is on no plot of this test" notice (with `_variable_of`): every
 leaf of a tree view is on a plot or in the card.
@@ -6029,11 +6062,13 @@ root LEAF moves every path) that unmounts a plot still awaiting NiceGUI
 3.16's async mount during plotly.js's first import leaves its resize
 observer on a detached div, and the console says "Resize must be passed a
 displayed plot div element"; the Playwright tests wait for every plot to be
-mounted before such a click. On a test with no tree view the card's editor
-does not redraw for an edit staged elsewhere (it compares against the
-view's leaf). A time of 1000 s or more prints in exponent form
-(`1.23e+03 s`). The structural-warning check still skips a statistic
-missing on either side (logged in `docs/ideas.md`). Not measured here: the
-TRANSFORM gate over a copy (the plan's Task 7 — rows over every test, the
-changed rows counted by kind with the walls apart, B7, and the report's
-tint before and after), which the plan leaves to its controller.
+mounted before such a click. The structural-warning check still skips a
+statistic missing on either side (logged in `docs/ideas.md`). A `+` on a
+row whose run has no value (a run from before run-side statistics) adds a
+criterion that fails "not found in current run" until a rerun — by
+design. Where a test was compared but the Session will not materialize
+its flat entry's tree (`Session._materialization`'s refusals), a plot
+criterion's editor now says "this leaf is not in the scored tree": it
+read the view's leaf before, and the Session refused its every edit. Of
+the TRANSFORM gate over a copy (the plan's Task 7) only the counts
+above are recorded here (items 1 and 5); the rest is the controller's.
