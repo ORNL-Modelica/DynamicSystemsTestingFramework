@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from ..comparison.tree_spec import LeafSpec, SpecNode
+    from ..comparison.validator import BaselineRoleLookup
     from ..figures.plotly import Visibility
     from ..reporting.stats_rows import StatRow
 
@@ -1707,6 +1708,14 @@ class ProjectView:
             names.append(PRIMARY_BASELINE)
         names.extend(self._store.get_soft_checks(model_id))
         return tuple(names)
+
+    def role_lookup(self, model_id: str) -> BaselineRoleLookup:
+        """Each baseline name's role for ``model_id`` — what the D66
+        validator checks a tree against, as `Session.stage` does: a move
+        checks its new tree with it before it is staged."""
+        from ..comparison.validator import role_lookup_from_store
+
+        return role_lookup_from_store(self._store, model_id)
 
 
 class SessionView:

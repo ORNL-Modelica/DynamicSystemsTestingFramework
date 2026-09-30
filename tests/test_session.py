@@ -2480,6 +2480,14 @@ class TestSessionView:
             A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
         )
         assert pv.baseline_names(A) == ("primary", "om_cross")
+        # Each baseline's role, as `stage` validates a tree against it: what
+        # a move checks its new tree with before it is staged (U4).
+        from dstf.comparison.validator import BaselineRole
+
+        roles = pv.role_lookup(A)
+        assert roles("primary") is BaselineRole.PRIMARY
+        assert roles("om_cross") is BaselineRole.SOFT_CHECK
+        assert roles("nope") is None
         assert (
             pv.config.backend_name == "Python"
             and pv.dataset_kind is session.project.dataset_kind
