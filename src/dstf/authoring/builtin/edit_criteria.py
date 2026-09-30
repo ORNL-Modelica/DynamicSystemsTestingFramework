@@ -86,7 +86,13 @@ class EditCriteria:
         running = s.running
         if running is not None and s.is_locked(model_id):
             return f"{running.label} is running on {model_id}"
-        return True
+        # A compared test whose tree the Session will not materialize: its
+        # leaves are on the plots, but every edit is refused — the Session's
+        # reason, as the editor's why-line, not the view's leaf as if
+        # editable. Said here and not in the panel: Edit on plot is refused
+        # for the same reason, and the host says a sentence once.
+        _tree, why = s.tree_or_reason(model_id)
+        return True if why is None else why
 
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
         from nicegui import ui
@@ -96,14 +102,8 @@ class EditCriteria:
         sel = s.selection
         model_id = next(iter(sel.tests))
         path = sel.leaf_path or ""
-        tree, why = s.tree_or_reason(model_id)
-        if tree is None:
-            # A compared test whose tree the Session will not materialize:
-            # its leaves are on the plots, but every edit is refused — say
-            # the Session's reason, not the view's leaf as if editable.
-            assert why is not None  # `tree` is None
-            ui.label(why)
-            return
+        tree = s.tree(model_id)
+        assert tree is not None  # `available` said so, on this same view
         leaf = _authored_leaf(tree, path)
         # The panel is rebuilt after edits made elsewhere: Edit tree wrapping
         # the selected leaf leaves the selection's path naming a combinator.

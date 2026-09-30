@@ -405,6 +405,25 @@ async def test_a_capability_that_answers_false_says_not_available(shell):
         assert _none(user, "probe:off")
 
 
+async def test_a_host_says_each_distinct_sentence_once(shell):
+    """Two capabilities unavailable for the same reason drew it twice, one
+    line each: a criterion's editor on a test with no tree read the
+    Session's reason under Edit criteria and again under Edit on plot. The
+    first capability to say a sentence says it; a different sentence is a
+    line of its own."""
+    _only(
+        _Probe("one", {Placement.CRITERION}, answer="rerun is running on FakeLib.A"),
+        _Probe("two", {Placement.CRITERION}, answer="rerun is running on FakeLib.A"),
+        _Probe("three", {Placement.CRITERION}, answer="three has no handles"),
+    )
+    box, root = _hosted(shell)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        assert _one(user, "why:one").text == "rerun is running on FakeLib.A"
+        assert _none(user, "why:two")
+        assert _one(user, "why:three").text == "three has no handles"
+
+
 async def test_on_applied_names_the_capability_whose_act_applied_something(shell):
     one = _Probe("one", {Placement.CRITERION}, raises="no", outcome=OUTCOME)
     _only(one, _Probe("two", {Placement.CRITERION}, outcome=OUTCOME))
@@ -2689,6 +2708,9 @@ async def test_an_open_editors_panels_follow_the_job_that_locked_the_test(shell)
         await _settled(lambda: _inside(user, "panel:edit-criteria", editor) == [])
         (why,) = _inside(user, "why:edit-criteria", editor)
         assert why.text == f"rerun is running on {D}"
+        # Edit on plot is locked out too, and says nothing more: one line.
+        texts = [getattr(e, "text", "") for e in _one(user, editor).descendants()]
+        assert texts.count(f"rerun is running on {D}") == 1
         gate.release.set()
         await _settled(lambda: bool(_inside(user, "panel:edit-criteria", editor)))
 
@@ -8437,7 +8459,8 @@ async def test_a_plot_editor_on_a_test_with_no_tree_says_why(tmp_path):
     Session refuses to materialize its tree — a baseline override the spec
     does not shadow — and refuses every per-leaf edit. Its editor said
     "this leaf is not in the scored tree", false of a leaf on the plot; it
-    says the Session's own refusal, and draws no field."""
+    says the Session's own refusal, once, and draws no field."""
+    from dstf.authoring.session import NO_TREE
     from dstf.discovery.patch_apply import PatchError
 
     shell = _opened(*_ref_override_project(tmp_path))
@@ -8452,7 +8475,11 @@ async def test_a_plot_editor_on_a_test_with_no_tree_says_why(tmp_path):
         await _settled(lambda: page.open == (0, T0))
         editor = _one(user, f"editor:0:{T0}")
         texts = [getattr(e, "text", "") for e in editor.descendants()]
-        assert reason in texts
+        # Edit criteria says it, on its own why-line; Edit on plot, refused
+        # for the same reason, does not say it a second time.
+        (why,) = _inside(user, "why:edit-criteria", f"editor:0:{T0}")
+        assert why.text == reason == NO_TREE
+        assert texts.count(NO_TREE) == 1
         assert "this leaf is not in the scored tree" not in texts
         assert not [e for e in editor.descendants() if isinstance(e, ui.number)]
 

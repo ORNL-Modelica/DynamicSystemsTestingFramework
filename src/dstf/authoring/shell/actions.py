@@ -320,7 +320,9 @@ class InlineHost:
     """Every capability placed at `placement`, its panel built inline in
     this host's column — no button, no heading (brief §3.2: Edit criteria
     and Edit on plot read as one editor; a node's controls are a panel).
-    An unavailable capability keeps its place and says why (brief §3.3).
+    An unavailable capability keeps its place and says why (brief §3.3) —
+    once per sentence: a second capability refused for the same reason
+    draws no line of its own.
     `build()` rebuilds from the selection as it is now; `clear()` empties
     the column and drops this host's figure handlers and the form row its
     panels opened. A raising act shows above that capability's panel — in
@@ -408,6 +410,10 @@ class InlineHost:
         if skip is None or [cap.name for cap, _ in placed] != list(self.cells):
             self.clear()
             skip = None
+        # The why-lines drawn so far. Edit criteria and Edit on plot are both
+        # refused on a test the Session has no tree for, or one a job holds,
+        # and the editor read the same sentence twice (the review).
+        said: set[str] = set()
         for cap, avail in placed:
             if cap.name == skip:
                 continue
@@ -419,7 +425,7 @@ class InlineHost:
             cell = self.cells[cap.name]
             cell.clear()
             with cell:
-                self._build_one(cap, avail, view)
+                self._build_one(cap, avail, view, said)
             # Not the skipped capability's: its place still shows the answer
             # it was built on, and `follow` is what brings it back in line.
             self.answers[cap.name] = avail
@@ -439,7 +445,9 @@ class InlineHost:
         if answers != self.answers:
             self.build()
 
-    def _build_one(self, cap: Capability, avail: bool | str, view: Any) -> None:
+    def _build_one(
+        self, cap: Capability, avail: bool | str, view: Any, said: set[str]
+    ) -> None:
         slot = self.row.slot if self.row is not None else None
         if slot is not None:
             # A host drawn in a row puts its error on a line of its own in
@@ -455,7 +463,9 @@ class InlineHost:
         self.errors[cap.name] = error
         if avail is not True:
             sentence = avail if isinstance(avail, str) else "not available"
-            ui.label(sentence).classes("dstf-why").mark(f"why:{cap.name}")
+            if sentence not in said:
+                said.add(sentence)
+                ui.label(sentence).classes("dstf-why").mark(f"why:{cap.name}")
             return
 
         def submit(**inputs: Any) -> bool:
