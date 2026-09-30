@@ -5247,6 +5247,25 @@ example: `simulation.wall_time` scored FAIL "not found" on `compare` before
 and PASS after, matching `run`. `compare --accept` stores that path's value
 into the baseline, as `run --accept` always did.
 
+*Amended 2026-09-30 (the owner's ruling): Dymola's logs are the fallback
+reader.* A Dymola result written before `run_stats.json` existed still has
+`dslog.txt` and `translation_log.txt` beside its `dsres.mat` (330 of the
+owner's 331 stored TRANSFORM results), yet `read_result` took statistics only
+from the run result, so `compare` and the tool showed none of its
+`translation` / `simulation` statistics. The parse-and-merge of the two logs
+is now one function, `log_parser.parse_test_logs`: the batch run (its
+timeout salvage too, which read `dslog.txt` alone), the persistent worker's
+disk read and `read_result` call it, the last when the run result carries no
+statistics. Kept run statistics still win — they are the run's own record;
+the logs are what code that reads files tolerates for a result from before
+them. The logs hold no phase walls, so such a result still has no `timing`
+block and its Sim (s) reads the marked CPU time. The consequences above
+follow for these results too: their structural-change warnings appear on
+`compare` and on a reload, and `compare --accept` stores the statistics.
+OpenModelica is unchanged: the file beside its result (`omc_stdout.txt`)
+holds only omc's phase times — a `timing` block, no counts — so reading it
+back is another change, not made here.
+
 **Cost.** A final render reads each row's `run_stats.json` once, whether or
 not its walls are shown: ~135 ms over TRANSFORM's 331 files on `/tmp`,
 per render (the tool renders once per Rerun, off its UI loop; Save, Discard
@@ -6070,10 +6089,12 @@ observer on a detached div, and the console says "Resize must be passed a
 displayed plot div element"; the Playwright tests wait for every plot to be
 mounted before such a click. The structural-warning check still skips a
 statistic missing on either side (logged in `docs/ideas.md`). A `+` on a
-row whose run has no value (a run from before run-side statistics) adds a
-criterion that fails "not found in current run" until a rerun — by
-design. Where a test was compared but the Session will not materialize
-its flat entry's tree (`Session._materialization`'s refusals), a plot
+row whose run has no value adds a criterion that fails "not found in
+current run" until a rerun — by design. For a result from before
+run-side statistics that is its `timing` rows; a Dymola result's
+`translation` / `simulation` rows have their values, which its logs give
+back (D138, amended 2026-09-30). Where a test was compared but the
+Session will not materialize its flat entry's tree (`Session._materialization`'s refusals), a plot
 criterion's editor draws no field and says the Session's own refusal.
 One method returns a test's tree or why it has none,
 `Session.tree_or_reason` (`tree` is its first half), and `stage`'s
