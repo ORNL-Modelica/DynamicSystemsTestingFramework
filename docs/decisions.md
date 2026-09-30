@@ -6154,3 +6154,70 @@ null in place. `spec-update`'s note for a per-leaf op on such an entry,
 "entry had no 'metrics' block", stands: a null is no block. Of
 the TRANSFORM gate over a copy (the plan's Task 7) only the counts
 above are recorded here (items 1 and 5); the rest is the controller's.
+
+## D145 — A test with no result is NOT RUN, not a failed simulation (2026-09-30)
+
+(D144 is held for step U4.)
+
+**Context.** A test the last run never ran — no entry in
+`batch_manifest.json` — and one a run started and never finished — its
+entry still `pending`, the stamp a run puts on every test in scope and
+overwrites as each result lands — both read SIM_FAIL: the comparator built
+`TestComparison(sim_success=False, "No simulation results found")` for the
+first, and the reader read the second's result file off disk, which is
+missing (a failed result) or partial (a green one). So an aborted run and
+a test nobody ran looked like a model that fails to simulate, counted
+against the exit code, and the Test page's badge said SIM_FAIL beside a
+strip that said "No result yet". The owner's ruling of 2026-09-30, chosen
+from drawn options: such a test gets a status of its own, **NOT RUN**.
+
+**Decision.**
+
+1. *The line, and where it is drawn.* "No result exists" and "the
+   simulation failed" are told apart in ONE place, `Backend.read_results`,
+   which holds the manifest: an entry whose `last_run_status` is
+   `pending`, with no result from this process's run and no recorded
+   failure for it (`run_verdicts` — the `status.json` row a pending entry
+   falls through to), yields NO result — its result file is not read,
+   whatever it holds. A model with no manifest entry yields none either.
+   `compare_one` makes "no result" (`result is None`) a comparison with
+   `ran=False`, and `reporting.status.classify` reads that first: NOT RUN.
+   Everything a run REACHED a verdict on stays as it was: a recorded
+   `failed` or `timed_out`, a failed result from this run, a result file
+   missing after a run that recorded passed, a translation error — SIM_FAIL
+   (a timeout is TIMED_OUT while the run is live). A pending entry whose
+   `status.json` row says `failed` ran and failed: SIM_FAIL. An entry
+   written before `last_run_status` existed is read as before (old data).
+2. *The word.* `NOT_RUN = "NOT RUN"` in `reporting.status`'s one table —
+   the key is the word, so every surface that shows the classifier's key
+   (the tool's badges, the Tests drawer's pills, the strip's verdict
+   phrase) reads it; its class is `not-run`, last in `STATUS_ORDER`.
+   Nothing else spells it: the Suite's count pills are handed to its script
+   from Python (`suite_grid.PILLS`), not listed in it.
+3. *The colour.* The existing neutral grey — the `queued` token —
+   under the `not-run` class (`theme.STATUS["not-run"]` is that mapping),
+   so its pills, row tint and badge are grey while a pill and a filter can
+   still tell NOT RUN from a queued live row.
+4. *Every surface.* The Suite row and a NOT RUN count pill (after NO_REF);
+   the Test page header's badge, which now agrees with the strip's "No
+   result yet — rerun to simulate it." (the strip reads NOT RUN as that
+   situation); the Tests drawer's pills and its status sort (after PASS,
+   before unscored); the dashboard's row, badge and pill (it filters by
+   the class, as every pill); the per-test report's sidecar summary; the
+   console, which prints `NOT RUN` and a `NOT RUN: n` line; the
+   interactive review (`run -i`), which says `NOT RUN` and passes the test
+   over. JUnit writes the testcase with `<skipped message="not run"/>` and
+   counts it skipped, never a failure or an error.
+5. *Not a failure.* `reporting.status.FAILURES` (FAIL, SIM_FAIL) is what
+   `compare` and `run` exit on (`exit_code`), and what the console and the
+   review count as still failing: exit 0 when everything that ran passed.
+   A persistent backend whose worker pool dies records every test it
+   could not reach as failed (`_drain_remaining`), so a crashed pool still
+   exits 1; NOT RUN arises from a run aborted by its process ending, or
+   from a test never in a run.
+
+**Consequences.** A pending test's partial result is no longer read by
+`compare` or the tool: it has no plots, and the Variables drawer says
+what it says for a test never run. `--rerun sim-failed` and `run -i
+sim-failed` still select NOT RUN tests: they match `sim_success=False`,
+which a comparison with no result carries (nothing succeeded).

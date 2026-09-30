@@ -548,7 +548,9 @@ A run keeps these, and its other statistics, beside each result in `test_NNNN/ru
 
 A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), an aborted run, or a rerun from `dstf author`. SIMULATED is not a status: it is in no count pill.
 
-The count pills along the top are the status filter: click one to show only its rows (PASS, FAIL, SIM_FAIL, NO_REF, TIMED OUT, QUEUED, RUNNING; `warnings` shows the rows with any), `Total` to show every row again.
+A row reads **NOT RUN**, in grey, when its test has no result: the last run never ran it, or started it and never finished it (a run stopped by Ctrl-C or a crash leaves its unfinished tests so). That is not a failed simulation — a test whose run finished and failed, timed out or could not translate reads SIM_FAIL — and it is not a failure: `run` and `compare` exit 0 when every test that ran passed, whatever is NOT RUN beside them; the console lists it as `NOT RUN` and JUnit writes it as a skipped testcase (`<skipped message="not run"/>`). Rerun it to give it a verdict.
+
+The count pills along the top are the status filter: click one to show only its rows (PASS, FAIL, SIM_FAIL, NO_REF, TIMED OUT, QUEUED, RUNNING, NOT RUN; `warnings` shows the rows with any), `Total` to show every row again.
 
 Every column but Status has a typed filter under its header:
 
@@ -796,7 +798,7 @@ hides the rest — Reference, Resolution, Translate (s), Total (s). Key, Worker
 and Elapsed are a live run's and are not offered. One toolbar row above it
 holds:
 
-- **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED n`, and
+- **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · NOT RUN n · EDITED n`, and
   `RUNNING n` while a job runs (and, switched on, until you switch it off). A
   pill filters the table to its status; several pills show any of them, and
   EDITED adds the edited tests. The counts are over every test, whatever the
@@ -842,7 +844,7 @@ action: "Fails 2 of 3 criteria. If the new behaviour is right, accept it as
 the baseline." (red, Accept filled); "No baseline yet — accept this result as
 the first one" (Accept filled); "The simulation failed. Fix the model or its
 settings, then rerun." and "No result yet — rerun to simulate it." (Rerun
-filled); "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
+filled; the verdict beside the model id then reads NOT RUN); "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
 and save opens the preview on this test, and Discard drops this test's edits
 only — the header's Discard drops every test's); "Passes against its
 baseline." (grey, Accept in the strip's ⋮ menu: there is nothing new to
@@ -967,7 +969,7 @@ the tab's, so a switch of test keeps it:
 - icon buttons opening menus, each choice checked when current: the arrow keys
   move among the choices, Home and End jump, Enter chooses, Esc or Tab closes.
   Tests: **Sort** — package order, name A→Z, or status, failures first (FAIL,
-  SIM_FAIL, scoring failed, NO_REF, PASS, then unscored); a **group** toggle
+  SIM_FAIL, scoring failed, NO_REF, PASS, NOT RUN, then unscored); a **group** toggle
   (by package, or flat); **Names** — short (cut at its end where it does not
   fit) or full (cut at its start, so ids sharing a package read apart; the
   whole id is the row's tooltip). Vars: **Sort** —
@@ -978,8 +980,8 @@ the tab's, so a switch of test keeps it:
   under Expression, a label another variable of the test shares, or another
   row of the drawer reads, still keeps its name beside it). An opened family
   stays open when the group changes or the filter keeps part of it.
-- on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED
-  n`, over every test whatever the filter, filtering as the Suite table's do; a
+- on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · NOT RUN
+  n · EDITED n`, over every test whatever the filter, filtering as the Suite table's do; a
   test whose scoring failed counts under SIM_FAIL, as its Suite row reads.
 
 Below the Suite page's list is the job panel: while a job runs it reads
@@ -1223,7 +1225,8 @@ uv run dstf --config testing.json run -i
 ### CI integration
 
 ```bash
-# JUnit output for CI systems
+# JUnit output for CI systems. The exit code is 1 when a test FAILs or
+# SIM_FAILs; NO_REF and NOT RUN (skipped testcases) leave it 0.
 uv run dstf --config testing.json run --report-format junit
 
 # HTML report — the same dashboard page `run --report` produces, at a path you pick.
