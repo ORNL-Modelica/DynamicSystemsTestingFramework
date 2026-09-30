@@ -537,8 +537,9 @@ class PendingDrawer:
                 # Captions and reasons are the header's (`Header.refresh`).
                 self.save = Action(
                     save,
-                    props="unelevated dense no-caps color=primary",
+                    props="dense no-caps color=primary",
                     marker="drawer-save",
+                    filled=True,
                 )
                 self.discard = Action(
                     discard,

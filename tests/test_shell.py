@@ -222,14 +222,15 @@ async def test_save_discard_and_export_say_their_object_effect_and_count(shell):
         assert not _suite(shell, user).header.save.why.visible
 
 
-async def test_save_is_filled_only_while_it_can_save(shell):
+@pytest.mark.parametrize("prefix", ["", "drawer-"])
+async def test_save_is_filled_only_while_it_can_save(shell, prefix):
     """At 0 pending Save was disabled yet still `unelevated color=primary`:
     Quasar's disabled only dims a filled button, so it read as the page's
     active primary action. Disabled, it is quiet, as Discard is; enabled,
-    filled."""
+    filled. The pending drawer's Save is the header's, drawn the same."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        save, discard = _one(user, "save"), _one(user, "discard")
+        save, discard = _one(user, f"{prefix}save"), _one(user, f"{prefix}discard")
         assert not save.enabled
         assert "unelevated" not in save.props and "flat" in save.props
         assert save.props.get("color") == discard.props.get("color")
