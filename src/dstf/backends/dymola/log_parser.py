@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+from ..common.statistics import summaries
+
 
 def parse_dslog(path: Path) -> dict | None:
     """Parse a Dymola log file and extract all available statistics.
@@ -248,10 +250,7 @@ def _extract_system_pair_simple(
         values = _parse_int_list(m.group(1))
         stats.setdefault(category, {})
         stats[category][key_base] = values
-        if values:
-            stats[category][f"{key_base}_count"] = len(values)
-            stats[category][f"{key_base}_total"] = sum(values)
-            stats[category][f"{key_base}_max"] = max(values)
+        stats[category].update(summaries(key_base, values))
 
     # After manipulation: "Sizes after manipulation of the <type> systems: {N, N, ...}"
     m = re.search(
@@ -263,10 +262,7 @@ def _extract_system_pair_simple(
         key = f"{key_base}_after_manipulation"
         stats.setdefault(category, {})
         stats[category][key] = values
-        if values:
-            stats[category][f"{key}_count"] = len(values)
-            stats[category][f"{key}_total"] = sum(values)
-            stats[category][f"{key}_max"] = max(values)
+        stats[category].update(summaries(key, values))
 
 
 def _extract_system_pair(
@@ -283,10 +279,7 @@ def _extract_system_pair(
         values = _parse_int_list(m.group(1))
         stats.setdefault(category, {})
         stats[category][key_base] = values
-        if values:
-            stats[category][f"{key_base}_count"] = len(values)
-            stats[category][f"{key_base}_total"] = sum(values)
-            stats[category][f"{key_base}_max"] = max(values)
+        stats[category].update(summaries(key_base, values))
 
     m = re.search(rf"{manipulation_pattern}\s*:\s*\{{([^}}]*)\}}", text)
     if m:
@@ -294,10 +287,7 @@ def _extract_system_pair(
         key = f"{key_base}_after_manipulation"
         stats.setdefault(category, {})
         stats[category][key] = values
-        if values:
-            stats[category][f"{key}_count"] = len(values)
-            stats[category][f"{key}_total"] = sum(values)
-            stats[category][f"{key}_max"] = max(values)
+        stats[category].update(summaries(key, values))
 
 
 def _parse_simulation_stats(text: str, stats: dict) -> None:

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..backends import VariableResult
+from ..backends.common.statistics import read_summary
 from ..backends.types import DatasetType
 from .comparator import VariableComparison, migration_hint
 from .geometry import Window
@@ -572,9 +573,14 @@ def _summarize_values(values, field_name: str) -> float | None:
 def _dotted_lookup(statistics: dict, path: str) -> float | None:
     """Walk ``path`` through nested dicts; ``None`` unless it lands on a number."""
     node: object = statistics or {}
-    for part in path.split("."):
-        if not isinstance(node, dict) or part not in node:
+    parts = path.split(".")
+    for i, part in enumerate(parts):
+        if not isinstance(node, dict):
             return None
+        if part not in node:
+            # A summary a baseline written before the parser always wrote
+            # it: 0 where its list is present and empty (the zero rule).
+            return _as_float(read_summary(node, part)) if i == len(parts) - 1 else None
         node = node[part]
     return _as_float(node)
 

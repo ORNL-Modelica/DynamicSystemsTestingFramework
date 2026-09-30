@@ -906,3 +906,51 @@ class TestScalarReporterSurfaces:
         error = (vc.diagnostics or {})["error"]
         assert "reference" in error and "not finite" in error
         assert error in summarize(vc).criterion
+
+
+class TestZeroCountRule:
+    """A baseline written before the parser always wrote a list's summaries
+    holds only the empty list: its count reads as 0 — and nothing else is
+    guessed."""
+
+    SPEC = {
+        "metric": "scalar",
+        "quantity": "translation.nonlinear_count",
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+    def _eval(self, baseline_stats, run_stats):
+        return evaluate_spec(
+            parse_metric_tree(self.SPEC),
+            {},
+            _baselines(statistics=baseline_stats),
+            1e-4,
+            scalars=ScalarSources(statistics=run_stats),
+        )
+
+    def test_an_empty_list_in_the_baseline_reads_as_zero(self):
+        node = self._eval(
+            {"translation": {"nonlinear": []}},
+            {"translation": {"nonlinear": [], "nonlinear_count": 0}},
+        )
+        assert node.passed
+
+    def test_a_count_that_moved_fails_on_its_value(self):
+        node = self._eval(
+            {"translation": {"nonlinear": []}},
+            {"translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3}},
+        )
+        assert not node.passed
+        assert "error" not in node.diagnostics["variable"].diagnostics
+        assert node.diagnostics["variable"].reference_final == 0.0
+        assert node.diagnostics["variable"].actual_final == 3.0
+
+    def test_no_list_in_the_baseline_still_hard_fails(self):
+        node = self._eval(
+            {"translation": {}},
+            {"translation": {"nonlinear_count": 0}},
+        )
+        assert not node.passed
+        error = node.diagnostics["variable"].diagnostics["error"]
+        assert "not found in baseline" in error

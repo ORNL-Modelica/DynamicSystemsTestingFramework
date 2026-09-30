@@ -88,6 +88,11 @@ class TestLogParser:
         # Empty system lists for simple model
         assert t["nonlinear"] == []
         assert t["linear"] == []
+        # ... and their summaries, always written: 0 for an empty list.
+        for key in ("nonlinear", "linear"):
+            assert t[f"{key}_count"] == 0
+            assert t[f"{key}_total"] == 0
+            assert t[f"{key}_max"] == 0
 
     def test_translation_log_complex(self):
         """Parse a complex translation log with init section and system sizes."""
