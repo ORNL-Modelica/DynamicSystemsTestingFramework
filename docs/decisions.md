@@ -6074,10 +6074,10 @@ criterion that fails "not found in current run" until a rerun — by
 design. Where a test was compared but the Session will not materialize
 its flat entry's tree (`Session._materialization`'s refusals), a plot
 criterion's editor draws no field and says the Session's own refusal —
-`session.NO_TREE`, the text `stage` refuses a per-leaf op with: "a
-per-leaf op needs the implicit tree materialized, and this test has no
-scored variables a tree could be built from (or one of the flat/tree
-differences applies) — author the tree explicitly". It read the view's
+`session.NO_TREE`, the text `stage` refuses a per-leaf op with: "this
+test's flat settings cannot become a criteria tree here without changing
+what it scores, or nothing was scored to build one from — write a
+metrics tree for it in test_spec.json to edit its criteria". It read the view's
 leaf before fix batch 3, while the Session refused its every edit, and
 between fix batches 3 and 4 said "this leaf is not in the scored tree",
 false of a leaf on the plot with its verdict; that line is now only for

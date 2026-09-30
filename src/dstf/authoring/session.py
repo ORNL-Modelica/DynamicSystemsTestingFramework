@@ -92,9 +92,9 @@ BACKGROUND_WAIT = 60.0
 #: (`Session.tree` is None: `_materialization` refused): what `stage`
 #: refuses a per-leaf op with, and what a criterion's editor says there.
 NO_TREE = (
-    "a per-leaf op needs the implicit tree materialized, and this test has "
-    "no scored variables a tree could be built from (or one of the flat/tree "
-    "differences applies) — author the tree explicitly"
+    "this test's flat settings cannot become a criteria tree here without "
+    "changing what it scores, or nothing was scored to build one from — "
+    "write a metrics tree for it in test_spec.json to edit its criteria"
 )
 
 

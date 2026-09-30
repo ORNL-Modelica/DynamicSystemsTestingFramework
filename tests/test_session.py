@@ -1352,7 +1352,7 @@ class TestRescoreAndStage:
         cannot get a tree from the entry's list behind rescore's back."""
         from dstf.discovery.patch_apply import PatchError
 
-        with pytest.raises(PatchError, match="no scored variables"):
+        with pytest.raises(PatchError, match="nothing was scored"):
             session.stage([PatchOp(B, "add", "/metrics/children/0/tolerance", 0.5)])
         assert session.spec.pending == []
         session.stage([LOOSEN])
