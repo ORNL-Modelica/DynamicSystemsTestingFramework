@@ -617,6 +617,35 @@ def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
             proc.wait(10)
 
 
+def test_save_is_unfilled_at_zero_pending_and_filled_at_one(
+    tmp_path, playwright_browser
+):
+    """At 0 pending the disabled Save was still painted primary blue (a
+    disabled Quasar button is only dimmed): it read as the active action.
+    Its computed background is transparent there, as Discard's is, and
+    filled once an edit is pending."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, hooks=True
+    )
+    try:
+        save = page.get_by_role("button", name=re.compile(r"^Save \d+ spec edit"))
+        discard = page.get_by_role("button", name=re.compile(r"^Discard \d+ edit"))
+        expect(save).to_be_disabled(timeout=EXPECT_TIMEOUT)
+        clear = "rgba(0, 0, 0, 0)"
+        bg = "el => getComputedStyle(el).backgroundColor"
+        assert save.evaluate(bg) == clear == discard.evaluate(bg)
+        with urllib.request.urlopen(url + "__stage?model=FakeLib.A") as r:
+            assert json.loads(r.read())["pending"] == 2
+        expect(save).to_be_enabled(timeout=EXPECT_TIMEOUT)
+        assert save.evaluate(bg) != clear
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_a_rescore_repaints_its_row_and_keeps_the_view(tmp_path, playwright_browser):
     """A staged edit rescores A while the page is open: its row repaints —
     PASS, "2 unsaved", the EDITED pill counts it — in one transaction, and

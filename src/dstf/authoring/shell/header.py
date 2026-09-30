@@ -149,8 +149,9 @@ class Header:
             )
             self.save = Action(
                 self._save,
-                props="unelevated dense no-caps color=primary",
+                props="dense no-caps color=primary",
                 marker="save",
+                filled=True,
             )
             self.discard = Action(
                 self._discard, props="flat dense no-caps", marker="discard", why=False

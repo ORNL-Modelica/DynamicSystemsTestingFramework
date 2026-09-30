@@ -21,7 +21,13 @@ class Action:
         props: str,
         marker: str,
         why: bool = True,
+        filled: bool = False,
     ) -> None:
+        #: `filled`: `unelevated` while enabled, `flat` while disabled —
+        #: Quasar's disabled only dims a filled button, and the header's
+        #: Save read as the page's active primary action at 0 pending
+        #: edits. Its colour stays, so disabled it reads as Discard does.
+        self.filled = filled
         with ui.row().classes("items-center no-wrap gap-2") as self.container:
             self.button = ui.button(on_click=on_click).props(props).mark(marker)
             self.why: ui.label | None = (
@@ -36,6 +42,11 @@ class Action:
             self.button.enable()
         else:
             self.button.disable()
+        if self.filled:
+            if reason is None:
+                self.button.props(remove="flat", add="unelevated")
+            else:
+                self.button.props(remove="unelevated", add="flat")
         if self.why is not None:
             self.why.set_text(reason or "")
             self.why.set_visibility(reason is not None)
