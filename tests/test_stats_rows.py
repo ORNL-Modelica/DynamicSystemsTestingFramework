@@ -303,6 +303,9 @@ def test_the_report_keeps_full_precision():
     assert report_text("time", 99.96) == "99.96 s"
     assert report_text("time", 1234.5) == "1234.5 s"
     assert report_text("time", 0.8) == "0.8 s"
+    # past six significant figures too: `:g` wrote 1.60042 s and 1.23457e+06 s
+    assert report_text("time", 1.600425) == "1.600425 s"
+    assert report_text("time", 1234567.89) == "1234567.89 s"
     assert report_text("count", 1234567) == "1234567"
     assert report_text("count", 102.0) == "102"
     assert report_text("count", None) == ""

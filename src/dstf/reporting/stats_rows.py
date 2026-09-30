@@ -113,10 +113,12 @@ def _value_text(kind: str, value: Any, time: Callable[[float], str]) -> str:
 
 def report_text(kind: str, value: Any) -> str:
     """A row's value as the REPORT prints it, in full: a time with its unit
-    (``0.045845 s``, ``99.96 s``, ``1234.5 s``), a count whole (``1234567``,
-    never ``1.23457e+06``), a list joined; ``""`` for a side that recorded
-    none. The report is where a number is read to its last digit."""
-    return _value_text(kind, value, lambda v: f"{v:g}")
+    (``0.045845 s``, ``1.600425 s``, ``1234567.89 s`` — ``:.15g``, where
+    ``:g`` stopped at six figures, ``1.60042 s``), a count whole
+    (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a side
+    that recorded none. The report is where a number is read to its last
+    digit."""
+    return _value_text(kind, value, lambda v: f"{v:.15g}")
 
 
 def card_text(kind: str, value: Any) -> str:
