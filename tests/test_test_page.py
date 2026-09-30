@@ -7915,9 +7915,10 @@ def _stat(path, run, baseline, changed=False, delta="", kind="count", key=None):
 
 def test_the_closed_line_names_a_list_once_counts_first_then_more():
     """B6: a list's `_count` / `_total` / `_max` changed together are ONE
-    entry, named by the first changed of the three in that order; counts
-    before times; at most three named, then `+N more`, `N` counting
-    entries."""
+    entry, named by the first changed of the three in that order; at most
+    three named, then `+N more`, `N` counting entries. The owner's ruling
+    of 2026-09-30: the counts part names COUNTS only; a changed time
+    follows it, after a `·`."""
     from dstf.authoring.shell.stats_card import line_text
 
     rows = [
@@ -7928,12 +7929,12 @@ def test_the_closed_line_names_a_list_once_counts_first_then_more():
         _stat("timing.total_wall", 4.02, 3.91, False, "+3%", kind="time"),
     ]
     assert (
-        line_text(rows, has_run=True) == "2 changed: Nonlinear count 0→3, CPUtime +40%"
+        line_text(rows, has_run=True) == "1 changed: Nonlinear count 0→3 · CPUtime +40%"
     )
     # Only the total moved: it names the list.
     rows[0] = _stat("translation.nonlinear_count", 3, 3)
     assert line_text(rows, has_run=True) == (
-        "2 changed: Nonlinear total 0→9, CPUtime +40%"
+        "1 changed: Nonlinear total 0→9 · CPUtime +40%"
     )
     many = [
         _stat("timing.a_wall", 2.0, 1.0, True, "+100%", kind="time"),
@@ -7943,7 +7944,45 @@ def test_the_closed_line_names_a_list_once_counts_first_then_more():
         _stat("simulation.d", 1, 0, True, "0→1"),
     ]
     assert line_text(many, has_run=True) == (
-        "5 changed: A count 0→1, B 0→1, C 0→1, +2 more"
+        "4 changed: A count 0→1, B 0→1, C 0→1 +1 more · A wall +100%"
+    )
+
+
+def test_the_closed_line_names_no_time_among_the_counts():
+    """The owner's ruling (2026-09-30): over TRANSFORM CPUtime ran ~2.2x
+    its baseline on 324 of 331 tests, so a line naming times among the
+    counts named CPUtime everywhere. A changed time never enters the
+    counts part, nor its `N`; with no count changed the line says so and
+    the time follows."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    cpu = _stat("CPUtime", 1.73, 0.8, True, "+116%", kind="time", key="CPUtime")
+    assert line_text([cpu], has_run=True) == "no count changed · CPUtime +116%"
+    rows = [cpu, _stat("translation.nonlinear_count", 3, 0, True, "0→3")]
+    assert line_text(rows, has_run=True) == (
+        "1 changed: Nonlinear count 0→3 · CPUtime +116%"
+    )
+    # Nothing changed: the counts part alone.
+    same = [_stat("simulation.state_events", 2, 2),
+            _stat("CPUtime", 0.81, 0.8, False, "+1%", kind="time", key="CPUtime")]  # fmt: skip
+    assert line_text(same, has_run=True) == "no count changed"
+
+
+def test_the_closed_line_names_two_times_largest_move_first():
+    """At most two changed times, by |relative change|, largest first — not
+    the rows' order, not the signed change — then `+N more`."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    rows = [
+        _stat("timing.sim_wall", 1.3, 1.0, True, "+30%", kind="time"),
+        _stat("timing.translation_wall", 0.5, 1.0, True, "-50%", kind="time"),
+        _stat("CPUtime", 1.73, 0.8, True, "+116%", kind="time", key="CPUtime"),
+    ]
+    assert line_text(rows, has_run=True) == (
+        "no count changed · CPUtime +116%, Translation wall -50% +1 more"
+    )
+    assert line_text(rows[:2], has_run=True) == (
+        "no count changed · Translation wall -50%, Sim wall +30%"
     )
 
 
@@ -7951,7 +7990,7 @@ def test_the_closed_line_says_why_it_names_nothing():
     from dstf.authoring.shell.stats_card import line_text
 
     same = [_stat("simulation.state_events", 2, 2)]
-    assert line_text(same, has_run=True) == "all match"
+    assert line_text(same, has_run=True) == "no count changed"
     assert line_text([], has_run=True) == "nothing recorded"
     text = StatRow("translation", "nonlinear", "translation.nonlinear", "N",
                    "text", [1], [], True, "")  # fmt: skip
@@ -7987,7 +8026,7 @@ async def test_the_statistics_card_sits_before_the_tree_card_closed(stats_shell)
         assert marks.index("stats") < marks.index("tree")
         assert page.stats is not None and not page.stats.is_open
         assert not page.stats.rows.visible
-        assert _line_text(user) == "2 changed: Nonlinear count 0→3, CPUtime +40%"
+        assert _line_text(user) == "1 changed: Nonlinear count 0→3 · CPUtime +40%"
         assert "Total wall" not in _line_text(user)
 
 

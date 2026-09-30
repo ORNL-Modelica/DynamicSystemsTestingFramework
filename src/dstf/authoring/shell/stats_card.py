@@ -1,6 +1,6 @@
 """The Statistics card (U3): every statistic the run and its baseline
 recorded, side by side, above the criteria tree. Closed it is one line
-naming the rows that changed; open, a row per count or time under its
+naming the counts that changed, then briefly the times; open, a row per count or time under its
 section, each ending in whatever attaches at STATISTIC (a `+` that adds a
 requirement on it) — or, for a row a criterion reads, that criterion's
 pill and its requirement in a word or two. The card is a VIEW of the one
@@ -18,6 +18,7 @@ lands in (the `TreeCard` rule); a value or a verdict repaints in place."""
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -39,7 +40,8 @@ if TYPE_CHECKING:
     from ...comparison.tree_spec import LeafSpec
     from .test_page import TestPage
 
-NAMED = 3  #: changed entries the closed line names (S6); the rest are counted
+NAMED = 3  #: changed counts the closed line names (S6); the rest are counted
+TIMES = 2  #: changed times it names after them (the owner, 2026-09-30)
 #: The node a STATISTIC panel's add acts on: the root, whose END it lands at.
 ROOT = "/metrics"
 
@@ -54,10 +56,26 @@ def _entry(row: StatRow) -> tuple[tuple[str, str], int]:
     return (row.section, row.key), 0
 
 
+def _moved(row: StatRow) -> float:
+    """How far a changed time moved, relative to its baseline: its rank
+    on the closed line. Off a zero baseline, farther than any."""
+    run, base = float(row.run), float(row.baseline)
+    return abs((run - base) / base) if base else math.inf
+
+
+def _more(named: Sequence[StatRow], cap: int) -> str:
+    text = ", ".join(f"{r.label} {r.delta}" for r in named[:cap])
+    return f"{text} +{len(named) - cap} more" if len(named) > cap else text
+
+
 def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
-    """The closed line after "run vs baseline ·": the changed entries —
-    counts before times, then in section order; at most `NAMED` named,
-    then `+N more` — or why it names none."""
+    """The closed line after "run vs baseline ·": the changed COUNTS — in
+    section order, at most `NAMED` named, then `+N more` — or `no count
+    changed`; then, after a `·`, the changed times, the farthest moved
+    first, at most `TIMES`. Or why it names none. The owner's ruling
+    (2026-09-30): over TRANSFORM CPUtime ran ~2.2x its baseline on 324 of
+    331 tests, so a line naming times among the counts named CPUtime on
+    every test; the open table still tints a changed time."""
     shown = [r for r in rows if r.kind != "text"]
     if not shown:
         return "nothing recorded"
@@ -67,21 +85,25 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
         return "no baseline statistics"
     entries: dict[tuple[str, str], tuple[int, StatRow]] = {}
     for row in shown:
-        if not row.changed:
+        if not row.changed or row.kind != "count":
             continue
         key, rank = _entry(row)
         if key not in entries or rank < entries[key][0]:
             entries[key] = (rank, row)
-    if not entries:
-        return "all match"
     sections = list(dict.fromkeys(r.section for r in shown))
-    named = sorted(
+    counts = sorted(
         (row for _, row in entries.values()),
-        key=lambda r: (r.kind != "count", sections.index(r.section)),
+        key=lambda r: sections.index(r.section),
     )
-    text = ", ".join(f"{r.label} {r.delta}" for r in named[:NAMED])
-    more = f", +{len(named) - NAMED} more" if len(named) > NAMED else ""
-    return f"{len(named)} changed: {text}{more}"
+    text = (
+        f"{len(counts)} changed: {_more(counts, NAMED)}"
+        if counts
+        else "no count changed"
+    )
+    times = sorted(
+        (r for r in shown if r.changed and r.kind == "time"), key=_moved, reverse=True
+    )
+    return f"{text} · {_more(times, TIMES)}" if times else text
 
 
 def summary(leaf: dict) -> str:

@@ -3820,7 +3820,7 @@ def test_the_statistics_cards_plus_adds_a_criterion_to_the_tree(
     with _served(tmp_path, playwright_browser, project=_stats_project) as page:
         card = page.locator(".dstf-stats")
         expect(card.locator(".dstf-stats-line")).to_contain_text(
-            "2 changed: Nonlinear count 0→3, CPUtime +40%", timeout=EXPECT_TIMEOUT
+            "1 changed: Nonlinear count 0→3 · CPUtime +40%", timeout=EXPECT_TIMEOUT
         )
         tree = page.locator(".dstf-tree-line")
         expect(tree).to_contain_text("and · 2 criteria")
