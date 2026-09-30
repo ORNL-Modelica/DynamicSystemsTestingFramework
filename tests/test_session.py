@@ -15,6 +15,7 @@ import pytest
 from conftest import make_test_model
 from dstf.authoring.capabilities import Artifact, Job, OpenProject, Patch, StoreWrite
 from dstf.authoring.session import (
+    NO_TREE,
     NOTHING_SCORED,
     JobRunningError,
     LockedError,
@@ -1319,6 +1320,7 @@ class TestRescoreAndStage:
         assert classify(s.comparisons[D]) == FAIL
         assert classify(s.rescore(D)) == FAIL
         assert s.spec.pending == []
+        assert s.tree_or_reason(D) == (None, NO_TREE)
         # And the CLI's materialization refuses the same entry outright.
         from dstf.discovery.patch_apply import PatchError
         from dstf.discovery.spec_update import implicit_tree_op
@@ -1345,6 +1347,7 @@ class TestRescoreAndStage:
         assert classify(s.comparisons[D]) == FAIL
         assert classify(s.rescore(D)) == FAIL
         assert s.spec.pending == []
+        assert s.tree_or_reason(D) == (None, NO_TREE)
 
     def test_stage_materializes_like_rescore_and_refuses_an_unscored_test(
         self, session
@@ -1452,7 +1455,7 @@ class TestRescoreAndStage:
         simulate-only test, a last run the loaded result no longer matches
         (a scored name it does not carry), and every other refusal of
         `_materialization` (an unnamed comparison)."""
-        from dstf.authoring.session import NO_TREE, SIMULATE_ONLY, STALE
+        from dstf.authoring.session import SIMULATE_ONLY, STALE
 
         tree, why = session.tree_or_reason(A)
         assert tree == session.tree(A) and tree is not None and why is None
