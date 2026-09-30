@@ -1848,3 +1848,14 @@ planning.
   so the drop no longer happens on a cold open, but any real network drop
   can still leave a page stale this way. The fix is upstream: report it to
   NiceGUI with this sequence. Not changed here.
+- **Watch-only: the structural-warning check skips a statistic missing on
+  one side (2026-09-30, from U3, D143)**: `comparator.
+  _check_structural_changes` compares `translation.nonlinear_count` and ten
+  more structural statistics, and skips any that either side lacks. A
+  baseline stored before the Dymola parser always wrote a list's summaries
+  holds `nonlinear: []` and no `nonlinear_count`, so a run that now has
+  three nonlinear systems draws no "Nonlinear system count" warning, while
+  the Statistics card (which reads that count as 0 through
+  `backends/common/statistics.py::read_summary`) calls the row changed.
+  Reading the check's values through `read_summary` would close it. Not
+  changed in U3: the plan left the check as it is.

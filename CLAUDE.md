@@ -115,7 +115,9 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
 # The Suite page is a table of the tests (count pills, typed column filters with .* / Aa, package
 # group rows, a column chooser); Accept the selection's results as baselines, Rerun the selection.
-# Open a test: its criteria tree closed to one line naming what failed, its plots — one per scored
+# Open a test: a Statistics card above the tree (every recorded statistic, run vs baseline,
+# collapsed to the changed ones; `+` adds a scalar criterion, and a statistics criterion is
+# edited there), its criteria tree closed to one line naming what failed, its plots — one per scored
 # variable or array in tree order, then watch plots (D140) — stacked and drawn as they scroll into
 # view, each with its criteria rows in tree order led by their ancestors (`and › k-of-n ›`),
 # a criterion's editor under its row (drag its handles on the plot above),

@@ -5885,3 +5885,155 @@ its variable, while the hint names the test's base. Not
 measured here: the TRANSFORM gate over a copy (the picker over the
 76,992-name test, the hints on a real test, the drawer), which the plan
 leaves to its controller.
+
+## D143 — The Statistics card: every recorded statistic, run vs baseline; a click adds a criterion on one (2026-09-30)
+
+**Context.** A run records statistics beside its result (D138): Dymola's
+translation and simulation counts, the walls every backend gets
+(`timing.*`), OpenModelica's phase times, and the diagnostics' finals
+(`CPUtime`, `EventCounter`) folded in. The report showed them in a table
+that tinted any difference; `dstf author` showed them nowhere, and a
+criterion scored through one — U2's diagnostic add, `scalar` with
+`quantity: "<name>.final"` — had no plot and nothing on the Test page that
+edited it (D142's known gap, the add-form plan's B6). The owner's rulings:
+the grill of 2026-09-28 (Q1 b — the card is a view of the one tree; Q6 —
+its `+` adds a requirement at the END of the root) and the plot-model
+board (Q2 A — a Statistics card above the Criteria card, columns
+Statistic / Run / Baseline / a `+` or the criterion's pill); then, on
+2026-09-29, **a row is "changed" when the criterion its `+` would add
+would fail**, and **expanded, the card lists every numeric statistic the
+run or the baseline recorded, by section**. Built from
+`docs/superpowers/plans/2026-09-29-the-statistics-card.md`, whose
+"Corrections 1" (two executing reviews) override its task text, and two
+fix batches from the mutation reviews.
+
+**Decision.**
+
+1. *The zero rule, and why it is narrow.* The Dymola parser wrote a
+   system-size list's `<key>_count` / `_total` / `_max` only for a
+   non-empty list, so a model with no nonlinear systems stored
+   `nonlinear: []` and no count, and a `translation.nonlinear_count`
+   criterion hard-failed "not found in baseline". `backends/common/
+   statistics.py` holds the rule in one place: `summaries` is what the
+   parser now writes ALWAYS (0, 0, 0 for an empty list — code that writes
+   never leaves a field out), and `read_summary` is what a reader falls
+   back to for a side written before that: 0 only where the list is
+   present AND empty in the same category. A missing list, or a non-empty
+   one without its count, stays missing. `comparison/tree_eval.py::
+   resolve_scalar_path` (made public for the rows) reads its last hop
+   through it, and a path missing from a side still hard-fails its leaf on
+   purpose (`_missing_scalar_path_comparison`: a stats path that silently
+   scored as 0 would be a green test measuring nothing). Re-accepting a
+   Dymola baseline that holds an empty list writes up to three more keys
+   per list into its reference JSON (Corrections A10; additive). The
+   report now shows an empty list's summaries as 0, in its table and in
+   Key stats.
+2. *A quantity's kind by its path (S5).* `comparison/seeds.py::
+   quantity_kind` says count or time by the PATH, never the value's type
+   (a Dymola `result_points` can be written as a float): the `timing`
+   section, `CPUtime` and the `*_time` / `*_wall` / `cpu_time*` keys are
+   times, every other statistic a count; a diagnostic's summary (`X.final`)
+   keeps D142's K1 (by name, else whole samples mean a count), and a
+   top-level statistic naming a diagnostic reads the run's samples the
+   same way (A5). `seed_quantity` is the one seed — a count exact
+   (`tolerance 0 abs`), a time `0.1 rel` inside a `warn` where it lands in
+   an `and` — and `seed_diagnostic` delegates to it, so ANY diagnostic time
+   is now warn-wrapped there (D142 wrapped `CPUtime` alone).
+3. *One row model, one "changed".* `reporting/stats_rows.py::
+   statistics_rows` is what BOTH tiers render — the report's Statistics
+   table and Key stats, and the card. A number's row is changed when the
+   scalar mode's own verdict over the seed `seed_quantity` writes fails, so
+   the tolerance lives in the seed alone; a row with no value on one side
+   is never changed (S3). The report adopts the rule (S7): a time within
+   the seed's 10% is no longer tinted, a count that moved still is. List
+   and text statistics (`translation.nonlinear`, `state_names`) are `text`
+   rows: the report keeps showing them under its old rule (formatted text
+   differs, both non-empty); the card leaves them out (S1). The report
+   keeps its row ORDER and sections (A2): keys alphabetical in a section,
+   `timing`'s four first, the top-level scalars among the Simulation keys
+   (or a Simulation section of their own at the end). Its LABELS become
+   the row model's — `Nonlinear count`, `CPU time integration` (`cpu`
+   spelled `CPU`), a top-level name as is: `CPUtime`, where the report
+   said `Cputime`. Its VALUES are printed as the card prints them
+   (`stats_rows.value_text`): a time to 3 significant figures keeping its
+   zeros, with its unit (`0.800 s`), a count whole (`1234567`). A delta
+   (S6) reads `0→3` for a count and `+40%` for a time — one decimal under
+   1% (`+0.3%`), `+<0.1%` under 0.05%, `+0.12 s` over a zero baseline —
+   whenever both sides differ, changed or not (A7). A leaf reading a path
+   no row holds gets a row of its own under "Other scored quantities"
+   (S4); `X.final` is the row `X` only for a top-level `X` (S2); a leaf
+   reading a list statistic gets such a row too. The builder no longer
+   writes into its inputs.
+4. *The Session's reads.* `Session.statistics(model_id)` is those rows
+   over the last result and the CACHED baseline (never copied, never
+   written). Which paths need a row, and which rows are scored, come from
+   the entry's OWN tree, staged edits included (`tree_spec.
+   statistic_leaves` / `statistic_paths`, through `Session.
+   statistic_leaves`) — never `Session.tree()`, which materializes a flat
+   entry's implicit tree by reading the baseline (B4), and never the tree
+   view: a test with nothing compared (no baseline) has no view, and its
+   staged criterion is a criterion all the same. The view only says each
+   one's verdict, "pending" where it has none. `Session.tracked` skips the
+   names statistics leaves score (B5).
+5. *The card.* `authoring/shell/stats_card.py::StatsCard`, above the
+   tree card, closed on every page open to one line: the changed entries
+   — a list's `_count` / `_total` / `_max` are one entry, counts before
+   times, at most three named, then `+N more` (B6) — or `all match`, `no
+   run result`, `no baseline statistics`, `nothing recorded`. Open, every
+   count and time under Translation / Simulation / Timing (then any other
+   section), columns Statistic / Run / Baseline; a changed row wears the
+   report's warn tint, and the open row the selection. A scored row shows
+   its first criterion's pill, its requirement in a word or two (`exact`,
+   `±10%`, `in [a, b]`, `≥ a`, B11) and `+1` per further criterion (B10);
+   a click on it opens that criterion's editor under it. Rows are rebuilt
+   only when their paths, the criteria reading them or the root a `+`
+   lands in move; otherwise repainted in place.
+6. *Placements; the shell names no capability (B1, B2).* A row no
+   criterion reads ends in whatever attaches at the new `Placement.
+   STATISTIC` (its selection's new `quantity` is the row's): `EditTree`
+   draws a `+` that stages `act(add, path=/metrics, quantity=...)` — the
+   seed, at the END of a root combinator or as `and[root, new]` beside a
+   root leaf — and reveals the new criterion's editor. Its tooltip is the
+   seed's requirement ("exact match", "within 10%, as a warning"). It is
+   drawn grey with the reason where nothing can take it — a job holding
+   the test, a simulate-only test, nothing scored, a `warn` or `weighted`
+   root — while `available` stays true for it, so no row carries a
+   why-line (a TRANSFORM card would have repeated one 57 times); the card
+   redraws its `+`s when a lock comes or goes. A statistics criterion's
+   editor is hosted at the new `Placement.STATISTIC_CRITERION`, where only
+   `EditCriteria` attaches (at CRITERION, Edit on plot answered with a
+   why-line). There `EditCriteria` draws no mode select, no window and no
+   quantity field, and puts the quantity back on every edit (B3).
+7. *One editor page-wide.* `TestPage.open` keeps its shape with a
+   sentinel: `(STATS, leaf path)`, `STATS = -1` (B9). Opening the card's
+   editor closes a plot's and a form row, and they close it; Focus and
+   closing the card close it; a plot rebuild does not (it hangs under no
+   plot). The page's shape leaves statistics leaves out: a `+` in the card
+   rebuilt every plot card, ending Focus and re-sending every figure. A
+   reveal or a jump to a statistics criterion lands in the card.
+
+**What it closes.** D142's known gap (the add-form plan's B6): a
+diagnostic's criterion has a home on the Test page — its row — where its
+values are edited.
+
+**What it reverses.** The report's any-difference tint on the Statistics
+table and Key stats (item 3). `TestPage._reveal_in_tree` is deleted: its
+one case (a criterion with no plot) now opens in the card. So is the
+jump's "… is on no plot of this test" notice (with `_variable_of`): every
+leaf of a tree view is on a plot or in the card.
+
+**Consequences.** `test_spec.json`, the CLI and the reference-JSON layout
+do not change; a re-accepted Dymola baseline gains the zero summaries
+(item 1). Known gaps: a genuine rebuild of the plot cards (a `+` beside a
+root LEAF moves every path) that unmounts a plot still awaiting NiceGUI
+3.16's async mount during plotly.js's first import leaves its resize
+observer on a detached div, and the console says "Resize must be passed a
+displayed plot div element"; the Playwright tests wait for every plot to be
+mounted before such a click. On a test with no tree view the card's editor
+does not redraw for an edit staged elsewhere (it compares against the
+view's leaf). A time of 1000 s or more prints in exponent form
+(`1.23e+03 s`). The structural-warning check still skips a statistic
+missing on either side (logged in `docs/ideas.md`). Not measured here: the
+TRANSFORM gate over a copy (the plan's Task 7 — rows over every test, the
+changed rows counted by kind with the walls apart, B7, and the report's
+tint before and after), which the plan leaves to its controller.

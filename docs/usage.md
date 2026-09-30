@@ -602,7 +602,10 @@ markup the server rendered. It shows
   under a `warn` wrapper. A leaf reads `metric · <label>`: the expression its
   model wrote where there is one, the name otherwise;
 - statistics, diagnostics and artifact sections, and plots for diagnostic
-  variables;
+  variables. The Statistics table is the rows `dstf author`'s Statistics card
+  shows: a row is tinted when the criterion its `+` would add would fail (a
+  count that moved; a time beyond 10%), and a count a baseline never wrote
+  because its list was empty reads 0;
 - a **decimation banner** naming every trace the page thinned, with its full and
   embedded sample counts, when any was thinned. `max_embedded_samples` in
   `testing.json` sets the cap; the full-resolution data is in
@@ -853,7 +856,32 @@ not hold it yet). Where the result FILE already holds the variable — Dymola's
 and the JSON driver's (Julia, Python) record every variable — the tool reads it
 again the moment the criterion is staged and scores it at once; the strip asks
 for a rerun only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
-reads 2 — its tree written out, and the edit. Under the strip, the criteria tree is
+reads 2 — its tree written out, and the edit.
+
+Under the strip, the **Statistics card** shows every statistic the run and its
+baseline recorded, side by side — the rows the report's Statistics table
+shows, under one rule. Closed, as on every page open, it is one line naming
+what changed (`2 changed: Nonlinear count 0→3, CPUtime +40%`; a list's
+count, total and max are one entry; counts first, at most three, then `+N
+more`), or `all match`, `no run result`, `no baseline statistics`, `nothing
+recorded`. A statistic has **changed** when the criterion its `+` would add
+would fail: a count on any difference, a time beyond 10%. Open, every count
+and time is a row under Translation / Simulation / Timing, with its run and
+baseline values (a time to 3 significant figures, `0.800 s`) and the
+difference; a changed row is tinted. Lists and names are left out: nothing
+scores them. A row no criterion reads ends in a `+` — "Add a requirement:
+exact match" for a count, "…within 10%, as a warning" for a time — that adds
+a `scalar` criterion on it at the end of the tree (a time inside a `warn`
+where it lands in an `and`) and opens its editor under the row. A row a
+criterion reads shows that criterion's pill and its requirement (`exact`,
+`±10%`, `in [a, b]`) instead; click the row to edit it there — tolerance,
+its mode, bounds; there is no plot. A criterion reading a quantity no
+statistic holds gets a row under "Other scored quantities". The `+` is grey,
+with the reason as its tooltip, while a job holds the test, on a
+simulate-only test, where nothing is scored yet, and under a `warn` or
+`weighted` root.
+
+Below the card, the criteria tree is
 closed to a single line — the root's verdict, what the root is, the tally, and
 the first failures by name, each a button that jumps to its criterion — and
 "Show tree" opens it to a row per node. Then come the test's plots — derived
@@ -1007,11 +1035,12 @@ backend records, stores and scores a criterion's variables after the test's
 (see the strip, above, for the rerun). A diagnostic's criterion scores its
 stored final — `scalar` with `quantity: "<name>.final"` — exactly for a count
 (`EventCounter`, or a diagnostic of whole numbers) and within 10% otherwise;
-`CPUtime` is added inside a `warn` where it lands in an `and` (beside a root
-criterion too, which makes the root one), since a run's CPU time moves with
-the machine's load; under an `or` or a `k-of-n` it is added bare, because a
-warn there would pass its parent. Such a criterion has no plot: after its Add the tree opens on
-its row, and its values are not yet edited on the Test page. On a
+a time (`CPUtime`, or a diagnostic of fractional numbers) is added inside a
+`warn` where it lands in an `and` (beside a root criterion too, which makes
+the root one), since a run's CPU time moves with the machine's load; under
+an `or` or a `k-of-n` it is added bare, because a warn there would pass its
+parent. Such a criterion has no plot: after its Add its editor opens under
+its row of the Statistics card, where it is edited from then on. On a
 simulate-only test the form says "This test is simulate-only: nothing is
 scored" and its Add is grey.
 
