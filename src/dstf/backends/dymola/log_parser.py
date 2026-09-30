@@ -1,6 +1,7 @@
 """Parse Dymola's dslog.txt and translation_log.txt for statistics."""
 
 import re
+import sys
 from pathlib import Path
 
 from ..common.statistics import summaries
@@ -39,9 +40,13 @@ def parse_test_logs(test_dir: Path) -> dict | None:
     The one reader of both — the batch run, the persistent worker's disk
     read and :meth:`DymolaBackend.read_result`'s fallback all call it, so
     the merge cannot differ between a run and a later reload.
+
+    A log that does not parse costs this test that log's statistics and
+    one ``# WARN:`` line naming the file: its number that is no number
+    (``1.2.3 s``) must not abort the read of the suite.
     """
-    statistics = parse_dslog(test_dir / "dslog.txt")
-    translation_stats = parse_dslog(test_dir / "translation_log.txt")
+    statistics = _parse_or_warn(test_dir / "dslog.txt")
+    translation_stats = _parse_or_warn(test_dir / "translation_log.txt")
     if not translation_stats:
         return statistics
     if statistics is None:
@@ -54,6 +59,17 @@ def parse_test_logs(test_dir: Path) -> dict | None:
         else:
             statistics[key] = value
     return statistics
+
+
+def _parse_or_warn(path: Path) -> dict | None:
+    """:func:`parse_dslog`, or None with a warning when the log's text
+    breaks the parse. A log is data a simulator wrote, so any error parsing
+    it is that file's, not the read's."""
+    try:
+        return parse_dslog(path)
+    except Exception as exc:
+        print(f"# WARN: could not parse {path}: {exc}", file=sys.stderr)
+        return None
 
 
 def _parse_translation_stats(text: str, stats: dict) -> None:

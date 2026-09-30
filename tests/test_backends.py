@@ -1105,6 +1105,53 @@ class TestDymolaStatisticsFromLogs:
         assert stats["simulation"] == {"cpu_time_integration": 99.0}
         assert "translation" not in stats
 
+    def test_translation_log_alone_is_read(self, tmp_path):
+        """A test that translated and never simulated leaves only
+        translation_log.txt: its statistics are the translation's."""
+        import shutil
+
+        from dstf.backends.dymola.log_parser import parse_test_logs
+
+        name = "translation_log.txt"
+        shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, tmp_path / name)
+        stats = parse_test_logs(tmp_path)
+        assert stats is not None
+        assert stats["translation"]["continuous_time_states"] is not None
+        assert "simulation" not in stats
+
+    def test_a_malformed_log_does_not_abort_the_read(self, tmp_path, capsys):
+        """A log whose number does not parse costs THAT test its statistics
+        from that file, with one warning naming the file — never the read
+        of the result, or of the suite."""
+        test_dir = self._test_dir(tmp_path, logs=False)
+        dslog = test_dir / "dslog.txt"
+        dslog.write_text("CPU-time for integration      : 1.2.3 s\n", encoding="utf-8")
+        test = _tm("Lib.A", variable_patterns=["x"])
+        result = self._backend(tmp_path).read_result(test, "test_0001", None)
+        assert result.success
+        assert "simulation" not in (result.statistics or {})
+        warns = [
+            line
+            for line in capsys.readouterr().err.splitlines()
+            if line.startswith("# WARN:")
+        ]
+        assert len(warns) == 1 and str(dslog) in warns[0]
+
+    def test_a_malformed_log_keeps_the_other_logs_statistics(self, tmp_path, capsys):
+        import shutil
+
+        from dstf.backends.dymola.log_parser import parse_test_logs
+
+        name = "translation_log.txt"
+        shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, tmp_path / name)
+        (tmp_path / "dslog.txt").write_text(
+            "CPU-time for integration      : 1.2.3 s\n", encoding="utf-8"
+        )
+        stats = parse_test_logs(tmp_path)
+        assert stats is not None and "translation" in stats
+        assert "simulation" not in stats
+        assert "dslog.txt" in capsys.readouterr().err
+
     def test_no_logs_reads_as_before(self, tmp_path):
         self._test_dir(tmp_path, logs=False)
         test = _tm("Lib.A", variable_patterns=["x"])

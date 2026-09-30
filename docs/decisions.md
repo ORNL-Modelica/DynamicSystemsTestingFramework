@@ -5256,7 +5256,9 @@ from the run result, so `compare` and the tool showed none of its
 is now one function, `log_parser.parse_test_logs`: the batch run (its
 timeout salvage too, which read `dslog.txt` alone), the persistent worker's
 disk read and `read_result` call it, the last when the run result carries no
-statistics. Kept run statistics still win — they are the run's own record;
+statistics. A log that does not parse (a `1.2.3 s` where a number belongs)
+costs that test that log's statistics and one `# WARN:` line naming the
+file, never the read of the suite. Kept run statistics still win — they are the run's own record;
 the logs are what code that reads files tolerates for a result from before
 them. The logs hold no phase walls, so such a result still has no `timing`
 block and its Sim (s) reads the marked CPU time. The consequences above
