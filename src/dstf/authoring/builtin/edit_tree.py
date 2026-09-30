@@ -35,6 +35,7 @@ from ..session import SIMULATE_ONLY, no_tree_error
 if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
+from ..tree_move import Dest, Moved, plan_move, validator_for
 from ..tree_pointer import node_or_none
 from ..tree_text import node_text, nodes_of
 
@@ -42,6 +43,10 @@ from ..tree_text import node_text, nodes_of
 # register_builtins(), and the Session must import without the extra.
 
 ROOT = "/metrics"
+
+#: What `EditTree.act` does; anything else is refused before its inputs are
+#: read.
+_ACTIONS = ("remove", "move", "add", "unwrap", "wrap", "edit")
 
 #: The combinator-only raw keys each kind carries (``tree_spec``); every
 #: other one is removed when a node changes kind.
@@ -180,7 +185,8 @@ def seed_data(
 
 class EditTree:
     """The metric tree's shape: wrap a node in a combinator, change a
-    combinator's kind and its fields, add a leaf, remove a node."""
+    combinator's kind and its fields, add a leaf, remove a node, move a
+    node (`tree_move`)."""
 
     name = "edit-tree"
     label = "Edit tree"
@@ -232,8 +238,20 @@ class EditTree:
 
     def act(self, s: SessionView, **inputs: Any) -> Patch | None:
         action, model_id, path = inputs["action"], inputs["model_id"], inputs["path"]
+        if action not in _ACTIONS:
+            # First: an action this does not know is the error, not the
+            # input its last branch would read.
+            raise ValueError(f"unknown action {action!r}")
         if action == "remove":
             return Patch(ops=[PatchOp(model_id, "remove", path)])
+        if action == "move":
+            # The whole new tree as ONE `add /metrics` (V1) — the root add
+            # a wrap uses: a flat test materializes nothing first, and two
+            # moves in a row fold into one pending op (`Session.stage`).
+            moved = planned_move(s, model_id, path, inputs["dest"])
+            if moved is None:
+                return None
+            return Patch(ops=[PatchOp(model_id, "add", ROOT, moved.tree)])
         tree, why = s.tree_or_reason(model_id)
         if tree is None:
             assert why is not None  # `tree` is None
@@ -313,27 +331,25 @@ class EditTree:
             op = "add" if path == ROOT else "replace"
             value = {"combinator": kind, "children": [node], **fields}
             return Patch(ops=[PatchOp(model_id, op, path, value)])
-        if action == "edit":
-            # Only what moved: an Apply with nothing changed staged the
-            # kind and every field again, four ops for no edit. Nothing
-            # moved is None — the row has closed, and nothing is staged.
-            ops = []
-            if node.get("combinator") != kind:
-                ops.append(PatchOp(model_id, "replace", f"{path}/combinator", kind))
-            for key, value in fields.items():
-                if key in node:
-                    if node[key] != value:
-                        ops.append(PatchOp(model_id, "replace", f"{path}/{key}", value))
-                elif not (key == "direction" and value == _DEFAULT_DIRECTION):
-                    ops.append(PatchOp(model_id, "add", f"{path}/{key}", value))
-            keeps = _KIND_KEYS.get(kind, ())
-            ops += [
-                PatchOp(model_id, "remove", f"{path}/{key}")
-                for key in _COMBINATOR_KEYS
-                if key in node and key not in keeps
-            ]
-            return Patch(ops=ops) if ops else None
-        raise ValueError(f"unknown action {action!r}")
+        # edit: only what moved. An Apply with nothing changed staged the
+        # kind and every field again, four ops for no edit. Nothing moved
+        # is None — the row has closed, and nothing is staged.
+        ops = []
+        if node.get("combinator") != kind:
+            ops.append(PatchOp(model_id, "replace", f"{path}/combinator", kind))
+        for key, value in fields.items():
+            if key in node:
+                if node[key] != value:
+                    ops.append(PatchOp(model_id, "replace", f"{path}/{key}", value))
+            elif not (key == "direction" and value == _DEFAULT_DIRECTION):
+                ops.append(PatchOp(model_id, "add", f"{path}/{key}", value))
+        keeps = _KIND_KEYS.get(kind, ())
+        ops += [
+            PatchOp(model_id, "remove", f"{path}/{key}")
+            for key in _COMBINATOR_KEYS
+            if key in node and key not in keeps
+        ]
+        return Patch(ops=ops) if ops else None
 
 
 def _combinator_fields(
@@ -874,6 +890,22 @@ def _variable_plus(
         ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
     if no_add is not None:
         button.disable()
+
+
+def planned_move(s: SessionView, model_id: str, src: str, dest: Dest) -> Moved | None:
+    """The move `EditTree.act` stages, with where the node lands and what
+    else changed — what a panel reveals and says after its ``submit`` went
+    through; `act` stages this plan's tree, so the two cannot disagree.
+    Checked against the test's baseline roles as `Session.stage` checks
+    it, so a refusal is the validator's sentence, raised here."""
+    tree, why = s.tree_or_reason(model_id)
+    if tree is None:
+        assert why is not None  # `tree` is None
+        raise no_tree_error(model_id, why)
+    project = s.project
+    assert project is not None  # a tree came from it
+    validate = validator_for(project.role_lookup(model_id))
+    return plan_move(tree, src, dest, validate=validate)
 
 
 def _locked_by(s: SessionView, model_id: str) -> str | None:

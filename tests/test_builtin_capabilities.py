@@ -3023,3 +3023,155 @@ def test_a_statistics_criterion_is_edited_at_its_own_placement():
     }
     assert at == {EditCriteria.name}
     assert Placement.STATISTIC_CRITERION not in EditOnPlot.placements
+
+
+# -- move a subtree (U4) ----------------------------------------------------
+
+
+def _move(session, src, dest, model=A):
+    view = SessionView(session, _node(model, src))
+    return EditTree().act(view, action="move", model_id=model, path=src, dest=dest)
+
+
+def test_a_move_on_a_flat_test_stages_one_whole_tree_add(two_var_session):
+    """A's tree is flat `and[nrmse x, nrmse y]`: the move supplies /metrics
+    itself, so nothing is materialized before it (V1)."""
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    before = s.tree(A)
+    patch = _move(s, "/metrics/children/1", Dest("at", ROOT, 0))
+    (op,) = patch.ops
+    assert (op.op, op.path) == ("add", ROOT)
+    assert op.value["children"] == list(reversed(before["children"]))
+    s.apply(patch)
+    (pending,) = s.spec.pending
+    assert (pending.op, pending.path, pending.materializes) == ("add", ROOT, False)
+    assert s.tree(A)["children"] == list(reversed(before["children"]))
+
+
+def test_two_moves_in_a_row_are_one_pending_op(two_var_session):
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    before = s.tree(A)
+    s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
+    s.apply(_move(s, "/metrics/children/0", Dest("at", ROOT, None)))
+    (pending,) = s.spec.pending
+    assert (pending.op, pending.path) == ("add", ROOT)
+    assert len(SessionView(s).pending) == 1
+    assert s.tree(A) == before
+
+
+def test_the_preview_shows_a_saved_trees_move_as_a_reorder(tmp_path):
+    """A's saved entry holds NESTED: the drawer's diff is what moved and
+    the k it lowered — the metrics block is not shown as added."""
+    import json
+
+    from dstf.authoring.spec_preview import entry_lines
+    from dstf.authoring.tree_move import Dest
+
+    cfg, work = _project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = NESTED
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    s.apply(_move(s, "/metrics/children/1/children/1", Dest("at", ROOT, 0)))
+    lines = entry_lines(s.spec.preview_base(A), s.spec.entry(A))
+    added = [line.text.strip() for line in lines if line.kind == "add"]
+    assert '"max_value": 9.0' in added and '"k": 1,' in added, added
+    assert not any('"metrics"' in text for text in added)
+
+
+def test_a_flat_tests_move_previews_as_the_whole_tree_added(two_var_session):
+    """The test gains its first tree: the drawer shows the whole metrics
+    block added, as a root wrap on a flat test already does (C9)."""
+    from dstf.authoring.spec_preview import entry_lines
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
+    lines = entry_lines(s.spec.preview_base(A), s.spec.entry(A))
+    assert any(line.kind == "add" and '"metrics"' in line.text for line in lines)
+
+
+def test_a_refused_move_stages_nothing_and_says_why(session):
+    from dstf.authoring.tree_move import INTO_WARN, WARN_UNDER, Dest, MoveRefused
+
+    session.stage([PatchOp(A, "add", ROOT, copy.deepcopy(NESTED))])
+    before = list(session.spec.pending)
+    with pytest.raises(MoveRefused) as e:
+        _move(session, "/metrics/children/0", Dest("at", "/metrics/children/2", 0))
+    assert str(e.value) == INTO_WARN
+    with pytest.raises(MoveRefused) as e:
+        _move(session, "/metrics/children/2", Dest("at", "/metrics/children/1", 0))
+    assert str(e.value) == WARN_UNDER
+    assert session.spec.pending == before
+
+
+def test_a_move_the_roles_refuse_says_the_validators_sentence(tmp_path):
+    """The Session's roles: `om_cross` is A's soft check, so it cannot
+    leave its warn — refused before it is staged, in stage's own words."""
+    from dstf.authoring.tree_move import Dest, MoveRefused
+
+    s = _session_with_soft_check(
+        tmp_path, PatchOp(A, "add", "/metrics/children/-", copy.deepcopy(WARN_LEAF))
+    )
+    before = list(s.spec.pending)
+    with pytest.raises(MoveRefused, match="soft check 'om_cross', which must sit"):
+        _move(s, "/metrics/children/1/children/0", Dest("at", ROOT, None))
+    assert s.spec.pending == before
+
+
+def test_a_move_that_changes_nothing_is_no_outcome(two_var_session):
+    from dstf.authoring.tree_move import Dest
+
+    assert _move(two_var_session, "/metrics/children/1", Dest("at", ROOT, None)) is None
+
+
+def test_a_locked_test_refuses_a_move(two_var_session):
+    from dstf.authoring.capabilities import Job
+    from dstf.authoring.session import LockedError
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    gate = _Gate()
+    s.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+    try:
+        view = SessionView(s, _node(A, "/metrics/children/1"))
+        assert EditTree().available(view) == f"rerun is running on {A}"
+        with pytest.raises(LockedError):
+            s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
+        assert s.spec.pending == []
+    finally:
+        gate.release.set()
+
+
+def test_the_planned_move_says_where_it_landed_and_what_changed(session):
+    """What a panel reveals and says after the move (V4), read from the
+    same plan `act` stages — they cannot disagree."""
+    from dstf.authoring.builtin.edit_tree import planned_move
+    from dstf.authoring.tree_move import Dest
+
+    session.stage([PatchOp(A, "add", ROOT, copy.deepcopy(NESTED))])
+    src = "/metrics/children/2/children/0"
+    view = SessionView(session, _node(A, src))
+    moved = planned_move(view, A, src, Dest("at", ROOT, 0))
+    patch = EditTree().act(
+        view, action="move", model_id=A, path=src, dest=Dest("at", ROOT, 0)
+    )
+    assert patch.ops[0].value == moved.tree
+    assert moved.path == "/metrics/children/0"
+    assert moved.notes == ("the empty warn was removed",)
+
+
+def test_an_unknown_action_is_refused_before_its_inputs_are_read(session):
+    """No `kind` input: the action's name is what is wrong, not a missing
+    key (C10)."""
+    view = SessionView(session, _node(A, ROOT))
+    with pytest.raises(ValueError, match="unknown action 'swap'"):
+        EditTree().act(view, action="swap", model_id=A, path=ROOT)
