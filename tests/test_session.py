@@ -4019,3 +4019,86 @@ class TestTheStatisticsRows:
         scored = [vc.name for vc in s.comparisons[A].variables]
         assert "translation.nonlinear_count" in scored  # what B5 is about
         assert s.tracked(A) == ["x", "y"]
+
+
+#: Dymola-shaped statistics at TRANSFORM's lengths (the keys `log_parser`
+#: writes), for the Statistics card: the baseline was stored before the
+#: parser wrote a list's zero summaries (an empty `nonlinear`, no `_count`),
+#: and the run's model grew three nonlinear systems. CPU time moved
+#: 0.80 -> 1.12 s (+40%); the total wall by 3%, inside the 10% a time's
+#: requirement allows.
+DYMOLA_BASE = {
+    "translation": {
+        "scalar_unknowns": 8715,
+        "scalar_equations": 8715,
+        "continuous_time_states": 120,
+        "numerical_jacobians": 0,
+        "nonlinear": [],
+        "init_homotopy_nonlinear_after_manipulation": [31, 31],
+        "init_homotopy_nonlinear_after_manipulation_count": 2,
+        "init_homotopy_nonlinear_after_manipulation_total": 62,
+        "init_homotopy_nonlinear_after_manipulation_max": 31,
+        "state_names": ["pipe_nParallel.pipe.flowModel.firstOrder_dps_K[1].y"],
+    },
+    "simulation": {
+        "cpu_time_integration": 0.201,
+        "result_points": 102,
+        "accepted_steps": 25,
+        "state_events": 0,
+    },
+    "timing": {
+        "translation_wall": 2.1,
+        "sim_wall": 1.2,
+        "other_wall": 0.61,
+        "total_wall": 3.91,
+    },
+    "CPUtime": 0.80,
+    "EventCounter": 0,
+}
+DYMOLA_RUN = copy.deepcopy(DYMOLA_BASE)
+DYMOLA_RUN["translation"].update(
+    {
+        "nonlinear": [3, 5, 1],
+        "nonlinear_count": 3,
+        "nonlinear_total": 9,
+        "nonlinear_max": 5,
+    }
+)
+DYMOLA_RUN["timing"]["total_wall"] = 4.02
+DYMOLA_RUN["CPUtime"] = 1.12
+
+
+def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A's run and baseline carrying `DYMOLA_RUN` /
+    `DYMOLA_BASE` ON DISK — the run's in `run_stats.json` (what a reload
+    reads; FakeLib's fixture never runs), the baseline's through the store —
+    so a served `dstf author` reads them too. B's run carries `DYMOLA_RUN`
+    and B has no baseline (NO_REF: nothing is scored)."""
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    for key, model in (("test_0001", A), ("test_0002", B)):
+        (work / key / "run_stats.json").write_text(
+            json.dumps(
+                {
+                    "model_id": model,
+                    "translation_wall": None,
+                    "sim_wall": None,
+                    "elapsed": 0.0,
+                    "statistics": DYMOLA_RUN,
+                }
+            ),
+            encoding="utf-8",
+        )
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=["x", "y"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+            ],
+            statistics=copy.deepcopy(DYMOLA_BASE),
+        ),
+    )
+    return cfg, work

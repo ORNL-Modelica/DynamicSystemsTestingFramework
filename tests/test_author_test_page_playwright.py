@@ -51,6 +51,7 @@ from test_session import (  # noqa: E402
     _drawer_project,
     _long_names_project,
     _page_project,
+    _stats_project,
     _two_var_project,
 )
 
@@ -3272,6 +3273,12 @@ def test_the_editors_fields_line_up_and_say_the_value_in_effect(
             expect(page.locator(".dstf-editor")).to_have_count(
                 1, timeout=EXPECT_TIMEOUT
             )
+            # Centred first: the Statistics card above the tree puts the
+            # editor at the viewport's foot, and the Tab below scrolled the
+            # page under the fields it compares.
+            page.locator(".dstf-editor").evaluate(
+                "e => e.scrollIntoView({block: 'center'})"
+            )
             page.wait_for_timeout(400)
             fields = page.evaluate(READ_FIELDS)
             rows: dict[int, list[float]] = {}
@@ -3744,3 +3751,26 @@ def test_a_grip_key_the_focus_left_before_its_release_sends_the_width(
         expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(800)
         assert page.evaluate(PANEL_AND_DRAWER) == [336, 376]
+
+
+def test_the_statistics_cards_plus_adds_a_criterion_to_the_tree(
+    tmp_path, playwright_browser
+):
+    """U3: the card is closed to the changed rows; open, a count row's `+`
+    stages its requirement at the root's end — the tree line counts one
+    more criterion — and the row shows the criterion's pill instead."""
+    with _served(tmp_path, playwright_browser, project=_stats_project) as page:
+        card = page.locator(".dstf-stats")
+        expect(card.locator(".dstf-stats-line")).to_contain_text(
+            "2 changed: Nonlinear count 0→3, CPUtime +40%", timeout=EXPECT_TIMEOUT
+        )
+        tree = page.locator(".dstf-tree-line")
+        expect(tree).to_contain_text("and · 2 criteria")
+        card.get_by_role("button", name="Statistics").click()
+        rows = card.locator(".dstf-stat-row:not(.dstf-stat-head)")
+        expect(rows).to_have_count(20, timeout=EXPECT_TIMEOUT)
+        row = rows.filter(has_text=re.compile(r"^Nonlinear count"))
+        row.get_by_role("button", name="Add a requirement: exact match").click()
+        expect(tree).to_contain_text("and · 3 criteria", timeout=EXPECT_TIMEOUT)
+        expect(row.locator(".dstf-pill")).to_have_text("fail", timeout=EXPECT_TIMEOUT)
+        expect(row.get_by_role("button")).to_have_count(0)

@@ -5,7 +5,9 @@ node's row (`Panel.row`), and on a combinator its kind as a dropdown in
 the row's lead place (`Panel.lead`), unwrap its last entry; at VARIABLE —
 a plot's criteria header — it is one `+` whose "Add a criterion for x"
 form is a row under the header, the new criterion's editor open after
-Add.
+Add; at STATISTIC — a Statistics row no criterion reads yet — one `+`
+that adds a requirement on the row's quantity at once, and opens its
+editor.
 Every control stages one structural change against the paths the report's
 tree already shows. The D66 validator's refusal reaches the page through
 ``Panel.submit`` — the Session is what it was.
@@ -138,6 +140,9 @@ _ROOT_UNWRAP = "the root has no parent to take its children"
 #: Why an add form's Add is grey on a simulate-only test: a criterion
 #: staged there is never scored (the comparator short-circuits it).
 _SIMULATE_ONLY = "This test is simulate-only: nothing is scored"
+#: Why a Statistics row's `+` is grey on a test with no tree: an add has
+#: nothing to land in (no baseline, a failed run).
+_NOTHING_SCORED = "nothing is scored"
 #: Why a weighted form's action is grey: its threshold starts EMPTY, not 0
 #: (0 with `less` always fails), and has to be typed.
 _NO_THRESHOLD = "enter a threshold"
@@ -184,7 +189,7 @@ class EditTree:
 
     name = "edit-tree"
     label = "Edit tree"
-    placements = frozenset({Placement.NODE, Placement.VARIABLE})
+    placements = frozenset({Placement.NODE, Placement.VARIABLE, Placement.STATISTIC})
 
     def caption(self, s: SessionView) -> str:
         # NODE and VARIABLE are inline: no button reads a caption there.
@@ -198,6 +203,11 @@ class EditTree:
         running = s.running
         if running is not None and s.is_locked(model_id):
             return f"{running.label} is running on {model_id}"
+        if sel.quantity is not None:
+            # A Statistics row's `+` is drawn grey with the add form's
+            # reason where nothing can be added (A9): a why-line in place
+            # of it, on every row, said the same thing twenty times.
+            return True
         tree = s.tree(model_id)
         if tree is None:
             return "no tree to edit (nothing scored)"
@@ -216,6 +226,8 @@ class EditTree:
         model_id = next(iter(sel.tests))
         if sel.node_path is not None:
             _cluster(ui, s, ui_panel, model_id, sel.node_path)
+        elif sel.quantity is not None:
+            _statistic_plus(ui, s, ui_panel, model_id, sel.quantity)
         else:
             # The plot's criteria header (Q3 A): one `+`, its form a row
             # under the header, the new criterion's editor open after Add.
@@ -232,30 +244,13 @@ class EditTree:
         if node is None:
             raise ValueError(f"{path} names no node of {model_id}")
         if action == "add":
-            # The kind of the combinator the criterion lands in (a root leaf
-            # becomes an `and` of both): CPU time warns only in an `and`.
-            if "combinator" in node:
-                into = str(node["combinator"])
-            elif path == ROOT:
-                into = "and"
-            else:
-                parent_node = node_or_none(tree, path.rsplit("/children/", 1)[0])
-                into = str((parent_node or {}).get("combinator"))
+            into = _into(tree, node, path)
             diagnostics = _diagnostics(s, model_id)
             quantity = inputs.get("quantity")
             if quantity is not None and inputs.get("variable") is not None:
                 raise ValueError("add takes a quantity or a variable, not both")
-            name, _, field_name = str(quantity).rpartition(".")
-            if quantity is not None and field_name == "final" and name in diagnostics:
-                # One seed per path: a diagnostic's final is the add form's
-                # diagnostic criterion, its kind read from its samples.
-                leaf = seed_diagnostic(name, diagnostics[name], into=into)
-            elif quantity is not None:
-                # A Statistics row's `+`: a stored number, no variable. A
-                # top-level statistic naming a diagnostic reads its samples
-                # for its kind, as its `X.final` would.
-                kind = quantity_kind(quantity, diagnostics.get(quantity))
-                leaf = seed_quantity(quantity, kind, into=into)
+            if quantity is not None:
+                leaf = _quantity_leaf(diagnostics, quantity, into)
             elif inputs["variable"] in diagnostics:
                 # A diagnostic is one stored number (K1): its final through
                 # a quantity path, never a trajectory — a `{"reduce": ...}`
@@ -541,9 +536,7 @@ def _add_form(
         close()
         ui_panel.reveal(_first_leaf(s.tree(model_id), added))
 
-    project = s.project
-    tests = project.tests if project is not None else ()
-    simulate_only = any(t.simulate_only for t in tests if t.model_id == model_id)
+    simulate_only = _simulate_only(s, model_id)
     ui.label(_SIMULATE_ONLY if simulate_only else _ADD_SENTENCE).classes("dstf-why")
     with ui.row().classes("items-center gap-2"):
         _cancel(ui, close, under)
@@ -554,6 +547,50 @@ def _add_form(
             if simulate_only:
                 add.disable()
                 ui.tooltip(_SIMULATE_ONLY)
+
+
+def _simulate_only(s: SessionView, model_id: str) -> bool:
+    project = s.project
+    tests = project.tests if project is not None else ()
+    return any(t.simulate_only for t in tests if t.model_id == model_id)
+
+
+def _into(tree: dict | None, node: dict, path: str) -> str:
+    """The kind of the combinator an add at ``path`` lands in — a root
+    leaf becomes an `and` of both: a time warns only in an `and`."""
+    if "combinator" in node:
+        return str(node["combinator"])
+    if path == ROOT:
+        return "and"
+    parent_node = node_or_none(tree, path.rsplit("/children/", 1)[0])
+    return str((parent_node or {}).get("combinator"))
+
+
+def _quantity_leaf(diagnostics: dict[str, Any], quantity: str, into: str) -> dict:
+    """The criterion an add on ``quantity`` stages, landing in ``into``: a
+    stored number, no variable. One seed per path — a diagnostic's final
+    is the add form's diagnostic criterion, its kind read from its samples,
+    and a top-level statistic naming a diagnostic reads them too, as its
+    ``X.final`` would."""
+    name, _, field_name = quantity.rpartition(".")
+    if field_name == "final" and name in diagnostics:
+        return seed_diagnostic(name, diagnostics[name], into=into)
+    return seed_quantity(
+        quantity, quantity_kind(quantity, diagnostics.get(quantity)), into=into
+    )
+
+
+def _requirement(leaf: dict) -> str:
+    """What a Statistics row's `+` adds, in the words of its seed — the
+    tolerance is the seed's, never a second copy of it."""
+    inner = leaf["children"][0] if "combinator" in leaf else leaf
+    tolerance = float(inner.get("tolerance") or 0)
+    if inner.get("tolerance_mode") == "rel":
+        what = f"within {tolerance * 100:g}%"
+    else:
+        what = "exact match" if tolerance == 0 else f"within ±{tolerance:g}"
+    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
+    return f"Add a requirement: {what}{warning}"
 
 
 def _cancel(ui: Any, close: Callable[[], None], path: str) -> None:
@@ -837,6 +874,51 @@ def _variable_plus(
         ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
     if no_add is not None:
         button.disable()
+
+
+def _statistic_plus(
+    ui: Any, s: SessionView, ui_panel: Panel, model_id: str, quantity: str
+) -> None:
+    """A Statistics row's `+` (U3): no form — the requirement is the seed
+    (a count exact, a time within its tolerance, inside a `warn` where it
+    lands in an `and`), added at the END of the root (Q6 b), or as
+    ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
+    after it. Grey with the add form's reason where nothing can take it:
+    a simulate-only test, a test with nothing scored (no tree to add to),
+    a root that takes no child alone."""
+    tree = s.tree(model_id)
+    if _simulate_only(s, model_id):
+        reason: str | None = _SIMULATE_ONLY
+    elif tree is None:
+        reason = _NOTHING_SCORED
+    else:
+        reason = _NO_ADD.get(str(tree.get("combinator")))
+    tip = reason
+    if tip is None:
+        assert tree is not None  # `reason` said so
+        into = _into(tree, tree, ROOT)
+        tip = _requirement(_quantity_leaf(_diagnostics(s, model_id), quantity, into))
+
+    def add() -> None:
+        # From the tree as it is NOW, before the add moves the count.
+        added = _added_path(s.tree(model_id), ROOT)
+        if ui_panel.submit(
+            model_id=model_id, action="add", path=ROOT, quantity=quantity
+        ):
+            ui_panel.reveal(_first_leaf(s.tree(model_id), added))
+
+    # A disabled Quasar button takes no pointer events: the reason's
+    # tooltip is on a span around it.
+    with ui.element("span"):
+        button = ui.button(icon="add", on_click=add)
+        button.props("flat dense round size=sm")
+        # Its accessible name is the sentence: the icon's ligature says
+        # "add". Set as an item, not through the props string.
+        button.props["aria-label"] = tip
+        button.mark(f"add-statistic:{quantity}")
+        ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
+        if reason is not None:
+            button.disable()
 
 
 def _kind_select(

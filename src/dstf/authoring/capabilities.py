@@ -27,26 +27,29 @@ if TYPE_CHECKING:
 class Placement(Enum):
     """Where a capability attaches (brief §3.2; D129): the Suite page's
     batch bar, the Test page's status strip, a plot card's criteria header,
-    the open criterion's editor, a tree node's place in the tree. A capability
+    the open criterion's editor, a tree node's place in the tree, a row of
+    the Statistics card. A capability
     names the frozenset it attaches at; the shell draws it at each and knows
     no capability by name. The tab strip this replaces listed one tab per
     ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
     leaf) are now what ``available`` answers for the page's selection.
 
     SUITE and TEST are a button carrying the capability's ``caption``, its
-    panel in a dialog; VARIABLE, CRITERION and NODE are inline — the panel
-    is built straight into the plot's criteria header (for the plot's first
-    tracked variable, its rows opening under the header), the criterion's
-    editor, or beside a tree node as that node's controls, with no button
-    and no heading. At VARIABLE and CRITERION ``Panel.figure`` is the
-    plot's hook, subscribed for as long as the panel is drawn; elsewhere a
-    subscription raises."""
+    panel in a dialog; VARIABLE, CRITERION, NODE and STATISTIC are inline —
+    the panel is built straight into the plot's criteria header (for the
+    plot's first tracked variable, its rows opening under the header), the
+    criterion's editor, beside a tree node as that node's controls, or at
+    the end of a Statistics row no criterion reads yet (the selection's
+    ``quantity`` is the row's), with no button and no heading. At VARIABLE
+    and CRITERION ``Panel.figure`` is the plot's hook, subscribed for as
+    long as the panel is drawn; elsewhere a subscription raises."""
 
     SUITE = "suite"
     TEST = "test"
     VARIABLE = "variable"
     CRITERION = "criterion"
     NODE = "node"
+    STATISTIC = "statistic"
 
 
 class Emphasis(Enum):

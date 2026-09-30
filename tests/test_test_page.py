@@ -7873,3 +7873,269 @@ async def test_a_drawer_row_with_nothing_but_new_plot_is_one_line(drawer_shell):
         at = next(i for i, e in enumerate(kids) if isinstance(e, MiddleCut))
         after = [m for e in kids[at + 1 :] for m in _marks(e)]
         assert var_marker("var-new", ROW_A0) in after
+
+
+# -- the Statistics card (U3) ------------------------------------------------
+
+from dstf.reporting.stats_rows import StatRow  # noqa: E402
+from test_session import _stats_project  # noqa: E402
+
+NONLINEAR = "translation.nonlinear_count"
+
+
+@pytest.fixture
+def stats_shell(tmp_path):
+    """A's run and baseline carry Dymola-shaped statistics (`_stats_project`):
+    three nonlinear systems appeared, CPU time +40%, the total wall +3%."""
+    return _opened(*_stats_project(tmp_path))
+
+
+def _line_text(user) -> str:
+    return _one(user, "stats:summary").text
+
+
+def _stat(path, run, baseline, changed=False, delta="", kind="count", key=None):
+    section, _, last = path.rpartition(".")
+    return StatRow(
+        section or "simulation",
+        key or last,
+        path,
+        # A top-level statistic is labelled by its name, as is (S2).
+        key or last.replace("_", " ").capitalize(),
+        kind,
+        run,
+        baseline,
+        changed,
+        delta,
+    )
+
+
+def test_the_closed_line_names_a_list_once_counts_first_then_more():
+    """B6: a list's `_count` / `_total` / `_max` changed together are ONE
+    entry, named by the first changed of the three in that order; counts
+    before times; at most three named, then `+N more`, `N` counting
+    entries."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    rows = [
+        _stat("translation.nonlinear_count", 3, 0, True, "0→3"),
+        _stat("translation.nonlinear_max", 5, 0, True, "0→5"),
+        _stat("translation.nonlinear_total", 9, 0, True, "0→9"),
+        _stat("CPUtime", 1.12, 0.8, True, "+40%", kind="time", key="CPUtime"),
+        _stat("timing.total_wall", 4.02, 3.91, False, "+3%", kind="time"),
+    ]
+    assert (
+        line_text(rows, has_run=True) == "2 changed: Nonlinear count 0→3, CPUtime +40%"
+    )
+    # Only the total moved: it names the list.
+    rows[0] = _stat("translation.nonlinear_count", 3, 3)
+    assert line_text(rows, has_run=True) == (
+        "2 changed: Nonlinear total 0→9, CPUtime +40%"
+    )
+    many = [
+        _stat("timing.a_wall", 2.0, 1.0, True, "+100%", kind="time"),
+        _stat("translation.a_count", 1, 0, True, "0→1"),
+        _stat("translation.b", 1, 0, True, "0→1"),
+        _stat("simulation.c", 1, 0, True, "0→1"),
+        _stat("simulation.d", 1, 0, True, "0→1"),
+    ]
+    assert line_text(many, has_run=True) == (
+        "5 changed: A count 0→1, B 0→1, C 0→1, +2 more"
+    )
+
+
+def test_the_closed_line_says_why_it_names_nothing():
+    from dstf.authoring.shell.stats_card import line_text
+
+    same = [_stat("simulation.state_events", 2, 2)]
+    assert line_text(same, has_run=True) == "all match"
+    assert line_text([], has_run=True) == "nothing recorded"
+    text = StatRow("translation", "nonlinear", "translation.nonlinear", "N",
+                   "text", [1], [], True, "")  # fmt: skip
+    assert line_text([text], has_run=True) == "nothing recorded"
+    assert line_text([_stat("simulation.state_events", None, 2)], has_run=False) == (
+        "no run result"
+    )
+    # FakeLib's baseline stores no statistics: "all match" said nothing true.
+    assert line_text([_stat("simulation.wall_time", 0.4, None, kind="time")],
+                     has_run=True) == "no baseline statistics"  # fmt: skip
+
+
+def test_a_scored_rows_summary_says_the_requirement():
+    """B11: the criterion in a word or two."""
+    from dstf.authoring.shell.stats_card import summary
+
+    def leaf(**params):
+        return {"params": {"quantity": NONLINEAR, **params}}
+
+    assert summary(leaf(tolerance=0, tolerance_mode="abs")) == "exact"
+    assert summary(leaf(tolerance=0)) == "exact"
+    assert summary(leaf(tolerance=0.5, tolerance_mode="abs")) == "±0.5"
+    assert summary(leaf(tolerance=0.1, tolerance_mode="rel")) == "±10%"
+    assert summary(leaf(min_value=1, max_value=4)) == "in [1, 4]"
+    assert summary(leaf(min_value=1)) == "≥ 1"
+    assert summary(leaf(max_value=4)) == "≤ 4"
+
+
+async def test_the_statistics_card_sits_before_the_tree_card_closed(stats_shell):
+    async with user_simulation(root=stats_shell.index) as user:
+        page = await _test_page(stats_shell, user)
+        marks = _marks(user.client.layout)
+        assert marks.index("stats") < marks.index("tree")
+        assert page.stats is not None and not page.stats.is_open
+        assert not page.stats.rows.visible
+        assert _line_text(user) == "2 changed: Nonlinear count 0→3, CPUtime +40%"
+        assert "Total wall" not in _line_text(user)
+
+
+async def test_the_open_card_lists_every_numeric_statistic_by_section(stats_shell):
+    """S1: every count and time, never a list or a text; under Translation /
+    Simulation / Timing, as the report's table has them; a changed row wears
+    the report's warn tint, an unchanged one does not."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        _click(user, _one(user, "stats:toggle"))
+        await _settled(lambda: page.stats.is_open)
+        rows = shell.session.statistics(A)
+        numeric = [r for r in rows if r.kind != "text"]
+        assert len(numeric) == 20 and len(rows) == 23
+        for row in rows:
+            assert _none(user, f"stats:row:{row.path}") == (row.kind == "text")
+        heads = [
+            e.text
+            for e in page.stats.rows.descendants()
+            if "stats:section" in e._markers
+        ]
+        assert heads == ["Translation", "Simulation", "Timing"]
+        assert [e.text for e in _one(user, "stats:head").descendants()
+                if isinstance(e, ui.label)] == ["Statistic", "Run", "Baseline"]  # fmt: skip
+        tinted = [r.path for r in numeric
+                  if "dstf-stat-changed" in _one(user, f"stats:row:{r.path}").classes]  # fmt: skip
+        assert tinted == [
+            "translation.nonlinear_count",
+            "translation.nonlinear_max",
+            "translation.nonlinear_total",
+            "CPUtime",
+        ]
+        texts = [e.text for e in _one(user, "stats:row:CPUtime").descendants()
+                 if isinstance(e, ui.label)]  # fmt: skip
+        assert texts[:4] == ["CPUtime", "1.12 s", "0.8 s", "+40%"]
+        texts = [e.text for e in _one(user, f"stats:row:{NONLINEAR}").descendants()
+                 if isinstance(e, ui.label)]  # fmt: skip
+        assert texts[:4] == ["Nonlinear count", "3", "0", "0→3"]
+
+
+async def test_a_plus_adds_a_requirement_at_the_roots_end_and_shows_its_pill(
+    stats_shell,
+):
+    """The `+` is EditTree's at the STATISTIC placement: one count leaf at
+    the END of the root; the row then shows the criterion's pill — FAIL,
+    since "changed" means the criterion a click adds would fail (B11) — and
+    its summary, and no `+`."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        before = len(shell.session.tree(A)["children"])
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        assert plus.props["aria-label"] == "Add a requirement: exact match"
+        _click(user, plus)
+        await _settled(lambda: len(shell.session.tree(A)["children"]) == before + 1)
+        assert shell.session.tree(A)["children"][-1] == {
+            "metric": "scalar",
+            "quantity": NONLINEAR,
+            "tolerance": 0,
+            "tolerance_mode": "abs",
+        }
+        await _settled(lambda: not _none(user, f"stats:pill:{NONLINEAR}"))
+        assert _one(user, f"stats:pill:{NONLINEAR}").text == "fail"
+        assert _one(user, f"stats:rule:{NONLINEAR}").text == "exact"
+        assert _none(user, f"add-statistic:{NONLINEAR}")
+        assert page.stats.is_open
+
+
+async def test_a_times_plus_says_it_warns_only_under_an_and(stats_shell):
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        tip = "Add a requirement: within 10%, as a warning"
+        assert _one(user, "add-statistic:CPUtime").props["aria-label"] == tip
+        _stage_tree(shell, A, {"combinator": "or", "children": [
+            {"metric": "nrmse", "variable": "x"}]})  # fmt: skip
+        await _settled(
+            lambda: (
+                not _none(user, "add-statistic:CPUtime")
+                and _one(user, "add-statistic:CPUtime").props["aria-label"]
+                == "Add a requirement: within 10%"
+            )
+        )
+
+
+async def test_a_scored_row_shows_its_criterion_and_no_plus(stats_shell):
+    """S2: U2's add form writes `CPUtime.final`; it is the CPUtime row. Two
+    leaves on one statistic: the first's pill, and `+1` beside it (B10)."""
+    shell = stats_shell
+    cpu = {"metric": "scalar", "variable": "CPUtime", "quantity": "CPUtime.final",
+           "tolerance": 0.1, "tolerance_mode": "rel"}  # fmt: skip
+    _stage_tree(shell, A, {"combinator": "and", "children": [
+        {"metric": "nrmse", "variable": "x"}, cpu,
+        {"metric": "scalar", "quantity": "CPUtime", "max_value": 5}]})  # fmt: skip
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        assert _one(user, "stats:pill:CPUtime").text == "fail"
+        assert _one(user, "stats:rule:CPUtime").text == "±10%"
+        assert _one(user, "stats:more:CPUtime").text == "+1"
+        assert _none(user, "add-statistic:CPUtime")
+        assert _none(user, "stats:row:CPUtime.final")
+        assert not _none(user, f"add-statistic:{NONLINEAR}")
+
+
+async def test_a_plus_is_grey_with_the_add_forms_reason_where_nothing_is_scored(
+    stats_shell,
+):
+    """A9: with no tree `EditTree.act` has nothing to add to — B has no
+    baseline, so nothing is scored: the `+` is drawn grey with why."""
+    shell = stats_shell
+    assert shell.session.tree(B) is None
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, model=B)
+        assert _line_text(user) == "no baseline statistics"
+        page.stats.toggle()
+        plus = _one(user, f"add-statistic:{NONLINEAR}")
+        assert not plus.enabled
+        assert plus.props["aria-label"] == "nothing is scored"
+
+
+async def test_a_sync_with_nothing_moved_repaints_the_rows_in_place(stats_shell):
+    """Rows are rebuilt only when their shape moves (the TreeCard rule): an
+    edit elsewhere repaints the pill it moved and keeps every row."""
+    shell = stats_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        row = _one(user, f"stats:row:{NONLINEAR}")
+        with page.client:
+            page.sync()
+        assert _one(user, f"stats:row:{NONLINEAR}") is row
+
+
+async def test_fakelibs_own_statistics_render(tmp_path):
+    """Nothing injected: what the Python backend records — `simulation.
+    wall_time` from the run, the walls every backend gets."""
+    cfg, work = _two_var_project(tmp_path)
+    (work / "test_0001" / "run_stats.json").write_text(
+        json.dumps({"model_id": A, "translation_wall": 0.0, "sim_wall": 0.41,
+                    "elapsed": 0.52,
+                    "statistics": {"simulation": {"wall_time": 0.41}}}),
+        encoding="utf-8",
+    )  # fmt: skip
+    shell = _opened(cfg, work)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _line_text(user) == "no baseline statistics"
+        page.stats.toggle()
+        _one(user, "stats:row:simulation.wall_time")
+        _one(user, "stats:row:timing.total_wall")

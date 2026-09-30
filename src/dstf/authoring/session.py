@@ -115,7 +115,9 @@ class Selection:
     tree path. A page builds a new view when it changes; two browser tabs
     keep two. Not the Session's — that was the old shell's one-tab shape.
     ``node_path``: the tree node whose controls are being drawn (NODE) — a
-    leaf or a combinator; ``leaf_path`` only ever names a criterion.
+    leaf or a combinator; ``leaf_path`` only ever names a criterion;
+    ``quantity`` the statistic a Statistics row shows (STATISTIC), by the
+    path a leaf would read it through (``translation.nonlinear_count``).
 
     ``texts`` is the page's ONE read of the selected test's label scope
     (:meth:`Session.variable_texts`), handed down with the selection so a
@@ -133,6 +135,7 @@ class Selection:
     variable: str | None = None
     leaf_path: str | None = None
     node_path: str | None = None
+    quantity: str | None = None
     texts: Mapping[str, VariableText] = MappingProxyType({})
 
 

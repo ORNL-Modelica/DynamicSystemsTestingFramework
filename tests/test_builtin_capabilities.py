@@ -1938,7 +1938,8 @@ async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(session):
 
 def test_the_builtins_declare_their_placements():
     """Brief §3.2: Accept and Rerun at suite and test; Edit tree as a tree
-    node's controls and a variable's "Add a criterion for x"; Edit on plot
+    node's controls, a variable's "Add a criterion for x" and a Statistics
+    row's `+` (U3); Edit on plot
     and Edit criteria at the open criterion — the two that read as ONE
     editor. Nothing built-in is left at TEST but Accept and Rerun."""
     from dstf.authoring.builtin.edit_on_plot import EditOnPlot
@@ -1951,7 +1952,7 @@ def test_the_builtins_declare_their_placements():
         Placement.CRITERION,
     )
     assert Accept.placements == {S, T} and Rerun.placements == {S, T}
-    assert EditTree.placements == {Placement.NODE, V}
+    assert EditTree.placements == {Placement.NODE, V, Placement.STATISTIC}
     assert EditOnPlot.placements == {C_}
     assert EditCriteria.placements == {C_}
     at_test = {c.name for c in caps.registered_capabilities() if T in c.placements}

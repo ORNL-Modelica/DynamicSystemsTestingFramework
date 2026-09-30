@@ -83,7 +83,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* A pill that carries its variable's name ("x FAIL", on a card drawing
    more than one series): the name keeps the case the test wrote it in. */
 .dstf-pill-named { text-transform: none; }
-.dstf-tree-line { min-height: 32px; }
+.dstf-tree-line, .dstf-stats-line { min-height: 32px; }
 .dstf-tree-row {
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
@@ -260,6 +260,37 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   font-size: 10px; text-transform: uppercase; letter-spacing: .03em;
   color: var(--dstf-text-muted); padding: 12px 0 2px; overflow-wrap: anywhere;
 }
+/* A short, fixed title — the picker's sections, the Statistics card's —
+   never breaks (at 10 px "On this plot" measured 70 px in a 69.6 px box)
+   and spaces its words: uppercase at 10 px a space is 2.3 px, and "S P"
+   read "ON THISPLOT" in Chromium on one line. A drawer's package title
+   keeps `anywhere`. */
+.dstf-pick-list .dstf-group, .dstf-stats .dstf-group {
+  white-space: nowrap; word-spacing: .2em;
+}
+/* The Statistics card (U3): a row per statistic, the numbers in fixed
+   right-aligned columns so Run and Baseline read down, the `+` or the
+   criterion's pill at the end; a changed row wears the report's warn
+   tint. */
+.dstf-stats .dstf-group { padding-left: 8px; }
+.dstf-stat-row {
+  width: 100%; min-height: 28px; padding: 0 8px;
+  border-top: 1px solid var(--dstf-border-hairline);
+}
+.dstf-stat-head { color: var(--dstf-text-muted); font-size: 12px; border-top: none; }
+.dstf-stat-label {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* In px, not ch: the headings are not in the numbers' mono font, and a
+   `ch` column is as wide as its own font says. */
+.dstf-stat-num { flex: none; width: 84px; text-align: right; }
+.dstf-stat-delta { flex: none; width: 56px; text-align: right; }
+.dstf-stat-end {
+  flex: none; width: 150px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 6px;
+}
+.dstf-stat-changed { background: var(--dstf-warn-tint); }
 /* The Tests drawer's rows at a real library's lengths: the name takes what
    the badge and the edits pill leave it and is cut with an ellipsis (the
    whole id is its title), and they never shrink. A TRANSFORM id in Full,

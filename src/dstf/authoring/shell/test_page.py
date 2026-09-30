@@ -1,5 +1,6 @@
 """The Test page (brief §3.2; roadmap §3): one test — its own header as a
-second row of the shared one, its criteria tree closed to a line, and its
+second row of the shared one, its statistics and its criteria tree each
+closed to a line, and its
 plots stacked, each drawn when it scrolls into view with that variable's
 criteria rows under it and, under the row that was clicked, that
 criterion's editor — one at a time, page-wide, with the plot above it as
@@ -36,6 +37,7 @@ from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard, folded
 from .rail import Rail
+from .stats_card import StatsCard
 from .strip import StatusStrip
 from .tabstate import connected_tab_state
 from .tree_card import TreeCard, leaf_status
@@ -87,6 +89,7 @@ class TestPage:
         self.strip: StatusStrip | None = None
         self.actions: ActionBar | None = None
         self.tree: TreeCard | None = None
+        self.stats: StatsCard | None = None
         self.cards: list[PlotCard] = []
         self.count: ui.label | None = None
         self.column: ui.column | None = None
@@ -133,6 +136,9 @@ class TestPage:
         self.header = Header(self.shell, below=self._subheader, strip=self._strip)
         self.rail = Rail(self)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
+            # Above the tree (the plot-model board): what the run recorded,
+            # and the `+` that makes a statistic a criterion.
+            self.stats = StatsCard(self)
             self.tree = TreeCard(self)
             self.count = (
                 ui.label().classes("text-secondary text-xs").mark("plots:count")
@@ -877,6 +883,8 @@ class TestPage:
             return
         view = self._view()
         self._paint(view)
+        if self.stats is not None:
+            self.stats.refresh(view)
         if self.tree is not None:
             self.tree.refresh(view)
         if self.column is None:
@@ -941,6 +949,8 @@ class TestPage:
         self.column.clear()
         if self.tree is not None:
             self.tree.forget()
+        if self.stats is not None:
+            self.stats.forget()
         if self.count is not None:
             self.count.set_text("")
         if self.focus_bar is not None:
