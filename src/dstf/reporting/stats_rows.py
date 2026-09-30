@@ -93,11 +93,31 @@ def _count_text(v: float) -> str:
     return str(int(v)) if float(v).is_integer() else f"{v:g}"
 
 
+def _time_text(v: float) -> str:
+    """3 significant figures KEEPING zeros (``0.800``, ``2.10``): ``0.8``
+    beside ``1.12`` read as a coarser number. ``100.`` loses its point."""
+    return f"{float(v):#.3g}".rstrip(".")
+
+
+def value_text(kind: str, value: Any) -> str:
+    """A row's value as BOTH tiers print it — the report's table and the
+    tool's card: a time with its unit (``0.800 s``), a count whole
+    (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a side
+    that recorded none."""
+    if value is None:
+        return ""
+    if kind == "text" or not _is_number(value):
+        return _text(value)
+    if kind == "time":
+        return f"{_time_text(value)} s"
+    return _count_text(value)
+
+
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     """S6: a count reads ``0→3``, a time ``+38%`` (``+0.12 s`` over a zero
     baseline) — whenever both sides are present and differ, changed or
-    not. Under 1% a time keeps one decimal (``+0.3%``): a time that moved
-    never reads ``+0%``."""
+    not. Under 1% a time keeps one decimal (``+0.3%``), and under 0.05%
+    reads ``+<0.1%``: a time that moved never reads ``+0%`` or ``+0.0%``."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
@@ -105,6 +125,8 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     if baseline == 0:
         return f"{run - baseline:+.2g} s"
     ratio = (run - baseline) / baseline
+    if abs(ratio) < 0.0005:
+        return f"{'+' if ratio > 0 else '-'}<0.1%"
     return f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
 
 
@@ -117,10 +139,15 @@ def _text(v: object) -> str:
     return str(v)
 
 
+#: A word a label spells in capitals: `cpu_time_integration` reads "CPU
+#: time integration".
+_UPPER = {"cpu": "CPU"}
+
+
 def _label(key: str, top_level: bool) -> str:
     if top_level:
         return key
-    text = key.replace("_", " ")
+    text = " ".join(_UPPER.get(word, word) for word in key.split("_"))
     return text[:1].upper() + text[1:]
 
 

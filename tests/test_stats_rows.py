@@ -108,7 +108,7 @@ def test_text_rows_are_present_and_changed_by_the_report_rule():
 def test_labels():
     rows = _by_path(statistics_rows(RUN, BASE))
     assert rows["translation.nonlinear_count"].label == "Nonlinear count"
-    assert rows["simulation.cpu_time_integration"].label == "Cpu time integration"
+    assert rows["simulation.cpu_time_integration"].label == "CPU time integration"
     assert rows["EventCounter"].label == "EventCounter"
 
 
@@ -269,3 +269,30 @@ def test_changed_reads_the_seeds_tolerance():
     assert not changed("translation.nonlinear_count", "count", 3, 3)
     assert not changed("CPUtime", "time", None, 1.0)
     assert not changed("CPUtime", "time", 1.0, None)
+
+
+def test_a_value_reads_the_same_on_both_tiers():
+    """A time to 3 significant figures KEEPING its zeros (`0.800 s`, never
+    `0.8 s`) and no bare trailing point; a count whole, however large."""
+    from dstf.reporting.stats_rows import value_text
+
+    assert value_text("time", 0.8) == "0.800 s"
+    assert value_text("time", 2.1) == "2.10 s"
+    assert value_text("time", 1.2345) == "1.23 s"
+    assert value_text("time", 100.0) == "100 s"
+    assert value_text("count", 1234567) == "1234567"
+    assert value_text("count", 102.0) == "102"
+    assert value_text("count", None) == ""
+    assert value_text("text", ["a", "b"]) == "a, b"
+
+
+def test_a_time_under_a_twentieth_of_a_percent_off_reads_under_a_tenth():
+    """`+0.0%` said nothing moved while the delta said it had."""
+    rows = _by_path(
+        statistics_rows(
+            {"timing": {"total_wall": 100.04, "sim_wall": 99.96}},
+            {"timing": {"total_wall": 100.0, "sim_wall": 100.0}},
+        )
+    )
+    assert rows["timing.total_wall"].delta == "+<0.1%"
+    assert rows["timing.sim_wall"].delta == "-<0.1%"

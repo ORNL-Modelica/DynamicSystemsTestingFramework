@@ -3768,6 +3768,17 @@ def _plots_mounted(page) -> None:
     page.wait_for_timeout(300)
 
 
+#: An element's computed background, and the selection token's resolved.
+SELECTION_BACKGROUND = """(el) => {
+    const probe = document.createElement("div");
+    probe.style.background = "var(--dstf-selection)";
+    document.body.appendChild(probe);
+    const want = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return [getComputedStyle(el).backgroundColor, want];
+}"""
+
+
 def test_a_statistics_plus_while_plotly_loads_raises_nothing(
     tmp_path, playwright_browser
 ):
@@ -3840,6 +3851,11 @@ def test_a_statistics_criterion_is_edited_under_its_row(tmp_path, playwright_bro
         editor = card.locator(".dstf-editor")
         expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
         expect(row).to_have_class(re.compile(r"dstf-crit-open"))
+        # A changed row is tinted; open, it wears the selection as every
+        # open criteria row does — the tint hid which row was open.
+        expect(row).to_have_class(re.compile(r"dstf-stat-changed"))
+        got, want = row.evaluate(SELECTION_BACKGROUND)
+        assert got == want, (got, want)
         for width in (1280, 900):
             page.set_viewport_size({"width": width, "height": 900})
             page.wait_for_timeout(300)

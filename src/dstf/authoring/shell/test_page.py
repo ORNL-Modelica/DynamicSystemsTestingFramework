@@ -33,7 +33,6 @@ from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..session import JobRunningError, LockedError
 from ..situation import Strip, new_variables, strip_for
 from ..tree_pointer import node_or_none
-from ..tree_text import nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard, folded
@@ -449,7 +448,7 @@ class TestPage:
         (U3): it has no plot."""
         if index is None and self.stats is not None:
             view = self._view()
-            if self.stats.row_for(path, view) is not None:
+            if self.stats.row_for(path) is not None:
                 self._close_row()
                 self._close()
                 if self.stats.open_editor(path, view):
@@ -513,29 +512,16 @@ class TestPage:
 
     def jump_to(self, path: str) -> None:
         """The closed tree line's jump (board 1A): open that criterion and
-        bring the row it opened under into view. A criterion whose variable
-        is on no plot of this test has no row to open — the jump said
-        nothing at all, and with another editor open it scrolled to THAT
-        row instead."""
+        bring the row it opened under into view — a plot's criteria row, or
+        a Statistics row (U3: every leaf of a tree view is on one or the
+        other). A criterion with no row drawn opens nothing and scrolls to
+        nothing: with another editor open, the jump scrolled to THAT row."""
         self.open_criterion(path)
         if self.open is not None and self.open[1] == path:
             ui.run_javascript(
                 'document.querySelector(".dstf-crit-open")'
                 '?.scrollIntoView({block: "center"})'
             )
-            return
-        ui.notify(
-            f"{self._variable_of(path)} is on no plot of this test", type="warning"
-        )
-
-    def _variable_of(self, path: str) -> str:
-        """What a tree node's variable is CALLED, for a sentence about it —
-        the leaf's own text, the same one its criteria row reads (a
-        notification carries no muted name beside it)."""
-        node = next((n for n in nodes_of(self._view()) if n.get("path") == path), None)
-        if node is None:
-            return path
-        return str(node.get("label") or node.get("variable"))
 
     # -- the cards -------------------------------------------------------------
 

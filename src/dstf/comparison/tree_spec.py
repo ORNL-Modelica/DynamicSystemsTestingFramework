@@ -204,18 +204,27 @@ def tree_variables(spec: SpecNode | None, diagnostics: Iterable[str] = ()) -> li
     return out
 
 
-def statistic_paths(spec: SpecNode | None) -> list[str]:
-    """The quantity paths the tree's statistics leaves read
-    (:func:`reads_a_statistic`), unique, in tree order: what a Statistics
-    row must exist for. ``[]`` for no tree."""
+def statistic_leaves(spec: SpecNode | None) -> list[tuple[LeafSpec, str]]:
+    """The tree's statistics leaves (:func:`reads_a_statistic`) with their
+    paths, in tree order: which Statistics rows the tree scores. ``[]``
+    for no tree."""
     if spec is None:
         return []
+    return [
+        (leaf, path)
+        for leaf, path in _walk_leaves_with_paths(spec, "/metrics")
+        if reads_a_statistic(leaf.metric, leaf.params)
+    ]
+
+
+def statistic_paths(spec: SpecNode | None) -> list[str]:
+    """The quantity paths the tree's statistics leaves read, unique, in
+    tree order: what a Statistics row must exist for. ``[]`` for no tree."""
     out: list[str] = []
-    for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
-        if reads_a_statistic(leaf.metric, leaf.params):
-            path = str(leaf.params["quantity"])
-            if path not in out:
-                out.append(path)
+    for leaf, _ in statistic_leaves(spec):
+        path = str(leaf.params["quantity"])
+        if path not in out:
+            out.append(path)
     return out
 
 

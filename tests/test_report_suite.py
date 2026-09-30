@@ -3250,6 +3250,16 @@ class TestTheStatisticsTable:
         row = self._rows()["Nonlinear count"]
         assert (row["current"], row["reference"]) == ("3", "0")
 
+    def test_a_value_reads_as_the_tools_card_reads_it(self):
+        """One formatting for both tiers: a time with its unit, to 3
+        significant figures keeping zeros."""
+        row = self._rows()["CPUtime"]
+        assert (row["current"], row["reference"]) == ("1.12 s", "0.800 s")
+        from dstf.reporting.context_builder import _build_key_stats
+
+        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, self.RUN)}
+        assert stats["CPU Time"]["reference"] == "0.800 s"
+
     def test_the_sections_and_their_order_are_the_reports(self):
         assert [
             (s["title"], [r["label"] for r in s["rows"]]) for s in self._sections()

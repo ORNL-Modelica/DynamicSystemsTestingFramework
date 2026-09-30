@@ -291,6 +291,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   justify-content: flex-end; gap: 6px;
 }
 .dstf-stat-changed { background: var(--dstf-warn-tint); }
+/* Open, a changed row wears the selection as every open criteria row does:
+   the tint, declared later, hid which row the editor was under. */
+.dstf-stats .dstf-crit-open { background: var(--dstf-selection); }
 /* The editor under a Statistics row keeps inside the card: `w-full` plus
    the editor's 16 px indent ran 16 px past its right edge (B12). */
 .dstf-stats .dstf-editor { width: calc(100% - 16px); }

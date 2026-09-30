@@ -200,14 +200,15 @@ class EditTree:
         if len(sel.tests) != 1:
             return "select exactly one test"
         model_id = next(iter(sel.tests))
-        running = s.running
-        if running is not None and s.is_locked(model_id):
-            return f"{running.label} is running on {model_id}"
         if sel.quantity is not None:
             # A Statistics row's `+` is drawn grey with the add form's
-            # reason where nothing can be added (A9): a why-line in place
-            # of it, on every row, said the same thing twenty times.
+            # reason where nothing can be added (A9), a job's lock included:
+            # a why-line in place of it, on every row, said the same thing
+            # twenty times (57 on a TRANSFORM card).
             return True
+        locked = _locked_by(s, model_id)
+        if locked is not None:
+            return locked
         tree = s.tree(model_id)
         if tree is None:
             return "no tree to edit (nothing scored)"
@@ -876,6 +877,14 @@ def _variable_plus(
         button.disable()
 
 
+def _locked_by(s: SessionView, model_id: str) -> str | None:
+    """Why nothing may edit ``model_id`` now — the job holding it — or None."""
+    running = s.running
+    if running is not None and s.is_locked(model_id):
+        return f"{running.label} is running on {model_id}"
+    return None
+
+
 def _statistic_plus(
     ui: Any, s: SessionView, ui_panel: Panel, model_id: str, quantity: str
 ) -> None:
@@ -884,11 +893,14 @@ def _statistic_plus(
     lands in an `and`), added at the END of the root (Q6 b), or as
     ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
     after it. Grey with the add form's reason where nothing can take it:
-    a simulate-only test, a test with nothing scored (no tree to add to),
-    a root that takes no child alone."""
+    a job holding the test, a simulate-only test, a test with nothing
+    scored (no tree to add to), a root that takes no child alone."""
     tree = s.tree(model_id)
-    if _simulate_only(s, model_id):
-        reason: str | None = _SIMULATE_ONLY
+    locked = _locked_by(s, model_id)
+    if locked is not None:
+        reason: str | None = locked
+    elif _simulate_only(s, model_id):
+        reason = _SIMULATE_ONLY
     elif tree is None:
         reason = _NOTHING_SCORED
     else:

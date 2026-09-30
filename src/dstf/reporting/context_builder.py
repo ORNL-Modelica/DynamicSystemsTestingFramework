@@ -16,7 +16,7 @@ import numpy as np
 from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
-from .stats_rows import SECTION_TITLES, statistics_rows
+from .stats_rows import SECTION_TITLES, statistics_rows, value_text
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +267,8 @@ def _build_statistics_sections(
     """The Statistics table: :func:`~.stats_rows.statistics_rows` rendered
     into the template's ``{title, rows: [{label, current, reference,
     changed}]}`` sections — the rows the tool's Statistics card shows, in
-    the report's order, under one "changed" rule for both. A section with
+    the report's order, under one "changed" rule for both and printed as
+    the card prints them (:func:`~.stats_rows.value_text`). A section with
     no key is no section. ``run_diagnostics`` are the run's samples: a
     folded diagnostic's row takes its kind from them, as the card's does."""
     sections: dict[str, dict] = {}
@@ -282,8 +283,8 @@ def _build_statistics_sections(
         sections[row.section]["rows"].append(
             {
                 "label": row.label,
-                "current": _format_value(row.run),
-                "reference": _format_value(row.baseline),
+                "current": value_text(row.kind, row.run),
+                "reference": value_text(row.kind, row.baseline),
                 "changed": row.changed,
             }
         )
@@ -495,7 +496,8 @@ def _build_key_stats(
     """
 
     # A statistics pick reads its row: its values (a baseline's empty list
-    # reads its count as 0) and the one "changed" rule.
+    # reads its count as 0), printed as the table prints them, and the one
+    # "changed" rule.
     rows = {
         row.path: row
         for row in statistics_rows(
@@ -510,8 +512,8 @@ def _build_key_stats(
         key_stats.append(
             {
                 "label": label,
-                "current": _format_value(row.run),
-                "reference": _format_value(row.baseline),
+                "current": value_text(row.kind, row.run),
+                "reference": value_text(row.kind, row.baseline),
                 "changed": row.changed,
             }
         )

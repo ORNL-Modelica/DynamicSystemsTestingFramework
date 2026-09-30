@@ -4,8 +4,10 @@ naming the rows that changed; open, a row per count or time under its
 section, each ending in whatever attaches at STATISTIC (a `+` that adds a
 requirement on it) — or, for a row a criterion reads, that criterion's
 pill and its requirement in a word or two. The card is a VIEW of the one
-tree (Q1 b): a statistics criterion is edited under its row, by whatever
-attaches at STATISTIC_CRITERION. It knows no capability by name.
+tree (Q1 b): which rows are scored is the tree as authored, staged edits
+included (`Session.statistic_leaves`); the tree view only says each
+criterion's verdict. A statistics criterion is edited under its row, by
+whatever attaches at STATISTIC_CRITERION. It knows no capability by name.
 
 The rows are `Session.statistics` (`reporting.stats_rows`), the row model
 the report renders too: a row is "changed" when the criterion its `+`
@@ -24,8 +26,7 @@ from nicegui import ui
 
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
-from ...comparison.tree_spec import reads_a_statistic
-from ...reporting.stats_rows import SECTION_TITLES, StatRow
+from ...reporting.stats_rows import SECTION_TITLES, StatRow, value_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
@@ -35,6 +36,7 @@ from .tree_card import leaf_status
 from .widgets import Pill
 
 if TYPE_CHECKING:
+    from ...comparison.tree_spec import LeafSpec
     from .test_page import TestPage
 
 NAMED = 3  #: changed entries the closed line names (S6); the rest are counted
@@ -100,13 +102,10 @@ def summary(leaf: dict) -> str:
     return "exact" if tol == 0 else f"±{tol:g}"
 
 
-def value_text(row: StatRow, value: Any) -> str:
-    """A time to 3 significant figures with its unit; a count as it is."""
-    if value is None:
-        return "—"
-    if row.kind == "time":
-        return f"{float(value):.3g} s"
-    return f"{float(value):g}"
+def cell_text(row: StatRow, value: Any) -> str:
+    """A value as the report's table prints it (`value_text`); `—` for a
+    side that recorded none."""
+    return value_text(row.kind, value) or "—"
 
 
 def row_of(quantity: str, paths: Sequence[str] | set[str]) -> str:
@@ -119,14 +118,28 @@ def row_of(quantity: str, paths: Sequence[str] | set[str]) -> str:
     return name if field == "final" and name in paths else quantity
 
 
-def scored(view: dict | None, paths: Sequence[str]) -> dict[str, list[dict]]:
-    """Row path -> the view's leaves reading it, in tree order."""
+def scored(
+    leaves: Sequence[tuple[LeafSpec, str]],
+    view: dict | None,
+    paths: Sequence[str],
+) -> dict[str, list[dict]]:
+    """Row path -> the criteria reading it, in tree order: the AUTHORED
+    tree's statistics leaves (``leaves``, `Session.statistic_leaves`), each
+    as ``{"path", "params", "status"}`` — its status the view's verdict,
+    "pending" where the view has none. Read from the view, a test with
+    nothing compared (no baseline: no view) showed a staged criterion's row
+    as unscored, and its `+` staged the same leaf again."""
     held = set(paths)
+    verdicts = {str(n["path"]): leaf_status(n) for n in leaves_of(view)}
     out: dict[str, list[dict]] = {}
-    for leaf in leaves_of(view):
-        params = leaf.get("params") or {}
-        if reads_a_statistic(str(leaf.get("metric")), params):
-            out.setdefault(row_of(str(params["quantity"]), held), []).append(leaf)
+    for leaf, path in leaves:
+        out.setdefault(row_of(str(leaf.params["quantity"]), held), []).append(
+            {
+                "path": path,
+                "params": leaf.params,
+                "status": verdicts.get(path, "pending"),
+            }
+        )
     return out
 
 
@@ -147,15 +160,15 @@ class _Row:
         self.pill, self.rule, self.more = pill, rule, more
 
     def paint(self, stat: StatRow, leaves: list[dict]) -> None:
-        self.run.set_text(value_text(stat, stat.run))
-        self.base.set_text(value_text(stat, stat.baseline))
+        self.run.set_text(cell_text(stat, stat.run))
+        self.base.set_text(cell_text(stat, stat.baseline))
         self.delta.set_text(stat.delta)
         if stat.changed:
             self.row.classes(add="dstf-stat-changed")
         else:
             self.row.classes(remove="dstf-stat-changed")
         if self.pill is not None and leaves:
-            self.pill.set(leaf_status(leaves[0]))
+            self.pill.set(leaves[0]["status"])
         if self.rule is not None and leaves:
             self.rule.set_text(summary(leaves[0]))
         if self.more is not None:
@@ -172,6 +185,9 @@ class StatsCard:
         self.rows_by_path: dict[str, ui.row] = {}
         self.slots: dict[str, ui.column] = {}
         self._shape: tuple = ()
+        #: The job holding this test when the `+`s were drawn: they grey
+        #: under it, and are redrawn when it comes or goes.
+        self._lock: str | None = None
         self._toggle: ui.button | None = None
         self._summary: ui.label | None = None
         #: The one open editor: its leaf, its host and box, and the leaf as
@@ -220,7 +236,7 @@ class StatsCard:
             return
         shown = [r for r in stats if r.kind != "text"]
         paths = [r.path for r in shown]
-        reads = scored(view, paths)
+        reads = scored(session.statistic_leaves(model), view, paths)
         tree = session.tree(model)
         shape = (
             model,
@@ -240,9 +256,17 @@ class StatsCard:
                 self.page._close()
             self._build(shown, reads)
             return
+        lock = self._locked()
+        moved, self._lock = lock != self._lock, lock
         for host in self.hosts:
-            # The rows stand; what a `+` MAY do does not (a job's lock).
-            host.follow()
+            # The rows stand; what a `+` MAY do does not. A job's lock greys
+            # it (a why-line in its place said the same thing on every
+            # row) — an answer `available` does not carry, so `follow`
+            # cannot see it move.
+            if moved:
+                host.build()
+            else:
+                host.follow()
         for stat in shown:
             self.painters[stat.path].paint(stat, reads.get(stat.path, []))
         if self.editor is not None:
@@ -254,6 +278,13 @@ class StatsCard:
                 self._edited = edited
             else:
                 self.editor.follow()
+
+    def _locked(self) -> str | None:
+        """The label of the job holding this test, or None."""
+        running = self.page.shell.session.running
+        if running is None or self.page.model_id not in running.models:
+            return None
+        return str(running.label)
 
     # -- the closed line -------------------------------------------------------
 
@@ -280,6 +311,7 @@ class StatsCard:
 
     def _build(self, shown: list[StatRow], reads: dict[str, list[dict]]) -> None:
         self.close_editor()
+        self._lock = self._locked()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters = [], {}
@@ -325,7 +357,7 @@ class StatsCard:
             delta = ui.label().classes("dstf-stat-delta text-secondary text-xs")
             with ui.element("span").classes("dstf-stat-end"):
                 if leaves:
-                    pill = Pill(leaf_status(leaves[0]), f"stats:pill:{path}")
+                    pill = Pill(leaves[0]["status"], f"stats:pill:{path}")
                     rule = ui.label().classes("dstf-mono text-xs")
                     rule.mark(f"stats:rule:{path}")
                     more = ui.label().classes("text-secondary text-xs")
@@ -361,21 +393,29 @@ class StatsCard:
 
     # -- the one open editor -------------------------------------------------
 
-    def row_for(self, leaf_path: str, view: dict | None) -> str | None:
+    def row_for(self, leaf_path: str) -> str | None:
         """The row a statistics criterion is shown on, or None — a leaf
-        that reads no statistic, or none at that path."""
-        leaf = next((n for n in leaves_of(view) if str(n["path"]) == leaf_path), None)
-        params = (leaf or {}).get("params") or {}
-        if leaf is None or not reads_a_statistic(str(leaf.get("metric")), params):
+        that reads no statistic, or none at that path. The authored tree's,
+        as `scored` reads it."""
+        session, model = self.page.shell.session, self.page.model_id
+        leaf = next(
+            (
+                leaf
+                for leaf, path in session.statistic_leaves(model)
+                if path == leaf_path
+            ),
+            None,
+        )
+        if leaf is None:
             return None
-        paths = [r.path for r in self.page.shell.session.statistics(self.page.model_id)]
-        return row_of(str(params["quantity"]), paths)
+        paths = [r.path for r in session.statistics(model)]
+        return row_of(str(leaf.params["quantity"]), paths)
 
     def open_editor(self, leaf_path: str, view: dict | None) -> bool:
         """The criterion's editor under its row (the `PlotCard.open_editor`
         pattern, with no plot), the card opened if it was closed. The page
         keeps the one-editor rule: it closes what else is open first."""
-        key = self.row_for(leaf_path, view)
+        key = self.row_for(leaf_path)
         if key is None:
             return False
         if not self.is_open:

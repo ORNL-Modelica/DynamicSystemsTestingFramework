@@ -3318,11 +3318,15 @@ async def test_a_jump_to_a_statistics_criterion_opens_it_in_the_card(shell):
         assert user.notify.messages == []
 
 
-async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
-    """A criterion whose variable is on no plot — the run failed while its
-    jump was on screen, so no plot is drawn — has no row to open: the jump
-    said nothing and — with another editor open — scrolled to THAT row
-    instead. With no tree view left it names the criterion by its path."""
+async def test_a_jump_to_a_criterion_with_no_row_opens_and_scrolls_nothing(
+    shell, monkeypatch
+):
+    """The run failed while a jump was on screen, so no plot is drawn: the
+    criterion has no row to open. With another editor open the jump
+    scrolled to THAT row; now it opens and scrolls to nothing. (It said
+    "… is on no plot of this test" until U3's fix batch 2: every leaf of a
+    tree view is on a plot or in the Statistics card, and a page with no
+    tree view shows no jump.)"""
     from dstf.authoring.shell import test_page as page_mod
     from dstf.backends.types import TestResult
 
@@ -3341,10 +3345,10 @@ async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
         monkeypatch.setattr(page_mod.ui, "run_javascript", scrolled.append)
         with page.client:
             page.jump_to(T1)
-        await _settled(lambda: user.notify.messages != [])
-        assert user.notify.messages == [f"{T1} is on no plot of this test"]
+        await asyncio.sleep(0.2)
         assert scrolled == []
         assert page.open is None
+        assert user.notify.messages == []
 
 
 async def test_a_jump_opens_the_card_holding_the_row(shell):
@@ -3652,10 +3656,7 @@ async def test_a_mode_switch_keeps_the_editor_open(shell):
 async def test_the_focus_bar_reads_the_label(awkward_expression_shell):
     """A place that names a variable, on the page whose titles already read
     its expression: the focus switcher's option said `unitTests.x[1]`,
-    which names nothing a person recognises. (The jump's "is on no plot"
-    read it too until U3: every leaf of a tree view is now on a plot or in
-    the Statistics card, and only a test with no tree view — no jumps —
-    draws no plot.)"""
+    which names nothing a person recognises."""
     from test_session import AWKWARD_EXPRESSION
 
     shell = awkward_expression_shell
@@ -8022,7 +8023,7 @@ async def test_the_open_card_lists_every_numeric_statistic_by_section(stats_shel
         ]
         texts = [e.text for e in _one(user, "stats:row:CPUtime").descendants()
                  if isinstance(e, ui.label)]  # fmt: skip
-        assert texts[:4] == ["CPUtime", "1.12 s", "0.8 s", "+40%"]
+        assert texts[:4] == ["CPUtime", "1.12 s", "0.800 s", "+40%"]
         texts = [e.text for e in _one(user, f"stats:row:{NONLINEAR}").descendants()
                  if isinstance(e, ui.label)]  # fmt: skip
         assert texts[:4] == ["Nonlinear count", "3", "0", "0→3"]
@@ -8283,3 +8284,72 @@ async def test_a_statistics_plus_rebuilds_no_plot(stats_shell, monkeypatch):
         await _settled(lambda: page.open is not None and page.open[0] == STATS)
         assert page.focused == 1
         assert page.cards == cards and len(built) == n
+
+
+async def test_a_large_count_reads_whole_on_the_card(stats_shell):
+    """A count is an integer: `1234567`, never `1.23457e+06`."""
+    shell = stats_shell
+    result = shell.session.project.results[A]
+    stats = copy.deepcopy(result.statistics)
+    stats["simulation"]["accepted_steps"] = 1234567
+    result.statistics = stats
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        texts = [e.text for e in _one(user, "stats:row:simulation.accepted_steps")
+                 .descendants() if isinstance(e, ui.label)]  # fmt: skip
+        assert texts[:3] == ["Accepted steps", "1234567", "25"]
+
+
+async def test_a_row_the_authored_tree_scores_is_pending_with_no_verdict(stats_shell):
+    """Which rows are scored is the entry's tree, not the tree view: B has
+    no baseline, so nothing is compared and there is no view — its staged
+    count requirement still holds the row, with a pending pill and no `+`
+    (a click on one staged the same leaf again)."""
+    shell = stats_shell
+    leaf = "/metrics/children/1"
+    _stage_tree(shell, B, {"combinator": "and", "children": [
+        {"metric": "range", "variable": "x", "min_value": -1},
+        {"metric": "scalar", "quantity": NONLINEAR, "tolerance": 0}]})  # fmt: skip
+    assert shell.session.tree_view(B) is None
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, model=B)
+        page.stats.toggle()
+        assert _one(user, f"stats:pill:{NONLINEAR}").text == "pending"
+        assert _one(user, f"stats:rule:{NONLINEAR}").text == "exact"
+        assert _none(user, f"add-statistic:{NONLINEAR}")
+        # and its row opens its editor, as a scored row's does
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        assert not _none(user, f"stats-editor:{leaf}")
+
+
+def _plus_state(user, marker: str) -> bool | None:
+    """The `+` marked ``marker``: enabled or not, None while it is not drawn."""
+    if _none(user, marker):
+        return None
+    return _one(user, marker).enabled
+
+
+async def test_a_job_lock_greys_the_plus_with_no_why_line(stats_shell):
+    """Under a job's lock every `+` greys with the lock as its tooltip — a
+    why-line in place of each said the same thing on every row (57 lines
+    on a TRANSFORM card) — and follows the lock back, the rows repainted,
+    not rebuilt."""
+    from dstf.authoring.capabilities import Job
+
+    shell = stats_shell
+    gate = _Gate()
+    plus = f"add-statistic:{NONLINEAR}"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        row = _one(user, f"stats:row:{NONLINEAR}")
+        assert _plus_state(user, plus) is True
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await _settled(lambda: _plus_state(user, plus) is False)
+        assert _one(user, plus).props["aria-label"] == f"rerun is running on {A}"
+        assert not [m for m in _marks(page.stats.rows) if m.startswith("why:")]
+        gate.release.set()
+        await _settled(lambda: _plus_state(user, plus) is True)
+        assert _one(user, f"stats:row:{NONLINEAR}") is row

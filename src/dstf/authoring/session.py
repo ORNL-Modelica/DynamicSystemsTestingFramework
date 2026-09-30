@@ -1036,6 +1036,19 @@ class Session:
             extra_paths=statistic_paths(self._entry_tree(model_id)),
         )
 
+    def statistic_leaves(self, model_id: str) -> list[tuple[LeafSpec, str]]:
+        """The statistics leaves of the entry's OWN tree, staged edits
+        included, with their paths (:func:`~dstf.comparison.tree_spec.
+        statistic_leaves`): which Statistics rows are scored. Read from the
+        tree as authored, not from :meth:`tree_view` — a test with nothing
+        compared (no baseline) has no view, and its criteria are criteria
+        all the same. An unknown model is a KeyError."""
+        from ..comparison.tree_spec import statistic_leaves
+
+        if self._require_project().test(model_id) is None:
+            raise KeyError(model_id)
+        return statistic_leaves(self._entry_tree(model_id))
+
     def _entry_tree(self, model_id: str) -> SpecNode | None:
         """The entry's OWN tree, parsed; None when it has none. Never the
         tree :meth:`tree` materializes for a flat entry: that reads the
