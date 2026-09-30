@@ -810,7 +810,7 @@ def test_statistics_diagnostics_and_artifacts_render(compared, playwright_browse
     page.close()
 
     assert errors == []
-    assert "Cpu Time" in text
+    assert "Cpu time" in text
     assert "CPUtime" in text
     assert href is not None and href.endswith("dslog.txt")
 

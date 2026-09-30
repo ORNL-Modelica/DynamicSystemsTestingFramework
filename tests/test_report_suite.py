@@ -3203,3 +3203,81 @@ class TestAVariableReadsAsItsExpression:
         ]
         # The keys are untouched.
         assert _page_data(page, "PLOT_SERIES") == [[self.N1], [self.N2]]
+
+
+class TestTheStatisticsTable:
+    """The report's Statistics table and Key stats render the one row model:
+    a row is tinted when the criterion its `+` would add would fail; its
+    order and sections are the report's as before, only the labels are the
+    row model's."""
+
+    # Built fresh for every call: a builder that wrote into its input would
+    # otherwise hide it from the next test.
+    @property
+    def RUN(self):
+        return {
+            "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
+            "simulation": {"state_events": 2},
+            "timing": {"total_wall": 4.02},
+            "CPUtime": 1.12,
+        }
+
+    @property
+    def BASE(self):
+        return {
+            "translation": {"nonlinear": []},
+            "simulation": {"state_events": 2},
+            "timing": {"total_wall": 3.91},
+            "CPUtime": 0.80,
+        }
+
+    def _sections(self):
+        from dstf.reporting.context_builder import _build_statistics_sections
+
+        return _build_statistics_sections(self.BASE, self.RUN)
+
+    def _rows(self):
+        return {r["label"]: r for s in self._sections() for r in s["rows"]}
+
+    def test_a_time_3_percent_off_is_not_tinted_and_a_count_change_is(self):
+        rows = self._rows()
+        assert not rows["Total wall"]["changed"]
+        assert rows["Nonlinear count"]["changed"]
+        assert rows["CPUtime"]["changed"]
+        assert not rows["State events"]["changed"]
+
+    def test_an_empty_list_reads_its_count_as_zero(self):
+        row = self._rows()["Nonlinear count"]
+        assert (row["current"], row["reference"]) == ("3", "0")
+
+    def test_the_sections_and_their_order_are_the_reports(self):
+        assert [
+            (s["title"], [r["label"] for r in s["rows"]]) for s in self._sections()
+        ] == [
+            ("Translation Statistics", ["Nonlinear", "Nonlinear count"]),
+            ("Simulation Statistics", ["CPUtime", "State events"]),
+            ("Timing", ["Total wall"]),
+        ]
+
+    def test_the_inputs_are_never_written(self):
+        from dstf.reporting.context_builder import (
+            _build_key_stats,
+            _build_statistics_sections,
+        )
+
+        run, base = self.RUN, self.BASE
+        _build_statistics_sections(base, run)
+        _build_key_stats([], base, run)
+        assert (base, run) == (self.BASE, self.RUN)
+
+    def test_key_stats_read_the_rows(self):
+        from dstf.reporting.context_builder import _build_key_stats
+
+        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, self.RUN)}
+        nonlinear = stats["Nonlinear Systems"]
+        assert (nonlinear["current"], nonlinear["reference"]) == ("3", "0")
+        assert nonlinear["changed"]
+        assert stats["CPU Time"]["changed"]
+        run = {**self.RUN, "CPUtime": 0.82}
+        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, run)}
+        assert not stats["CPU Time"]["changed"]

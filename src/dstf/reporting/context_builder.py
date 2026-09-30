@@ -16,6 +16,7 @@ import numpy as np
 from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
+from .stats_rows import SECTION_TITLES, statistics_rows
 
 logger = logging.getLogger(__name__)
 
@@ -51,41 +52,6 @@ def _format_value(val) -> str:
     if val is None or val == "":
         return ""
     return str(val)
-
-
-def _build_stats_section(
-    title: str,
-    ref_cat: dict,
-    cur_cat: dict,
-    key_order: list[str] | None = None,
-) -> dict | None:
-    """Build a statistics section dict for the template.
-
-    If `key_order` is provided, keys appear in that order; unrecognized keys
-    append alphabetically. If omitted, all keys appear alphabetically.
-    """
-    all_keys_set = set(ref_cat.keys()) | set(cur_cat.keys())
-    if not all_keys_set:
-        return None
-    if key_order:
-        all_keys = [k for k in key_order if k in all_keys_set]
-        all_keys += sorted(all_keys_set - set(key_order))
-    else:
-        all_keys = sorted(all_keys_set)
-    rows = []
-    for key in all_keys:
-        ref_val = _format_value(ref_cat.get(key, ""))
-        cur_val = _format_value(cur_cat.get(key, ""))
-        changed = ref_val != cur_val and ref_val and cur_val
-        rows.append(
-            {
-                "label": key.replace("_", " ").title(),
-                "current": cur_val,
-                "reference": ref_val,
-                "changed": changed,
-            }
-        )
-    return {"title": title, "rows": rows}
 
 
 def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
@@ -293,59 +259,29 @@ def _build_sim_params(test_model, ref_sim: dict) -> list:
 
 
 def _build_statistics_sections(ref_stats: dict, cur_stats: dict) -> list:
-    """Auto-detect and render every top-level dict in stats as its own
-    collapsible section, plus mop up top-level scalars under "Simulation
-    Statistics" for back-compat with older reference shapes. Future
-    categories (e.g. ``"timing"``) drop in for free since the dispatch
-    is by dict key, not a hardcoded enum.
-    """
-    SECTION_TITLES = {
-        "translation": "Translation Statistics",
-        "simulation": "Simulation Statistics",
-        "timing": "Timing",
-    }
-    section_keys: list[str] = []
-    seen: set[str] = set()
-    for src in (ref_stats, cur_stats):
-        for k, v in src.items():
-            if isinstance(v, dict) and k not in seen:
-                seen.add(k)
-                section_keys.append(k)
-
-    preferred = ["translation", "simulation", "timing"]
-    ordered_keys = [k for k in preferred if k in seen] + [
-        k for k in section_keys if k not in preferred
-    ]
-
-    statistics_sections = []
-    for key in ordered_keys:
-        ref_cat = ref_stats.get(key, {}) if isinstance(ref_stats.get(key), dict) else {}
-        cur_cat = cur_stats.get(key, {}) if isinstance(cur_stats.get(key), dict) else {}
-        if key == "simulation":
-            for k, v in ref_stats.items():
-                if not isinstance(v, dict):
-                    ref_cat.setdefault(k, v)
-            for k, v in cur_stats.items():
-                if not isinstance(v, dict):
-                    cur_cat.setdefault(k, v)
-        title = SECTION_TITLES.get(key, key.replace("_", " ").title())
-        key_order = None
-        if key == "timing":
-            key_order = ["translation_wall", "sim_wall", "other_wall", "total_wall"]
-        section = _build_stats_section(title, ref_cat, cur_cat, key_order=key_order)
-        if section:
-            statistics_sections.append(section)
-
-    if "simulation" not in seen:
-        ref_scalars = {k: v for k, v in ref_stats.items() if not isinstance(v, dict)}
-        cur_scalars = {k: v for k, v in cur_stats.items() if not isinstance(v, dict)}
-        if ref_scalars or cur_scalars:
-            section = _build_stats_section(
-                "Simulation Statistics", ref_scalars, cur_scalars
+    """The Statistics table: :func:`~.stats_rows.statistics_rows` rendered
+    into the template's ``{title, rows: [{label, current, reference,
+    changed}]}`` sections — the rows the tool's Statistics card shows, in
+    the report's order, under one "changed" rule for both. A section with
+    no key is no section."""
+    sections: dict[str, dict] = {}
+    for row in statistics_rows(cur_stats, ref_stats):
+        if row.section not in sections:
+            title = (
+                SECTION_TITLES.get(row.section) or row.section.replace("_", " ").title()
             )
-            if section:
-                statistics_sections.append(section)
-    return statistics_sections
+            if row.section in ("translation", "simulation"):
+                title += " Statistics"
+            sections[row.section] = {"title": title, "rows": []}
+        sections[row.section]["rows"].append(
+            {
+                "label": row.label,
+                "current": _format_value(row.run),
+                "reference": _format_value(row.baseline),
+                "changed": row.changed,
+            }
+        )
+    return list(sections.values())
 
 
 def build_trajectories(
@@ -550,15 +486,22 @@ def _build_key_stats(
     rows so the template renderer is uniform.
     """
 
-    def _get_stat(source: dict, category: str, key: str):
-        cat = source.get(category, {})
-        if isinstance(cat, dict):
-            return cat.get(key)
-        return None
+    # A statistics pick reads its row: its values (a baseline's empty list
+    # reads its count as 0) and the one "changed" rule.
+    rows = {row.path: row for row in statistics_rows(cur_stats, ref_stats)}
 
-    def _get_scalar(source: dict, key: str):
-        val = source.get(key)
-        return val if not isinstance(val, dict) else None
+    def _pick(path: str, label: str) -> None:
+        row = rows.get(path)
+        if row is None or (row.run is None and row.baseline is None):
+            return
+        key_stats.append(
+            {
+                "label": label,
+                "current": _format_value(row.run),
+                "reference": _format_value(row.baseline),
+                "changed": row.changed,
+            }
+        )
 
     key_stats = []
     # "Worst Score" — for NRMSE leaves this is the max NRMSE (lower is
@@ -600,44 +543,14 @@ def _build_key_stats(
             }
         )
 
-    stat_picks = [
-        ("translation", "continuous_time_states", "Continuous States"),
-        ("translation", "nonlinear_count", "Nonlinear Systems"),
-        ("translation", "nonlinear_max", "Largest Nonlinear"),
-    ]
-    for category, key, label in stat_picks:
-        cur_val = _get_stat(cur_stats, category, key)
-        ref_val = _get_stat(ref_stats, category, key)
-        if cur_val is not None or ref_val is not None:
-            key_stats.append(
-                {
-                    "label": label,
-                    "current": _format_value(cur_val),
-                    "reference": _format_value(ref_val),
-                    "changed": cur_val is not None
-                    and ref_val is not None
-                    and str(cur_val) != str(ref_val),
-                }
-            )
-
-    scalar_picks = [
+    for path, label in (
+        ("translation.continuous_time_states", "Continuous States"),
+        ("translation.nonlinear_count", "Nonlinear Systems"),
+        ("translation.nonlinear_max", "Largest Nonlinear"),
         ("CPUtime", "CPU Time"),
         ("EventCounter", "Events"),
-    ]
-    for key, label in scalar_picks:
-        cur_val = _get_scalar(cur_stats, key)
-        ref_val = _get_scalar(ref_stats, key)
-        if cur_val is not None or ref_val is not None:
-            key_stats.append(
-                {
-                    "label": label,
-                    "current": _format_value(cur_val),
-                    "reference": _format_value(ref_val),
-                    "changed": cur_val is not None
-                    and ref_val is not None
-                    and str(cur_val) != str(ref_val),
-                }
-            )
+    ):
+        _pick(path, label)
     return key_stats
 
 
