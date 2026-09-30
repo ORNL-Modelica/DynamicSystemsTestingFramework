@@ -8357,10 +8357,67 @@ async def test_a_row_the_authored_tree_scores_is_pending_with_no_verdict(stats_s
         assert _one(user, f"stats:pill:{NONLINEAR}").text == "pending"
         assert _one(user, f"stats:rule:{NONLINEAR}").text == "exact"
         assert _none(user, f"add-statistic:{NONLINEAR}")
-        # and its row opens its editor, as a scored row's does
+        # and its row opens its editor, as a scored row's does — with its
+        # fields: the leaf is read from the authored tree, not the view
         _click(user, _one(user, f"stats:row:{NONLINEAR}"))
         await _settled(lambda: page.open == (STATS, leaf))
-        assert not _none(user, f"stats-editor:{leaf}")
+        assert _stats_tolerance(user, leaf).value == 0
+
+
+def _stats_tolerance(user, leaf: str):
+    """The Tolerance field of the card's open editor on ``leaf``."""
+    editor = _one(user, f"stats-editor:{leaf}")
+    (field,) = [e for e in editor.descendants() if isinstance(e, ui.number)
+                and e.props.get("label") == "Tolerance"]  # fmt: skip
+    return field
+
+
+async def test_a_plus_on_a_test_with_no_baseline_opens_a_usable_editor(stats_shell):
+    """B has a tree but no baseline: its range leaf is scored, but with the
+    count requirement added nothing is (no tree view), and the new
+    criterion's editor read its leaf from the view and drew "this leaf is
+    not in the scored tree" and no field."""
+    shell = stats_shell
+    _stage_tree(shell, B, {"combinator": "and", "children": [
+        {"metric": "range", "variable": "x", "min_value": -1}]})  # fmt: skip
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, model=B)
+        page.stats.toggle()
+        _click(user, _one(user, f"add-statistic:{NONLINEAR}"))
+        leaf = "/metrics/children/1"
+        await _settled(lambda: page.open == (STATS, leaf))
+        assert shell.session.tree_view(B) is None
+        editor = _one(user, f"stats-editor:{leaf}")
+        texts = [getattr(e, "text", "") for e in editor.descendants()]
+        assert "this leaf is not in the scored tree" not in texts
+        field = _stats_tolerance(user, leaf)
+        assert field.value == 0
+        field.set_value(2)
+        op = shell.session.spec.pending[-1]
+        assert (op.op, op.path) == ("replace", leaf)
+        assert op.value["quantity"] == NONLINEAR and op.value["tolerance"] == 2
+
+
+async def test_the_card_editor_follows_an_edit_staged_elsewhere_with_no_view(
+    stats_shell,
+):
+    """With no tree view (B has no baseline) the open editor compared
+    against the view's leaf, found none, and never redrew: fields showing
+    an undone value stage it back."""
+    shell = stats_shell
+    leaf = "/metrics/children/1"
+    _stage_tree(shell, B, {"combinator": "and", "children": [
+        {"metric": "range", "variable": "x", "min_value": -1},
+        {"metric": "scalar", "quantity": NONLINEAR, "tolerance": 0}]})  # fmt: skip
+    assert shell.session.tree_view(B) is None
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, model=B)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        shell.session.stage([PatchOp(B, "replace", f"{leaf}/tolerance", 5)])
+        await _settled(lambda: _stats_tolerance(user, leaf).value == 5)
+        assert page.open == (STATS, leaf)
 
 
 def _plus_state(user, marker: str) -> bool | None:

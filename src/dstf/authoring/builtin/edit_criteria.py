@@ -15,8 +15,15 @@ from typing import TYPE_CHECKING, Any
 from ...comparison.mode_schema import Schema, derive_schema
 from ...comparison.registry import metric, metrics
 from ...comparison.seeds import seeded_leaf
-from ...comparison.tree_spec import LeafSpec, reads_a_statistic, spec_to_raw
+from ...comparison.tree_spec import (
+    LeafSpec,
+    parse_metric_tree,
+    reads_a_statistic,
+    spec_to_raw,
+    spec_to_view,
+)
 from ..capabilities import Panel, Patch, Placement
+from ..tree_pointer import node_or_none
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -38,6 +45,26 @@ def _leaf_node(view: dict | None, path: str) -> dict | None:
         if found is not None:
             return found
     return None
+
+
+def _authored_leaf(tree: dict | None, path: str) -> dict | None:
+    """The leaf at ``path`` of the tree as AUTHORED (`SessionView.tree`,
+    staged edits included), shaped as the tree view's leaf — its metric,
+    variable, params, baseline and window, and ``advisory`` when a ``warn``
+    sits above it; None where ``path`` names no leaf. Not the view's: a
+    test with nothing compared (no baseline) has no view, and the editor
+    of the criterion just staged there drew no field."""
+    raw = node_or_none(tree, path)
+    if raw is None or "metric" not in raw:
+        return None
+    leaf = spec_to_view(parse_metric_tree(raw), root=path)
+    parts = path.split("/children/")
+    leaf["advisory"] = any(
+        (node_or_none(tree, "/children/".join(parts[:i])) or {}).get("combinator")
+        == "warn"
+        for i in range(1, len(parts))
+    )
+    return leaf
 
 
 class EditCriteria:
@@ -69,12 +96,15 @@ class EditCriteria:
         sel = s.selection
         model_id = next(iter(sel.tests))
         path = sel.leaf_path or ""
-        leaf = _leaf_node(s.tree_view(model_id), path)
+        leaf = _authored_leaf(s.tree(model_id), path)
         # The panel is rebuilt after edits made elsewhere: Edit tree wrapping
         # the selected leaf leaves the selection's path naming a combinator.
-        if leaf is None or leaf.get("kind") != "leaf":
+        if leaf is None:
             ui.label("this leaf is not in the scored tree")
             return
+        # What the leaf was scored with: only a view says — none before a
+        # compare (no baseline), and then the fields show no hint.
+        scored = _leaf_node(s.tree_view(model_id), path) or {}
         state: dict[str, Any] = {
             "metric": leaf["metric"],
             "variable": leaf["variable"],
@@ -118,8 +148,8 @@ class EditCriteria:
                     # The mode the leaf was scored in: a switched mode's
                     # fields were never applied, so nothing is in effect.
                     in_effect=(
-                        leaf.get("in_effect")
-                        if state["metric"] == leaf["metric"]
+                        scored.get("in_effect")
+                        if state["metric"] == scored.get("metric")
                         else None
                     ),
                 )

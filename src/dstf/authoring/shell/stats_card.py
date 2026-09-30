@@ -31,8 +31,8 @@ from ...reporting.stats_rows import SECTION_TITLES, StatRow, value_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
+from ..tree_pointer import node_or_none
 from .actions import InlineHost, RowTarget
-from .plot_card import _EDITED
 from .tree_card import leaf_status
 from .widgets import Pill
 
@@ -217,7 +217,7 @@ class StatsCard:
         self.open_path: str | None = None
         self.editor: InlineHost | None = None
         self.editor_box: ui.column | None = None
-        self._edited: tuple | None = None
+        self._edited: str | None = None
         with ui.card().classes("dstf-card dstf-stats w-full gap-1").mark("stats"):
             self.line = ui.row().classes("dstf-stats-line items-center gap-3 w-full")
             self.line.mark("stats:line")
@@ -292,7 +292,7 @@ class StatsCard:
         for stat in shown:
             self.painters[stat.path].paint(stat, reads.get(stat.path, []))
         if self.editor is not None:
-            edited = self._edited_now(view)
+            edited = self._edited_now()
             if edited != self._edited:
                 # The leaf moved by an edit staged ELSEWHERE (a Discard):
                 # fields showing the undone value would stage it back.
@@ -470,27 +470,27 @@ class StatsCard:
                 on_applied=self._applied,
             )
             self.editor.build()
-        self._edited = self._edited_now(view)
+        self._edited = self._edited_now()
         return True
 
     def _applied(self, name: str) -> None:
         """A panel's own submit rebuilds every OTHER panel, leaving the one
-        being typed in; recorded from a FRESH view, so its own edit is not
-        read as one staged elsewhere."""
+        being typed in; the leaf recorded as it now stands, so its own edit
+        is not read as one staged elsewhere."""
         if self.editor is None:
             return
         self.editor.build(skip=name)
-        self._edited = self._edited_now(self.page._view())
+        self._edited = self._edited_now()
 
-    def _edited_now(self, view: dict | None) -> tuple | None:
-        leaf = next(
-            (n for n in leaves_of(view) if str(n["path"]) == self.open_path), None
-        )
-        if leaf is None:
+    def _edited_now(self) -> str | None:
+        """The open editor's leaf as AUTHORED — staged edits included — not
+        the view's: a test with nothing compared has no view, and its
+        editor never redrew for an edit staged elsewhere."""
+        if self.open_path is None:
             return None
-        return tuple(
-            json.dumps(leaf.get(k), sort_keys=True, default=str) for k in _EDITED
-        )
+        session = self.page.shell.session
+        leaf = node_or_none(session.tree(self.page.model_id), self.open_path)
+        return None if leaf is None else json.dumps(leaf, sort_keys=True, default=str)
 
     def close_editor(self) -> None:
         """The editor goes — its column only: the row's slot also holds
