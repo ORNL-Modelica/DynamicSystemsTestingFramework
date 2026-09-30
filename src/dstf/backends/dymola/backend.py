@@ -27,7 +27,7 @@ from ..types import (
     TestRunResult,
     timeout_message,
 )
-from .log_parser import parse_dslog
+from .log_parser import parse_test_logs
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,7 @@ class DymolaBackend(Backend):
                             test_key=test_key,
                             success=True,
                             elapsed=per_elapsed,
-                            statistics=parse_dslog(test_dir / "dslog.txt"),
+                            statistics=parse_test_logs(test_dir),
                         )
                     )
                     if self.progress is not None:
@@ -400,23 +400,7 @@ class DymolaBackend(Backend):
             label = f"{test_key} {short_name}"
 
             # Parse both dslog.txt (simulation runtime) and translation_log.txt (structural)
-            statistics = parse_dslog(test_dir / "dslog.txt")
-            translation_stats = parse_dslog(test_dir / "translation_log.txt")
-            if translation_stats:
-                if statistics is None:
-                    statistics = translation_stats
-                else:
-                    # Merge: each log produces different top-level keys
-                    # (dslog → "simulation", translation → "translation")
-                    for key, value in translation_stats.items():
-                        if key not in statistics:
-                            statistics[key] = value
-                        elif isinstance(value, dict) and isinstance(
-                            statistics[key], dict
-                        ):
-                            statistics[key].update(value)
-                        else:
-                            statistics[key] = value
+            statistics = parse_test_logs(test_dir)
 
             # Check for translation failure (defense in depth)
             translation_failed = False
@@ -527,12 +511,17 @@ class DymolaBackend(Backend):
         test_key: str,
         run_result: TestRunResult | None,
     ) -> TestResult:
+        test_dir = self.config.work_dir / test_key
+        # The run's own statistics (in process, or kept in run_stats.json)
+        # win. Without them the logs Dymola left beside the result are read:
+        # code that reads files tolerates a result written before
+        # run_stats.json existed (D138), and such a result still has both.
+        # They hold no phase walls, so nothing here invents a timing block.
         stats = (
             dict(run_result.statistics)
             if run_result and run_result.statistics
-            else None
+            else parse_test_logs(test_dir)
         )
-        test_dir = self.config.work_dir / test_key
         mat_path = test_dir / "dsres.mat"
 
         if not mat_path.exists():

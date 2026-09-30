@@ -1035,3 +1035,112 @@ class TestBatchDymolaToolVersion:
             "\nDymola 2026x Refresh 1\nDymola 2026x Refresh 1\n", encoding="utf-8"
         )
         assert _read_startup_tool_version(tmp_path) == "Dymola 2026x Refresh 1"
+
+
+# =========================================================================
+# D138 amended — Dymola's logs are the fallback reader of a result's run
+# statistics. A result written before run_stats.json existed still has
+# dslog.txt / translation_log.txt beside its dsres.mat; read_result reads
+# them when no kept run statistics came with the result.
+# =========================================================================
+
+
+class TestDymolaStatisticsFromLogs:
+    def _backend(self, work_dir):
+        from dstf.backends.dymola import backend as dr
+
+        cfg = SimpleNamespace(
+            show_ide=False,
+            backend_setup=[],
+            diagnostic_variables=["CPUtime"],
+            work_dir=work_dir,
+            backend_path="dymola-fake",
+            timeout=1,
+            parallel=1,
+        )
+        return dr.DymolaBackend(cfg)
+
+    def _test_dir(self, work_dir, *, logs=True):
+        import shutil
+
+        test_dir = work_dir / "test_0001"
+        test_dir.mkdir(parents=True)
+        shutil.copy(SAMPLE_MAT, test_dir / "dsres.mat")
+        if logs:
+            for name in ("dslog.txt", "translation_log.txt"):
+                shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, test_dir / name)
+        return test_dir
+
+    def test_logs_are_read_when_the_run_kept_no_statistics(self, tmp_path):
+        self._test_dir(tmp_path)
+        test = _tm("Lib.A", variable_patterns=["x"])
+        stats = self._backend(tmp_path).read_result(test, "test_0001", None).statistics
+        assert stats is not None
+        assert stats["translation"]["continuous_time_states"] is not None
+        assert "cpu_time_integration" in stats["simulation"]
+        # The diagnostics still fold in after the logs.
+        assert "CPUtime" in stats
+        # The logs hold no phase walls; nothing invents them.
+        assert "timing" not in stats
+
+    def test_kept_run_statistics_win_over_the_logs(self, tmp_path):
+        from dstf.backends.base import kept_run_result
+        from dstf.backends.types import TestRunResult
+        from dstf.storage.run_stats import write_run_stats
+
+        test_dir = self._test_dir(tmp_path)
+        write_run_stats(
+            test_dir,
+            TestRunResult(
+                model_id="Lib.A",
+                test_key="test_0001",
+                success=True,
+                elapsed=1.0,
+                statistics={"simulation": {"cpu_time_integration": 99.0}},
+            ),
+        )
+        test = _tm("Lib.A", variable_patterns=["x"])
+        kept = kept_run_result(test_dir, "Lib.A", "test_0001")
+        stats = self._backend(tmp_path).read_result(test, "test_0001", kept).statistics
+        assert stats["simulation"] == {"cpu_time_integration": 99.0}
+        assert "translation" not in stats
+
+    def test_no_logs_reads_as_before(self, tmp_path):
+        self._test_dir(tmp_path, logs=False)
+        test = _tm("Lib.A", variable_patterns=["x"])
+        stats = self._backend(tmp_path).read_result(test, "test_0001", None).statistics
+        assert stats is not None
+        assert "translation" not in stats
+        assert "simulation" not in stats
+
+    def test_batch_run_merges_both_logs(self, tmp_path, monkeypatch):
+        import shutil
+
+        from dstf.backends.dymola import backend as dr
+
+        backend = self._backend(tmp_path)
+        test_dir = tmp_path / "test_0001"
+        test_dir.mkdir()
+        t = np.linspace(0.0, 1.0, 5)
+        _write_mat4(test_dir / "dsres.mat", [("data_2", np.vstack([t, 2 * t]), 0)])
+        (test_dir / "dsfinal.txt").write_text("done")
+        for name in ("dslog.txt", "translation_log.txt"):
+            shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, test_dir / name)
+
+        class _DoneProc:
+            pid = 1
+
+            def communicate(self, timeout=None):
+                return (b"", b"")
+
+        monkeypatch.setattr(dr.subprocess, "Popen", lambda *a, **kw: _DoneProc())
+        startup = tmp_path / "startup.mos"
+        shutdown = tmp_path / "shutdown.mos"
+        startup.write_text("// stub")
+        shutdown.write_text("// stub")
+
+        items = [(_tm("Lib.A", stop_time=1.0), "test_0001")]
+        (result,) = backend._run_batch(items, startup, shutdown, 0, 1)
+        assert result.success is True
+        assert "continuous_time_states" in result.statistics["translation"]
+        assert "cpu_time_integration" in result.statistics["simulation"]

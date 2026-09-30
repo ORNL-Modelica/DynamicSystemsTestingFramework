@@ -34,7 +34,7 @@ from ..persistent import PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import DymolaBackend, DymolaConfig
 from .interface_loader import load_dymola_interface
-from .log_parser import parse_dslog
+from .log_parser import parse_test_logs
 
 logger = logging.getLogger(__name__)
 
@@ -494,19 +494,7 @@ class DymolaWorker(Worker):
         actually completed and written its mat file.
         """
         test_dir = self.config.work_dir / test_key
-        statistics = parse_dslog(test_dir / "dslog.txt")
-        translation_stats = parse_dslog(test_dir / "translation_log.txt")
-        if translation_stats:
-            if statistics is None:
-                statistics = translation_stats
-            else:
-                for k, v in translation_stats.items():
-                    if k not in statistics:
-                        statistics[k] = v
-                    elif isinstance(v, dict) and isinstance(statistics[k], dict):
-                        statistics[k].update(v)
-                    else:
-                        statistics[k] = v
+        statistics = parse_test_logs(test_dir)
 
         translation_failed = False
         translation_log = test_dir / "translation_log.txt"

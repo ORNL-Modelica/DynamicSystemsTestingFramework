@@ -31,6 +31,31 @@ def parse_dslog(path: Path) -> dict | None:
     return stats if stats else None
 
 
+def parse_test_logs(test_dir: Path) -> dict | None:
+    """The statistics of the two logs Dymola leaves in a test's directory,
+    merged: ``dslog.txt`` (``simulation.*``) and ``translation_log.txt``
+    (``translation.*``). ``None`` when neither holds any.
+
+    The one reader of both — the batch run, the persistent worker's disk
+    read and :meth:`DymolaBackend.read_result`'s fallback all call it, so
+    the merge cannot differ between a run and a later reload.
+    """
+    statistics = parse_dslog(test_dir / "dslog.txt")
+    translation_stats = parse_dslog(test_dir / "translation_log.txt")
+    if not translation_stats:
+        return statistics
+    if statistics is None:
+        return translation_stats
+    # Each log produces different top-level keys (dslog -> "simulation",
+    # translation -> "translation"); a shared category merges key by key.
+    for key, value in translation_stats.items():
+        if isinstance(value, dict) and isinstance(statistics.get(key), dict):
+            statistics[key].update(value)
+        else:
+            statistics[key] = value
+    return statistics
+
+
 def _parse_translation_stats(text: str, stats: dict) -> None:
     """Extract translation statistics from a Dymola log."""
 
