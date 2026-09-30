@@ -6075,18 +6075,39 @@ criterion that fails "not found in current run" until a rerun — by
 design. Where a test was compared but the Session will not materialize
 its flat entry's tree (`Session._materialization`'s refusals), a plot
 criterion's editor draws no field and says the Session's own refusal.
-One method says why a test has no tree to edit, `Session.no_tree_reason`,
-and `stage`'s refusal of a per-leaf op, a criterion's editor, Edit tree's
-why and a Statistics row's `+` all read it (fix batch 5): "nothing is
-scored" (`session.NOTHING_SCORED`) where no comparison scored a variable
-(no baseline, a failed run), else `session.NO_TREE`: "this test's
-criteria cannot become a tree here without changing what it scores (its
-flat settings, its baseline's settings or its last run differ from what a
-tree would score) — write a metrics tree for it in test_spec.json to edit
-its criteria". Until fix batch 5 Edit tree said "no tree to edit (nothing
-scored)" and the `+` "nothing is scored" of a test that WAS scored, and
-`NO_TREE` blamed flat settings for every refusal, a last run the loaded
-result no longer matches included. The editor read the view's
+One method returns a test's tree or why it has none,
+`Session.tree_or_reason` (`tree` is its first half), and `stage`'s
+refusal of a per-leaf op, a criterion's editor, Edit tree's why and its
+add, Edit on plot and a Statistics row's `+` all read it. The reason is
+`_materialization`'s own refusal, so the baseline JSON is read once for
+the tree and the reason (fix batch 6). Four reasons, each one line:
+"nothing is scored" (`session.NOTHING_SCORED`) where no comparison
+scored a variable (no baseline, a failed run, no result, a model not in
+the project); "simulate-only: nothing is scored"
+(`session.SIMULATE_ONLY`) for the same on a simulate-only test, which is
+also the add form's grey Add there, tree or not; "its last run no longer
+holds what it scored — rerun it" (`session.STALE`) where a scored name
+is not one the loaded result carries; and for every other refusal (an
+unnamed scored name, a string `quantity` or an unregistered mode in an
+override, a reference-JSON override the spec does not shadow)
+`session.NO_TREE`: "its flat criteria can't become a tree without
+changing its scores — write a metrics tree in test_spec.json". An edit
+that reaches a test with no tree is refused with
+`session.no_tree_error`, a `PatchError` whose `reason` is that line: the
+tool shows it alone beside the edit, the CLI's text keeps the model.
+Until fix batch 5 Edit tree said "no tree to edit (nothing scored)" and
+the `+` "nothing is scored" of a test that WAS scored, and `NO_TREE`
+blamed flat settings for every refusal, a last run the loaded result no
+longer matches included; batch 5's `NO_TREE` ran to 244 characters, and
+a surface that asked for the tree and then its reason read the baseline
+twice. Until fix batch 6 Edit on plot read the comparison's tree, not the
+Session's: on a test
+the Session has no tree for it offered the handles, and every drag and
+row edit raised "has no tree to edit" (the defect is older than this
+step); a simulate-only test's add form said "This test is simulate-only:
+nothing is scored", and `stage` of a per-leaf op on a model not in the
+project raised a KeyError from the reason's lookup, where it had been a
+`PatchError`. The editor read the view's
 leaf before fix batch 3, while the Session refused its every edit, and
 between fix batches 3 and 4 said "this leaf is not in the scored tree",
 false of a leaf on the plot with its verdict; that line is now only for
@@ -6095,8 +6116,11 @@ whose `metrics` is `null` has no tree (fix batch 5; the defect is older
 than this step): `spec_update.has_metrics` is the one question
 `needs_materialization`, the D66 validator's entry check, `Session.tree`,
 `_materialization` and the materialization's mark all ask, as
-`spec_parser` already scored such an entry by the flat path. Before it,
+`spec_parser` already scored such an entry by the flat path; an empty
+tree (`{}`) is a tree, which the validator refuses. Before it,
 `tree` was None beside a tree view, a per-leaf `stage` failed "cannot
-descend into NoneType", and the validator refused any op on the entry. Of
+descend into NoneType", and the validator refused any op that left the
+null in place. `spec-update`'s note for a per-leaf op on such an entry,
+"entry had no 'metrics' block", stands: a null is no block. Of
 the TRANSFORM gate over a copy (the plan's Task 7) only the counts
 above are recorded here (items 1 and 5); the rest is the controller's.

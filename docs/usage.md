@@ -881,8 +881,10 @@ criterion reads shows that criterion's pill and its requirement (`exact`,
 the tolerance mode, bounds; there is no plot. A criterion reading a quantity no
 statistic holds gets a row under "Other scored quantities". The `+` is grey,
 with the reason as its tooltip, while a job holds the test, on a
-simulate-only test, where nothing is scored yet, and under a `warn` or
-`weighted` root.
+simulate-only test, where nothing is scored yet, where the last run no
+longer holds what it scored (rerun it), where the test's flat criteria
+cannot become a tree without changing its scores (write a `metrics` tree
+in `test_spec.json`), and under a `warn` or `weighted` root.
 
 Below the card, the criteria tree is
 closed to a single line — the root's verdict, what the root is, the tally, and
@@ -1044,8 +1046,8 @@ the root one), since a run's CPU time moves with the machine's load; under
 an `or` or a `k-of-n` it is added bare, because a warn there would pass its
 parent. Such a criterion has no plot: after its Add its editor opens under
 its row of the Statistics card, where it is edited from then on. On a
-simulate-only test the form says "This test is simulate-only: nothing is
-scored" and its Add is grey.
+simulate-only test the form says "simulate-only: nothing is scored" and
+its Add is grey.
 
 A combinator's kind is a dropdown in its row — and, or, k-of-n, warn,
 weighted, and below a separator "unwrap — its children take its place" (left
