@@ -306,6 +306,8 @@ def test_the_report_keeps_full_precision():
     # past six significant figures too: `:g` wrote 1.60042 s and 1.23457e+06 s
     assert report_text("time", 1.600425) == "1.600425 s"
     assert report_text("time", 1234567.89) == "1234567.89 s"
+    # and past nine: twelve figures read in full (`.9g` wrote 0.123456789 s)
+    assert report_text("time", 0.123456789012) == "0.123456789012 s"
     assert report_text("count", 1234567) == "1234567"
     assert report_text("count", 102.0) == "102"
     assert report_text("count", None) == ""
