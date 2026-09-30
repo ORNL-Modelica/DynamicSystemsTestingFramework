@@ -15,6 +15,7 @@ import pytest
 from conftest import make_test_model
 from dstf.authoring.capabilities import Artifact, Job, OpenProject, Patch, StoreWrite
 from dstf.authoring.session import (
+    NOTHING_SCORED,
     JobRunningError,
     LockedError,
     Session,
@@ -1352,7 +1353,7 @@ class TestRescoreAndStage:
         cannot get a tree from the entry's list behind rescore's back."""
         from dstf.discovery.patch_apply import PatchError
 
-        with pytest.raises(PatchError, match="nothing was scored"):
+        with pytest.raises(PatchError, match=f"{B}: {NOTHING_SCORED}$"):
             session.stage([PatchOp(B, "add", "/metrics/children/0/tolerance", 0.5)])
         assert session.spec.pending == []
         session.stage([LOOSEN])
@@ -1444,6 +1445,46 @@ class TestRescoreAndStage:
         # A remove after an ADD stays two ops: the add may have replaced a
         # member that existed, and dropping both would leave that member.
         assert len(session.spec.pending) == m + 7
+
+    def test_no_tree_reason_is_the_one_why(self, session):
+        """None where there is a tree to edit; "nothing is scored" where no
+        comparison scored a variable (B: no baseline; C: no result)."""
+        assert session.tree(A) is not None
+        assert session.no_tree_reason(A) is None
+        assert session.tree(B) is None
+        assert session.no_tree_reason(B) == NOTHING_SCORED
+        assert session.no_tree_reason(C) == NOTHING_SCORED
+        with pytest.raises(KeyError):
+            session.no_tree_reason("FakeLib.Examples.Nope")
+
+    def test_a_null_metrics_is_no_tree(self, tmp_path):
+        """`"metrics": null` is no tree: spec_parser scores the flat path, so
+        the Session materializes that tree — it did not, and `tree` was None
+        beside a tree view while `stage` descended into the null (and the
+        validator refused any op on the entry: a null is no tree to parse)."""
+        from dstf.discovery.spec_update import needs_materialization
+
+        cfg, work = _project(tmp_path)
+        doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+        next(e for e in doc["tests"] if e["model"] == A)["metrics"] = None
+        (cfg.parent / "test_spec.json").write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.tree_view(A) is not None
+        assert needs_materialization(s.spec.entry(A), [LOOSEN.raw()])
+        assert [c["variable"] for c in s.tree(A)["children"]] == ["x"]
+        assert s.no_tree_reason(A) is None
+        s.stage([PatchOp(A, "add", "/comparison", {"tolerance": 0.01})])
+        s.stage([LOOSEN])
+        assert [op.path for op in s.spec.pending] == [
+            "/comparison",
+            "/metrics",
+            LOOSEN.path,
+        ]
+        assert s.spec.pending[1].materializes
+        assert s.spec.entry(A)["metrics"]["children"][0]["tolerance"] == 0.5
 
 
 class TestAFlatTestScoresWhatItTracks:
@@ -2361,6 +2402,8 @@ class TestSessionView:
             "variable_texts",
             "tree_view",
             "tree",
+            # why `tree` is None, in the one text every surface says it with
+            "no_tree_reason",
             "is_locked",
         }
         assert not public & {

@@ -492,7 +492,7 @@ def test_available_answers_the_lock_and_the_missing_tree_first(session):
 
     cap = EditTree()
     only_b = SessionView(session, Selection(tests=frozenset({B})))
-    assert cap.available(only_b) == "no tree to edit (nothing scored)"
+    assert cap.available(only_b) == "nothing is scored"
     gate = _Gate()
     session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
     try:

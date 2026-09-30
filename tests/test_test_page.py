@@ -1479,7 +1479,7 @@ async def test_a_no_baseline_test_draws_its_result(shell):
         page = await _test_page(shell, user, B)
         assert len(page.cards) == 2 and all(not c.rows for c in page.cards)
         (why,) = _inside(user, "why:edit-tree", "criteria-header:0")
-        assert why.text == "no tree to edit (nothing scored)"
+        assert why.text == "nothing is scored"
         with page.client:
             page.cards[0].show()
         assert page.cards[0].plot is not None
@@ -8440,6 +8440,33 @@ async def test_a_plot_editor_on_a_test_with_no_tree_says_why(tmp_path):
         assert reason in texts
         assert "this leaf is not in the scored tree" not in texts
         assert not [e for e in editor.descendants() if isinstance(e, ui.number)]
+
+
+def test_edit_tree_says_the_sessions_reason_for_no_tree(tmp_path):
+    """Edit tree's why read "no tree to edit (nothing scored)" on A, which
+    IS scored (a baseline override the spec does not shadow is what keeps
+    its tree); it says the Session's one reason, as `stage` refuses with,
+    and a test with nothing scored (B, no baseline) says so."""
+    import re
+
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import NO_TREE, NOTHING_SCORED, SessionView
+    from dstf.discovery.patch_apply import PatchError
+
+    shell = _opened(*_ref_override_project(tmp_path))
+    session = shell.session
+
+    def available(model_id):
+        return EditTree().available(
+            SessionView(session, Selection(tests=frozenset({model_id})))
+        )
+
+    assert session.no_tree_reason(A) == NO_TREE
+    assert available(A) == NO_TREE
+    with pytest.raises(PatchError, match=f"{A}: {re.escape(NO_TREE)}$"):
+        session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 1)])
+    assert session.no_tree_reason(B) == NOTHING_SCORED
+    assert available(B) == NOTHING_SCORED
 
 
 async def test_a_plus_on_a_test_with_no_baseline_opens_a_usable_editor(stats_shell):

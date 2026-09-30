@@ -92,7 +92,6 @@ class EditCriteria:
         from nicegui import ui
 
         from ..forms import BOTTOM, render_form
-        from ..session import NO_TREE
 
         sel = s.selection
         model_id = next(iter(sel.tests))
@@ -102,7 +101,9 @@ class EditCriteria:
             # A compared test whose tree the Session will not materialize:
             # its leaves are on the plots, but every edit is refused — say
             # the Session's reason, not the view's leaf as if editable.
-            ui.label(NO_TREE)
+            why = s.no_tree_reason(model_id)
+            assert why is not None  # `tree` is None
+            ui.label(why)
             return
         leaf = _authored_leaf(tree, path)
         # The panel is rebuilt after edits made elsewhere: Edit tree wrapping

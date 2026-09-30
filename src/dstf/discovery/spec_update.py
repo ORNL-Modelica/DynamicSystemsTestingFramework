@@ -113,10 +113,18 @@ def materialize_implicit_metrics(
     return [implicit_tree_op(entry), *ops]
 
 
+def has_metrics(entry: dict | None) -> bool:
+    """Whether ``entry`` has a ``metrics`` tree of its own. ``"metrics":
+    null`` is none: spec_parser scores such an entry by the flat path, so
+    every "has it a tree" question — here and in the authoring Session —
+    asks this, and none tests the key."""
+    return entry is not None and entry.get("metrics") is not None
+
+
 def needs_materialization(entry: dict | None, patch: Sequence[dict]) -> bool:
     """Some op edits under ``/metrics/`` and neither the entry nor the patch
     itself supplies the tree (a missing entry is left to ``apply_patch``)."""
-    if entry is None or "metrics" in entry:
+    if entry is None or has_metrics(entry):
         return False
     edits_under = any(
         isinstance(op, dict) and str(op.get("path", "")).startswith("/metrics/")
@@ -136,7 +144,7 @@ def validate_entry_metric_tree(
     no tree (implicit AND). ``store`` saves the caller that already holds one
     (the Session) a rescan of the whole partition per call."""
     entry = spec_entry(data, model_id)
-    if entry is None or "metrics" not in entry:
+    if entry is None or not has_metrics(entry):
         return
 
     from ..comparison.tree_spec import MetricSpecError, parse_metric_tree

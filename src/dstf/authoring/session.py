@@ -43,6 +43,7 @@ from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
     apply_validated_patches,
+    has_metrics,
     implicit_tree_op,
     is_literal_variable,
     needs_materialization,
@@ -88,13 +89,18 @@ logger = logging.getLogger(__name__)
 #: dir with --report sidecars). Past it the run starts and one line says so.
 BACKGROUND_WAIT = 60.0
 
-#: Why a test with no ``metrics`` of its own has no tree to edit
-#: (`Session.tree` is None: `_materialization` refused): what `stage`
-#: refuses a per-leaf op with, and what a criterion's editor says there.
+#: Why a test has no tree to edit when no comparison scored a variable
+#: (no baseline, a failed run, simulate-only): `Session.no_tree_reason`.
+NOTHING_SCORED = "nothing is scored"
+#: Why a SCORED test with no ``metrics`` of its own has no tree to edit
+#: (`_materialization` refused — each refusal is a flat setting of the
+#: spec or the baseline, or a last run the loaded result no longer
+#: matches): `Session.no_tree_reason`.
 NO_TREE = (
-    "this test's flat settings cannot become a criteria tree here without "
-    "changing what it scores, or nothing was scored to build one from — "
-    "write a metrics tree for it in test_spec.json to edit its criteria"
+    "this test's criteria cannot become a tree here without changing what "
+    "it scores (its flat settings, its baseline's settings or its last run "
+    "differ from what a tree would score) — write a metrics tree for it in "
+    "test_spec.json to edit its criteria"
 )
 
 
@@ -1074,11 +1080,26 @@ class Session:
         the document. An unknown model is a KeyError, as for ``tree_view``."""
         if self._require_project().test(model_id) is None:
             raise KeyError(model_id)
-        entry = self.spec.entry(model_id) or {}
-        if "metrics" in entry:
+        entry = self.spec.entry(model_id)
+        if has_metrics(entry):
+            assert entry is not None  # `has_metrics` said so
             return copy.deepcopy(entry["metrics"])
         op = self._materialization(model_id)
         return op["value"] if op is not None else None
+
+    def no_tree_reason(self, model_id: str) -> str | None:
+        """Why ``model_id`` has no tree to edit — the ONE text every surface
+        says it with (`stage`'s refusal, a criterion's editor, Edit tree,
+        a Statistics row's `+`): ``None`` when :meth:`tree` is not None;
+        :data:`NOTHING_SCORED` when no comparison scored a variable;
+        :data:`NO_TREE` when one did and `_materialization` refused. An
+        unknown model is a KeyError, as for :meth:`tree`."""
+        if self.tree(model_id) is not None:
+            return None
+        comp = self.comparisons.get(model_id)
+        if comp is None or not comp.variables:
+            return NOTHING_SCORED
+        return NO_TREE
 
     # -- the spec ----------------------------------------------------------
 
@@ -1100,7 +1121,7 @@ class Session:
                 # leaf i is /metrics/children/i of the report's tree.
                 tree_op = self._materialization(model_id)
                 if tree_op is None:
-                    raise PatchError(f"{model_id}: {NO_TREE}")
+                    raise PatchError(f"{model_id}: {self.no_tree_reason(model_id)}")
                 # Marked: the drawer diffs against the saved entry with this
                 # tree in it (`SpecDocument.preview_base`) — but only when it
                 # is the tree the SAVED entry scores. Built from overrides an
@@ -1564,7 +1585,7 @@ class Session:
             return (entry.get("comparison") or {}).get("variable_overrides") or {}
 
         saved = self.spec.saved_entry(model_id) or {"model": model_id}
-        if "metrics" in saved:
+        if has_metrics(saved):
             return False
         return overrides(saved) == overrides(self.spec.entry(model_id) or {})
 
@@ -1575,7 +1596,8 @@ class Session:
         tiers. For a test tracked by its ``.mo`` annotation those names are
         in no spec entry (and the entry may not exist yet: the op creates
         it). ``None`` — and ``rescore`` stages nothing — when the entry
-        already has a tree, when nothing was scored (NO_REF, SIM_FAIL,
+        already has a tree (`has_metrics`: a null ``metrics`` is none),
+        when nothing was scored (NO_REF, SIM_FAIL,
         simulate-only), or when a tree would not score what the flat path
         scored: a scored variable whose name is not one the result carries
         (a comparison from a run the results no longer match), a string
@@ -1589,7 +1611,7 @@ class Session:
         project = self._require_project()
         entry = self.spec.entry(model_id) or {"model": model_id}
         comp = self.comparisons.get(model_id)
-        if "metrics" in entry or comp is None or not comp.variables:
+        if has_metrics(entry) or comp is None or not comp.variables:
             return None
         # A pattern-tracked spec materializes from the names the pattern
         # resolved today (owner ruling, D126): the pattern keeps tracking,
@@ -1792,6 +1814,9 @@ class SessionView:
 
     def tree(self, model_id: str) -> dict | None:
         return self._session.tree(model_id)
+
+    def no_tree_reason(self, model_id: str) -> str | None:
+        return self._session.no_tree_reason(model_id)
 
 
 def _known_models(config: Config, document: object) -> list[str]:

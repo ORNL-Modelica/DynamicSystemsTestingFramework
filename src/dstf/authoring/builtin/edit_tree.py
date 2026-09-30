@@ -140,9 +140,6 @@ _ROOT_UNWRAP = "the root has no parent to take its children"
 #: Why an add form's Add is grey on a simulate-only test: a criterion
 #: staged there is never scored (the comparator short-circuits it).
 _SIMULATE_ONLY = "This test is simulate-only: nothing is scored"
-#: Why a Statistics row's `+` is grey on a test with no tree: an add has
-#: nothing to land in (no baseline, a failed run).
-_NOTHING_SCORED = "nothing is scored"
 #: Why a weighted form's action is grey: its threshold starts EMPTY, not 0
 #: (0 with `less` always fails), and has to be typed.
 _NO_THRESHOLD = "enter a threshold"
@@ -211,7 +208,9 @@ class EditTree:
             return locked
         tree = s.tree(model_id)
         if tree is None:
-            return "no tree to edit (nothing scored)"
+            why = s.no_tree_reason(model_id)
+            assert why is not None  # `tree` is None
+            return why
         if sel.node_path is not None and node_or_none(tree, sel.node_path) is None:
             # A selection the tree moved under: the panel would index a list
             # that is shorter now.
@@ -893,8 +892,9 @@ def _statistic_plus(
     lands in an `and`), added at the END of the root (Q6 b), or as
     ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
     after it. Grey with the add form's reason where nothing can take it:
-    a job holding the test, a simulate-only test, a test with nothing
-    scored (no tree to add to), a root that takes no child alone."""
+    a job holding the test, a simulate-only test, a test with no tree to
+    add to (the Session's `no_tree_reason`), a root that takes no child
+    alone."""
     tree = s.tree(model_id)
     locked = _locked_by(s, model_id)
     if locked is not None:
@@ -902,7 +902,8 @@ def _statistic_plus(
     elif _simulate_only(s, model_id):
         reason = _SIMULATE_ONLY
     elif tree is None:
-        reason = _NOTHING_SCORED
+        # The Session's one reason: nothing scored, or a tree it refuses.
+        reason = s.no_tree_reason(model_id)
     else:
         reason = _NO_ADD.get(str(tree.get("combinator")))
     tip = reason
