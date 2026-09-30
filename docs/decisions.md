@@ -5904,8 +5904,8 @@ Statistic / Run / Baseline / a `+` or the criterion's pill); then, on
 would fail**, and **expanded, the card lists every numeric statistic the
 run or the baseline recorded, by section**. Built from
 `docs/superpowers/plans/2026-09-29-the-statistics-card.md`, whose
-"Corrections 1" (two executing reviews) override its task text, and two
-fix batches from the mutation reviews.
+"Corrections 1" (two executing reviews) override its task text, and four
+fix batches from the reviews.
 
 **Decision.**
 
@@ -5964,9 +5964,11 @@ fix batches from the mutation reviews.
    spelled `CPU`), a top-level name as is: `CPUtime`, where the report
    said `Cputime`. Its VALUES keep their precision (`stats_rows.
    report_text`): a time as recorded, with its unit (`0.045845 s`,
-   `99.96 s`, `1234.5 s` — `:g`, so at most six significant figures), a
-   count whole (`1234567`). Only the card rounds (`card_text`): a time to
-   3 significant figures keeping its zeros (`0.800 s`), and whole seconds
+   `1.600425 s`, `1234567.89 s` — `:.15g`; until fix batch 4 it was `:g`,
+   six significant figures, `1.60042 s` and `1.23457e+06 s`, while the
+   docstring said "in full"), a count whole (`1234567`). Only the card
+   rounds (`card_text`): a time to 3 significant figures keeping its
+   zeros (`0.800 s`), and whole seconds
    from 999.5 s (`1234 s` — `#.3g` wrote `1.00e+03 s`). Fix batch 3 split
    the two (a controller's call, reversible); before it both tiers printed
    the card's rounding. A delta
@@ -5997,10 +5999,13 @@ fix batches from the mutation reviews.
    count 0→3 · CPUtime +116%`). That is the owner's ruling of 2026-09-30,
    on the TRANSFORM gate's measurement: CPUtime ran about 2.2x its
    baseline (median 2.24x) on 324 of 331 tests, so a line naming times
-   among the counts named CPUtime on every test. `all match` is gone —
-   nothing changed reads `no count changed`; the line otherwise says `no
-   run result`, `no baseline statistics` or `nothing recorded`. The open
-   table still tints a changed time (the seed's 10%). Open, every
+   among the counts named CPUtime on every test. Where no count and no
+   time changed the line says `all match`, as before the ruling (fix batch
+   3 had turned that into `no count changed` by accident; fix batch 4
+   restored it); `no count changed` leads only a line of times. The line
+   otherwise says `no run result`, `no baseline statistics` or `nothing
+   recorded`. The open table still tints a changed time (the seed's 10%).
+   Open, every
    count and time under Translation / Simulation / Timing (then any other
    section), columns Statistic / Run / Baseline; a changed row wears the
    report's warn tint, and the open row the selection. A scored row shows
@@ -6028,10 +6033,10 @@ fix batches from the mutation reviews.
    placements it reads the leaf from the tree as AUTHORED (`SessionView.
    tree`, staged edits included), and the values-in-effect hints only
    where a tree view says what the leaf was scored with; the card's open
-   editor redraws when the authored leaf moves. Read from the view (fix
-   batch 3), a `+` on a test with no baseline — nothing compared, no view
-   — opened an editor with no field, and an open editor there never
-   followed an edit staged elsewhere.
+   editor redraws when the authored leaf moves. Before fix batch 3 it read
+   the leaf from the view, and a `+` on a test with no baseline — nothing
+   compared, no view — opened an editor with no field, and an open editor
+   there never followed an edit staged elsewhere.
 7. *One editor page-wide.* `TestPage.open` keeps its shape with a
    sentinel: `(STATS, leaf path)`, `STATS = -1` (B9). Opening the card's
    editor closes a plot's and a form row, and they close it; Focus and
@@ -6068,7 +6073,14 @@ row whose run has no value (a run from before run-side statistics) adds a
 criterion that fails "not found in current run" until a rerun — by
 design. Where a test was compared but the Session will not materialize
 its flat entry's tree (`Session._materialization`'s refusals), a plot
-criterion's editor now says "this leaf is not in the scored tree": it
-read the view's leaf before, and the Session refused its every edit. Of
+criterion's editor draws no field and says the Session's own refusal —
+`session.NO_TREE`, the text `stage` refuses a per-leaf op with: "a
+per-leaf op needs the implicit tree materialized, and this test has no
+scored variables a tree could be built from (or one of the flat/tree
+differences applies) — author the tree explicitly". It read the view's
+leaf before fix batch 3, while the Session refused its every edit, and
+between fix batches 3 and 4 said "this leaf is not in the scored tree",
+false of a leaf on the plot with its verdict; that line is now only for
+a path naming no leaf of a tree (Edit tree wrapped it). Of
 the TRANSFORM gate over a copy (the plan's Task 7) only the counts
 above are recorded here (items 1 and 5); the rest is the controller's.
