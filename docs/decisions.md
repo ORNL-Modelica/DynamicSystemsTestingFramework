@@ -6082,19 +6082,26 @@ add, Edit on plot and a Statistics row's `+` all read it. The reason is
 `_materialization`'s own refusal, so the baseline JSON is read once for
 the tree and the reason (fix batch 6). Four reasons, each one line:
 "nothing is scored" (`session.NOTHING_SCORED`) where no comparison
-scored a variable (no baseline, a failed run, no result, a model not in
-the project); "simulate-only: nothing is scored"
+scored a variable (no baseline, a failed run, no result; `stage`'s
+refusal of a per-leaf op on a model not in the project says it too, where
+`tree_or_reason` raises a KeyError for that model, as `tree_view` does);
+"simulate-only: nothing is scored"
 (`session.SIMULATE_ONLY`) for the same on a simulate-only test, which is
 also the add form's grey Add there, tree or not; "its last run no longer
 holds what it scored — rerun it" (`session.STALE`) where a scored name
 is not one the loaded result carries; and for every other refusal (an
-unnamed scored name, a string `quantity` or an unregistered mode in an
-override, a reference-JSON override the spec does not shadow)
+unnamed or non-literal scored name, a string `quantity` or an
+unregistered mode in an override, a reference-JSON override the spec does not shadow)
 `session.NO_TREE`: "its flat criteria can't become a tree without
 changing its scores — write a metrics tree in test_spec.json". An edit
 that reaches a test with no tree is refused with
 `session.no_tree_error`, a `PatchError` whose `reason` is that line: the
-tool shows it alone beside the edit, the CLI's text keeps the model.
+tool shows it alone beside the edit, and the error's message names the
+model. A criterion's editor says a reason once: its host draws one
+why-line per distinct sentence, the first capability's, and Edit criteria
+says the Session's reason as its `available` answer, so Edit on plot,
+refused for the same reason, draws no second line; a sentence only one
+capability says ("nrmse has no on-plot handles") keeps its own line.
 Until fix batch 5 Edit tree said "no tree to edit (nothing scored)" and
 the `+` "nothing is scored" of a test that WAS scored, and `NO_TREE`
 blamed flat settings for every refusal, a last run the loaded result no
@@ -6107,7 +6114,9 @@ row edit raised "has no tree to edit" (the defect is older than this
 step); a simulate-only test's add form said "This test is simulate-only:
 nothing is scored", and `stage` of a per-leaf op on a model not in the
 project raised a KeyError from the reason's lookup, where it had been a
-`PatchError`. The editor read the view's
+`PatchError`. Until fix batch 7 the editor of a test with no tree read
+the reason twice, from Edit criteria's panel and Edit on plot's
+why-line, and a job holding the test twice likewise. The editor read the view's
 leaf before fix batch 3, while the Session refused its every edit, and
 between fix batches 3 and 4 said "this leaf is not in the scored tree",
 false of a leaf on the plot with its verdict; that line is now only for

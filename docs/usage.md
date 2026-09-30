@@ -1116,8 +1116,11 @@ shows the tests that reran and no others: one invocation writes one
 criterion: it is available when that leaf's metric has handles or a table — a
 `tube`, `range`, `scalar`, `points`, `event-timing` or `dominant-frequency`
 leaf. (An `nrmse` criterion says `nrmse has no on-plot handles` in the editor's
-place.) The plot above the editor carries rings for the open criterion alone,
-and a handle belonging to another leaf is refused by name. What drags:
+place.) On a test whose flat criteria cannot become a tree without changing
+its scores, the editor draws no field and says that reason on one line, in
+place of both Edit criteria and Edit on plot; a reason both would give — a
+job holding the test — likewise appears once. The plot above the editor
+carries rings for the open criterion alone, and a handle belonging to another leaf is refused by name. What drags:
 
 - a green ring on each tube control point (upper and lower edge), each
   checkpoint and each declared peak (on the spectrum panel) — grab it at its

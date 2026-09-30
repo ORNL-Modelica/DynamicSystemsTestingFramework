@@ -230,8 +230,8 @@ class RunningJob:
 def no_tree_error(model_id: str, why: str) -> PatchError:
     """The refusal of an edit that needs ``model_id``'s tree where there is
     none (`Session.tree_or_reason`'s ``why``): a patch the Session will not
-    take, so the tool shows ``why`` alone beside the edit it came from, and
-    the CLI's text keeps the model."""
+    take, whose ``reason`` is ``why`` — what the tool shows alone beside the
+    edit it came from — and whose message names the model too."""
     return PatchError(f"{model_id}: {why}", reason=why)
 
 
@@ -1608,8 +1608,9 @@ class Session:
         entry already has a tree (`has_metrics`: a null ``metrics`` is
         none). Otherwise ``(None, why)`` — and ``rescore`` stages nothing:
         :data:`SIMULATE_ONLY` or :data:`NOTHING_SCORED` when nothing was
-        scored (NO_REF, SIM_FAIL, simulate-only, a model not in the
-        project); :data:`STALE` when a scored variable's name is not one the
+        scored (NO_REF, SIM_FAIL, simulate-only; and a model not in the
+        project, which `stage` refuses with it as a patch — `tree_or_reason`
+        raises a KeyError for one before asking); :data:`STALE` when a scored variable's name is not one the
         loaded result carries (a comparison from a run the results no
         longer match); :data:`NO_TREE` when a tree would not score what the
         flat path scored: an unnamed or non-literal scored name, a string
