@@ -20,7 +20,13 @@ from typing import TYPE_CHECKING, Any
 
 from ...backends.types import DatasetType
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
-from ...comparison.seeds import SeedData, seed_diagnostic, seeded_leaf
+from ...comparison.seeds import (
+    SeedData,
+    quantity_kind,
+    seed_diagnostic,
+    seed_quantity,
+    seeded_leaf,
+)
 from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
@@ -236,7 +242,21 @@ class EditTree:
                 parent_node = node_or_none(tree, path.rsplit("/children/", 1)[0])
                 into = str((parent_node or {}).get("combinator"))
             diagnostics = _diagnostics(s, model_id)
-            if inputs["variable"] in diagnostics:
+            quantity = inputs.get("quantity")
+            if quantity is not None and inputs.get("variable") is not None:
+                raise ValueError("add takes a quantity or a variable, not both")
+            name, _, field_name = str(quantity).rpartition(".")
+            if quantity is not None and field_name == "final" and name in diagnostics:
+                # One seed per path: a diagnostic's final is the add form's
+                # diagnostic criterion, its kind read from its samples.
+                leaf = seed_diagnostic(name, diagnostics[name], into=into)
+            elif quantity is not None:
+                # A Statistics row's `+`: a stored number, no variable. A
+                # top-level statistic naming a diagnostic reads its samples
+                # for its kind, as its `X.final` would.
+                kind = quantity_kind(quantity, diagnostics.get(quantity))
+                leaf = seed_quantity(quantity, kind, into=into)
+            elif inputs["variable"] in diagnostics:
                 # A diagnostic is one stored number (K1): its final through
                 # a quantity path, never a trajectory — a `{"reduce": ...}`
                 # scalar on one never scores.

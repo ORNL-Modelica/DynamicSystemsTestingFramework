@@ -2821,3 +2821,104 @@ async def test_an_own_tolerance_cleared_says_the_base_in_effect(session):
                 == {"Tolerance": f"in effect: {base:g} (the project's tolerance)"}
             )
         )
+
+
+# -- a quantity added from the Statistics card (U3) -------------------------------
+
+_COUNT_LEAF = {
+    "metric": "scalar",
+    "quantity": "translation.nonlinear_count",
+    "tolerance": 0,
+    "tolerance_mode": "abs",
+}
+
+
+def _add_quantity(session, quantity, path=ROOT):
+    view = SessionView(session, Selection(tests=frozenset({A})))
+    return (
+        EditTree().act(view, action="add", model_id=A, path=path, quantity=quantity).ops
+    )
+
+
+@pytest.mark.parametrize("flat", [True, False])
+async def test_a_count_lands_at_the_end_of_an_and_root(tmp_path, flat):
+    """The `+` of a Statistics row adds at the END of the root (Q6 b): one
+    op, `/metrics/children/-`, the count exact and bare."""
+    session = _wide_session(tmp_path, 0)
+    if not flat:
+        session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
+    (op,) = _add_quantity(session, "translation.nonlinear_count")
+    assert (op.op, op.path) == ("add", f"{ROOT}/children/-")
+    assert op.value == _COUNT_LEAF
+    session.stage([op])
+    assert session.tree(A)["children"][-1] == _COUNT_LEAF
+    assert len(session.tree(A)["children"]) == 3
+
+
+async def test_cpu_time_warns_in_an_and_root_and_goes_bare_in_an_or(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
+    (op,) = _add_quantity(session, "CPUtime")
+    assert op.value == {
+        "combinator": "warn",
+        "children": [
+            {
+                "metric": "scalar",
+                "quantity": "CPUtime",
+                "tolerance": 0.1,
+                "tolerance_mode": "rel",
+            }
+        ],
+    }
+    session.stage([PatchOp(A, "add", ROOT, {"combinator": "or", "children": _XY})])
+    (op,) = _add_quantity(session, "CPUtime")
+    assert "combinator" not in op.value and op.value["tolerance_mode"] == "rel"
+
+
+async def test_a_quantity_beside_a_root_leaf_makes_an_and_of_both(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    session.stage([PatchOp(A, "add", ROOT, dict(_XY[0]))])
+    (op,) = _add_quantity(session, "translation.nonlinear_count")
+    assert (op.op, op.path) == ("add", ROOT)
+    assert op.value == {"combinator": "and", "children": [_XY[0], _COUNT_LEAF]}
+
+
+async def test_a_diagnostic_final_goes_through_its_seed(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, EventCounter=4.0)
+    (op,) = _add_quantity(session, "EventCounter.final")
+    assert op.value == {
+        "metric": "scalar",
+        "variable": "EventCounter",
+        "quantity": "EventCounter.final",
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+
+async def test_a_top_level_statistic_naming_a_diagnostic_takes_its_kind(tmp_path):
+    """A user-configured diagnostic folded into the statistics: its row's
+    `+` reads the run's samples, as the add form's `Wall.final` does — a
+    time, warned in an `and` (Corrections A5)."""
+    session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, Wall=2.5)  # samples 0 .. 2.5: fractional
+    (op,) = _add_quantity(session, "Wall")
+    assert op.value["combinator"] == "warn"
+    (leaf,) = op.value["children"]
+    assert (leaf["quantity"], leaf["tolerance_mode"]) == ("Wall", "rel")
+    assert "variable" not in leaf
+
+
+async def test_a_quantity_and_a_variable_together_raise(tmp_path):
+    session = _wide_session(tmp_path, 0)
+    view = SessionView(session, Selection(tests=frozenset({A})))
+    with pytest.raises(ValueError, match="quantity or a variable"):
+        EditTree().act(
+            view,
+            action="add",
+            model_id=A,
+            path=ROOT,
+            quantity="CPUtime",
+            variable="y",
+            metric="scalar",
+        )

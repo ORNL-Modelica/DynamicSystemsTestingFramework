@@ -3860,3 +3860,162 @@ class TestACriterionOnAFileVariable:
         assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
         assert "w" in s.variable_names(D)
         assert len(listed) == 1, listed
+
+
+# -- the Statistics rows (U3) -----------------------------------------------------
+
+#: Dymola-shaped statistics: the baseline was stored before the parser always
+#: wrote a list's summaries (an empty `nonlinear`, no `nonlinear_count`).
+STATS_RUN = {
+    "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
+    "simulation": {"state_events": 2},
+    "timing": {"total_wall": 4.02},
+    "CPUtime": 1.12,
+}
+STATS_BASE = {
+    "translation": {"nonlinear": []},
+    "simulation": {"state_events": 2},
+    "timing": {"total_wall": 3.91},
+    "CPUtime": 0.80,
+}
+
+
+def _stats_session(tmp_path: Path, *, result: bool = True) -> Session:
+    """`_two_var_project` with A's baseline carrying `STATS_BASE` and its
+    in-memory result `STATS_RUN` (FakeLib records only walls)."""
+    cfg, work = _two_var_project(tmp_path)
+    config = Config(config_file=cfg, work_dir=work)
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(config).store_reference(
+        make_test_model(A, variable_patterns=["x", "y"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+            ],
+            statistics=copy.deepcopy(STATS_BASE),
+            diagnostics=[
+                VariableResult(index=0, time=tt, values=0.80 * tt, name="CPUtime")
+            ],
+        ),
+    )
+    s = Session()
+    s.open(cfg, work_dir=work)
+    if result:
+        res = s.project.results[A]
+        res.statistics = copy.deepcopy(STATS_RUN)
+        res.diagnostics = [
+            VariableResult(index=0, time=tt, values=1.12 * tt, name="CPUtime")
+        ]
+    else:
+        s.project.results.pop(A, None)
+    return s
+
+
+class TestTheStatisticsRows:
+    def test_the_run_beside_the_baseline_in_the_reports_order(self, tmp_path):
+        s = _stats_session(tmp_path)
+        rows = s.statistics(A)
+        assert [r.path for r in rows] == [
+            "translation.nonlinear",
+            "translation.nonlinear_count",
+            "CPUtime",
+            "simulation.state_events",
+            "timing.total_wall",
+        ]
+        by = {r.path: r for r in rows}
+        assert by["translation.nonlinear_count"].baseline == 0
+        assert by["translation.nonlinear_count"].delta == "0→3"
+        assert by["translation.nonlinear_count"].changed
+        assert by["CPUtime"].changed and by["CPUtime"].delta == "+40%"
+        assert not by["timing.total_wall"].changed
+
+    def test_a_staged_leaf_on_an_unknown_quantity_gets_its_own_row(self, tmp_path):
+        s = _stats_session(tmp_path)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "scalar", "quantity": "translation.typo", "tolerance": 0},
+                {
+                    "metric": "scalar",
+                    "variable": "CPUtime",
+                    "quantity": "CPUtime.final",
+                    "tolerance": 0.1,
+                    "tolerance_mode": "rel",
+                },
+            ],
+        }
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        rows = s.statistics(A)
+        assert (rows[-1].path, rows[-1].section) == ("translation.typo", "other scored")
+        assert rows[-1].run is None and rows[-1].baseline is None
+        # `CPUtime.final` is the `CPUtime` row (S2): no second one.
+        assert [r.path for r in rows].count("CPUtime") == 1
+        assert "CPUtime.final" not in [r.path for r in rows]
+
+    def test_an_implicit_tree_is_never_materialized_for_them(self, tmp_path):
+        """The extra rows come from the ENTRY's own tree: an implicit tree
+        holds no statistics leaf, and materializing one reads the baseline
+        (Corrections B4)."""
+        s = _stats_session(tmp_path)
+
+        def refuse(model_id):
+            raise AssertionError("materialized")
+
+        s._materialization = refuse  # type: ignore[method-assign]
+        assert s.statistics(A)
+
+    def test_no_result_reads_the_baseline_rows_alone(self, tmp_path):
+        s = _stats_session(tmp_path, result=False)
+        rows = s.statistics(A)
+        assert rows and all(r.run is None and not r.changed for r in rows)
+        assert s.statistics(B) == []
+        with pytest.raises(KeyError):
+            s.statistics("FakeLib.Nope")
+
+    def test_the_cached_reference_is_never_written(self, tmp_path):
+        s = _stats_session(tmp_path)
+        before = copy.deepcopy(s._reads_for(A).ref)
+        s.statistics(A)
+        s.statistics(A)
+        assert s._reads_for(A).ref == before
+
+    def test_a_statistics_leaf_is_no_tracked_variable(self, tmp_path):
+        """A statistics leaf scores a stored number, not a variable: its
+        parsed `variable` (its path, or a diagnostic's name) is never one of
+        the test's tracked variables, which the add form's picker lists
+        (Corrections B5)."""
+        s = _stats_session(tmp_path)
+        s.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics",
+                    {
+                        "combinator": "and",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x"},
+                            {
+                                "metric": "scalar",
+                                "quantity": "translation.nonlinear_count",
+                                "tolerance": 0,
+                            },
+                            {
+                                "metric": "scalar",
+                                "variable": "CPUtime",
+                                "quantity": "CPUtime.final",
+                                "tolerance": 0.1,
+                                "tolerance_mode": "rel",
+                            },
+                        ],
+                    },
+                )
+            ]
+        )
+        scored = [vc.name for vc in s.comparisons[A].variables]
+        assert "translation.nonlinear_count" in scored  # what B5 is about
+        assert s.tracked(A) == ["x", "y"]

@@ -74,8 +74,9 @@ from .spec_document import PatchOp, SpecDocument
 if TYPE_CHECKING:
     import numpy as np
 
-    from ..comparison.tree_spec import LeafSpec
+    from ..comparison.tree_spec import LeafSpec, SpecNode
     from ..figures.plotly import Visibility
+    from ..reporting.stats_rows import StatRow
 
 Event = Literal["spec", "results", "job", "loading", "known", "overlays"]
 Listener = Callable[[dict[str, Any]], None]
@@ -681,9 +682,23 @@ class Session:
         variable a criterion may be added for is one of them — the scored
         names alone would lose a variable whose last criterion was just
         removed, and with it the way back to one."""
+        from ..comparison.tree_spec import collect_variables, tree_variables
+
         project = self._require_project()
         comp = self.comparisons.get(model_id)
-        scored = [vc.name for vc in comp.variables] if comp is not None else []
+        # A statistics leaf scores a stored number: its parsed `variable`
+        # (its quantity path, or a diagnostic's name) is no variable, and
+        # listed here the add form's picker offered `translation.*` paths
+        # as "Other variables". A name a trajectory leaf scores too stays.
+        spec = self._entry_tree(model_id)
+        numbers = (
+            set(collect_variables(spec)) - set(tree_variables(spec)) if spec else set()
+        )
+        scored = (
+            [vc.name for vc in comp.variables if vc.name not in numbers]
+            if comp is not None
+            else []
+        )
         result = project.results.get(model_id)
         test = project.test(model_id)
         if result is not None and test is not None:
@@ -992,6 +1007,39 @@ class Session:
             # the editor's "in effect" hints (K3); the report shows none
             base,
         )
+
+    def statistics(self, model_id: str) -> list[StatRow]:
+        """The test's Statistics rows (:func:`~dstf.reporting.stats_rows.
+        statistics_rows`): the last run's statistics beside its baseline's,
+        plus a row for every quantity a statistics leaf of the entry's tree
+        reads that no recorded statistic holds. The baseline's rows alone
+        with no result; ``[]`` with neither. Reads the CACHED reference,
+        which `statistics_rows` never writes. An unknown model is a
+        KeyError, as for :meth:`tree`."""
+        from ..comparison.tree_spec import statistic_paths
+        from ..reporting.stats_rows import statistics_rows
+
+        project = self._require_project()
+        if project.test(model_id) is None:
+            raise KeyError(model_id)
+        result = project.results.get(model_id)
+        ref = self._reads_for(model_id).ref or {}
+        return statistics_rows(
+            result.statistics if result is not None else None,
+            ref.get("statistics"),
+            run_diagnostics=(result.diagnostics or []) if result is not None else (),
+            baseline_diagnostics=ref.get("diagnostics") or (),
+            extra_paths=statistic_paths(self._entry_tree(model_id)),
+        )
+
+    def _entry_tree(self, model_id: str) -> SpecNode | None:
+        """The entry's OWN tree, parsed; None when it has none. Never the
+        tree :meth:`tree` materializes for a flat entry: that reads the
+        baseline, and an implicit tree holds no statistics leaf."""
+        from ..comparison.tree_spec import parse_metric_tree
+
+        raw = (self.spec.entry(model_id) or {}).get("metrics")
+        return parse_metric_tree(raw) if raw is not None else None
 
     def tree(self, model_id: str) -> dict | None:
         """The raw tree a Patch edits: the entry's ``metrics`` block, else the
