@@ -309,6 +309,32 @@ async def test_against_offers_the_soft_check_under_warn(tmp_path):
         )
 
 
+async def test_against_offers_the_soft_check_to_a_primary_leaf_under_warn(tmp_path):
+    """Under a `warn`, a leaf scored against primary may be pointed at the
+    soft_check: `advisory` comes from the AUTHORED tree. (The test above's
+    leaf already names om_cross, which the panel keeps selectable either
+    way.)"""
+    under = {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "x"}]}
+    s = _session_with_soft_check(
+        tmp_path, PatchOp(A, "add", "/metrics/children/-", under)
+    )
+    async with host(s, EditCriteria(), UNDER_WARN) as (user, errors, _):
+        against = await _against_select(user)
+        assert against.options == ["primary", "om_cross"]
+        assert against.value == "primary"
+
+
+async def test_edit_criteria_on_a_combinator_says_it_is_no_leaf(tmp_path):
+    """Edit tree wrapped the selected leaf: the selection's path names a
+    combinator, which the editor reads as no leaf."""
+    s = _session_with_soft_check(
+        tmp_path, PatchOp(A, "add", "/metrics/children/-", WARN_LEAF)
+    )
+    sel = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/1")
+    async with host(s, EditCriteria(), sel) as (user, errors, _):
+        await user.should_see("this leaf is not in the scored tree")
+
+
 async def test_against_keeps_a_value_the_store_no_longer_knows(tmp_path):
     """The leaf one opens this panel to repair — its baseline was removed
     after the spec was written; the validator refuses to STAGE such a leaf,

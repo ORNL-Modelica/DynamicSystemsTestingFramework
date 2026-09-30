@@ -7986,6 +7986,20 @@ def test_the_closed_line_names_two_times_largest_move_first():
     )
 
 
+def test_the_closed_line_ranks_a_time_off_a_zero_baseline_first():
+    """A time off a zero baseline has no relative change: it moved
+    farthest, and is named first."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    rows = [
+        _stat("CPUtime", 1.73, 0.8, True, "+116%", kind="time", key="CPUtime"),
+        _stat("timing.other_wall", 0.05, 0.0, True, "+0.05 s", kind="time"),
+    ]
+    assert line_text(rows, has_run=True) == (
+        "no count changed · Other wall +0.05 s, CPUtime +116%"
+    )
+
+
 def test_the_closed_line_says_why_it_names_nothing():
     from dstf.authoring.shell.stats_card import line_text
 

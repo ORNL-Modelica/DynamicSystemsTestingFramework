@@ -351,3 +351,10 @@ def test_a_system_size_list_on_either_side_gives_its_summaries_on_both():
     # A list of names sizes no system: no summary rows.
     rows = _by_path(statistics_rows({"translation": {"state_names": ["a.x"]}}, {}))
     assert "translation.state_names_count" not in rows
+
+
+def test_a_run_sides_empty_list_gives_its_summaries():
+    """A list on the RUN side alone gives its summaries too ("either side")."""
+    rows = _by_path(statistics_rows({"translation": {"nonlinear": []}}, {}))
+    row = rows["translation.nonlinear_count"]
+    assert (row.kind, row.run, row.baseline) == ("count", 0, None)
