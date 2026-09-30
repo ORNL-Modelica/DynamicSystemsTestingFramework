@@ -862,10 +862,11 @@ Under the strip, the **Statistics card** shows every statistic the run and its
 baseline recorded, side by side — the rows the report's Statistics table
 shows, under one rule. Closed, as on every page open, it is one line naming
 the counts that changed (`1 changed: Nonlinear count 0→3`; a list's count,
-total and max are one entry; at most three, then `+N more`) or `no count
-changed`, then, after a `·`, at most two changed times, the one that moved
-most first (`· CPUtime +40%`); or `no run result`, `no baseline
-statistics`, `nothing recorded`. A statistic has **changed** when the criterion its `+` would add
+total and max are one entry; at most three, then `+N more`), then, after a
+`·`, at most two changed times, the one that moved most first (`· CPUtime
++40%`); `all match` when no count and no time changed; `no count changed`
+leads a line of times; or `no run result`, `no baseline statistics`,
+`nothing recorded`. A statistic has **changed** when the criterion its `+` would add
 would fail: a count on any difference, a time beyond 10%. Open, every count
 and time is a row under Translation / Simulation / Timing, with its run and
 baseline values (a time to 3 significant figures, `0.800 s`; the report's

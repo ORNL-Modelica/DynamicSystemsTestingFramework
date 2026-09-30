@@ -6001,8 +6001,9 @@ fix batches from the reviews.
    baseline (median 2.24x) on 324 of 331 tests, so a line naming times
    among the counts named CPUtime on every test. Where no count and no
    time changed the line says `all match`, as before the ruling (fix batch
-   3 had turned that into `no count changed` by accident; fix batch 4
-   restored it); `no count changed` leads only a line of times. The line
+   3 had turned that into `no count changed`; it was restored by the
+   controller (fix batch 4)); `no count changed` leads only a line of
+   times. The line
    otherwise says `no run result`, `no baseline statistics` or `nothing
    recorded`. The open table still tints a changed time (the seed's 10%).
    Open, every
@@ -6073,14 +6074,29 @@ row whose run has no value (a run from before run-side statistics) adds a
 criterion that fails "not found in current run" until a rerun — by
 design. Where a test was compared but the Session will not materialize
 its flat entry's tree (`Session._materialization`'s refusals), a plot
-criterion's editor draws no field and says the Session's own refusal —
-`session.NO_TREE`, the text `stage` refuses a per-leaf op with: "this
-test's flat settings cannot become a criteria tree here without changing
-what it scores, or nothing was scored to build one from — write a
-metrics tree for it in test_spec.json to edit its criteria". It read the view's
+criterion's editor draws no field and says the Session's own refusal.
+One method says why a test has no tree to edit, `Session.no_tree_reason`,
+and `stage`'s refusal of a per-leaf op, a criterion's editor, Edit tree's
+why and a Statistics row's `+` all read it (fix batch 5): "nothing is
+scored" (`session.NOTHING_SCORED`) where no comparison scored a variable
+(no baseline, a failed run), else `session.NO_TREE`: "this test's
+criteria cannot become a tree here without changing what it scores (its
+flat settings, its baseline's settings or its last run differ from what a
+tree would score) — write a metrics tree for it in test_spec.json to edit
+its criteria". Until fix batch 5 Edit tree said "no tree to edit (nothing
+scored)" and the `+` "nothing is scored" of a test that WAS scored, and
+`NO_TREE` blamed flat settings for every refusal, a last run the loaded
+result no longer matches included. The editor read the view's
 leaf before fix batch 3, while the Session refused its every edit, and
 between fix batches 3 and 4 said "this leaf is not in the scored tree",
 false of a leaf on the plot with its verdict; that line is now only for
-a path naming no leaf of a tree (Edit tree wrapped it). Of
+a path naming no leaf of a tree (Edit tree wrapped it). A spec entry
+whose `metrics` is `null` has no tree (fix batch 5; the defect is older
+than this step): `spec_update.has_metrics` is the one question
+`needs_materialization`, the D66 validator's entry check, `Session.tree`,
+`_materialization` and the materialization's mark all ask, as
+`spec_parser` already scored such an entry by the flat path. Before it,
+`tree` was None beside a tree view, a per-leaf `stage` failed "cannot
+descend into NoneType", and the validator refused any op on the entry. Of
 the TRANSFORM gate over a copy (the plan's Task 7) only the counts
 above are recorded here (items 1 and 5); the rest is the controller's.
