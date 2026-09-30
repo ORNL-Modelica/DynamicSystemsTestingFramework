@@ -92,11 +92,19 @@ class EditCriteria:
         from nicegui import ui
 
         from ..forms import BOTTOM, render_form
+        from ..session import NO_TREE
 
         sel = s.selection
         model_id = next(iter(sel.tests))
         path = sel.leaf_path or ""
-        leaf = _authored_leaf(s.tree(model_id), path)
+        tree = s.tree(model_id)
+        if tree is None:
+            # A compared test whose tree the Session will not materialize:
+            # its leaves are on the plots, but every edit is refused — say
+            # the Session's reason, not the view's leaf as if editable.
+            ui.label(NO_TREE)
+            return
+        leaf = _authored_leaf(tree, path)
         # The panel is rebuilt after edits made elsewhere: Edit tree wrapping
         # the selected leaf leaves the selection's path naming a combinator.
         if leaf is None:

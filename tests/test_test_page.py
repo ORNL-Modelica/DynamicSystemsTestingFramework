@@ -8372,6 +8372,55 @@ def _stats_tolerance(user, leaf: str):
     return field
 
 
+def _ref_override_project(tmp_path):
+    """`_two_var_project` with A's baseline carrying a reference-JSON
+    override the spec does not shadow: A is compared, has a tree view, and
+    the Session will not materialize its flat entry's tree."""
+    import numpy as np
+
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.config import Config
+    from dstf.storage.reference_store import ReferenceStore
+    from test_session import make_test_model
+
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    t = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(
+            A, variable_patterns=["x", "y"], variable_overrides={"x": {"tolerance": 0.5}}
+        ),
+        TestResult(model_id=A, success=True, variables=[
+            VariableResult(index=1, time=t, values=t, name="x"),
+            VariableResult(index=2, time=t, values=2.1 * t, name="y")]),  # fmt: skip
+    )
+    return cfg, work
+
+
+async def test_a_plot_editor_on_a_test_with_no_tree_says_why(tmp_path):
+    """A is compared (its leaves are on its plots, with verdicts), but the
+    Session refuses to materialize its tree — a baseline override the spec
+    does not shadow — and refuses every per-leaf edit. Its editor said
+    "this leaf is not in the scored tree", false of a leaf on the plot; it
+    says the Session's own refusal, and draws no field."""
+    from dstf.discovery.patch_apply import PatchError
+
+    shell = _opened(*_ref_override_project(tmp_path))
+    assert shell.session.tree_view(A) is not None
+    assert shell.session.tree(A) is None
+    with pytest.raises(PatchError) as refused:
+        shell.session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 1)])
+    reason = str(refused.value).removeprefix(f"{A}: ")
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        editor = _one(user, f"editor:0:{T0}")
+        texts = [getattr(e, "text", "") for e in editor.descendants()]
+        assert reason in texts
+        assert "this leaf is not in the scored tree" not in texts
+        assert not [e for e in editor.descendants() if isinstance(e, ui.number)]
+
+
 async def test_a_plus_on_a_test_with_no_baseline_opens_a_usable_editor(stats_shell):
     """B has a tree but no baseline: its range leaf is scored, but with the
     count requirement added nothing is (no tree view), and the new

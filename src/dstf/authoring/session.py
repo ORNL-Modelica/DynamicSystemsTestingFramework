@@ -88,6 +88,15 @@ logger = logging.getLogger(__name__)
 #: dir with --report sidecars). Past it the run starts and one line says so.
 BACKGROUND_WAIT = 60.0
 
+#: Why a test with no ``metrics`` of its own has no tree to edit
+#: (`Session.tree` is None: `_materialization` refused): what `stage`
+#: refuses a per-leaf op with, and what a criterion's editor says there.
+NO_TREE = (
+    "a per-leaf op needs the implicit tree materialized, and this test has "
+    "no scored variables a tree could be built from (or one of the flat/tree "
+    "differences applies) — author the tree explicitly"
+)
+
 
 @dataclass
 class Project:
@@ -1091,12 +1100,7 @@ class Session:
                 # leaf i is /metrics/children/i of the report's tree.
                 tree_op = self._materialization(model_id)
                 if tree_op is None:
-                    raise PatchError(
-                        f"{model_id}: a per-leaf op needs the implicit tree "
-                        "materialized, and this test has no scored variables "
-                        "a tree could be built from (or one of the flat/tree "
-                        "differences applies) — author the tree explicitly"
-                    )
+                    raise PatchError(f"{model_id}: {NO_TREE}")
                 # Marked: the drawer diffs against the saved entry with this
                 # tree in it (`SpecDocument.preview_base`) — but only when it
                 # is the tree the SAVED entry scores. Built from overrides an
