@@ -1298,20 +1298,26 @@ async def test_the_plus_adds_a_criterion_for_the_variable(shell):
 
 async def test_a_test_with_no_result_has_no_cards(shell):
     """C's last run never finished it (its manifest entry is still
-    pending): the reader hands in a failed result, but there is no result
-    to read, so the reason is the result, as the strip says — not the
-    run."""
+    pending): the reader hands in no result (D145), so the reason is the
+    result, as the strip says — not the run."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, C)
         assert _one(user, "plots:count").text == "no plots: this test has no result"
         assert page.cards == []
 
 
-def _c_run(tmp_path, status: str | None) -> Shell:
+def _c_run(tmp_path, status: str | None, live: str | None = None) -> Shell:
     """`shell` with C's manifest entry reading ``status`` — `pending` is a
     run that never finished C, `failed` one that finished it, failed — or,
-    with None, gone: C was never run. C has no result file either way."""
+    with None, gone: C was never run. C has no result file either way.
+    ``live``: C's row in status.json, the record a pending entry falls
+    through to."""
     cfg, work = _two_var_project(tmp_path)
+    if live is not None:
+        (work / "status.json").write_text(
+            json.dumps({"tests": [{"model_id": C, "status": live}]}),
+            encoding="utf-8",
+        )
     path = work / "batch_manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if status is None:
@@ -1366,6 +1372,23 @@ async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
             "var-target": "The run failed: no plots",
         }
         assert _one(user, "var-empty").text == "the run failed"
+
+
+async def test_a_pending_run_status_json_records_failed_says_the_run_failed(
+    tmp_path,
+):
+    """C's manifest entry is still pending but status.json records its run
+    failed: the reader hands in a failed result and the badge says SIM_FAIL
+    (D145). The strip said "No result yet" beside it — it reads the same
+    result the badge was scored from."""
+    shell = _c_run(tmp_path, "pending", live="failed")
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, C)
+        assert page.badge.text == "SIM_FAIL"
+        assert page.run_state() == "failed"
+        said = {m: _one(user, m).text for m in _RUN_LINES}
+        assert said["strip-text"].startswith("The simulation failed.")
+        assert said["plots:count"] == "no plots: the run failed"
 
 
 async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):

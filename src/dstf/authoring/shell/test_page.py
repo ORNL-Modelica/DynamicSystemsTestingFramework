@@ -25,7 +25,6 @@ from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
 from ...reporting.status import SCORING_FAILED, classify, classify_with_class
 from ...reporting.tree_rows import leaves_of
-from ...storage.batch_manifest import unfinished_run_models
 from ...storage.ref_index import RefIndex
 from ..capabilities import plural
 from ..errors import user_text
@@ -214,20 +213,15 @@ class TestPage:
 
     def run_state(self) -> str:
         """The ONE run-state rule every line of the page words its reason
-        by: "none" — no result, or the last run never finished the test
-        (its manifest entry still pending: the reader hands in no result
-        for it, D145, unless status.json recorded it failed, and then what
-        it hands in is not this run's result, as Accept's "re-run before
-        accepting" reads it) — "failed" when the run finished and failed,
-        else "ok". The strip said "No result yet" for an unfinished run
-        while the count, the tree and the drawer said the run failed."""
+        by: "none" — no result — "failed" when the result is a failed run,
+        else "ok". It reads the result the badge was scored from, so the
+        two cannot disagree: the reader hands in no result for a test the
+        last run never finished (its manifest entry still pending, D145),
+        and a failed one where status.json recorded that run failed — the
+        badge's SIM_FAIL, beside which the strip said "No result yet"
+        while it asked the manifest instead."""
         result = self.result()
-        project = self.shell.session.project
-        if result is None or project is None:
-            return "none"
-        work_dir = project.config.work_dir
-        assert work_dir is not None  # resolved in Config.__post_init__
-        if self.model_id in unfinished_run_models(work_dir):
+        if result is None:
             return "none"
         return "ok" if result.success else "failed"
 
