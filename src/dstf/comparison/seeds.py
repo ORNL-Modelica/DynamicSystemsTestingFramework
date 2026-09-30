@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -197,34 +198,84 @@ COUNTS = frozenset({"EventCounter"})
 TIMES = frozenset({"CPUtime"})
 
 
-def seed_diagnostic(name: str, values: np.ndarray | None, *, into: str) -> dict:
-    """A criterion on the diagnostic ``name`` (the plan's K1): its stored
-    final through a quantity path, ``tolerance 0 abs`` for a count and
-    ``0.1 rel`` otherwise. A diagnostic of neither known kind is a count
-    when every finite sample is a whole number. ``variable`` is the
-    diagnostic's name: parsed without one, the leaf's variable becomes the
-    quantity text, and its row reads ``scalar · CPUtime.final``.
+def quantity_kind(
+    path: str, values: np.ndarray | None = None
+) -> Literal["count", "time"]:
+    """What kind of number ``path`` names (S5): a ``count`` is scored exact,
+    a ``time`` within 10%. A statistic is a time by its path — the
+    ``timing`` section, CPUtime, and the ``*_time`` / ``*_wall`` /
+    ``cpu_time*`` keys; every other number a backend records is a count,
+    whatever its type (a Dymola ``result_points`` can be written as a
+    float).
 
-    A time (`TIMES`) is seeded inside a ``warn`` when it lands in an
-    ``and`` (``into``, the kind of the combinator it is added to): a run's
-    CPU time moves with the machine's load — under ``--parallel`` most of
-    all — and 10% would fail a test whose model did not change. Anywhere
-    else it is bare: a ``warn`` child passes whatever it scores, so under
-    an ``or`` or a ``k-of-n`` it would pass its parent with nothing else
-    passing. A count stays bare: it only moves when the model does."""
-    finite = values[np.isfinite(values)] if values is not None else np.array([])
-    count = name in COUNTS or (
-        name not in TIMES
-        and finite.size > 0
-        and bool(np.all(finite == np.round(finite)))
+    A diagnostic's summary (``CPUtime.final``) takes K1's rule: by name
+    when known, else a count when every finite sample of ``values`` is a
+    whole number. A top-level statistic given the run's samples of the
+    diagnostic it names (``CPUtime``, folded in from the diagnostics) is
+    that diagnostic's final and takes the same rule — the Statistics row
+    and the add form's ``X.final`` leaf are one kind."""
+    name, _, field = path.rpartition(".")
+    if not name and values is not None:
+        name, field = path, "final"
+    if name and "." not in name and field in ("final", "min", "max"):
+        if name in COUNTS:
+            return "count"
+        if name in TIMES:
+            return "time"
+        finite = values[np.isfinite(values)] if values is not None else np.array([])
+        whole = finite.size > 0 and bool(np.all(finite == np.round(finite)))
+        return "count" if whole else "time"
+    head = path.split(".", 1)[0]
+    last = path.rsplit(".", 1)[-1]
+    if (
+        head == "timing"
+        or last in TIMES
+        or last.endswith(("_time", "_wall"))
+        or last.startswith("cpu_time")
+    ):
+        return "time"
+    return "count"
+
+
+def seed_quantity(
+    path: str,
+    kind: Literal["count", "time"],
+    *,
+    into: str,
+    variable: str | None = None,
+) -> dict:
+    """A ``scalar`` criterion on the stored number ``path`` names:
+    ``tolerance 0 abs`` for a count and ``0.1 rel`` for a time. With
+    ``variable`` (a diagnostic's name) the leaf names it: parsed without
+    one, its variable becomes the quantity text, and its row reads
+    ``scalar · CPUtime.final``.
+
+    A time is seeded inside a ``warn`` when it lands in an ``and``
+    (``into``, the kind of the combinator it is added to): a run's CPU time
+    moves with the machine's load — under ``--parallel`` most of all — and
+    10% would fail a test whose model did not change. Anywhere else it is
+    bare: a ``warn`` child passes whatever it scores, so under an ``or`` or
+    a ``k-of-n`` it would pass its parent with nothing else passing. A
+    count stays bare: it only moves when the model does."""
+    count = kind == "count"
+    leaf: dict = {"metric": "scalar"}
+    if variable is not None:
+        leaf["variable"] = variable
+    leaf.update(
+        {
+            "quantity": path,
+            "tolerance": 0 if count else 0.1,
+            "tolerance_mode": "abs" if count else "rel",
+        }
     )
-    leaf = {
-        "metric": "scalar",
-        "variable": name,
-        "quantity": f"{name}.final",
-        "tolerance": 0 if count else 0.1,
-        "tolerance_mode": "abs" if count else "rel",
-    }
-    if name in TIMES and into == "and":
+    if not count and into == "and":
         return {"combinator": "warn", "children": [leaf]}
     return leaf
+
+
+def seed_diagnostic(name: str, values: np.ndarray | None, *, into: str) -> dict:
+    """A criterion on the diagnostic ``name`` (the plan's K1): its stored
+    final through a quantity path, seeded by :func:`seed_quantity` at the
+    kind :func:`quantity_kind` reads from ``values``."""
+    path = f"{name}.final"
+    return seed_quantity(path, quantity_kind(path, values), into=into, variable=name)

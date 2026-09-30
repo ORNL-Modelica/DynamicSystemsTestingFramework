@@ -11,7 +11,14 @@ import pytest
 from dstf.backends.types import VariableResult
 from dstf.comparison.algorithms import _compute_fft_spectrum
 from dstf.comparison.modes import resolve_mode
-from dstf.comparison.seeds import SeedData, _outward, seed_diagnostic, seeded_leaf
+from dstf.comparison.seeds import (
+    SeedData,
+    _outward,
+    quantity_kind,
+    seed_diagnostic,
+    seed_quantity,
+    seeded_leaf,
+)
 from dstf.comparison.tree_eval import (
     PRIMARY_BASELINE,
     BaselineView,
@@ -366,7 +373,10 @@ def test_cpu_time_is_seeded_inside_a_warn_and_a_count_bare():
     assert "combinator" not in seed_diagnostic(
         "EventCounter", np.array([0.0, 3.0]), into="and"
     )
-    assert "combinator" not in seed_diagnostic("Wall", np.array([0.0, 2.5]), into="and")
+    # A diagnostic time of unknown name is a time too: it warns in an `and`.
+    assert seed_diagnostic("Wall", np.array([0.0, 2.5]), into="and")["combinator"] == (
+        "warn"
+    )
     parse_metric_tree(node)  # a tree the evaluator reads
 
 
@@ -391,7 +401,7 @@ def test_another_diagnostic_is_a_count_when_every_sample_is_whole():
         == 0
     )
     assert (
-        seed_diagnostic("Wall", np.array([0.0, 2.0, 9.5]), into="and")["tolerance"]
+        seed_diagnostic("Wall", np.array([0.0, 2.0, 9.5]), into="or")["tolerance"]
         == 0.1
     )
 
@@ -427,3 +437,86 @@ def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
         scalars=ScalarSources(statistics={}, diagnostics=[diag]),
     )
     assert got.passed, got
+
+
+# -- a quantity's kind and its seed (U3) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "kind"),
+    [
+        ("translation.nonlinear_count", "count"),
+        ("translation.continuous_time_states", "count"),
+        ("simulation.state_events", "count"),
+        ("simulation.result_points", "count"),
+        ("simulation.accepted_steps", "count"),
+        ("EventCounter", "count"),
+        ("EventCounter.final", "count"),
+        ("CPUtime", "time"),
+        ("CPUtime.final", "time"),
+        ("simulation.cpu_time_integration", "time"),
+        ("simulation.wall_time", "time"),
+        ("timing.total_wall", "time"),
+        ("timing.frontend", "time"),
+        ("timing.anything", "time"),
+    ],
+)
+def test_a_quantity_kind_by_its_path(path, kind):
+    assert quantity_kind(path) == kind
+
+
+def test_an_unknown_diagnostic_kind_by_its_samples():
+    assert quantity_kind("Foo.final", np.array([0.0, 2.0, 9.0])) == "count"
+    assert quantity_kind("Foo.final", np.array([0.0, 2.0, 9.5])) == "time"
+
+
+def test_a_top_level_statistic_naming_a_diagnostic_is_its_kind():
+    """A top-level statistic (`Wall`, folded in from the diagnostics) given
+    the run's samples is classified as the diagnostic is: the add form's
+    `Wall.final` leaf and the Statistics row's `Wall` are one kind."""
+    assert quantity_kind("Wall", np.array([0.0, 2.0, 9.5])) == "time"
+    assert quantity_kind("Wall", np.array([0.0, 2.0, 9.0])) == "count"
+    assert quantity_kind("Wall") == "count"
+    # A known name wins over whole samples, as K1 says.
+    assert quantity_kind("CPUtime", np.array([0.0, 1.0, 1.0])) == "time"
+
+
+def test_a_count_is_seeded_exact_and_bare():
+    assert seed_quantity("translation.nonlinear_count", "count", into="and") == {
+        "metric": "scalar",
+        "quantity": "translation.nonlinear_count",
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+
+def test_a_time_under_and_is_seeded_in_a_warn():
+    node = seed_quantity("timing.total_wall", "time", into="and")
+    assert node == {
+        "combinator": "warn",
+        "children": [
+            {
+                "metric": "scalar",
+                "quantity": "timing.total_wall",
+                "tolerance": 0.1,
+                "tolerance_mode": "rel",
+            }
+        ],
+    }
+    parse_metric_tree(node)
+
+
+@pytest.mark.parametrize("into", ["or", "k-of-n", "warn", "weighted"])
+def test_a_time_elsewhere_is_seeded_bare(into):
+    leaf = seed_quantity("CPUtime", "time", into=into)
+    assert leaf == {
+        "metric": "scalar",
+        "quantity": "CPUtime",
+        "tolerance": 0.1,
+        "tolerance_mode": "rel",
+    }
+
+
+def test_a_variable_is_named_when_given():
+    leaf = seed_quantity("CPUtime.final", "time", into="or", variable="CPUtime")
+    assert leaf["variable"] == "CPUtime"
