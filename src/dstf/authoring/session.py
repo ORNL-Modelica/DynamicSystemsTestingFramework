@@ -323,6 +323,10 @@ class Session:
         self.notices: list[str] = []
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
+        #: The number of the last `spec` event, which carries it as
+        #: ``revision`` (`_emit_spec`): a page tells the event an act of
+        #: its own produced from one queued before or after it.
+        self.spec_revision = 0
         self.rescan_done = threading.Event()
         self._reads: dict[str, _ModelReads] = {}
         self._background = _Background()
@@ -432,7 +436,7 @@ class Session:
                 name="dstf-overlay-index",
                 daemon=True,
             ).start()
-            self._emit("spec", models={t.model_id for t in tests})
+            self._emit_spec({t.model_id for t in tests})
             done_event = threading.Event()
             self.rescan_done = done_event
             try:
@@ -562,7 +566,7 @@ class Session:
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
         self._reads = {}
-        self._emit("spec", models=set())
+        self._emit_spec(set())
 
     def reload(self) -> None:
         """Re-read the spec from disk, dropping pending ops (what a refused
@@ -1212,7 +1216,7 @@ class Session:
         project.tests = tests
         if reread:
             self._keep_read(reread, fresh)
-        self._emit("spec", models=models)
+        self._emit_spec(models)
         self._score_all(models)
 
     def discard(self, models: set[str] | None = None) -> None:
@@ -1450,7 +1454,7 @@ class Session:
             del self._reads[model_id]
         if reread:
             self._keep_read(reread, fresh)
-        self._emit("spec", models=models | gone | new)
+        self._emit_spec(models | gone | new)
         self._score_all((models | new) & current)
 
     def _read_again(
@@ -1680,6 +1684,12 @@ class Session:
         locked = set(models) & self.running.models
         if locked:
             raise LockedError(locked, self.running.label)
+
+    def _emit_spec(self, models: set[str]) -> None:
+        """The `spec` event for ``models``, numbered one up from the last
+        (`spec_revision`)."""
+        self.spec_revision += 1
+        self._emit("spec", models=models, revision=self.spec_revision)
 
     def _emit(self, event: Event, **payload: Any) -> None:
         """Every listener hears every event: one that raises (a deleted UI

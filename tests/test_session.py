@@ -1407,6 +1407,19 @@ class TestRescoreAndStage:
         session.stage([LOOSEN])
         assert seen == [("spec", {A}), ("results", {A})]
 
+    def test_each_spec_event_carries_the_next_revision(self, session):
+        """Numbered one up each, and `spec_revision` the last one's: the
+        number a page reads right after its own act is that act's event —
+        even when two stages fold into ONE pending op, as two moves do."""
+        seen = []
+        session.on("spec", lambda e: seen.append(e["revision"]))
+        first = session.spec_revision
+        session.stage([LOOSEN])
+        n = len(session.spec.pending)
+        session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.4)])
+        assert len(session.spec.pending) == n  # folded into LOOSEN's add
+        assert seen == [first + 1, first + 2] and session.spec_revision == first + 2
+
     def test_no_result_and_no_baseline_rescore_to_the_cli_states(self, session):
         assert classify(session.rescore(B)) == NO_REF
         assert classify(session.rescore(C)) == NOT_RUN

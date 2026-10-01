@@ -9621,6 +9621,45 @@ async def test_an_event_ahead_of_the_moves_own_spec_event_keeps_the_line(
         await _settled(lambda: _none(user, "moved-note"))
 
 
+async def test_two_moves_in_one_tick_keep_the_second_ones_line(nested_shell):
+    """Two moves before the Shell's next tick: both `spec` events are
+    queued, and the first one's — handled with the second move pending —
+    is no edit after it. The second move's line stands."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        await asyncio.sleep(0.3)
+        _drop(page, N_Y, N_T2, "before")  # [y, T2, k, x2]
+        _drop(page, N_Y, N_T2, "before")  # [x2, y, T2, k]
+        await asyncio.sleep(0.6)  # both events have been handled
+        # Both went through: x's max is the first child now.
+        assert shell.session.tree(A)["children"][0].get("max_value") == 100.0
+        assert page.pending_moved is None
+        assert not _none(user, "moved-note")
+
+
+async def test_an_edit_staged_just_before_a_move_keeps_the_moves_line(
+    nested_shell,
+):
+    """An edit and a move in one tick: the edit's `spec` event, handled
+    first, is no edit AFTER the move, and the move's own that follows is
+    the move's. Neither takes its line away."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        await asyncio.sleep(0.3)
+        shell.session.stage([PatchOp(A, "replace", f"{N_T2}/min_value", -2.0)])
+        _drop(page, N_Y, N_T2, "before")
+        await asyncio.sleep(0.6)  # both events have been handled
+        assert page.pending_moved is None
+        assert not _none(user, "moved-note")
+        # The next edit's `spec` event still takes it away.
+        shell.session.stage([PatchOp(A, "replace", f"{N_Y}/max_value", 50.0)])
+        await _settled(lambda: _none(user, "moved-note"))
+
+
 async def test_a_failed_runs_statistics_line_says_there_is_no_run_result(
     stats_shell,
 ):

@@ -113,11 +113,14 @@ class TestPage:
         #: A move's row to bring into view and the line it says, for the
         #: end of the next sync (`moved`).
         self.pending_moved: tuple[str, str] | None = None
-        #: Whether the move's own `spec` event is still to come: it is the
-        #: move's, and takes no line away (`handle`). A flag apart from
-        #: `pending_moved`: another event of this test queued in the same
-        #: tick, ahead of it, syncs first and says the line.
-        self.move_spec_due = False
+        #: The revision of the last move's own `spec` event
+        #: (`Session.spec_revision` right after it staged), or None: only
+        #: a `spec` event numbered past it is an edit AFTER the move, and
+        #: takes its line away (`handle`). A number, not a flag: an edit or
+        #: a second move queued in the same tick sends a `spec` event ahead
+        #: of the move's own, and either one, handled first, cleared the
+        #: flag — the move's own event then took its line away.
+        self.move_revision: int | None = None
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -522,7 +525,7 @@ class TestPage:
         self._redraw_moved(view)
         self._unsay()
         self.pending_moved = (path, text)
-        self.move_spec_due = True
+        self.move_revision = self.shell.session.spec_revision
 
     def _unsay(self) -> None:
         """Take a move's line away: the next form, editor or edit."""
@@ -976,7 +979,7 @@ class TestPage:
         self._close()
         self._close_row()
         self.pending_reveal = self.pending_moved = None
-        self.move_spec_due = False
+        self.move_revision = None
         if self.strip is not None:
             self.strip.forget()
         if self.badge is not None:
@@ -1036,14 +1039,13 @@ class TestPage:
             # signature sees an overlay, so the drawn plots are re-sent.
             self.sync(force=True)
         elif syncs:
-            if event["event"] == "spec":
-                if self.move_spec_due:
-                    # The move's own event: its line is said by this sync,
-                    # or was by an event ahead of it.
-                    self.move_spec_due = False
-                else:
-                    # An edit after a move: the line has said its piece.
-                    self._unsay()
+            if event["event"] == "spec" and (
+                self.move_revision is None or event["revision"] > self.move_revision
+            ):
+                # An edit after a move: the line has said its piece. The
+                # move's own event, or one queued ahead of it, is not: the
+                # line is said by this sync, or was by an event before it.
+                self._unsay()
             self.sync()
 
     def _mine(self, event: dict[str, Any]) -> bool:
