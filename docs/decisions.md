@@ -6157,9 +6157,152 @@ null in place. `spec-update`'s note for a per-leaf op on such an entry,
 the TRANSFORM gate over a copy (the plan's Task 7) only the counts
 above are recorded here (items 1 and 5); the rest is the controller's.
 
-## D145 — A test with no result is NOT RUN, not a failed simulation (2026-09-30)
+## D144 — A criterion or group moves within its test's tree, by a grip or Move to…, as one whole-tree edit (2026-09-30)
 
-(D144 is held for step U4.)
+**Context.** The tree card edited a tree in place — wrap, unwrap, add,
+remove, a combinator's kind and fields (D133, D139) — and nothing moved a
+criterion: putting one elsewhere in its tree meant removing it and adding
+it again, its settings typed anew. The grill of 2026-09-28 (Q4, Q9) and the
+plot-model board asked for a move by drag AND by a "Move to…" menu in the
+tree card, a drop on a criterion wrapping both in `and`, and a refused drop
+that says why. On 2026-09-30 the owner ruled on four questions, asked with
+drawn previews (D1-D4 below). Built from
+`docs/superpowers/plans/2026-09-30-move-a-subtree.md`, whose "Corrections
+1" (two executing reviews, and the owner's amendment of D1) override its
+task text, and one fix batch from the review of its first part.
+
+**Decision.**
+
+1. *Where a node can go (D1, as amended).* Every row of the tree card but
+   the root's has a grip (⋮⋮) before its pill, wherever Edit tree is
+   offered on it. While dragging, a row's TOP half is "before it" — an
+   accent line drawn from the row's indent — and its BOTTOM half is "onto
+   it", outlined: onto a combinator appends at its
+   end, onto a criterion wraps both in `and` (the criterion first, then the
+   moved node). There is no "after": every pixel line means one place, and
+   a node goes last at an outer level by a drop onto that outer combinator.
+   The root's row is all "onto": nothing sits beside the root. (The plan
+   drew quarters — before / onto / after; the amendment replaced them
+   before the drag was built.) Move to… lists the same places with every
+   position spelled out, in tree order (`tree_move.move_destinations`):
+   each combinator's "at 1" … "at the end", each criterion's "wrap both in
+   and". `Dest("at", path, i)` is before the child at `i` as the tree is
+   NOW, before the move (C2).
+2. *What a move repairs, and says (D2, D3).* `authoring/tree_move.py::
+   plan_move` computes the whole new tree on a copy: it holds the
+   destination by the dicts themselves before anything shifts, takes the
+   node out, puts it in, and only then repairs the source's side upward
+   (C1). A combinator the move empties is removed, and its parent if that
+   empties, up the tree (D2); the root never empties, since it holds the
+   destination. Every `k-of-n` on that chain left with fewer children than
+   its `k` lowers `k` to them — "k 3 → 2" (D3). A node moved into a
+   `weighted` gets weight 1 at its index ("weight 1 given"); one moving out
+   takes its weight with it, and that is said too ("weight 2 went with it"
+   — the controller's call after the first part's review, on D3's "the
+   row says what changed"); a reorder among one `weighted`'s own children
+   carries the weight with its child and says nothing (C3). A move whose
+   new tree equals the old — two equal siblings trading places — is None,
+   no edit (the first part's review).
+3. *What it refuses, in this order, each in one sentence (V5, C5).* The
+   root ("The root holds the whole tree: move what is in it instead.");
+   a node into itself or its own subtree ("A criterion group can't move
+   into itself."); then a place where the node already is, which is no
+   refusal but None — listed once, as "— where it is", greyed; then into
+   a `warn` ("A warning holds exactly one criterion or group: drop onto it
+   to wrap both in `and`."); then D4 (item 4); then the validator's own
+   sentence (`tree_move.validator_for`: the parser's message, or
+   `validate_tree`'s messages joined — the text `Session.stage`'s refusal
+   shows), such as no primary criterion left outside a `warn`.
+   `MoveRefused` is one of the tool's user errors (`errors.USER_ERRORS`):
+   a stale menu's or drag's refusal is said under the row, never logged
+   as a bug.
+4. *D4, applied to D142's reason (C4, the controller's call).* The owner
+   ruled that a move putting a `warn` directly under an `or` or a `k-of-n`
+   is refused, and only moves are checked. D142's reason is wider than a
+   `warn`: a child that can never fail passes its parent with nothing else
+   passing. `tree_move.always_passes` says which children cannot fail: a
+   `warn`; an `and` all of whose children cannot; an `or` with one that
+   cannot; a `k-of-n` with at least `k` that cannot; never a `weighted`
+   or a criterion. A move is refused — "A warning passes whatever it
+   scores: under or / k-of-n it would pass its parent with nothing else
+   passing." — when the NEW tree pairs an `or` / `k-of-n` with such a
+   child and the old tree did not have that pairing, compared node for
+   node by reference. A tree that already has one is left as it is, and a
+   move elsewhere in it goes through.
+5. *One edit (V1).* `EditTree.act(action="move", model_id=..., path=src,
+   dest=...)` stages ONE op, `add /metrics` carrying the whole new tree —
+   the root add Edit tree already staged where an add beside a root
+   criterion wraps both in `and`. No RFC 6902 `move`: `patch_apply`
+   supports `add` / `replace` / `remove` only, and `dstf spec-update`
+   applies the same envelope, so the patch format does not change. A flat
+   test materializes nothing first: the move's tree is its first tree,
+   and the preview shows the whole `metrics` block added (C9, the
+   controller's call: true, the test gains a tree); a saved tree's move
+   previews as the reorder it is. `Session.stage` folds an `add` after an
+   `add` at the same OBJECT member — the second replaces what the first
+   put there — so two moves in a row are one pending op, the second tree
+   (C8); an `add` at a list index inserts, and both stay. A move folded
+   onto the `add /metrics` that materialized a flat test's tree replaces
+   it, and the op is no longer marked as that materialization
+   (`PatchOp.materializes`).
+6. *The tree card only (V2).* A plot's criteria rows host the same
+   `Placement.NODE` and move nothing: `Panel.can_move` is true only where
+   the host's `RowTarget.drag` is, which the tree card alone sets, so they
+   draw no grip and no Move to…. The panel's hooks are `Panel.can_move`,
+   `Panel.movable(on_drop, zones)` and `Panel.moved(node_path, text)`; the
+   shell names no capability (C12).
+7. *The drag (C12, C14, C17).* Plain HTML5 drag-and-drop, drawn in the
+   browser: only a drag's start and its drop reach the server. At each
+   start the page empties the last drag's map and asks the panel once for
+   `{row path: {zone: reason}}` (`tree_move.zone_map`: `None` allowed,
+   `""` where the node is, else the refusal), so a slow reply never draws
+   one drag with another's map; until it arrives a zone draws as allowed,
+   and a drop there is the act's to refuse. A refused zone outlines its
+   row red, takes no drop, and says its reason in ONE place, the tree
+   card's header line, in place of the line's text while it is dragged
+   over (C14, the controller's call): said inside the row it reflowed the
+   row's icons, and the browser shows no title while it drags.
+8. *After a move (V4, C11).* The panel plans the move BEFORE it submits
+   (`edit_tree.planned_move`; afterwards `src` names another node) and,
+   once the submit went through, calls `Panel.moved`: every open editor
+   and form row closes — two criteria on one variable trading places move
+   no shape, and an editor left open showed the other one — and, once the
+   tree is redrawn, the moved row is scrolled into view and flashed, with
+   one line under it saying what changed: "Moved." and each note as a
+   sentence — "Moved. k 3 → 2.", "Moved. The empty warn was removed.",
+   "Moved. Weight 1 given." It goes with the next form, editor or edit.
+   The plan closed the editors before staging; after the submit is
+   enough, since the Session's events cross the Shell's queue (C11).
+9. *Move to… (C7, C13).* An icon among a row's controls, tooltip "Move
+   to…", whose menu is built when it opens, from the tree as it is then
+   (see Consequences). Each place reads its node's text — the page's
+   labels, cut in the middle — then where; a refused place is greyed with
+   its reason as a second line, "where it is" greyed with none; the node's
+   own row is not listed, and its subtree's places are, refused. The arrow
+   keys move among the places, skipping the greyed ones, Enter chooses,
+   and the button shows no tooltip while its menu is open.
+
+**What it enforces that the validator does not.** D4 (item 4), on moves
+only. `validate_tree` does not check what sits under an `or` or a
+`k-of-n`; D142 keeps a `warn` out of one only in the seed an add writes. A
+tree written by hand, or edited otherwise, may still hold such a pairing,
+and the tool neither refuses it nor a move elsewhere in it.
+
+**What it reverses.** Nothing.
+
+**Consequences.** `test_spec.json`, the patch envelope, the CLI and the
+reference-JSON layout do not change: a move is an `add /metrics` that
+any `spec-update` applies. Limits: nothing moves between tests; nothing
+moves on a plot's criteria rows (item 6); there is no undo but the
+pending edit itself — Discard, or a move back. `move_destinations` and
+`zone_map` plan a move to every place in the tree, so they grow with the
+square of its size — on a 134-node tree about 0.14 s for the menu and
+0.2 s for a drag's zones — which is why the menu is built when it opens
+(one built per row with the rows was about 20 s of rebuild on such a
+tree) and the zones are asked for once per drag, never per rebuild. The
+TRANSFORM gate is the controller's; nothing of it is recorded here.
+
+## D145 — A test with no result is NOT RUN, not a failed simulation (2026-09-30)
 
 **Context.** A test the last run never ran — no entry in
 `batch_manifest.json` — and one a run started and never finished — its

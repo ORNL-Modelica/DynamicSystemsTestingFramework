@@ -1078,6 +1078,43 @@ all of them, in order — which the root, having no parent, cannot do. `+` is
 grey under a `warn` (it takes exactly one child) and under a `weighted` node
 (one weight per child), with that reason as its tooltip.
 
+**Moving a criterion or group.** In the open tree, every row but the root's
+has a ⋮⋮ grip before its pill and a **Move to…** icon among its controls; both
+move that criterion, or a combinator with everything under it, to another
+place in the same test's tree. Drag it by the grip: over a row's top half the
+drop puts it BEFORE that row (an accent line from the row's indent), over its
+bottom half ONTO the row (an outline) — a combinator takes it as its last
+child, a criterion is wrapped with it in an `and`, the criterion first. The
+root's row is all "onto", and there is no "after": to put a node last at an
+outer level, drop it onto that outer combinator. A place the move refuses
+outlines its row in red while dragged over, the tree card's line says why, and a
+drop there does nothing. Move to… opens a menu of every place in tree order —
+each combinator's "at 1" … "at the end", each criterion's "wrap both in and";
+the place the node already is reads "where it is", and it and every refused
+place are greyed, a refused one with its reason under it. The arrow keys move
+among the places, Enter chooses.
+
+A move keeps the tree valid by changing what it must: a combinator it empties
+is removed, and its parent if that empties too; a k-of-n left with fewer
+criteria than its `k` lowers `k`; a node moved into a weighted gets weight 1,
+and one moved out takes its weight with it. Afterwards any open editor or form
+closes, the moved row is scrolled into view and flashed, and a line under it
+says what changed — "Moved. k 3 → 2.", "Moved. The empty warn was removed.",
+"Moved. Weight 1 given.", "Moved. Weight 2 went with it." — until the next
+form, editor or edit. Each refusal is one sentence: the root, which holds the
+whole tree; a group into itself; into a `warn`, which holds exactly one
+criterion or group (drop onto that one to wrap both in `and`); a move that
+puts under an `or` or a `k-of-n` a child that can never fail — a `warn`, or a
+group that passes whatever its criteria score — which would pass its parent
+with nothing else passing (a tree that already has one is left alone; only
+the move is refused); and whatever the validator refuses, such as no primary
+criterion left outside a `warn`. A move is ONE pending edit — the whole tree,
+staged as one `add` of `metrics` — and a second move right after it replaces
+it, so the pending count stays 1. On a test the flat path scored, the preview
+shows the whole `metrics` block added: the test gains its first tree. Moving
+is the tree's alone: a plot's criteria rows have no grip and no Move to…, and
+nothing moves between tests.
+
 **Accept** applies to the selected tests: their current results become
 baselines through the same accept function `run --accept` and `compare --accept`
 call, so the tool cannot accept a result the CLI would refuse. The panel lists

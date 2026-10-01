@@ -126,7 +126,9 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # a status strip under the test's row saying its situation and filling the one next action,
 # +/wrap/− on every tree node (edit on a k-of-n or weighted one), each form an inline row under its
 # node: a `+` adds right after a criterion, last under a combinator, or from a plot's criteria
-# header; a combinator's kind is a dropdown in its row (unwrap in it). The add form picks from
+# header; a combinator's kind is a dropdown in its row (unwrap in it); a ⋮⋮ grip or Move to… moves
+# a criterion or group: drop on the top half of a row to put it before, on the bottom half to put it
+# in (or, on a criterion, to wrap both in `and`). The add form picks from
 # EVERY variable of the result file and the run's diagnostics (a searchable picker; the Metric
 # list follows the choice); a criterion's variable is tracked by that, and the strip asks for a
 # rerun where the last run did not record it. An editor's field says the tolerance in effect
