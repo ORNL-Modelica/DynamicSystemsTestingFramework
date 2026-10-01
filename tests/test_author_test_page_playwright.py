@@ -4731,7 +4731,9 @@ ROW_FIT = """() => ({
             card: r.closest('.dstf-tree').getBoundingClientRect().right,
             label: t.getBoundingClientRect().height,
             line: parseFloat(getComputedStyle(t).lineHeight),
+            spill: t.scrollWidth - t.clientWidth,
             readout: o && {cut: o.scrollWidth > o.clientWidth, title: o.title,
+                           width: o.clientWidth,
                            text: o.textContent,
                            ellipsis: getComputedStyle(o).textOverflow}};
   }),
@@ -4768,6 +4770,9 @@ def test_a_long_tree_row_wraps_its_label_and_cuts_its_readout(
         for path in (f"{G2}/children/0", f"{G3}/children/0"):  # range · x, · y
             deep = next(r for r in fit["rows"] if r["path"] == path)
             assert deep["label"] > 1.5 * deep["line"], deep  # wrapped
+            assert deep["spill"] <= 0, deep  # inside its own box
             readout = deep["readout"]
+            # Cut, never squeezed away by a name that cannot wrap.
+            assert readout["width"] >= 80, readout
             assert readout["ellipsis"] == "ellipsis", readout
             assert readout["title"] == readout["text"] != "", readout
