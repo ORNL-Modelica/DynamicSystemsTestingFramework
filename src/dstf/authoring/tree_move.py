@@ -16,12 +16,16 @@ stays as it is.
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterator, Mapping
+import re
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from ..comparison.validator import BaselineRoleLookup
 from .tree_pointer import node_or_none
+
+if TYPE_CHECKING:
+    from .spec_document import PatchOp
 
 ROOT = "/metrics"
 
@@ -69,6 +73,10 @@ class Moved:
     tree: dict  # the whole new tree: what `add /metrics` stages
     path: str  # where the moved node is in it
     notes: tuple[str, ...]  # what else changed: "k 3 → 2", ...
+    #: Every node the move kept: its path before -> its path in ``tree``.
+    #: A move shifts its old and new siblings too; what is keyed by a
+    #: node's path (the tree card's folded groups, U5 R1) follows this.
+    paths: dict[str, str]
 
 
 class MoveRefused(ValueError):
@@ -111,6 +119,13 @@ def _nodes(tree: dict) -> Iterator[dict]:
     yield tree
     for child in tree.get("children") or []:
         yield from _nodes(child)
+
+
+def _paths(tree: dict, path: str = ROOT) -> Iterator[tuple[int, str]]:
+    """``(id(node), path)`` for every node of ``tree``."""
+    yield id(tree), path
+    for i, child in enumerate(tree.get("children") or []):
+        yield from _paths(child, f"{path}/children/{i}")
 
 
 def _path_of(tree: dict, node: dict, path: str = ROOT) -> str | None:
@@ -294,7 +309,74 @@ def plan_move(
         validate(new)
     where = _path_of(new, moved)
     assert where is not None
-    return Moved(tree=new, path=where, notes=tuple(notes))
+    # Each kept node by its copy (`origin`): a node the move removed (D2)
+    # is in no path of ``new``, the wrap's new `and` in no path of ``tree``.
+    before, after = dict(_paths(tree)), dict(_paths(new))
+    paths = {
+        before[id(old)]: after[key] for key, (_, old) in origin.items() if key in after
+    }
+    return Moved(tree=new, path=where, notes=tuple(notes), paths=paths)
+
+
+#: A JSON pointer that names a node of the tree, not one of its fields: the
+#: root, or a child at an index or at the end (``-``).
+_NODE_PATH = re.compile(rf"{ROOT}(/children/(\d+|-))*")
+
+
+def path_map(tree: dict, ops: Sequence[PatchOp]) -> dict[str, str]:
+    """Every node of ``tree`` that ``ops`` keep: its path before -> after
+    (U5 R1) — what is keyed by a node's path follows it. Not by comparing
+    the trees on both sides of a stage: the Session stages a copy, so no
+    node is the same object on both. By the ops' own semantics, over
+    ``tree`` as the edit read it: an add at an index shifts the siblings
+    after it, a remove drops its subtree and shifts them back, a replace (an
+    add at the root) puts its value where the node was — and a node of
+    ``tree`` that an op's value CARRIES (a wrap's child, an unwrap's
+    children, the root leaf an add pairs with the new one) is that node,
+    found by identity: `EditTree.act` builds its values from the very tree
+    it read. A copy is a new node — a move's whole new tree is one, which is
+    why a move reports `Moved.paths`. An op on a field (``/k``,
+    ``/combinator``) moves no node."""
+    was = {key: path for key, path in _paths(tree)}
+
+    def shadow(node: dict) -> dict:
+        return {
+            "was": was.get(id(node)),
+            "children": [shadow(c) for c in node.get("children") or []],
+        }
+
+    root = shadow(tree)
+    for op in ops:
+        if not _NODE_PATH.fullmatch(op.path):
+            continue
+        if op.path == ROOT:
+            if op.op != "remove":
+                root = shadow(op.value)
+            continue
+        parent_path, index = op.path.rsplit("/children/", 1)
+        parent = root
+        for i in parent_path[len(ROOT) :].split("/children/")[1:]:
+            parent = parent["children"][int(i)]
+        kids = parent["children"]
+        at = len(kids) if index == "-" else int(index)
+        if op.op == "remove":
+            del kids[at]
+        elif op.op == "add":
+            kids.insert(at, shadow(op.value))
+        elif op.op == "replace":
+            kids[at] = shadow(op.value)
+        else:
+            raise ValueError(f"{op.op!r} is no op an edit of the tree stages")
+    out: dict[str, str] = {}
+
+    def walk(node: dict, path: str) -> None:
+        if node["was"] is not None:
+            out[node["was"]] = path
+        for i, child in enumerate(node["children"]):
+            walk(child, f"{path}/children/{i}")
+
+    walk(root, ROOT)
+    return out
 
 
 def _drop_weight(node: dict, index: int) -> float | None:

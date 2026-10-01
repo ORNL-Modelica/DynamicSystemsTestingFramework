@@ -249,13 +249,25 @@ class Panel(Protocol):
         to the server."""
         ...
 
-    def moved(self, node_path: str, text: str) -> None:
+    def moved(self, node_path: str, text: str, paths: dict[str, str]) -> None:
         """A move just went through (U4, V4): every open editor and form row
         on the page closes NOW — two criteria on one variable trading
         places move no shape, and an editor left open would show the other
         one — and once the tree is redrawn ``node_path``'s row is brought
         into view with ``text`` as one line under it, until the next form,
-        editor or edit. A no-op where no page shows the tree."""
+        editor or edit. ``paths`` is every node the move kept, its path
+        before -> after (`Moved.paths`): what the page keys by a node's
+        path follows it, as for `edited`. A no-op where no page shows the
+        tree."""
+        ...
+
+    def edited(self, paths: dict[str, str]) -> None:
+        """Any other edit of the tree just went through: ``paths`` is every
+        node it kept, its path before -> after (`tree_move.path_map`) — an
+        add or a remove shifts the siblings after it, a wrap pushes its node
+        one level down, an unwrap lifts its children. What the page keys by
+        a node's path follows it (the tree card's folded groups, U5 R1);
+        a node not in it is gone. A no-op where no page shows the tree."""
         ...
 
 

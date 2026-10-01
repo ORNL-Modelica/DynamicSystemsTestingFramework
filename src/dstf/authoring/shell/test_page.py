@@ -513,12 +513,14 @@ class TestPage:
             return
         self.cards[index].close_editor()
 
-    def moved(self, path: str, text: str) -> None:
+    def moved(self, path: str, text: str, paths: dict[str, str]) -> None:
         """A move went through (U4, V4; `Panel.moved`): the editor and the
         form row close NOW, before the sync the move's events bring — two
         criteria on one variable trading places move no shape, and an
         editor left open showed the other one — and the moved row and its
-        line wait for that sync, which draws the row."""
+        line wait for that sync, which draws the row. ``paths``: as for
+        `edited`."""
+        self.edited(paths)
         view = self._view()
         self._close()
         self._close_row()
@@ -526,6 +528,11 @@ class TestPage:
         self._unsay()
         self.pending_moved = (path, text)
         self.move_revision = self.shell.session.spec_revision
+
+    def edited(self, paths: dict[str, str]) -> None:
+        """An edit of the tree went through (`Panel.edited`, U5 R1):
+        ``paths`` says where each node it kept went. Nothing on the page is
+        keyed by a node's path yet."""
 
     def _unsay(self) -> None:
         """Take a move's line away: the next form, editor or edit."""

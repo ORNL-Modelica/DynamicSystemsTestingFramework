@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -3202,3 +3203,202 @@ def test_a_move_onto_a_criterion_stages_the_wrap(two_var_session):
         "combinator": "and",
         "children": [{"combinator": "and", "children": [x, y]}],
     }
+
+
+# -- every edit says where each node went (U5, R1 / E1) ----------------------
+
+
+def _q(*idx: int) -> str:
+    return ROOT + "".join(f"/children/{i}" for i in idx)
+
+
+def _r(top: float) -> dict:
+    return {"metric": "range", "variable": "x", "max_value": top}
+
+
+#: and[r9, k-of-n[and[r8], r7], warn[r5]]: every shape an edit can shift.
+SHIFTS = {
+    "combinator": "and",
+    "children": [
+        _r(9.0),
+        {
+            "combinator": "k-of-n",
+            "k": 1,
+            "children": [{"combinator": "and", "children": [_r(8.0)]}, _r(7.0)],
+        },
+        {"combinator": "warn", "children": [_r(5.0)]},
+    ],
+}
+#: SHIFTS's node paths, each to itself: an edit that moves no node.
+UNMOVED = {
+    q: q
+    for q in (
+        ROOT,
+        _q(0),
+        _q(1),
+        _q(1, 0),
+        _q(1, 0, 0),
+        _q(1, 1),
+        _q(2),
+        _q(2, 0),
+    )
+}
+
+
+async def _apply(user, marker: str) -> None:
+    await user.should_see(marker=marker)
+    user.find(marker=marker).click()
+
+
+async def _remove(user, path):
+    user.find(marker=f"remove:{path}").click()
+
+
+async def _add(user, path):
+    user.find(marker=f"add:{path}").click()
+    await _apply(user, f"apply-add:{path}")
+
+
+async def _wrap(user, path):
+    user.find(marker=f"wrap:{path}").click()
+    await _apply(user, f"apply-wrap:{path}")
+
+
+async def _kind(value, user, path):
+    _one(user, f"kind:{path}").set_value(value)
+
+
+async def _k(user, path):
+    user.find(marker=f"edit:{path}").click()
+    await user.should_see(marker=f"apply-edit:{path}")
+    (k,) = _labelled(user, ui.number, K)
+    k.set_value(2)
+    user.find(marker=f"apply-edit:{path}").click()
+
+
+def _down(q: str, at: str, by: int = 1) -> str:
+    """``q`` with the index of its ancestor-or-self that is a sibling AFTER
+    the place ``at`` raised by ``by`` — what an insert at ``at`` does."""
+    parent, index = at.rsplit("/children/", 1)
+    head = parent + "/children/"
+    if not q.startswith(head):
+        return q
+    i, _, rest = q[len(head) :].partition("/")
+    if int(i) < int(index):
+        return q
+    return f"{head}{int(i) + by}" + (f"/{rest}" if rest else "")
+
+
+@pytest.mark.parametrize(
+    ("path", "do", "paths"),
+    [
+        pytest.param(
+            _q(0),
+            _remove,
+            {ROOT: ROOT, _q(1): _q(0), _q(1, 0): _q(0, 0), _q(1, 0, 0): _q(0, 0, 0)}
+            | {_q(1, 1): _q(0, 1), _q(2): _q(1), _q(2, 0): _q(1, 0)},
+            id="remove",
+        ),
+        pytest.param(
+            _q(0),
+            _add,
+            {q: _down(q, _q(1)) for q in UNMOVED},
+            id="add-after-a-criterion",
+        ),
+        pytest.param(_q(1), _add, UNMOVED, id="add-at-a-groups-end"),
+        pytest.param(
+            _q(1),
+            _wrap,
+            UNMOVED
+            | {
+                _q(1): _q(1, 0),
+                _q(1, 0): _q(1, 0, 0),
+                _q(1, 0, 0): _q(1, 0, 0, 0),
+                _q(1, 1): _q(1, 0, 1),
+            },
+            id="wrap",
+        ),
+        pytest.param(
+            ROOT,
+            _wrap,
+            {q: _q(0) + q[len(ROOT) :] for q in UNMOVED},
+            id="wrap-the-root",
+        ),
+        pytest.param(
+            _q(1),
+            partial(_kind, "unwrap…"),
+            {ROOT: ROOT, _q(0): _q(0), _q(1, 0): _q(1), _q(1, 0, 0): _q(1, 0)}
+            | {_q(1, 1): _q(2), _q(2): _q(3), _q(2, 0): _q(3, 0)},
+            id="unwrap-several",
+        ),
+        pytest.param(
+            _q(2),
+            partial(_kind, "unwrap…"),
+            {q: q for q in UNMOVED if not q.startswith(_q(2))} | {_q(2, 0): _q(2)},
+            id="unwrap-one",
+        ),
+        pytest.param(_q(1), partial(_kind, "or"), UNMOVED, id="kind"),
+        pytest.param(_q(1), _k, UNMOVED, id="fields"),
+    ],
+)
+async def test_every_edit_says_where_each_node_went(session, path, do, paths):
+    """R1: an edit that went through tells the page each node it kept, its
+    path before -> after (`Panel.edited`) — the siblings an add or a remove
+    shifts, a wrapped node pushed down, an unwrapped node's children
+    lifted — so what the page keys by a node's path follows it."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(SHIFTS))])
+    edits: list[dict[str, str]] = []
+    async with host(session, EditTree(), _node(D, path), edits=edits) as (
+        user,
+        errors,
+        _f,
+    ):
+        staged = copy.deepcopy(session.spec.pending)
+        await do(user, path)
+        await _settled(lambda: bool(edits) or bool(errors))
+        assert errors == {}
+        # Staged: a root's wrap folds into the pending `add /metrics`.
+        assert session.spec.pending != staged
+    assert edits == [paths]
+
+
+async def test_an_add_beside_the_root_leaf_says_it_went_under_the_new_and(session):
+    session.stage([PatchOp(D, "add", ROOT, _r(9.0))])
+    edits: list[dict[str, str]] = []
+    async with host(session, EditTree(), _node(D, ROOT), edits=edits) as (
+        user,
+        errors,
+        _f,
+    ):
+        await _add(user, ROOT)
+        await _settled(lambda: bool(edits))
+        assert errors == {}
+    assert edits == [{ROOT: _q(0)}]
+
+
+async def test_the_plots_plus_says_its_add_moved_nothing(session):
+    """The plot's `+` appends to the root: every node stays where it was."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(SHIFTS))])
+    edits: list[dict[str, str]] = []
+    sel = Selection(tests=frozenset({D}), variable="x")
+    async with host(session, EditTree(), sel, edits=edits) as (user, errors, _f):
+        user.find(marker="add-for:x").click()
+        await _apply(user, "apply-add:x")
+        await _settled(lambda: bool(edits))
+        assert errors == {}
+    assert edits == [UNMOVED]
+
+
+async def test_a_refused_edit_says_nothing_of_where_nodes_went(session):
+    """The warn's one child removed: the validator refuses, nothing moved."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(SHIFTS))])
+    edits: list[dict[str, str]] = []
+    leaf = _q(2, 0)
+    async with host(session, EditTree(), _node(D, leaf), edits=edits) as (
+        user,
+        errors,
+        _f,
+    ):
+        await _remove(user, leaf)
+        await _settled(lambda: "edit-tree" in errors)
+    assert edits == []

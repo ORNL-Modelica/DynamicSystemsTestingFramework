@@ -108,10 +108,15 @@ class ShellPanel:
             target.grip.classes(remove="dstf-grip-off")
         return True
 
-    def moved(self, node_path: str, text: str) -> None:
+    def moved(self, node_path: str, text: str, paths: dict[str, str]) -> None:
         # Quiet where there is no page (a dialog): the contract's no-op.
         if self._target is not None:
-            self._target.page.moved(node_path, text)
+            self._target.page.moved(node_path, text, paths)
+
+    def edited(self, paths: dict[str, str]) -> None:
+        # Quiet where there is no page (a dialog): the contract's no-op.
+        if self._target is not None:
+            self._target.page.edited(paths)
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)

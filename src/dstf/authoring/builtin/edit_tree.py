@@ -41,6 +41,7 @@ from ..tree_move import (
     Dest,
     Moved,
     move_destinations,
+    path_map,
     plan_move,
     validator_for,
     zone_dest,
@@ -255,7 +256,7 @@ class EditTree:
             # input its last branch would read.
             raise ValueError(f"unknown action {action!r}")
         if action == "remove":
-            return Patch(ops=[PatchOp(model_id, "remove", path)])
+            return _patch(s, None, inputs)
         if action == "move":
             # The whole new tree as ONE `add /metrics` (V1) — the root add
             # a wrap uses: a flat test materializes nothing first, and two
@@ -268,100 +269,112 @@ class EditTree:
         if tree is None:
             assert why is not None  # `tree` is None
             raise no_tree_error(model_id, why)
-        node = node_or_none(tree, path)
-        if node is None:
-            raise ValueError(f"{path} names no node of {model_id}")
-        if action == "add":
-            into = _into(tree, node, path)
-            diagnostics = _diagnostics(s, model_id)
-            quantity = inputs.get("quantity")
-            if quantity is not None and inputs.get("variable") is not None:
-                raise ValueError("add takes a quantity or a variable, not both")
-            if quantity is not None:
-                leaf = _quantity_leaf(diagnostics, quantity, into)
-            elif inputs["variable"] in diagnostics:
-                # A diagnostic is one stored number (K1): its final through
-                # a quantity path, never a trajectory — a `{"reduce": ...}`
-                # scalar on one never scores.
-                if inputs["metric"] not in _metrics_for(diagnostic=True):
-                    raise ValueError(
-                        f"{inputs['variable']} is a diagnostic: scalar scores it"
-                    )
-                leaf = seed_diagnostic(
-                    inputs["variable"], diagnostics[inputs["variable"]], into=into
+        return _patch(s, tree, inputs)
+
+
+def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch | None:
+    """What `EditTree.act` stages for every action but a move, built from
+    ``tree`` — the test's raw tree as it is now, read by the caller, so a
+    value that carries one of its nodes carries THAT node (`path_map`). A
+    remove reads none: the Session's stage says why a path names nothing."""
+    action, model_id, path = inputs["action"], inputs["model_id"], inputs["path"]
+    if action == "remove":
+        return Patch(ops=[PatchOp(model_id, "remove", path)])
+    assert tree is not None  # read by the caller for every other action
+    node = node_or_none(tree, path)
+    if node is None:
+        raise ValueError(f"{path} names no node of {model_id}")
+    if action == "add":
+        into = _into(tree, node, path)
+        diagnostics = _diagnostics(s, model_id)
+        quantity = inputs.get("quantity")
+        if quantity is not None and inputs.get("variable") is not None:
+            raise ValueError("add takes a quantity or a variable, not both")
+        if quantity is not None:
+            leaf = _quantity_leaf(diagnostics, quantity, into)
+        elif inputs["variable"] in diagnostics:
+            # A diagnostic is one stored number (K1): its final through
+            # a quantity path, never a trajectory — a `{"reduce": ...}`
+            # scalar on one never scores.
+            if inputs["metric"] not in _metrics_for(diagnostic=True):
+                raise ValueError(
+                    f"{inputs['variable']} is a diagnostic: scalar scores it"
                 )
-            else:
-                # Seeded: a bare range, tube or scalar does not resolve, and
-                # a bare dominant-frequency always fails "no peaks declared".
-                leaf = seeded_leaf(
-                    inputs["metric"],
-                    inputs["variable"],
-                    seed_data(s, model_id, inputs["variable"]),
-                )
-            if "combinator" in node:
-                under = path
-            elif path == ROOT:
-                # Beside a root leaf: the root becomes an `and` of both, in
-                # one op (`add` at /metrics replaces the member). A leaf has
-                # no `children` for the patch to append to.
-                value = {"combinator": "and", "children": [node, leaf]}
-                return Patch(ops=[PatchOp(model_id, "add", ROOT, value)])
-            else:
-                # Beside any other leaf: right AFTER it, under its parent
-                # combinator (Q3 A) — where the `+` that was clicked is.
-                parent, index = path.rsplit("/children/", 1)
-                at = f"{parent}/children/{int(index) + 1}"
-                return Patch(ops=[PatchOp(model_id, "add", at, leaf)])
-            return Patch(ops=[PatchOp(model_id, "add", f"{under}/children/-", leaf)])
-        if action == "unwrap":
-            # A single-child combinator gives way to its child (the browser
-            # editor's unwrap): `warn(leaf)` becomes `leaf`, params kept.
-            children = node.get("children") or []
-            if len(children) == 1:
-                op = "add" if path == ROOT else "replace"
-                return Patch(ops=[PatchOp(model_id, op, path, children[0])])
-            # Several children take the node's place in its parent, in
-            # order. A `warn` or `weighted` parent refuses that by name, in
-            # the validator, like any other op.
-            if path == ROOT:
-                raise ValueError(_ROOT_UNWRAP)
-            if not children:
-                raise ValueError(f"{path} has no children to take its place")
+            leaf = seed_diagnostic(
+                inputs["variable"], diagnostics[inputs["variable"]], into=into
+            )
+        else:
+            # Seeded: a bare range, tube or scalar does not resolve, and
+            # a bare dominant-frequency always fails "no peaks declared".
+            leaf = seeded_leaf(
+                inputs["metric"],
+                inputs["variable"],
+                seed_data(s, model_id, inputs["variable"]),
+            )
+        if "combinator" in node:
+            under = path
+        elif path == ROOT:
+            # Beside a root leaf: the root becomes an `and` of both, in
+            # one op (`add` at /metrics replaces the member). A leaf has
+            # no `children` for the patch to append to.
+            value = {"combinator": "and", "children": [node, leaf]}
+            return Patch(ops=[PatchOp(model_id, "add", ROOT, value)])
+        else:
+            # Beside any other leaf: right AFTER it, under its parent
+            # combinator (Q3 A) — where the `+` that was clicked is.
             parent, index = path.rsplit("/children/", 1)
-            ops = [PatchOp(model_id, "remove", path)]
-            ops += [
-                PatchOp(model_id, "add", f"{parent}/children/{int(index) + j}", child)
-                for j, child in enumerate(children)
-            ]
-            return Patch(ops=ops)
-        kind = inputs["kind"]
-        fields = _kind_fields(kind, inputs)
-        if action == "wrap":
-            # `add` at /metrics: a flat test has no member there yet, and
-            # RFC 6902 `replace` on a missing member is an error, while
-            # `add` on an existing one replaces it.
+            at = f"{parent}/children/{int(index) + 1}"
+            return Patch(ops=[PatchOp(model_id, "add", at, leaf)])
+        return Patch(ops=[PatchOp(model_id, "add", f"{under}/children/-", leaf)])
+    if action == "unwrap":
+        # A single-child combinator gives way to its child (the browser
+        # editor's unwrap): `warn(leaf)` becomes `leaf`, params kept.
+        children = node.get("children") or []
+        if len(children) == 1:
             op = "add" if path == ROOT else "replace"
-            value = {"combinator": kind, "children": [node], **fields}
-            return Patch(ops=[PatchOp(model_id, op, path, value)])
-        # edit: only what moved. An Apply with nothing changed staged the
-        # kind and every field again, four ops for no edit. Nothing moved
-        # is None — the row has closed, and nothing is staged.
-        ops = []
-        if node.get("combinator") != kind:
-            ops.append(PatchOp(model_id, "replace", f"{path}/combinator", kind))
-        for key, value in fields.items():
-            if key in node:
-                if node[key] != value:
-                    ops.append(PatchOp(model_id, "replace", f"{path}/{key}", value))
-            elif not (key == "direction" and value == _DEFAULT_DIRECTION):
-                ops.append(PatchOp(model_id, "add", f"{path}/{key}", value))
-        keeps = _KIND_KEYS.get(kind, ())
+            return Patch(ops=[PatchOp(model_id, op, path, children[0])])
+        # Several children take the node's place in its parent, in
+        # order. A `warn` or `weighted` parent refuses that by name, in
+        # the validator, like any other op.
+        if path == ROOT:
+            raise ValueError(_ROOT_UNWRAP)
+        if not children:
+            raise ValueError(f"{path} has no children to take its place")
+        parent, index = path.rsplit("/children/", 1)
+        ops = [PatchOp(model_id, "remove", path)]
         ops += [
-            PatchOp(model_id, "remove", f"{path}/{key}")
-            for key in _COMBINATOR_KEYS
-            if key in node and key not in keeps
+            PatchOp(model_id, "add", f"{parent}/children/{int(index) + j}", child)
+            for j, child in enumerate(children)
         ]
-        return Patch(ops=ops) if ops else None
+        return Patch(ops=ops)
+    kind = inputs["kind"]
+    fields = _kind_fields(kind, inputs)
+    if action == "wrap":
+        # `add` at /metrics: a flat test has no member there yet, and
+        # RFC 6902 `replace` on a missing member is an error, while
+        # `add` on an existing one replaces it.
+        op = "add" if path == ROOT else "replace"
+        value = {"combinator": kind, "children": [node], **fields}
+        return Patch(ops=[PatchOp(model_id, op, path, value)])
+    # edit: only what moved. An Apply with nothing changed staged the
+    # kind and every field again, four ops for no edit. Nothing moved
+    # is None — the row has closed, and nothing is staged.
+    ops = []
+    if node.get("combinator") != kind:
+        ops.append(PatchOp(model_id, "replace", f"{path}/combinator", kind))
+    for key, value in fields.items():
+        if key in node:
+            if node[key] != value:
+                ops.append(PatchOp(model_id, "replace", f"{path}/{key}", value))
+        elif not (key == "direction" and value == _DEFAULT_DIRECTION):
+            ops.append(PatchOp(model_id, "add", f"{path}/{key}", value))
+    keeps = _KIND_KEYS.get(kind, ())
+    ops += [
+        PatchOp(model_id, "remove", f"{path}/{key}")
+        for key in _COMBINATOR_KEYS
+        if key in node and key not in keeps
+    ]
+    return Patch(ops=ops) if ops else None
 
 
 def _combinator_fields(
@@ -551,7 +564,9 @@ def _add_form(
     )
 
     def apply() -> None:
-        if not ui_panel.submit(
+        if not _submit(
+            s,
+            ui_panel,
             model_id=model_id,
             action="add",
             path=under,
@@ -716,7 +731,7 @@ def _cluster(
         return path if seen is None else node_text(seen)
 
     def act_now(action: str) -> bool:
-        return ui_panel.submit(model_id=model_id, action=action, path=path)
+        return _submit(s, ui_panel, model_id=model_id, action=action, path=path)
 
     def fresh() -> dict | None:
         """The node as it is at THIS build; the sentence in the row when the
@@ -756,7 +771,9 @@ def _cluster(
         )
 
         def apply() -> None:
-            if ui_panel.submit(model_id=model_id, action="wrap", path=path, **values()):
+            if _submit(
+                s, ui_panel, model_id=model_id, action="wrap", path=path, **values()
+            ):
                 close()
 
         with ui.row().classes("items-center gap-2"):
@@ -786,7 +803,9 @@ def _cluster(
         )
 
         def apply() -> None:
-            if ui_panel.submit(model_id=model_id, action="edit", path=path, **values()):
+            if _submit(
+                s, ui_panel, model_id=model_id, action="edit", path=path, **values()
+            ):
                 close()
 
         with ui.row().classes("items-center gap-2"):
@@ -803,6 +822,7 @@ def _cluster(
             partial(
                 _kind_select,
                 ui,
+                s,
                 ui_panel,
                 model_id,
                 path,
@@ -955,7 +975,28 @@ def _submit_move(
         moved = None
     went = ui_panel.submit(model_id=model_id, action="move", path=src, dest=dest)
     if went and moved is not None:
-        ui_panel.moved(moved.path, moved_text(moved.notes))
+        ui_panel.moved(moved.path, moved_text(moved.notes), moved.paths)
+
+
+def _submit(s: SessionView, ui_panel: Panel, **inputs: Any) -> bool:
+    """`Panel.submit` for every action but a move, and once it went through
+    where each node it kept went (`Panel.edited`, U5 R1): mapped BEFORE the
+    submit, from the ops `act` builds over the tree as it is now — as a
+    move is planned before its submit: afterwards the paths name the new
+    tree. An act that raises maps nothing; the submit raises it again, and
+    says or logs it."""
+    paths: dict[str, str] | None = None
+    try:
+        tree = s.tree(inputs["model_id"])
+        patch = None if tree is None else _patch(s, tree, inputs)
+    except Exception:
+        tree = patch = None
+    if tree is not None and patch is not None:
+        paths = path_map(tree, patch.ops)
+    went = ui_panel.submit(**inputs)
+    if went and paths is not None:
+        ui_panel.edited(paths)
+    return went
 
 
 def _drag(s: SessionView, ui_panel: Panel, model_id: str, path: str) -> None:
@@ -1103,8 +1144,8 @@ def _statistic_plus(
     def add() -> None:
         # From the tree as it is NOW, before the add moves the count.
         added = _added_path(s.tree(model_id), ROOT)
-        if ui_panel.submit(
-            model_id=model_id, action="add", path=ROOT, quantity=quantity
+        if _submit(
+            s, ui_panel, model_id=model_id, action="add", path=ROOT, quantity=quantity
         ):
             ui_panel.reveal(_first_leaf(s.tree(model_id), added))
 
@@ -1124,6 +1165,7 @@ def _statistic_plus(
 
 def _kind_select(
     ui: Any,
+    s: SessionView,
     ui_panel: Panel,
     model_id: str,
     path: str,
@@ -1161,10 +1203,10 @@ def _kind_select(
             open_edit(str(value))
             return
         if value == _UNWRAP_VALUE:
-            done = ui_panel.submit(model_id=model_id, action="unwrap", path=path)
+            done = _submit(s, ui_panel, model_id=model_id, action="unwrap", path=path)
         else:
-            done = ui_panel.submit(
-                model_id=model_id, action="edit", path=path, kind=value
+            done = _submit(
+                s, ui_panel, model_id=model_id, action="edit", path=path, kind=value
             )
         if not done:
             select.set_value(current)

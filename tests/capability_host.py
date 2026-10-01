@@ -35,23 +35,26 @@ class HostPanel:
     ``host-row:title``), and ``close`` empties it; ``lead`` draws into a
     span of its own above the panel (marked ``host-lead``), emptied first;
     ``reveal`` records the path in ``reveals`` — there is no page to open
-    it on — and ``moved`` what it was told in ``moves``."""
+    it on — ``moved`` what it was told in ``moves``, and ``edited`` the
+    path maps it was told in ``edits``."""
 
     def __init__(
         self,
         submit: Callable[..., bool],
         figure: RecordingFigure,
         reveals: list[str] | None = None,
+        edits: list[dict[str, str]] | None = None,
     ) -> None:
         self.figure = figure
         self._submit = submit
         self.reveals = reveals if reveals is not None else []
+        self.edits = edits if edits is not None else []
         #: Set by `host` once the panel is drawn, so the row sits below it.
         self.slot: ui.column | None = None
         self.lead_slot: ui.element | None = None
         self.closed = 0
-        #: What `moved` was told: (node path, text), in order.
-        self.moves: list[tuple[str, str]] = []
+        #: What `moved` was told: (node path, text, paths), in order.
+        self.moves: list[tuple[str, str, dict[str, str]]] = []
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -85,8 +88,11 @@ class HostPanel:
     def movable(self, on_drop: Any, zones: Any = None) -> bool:
         return False
 
-    def moved(self, node_path: str, text: str) -> None:
-        self.moves.append((node_path, text))
+    def moved(self, node_path: str, text: str, paths: dict[str, str]) -> None:
+        self.moves.append((node_path, text, paths))
+
+    def edited(self, paths: dict[str, str]) -> None:
+        self.edits.append(paths)
 
 
 @asynccontextmanager
@@ -95,10 +101,12 @@ async def host(
     cap: Any,
     selection: Selection,
     reveals: list[str] | None = None,
+    edits: list[dict[str, str]] | None = None,
 ) -> AsyncIterator[tuple[User, dict[str, str], RecordingFigure]]:
     """Yield ``(user, errors, figure)`` with the panel built at ``/`` — or,
     when ``available`` is not True, a label marked ``reason`` in its place.
-    The panel's ``reveal`` appends to ``reveals`` when one is given."""
+    The panel's ``reveal`` appends to ``reveals`` when one is given, and
+    its ``edited`` to ``edits``."""
     errors: dict[str, str] = {}
     figure = RecordingFigure()
     view = SessionView(session, selection)
@@ -119,7 +127,7 @@ async def host(
                 "reason"
             )
             return
-        panel = HostPanel(submit, figure, reveals)
+        panel = HostPanel(submit, figure, reveals, edits)
         cap.panel(view, panel)
         panel.slot = ui.column().classes("w-full").mark("host-row")
 

@@ -7,6 +7,7 @@ import copy
 
 import pytest
 
+from dstf.authoring.spec_document import PatchOp
 from dstf.authoring.tree_move import (
     INTO_ITSELF,
     INTO_WARN,
@@ -15,6 +16,7 @@ from dstf.authoring.tree_move import (
     Dest,
     MoveRefused,
     move_destinations,
+    path_map,
     plan_move,
     validator_for,
     zone_dest,
@@ -573,3 +575,146 @@ def test_the_zone_map_is_the_sources_own():
     assert zones[p(2, 0)] == {"before": "", "onto": INTO_ITSELF}
     assert zones[p(1)]["onto"] is None  # a criterion can fail: a k-of-n takes it
     assert zones[p(0)] == {"before": None, "onto": None}
+
+
+# -- where each node went (U5, R1) -------------------------------------------
+
+
+def test_a_move_says_where_every_node_it_kept_went():
+    """A move shifts more than its node: a, appended last, takes b's and the
+    or's places from them, and each says where it went (E1)."""
+    tree = C("and", C("and", L("a")), C("and", L("b")), C("or", L("c"), L("d")))
+    moved = move(tree, p(0), Dest("onto", R))
+    assert moved is not None
+    assert moved.paths == {
+        R: R,
+        p(0): p(2),
+        p(0, 0): p(2, 0),
+        p(1): p(0),
+        p(1, 0): p(0, 0),
+        p(2): p(1),
+        p(2, 0): p(1, 0),
+        p(2, 1): p(1, 1),
+    }
+
+
+def test_a_move_that_empties_a_group_leaves_it_out():
+    """D2 removed the emptied warn: it is no kept node."""
+    moved = move(C("and", C("warn", L("a")), L("b")), p(0, 0), Dest("at", R, None))
+    assert moved is not None
+    assert moved.paths == {R: R, p(0, 0): p(1), p(1): p(0)}
+
+
+def test_a_move_onto_a_criterion_pushes_it_into_the_new_and():
+    moved = move(FLAT, p(3), Dest("onto", p(1)))
+    assert moved is not None
+    assert moved.paths == {R: R, p(0): p(0), p(1): p(1, 0), p(2): p(2), p(3): p(1, 1)}
+
+
+#: and[a, k-of-n[and[b], c], warn[d]]: every shape an edit can shift.
+T = C("and", L("a"), C("k-of-n", C("and", L("b")), L("c"), k=1), C("warn", L("d")))
+#: T's node paths, each to itself.
+SAME = {q: q for q in (R, p(0), p(1), p(1, 0), p(1, 0, 0), p(1, 1), p(2), p(2, 0))}
+
+
+def _at(tree: dict, *idx: int) -> dict:
+    for i in idx:
+        tree = tree["children"][i]
+    return tree
+
+
+def op(kind: str, path: str, value=None) -> PatchOp:
+    return PatchOp("M", kind, path, value)
+
+
+def test_path_map_a_remove_drops_its_subtree_and_shifts_the_siblings_back():
+    t = copy.deepcopy(T)
+    assert path_map(t, [op("remove", p(1))]) == {
+        R: R,
+        p(0): p(0),
+        p(2): p(1),
+        p(2, 0): p(1, 0),
+    }
+
+
+def test_path_map_an_add_at_an_index_shifts_the_siblings_after_it():
+    t = copy.deepcopy(T)
+    assert path_map(t, [op("add", p(1), L("new"))]) == {
+        R: R,
+        p(0): p(0),
+        p(1): p(2),
+        p(1, 0): p(2, 0),
+        p(1, 0, 0): p(2, 0, 0),
+        p(1, 1): p(2, 1),
+        p(2): p(3),
+        p(2, 0): p(3, 0),
+    }
+
+
+def test_path_map_an_append_and_a_fields_edit_move_nothing():
+    t = copy.deepcopy(T)
+    assert path_map(t, [op("add", f"{p(1)}/children/-", L("new"))]) == SAME
+    fields = [
+        op("replace", f"{p(1)}/combinator", "or"),
+        op("remove", f"{p(1)}/k"),
+        op("add", f"{p(0)}/max_value", 3.0),
+    ]
+    assert path_map(t, fields) == SAME
+
+
+def test_path_map_a_wrap_pushes_the_node_one_level_down():
+    """The wrap's value CARRIES the node it read from the tree: that node,
+    found by identity, is pushed to ``<path>/children/0`` with its
+    subtree."""
+    t = copy.deepcopy(T)
+    value = C("and", _at(t, 1))
+    assert path_map(t, [op("replace", p(1), value)]) == {
+        **SAME,
+        p(1): p(1, 0),
+        p(1, 0): p(1, 0, 0),
+        p(1, 0, 0): p(1, 0, 0, 0),
+        p(1, 1): p(1, 0, 1),
+    }
+
+
+def test_path_map_a_root_wrap_pushes_everything_under_the_new_root():
+    t = copy.deepcopy(T)
+    assert path_map(t, [op("add", R, C("warn", t))]) == {
+        q: p(0) + q[len(R) :] for q in SAME
+    }
+
+
+def test_path_map_an_unwrap_lifts_the_children():
+    t = copy.deepcopy(T)
+    # One child: it takes the node's place; the warn itself is gone.
+    one = path_map(t, [op("replace", p(2), _at(t, 2, 0))])
+    assert one == {**{q: q for q in SAME if not q.startswith(p(2))}, p(2, 0): p(2)}
+    # Several: they take its place in its parent, in order; what came after
+    # it shifts by one less than their count.
+    several = [
+        op("remove", p(1)),
+        op("add", p(1), _at(t, 1, 0)),
+        op("add", p(2), _at(t, 1, 1)),
+    ]
+    assert path_map(t, several) == {
+        R: R,
+        p(0): p(0),
+        p(1, 0): p(1),
+        p(1, 0, 0): p(1, 0),
+        p(1, 1): p(2),
+        p(2): p(3),
+        p(2, 0): p(3, 0),
+    }
+
+
+def test_path_map_an_add_beside_a_root_leaf_pushes_the_leaf_down():
+    leaf = L("a")
+    assert path_map(leaf, [op("add", R, C("and", leaf, L("new")))]) == {R: p(0)}
+
+
+def test_path_map_a_copy_is_a_new_node():
+    """Identity, not equality: a node equal to one of the tree's but not
+    taken from it is new — what a move's whole new tree is, which is why a
+    move reports `Moved.paths` instead."""
+    t = copy.deepcopy(T)
+    assert path_map(t, [op("add", R, copy.deepcopy(t))]) == {}
