@@ -4727,6 +4727,259 @@ def test_a_drag_resting_on_a_folded_group_unfolds_it_and_drops_inside(
         expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
 
 
+def _hidden_rows(page) -> list[str]:
+    return sorted(
+        k[4:] for k, v in page.evaluate(SHOWN).items() if not v and k.startswith("row ")
+    )
+
+
+def test_a_fold_survives_an_edit_here_and_a_reload(tmp_path, playwright_browser):
+    """R1 / Q8 in the browser: a folded group shifted by a remove before it
+    is folded where it went — its rows hidden, its summary and chevron
+    saying so — and a reload of the tab draws it folded again (the folds
+    are the tab's)."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        _fold_click(page, G2)
+        expect(_tree_row(page, G2)).to_have_attribute("data-folded", "1")
+        page.wait_for_timeout(400)
+        rev = page.evaluate(REV)
+        # The tube (G1/children/0) removed: G2 moves up to G1/children/0.
+        _tree_row(page, f"{G1}/children/0").get_by_role(
+            "button", name="Remove this criterion"
+        ).click()
+        moved = f"{G1}/children/0"
+        expect(_tree_row(page, moved)).to_have_attribute(
+            "data-folded", "1", timeout=EXPECT_TIMEOUT
+        )
+        assert page.evaluate(REV) != rev
+        hidden = _hidden_rows(page)
+        assert hidden == sorted(
+            [
+                f"{moved}/children/0",
+                f"{moved}/children/1",
+                f"{moved}/children/1/children/0",
+            ]
+        )
+        expect(_tree_row(page, moved).locator(".dstf-fold-summary")).to_have_text(
+            "· 2 hidden · 1 pass · 1 fail", timeout=EXPECT_TIMEOUT
+        )
+        chev = _tree_row(page, moved).locator(".dstf-chev")
+        expect(chev).to_have_attribute("aria-expanded", "false")
+        page.reload()
+        expect(page.locator(".js-plotly-plot").first).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        _show_tree(page, DEEP_ROWS - 1)
+        expect(_tree_row(page, moved)).to_have_attribute(
+            "data-folded", "1", timeout=EXPECT_TIMEOUT
+        )
+        assert _hidden_rows(page) == hidden
+        expect(_tree_row(page, moved).locator(".dstf-fold-summary")).to_be_visible()
+        chev = _tree_row(page, moved).locator(".dstf-chev")
+        expect(chev).to_have_attribute("aria-expanded", "false")
+        expect(chev).to_have_attribute("aria-label", "Unfold and · 2 criteria")
+
+
+def test_the_suite_and_back_keeps_the_folds(tmp_path, playwright_browser):
+    """Q8: the Suite page and back in the tab: the group is folded still."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        _fold_click(page, G1)
+        page.wait_for_timeout(400)
+        base = page.url.split("test/")[0]
+        page.goto(base)
+        expect(page.locator("#dstf-suite-tools")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.goto(f"{base}test/{A}")
+        expect(page.locator(".js-plotly-plot").first).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        _show_tree(page, DEEP_ROWS)
+        expect(_tree_row(page, G1)).to_have_attribute(
+            "data-folded", "1", timeout=EXPECT_TIMEOUT
+        )
+        assert set(_hidden_rows(page)) == {
+            f"{G1}/children/0",
+            G2,
+            f"{G2}/children/0",
+            G3,
+            f"{G3}/children/0",
+        }
+
+
+def test_a_chevron_folds_from_the_keyboard_and_the_branch_marks_stand(
+    tmp_path, playwright_browser
+):
+    """Q3: the chevron is a button — Enter folds, Space unfolds, and
+    `aria-expanded` says which; a fold and unfold by mouse under a hovered
+    row leaves the branch's bars as the hover drew them."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        chev = _tree_row(page, G2).locator(".dstf-chev")
+        chev.focus()
+        page.keyboard.press("Enter")
+        expect(chev).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
+        assert f"{G2}/children/0" in _hidden_rows(page)
+        page.keyboard.press(" ")
+        expect(chev).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        assert _hidden_rows(page) == []
+        tokens = page.evaluate(TOKENS)
+        _tree_row(page, G2).locator(".dstf-pill").first.hover()
+        page.wait_for_timeout(150)
+        chev.click()
+        page.wait_for_timeout(400)
+        chev.click()
+        page.wait_for_timeout(400)
+        bad = [
+            (row["path"], row["bars"])
+            for row in page.evaluate(BARS)
+            if row["bars"] != _expected_bars(tokens, row["path"], G2)
+        ]
+        assert not bad, bad
+
+
+def _twin_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` with A's tree two same-shaped groups:
+    and[and[range · x], and[range · x']]."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            _, range_x, _ = entry["metrics"]["children"]
+            other = dict(range_x)
+            other["min_value"] = (other.get("min_value") or 0) - 1
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {"combinator": "and", "children": [range_x]},
+                    {"combinator": "and", "children": [other]},
+                ],
+            }
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+def test_a_swap_of_twin_groups_moves_the_fold_with_the_group(
+    tmp_path, playwright_browser
+):
+    """R1 (the U5 review, H1) with a real mouse: group 0 folded and dragged
+    onto the root goes last, where its twin was — the rows are painted, not
+    rebuilt, and the fold is drawn on the row it went to."""
+    a, b = "/metrics/children/0", "/metrics/children/1"
+    with _served(tmp_path, playwright_browser, project=_twin_project) as page:
+        _show_tree(page, 5)
+        _fold_click(page, a)
+        page.wait_for_timeout(400)
+        _mouse_drag(page, a, "/metrics", ONTO)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_tree_row(page, b)).to_have_attribute(
+            "data-folded", "1", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(400)
+        assert _tree_row(page, a).get_attribute("data-folded") is None
+        assert _hidden_rows(page) == [f"{b}/children/0"]
+
+
+def test_a_rebuild_under_a_resting_pointer_marks_the_branch_again(
+    tmp_path, playwright_browser
+):
+    """Y2: the rows rebuilt (a remove from the keyboard) under a pointer
+    resting on a group's pill: the next move marks that group's branch on
+    the NEW rows — the hover's key carries the rows' revision."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        tokens = page.evaluate(TOKENS)
+        pill = _tree_row(page, G2).locator(".dstf-pill").first
+        pill.hover()
+        page.wait_for_timeout(150)
+        box = pill.bounding_box()
+        assert box is not None
+        rev = page.evaluate(REV)
+        _tree_row(page, SIB).get_by_role(
+            "button", name="Remove this node and everything under it"
+        ).focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            "(rev) => document.querySelector('.dstf-tree [data-rev]')"
+            ".dataset.rev !== rev",
+            arg=rev,
+        )
+        page.wait_for_timeout(300)
+        page.mouse.move(box["x"] + box["width"] / 2 + 1, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(150)
+        bad = [
+            (row["path"], row["bars"])
+            for row in page.evaluate(BARS)
+            if row["bars"] != _expected_bars(tokens, row["path"], G2)
+        ]
+        assert not bad, bad
+
+
+def test_a_fold_hides_rows_and_slots_before_the_server_answers(
+    tmp_path, playwright_browser
+):
+    """E2: the page folds at the click, in the same task — every row AND
+    form slot under the group hidden before any answer could arrive."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        shown = page.evaluate(
+            """(g) => {
+              document.querySelector(`[data-tree-path="${g}"] .dstf-chev`).click();
+              return [...document.querySelectorAll(
+                `.dstf-tree [data-tree-path^="${g}/"], .dstf-tree [data-slot-of^="${g}/"]`)]
+                .map(el => getComputedStyle(el).display !== 'none');
+            }""",
+            G2,
+        )
+        assert len(shown) == 6 and not any(shown), shown
+
+
+def test_a_folded_groups_chevron_turns(tmp_path, playwright_browser):
+    """Q3: the chevron's glyph turns a quarter on a folded group."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        icon = _tree_row(page, G2).locator(".dstf-chev .q-icon")
+        assert icon.evaluate("e => getComputedStyle(e).transform") == "none"
+        _fold_click(page, G2)
+        page.wait_for_timeout(300)
+        assert icon.evaluate("e => getComputedStyle(e).transform") != "none"
+
+
+def test_a_drag_leaving_the_rows_cancels_a_folded_groups_rest(
+    tmp_path, playwright_browser
+):
+    """Q10: a drag resting on a folded group, then carried straight off the
+    rows (a dragleave with no row's dragenter after it), and held there past
+    the rest: the group stays folded — the timer went with the leave."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        _fold_click(page, G2)
+        page.wait_for_timeout(300)
+        grip = _tree_row(page, SIB).locator(".dstf-grip").bounding_box()
+        assert grip is not None
+        page.mouse.move(grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(grip["x"] + 12, grip["y"] + 8, steps=4)
+        box = _tree_row(page, G2).bounding_box()
+        assert box is not None
+        x, y = box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.8
+        page.mouse.move(x, y, steps=8)
+        page.wait_for_timeout(300)
+        line = page.locator(".dstf-tree-line").bounding_box()
+        assert line is not None
+        page.mouse.move(line["x"] + 5, line["y"] + 5, steps=3)
+        for i in range(9):  # 900 ms off the rows, still dragging
+            page.wait_for_timeout(100)
+            page.mouse.move(line["x"] + 5 + i % 2, line["y"] + 5)
+        folded = _tree_row(page, G2).get_attribute("data-folded")
+        page.mouse.up()
+        assert folded == "1"
+
+
 # -- a long row (U5) ----------------------------------------------------------
 
 #: The page's width against its viewport's, and each tree row's label and
