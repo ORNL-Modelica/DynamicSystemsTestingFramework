@@ -6284,6 +6284,9 @@ task text, and one fix batch from the review of its first part.
    one line under it saying what changed: "Moved." and each note as a
    sentence — "Moved. k 3 → 2.", "Moved. The empty warn was removed.",
    "Moved. Weight 1 given." It goes with the next form, editor or edit.
+   One visually hidden live region in the tree card, there from its build,
+   announces a move: told the line's text — a repeat with a zero-width
+   character added, so it still changes — while the line is no live region.
    The plan closed the editors before staging; after the submit is
    enough, since the Session's events cross the Shell's queue (C11).
 9. *Move to… (C7, C13).* An icon among a row's controls, tooltip "Move

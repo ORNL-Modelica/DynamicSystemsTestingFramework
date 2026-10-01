@@ -13,12 +13,11 @@ sync with the tree open)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from nicegui import background_tasks, ui
+from nicegui import ui
 
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
@@ -33,9 +32,10 @@ if TYPE_CHECKING:
 
 NAMED = 2  #: failures the closed line names; the rest are counted
 
-#: How long a move's line stands empty before its text: long enough for
-#: the browser to have it (`TreeCard.say`).
-SAY_AFTER = 0.05
+#: Appended to a move's announcement when the live region already holds
+#: that text: a live region is read out when its text CHANGES, and a
+#: second "Moved." would not change it (`TreeCard.say`).
+_AGAIN = "\u200b"
 
 #: The drag (U4), drawn in the browser — only the drag's start and the drop
 #: reach the server. A row's top half is BEFORE it, its bottom half ONTO
@@ -248,15 +248,6 @@ class _Row:
             self.readout.set_text(leaf_readout(node))
 
 
-async def _fill(said: ui.label, text: str) -> None:
-    """A move's line's text, in an update of its own after the one that
-    created it — never the same: the outbox sends one tick's updates as
-    one message."""
-    await asyncio.sleep(SAY_AFTER)
-    if not said.is_deleted:
-        said.set_text(text)
-
-
 class TreeCard:
     def __init__(self, page: TestPage) -> None:
         self.page = page
@@ -279,6 +270,17 @@ class TreeCard:
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
+            #: What a screen reader is told of a move (`say`): ONE region,
+            #: there from the start and visually hidden — a live region is
+            #: read out when its text changes, and one that arrives holding
+            #: its text already is not. The line under the row is not it:
+            #: made for each move, it needed a timer to arrive empty first.
+            self.live = (
+                ui.label("")
+                .classes("dstf-live")
+                .props('role="status" aria-live="polite"')
+                .mark("moved-live")
+            )
         rows = self.rows
         rows.on("dragstart", self._drag_start, js_handler=_drag_js(_DRAG_START))
         rows.on("dragover", js_handler=_drag_js(_DRAG_OVER))
@@ -333,7 +335,8 @@ class TreeCard:
 
     def say(self, path: str, text: str) -> None:
         """A move's line under ``path``'s row, the row brought into view and
-        flashed (V4). One at a time; `unsay` takes it away."""
+        flashed (V4), and the same text told to the card's live region. One
+        at a time; `unsay` takes the line away."""
         self.unsay()
         target, row = self.targets.get(path), self.rows_by_path.get(path)
         if target is None or target.slot is None or row is None:
@@ -341,16 +344,13 @@ class TreeCard:
         depth = path.count("/children/")
         with target.slot:
             # Under the row's pill: its indent, the handle's place and a gap.
-            # Empty, its text set once the browser has it (`_fill`): a live
-            # region is read out when its text CHANGES, and one that arrives
-            # holding it already is not.
             self.said = (
-                ui.label("")
+                ui.label(text)
                 .classes("dstf-moved text-xs")
                 .style(f"padding-left: {16 * depth + 32}px")
-                .props('role="status"')
                 .mark("moved-note")
             )
+        self.live.set_text(text if self.live.text != text else text + _AGAIN)
         # To THIS page's client: `sync` runs from the Shell's timer, whose
         # context is no page's (`TestPage._reveal`). The row, then the line
         # under it: the row alone, scrolled to its nearest edge from above,
@@ -363,7 +363,6 @@ class TreeCard:
             ' r.classList.add("dstf-flash"); }'
             'if (l) l.scrollIntoView({block: "nearest"});'
         )
-        background_tasks.create(_fill(self.said, text), name="moved-note")
 
     def unsay(self) -> None:
         if self.said is not None and not self.said.is_deleted:

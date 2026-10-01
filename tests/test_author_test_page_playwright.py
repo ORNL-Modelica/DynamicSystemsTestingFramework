@@ -2630,14 +2630,9 @@ def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
 
 MENU_ACTIVE = "() => document.activeElement.innerText.replace(/\\s+/g, ' ').trim()"
 
-#: Records each move's line as it enters the page: its text right then.
-SAID_AT_FIRST = """() => {
-  window.saidAtFirst = [];
-  new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach(
-    (n) => n.nodeType === 1 && [n, ...n.querySelectorAll('*')].forEach(
-      (e) => e.matches('.dstf-moved') && window.saidAtFirst.push(e.textContent)))))
-    .observe(document.body, {childList: true, subtree: true});
-}"""
+#: The tree card's live region, kept to compare with the one there later.
+LIVE_AT_FIRST = "() => { window.liveAtFirst = document.querySelector('.dstf-live'); }"
+SAME_LIVE = "() => document.querySelector('.dstf-live') === window.liveAtFirst"
 
 
 def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_browser):
@@ -2667,7 +2662,7 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         assert page.evaluate(MENU_ACTIVE) == (
             "and · 3 criteria (root) — before k-of-n · 2 criteria · k=1"
         )
-        page.evaluate(SAID_AT_FIRST)
+        page.evaluate(LIVE_AT_FIRST)
         page.keyboard.press("Enter")
         expect(rows.nth(1)).to_contain_text("range · y", timeout=EXPECT_TIMEOUT)
         expect(items).to_have_count(0)
@@ -2675,9 +2670,12 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         # The moved row, in view, says it moved on one line right under it.
         said = page.locator(".dstf-moved")
         expect(said).to_have_text("Moved.", timeout=EXPECT_TIMEOUT)
-        # A live region, drawn empty and then given its text: read out.
-        assert page.evaluate("() => window.saidAtFirst") == [""]
-        expect(said).to_have_attribute("role", "status")
+        # Told to the card's live region, there since the page was built:
+        # its text changed, so it is read out. The line is none.
+        live = page.get_by_role("status").and_(page.locator(".dstf-live"))
+        expect(live).to_have_text("Moved.")
+        assert page.evaluate(SAME_LIVE)
+        expect(said).not_to_have_attribute("role", re.compile(".*"))
         page.wait_for_timeout(300)
         line, row = said.bounding_box(), rows.nth(1).bounding_box()
         assert line is not None and row is not None
@@ -2737,6 +2735,31 @@ def test_a_long_place_is_cut_in_the_middle_inside_the_menu(
             assert p["item"] <= p["menu"] and p["label"] <= p["menu"], p
             assert p["menuScroll"] <= p["menu"], p
             assert p["node"] > 0, p
+
+
+def test_a_move_said_while_the_loop_is_busy_is_still_read_out(
+    tmp_path, playwright_browser
+):
+    """A move's line said and the UI loop then held 0.4 s: the line and its
+    text arrive in one message. What a screen reader is told is no part of
+    that line: the card's live region, there and empty since the page was
+    built, changes its text in place — and that is read out."""
+    with _served(
+        tmp_path, playwright_browser, project=_nested_project, hooks=True
+    ) as page:
+        _show_tree(page, 5)
+        live = page.locator(".dstf-live")
+        expect(live).to_have_text("")
+        page.evaluate(LIVE_AT_FIRST)
+        base = page.url.split("test/")[0]
+        query = urllib.parse.urlencode({"path": "/metrics/children/1", "block": 0.4})
+        with urllib.request.urlopen(f"{base}__say?{query}") as r:
+            assert json.loads(r.read()) == {"said": 1}
+        expect(page.locator(".dstf-moved")).to_have_text(
+            "Moved.", timeout=EXPECT_TIMEOUT
+        )
+        expect(live).to_have_text("Moved.")
+        assert page.evaluate(SAME_LIVE)
 
 
 def _tree_row(page, path: str):

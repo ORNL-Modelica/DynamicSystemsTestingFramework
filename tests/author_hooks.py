@@ -43,6 +43,29 @@ async def _expression(name: str, expression: str, model: str = "FakeLib.A") -> d
     return {"stamped": hit}
 
 
+@app.get("/__say")
+async def _say(path: str, block: float = 0.0) -> dict:
+    """`TreeCard.say` on every open Test page's tree, then the UI loop held
+    ``block`` s, as a long sync holds it: the line's element, its text and
+    the live region's change all leave in one message."""
+    import time
+
+    from dstf.authoring.shell.test_page import TestPage
+
+    pages = [
+        o
+        for o in gc.get_objects()
+        if isinstance(o, TestPage)
+        and o.tree is not None
+        and o.tree.targets
+        and not o.client.is_deleted
+    ]
+    for page in pages:
+        page.tree.say(path, "Moved.")
+    time.sleep(block)
+    return {"said": len(pages)}
+
+
 @app.get("/__touch")
 async def _touch() -> list[str]:
     """`.classes(add=…)` on every live Suite grid, Python-side."""

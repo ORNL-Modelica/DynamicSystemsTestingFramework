@@ -9419,19 +9419,29 @@ async def test_the_moved_row_says_what_changed(
             assert page.tree.targets[landed].slot in list(_ancestors(line))
 
 
-async def test_the_moved_line_is_a_live_region_filled_once_drawn(nested_shell):
-    """`role="status"`, created EMPTY and its text set in a later update:
-    a live region is read out when its text changes, and one that arrives
-    already holding it is not."""
+async def test_a_move_is_told_to_the_tree_cards_one_live_region(nested_shell):
+    """ONE `role="status"` region in the tree card, there and empty from
+    its build — a live region is read out when its text CHANGES, and one
+    that arrives holding it is not. A move's line is said into it; the
+    line under the row is born holding its text and is no live region. A
+    second "Moved." in a row still changes the region's text."""
     shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
+        live = _one(user, "moved-live")
+        assert live is page.tree.live and live.text == ""
+        assert (live.props["role"], live.props["aria-live"]) == ("status", "polite")
         await _open_tree(user)
-        page.tree.say(N_Y, "Moved.")
-        line = page.tree.said
-        assert line is not None and line.props["role"] == "status"
-        assert line.text == ""
-        await _settled(lambda: line.text == "Moved.")
+        _drop(page, N_Y, N_T2, "before")  # [y, T2, k, x2]
+        await _settled(lambda: not _none(user, "moved-note"))
+        line = _one(user, "moved-note")
+        assert line.text == "Moved." and "role" not in line.props
+        assert live.text == "Moved."
+        _drop(page, N_Y, N_T2, "before")  # [x2, y, T2, k]
+        await _settled(lambda: live.text != "Moved.")
+        assert live.text == "Moved.\u200b"
+        assert _one(user, "moved-note").text == "Moved."
+        assert _one(user, "moved-live") is live
 
 
 async def test_the_moved_line_goes_with_the_next_form(nested_shell):
