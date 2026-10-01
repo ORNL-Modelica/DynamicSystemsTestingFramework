@@ -725,6 +725,10 @@ class TreeCard:
             host.follow()
         for node in nodes_of(view):
             self.painters[str(node.get("path"))].paint(node)
+        # The folded set may have been re-keyed under rows whose shape did
+        # not move (twin groups trading places, the U5 review): it is drawn
+        # on the rows standing, not left on the ones it was folded on.
+        self._apply_folds()
         # A host rebuilt under a job's lock takes its row's click away.
         self.paint_clicks()
         self._follow_editor()

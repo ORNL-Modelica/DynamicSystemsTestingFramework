@@ -1066,6 +1066,33 @@ async def test_a_move_rekeys_the_folded_groups_it_shifts(shell):
         }
 
 
+async def test_a_swap_of_twin_groups_moves_the_fold_onto_the_row_standing(shell):
+    """R1 (the U5 review, H1): two groups whose rows have the same shape
+    trade places — the rows are painted, not rebuilt — and the fold, re-keyed
+    to the moved group's new path, is drawn on the row standing there, not
+    left on the row it was folded on."""
+    twin = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "and", "children": [_range(-1)]},
+            {"combinator": "and", "children": [_range(-2)]},
+        ],
+    }
+    a, b = "/metrics/children/0", "/metrics/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, twin)
+        _fold(user, a)
+        await _settled(lambda: page.state.tree_folded.get(A) == [a])
+        rev = page.tree.revision
+        page.tree.dropped({"src": a, "target": "/metrics", "zone": "onto", "rev": rev})
+        await _settled(lambda: page.tree.said is not None)
+        assert page.tree.revision == rev  # painted, not rebuilt
+        assert page.state.tree_folded == {A: [b]}
+        assert page.tree.rows_by_path[b].props.get("data-folded") == "1"
+        assert page.tree.rows_by_path[a].props.get("data-folded") is None
+        assert _hidden(page) == _under(page, b)
+
+
 #: and[r, and[r], and[r, r]]: a folded group after a criterion and a group.
 SHIFTED = {
     "combinator": "and",
