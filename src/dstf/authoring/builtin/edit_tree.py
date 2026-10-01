@@ -1032,8 +1032,7 @@ def _move_menu(
             tree, path, validate=_validator(s, model_id), names=s.labels(model_id)
         )
         with menu:
-            for i, (label, dest, reason) in enumerate(places):
-                text, where = label.rsplit(" — ", 1)
+            for i, (text, where, dest, reason) in enumerate(places):
                 item = (
                     ui.menu_item(on_click=partial(choose, dest), auto_close=False)
                     .props('dense role="menuitem" tabindex="-1"')

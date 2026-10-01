@@ -6185,9 +6185,13 @@ task text, and one fix batch from the review of its first part.
    drew quarters — before / onto / after; the amendment replaced them
    before the drag was built.) Move to… lists the same places with every
    position spelled out, in tree order (`tree_move.move_destinations`):
-   each combinator's "at 1" … "at the end", each criterion's "wrap both in
-   and". `Dest("at", path, i)` is before the child at `i` as the tree is
-   NOW, before the move (C2).
+   each combinator's "before <the row there>" … "at the end" — the drag's
+   own word, naming a row the person can see (the controller's call after
+   the review of the build; it drew "at 1" … "at N" first) — and each
+   criterion's "wrap both in and". Where two siblings read the same,
+   "before" either would not say which, and their places are numbered
+   ("at 2"). `Dest("at", path, i)` is before the child at `i` as the tree
+   is NOW, before the move (C2).
 2. *What a move repairs, and says (D2, D3).* `authoring/tree_move.py::
    plan_move` computes the whole new tree on a copy: it holds the
    destination by the dicts themselves before anything shifts, takes the
@@ -6285,7 +6289,8 @@ task text, and one fix batch from the review of its first part.
 9. *Move to… (C7, C13).* An icon among a row's controls, tooltip "Move
    to…", whose menu is built when it opens, from the tree as it is then
    (see Consequences). Each place reads its node's text — the page's
-   labels, cut in the middle — then where; a refused place is greyed with
+   labels, cut in the middle — then where in it, whole ("— before range ·
+   x"); a refused place is greyed with
    its reason as a second line, "where it is" greyed with none; the node's
    own row is not listed, and its subtree's places are, refused. The arrow
    keys move among the places, skipping the greyed ones, Enter chooses,

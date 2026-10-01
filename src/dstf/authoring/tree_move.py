@@ -328,19 +328,22 @@ def move_destinations(
     *,
     validate: Callable[[dict], None] | None = None,
     names: Mapping[str, str] | None = None,
-) -> list[tuple[str, Dest, str | None]]:
-    """Every place the node at ``src`` can go, in tree order, as ``(label,
-    dest, reason)``: a combinator's positions between its children's rows
-    ("at 1" … "at the end"), a criterion's "wrap both in and". ``names`` is
-    each variable's text as the page reads it (`SessionView.labels`).
+) -> list[tuple[str, str, Dest, str | None]]:
+    """Every place the node at ``src`` can go, in tree order, as ``(text,
+    where, dest, reason)``: a combinator's (``text``) positions between its
+    children's rows — "before" the row there, the drag's own word, and "at
+    the end" — and a criterion's "wrap both in and". ``names`` is each
+    variable's text as the page reads it (`SessionView.labels`). Where two
+    siblings read the same, "before" either would not say which: their
+    places are numbered instead ("at 2").
 
-    The places beside the node read as ONE row, "… — where it is" (reason
-    None; the caller greys it: `plan_move` gives None). The node's own row
-    is not listed; the places in its own subtree are, with their refusal."""
+    The places beside the node read as ONE row, "where it is" (reason None;
+    the caller greys it: `plan_move` gives None). The node's own row is
+    not listed; the places in its own subtree are, with their refusal."""
     from .tree_text import node_text
 
     names = names or {}
-    rows: list[tuple[str, Dest, str | None]] = []
+    rows: list[tuple[str, str, Dest, str | None]] = []
     here = False
 
     def one(text: str, where: str, dest: Dest) -> None:
@@ -348,14 +351,14 @@ def move_destinations(
         try:
             planned = plan_move(tree, src, dest, validate=validate)
         except MoveRefused as e:
-            rows.append((f"{text} — {where}", dest, str(e)))
+            rows.append((text, where, dest, str(e)))
             return
         if planned is None:
             if not here:
                 here = True
-                rows.append((f"{text} — {WHERE_IT_IS}", dest, None))
+                rows.append((text, WHERE_IT_IS, dest, None))
             return
-        rows.append((f"{text} — {where}", dest, None))
+        rows.append((text, where, dest, None))
 
     def walk(node: dict, path: str) -> None:
         text = node_text(_view(node, names))
@@ -366,8 +369,11 @@ def move_destinations(
                 one(text, "wrap both in and", Dest("onto", path))
             return
         kids = node.get("children") or []
+        befores = [node_text(_view(child, names)) for child in kids]
         for i, child in enumerate(kids):
-            one(text, f"at {i + 1}", Dest("at", path, i))
+            before = befores[i]
+            where = f"before {before}" if befores.count(before) == 1 else f"at {i + 1}"
+            one(text, where, Dest("at", path, i))
             walk(child, f"{path}/children/{i}")
         one(text, "at the end", Dest("at", path, None))
 

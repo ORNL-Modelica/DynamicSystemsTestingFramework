@@ -2664,7 +2664,9 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         page.keyboard.press("End")
         assert page.evaluate(MENU_ACTIVE) == "k-of-n · 2 criteria · k=1 — at the end"
         page.keyboard.press("Home")
-        assert page.evaluate(MENU_ACTIVE) == "and · 3 criteria (root) — at 1"
+        assert page.evaluate(MENU_ACTIVE) == (
+            "and · 3 criteria (root) — before k-of-n · 2 criteria · k=1"
+        )
         page.evaluate(SAID_AT_FIRST)
         page.keyboard.press("Enter")
         expect(rows.nth(1)).to_contain_text("range · y", timeout=EXPECT_TIMEOUT)

@@ -1089,10 +1089,13 @@ root's row is all "onto", and there is no "after": to put a node last at an
 outer level, drop it onto that outer combinator. A place the move refuses
 outlines its row in red while dragged over, the tree card's line says why, and a
 drop there does nothing. Move to… opens a menu of every place in tree order —
-each combinator's "at 1" … "at the end", each criterion's "wrap both in and";
-the place the node already is reads "where it is", and it and every refused
-place are greyed, a refused one with its reason under it. The arrow keys move
-among the places, Enter chooses.
+each combinator's "before" each of its rows (`before range · x`) and "at the
+end", each criterion's "wrap both in and" (two siblings that read the same have
+their places numbered, "at 2"); the place the node already is reads "where it
+is", and it and every refused place are greyed, a refused one with its reason
+under it. The arrow keys move among the places, Enter chooses. A drag that
+started on rows rebuilt before its drop (an edit staged meanwhile) is refused:
+"The tree changed while you dragged: try again."
 
 A move keeps the tree valid by changing what it must: a combinator it empties
 is removed, and its parent if that empties too; a k-of-n left with fewer

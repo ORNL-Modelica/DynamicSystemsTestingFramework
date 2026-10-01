@@ -9013,9 +9013,10 @@ async def _open_move_menu(user, path: str) -> None:
 
 
 async def test_move_to_lists_every_destination_in_tree_order(nested_shell):
-    """y's menu: every place between rows and every criterion to wrap with,
-    in tree order; the places beside y read as ONE greyed "where it is",
-    with no reason. Built at the click, never with the rows (Q6)."""
+    """y's menu: every place between rows — named by the row it goes
+    before — and every criterion to wrap with, in tree order; the places
+    beside y read as ONE greyed "where it is", with no reason. Built at the
+    click, never with the rows (Q6)."""
     shell = nested_shell
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
@@ -9024,15 +9025,15 @@ async def test_move_to_lists_every_destination_in_tree_order(nested_shell):
         await _open_move_menu(user, N_Y)
         root, k = "and · 5 criteria (root)", "k-of-n · 2 criteria · k=1"
         assert _move_items(user, N_Y) == [
-            (root, "— at 1", None, True),
+            (root, "— before range · pipe.T[2]", None, True),
             ("range · pipe.T[2]", "— wrap both in and", None, True),
-            (root, "— at 2", None, True),
-            (k, "— at 1", None, True),
+            (root, f"— before {k}", None, True),
+            (k, "— before range · x", None, True),
             ("range · x", "— wrap both in and", None, True),
-            (k, "— at 2", None, True),
+            (k, "— before range · pipe.T[1]", None, True),
             ("range · pipe.T[1]", "— wrap both in and", None, True),
             (k, "— at the end", None, True),
-            (root, "— at 3", None, True),
+            (root, "— before range · x", None, True),
             ("range · x", "— wrap both in and", None, True),
             (root, "— where it is", None, False),
         ]

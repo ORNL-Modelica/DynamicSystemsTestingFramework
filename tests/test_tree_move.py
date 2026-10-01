@@ -395,37 +395,53 @@ def test_the_validator_is_called_last_with_the_new_tree():
 # -- the destinations ----------------------------------------------------------
 
 
+def _labels(rows) -> list[tuple[str, Dest]]:
+    """Each place as the menu reads it, "text — where", with its dest."""
+    return [(f"{text} — {where}", dest) for text, where, dest, _ in rows]
+
+
 def test_move_destinations_over_a_nested_tree():
-    """Tree order, positions between a combinator's children; the node's
-    own row is not listed, and the places beside it read as ONE row."""
+    """Tree order, positions between a combinator's children, each named
+    by the row it goes before; the node's own row is not listed, and the
+    places beside it read as ONE row."""
     rows = move_destinations(NESTED, p(0), validate=VALIDATE, names={"b": "pipe.T[1]"})
     root = "and · 4 criteria (root)"
     kn = "k-of-n · 2 criteria · k=2"
-    assert [(label, dest) for label, dest, _ in rows] == [
+    assert _labels(rows) == [
         (f"{root} — where it is", Dest("at", R, 0)),
-        (f"{kn} — at 1", Dest("at", p(1), 0)),
+        (f"{kn} — before nrmse · pipe.T[1]", Dest("at", p(1), 0)),
         ("nrmse · pipe.T[1] — wrap both in and", Dest("onto", p(1, 0))),
-        (f"{kn} — at 2", Dest("at", p(1), 1)),
+        (f"{kn} — before nrmse · c", Dest("at", p(1), 1)),
         ("nrmse · c — wrap both in and", Dest("onto", p(1, 1))),
         (f"{kn} — at the end", Dest("at", p(1), None)),
-        (f"{root} — at 3", Dest("at", R, 2)),
-        ("warn · 1 criterion — at 1", Dest("at", p(2), 0)),
+        (f"{root} — before warn · 1 criterion", Dest("at", R, 2)),
+        ("warn · 1 criterion — before nrmse · d", Dest("at", p(2), 0)),
         ("nrmse · d — wrap both in and", Dest("onto", p(2, 0))),
         ("warn · 1 criterion — at the end", Dest("at", p(2), None)),
         (f"{root} — at the end", Dest("at", R, None)),
     ]
-    why = {label: reason for label, _, reason in rows}
-    assert why["warn · 1 criterion — at 1"] == INTO_WARN
+    why = {f"{t} — {w}": reason for t, w, _, reason in rows}
+    assert why["warn · 1 criterion — before nrmse · d"] == INTO_WARN
     assert why["warn · 1 criterion — at the end"] == INTO_WARN
-    for label, dest, reason in rows:
+    for _text, where, dest, reason in rows:
         if reason is None:
             planned = plan_move(NESTED, p(0), dest, validate=VALIDATE)
-            assert (planned is None) == label.endswith("where it is"), label
+            assert (planned is None) == (where == "where it is"), where
+
+
+def test_move_destinations_number_the_places_of_siblings_that_read_the_same():
+    """Of two siblings that read the same, "before nrmse · x" would not
+    say which: those two places are numbered, and a sibling that reads
+    apart keeps its name."""
+    tree = C("and", L("x"), L("x"), L("y"), L("z"))
+    rows = move_destinations(tree, p(3), validate=VALIDATE)
+    root = [where for text, where, _, _ in rows if text.endswith("(root)")]
+    assert root == ["at 1", "at 2", "before nrmse · y", "where it is"]
 
 
 def test_move_destinations_where_it_is_when_last():
     rows = move_destinations(FLAT, p(3), validate=VALIDATE)
-    labels = [label for label, _, _ in rows]
+    labels = [label for label, _ in _labels(rows)]
     here = [label for label in labels if label.endswith("where it is")]
     assert here == ["and · 4 criteria (root) — where it is"]
     assert labels[-1] == here[0]
@@ -434,11 +450,11 @@ def test_move_destinations_where_it_is_when_last():
 
 def test_move_destinations_of_a_combinator_refuse_its_own_subtree():
     rows = move_destinations(NESTED, p(1), validate=VALIDATE)
-    inside = [why for _, dest, why in rows if dest.path.startswith(p(1))]
+    inside = [why for _, _, dest, why in rows if dest.path.startswith(p(1))]
     assert len(inside) == 5 and set(inside) == {INTO_ITSELF}
     rows = move_destinations(NESTED, p(2), validate=VALIDATE)
-    why = {label: w for label, _, w in rows}
-    assert why["k-of-n · 2 criteria · k=2 — at 1"] == WARN_UNDER
+    why = {f"{t} — {w}": reason for t, w, _, reason in rows}
+    assert why["k-of-n · 2 criteria · k=2 — before nrmse · b"] == WARN_UNDER
 
 
 # -- what the mutation review of Part A found unpinned ------------------------
