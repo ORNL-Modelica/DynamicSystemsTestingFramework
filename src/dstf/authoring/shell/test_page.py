@@ -113,6 +113,11 @@ class TestPage:
         #: A move's row to bring into view and the line it says, for the
         #: end of the next sync (`moved`).
         self.pending_moved: tuple[str, str] | None = None
+        #: Whether the move's own `spec` event is still to come: it is the
+        #: move's, and takes no line away (`handle`). A flag apart from
+        #: `pending_moved`: another event of this test queued in the same
+        #: tick, ahead of it, syncs first and says the line.
+        self.move_spec_due = False
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -517,6 +522,7 @@ class TestPage:
         self._redraw_moved(view)
         self._unsay()
         self.pending_moved = (path, text)
+        self.move_spec_due = True
 
     def _unsay(self) -> None:
         """Take a move's line away: the next form, editor or edit."""
@@ -970,6 +976,7 @@ class TestPage:
         self._close()
         self._close_row()
         self.pending_reveal = self.pending_moved = None
+        self.move_spec_due = False
         if self.strip is not None:
             self.strip.forget()
         if self.badge is not None:
@@ -1029,10 +1036,14 @@ class TestPage:
             # signature sees an overlay, so the drawn plots are re-sent.
             self.sync(force=True)
         elif syncs:
-            if event["event"] == "spec" and self.pending_moved is None:
-                # An edit after a move: the move's line has said its piece.
-                # The move's own event finds its line still to be said.
-                self._unsay()
+            if event["event"] == "spec":
+                if self.move_spec_due:
+                    # The move's own event: its line is said by this sync,
+                    # or was by an event ahead of it.
+                    self.move_spec_due = False
+                else:
+                    # An edit after a move: the line has said its piece.
+                    self._unsay()
             self.sync()
 
     def _mine(self, event: dict[str, Any]) -> bool:

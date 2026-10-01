@@ -9434,6 +9434,27 @@ async def test_a_move_by_the_menu_says_it_too(nested_shell):
         assert _one(user, "moved-note").text == "Moved."
 
 
+async def test_an_event_ahead_of_the_moves_own_spec_event_keeps_the_line(
+    nested_shell,
+):
+    """A `results` event queued in the same tick as the move, ahead of its
+    own `spec` event, syncs first and says the line; the move's `spec`
+    event that follows is still the move's, and must not take it away."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        await asyncio.sleep(0.3)
+        shell._events.put({"event": "results", "models": {A}})
+        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        await asyncio.sleep(0.6)  # both events have been handled
+        assert page.pending_moved is None
+        assert not _none(user, "moved-note")
+        # The next edit's `spec` event still takes it away.
+        shell.session.stage([PatchOp(A, "replace", f"{N_Y}/max_value", 50.0)])
+        await _settled(lambda: _none(user, "moved-note"))
+
+
 async def test_a_failed_runs_statistics_line_says_there_is_no_run_result(
     stats_shell,
 ):
