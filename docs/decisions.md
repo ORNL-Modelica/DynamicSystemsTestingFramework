@@ -6220,11 +6220,12 @@ from drawn options: such a test gets a status of its own, **NOT RUN**.
    always did. NOT RUN arises four ways, and the exit code in each:
    a test never in a run, beside tests that ran — 0 when those passed;
    a run aborted by its process ending (Ctrl+C, a crash) — a later
-   `compare` exits by what that run finished, 1 when it finished nothing;
-   a persistent pool whose workers ALL fail to start — every test is
-   stamped `pending`, `run` itself exits 1 ("Run aborted"), and a later
-   `compare` exits 1 (nothing ran); and a `compare` over an empty or wrong
-   work dir — 1. A pool that dies mid-run records every test it could not
+   `compare` exits by every result the work dir holds — this run's and
+   older runs' — and 1 only when it holds none; a persistent pool whose
+   workers ALL fail to start — every test in its scope is stamped
+   `pending` and `run` itself exits 1 ("Run aborted"); a later `compare`
+   exits as after any aborted run (1 when no older result is left); and
+   a `compare` over an empty or wrong work dir — 1. A pool that dies mid-run records every test it could not
    reach as failed (`_drain_remaining`): SIM_FAIL, exit 1.
 
 **Consequences.** A pending test's partial result is no longer read by
