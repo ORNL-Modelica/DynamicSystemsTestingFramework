@@ -631,7 +631,7 @@ class TreeCard:
                 self.page.drop_row(target)
                 if self.editor_path == path:
                     # The editor under it goes the same way (F9).
-                    self.page._close()
+                    self.page.drop_editor()
 
     def _fold(self, path: str, e: Any) -> None:
         """A chevron's click (or a drag resting on its row, Q10): the page
@@ -710,7 +710,7 @@ class TreeCard:
                     self.page.drop_row(host.row)
             # And an editor nobody can see is no editor (U5).
             if self.editor is not None:
-                self.page._close()
+                self.page.drop_editor()
         if view is None or not self.is_open:
             return
         shape = shape_of(view)
@@ -968,7 +968,7 @@ class TreeCard:
         if self.editor is not None:
             # The rows it hangs under go, and the page's one editor with
             # them: the node at its path may be another criterion now.
-            self.page._close()
+            self.page.drop_editor()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.rows_by_path = [], {}, {}

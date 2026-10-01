@@ -279,7 +279,7 @@ class StatsCard:
             if self.open_path is not None:
                 # The rows its editor hangs under go, as a plot card's
                 # rebuild takes its editor: the page's one editor with them.
-                self.page._close()
+                self.page.drop_editor()
             self._build(shown, reads)
             return
         lock = self._locked()

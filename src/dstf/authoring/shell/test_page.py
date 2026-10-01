@@ -314,7 +314,7 @@ class TestPage:
         ONE thing open at a time: the editor goes, and any other row — and
         the card whose rings went with the editor is re-sent, once."""
         view = self._view()
-        self._close()
+        self.drop_editor()
         self._close_row()
         self._unsay()
         # Its own row's error goes as its form opens; any other row's
@@ -483,7 +483,7 @@ class TestPage:
             view = self._view()
             if self.stats.row_for(path) is not None:
                 self._close_row()
-                self._close()
+                self.drop_editor()
                 if self.stats.open_editor(path, view):
                     self.open = (STATS, path)
                 self._redraw_moved(view)
@@ -502,7 +502,7 @@ class TestPage:
             # card Focus is hiding (board 5A shows ONE plot).
             self.focused = None
             self._paint_focus(view)
-        self._close()
+        self.drop_editor()
         self.open = (index, path)
         card.show(view)
         card.open_editor(path, view)
@@ -544,7 +544,7 @@ class TestPage:
         self._unsay()
         view = self._view()
         self._close_row()
-        self._close()
+        self.drop_editor()
         if self.tree.open_editor(path):
             self.open = (TREE, path)
         self._redraw_moved(view)
@@ -573,16 +573,18 @@ class TestPage:
 
     def close_editor(self) -> None:
         view = self._view()
-        self._close()
+        self.drop_editor()
         self._redraw_moved(view)
 
-    def _close(self) -> None:
+    def drop_editor(self) -> None:
         """Close the open editor and redraw NOTHING: what is re-sent is the
         caller's to decide, once. A close that redrew on its own re-sent the
         same card twice for a swap between two of its rows — and, in
         `rebuild`, asked the Session for a plot the staged layout had just
         taken away, which ended the rebuild half-done with the new shape
-        already recorded (the Task 6 review)."""
+        already recorded (the Task 6 review). The tree card and the
+        Statistics card close the page's one editor through it too, as
+        `drop_row` closes its form row."""
         if self.open is None:
             return
         index, self.open = self.open[0], None
@@ -605,7 +607,7 @@ class TestPage:
         `edited`."""
         self.edited(paths)
         view = self._view()
-        self._close()
+        self.drop_editor()
         self._close_row()
         self._redraw_moved(view)
         self._unsay()
@@ -760,7 +762,7 @@ class TestPage:
         # be a plot the staged layout no longer has. The Statistics card's
         # editor and the tree's (U5) hang under none of them.
         if self.open is not None and self.open[0] >= 0:
-            self._close()
+            self.drop_editor()
         # Focus names an INDEX, and after this the indices may name other
         # plots; the plots a user had drawn are re-drawn where they are left.
         self.focused = None
@@ -1168,7 +1170,7 @@ class TestPage:
         if self.gone or self.column is None:
             return
         self.gone = True
-        self._close()
+        self.drop_editor()
         self._close_row()
         self.pending_reveal = self.pending_moved = None
         self.move_revision = None
