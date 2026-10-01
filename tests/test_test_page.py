@@ -10607,3 +10607,112 @@ async def test_a_jump_from_an_open_tree_editor_scrolls_to_the_plots_row(shell):
         scrolls = [js for js in sent if "scrollIntoView" in js]
         assert scrolls and all(row.html_id in js for js in scrolls), sent
         assert not any(".dstf-crit-open" in js for js in sent)
+
+
+# -- U5 Task 4: the jump icon ------------------------------------------------
+
+
+async def test_the_jump_icon_shows_a_criterion_on_its_plot_and_opens_nothing(
+    page_shell,
+):
+    """Q7: every criterion row has one, no group row does; it draws a lazy
+    plot, scrolls to the criterion's row and flashes it — no editor opens,
+    and an open one is not moved."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        await _open_tree(user)
+        assert _none(user, "show:/metrics")
+        for path in (TUBE, RANGE_X, RANGE_Y):
+            icon = _one(user, f"show:{path}")
+            assert icon.props.get("aria-label") == "Show on its plot"
+        card = page.cards[1]
+        assert card.plot is None  # y's plot is not drawn yet
+        sent = _js_sent(page)
+        user.find(marker=f"show:{RANGE_Y}").click()
+        await _settled(lambda: card.plot is not None)
+        row = card.rows[RANGE_Y].row
+        assert any(row.html_id in js and "dstf-flash" in js for js in sent), sent
+        assert page.open is None and page.form is None
+        # An editor open in the tree stays where it is.
+        _tree_click(user, RANGE_X)
+        await _settled(lambda: page.open == (TREE_OPEN, RANGE_X))
+        user.find(marker=f"show:{TUBE}").click()
+        await asyncio.sleep(0.1)
+        assert page.open == (TREE_OPEN, RANGE_X)
+
+
+async def test_the_jump_icon_ends_a_focus_that_hides_its_plot(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        await _open_tree(user)
+        with page.client:
+            page.focus(0)
+        assert not page.cards[1].card.visible
+        user.find(marker=f"show:{RANGE_Y}").click()
+        await _settled(lambda: page.focused is None)
+        assert page.cards[1].card.visible
+        # A focus that shows the plot is kept.
+        with page.client:
+            page.focus(1)
+        user.find(marker=f"show:{RANGE_Y}").click()
+        await asyncio.sleep(0.1)
+        assert page.focused == 1
+
+
+async def test_a_statistics_criterions_jump_opens_the_card_at_its_row(stats_shell):
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        icon = _one(user, f"show:{leaf}")
+        assert icon.props.get("aria-label") == "Show on the Statistics card"
+        assert not page.stats.is_open
+        sent = _js_sent(page)
+        user.find(marker=f"show:{leaf}").click()
+        await _settled(lambda: page.stats.is_open)
+        row = page.stats.rows_by_path[NONLINEAR]
+        assert any(row.html_id in js and "dstf-flash" in js for js in sent), sent
+        assert page.open is None and page.stats.editor is None
+
+
+async def test_the_jump_icons_name_follows_a_mode_switch(stats_shell):
+    """F8: the ⤓'s name is repainted, never fixed at build — a mode switch
+    moves no shape of the tree, so the row stands."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    nrmse = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        assert _one(user, f"show:{nrmse}").props["aria-label"] == "Show on its plot"
+        revision = page.tree.revision
+        stat = {"metric": "scalar", "variable": "x", "quantity": NONLINEAR}
+        shell.session.stage([PatchOp(A, "replace", nrmse, stat)])
+        await _settled(
+            lambda: (
+                _one(user, f"show:{nrmse}").props["aria-label"]
+                == "Show on the Statistics card"
+                or page.tree.revision != revision
+            )
+        )
+        assert page.tree.revision == revision  # repainted, not rebuilt
+        assert _plus_tips(_one(user, f"show:{nrmse}")) == [
+            "Show on the Statistics card"
+        ]
+        _ = leaf
+
+
+async def test_the_jump_icon_leaves_the_folds_alone(shell):
+    """R2: the ⤓ shows a plot's row, not a tree row — a folded group over
+    its criterion stays folded."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        _fold(user, G1)
+        await _settled(lambda: page.state.tree_folded.get(A) == [G1])
+        with page.client:
+            page.show_criterion(f"{G1}/children/0")
+        assert page.state.tree_folded[A] == [G1]
+        assert f"{G1}/children/0" in _hidden(page)

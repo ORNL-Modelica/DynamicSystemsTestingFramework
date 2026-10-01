@@ -650,13 +650,45 @@ class TestPage:
         under now, or None."""
         if self.open is None or self.open[1] != path:
             return None
-        index = self.open[0]
+        return self._row_on(self.open[0], path)
+
+    def _row_on(self, index: int, path: str) -> ui.element | None:
+        """``path``'s criteria row on plot ``index``, or its Statistics row
+        for STATS — None where none is drawn."""
         if index == STATS and self.stats is not None:
             key = self.stats.row_for(path)
             return None if key is None else self.stats.rows_by_path.get(key)
         if 0 <= index < len(self.cards) and path in self.cards[index].rows:
             return self.cards[index].rows[path].row
         return None
+
+    def show_criterion(self, path: str, *_: Any) -> None:
+        """A tree row's ⤓ (U5, Q7): the criterion's row where it is drawn —
+        on its first plot, drawn if it was not and a Focus hiding it ended;
+        or its Statistics row, the card opened — scrolled to the middle of
+        the viewport and flashed. No editor opens or moves, and no fold
+        opens: it shows a plot, not a tree row (R2)."""
+        view = self._view()
+        index = next((c.index for c in self.cards if path in c.rows), None)
+        if index is not None:
+            if self.focused is not None and self.focused != index:
+                self.focused = None
+                self._paint_focus(view)
+            self.cards[index].show(view)
+        elif self.stats is not None and self.stats.row_for(path) is not None:
+            index = STATS
+            if not self.stats.is_open:
+                self.stats.is_open = True
+                self.stats.refresh(view)
+        row = None if index is None else self._row_on(index, path)
+        if row is None:
+            return
+        self.client.run_javascript(
+            f'const r = document.getElementById("{row.html_id}");'
+            'if (r) { r.scrollIntoView({block: "center"});'
+            ' r.classList.remove("dstf-flash"); void r.offsetWidth;'
+            ' r.classList.add("dstf-flash"); }'
+        )
 
     # -- the cards -------------------------------------------------------------
 

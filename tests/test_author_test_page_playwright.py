@@ -4947,3 +4947,74 @@ def test_a_tree_rows_click_answers_the_keyboard(tmp_path, playwright_browser):
         expect(k_of_n).to_have_attribute("aria-expanded", "false")
         page.keyboard.press("Enter")
         expect(_tree_row(page, K_TUBE)).to_be_visible(timeout=EXPECT_TIMEOUT)
+
+
+# -- the ⤓ jump (U5 Task 4) ---------------------------------------------------
+
+#: The flash's own class, on the row the ⤓ landed on.
+FLASHED = re.compile(r"dstf-flash")
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+def test_the_jump_icon_scrolls_to_the_plot_row_and_flashes_it(
+    tmp_path, playwright_browser, width
+):
+    """Q7 / F4 with a real mouse: the ⤓ sits in the criterion row's
+    cluster; its click is its own — no editor opens — and brings the
+    criterion's plot row to the middle of the viewport, flashed; with
+    Focus hiding that plot, the Focus ends."""
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        page.set_viewport_size({"width": width, "height": 900})
+        _show_tree(page, 5)
+        icon = _tree_row(page, K_RANGE_Y).get_by_role("button", name="Show on its plot")
+        expect(icon).to_have_count(1)
+        assert _tree_row(page, K_OF_N).locator(".dstf-show").count() == 0
+        box, row = icon.bounding_box(), _tree_row(page, K_RANGE_Y).bounding_box()
+        assert box and row
+        assert (
+            row["y"] <= box["y"]
+            and box["y"] + box["height"] <= row["y"] + row["height"] + 0.5
+        ), (row, box)
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, f"u5-jump-icons-{width}")
+        icon.click()
+        target = _crit(page, 1, "range · y")
+        expect(target).to_be_in_viewport(timeout=EXPECT_TIMEOUT)
+        expect(target).to_have_class(FLASHED)
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, f"u5-jump-arrived-{width}")
+        assert page.locator(".dstf-editor").count() == 0
+        assert page.locator(".dstf-form-row").count() == 0
+        # Focus on x's plot hides y's: the ⤓ ends it.
+        page.locator(".dstf-plot").nth(0).get_by_role("button", name="Focus").click()
+        expect(page.locator(".dstf-plot").nth(1)).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        icon.click()
+        expect(target).to_be_in_viewport(timeout=EXPECT_TIMEOUT)
+        assert page.locator(".dstf-editor").count() == 0
+
+
+def test_a_statistics_criterions_jump_icon_opens_its_card_row(
+    tmp_path, playwright_browser
+):
+    """Q7: a statistics criterion's ⤓ opens the closed Statistics card and
+    brings its row to the middle of the viewport, flashed; nothing opens."""
+    with _served(tmp_path, playwright_browser, project=_stats_project) as page:
+        card = page.locator(".dstf-stats")
+        _plots_mounted(page)
+        card.get_by_role("button", name="Statistics").click()
+        rows = card.locator(".dstf-stat-row:not(.dstf-stat-head)")
+        row = rows.filter(has_text=re.compile(r"^Nonlinear count"))
+        row.get_by_role("button", name="Add a requirement: exact match").click()
+        expect(card.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        card.locator(".dstf-editor").get_by_role("button", name="Done").click()
+        card.get_by_role("button", name="Statistics").click()  # closed again
+        expect(row).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
+        icons = page.get_by_role("button", name="Show on the Statistics card")
+        expect(icons.first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        icons.last.click()  # the criterion just added: the root's last child
+        expect(row).to_be_in_viewport(timeout=EXPECT_TIMEOUT)
+        expect(row).to_have_class(FLASHED)
+        assert page.locator(".dstf-editor").count() == 0

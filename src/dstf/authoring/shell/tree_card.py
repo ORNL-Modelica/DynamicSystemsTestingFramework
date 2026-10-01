@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...comparison.tree_spec import reads_a_statistic
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
@@ -361,6 +362,13 @@ def fold_text(node: dict) -> str:
     return "· " + " · ".join(parts)
 
 
+def show_tip(leaf: dict) -> str:
+    """The ⤓'s name (U5, Q7): where it shows the criterion — a statistics
+    criterion is drawn on the Statistics card, any other on its plot."""
+    statistic = reads_a_statistic(str(leaf.get("metric")), leaf.get("params") or {})
+    return "Show on the Statistics card" if statistic else "Show on its plot"
+
+
 def _ancestors(path: str) -> list[str]:
     """Every proper ancestor's path of ``path``, the root's included."""
     out = []
@@ -393,6 +401,7 @@ class _Row:
         lead: ui.element | None = None,
         summary: ui.label | None = None,
         chevron: ui.element | None = None,
+        show: tuple[ui.element, ui.tooltip] | None = None,
     ) -> None:
         self.pill, self.text, self.readout, self.lead = pill, text, readout, lead
         #: A group's fold summary (Q4), shown by CSS while its row is
@@ -400,6 +409,9 @@ class _Row:
         self.summary = summary
         #: A group's chevron (Q3): named by the group's text.
         self.chevron = chevron
+        #: A criterion's ⤓ and its tooltip (Q7): named by where it is
+        #: drawn, which a mode switch moves without rebuilding the row.
+        self.show = show
 
     def paint(self, node: dict) -> None:
         if self.summary is not None:
@@ -421,6 +433,12 @@ class _Row:
         # lock — leaves the kind in the text, so it never disappears.
         led = self.lead is not None and bool(self.lead.default_slot.children)
         self.text.set_text(count_text(node) if led else node_text(node))
+        if self.show is not None:
+            button, tip = self.show
+            said = show_tip(node)
+            if _set_prop(button, "aria-label", said):
+                button.update()
+                tip.set_text(said)
         if self.readout is not None:
             # Cut to one line with an ellipsis: its title holds the whole.
             said = leaf_readout(node)
@@ -951,6 +969,30 @@ class TreeCard:
             self._row(view, 0, self.folded)
         self.paint_clicks()
 
+    def _show_icon(self, node: dict, path: str) -> tuple[ui.element, ui.tooltip]:
+        """⤓ (Q7), at the start of the criterion's icon cluster: the
+        criterion where it is drawn — its plot's row, or its Statistics
+        row — scrolled to and flashed; nothing opens. The page owns the
+        jump, as it owns the closed line's named buttons. Its click is
+        stopped in the browser: the row's own click opens the editor."""
+        tip = show_tip(node)
+        button = (
+            ui.button(icon="vertical_align_bottom")
+            .props("flat dense round size=sm")
+            .classes("dstf-show")
+            .on(
+                "click",
+                partial(self.page.show_criterion, path),
+                js_handler="(e) => { e.stopPropagation(); emit(); }",
+            )
+        )
+        # Named for a screen reader: its icon's ligature names nothing.
+        button.props["aria-label"] = tip
+        with button:
+            tooltip = ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
+        button.mark(f"show:{path}")
+        return button, tooltip
+
     def _row(self, node: dict, depth: int, folded: set[str]) -> None:
         path, model = str(node["path"]), self.page.model_id
         group = node.get("kind") != "leaf"
@@ -1060,11 +1102,14 @@ class TreeCard:
                     .mark(f"tree-summary:{path}")
                 )
             readout: ui.label | None = None
+            show: tuple[ui.element, ui.tooltip] | None = None
             if node.get("kind") == "leaf":
                 readout = ui.label(leaf_readout(node)).classes(
                     "dstf-tree-readout dstf-mono text-xs"
                 )
             ui.space()
+            if not group:
+                show = self._show_icon(node, path)
             target = RowTarget(self.page, f"tree:{path}", row, path, None)
             target.lead = lead
             # The tree card's rows are where a node moves from (V2).
@@ -1094,7 +1139,7 @@ class TreeCard:
             target.slot.props["hidden"] = True
         host.build()
         self.hosts.append(host)
-        self.painters[path] = _Row(pill, text, readout, lead, summary, chevron)
+        self.painters[path] = _Row(pill, text, readout, lead, summary, chevron, show)
         # Once the host has drawn: whether its lead holds the kind decides
         # the text.
         self.painters[path].paint(node)
