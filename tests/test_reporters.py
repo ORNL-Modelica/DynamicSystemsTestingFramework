@@ -405,6 +405,9 @@ class TestReportFormatRouting:
             ], fmt
         assert exit_code([]) == 1
         assert exit_code(iter([_not_run()])) == 1
+        # An iterator is read once: a FAIL is not lost to the nothing-ran
+        # check that read it first.
+        assert exit_code(iter([_failing()])) == 1
         assert exit_code([_not_run(), _passing()]) == 0
 
     def test_junit_route_unchanged(self, tmp_path):
