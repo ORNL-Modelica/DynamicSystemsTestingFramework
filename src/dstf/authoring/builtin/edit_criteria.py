@@ -1,7 +1,8 @@
 """Edit criteria (§4.6 table, §4.7): the CRITERION placement; a mode switch,
 the mode's form, the window, the ``against`` selector — and the
 STATISTIC_CRITERION one, a statistics criterion's editor under its
-Statistics row, where the mode, the window and the quantity are no fields. Each change stages one
+Statistics row, where the mode, the window and the quantity are no fields —
+and the TREE_CRITERION one, any criterion's editor under its tree row (U5). Each change stages one
 ``replace`` of the whole leaf and the test rescores. The Session collapses
 consecutive replaces of one leaf into one pending op, so the pending count
 and the exported envelope carry one edit, never a keystroke log (the
@@ -73,7 +74,13 @@ class EditCriteria:
 
     name = "edit-criteria"
     label = "Edit criteria"
-    placements = frozenset({Placement.CRITERION, Placement.STATISTIC_CRITERION})
+    placements = frozenset(
+        {
+            Placement.CRITERION,
+            Placement.STATISTIC_CRITERION,
+            Placement.TREE_CRITERION,
+        }
+    )
 
     def caption(self, s: SessionView) -> str:
         return self.label

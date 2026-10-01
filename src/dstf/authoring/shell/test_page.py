@@ -76,6 +76,12 @@ NOT_A_TEST = "{} is not a test of this project"
 #: leaf path)` — no plot is ever at index -1.
 STATS = -1
 
+#: `TestPage.open`'s index for a criterion edited under its row in the
+#: criteria tree (U5, Y4): no plot is at -2 either, and it is not STATS —
+#: the Statistics card's editor closes with that card, this one with the
+#: tree's rows.
+TREE = -2
+
 
 def _raw(node: dict | None) -> str:
     """A raw node as the form row records it, to tell whether it moved."""
@@ -101,8 +107,9 @@ class TestPage:
         #: Whether the page is showing "… is not a test of this project"
         #: instead of a test (`_gone`).
         self.gone = False
-        #: The one open editor: (plot index, leaf path), or (STATS, leaf
-        #: path) for a statistics criterion's, in the Statistics card.
+        #: The one open editor: (plot index, leaf path), (STATS, leaf path)
+        #: for a statistics criterion's, in the Statistics card, or (TREE,
+        #: leaf path) for one opened under its tree row (U5).
         self.open: tuple[int, str] | None = None
         #: The one open form row: its target, its title, its build, its
         #: column, and the node's raw JSON it was last built from.
@@ -325,6 +332,7 @@ class TestPage:
         target.row.classes(add="dstf-row-open")
         self.form = (target, title, build, column, _raw(self._node(target.node)))
         self._build_row()
+        self._paint_tree_clicks()
         # Just enough to show the whole row, like the tree line's jump; a
         # row already in view does not move (the owner's ruling). Opened
         # from a criteria row at the viewport's foot, it was drawn below
@@ -356,6 +364,12 @@ class TestPage:
             column.delete()
         if not target.row.is_deleted:
             target.row.classes(remove="dstf-row-open")
+        self._paint_tree_clicks()
+
+    def _paint_tree_clicks(self) -> None:
+        """What each clickable tree row says it has open under it (F5)."""
+        if self.tree is not None:
+            self.tree.paint_clicks()
 
     def drop_row(self, target: RowTarget) -> None:
         """Close the open form if it hangs under ``target``: a host being
@@ -485,6 +499,54 @@ class TestPage:
         card.open_editor(path, view)
         self._redraw_moved(view)
 
+    def tree_row_click(self, path: str, *_: Any) -> None:
+        """A tree row's own click, or Enter / Space on it (U5): it closes a
+        form open under it and opens nothing (a criteria row's rule); else a
+        criterion's row toggles its editor under the row (Q5), and a
+        group's does what a panel registered for it (Q6: a k-of-n's or a
+        weighted's fields) — or nothing."""
+        if self.tree is None:
+            return
+        if self.form is not None and self.form[0].key == f"tree:{path}":
+            self._close_row()
+            return
+        node = self._node(path)
+        if node is None:
+            return
+        if "combinator" not in node:
+            self.toggle_tree_criterion(path)
+            return
+        target = self.tree.targets.get(path)
+        if target is not None and target.click is not None:
+            target.click()
+
+    def toggle_tree_criterion(self, path: str) -> None:
+        if self.open == (TREE, path):
+            self.close_editor()
+        else:
+            self.open_tree_criterion(path)
+
+    def open_tree_criterion(self, path: str) -> None:
+        """The criterion's editor under its tree row (Q5, Y4) — the page's
+        one editor (Q11): whatever else is open closes first, and the card
+        whose rings went with it is re-sent."""
+        if self.tree is None:
+            return
+        self._unsay()
+        view = self._view()
+        self._close_row()
+        self._close()
+        if self.tree.open_editor(path):
+            self.open = (TREE, path)
+        self._redraw_moved(view)
+
+    def edit_on_plot(self, path: str, index: int) -> None:
+        """Q12: the tree editor's "Edit on its plot" — the criterion opens
+        on plot ``index`` (the tree's editor closes: one editor page-wide)
+        and its row is brought to the middle of the viewport."""
+        self.open_criterion(path, index)
+        self._scroll_to_open(path)
+
     def toggle_stats_editor(self, path: str, *_: Any) -> None:
         """A scored Statistics row's own click: its criterion's editor
         opens under it, or closes if it was the open one."""
@@ -511,6 +573,10 @@ class TestPage:
         if index == STATS:
             if self.stats is not None:
                 self.stats.close_editor()
+            return
+        if index == TREE:
+            if self.tree is not None:
+                self.tree.close_editor()
             return
         self.cards[index].close_editor()
 
@@ -564,11 +630,33 @@ class TestPage:
         other). A criterion with no row drawn opens nothing and scrolls to
         nothing: with another editor open, the jump scrolled to THAT row."""
         self.open_criterion(path)
-        if self.open is not None and self.open[1] == path:
-            ui.run_javascript(
-                'document.querySelector(".dstf-crit-open")'
+        self._scroll_to_open(path)
+
+    def _scroll_to_open(self, path: str) -> None:
+        """The row ``path``'s editor is open under, brought to the middle of
+        the viewport — found BY ITS ID: a `.dstf-crit-open` query found the
+        tree row an open had just closed (U5), whose class goes with the
+        next update, which this script can overtake. Nothing where the
+        open did not land on ``path``."""
+        row = self._drawn_row(path)
+        if row is not None:
+            self.client.run_javascript(
+                f'document.getElementById("{row.html_id}")'
                 '?.scrollIntoView({block: "center"})'
             )
+
+    def _drawn_row(self, path: str) -> ui.element | None:
+        """The plot's criteria row or the Statistics row ``path`` is open
+        under now, or None."""
+        if self.open is None or self.open[1] != path:
+            return None
+        index = self.open[0]
+        if index == STATS and self.stats is not None:
+            key = self.stats.row_for(path)
+            return None if key is None else self.stats.rows_by_path.get(key)
+        if 0 <= index < len(self.cards) and path in self.cards[index].rows:
+            return self.cards[index].rows[path].row
+        return None
 
     # -- the cards -------------------------------------------------------------
 
@@ -586,8 +674,8 @@ class TestPage:
         # it was open on may not even exist after this. Closed WITHOUT a
         # redraw — these cards are about to be dropped, and one of them may
         # be a plot the staged layout no longer has. The Statistics card's
-        # editor hangs under none of them.
-        if self.open is not None and self.open[0] != STATS:
+        # editor and the tree's (U5) hang under none of them.
+        if self.open is not None and self.open[0] >= 0:
             self._close()
         # Focus names an INDEX, and after this the indices may name other
         # plots; the plots a user had drawn are re-drawn where they are left.
@@ -754,6 +842,7 @@ class TestPage:
         if (
             self.focused is not None
             and self.open is not None
+            and self.open[0] != TREE  # Focus never hides the tree card
             and self.open[0] != self.focused
         ):
             # An editor nobody can see is no editor, and it goes on staging

@@ -88,6 +88,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* A row whose click opens something (U5): a criterion's editor, a k-of-n's
+   or a weighted's fields — a button to the mouse and the keyboard. */
+.dstf-tree-row[role="button"] { cursor: pointer; }
+.dstf-tree-row[role="button"]:focus-visible {
+  outline: 2px solid var(--dstf-accent); outline-offset: -2px;
+}
 /* Where a row sits (U5, Q1): a 6 px bar per level, 2 px apart, the row's
    full height, in place of an indent; the hovered group's branch takes its
    level's deeper shade on that level's bar (`.dstf-lvl-on`, set by the
@@ -392,9 +398,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* Open, a changed row wears the selection as every open criteria row does:
    the tint, declared later, hid which row the editor was under. */
 .dstf-stats .dstf-crit-open { background: var(--dstf-selection); }
-/* The editor under a Statistics row keeps inside the card: `w-full` plus
-   the editor's 16 px indent ran 16 px past its right edge (B12). */
-.dstf-stats .dstf-editor { width: calc(100% - 16px); }
+/* The editor under a Statistics row, or a tree row (U5), keeps inside the
+   card: `w-full` plus the editor's 16 px indent ran 16 px past its right
+   edge (B12). */
+.dstf-stats .dstf-editor, .dstf-tree .dstf-editor { width: calc(100% - 16px); }
 /* The Tests drawer's rows at a real library's lengths: the name takes what
    the badge and the edits pill leave it and is cut with an ellipsis (the
    whole id is its title), and they never shrink. A TRANSFORM id in Full,

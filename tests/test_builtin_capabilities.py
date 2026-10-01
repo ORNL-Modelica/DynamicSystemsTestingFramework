@@ -724,7 +724,7 @@ async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
     async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _figure):
         for marker in (f"add:{leaf}", f"wrap:{leaf}", f"remove:{leaf}"):
             await user.should_see(marker=marker)
-        await user.should_not_see(marker=f"edit:{leaf}")  # a leaf has no combinator
+        await user.should_not_see(marker="host-click")  # a leaf has no fields
         user.find(marker=f"wrap:{leaf}").click()  # the row is built on the click
         user.find(marker=f"apply-wrap:{leaf}").click()
         await _settled(lambda: "combinator" in session.tree(D)["children"][1])
@@ -756,12 +756,12 @@ async def test_the_root_has_no_remove_and_a_combinator_has_its_kind(session):
     async with host(session, EditTree(), _node(D, ROOT)) as (user, _errors, _figure):
         await user.should_see(marker=f"kind:{ROOT}")
         assert _inside_lead(user, f"kind:{ROOT}")
-        await user.should_not_see(marker=f"edit:{ROOT}")
+        await user.should_not_see(marker="host-click")  # an `and` has no fields
         await user.should_not_see(marker=f"remove:{ROOT}")
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
-        await user.should_see(marker=f"edit:{k_of_n}")
+        await user.should_see(marker="host-click")  # its row opens its fields
         assert _one(user, f"kind:{k_of_n}").value == "k-of-n"
 
 
@@ -785,7 +785,7 @@ async def test_unwrap_lives_in_the_kind_dropdown(session):
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
         await user.should_not_see(marker=f"unwrap:{k_of_n}")
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         assert _none(user, f"unwrap-in-edit:{k_of_n}")
         kind = _one(user, f"kind:{k_of_n}")
@@ -808,7 +808,7 @@ async def test_unwrap_from_the_dropdown_stages_at_once(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     warn = "/metrics/children/2"
     async with host(session, EditTree(), _node(D, warn)) as (user, errors, _figure):
-        await user.should_not_see(marker=f"edit:{warn}")
+        await user.should_not_see(marker="host-click")  # a warn has no fields
         _one(user, f"kind:{warn}").set_value("unwrap…")
         await _settled(lambda: "combinator" not in session.tree(D)["children"][2])
         assert session.tree(D)["children"][2]["max_value"] == 5.0  # the child kept
@@ -822,7 +822,7 @@ async def test_the_edit_form_is_prefilled_and_stages_an_edit(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         assert _labelled(user, ui.select, "Combinator") == []
         (k,) = _labelled(user, ui.number, K)
@@ -953,7 +953,7 @@ async def test_a_form_opened_after_the_session_moved_shows_the_node_as_it_is(ses
     assert session.tree(D)["children"][1]["k"] == 2
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
         session.stage([PatchOp(D, "replace", f"{k_of_n}/k", 1)])
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         (k,) = _labelled(user, ui.number, K)
         assert k.value == 1  # the node as it is now
@@ -1017,15 +1017,15 @@ async def test_a_form_is_rebuilt_on_every_open(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _figure):
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         (first,) = user.find(marker=f"apply-edit:{k_of_n}").elements
         user.find(marker=f"cancel:{k_of_n}").click()
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         (second,) = user.find(marker=f"apply-edit:{k_of_n}").elements
         assert second is not first  # one apply button, and a new one
         session.stage([PatchOp(D, "replace", f"{k_of_n}/k", 1)])
         user.find(marker=f"cancel:{k_of_n}").click()
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         (k,) = _labelled(user, ui.number, K)
         assert k.value == 1  # the node as it is now, not as it was
 
@@ -1310,7 +1310,7 @@ async def test_edit_carries_the_nodes_direction(session):
     )
     node = "/metrics/children/0"
     async with host(session, EditTree(), _node(D, node)) as (user, errors, _f):
-        user.find(marker=f"edit:{node}").click()
+        user.find(marker="host-click").click()
         await user.should_see(marker=f"apply-edit:{node}")
         assert _one(user, "host-row:title").text == "Edit this combinator"
         (direction,) = _labelled(user, ui.select, "Direction")
@@ -1339,7 +1339,7 @@ async def test_the_edit_rows_buttons_read_cancel_apply(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         row = _one(user, f"apply-edit:{k_of_n}").parent_slot.parent
         assert [b.text for b in row.default_slot.children] == ["Cancel", "Apply"]
@@ -1569,7 +1569,7 @@ async def test_an_unchanged_edit_stages_nothing_and_closes_the_row(session):
     for node in ("/metrics/children/1", "/metrics/children/3"):
         async with host(session, EditTree(), _node(D, node)) as (user, errors, _f):
             staged = len(session.spec.pending)
-            user.find(marker=f"edit:{node}").click()
+            user.find(marker="host-click").click()
             await user.should_see(marker=f"apply-edit:{node}")
             user.find(marker=f"apply-edit:{node}").click()
             await _settled(lambda: _none(user, "host-row:title"))
@@ -1981,7 +1981,11 @@ def test_the_builtins_declare_their_placements():
     assert Accept.placements == {S, T} and Rerun.placements == {S, T}
     assert EditTree.placements == {Placement.NODE, V, Placement.STATISTIC}
     assert EditOnPlot.placements == {C_}
-    assert EditCriteria.placements == {C_, Placement.STATISTIC_CRITERION}
+    assert EditCriteria.placements == {
+        C_,
+        Placement.STATISTIC_CRITERION,
+        Placement.TREE_CRITERION,
+    }
     at_test = {c.name for c in caps.registered_capabilities() if T in c.placements}
     assert at_test == {"accept", "rerun"}
 
@@ -2105,7 +2109,7 @@ async def test_a_refused_unwrap_keeps_the_edit_row(session):
     session.stage([PatchOp(D, "add", ROOT, tree)])
     k_of_n = "/metrics/children/1/children/0"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
-        user.find(marker=f"edit:{k_of_n}").click()
+        user.find(marker="host-click").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         (k,) = _labelled(user, ui.number, K)
         k.set_value(1)
@@ -3026,6 +3030,21 @@ def test_a_statistics_criterion_is_edited_at_its_own_placement():
     assert Placement.STATISTIC_CRITERION not in EditOnPlot.placements
 
 
+def test_a_tree_criterion_is_edited_by_edit_criteria_alone():
+    """U5 Y4: under a tree row only Edit criteria attaches — Edit on plot
+    needs a drawn figure, and the tree editor links to the plot's."""
+    from dstf.authoring.builtin.edit_on_plot import EditOnPlot
+    from dstf.authoring.capabilities import Placement
+
+    at = {
+        c.name
+        for c in caps.registered_capabilities()
+        if Placement.TREE_CRITERION in c.placements
+    }
+    assert at == {EditCriteria.name}
+    assert Placement.TREE_CRITERION not in EditOnPlot.placements
+
+
 # -- move a subtree (U4) ----------------------------------------------------
 
 
@@ -3269,7 +3288,7 @@ async def _kind(value, user, path):
 
 
 async def _k(user, path):
-    user.find(marker=f"edit:{path}").click()
+    user.find(marker="host-click").click()  # its row opens its fields
     await user.should_see(marker=f"apply-edit:{path}")
     (k,) = _labelled(user, ui.number, K)
     k.set_value(2)

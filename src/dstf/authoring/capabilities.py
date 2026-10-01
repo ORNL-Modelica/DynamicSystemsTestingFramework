@@ -43,7 +43,10 @@ class Placement(Enum):
     ``quantity`` is the row's), with no button and no heading.
     STATISTIC_CRITERION is the editor of a criterion scored through a
     statistic, under its Statistics row: CRITERION's with no plot, so a
-    capability that needs one is not offered there. At VARIABLE and
+    capability that needs one is not offered there. TREE_CRITERION is the
+    editor of any criterion opened under its row in the criteria tree
+    (U5): CRITERION's with no plot, like STATISTIC_CRITERION — the plot's
+    own editor is a link away. At VARIABLE and
     CRITERION ``Panel.figure`` is the plot's hook, subscribed for as long as
     the panel is drawn; elsewhere a subscription raises."""
 
@@ -54,6 +57,7 @@ class Placement(Enum):
     NODE = "node"
     STATISTIC = "statistic"
     STATISTIC_CRITERION = "statistic-criterion"
+    TREE_CRITERION = "tree-criterion"
 
 
 class Emphasis(Enum):
@@ -247,6 +251,16 @@ class Panel(Protocol):
         where the node already is, else the sentence refusing it — which
         the page draws over every row while dragging, with no round trip
         to the server."""
+        ...
+
+    def on_click(self, handler: Callable[[], None]) -> bool:
+        """What a click on the row this panel is drawn in does (U5, Q6):
+        ``handler()``, called when the row itself is clicked — or, from the
+        keyboard, Enter or Space on it — never a control inside it. Offered
+        by the tree card's rows and nowhere else (`can_move`'s rule): a
+        plot's criteria row has a click of its own, its editor. Elsewhere
+        it registers nothing and returns False. One per row; a later call
+        replaces it, and it goes with the panel."""
         ...
 
     def moved(self, node_path: str, text: str, paths: dict[str, str]) -> None:

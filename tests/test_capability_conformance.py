@@ -652,6 +652,51 @@ async def test_a_criterion_capability_is_the_whole_editor_with_no_heading(shell)
         assert _none(user, "action:criterion")
 
 
+async def test_a_tree_criterion_capability_is_the_editor_under_a_tree_row(shell):
+    """Placement.TREE_CRITERION (U5): a capability the shell never heard of
+    is the editor a tree row's click opens under it — and not the plot's."""
+    cap = _Dummy("tree-crit", {Placement.TREE_CRITERION})
+    only(cap)
+    shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    path = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        page.tree.toggle()
+        page.tree_row_click(path)
+        await user.should_see("submit tree-crit", retries=20)
+        editor = _one(user, f"tree-editor:{path}")
+        assert [m for m in _marks(editor) if m.startswith("panel:")] == [
+            "panel:tree-crit"
+        ]
+        user.find("submit tree-crit").click()
+        assert cap.inputs == [{"who": "tree-crit"}]
+
+
+async def test_a_node_capability_says_what_a_tree_rows_click_does(shell):
+    """`Panel.on_click` (U5, Q6): a NODE capability the shell never heard
+    of registers a click; the tree row's click calls it, and a plot's
+    criteria row — the same NODE placement — takes none."""
+    clicked: list[str] = []
+    offered: list[bool] = []
+
+    class _Clicking(_Dummy):
+        def panel(self, s, panel):
+            path = s.selection.node_path
+            offered.append(panel.on_click(lambda: clicked.append(path)))
+            super().panel(s, panel)
+
+    only(_Clicking("clicking", {Placement.NODE}))
+    shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        assert offered and not any(offered)  # the plot's criteria rows
+        offered.clear()
+        page.tree.toggle()
+        assert offered and all(offered)  # every tree row
+        page.tree_row_click("/metrics")
+        assert clicked == ["/metrics"]
+
+
 # -- the shell names no capability ----------------------------------------
 
 

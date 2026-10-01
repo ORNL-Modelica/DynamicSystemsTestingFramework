@@ -36,7 +36,9 @@ class HostPanel:
     span of its own above the panel (marked ``host-lead``), emptied first;
     ``reveal`` records the path in ``reveals`` — there is no page to open
     it on — ``moved`` what it was told in ``moves``, and ``edited`` the
-    path maps it was told in ``edits``."""
+    path maps it was told in ``edits``. ``on_click`` keeps the row click a
+    panel registered (U5) in ``click``; `host` then draws a button marked
+    ``host-click`` that calls it, standing for the row."""
 
     def __init__(
         self,
@@ -55,6 +57,8 @@ class HostPanel:
         self.closed = 0
         #: What `moved` was told: (node path, text, paths), in order.
         self.moves: list[tuple[str, str, dict[str, str]]] = []
+        #: What `on_click` registered: the row's click, or None.
+        self.click: Callable[[], None] | None = None
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -94,6 +98,10 @@ class HostPanel:
     def edited(self, paths: dict[str, str]) -> None:
         self.edits.append(paths)
 
+    def on_click(self, handler: Callable[[], None]) -> bool:
+        self.click = handler
+        return True
+
 
 @asynccontextmanager
 async def host(
@@ -129,6 +137,9 @@ async def host(
             return
         panel = HostPanel(submit, figure, reveals, edits)
         cap.panel(view, panel)
+        if panel.click is not None:
+            # The row the panel would be drawn in: its click.
+            ui.button("row", on_click=panel.click).mark("host-click")
         panel.slot = ui.column().classes("w-full").mark("host-row")
 
     async with user_simulation(root=root) as user:

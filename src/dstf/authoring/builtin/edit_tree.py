@@ -126,7 +126,7 @@ _UNWRAP_VALUE = "unwrap…"
 _UNWRAP_TEXT = "unwrap — its children take its place"
 #: The kinds a node cannot take without fields: the dropdown opens the Edit
 #: form preset to one of them, and nothing is staged until Apply. And, or
-#: and warn have none — only these nodes carry the Edit icon.
+#: and warn have none — only these nodes' rows open it on a click (U5).
 _NEEDS_FIELDS = ("k-of-n", "weighted")
 #: The dropdown's option slot: the unwrap entry below a separator.
 _KIND_OPTION = (
@@ -714,7 +714,7 @@ def _cluster(
             # the title of the form row the same click opens under the row.
             ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
         # Its accessible name is the tooltip: the icon's ligature ("add",
-        # "tune") names nothing. Set as an item, not through the props
+        # "data_array") names nothing. Set as an item, not through the props
         # string, whose parser a quote in a node's text would break.
         button.props["aria-label"] = tip
         if not enabled:
@@ -817,6 +817,12 @@ def _cluster(
             )
 
     _drag(s, ui_panel, model_id, path)
+    if node.get("combinator") in _NEEDS_FIELDS:
+        # A click on the node's row opens its fields (U5, Q6) — the root's
+        # too, or a k-of-n root's k could not be edited at all. and / or /
+        # warn have none: their kind is all there is, and the dropdown
+        # changes it, so their row's click does nothing.
+        ui_panel.on_click(lambda: ui_panel.row("Edit this combinator", build_edit))
     if is_combinator:
         ui_panel.lead(
             partial(
@@ -855,15 +861,6 @@ def _cluster(
             f"wrap:{path}",
             lambda: ui_panel.row(f"Wrap {text()} in a combinator", build_wrap),
         )
-        if node.get("combinator") in _NEEDS_FIELDS:
-            # and / or / warn have no fields: their kind is all there is,
-            # and the dropdown changes it.
-            icon(
-                "tune",
-                "Change this combinator's fields",
-                f"edit:{path}",
-                lambda: ui_panel.row("Edit this combinator", build_edit),
-            )
         if path != ROOT and ui_panel.can_move:
             # Moving is the tree card's (V2); the root has nowhere to go.
             _move_menu(ui, s, ui_panel, model_id, path)

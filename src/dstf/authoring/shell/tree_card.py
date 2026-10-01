@@ -23,6 +23,7 @@ from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
 from ..tree_move import TREE_CHANGED, MoveRefused
+from ..tree_pointer import node_or_none
 from ..tree_text import count_text, leaf_name, node_text, nodes_of
 from .actions import InlineHost, RowTarget
 from .widgets import Pill
@@ -229,6 +230,18 @@ _FOLD_CLICK = """(e) => {
   });
   emit(on);
 }"""
+
+#: A click on a row's own control is the control's, never the row's (U5):
+#: the row's click opens its editor or its fields.
+_STOP = "(e) => e.stopPropagation()"
+
+#: Enter or Space on a row that is a button (U5, F5) is its click — on the
+#: row itself, never bubbled up from a control inside it; Space's default
+#: would scroll the page.
+_ROW_KEYS = (
+    "(e) => { if (e.target === e.currentTarget && "
+    "(e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); emit(); } }"
+)
 
 #: The drag's own MIME type (`_DRAG_COMMON`).
 MIME = "application/x-dstf-node"
@@ -437,6 +450,17 @@ class TreeCard:
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
         #: Each group's chevron by its path (U5, Q3): the root has none.
         self.chevrons: dict[str, ui.element] = {}
+        #: The criteria's rows by path: a click on each opens its editor.
+        self.leaves: set[str] = set()
+        #: The one criterion editor opened under a tree row (U5, Y4): its
+        #: leaf, its host and box, the leaf as authored when its fields
+        #: were built, and its "Edit on its plot" link's place and plot.
+        self.editor_path: str | None = None
+        self.editor: InlineHost | None = None
+        self.editor_box: ui.column | None = None
+        self.link_slot: ui.element | None = None
+        self._edited: str | None = None
+        self._link: int | None = None
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
@@ -586,6 +610,9 @@ class TreeCard:
                 row.update()
             if hide and target is not None:
                 self.page.drop_row(target)
+                if self.editor_path == path:
+                    # The editor under it goes the same way (F9).
+                    self.page._close()
 
     def _fold(self, path: str, e: Any) -> None:
         """A chevron's click (or a drag resting on its row, Q10): the page
@@ -633,10 +660,12 @@ class TreeCard:
         `refresh` is not the way there — its "nothing scored" line asks the
         page WHY, which for a test this project does not have is a sentence
         about a baseline that was never the reason."""
+        self.close_editor()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.named = [], {}, []
         self.rows_by_path, self.targets, self.chevrons = {}, {}, {}
+        self.leaves = set()
         self.root_pill = None
         self.is_open = False
         self._shape = ()
@@ -660,6 +689,9 @@ class TreeCard:
             for host in self.hosts:
                 if host.row is not None:
                     self.page.drop_row(host.row)
+            # And an editor nobody can see is no editor (U5).
+            if self.editor is not None:
+                self.page._close()
         if view is None or not self.is_open:
             return
         shape = shape_of(view)
@@ -675,6 +707,159 @@ class TreeCard:
             host.follow()
         for node in nodes_of(view):
             self.painters[str(node.get("path"))].paint(node)
+        # A host rebuilt under a job's lock takes its row's click away.
+        self.paint_clicks()
+        self._follow_editor()
+
+    def paint_clicks(self) -> None:
+        """Each row whose click opens something — a criterion's (its
+        editor), a group's a panel registered one for (its fields) — is a
+        button to the keyboard and says whether that is open under it now
+        (U5, F5); any other row is neither. Sent only where it moved."""
+        form = self.page.form[0] if self.page.form is not None else None
+        for path, target in self.targets.items():
+            row = target.row
+            if row.is_deleted:
+                continue
+            on = path in self.leaves or target.click is not None
+            shown = None
+            if on:
+                shown = (
+                    "true" if self.editor_path == path or form is target else "false"
+                )
+            moved = _set_prop(row, "role", "button" if on else None)
+            moved |= _set_prop(row, "tabindex", "0" if on else None)
+            moved |= _set_prop(row, "aria-expanded", shown)
+            if moved:
+                row.update()
+
+    # -- the criterion editor under a tree row (U5) -----------------------------
+
+    def open_editor(self, path: str) -> bool:
+        """``path``'s editor under its tree row: Done, the "Edit on its
+        plot" link where its plot can do more, then every capability placed
+        at TREE_CRITERION (`PlotCard.open_editor`'s pattern with no plot).
+        The page keeps the one-editor rule: it closes what else is open
+        first. False where no row is drawn at ``path``."""
+        target, row = self.targets.get(path), self.rows_by_path.get(path)
+        if target is None or row is None or target.slot is None:
+            return False
+        self.close_editor()
+        self.open_path(path)  # R2: an editor under a tree row is shown
+        model = self.page.model_id
+        self.editor_path = path
+        row.classes(add="dstf-crit-open")
+        with target.slot:
+            self.editor_box = ui.column().classes("dstf-editor gap-2")
+        with self.editor_box:
+            with ui.row().classes("items-center no-wrap gap-3 w-full"):
+                ui.label(
+                    "Edits are staged as you make them; Save writes them."
+                ).classes("dstf-why")
+                ui.space()
+                self.link_slot = ui.element("span")
+                ui.button("Done", on_click=self.page.close_editor).props(
+                    "flat dense no-caps"
+                ).mark(f"tree-editor-done:{path}")
+            self.editor = InlineHost(
+                self.page.shell,
+                Placement.TREE_CRITERION,
+                partial(Selection, tests=frozenset({model}), leaf_path=path),
+                figure=None,
+                marker=f"tree-editor:{path}",
+                on_applied=self._applied,
+            )
+            self.editor.build()
+        self._edited = self._edited_now()
+        self._link = None
+        self._paint_link()
+        self.paint_clicks()
+        return True
+
+    def close_editor(self) -> None:
+        """The editor goes, its column only: the row's slot also holds its
+        host's error labels and a move's line."""
+        if self.editor is not None:
+            self.editor.clear()
+        if self.editor_box is not None and not self.editor_box.is_deleted:
+            self.editor_box.delete()
+        row = self.rows_by_path.get(self.editor_path or "")
+        if row is not None and not row.is_deleted:
+            row.classes(remove="dstf-crit-open")
+        was = self.editor_path
+        self.editor, self.editor_box, self.link_slot = None, None, None
+        self.editor_path, self._edited, self._link = None, None, None
+        if was is not None:
+            self.paint_clicks()
+
+    def _applied(self, name: str) -> None:
+        """A panel's own submit rebuilds every OTHER panel, leaving the one
+        being typed in; the leaf recorded as it now stands, so its own edit
+        is not read as one staged elsewhere."""
+        if self.editor is None:
+            return
+        self.editor.build(skip=name)
+        self._edited = self._edited_now()
+
+    def _edited_now(self) -> str | None:
+        """The open editor's leaf as AUTHORED — staged edits included (the
+        Statistics card's rule: a test with nothing compared has no view)."""
+        if self.editor_path is None:
+            return None
+        session = self.page.shell.session
+        leaf = node_or_none(session.tree(self.page.model_id), self.editor_path)
+        return None if leaf is None else json.dumps(leaf, sort_keys=True, default=str)
+
+    def _follow_editor(self) -> None:
+        if self.editor is None:
+            return
+        edited = self._edited_now()
+        if edited != self._edited:
+            # The leaf moved by an edit staged ELSEWHERE (a Discard, its
+            # plot's drag): fields showing the undone value stage it back.
+            self.editor.build()
+            self._edited = edited
+        else:
+            self.editor.follow()
+        self._paint_link()
+
+    def _paint_link(self) -> None:
+        """Q12 (F2): "Edit on its plot" while the plot that holds the
+        criterion — the first, as a jump opens it — offers more than this
+        editor does: a capability placed at CRITERION and not here is
+        available there (one that drags its handles). Asked of the
+        placements, never of a capability by name; redrawn only when its
+        answer moves (a mode switched to one with no handles takes it)."""
+        if self.link_slot is None or self.link_slot.is_deleted:
+            return
+        path = self.editor_path
+        page, shell = self.page, self.page.shell
+        index = next((c.index for c in page.cards if path in c.rows), None)
+        if index is not None and path is not None:
+            selection = Selection(
+                tests=frozenset({page.model_id}),
+                variable=page.cards[index].rows[path].variable,
+                leaf_path=path,
+            )
+            more = any(
+                avail is True and Placement.TREE_CRITERION not in cap.placements
+                for cap, avail in shell.placed(
+                    Placement.CRITERION, shell.view_for(selection)
+                )
+            )
+            if not more:
+                index = None
+        if index == self._link:
+            return
+        self._link = index
+        self.link_slot.clear()
+        if index is None or path is None:
+            return
+        with self.link_slot:
+            ui.button(
+                "Edit on its plot",
+                on_click=partial(page.edit_on_plot, path, index),
+            ).props("flat dense no-caps").mark(f"tree-editor-on-plot:{path}")
 
     # -- the closed line -----------------------------------------------------------
 
@@ -743,10 +928,14 @@ class TreeCard:
     # -- the rows ------------------------------------------------------------------
 
     def _build_rows(self, view: dict) -> None:
+        if self.editor is not None:
+            # The rows it hangs under go, and the page's one editor with
+            # them: the node at its path may be another criterion now.
+            self.page._close()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.rows_by_path = [], {}, {}
-        self.targets, self.chevrons = {}, {}
+        self.targets, self.chevrons, self.leaves = {}, {}, set()
         # A folded path that names no group any more is dropped (Y6): an
         # edit that said where its nodes went has re-keyed the set already
         # (`rekey`); this is for any other.
@@ -760,6 +949,7 @@ class TreeCard:
         self.rows.update()
         with self.rows:
             self._row(view, 0, self.folded)
+        self.paint_clicks()
 
     def _row(self, node: dict, depth: int, folded: set[str]) -> None:
         path, model = str(node["path"]), self.page.model_id
@@ -781,6 +971,16 @@ class TreeCard:
             row.props["hidden"] = True
         if path in folded:
             row.props["data-folded"] = "1"
+        # The row IS the way in (U5): a criterion's editor opens under it,
+        # a k-of-n's or a weighted's fields — whatever a panel registered
+        # (`Panel.on_click`) — and Enter or Space does the same where the
+        # row is a button (`paint_clicks`). Its own controls stop the click
+        # before it gets here: the chevron, the grip, the lead (the kind
+        # dropdown) and the host.
+        row.on("click", partial(self.page.tree_row_click, path))
+        row.on("keydown", partial(self.page.tree_row_click, path), js_handler=_ROW_KEYS)
+        if not group:
+            self.leaves.add(path)
         # `--indent` is where a "before" line starts: the row's content,
         # right of its bars (U4 C15, U5 E4).
         with row.style(f"--indent: {content_left(depth)}px").mark(f"tree-row:{path}"):
@@ -830,6 +1030,7 @@ class TreeCard:
                 .classes("dstf-grip dstf-grip-off")
                 .mark(f"grip:{path}")
             )
+            grip.on("click", js_handler=_STOP)
             if depth:
                 grip.props["draggable"] = "true"
                 grip.props["aria-label"] = "Drag to move"
@@ -842,6 +1043,7 @@ class TreeCard:
             lead: ui.element | None = None
             if group:
                 lead = ui.element("span").classes("dstf-node-lead")
+                lead.on("click", js_handler=_STOP)
             text = (
                 ui.label(node_text(node))
                 .classes("dstf-tree-text text-body2")
@@ -868,6 +1070,8 @@ class TreeCard:
             # The tree card's rows are where a node moves from (V2).
             target.drag = True
             target.grip = grip if depth else None
+            # And where a click is a panel's to say (Q6, `Panel.on_click`).
+            target.clickable = True
             self.targets[path] = target
             host = InlineHost(
                 self.page.shell,

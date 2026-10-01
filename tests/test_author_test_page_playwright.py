@@ -2593,9 +2593,17 @@ def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
         page.keyboard.press("Escape")
         expect(options).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
-        # A k-of-n keeps its tune icon: its form holds k and nothing else.
-        k_of_n.get_by_role("button", name="Change this combinator's fields").click()
+        # An option chosen in the k-of-n's own dropdown is the dropdown's:
+        # weighted opens the form preset to weighted, not the row's k.
+        k_of_n.get_by_label("Combinator kind").click()
+        page.get_by_role("option", name="weighted").click()
         form = page.locator(".dstf-form-row")
+        expect(form.get_by_label("Threshold")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(form.get_by_label("k — how many must pass")).to_have_count(0)
+        form.get_by_role("button", name="Cancel").click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        # A k-of-n's row opens its fields (U5): its form holds k alone.
+        k_of_n.get_by_text("k=1 · 2 criteria").click()
         expect(form).to_contain_text(
             "Changes this node's fields; its children stay.", timeout=EXPECT_TIMEOUT
         )
@@ -4776,3 +4784,164 @@ def test_a_long_tree_row_wraps_its_label_and_cuts_its_readout(
             assert readout["width"] >= 80, readout
             assert readout["ellipsis"] == "ellipsis", readout
             assert readout["title"] == readout["text"] != "", readout
+
+
+# -- a click on a tree row (U5 Task 3) ----------------------------------------
+
+K_OF_N, K_TUBE, K_RANGE_X, K_RANGE_Y = (
+    "/metrics/children/0",
+    "/metrics/children/0/children/0",
+    "/metrics/children/0/children/1",
+    "/metrics/children/1",
+)
+
+
+def _row_text_click(page, path: str) -> None:
+    """A real click on the row's own text: not a control inside it."""
+    _tree_row(page, path).locator(".dstf-tree-text").first.click()
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+def test_a_tree_rows_click_opens_its_editor_and_its_controls_keep_theirs(
+    tmp_path, playwright_browser, width
+):
+    """Q5 / Q6 / Q11 / Q12 with a real mouse: the kind dropdown, the grip
+    and an icon keep their clicks (Y5, F4); a row with a form under it
+    closes the form; a criterion's row opens its editor under it, inside
+    the card (B12), with "Edit on its plot" for a tube, which moves it; a
+    bound typed in the tree moves both readouts; a k-of-n's row opens its
+    k; the root `and`'s opens nothing."""
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        page.set_viewport_size({"width": width, "height": 900})
+        _show_tree(page, 5)
+        tree_editor = page.locator(".dstf-tree .dstf-editor")
+        plot_editor = page.locator(".dstf-plot .dstf-editor")
+        forms = page.locator(".dstf-form-row")
+
+        _tree_row(page, K_OF_N).get_by_label("Combinator kind").click()
+        expect(page.get_by_role("option")).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("option")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        assert forms.count() == 0 and tree_editor.count() == 0
+        _tree_row(page, K_TUBE).locator(".dstf-grip").click()
+        page.wait_for_timeout(300)
+        assert tree_editor.count() == 0
+        _tree_row(page, K_TUBE).get_by_role("button", name=re.compile("Wrap")).click()
+        expect(forms).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        assert tree_editor.count() == 0
+        # The tube's row: the form goes, nothing opens (the open row rule).
+        _row_text_click(page, K_TUBE)
+        expect(forms).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        assert tree_editor.count() == 0
+
+        _row_text_click(page, K_TUBE)
+        expect(tree_editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(tree_editor).to_contain_text("Edit on its plot")
+        card = page.locator(".dstf-tree").bounding_box()
+        box = tree_editor.bounding_box()
+        row = _tree_row(page, K_TUBE).bounding_box()
+        assert card and box and row
+        assert box["y"] >= row["y"] + row["height"] - 1, (row, box)
+        assert box["x"] + box["width"] <= card["x"] + card["width"] + 0.5, (card, box)
+        assert page.evaluate("document.documentElement.scrollWidth") <= width
+        tree_editor.locator(".dstf-why").first.click()  # the editor's own
+        page.wait_for_timeout(300)
+        assert tree_editor.count() == 1
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, f"u5-tree-editor-{width}")
+        tree_editor.get_by_role("button", name="Edit on its plot").click()
+        expect(plot_editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(tree_editor).to_have_count(0)
+        expect(page.locator(".dstf-plot .dstf-crit-open")).to_be_in_viewport()
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, f"u5-edit-on-its-plot-{width}")
+
+        page.evaluate("() => window.scrollTo(0, 0)")
+        _row_text_click(page, K_RANGE_Y)
+        expect(tree_editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(plot_editor).to_have_count(0)
+        tree_ro = _tree_row(page, K_RANGE_Y).locator(".dstf-mono")
+        plot_ro = _crit(page, 1, "range · y").locator(".dstf-mono")
+        before = tree_ro.inner_text()
+        upper = tree_editor.get_by_label("Upper bound (optional)")
+        upper.fill("1000000")
+        upper.press("Tab")
+        expect(tree_ro).not_to_have_text(before, timeout=EXPECT_TIMEOUT)
+        expect(plot_ro).to_have_text(tree_ro.inner_text(), timeout=EXPECT_TIMEOUT)
+        expect(tree_editor).to_have_count(1)
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+
+        _row_text_click(page, K_OF_N)
+        expect(forms).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(forms).to_contain_text("Edit this combinator")
+        expect(forms.get_by_label("k — how many must pass")).to_have_value("1")
+        expect(tree_editor).to_have_count(0)
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, f"u5-k-of-n-fields-{width}")
+        _row_text_click(page, "/metrics")
+        page.wait_for_timeout(300)
+        assert forms.count() == 1  # still the k-of-n's
+        _row_text_click(page, K_OF_N)  # a second click closes its fields
+        expect(forms).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+
+#: The focused element's tree path and whether it shows a focus ring.
+FOCUSED = """() => { const a = document.activeElement;
+  return {path: a.dataset.treePath || null, visible: a.matches(':focus-visible'),
+          outline: getComputedStyle(a).outlineStyle}; }"""
+
+
+def test_a_tree_rows_click_answers_the_keyboard(tmp_path, playwright_browser):
+    """F5 / F8: a row whose click opens something is a tab stop with a
+    visible focus ring, a pointer to the mouse; Enter or Space on it is its
+    click — on a key pressed in a control inside it, the control's alone —
+    and it says whether its editor or its fields are open."""
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        tube, k_of_n, root = (
+            _tree_row(page, K_TUBE),
+            _tree_row(page, K_OF_N),
+            _tree_row(page, "/metrics"),
+        )
+        cursor = "e => getComputedStyle(e).cursor"
+        assert tube.evaluate(cursor) == "pointer"
+        assert k_of_n.evaluate(cursor) == "pointer"
+        assert root.evaluate(cursor) != "pointer"
+        assert root.get_attribute("role") is None
+        assert root.get_attribute("tabindex") is None
+        # Into the tube's row from the keyboard: the ring shows.
+        tube.focus()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        focused = page.evaluate(FOCUSED)
+        assert focused == {"path": K_TUBE, "visible": True, "outline": "solid"}
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, "u5-focus-ring")
+        expect(tube).to_have_attribute("aria-expanded", "false")
+        page.keyboard.press("Enter")
+        editor = page.locator(".dstf-tree .dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(tube).to_have_attribute("aria-expanded", "true")
+        page.keyboard.press("Enter")
+        expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(tube).to_have_attribute("aria-expanded", "false")
+        # Space on the k-of-n's row: its fields.
+        k_of_n.focus()
+        page.keyboard.press(" ")
+        forms = page.locator(".dstf-form-row")
+        expect(forms.get_by_label("k — how many must pass")).to_have_value(
+            "1", timeout=EXPECT_TIMEOUT
+        )
+        expect(k_of_n).to_have_attribute("aria-expanded", "true")
+        page.keyboard.press(" ")
+        expect(forms).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        # Enter on the k-of-n's `+`: its Add form, and nothing of the row's.
+        k_of_n.get_by_role("button", name=re.compile("^Add a criterion")).focus()
+        page.keyboard.press("Enter")
+        expect(forms).to_contain_text("Add a criterion", timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)
+        expect(forms).to_have_count(1)
+        expect(forms).to_contain_text("Add a criterion")

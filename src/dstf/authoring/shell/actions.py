@@ -108,6 +108,15 @@ class ShellPanel:
             target.grip.classes(remove="dstf-grip-off")
         return True
 
+    def on_click(self, handler: Callable[[], None]) -> bool:
+        # The tree card's rows are clicked (U5, Q6); a plot's criteria row
+        # has a click of its own — its editor — and takes no handler.
+        target = self._target
+        if target is None or not target.clickable:
+            return False
+        target.click = handler
+        return True
+
     def moved(self, node_path: str, text: str, paths: dict[str, str]) -> None:
         # Quiet where there is no page (a dialog): the contract's no-op.
         if self._target is not None:
@@ -183,6 +192,11 @@ class RowTarget:
         #: to say a refusal (`InlineHost`) — and read only where `on_drop`
         #: is set: no default, which nothing could reach.
         self.refuse: Callable[[BaseException], None]
+        #: Whether a click on this row is the panels' to say (U5, Q6): set
+        #: by the tree card, and by no other row's owner. What a panel
+        #: registered for it (`Panel.on_click`), or None.
+        self.clickable = False
+        self.click: Callable[[], None] | None = None
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -450,6 +464,8 @@ class InlineHost:
             # And what they registered for the drag: a host rebuilt under
             # a job's lock takes no drop and offers no handle.
             self.row.on_drop = self.row.zones = None
+            # And its click: a host rebuilt to its why-line opens no form.
+            self.row.click = None
             if self.row.grip is not None and not self.row.grip.is_deleted:
                 self.row.grip.classes(add="dstf-grip-off")
         self.column.clear()
