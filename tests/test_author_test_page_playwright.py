@@ -4643,7 +4643,7 @@ def test_a_chevron_folds_its_group_in_the_page_and_says_what_it_hides(
         expect(_tree_row(page, G2).locator(".dstf-fold-summary")).to_be_hidden()
         assert page.evaluate(REV) == rev
         line = page.locator(".dstf-tree-line")
-        line.get_by_role("button", name="Collapse all").click()
+        line.get_by_role("button", name="Collapse all groups", exact=True).click()
         expect(_tree_row(page, f"{G1}/children/0")).to_be_hidden(timeout=EXPECT_TIMEOUT)
         shown = page.evaluate(SHOWN)
         assert {k for k, v in shown.items() if v and k.startswith("row ")} == {
@@ -4651,12 +4651,36 @@ def test_a_chevron_folds_its_group_in_the_page_and_says_what_it_hides(
             f"row {G1}",
             f"row {SIB}",
         }
-        line.get_by_role("button", name="Expand all").click()
+        line.get_by_role("button", name="Expand all groups", exact=True).click()
         expect(_tree_row(page, f"{G3}/children/0")).to_be_visible(
             timeout=EXPECT_TIMEOUT
         )
         assert all(page.evaluate(SHOWN).values())
         assert page.evaluate(REV) == rev
+
+
+def test_at_900_px_the_tree_line_is_one_line(tmp_path, playwright_browser):
+    """H4 (the U5 review): Expand all / Collapse all are icon buttons named
+    for a screen reader and a tooltip, so at 900 px the tree's line —
+    toggle, verdict, tally, jumps, the two of them — stays one line."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        page.set_viewport_size({"width": 900, "height": 900})
+        _show_tree(page, DEEP_ROWS)
+        line = page.locator(".dstf-tree-line")
+        for name in ("Expand all groups", "Collapse all groups"):
+            expect(line.get_by_role("button", name=name, exact=True)).to_be_visible()
+        tops = line.evaluate(
+            """l => [...l.children].filter(c => c.offsetParent !== null)
+              .map(c => [c.getBoundingClientRect().top, c.getBoundingClientRect().bottom])"""
+        )
+        assert len(tops) >= 5, tops
+        # One line: every item's box spans the line's middle.
+        mid = max(t for t, _ in tops) - 1
+        assert all(t <= mid + 1 and b >= mid for t, b in tops), tops
+        line.screenshot(path=str(tmp_path / "tree-line-900.png"))
+        shots = os.environ.get("DSTF_LOOK_DIR")
+        if shots:
+            page.screenshot(path=os.path.join(shots, "tree-line-900.png"))
 
 
 def _drag_rest(

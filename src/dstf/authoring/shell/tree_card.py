@@ -940,12 +940,20 @@ class TreeCard:
                 n.get("kind") != "leaf" for n in nodes_of(view)[1:]
             ):
                 # Y7: beside the tally, while the rows show and hold a group.
-                ui.button("Expand all", on_click=lambda: self.fold_all(False)).props(
-                    "flat dense no-caps"
-                ).mark("tree:expand-all")
-                ui.button("Collapse all", on_click=lambda: self.fold_all(True)).props(
-                    "flat dense no-caps"
-                ).mark("tree:collapse-all")
+                # Icons (H4, the U5 review): their words wrapped the line at
+                # 900 px. Named for a screen reader and by a tooltip.
+                for icon, on, name, marker in (
+                    ("unfold_more", False, "Expand all groups", "tree:expand-all"),
+                    ("unfold_less", True, "Collapse all groups", "tree:collapse-all"),
+                ):
+                    button = (
+                        ui.button(icon=icon, on_click=partial(self.fold_all, on))
+                        .props("flat dense round size=sm")
+                        .mark(marker)
+                    )
+                    button.props["aria-label"] = name
+                    with button:
+                        ui.tooltip(name)
             self._reset_layout()
 
     # -- the rows ------------------------------------------------------------------
