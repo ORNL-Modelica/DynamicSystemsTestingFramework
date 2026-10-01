@@ -409,7 +409,11 @@ class _Row:
         led = self.lead is not None and bool(self.lead.default_slot.children)
         self.text.set_text(count_text(node) if led else node_text(node))
         if self.readout is not None:
-            self.readout.set_text(leaf_readout(node))
+            # Cut to one line with an ellipsis: its title holds the whole.
+            said = leaf_readout(node)
+            self.readout.set_text(said)
+            if _set_prop(self.readout, "title", said):
+                self.readout.update()
 
 
 class TreeCard:
@@ -840,7 +844,7 @@ class TreeCard:
                 lead = ui.element("span").classes("dstf-node-lead")
             text = (
                 ui.label(node_text(node))
-                .classes("text-body2")
+                .classes("dstf-tree-text text-body2")
                 .mark(f"tree-text:{path}")
             )
             if depth == 0:
@@ -855,7 +859,9 @@ class TreeCard:
                 )
             readout: ui.label | None = None
             if node.get("kind") == "leaf":
-                readout = ui.label(leaf_readout(node)).classes("dstf-mono text-xs")
+                readout = ui.label(leaf_readout(node)).classes(
+                    "dstf-tree-readout dstf-mono text-xs"
+                )
             ui.space()
             target = RowTarget(self.page, f"tree:{path}", row, path, None)
             target.lead = lead

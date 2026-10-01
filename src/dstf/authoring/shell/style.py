@@ -116,6 +116,15 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-chev .q-icon { font-size: 18px; transition: transform .12s; }
 .dstf-tree-row[data-folded="1"] .dstf-chev .q-icon { transform: rotate(-90deg); }
 .dstf-fold-summary { color: var(--dstf-text-secondary); font-size: 12px; }
+/* A long row never widens the page: its text wraps — anywhere, as a
+   TRANSFORM name has no space to break at — and its readout keeps one
+   line, cut with an ellipsis, the whole of it in its title (`_Row.paint`).
+   At 900 px a deep criterion's name and readout pushed the page 48 px
+   sideways. */
+.dstf-tree-row > .dstf-tree-text { min-width: 0; overflow-wrap: anywhere; }
+.dstf-tree-row > .dstf-tree-readout {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .dstf-tree-row:not([data-folded="1"]) .dstf-fold-summary { display: none; }
 /* The root's tag (Q2): "and · 5 criteria · root". */
 .dstf-root-tag { color: var(--dstf-text-muted); font-size: 12px; }

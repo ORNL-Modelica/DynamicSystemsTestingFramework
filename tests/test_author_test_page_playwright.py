@@ -4717,3 +4717,57 @@ def test_a_drag_resting_on_a_folded_group_unfolds_it_and_drops_inside(
             "1 criterion", timeout=EXPECT_TIMEOUT
         )
         expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+
+
+# -- a long row (U5) ----------------------------------------------------------
+
+#: The page's width against its viewport's, and each tree row's label and
+#: readout: its lines (by height) and whether its text is cut.
+ROW_FIT = """() => ({
+  page: [document.documentElement.scrollWidth, document.documentElement.clientWidth],
+  rows: [...document.querySelectorAll('.dstf-tree-row')].map(r => {
+    const t = r.querySelector('.text-body2'), o = r.querySelector('.dstf-mono');
+    return {path: r.dataset.treePath, right: r.getBoundingClientRect().right,
+            card: r.closest('.dstf-tree').getBoundingClientRect().right,
+            label: t.getBoundingClientRect().height,
+            line: parseFloat(getComputedStyle(t).lineHeight),
+            readout: o && {cut: o.scrollWidth > o.clientWidth, title: o.title,
+                           text: o.textContent,
+                           ellipsis: getComputedStyle(o).textOverflow}};
+  }),
+})"""
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+def test_a_long_tree_row_wraps_its_label_and_cuts_its_readout(
+    tmp_path, playwright_browser, width
+):
+    """Criteria reading a 100-character expression, four levels down — x's
+    with no space to break at, as a TRANSFORM name: a label wraps and its readout is cut with an ellipsis, the whole of
+    it in its title — no row is wider than the card, and the page never
+    scrolls sideways."""
+    served = _served(tmp_path, playwright_browser, project=_deep_project, hooks=True)
+    with served as page:
+        base = page.url.split("test/")[0]
+        # x's with no space to break at, as a TRANSFORM name; y's with.
+        for name, text in (("x", LONG_X.replace(" ", "")), ("y", LONG_X)):
+            query = urllib.parse.urlencode({"name": name, "expression": text})
+            with urllib.request.urlopen(f"{base}__expression?{query}") as r:
+                assert json.loads(r.read()) == {"stamped": 1}
+        page.set_viewport_size({"width": width, "height": 900})
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _show_tree(page, DEEP_ROWS)
+        page.mouse.move(2, 2)
+        _shot(page, tmp_path, f"tree-long-{width}")
+        fit = page.evaluate(ROW_FIT)
+        scroll, client = fit["page"]
+        assert scroll <= client, fit["page"]
+        for row in fit["rows"]:
+            assert row["right"] <= row["card"] + 0.5, row
+        for path in (f"{G2}/children/0", f"{G3}/children/0"):  # range · x, · y
+            deep = next(r for r in fit["rows"] if r["path"] == path)
+            assert deep["label"] > 1.5 * deep["line"], deep  # wrapped
+            readout = deep["readout"]
+            assert readout["ellipsis"] == "ellipsis", readout
+            assert readout["title"] == readout["text"] != "", readout
