@@ -1381,6 +1381,61 @@ async def test_this_pages_own_edits_keep_the_folds(page_shell):
         assert _hidden(page) == _under(page, group)
 
 
+async def test_a_page_left_in_the_tab_hears_the_new_pages_edit_as_the_tabs(
+    page_shell,
+):
+    """J0: a page navigated away from stays in `Shell.pages` until NiceGUI's
+    reconnect timeout (for ever in the simulation) and hears every event.
+    The test opened again in the same tab, folded and edited there: the
+    edit is the TAB's own, and the page left behind keeps the folds too —
+    it heard the new page's edit as foreign and cleared them."""
+    from dstf.authoring.layout import new_watch
+
+    shell = page_shell
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        left = await _deep_open(shell, user, TWO_GROUPS)
+        page = await _test_page(shell, user)  # the same test, the same tab
+        assert left is not page and left in shell.pages
+        assert left.state is page.state
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        cards = len(page.cards)
+        with page.client:
+            assert page.stage_layout(new_watch(shell.session.layout(A), "y"))
+        await _settled(lambda: len(page.cards) == cards + 1)
+        assert page.state.tree_folded == {A: [p0]}
+        assert _hidden(page) == _under(page, p0)
+
+
+async def test_another_tabs_edit_unfolds_this_tabs_groups(page_shell):
+    """J0: the own revisions are the TAB's — an edit made on the same test
+    in another tab is one this tab did not make, and unfolds its groups
+    (the ruling, H2)."""
+    from nicegui.testing import User
+
+    from dstf.authoring.layout import new_watch
+
+    shell = page_shell
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, TWO_GROUPS)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        other = User(user.http_client)
+        await _open(other, f"/test/{A}")
+        there = _page(shell, other)
+        assert there.state is not page.state
+        cards = len(there.cards)
+        with there.client:
+            assert there.stage_layout(new_watch(shell.session.layout(A), "y"))
+        await _settled(lambda: len(there.cards) == cards + 1)
+        await _settled(lambda: not page.state.tree_folded.get(A))
+        assert _all_open(page)
+
+
 async def test_rows_built_folded_hide_their_slots_and_name_the_chevron(shell):
     """Q3 / E2: rows BUILT under a folded group — the test opened again in
     the tab — hide their form slots as their rows, and the folded group's

@@ -42,6 +42,13 @@ class TabState:
     #: The tree card's folded groups (U5, Q8 / Y6): model id -> the folded
     #: groups' node paths. The tab's, so a switch of test keeps them.
     tree_folded: dict[str, list[str]] = field(default_factory=dict)
+    #: The `spec` revisions this tab's own acts produced (`TestPage._own`),
+    #: kept until a later revision is heard. Any other `spec` event for a
+    #: test unfolds its groups (the owner's ruling, U5 H2). The tab's, not
+    #: a page's: a page navigated away from stays registered until NiceGUI's
+    #: reconnect timeout and hears every event, and with a record of its
+    #: own it heard the new page's edit as foreign and cleared the folds.
+    own_revisions: set[int] = field(default_factory=set)
 
 
 async def connected_tab_state(client: Any) -> TabState | None:

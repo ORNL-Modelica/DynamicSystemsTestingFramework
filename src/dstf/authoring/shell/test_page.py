@@ -128,13 +128,6 @@ class TestPage:
         #: of the move's own, and either one, handled first, cleared the
         #: flag — the move's own event then took its line away.
         self.move_revision: int | None = None
-        #: The revisions of the `spec` events this page's own acts produced
-        #: (`_own`), not yet heard. Any other `spec` event for this test —
-        #: a Discard, a Save that reloads, another tab's edit, a spec
-        #: reload — is a tree change this page did not make, and unfolds
-        #: every group of the test (the owner's ruling, U5 H2; `handle`).
-        #: Its folds followed only this page's own edits (`edited`).
-        self.own_revisions: set[int] = set()
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -619,25 +612,32 @@ class TestPage:
 
     def _own(self, act: Callable[[], None]) -> None:
         """Run ``act``, one of this page's own edits, and note the `spec`
-        revisions it produced: all of them, a sequence of outcomes stages
-        once per patch. Nothing else stages between the two reads: the
-        Session is driven from the UI loop, a job's or a scan's work posted
-        to it (`Session._post`), and ``act`` runs to its end on it."""
+        revisions it produced in the TAB's record (`TabState.own_revisions`):
+        all of them, a sequence of outcomes stages once per patch. Nothing
+        else stages between the two reads: the Session is driven from the
+        UI loop, a job's or a scan's work posted to it (`Session._post`),
+        and ``act`` runs to its end on it."""
         session = self.shell.session
         before = session.spec_revision
         try:
             act()
         finally:
-            self.own_revisions.update(range(before + 1, session.spec_revision + 1))
+            self.state.own_revisions.update(
+                range(before + 1, session.spec_revision + 1)
+            )
 
     def _heard_spec(self, event: dict[str, Any]) -> None:
-        """A `spec` event (H2): one this page's own edit did not produce
-        unfolds every group of this test — its folds followed only this
-        page's edits. Every revision up to the event's has been heard
-        (the Shell's queue keeps their order), so they are forgotten."""
+        """A `spec` event (H2): one this tab's own edits did not produce
+        unfolds every group of this test — its folds followed only the
+        tab's edits (`edited`): a Discard, a Save that reloads, another
+        tab's edit, a spec reload. Every page of the tab hears this event
+        and reads the same record, so the event's own revision stays in it
+        and only those BELOW it go: the Shell hands each event to every
+        page before the next (`Shell.tick`), so every page has heard them."""
         revision = event["revision"]
-        own = revision in self.own_revisions
-        self.own_revisions = {r for r in self.own_revisions if r > revision}
+        own_revisions = self.state.own_revisions
+        own = revision in own_revisions
+        own_revisions.difference_update([r for r in own_revisions if r < revision])
         if not own and self._mine(event):
             self.state.tree_folded.pop(self.model_id, None)
 
