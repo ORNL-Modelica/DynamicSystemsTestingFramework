@@ -232,6 +232,23 @@ class Panel(Protocol):
         row hosts the same NODE placement and moves nothing."""
         ...
 
+    def movable(
+        self,
+        on_drop: Callable[[str, str], None],
+        zones: Callable[[], dict[str, dict[str, str | None]]] | None = None,
+    ) -> bool:
+        """Take part in the host's drag (U4) where it offers moving
+        (`can_move`); elsewhere register nothing and return False.
+        ``on_drop(src_path, zone)`` is called when a node is dropped on
+        this panel's row — ``zone`` is ``before`` (the row's top half) or
+        ``onto`` (its bottom half; the root's whole row). ``zones`` makes
+        the row draggable: called once at the start of a drag from it, it
+        answers ``{row path: {zone: reason}}`` — ``None`` allowed, ``""``
+        where the node already is, else the sentence refusing it — which
+        the page draws over every row while dragging, with no round trip
+        to the server."""
+        ...
+
 
 @runtime_checkable
 class Capability(Protocol):

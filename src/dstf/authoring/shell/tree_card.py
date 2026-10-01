@@ -13,8 +13,9 @@ sync with the tree open)."""
 
 from __future__ import annotations
 
+import json
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
@@ -29,6 +30,90 @@ if TYPE_CHECKING:
     from .test_page import TestPage
 
 NAMED = 2  #: failures the closed line names; the rest are counted
+
+#: The drag (U4), drawn in the browser — only the drag's start and the drop
+#: reach the server. A row's top half is BEFORE it, its bottom half ONTO
+#: it (the owner's ruling, D1 as amended); the root has only onto. The map
+#: of each row's zones (`Panel.movable`'s ``zones``) arrives once per drag
+#: (`TreeCard._drag_start`) and is emptied at every start, so a slow reply
+#: never draws one drag with the last one's map; until it has arrived a
+#: zone draws as allowed, and a drop there is the act's to refuse. A
+#: refused zone outlines its row and says why in the card's header line,
+#: in place of the line's text — said in the row, it reflowed the row's
+#: icons, and the browser shows no title while it drags.
+_DRAG_COMMON = """const D = window.dstfMove || (window.dstfMove = {src: null, map: {}});
+const zoneOf = (row, e) => {
+  if (row.dataset.root === '1') return 'onto';
+  const r = row.getBoundingClientRect();
+  return (e.clientY - r.top) / r.height < 0.5 ? 'before' : 'onto';
+};
+const say = (rows, why) => {
+  const line = rows.closest('.dstf-tree')?.querySelector('.dstf-tree-line');
+  if (!line) return;
+  if (why) { line.dataset.why = why; line.classList.add('dstf-line-why'); }
+  else { delete line.dataset.why; line.classList.remove('dstf-line-why'); }
+};
+const clear = (rows) => {
+  rows.querySelectorAll('.dstf-drop').forEach(el => el.classList.remove(
+    'dstf-drop', 'dstf-drop-before', 'dstf-drop-onto', 'dstf-drop-no'));
+  say(rows, null);
+};"""
+_DRAG_START = """(e) => {
+  __COMMON__
+  const grip = e.target.closest && e.target.closest('.dstf-grip');
+  const row = grip && grip.closest('[data-tree-path]');
+  if (!row) return;
+  D.src = row.dataset.treePath;
+  D.map = {};
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', D.src);
+  e.dataTransfer.setDragImage(row, 12, row.offsetHeight / 2);
+  emit(D.src);
+}"""
+_DRAG_OVER = """(e) => {
+  __COMMON__
+  const row = e.target.closest && e.target.closest('[data-tree-path]');
+  if (!row || !D.src) return;
+  const zone = zoneOf(row, e);
+  const why = (D.map[row.dataset.treePath] || {})[zone];
+  clear(e.currentTarget);
+  row.classList.add('dstf-drop');
+  if (why === '') return;  // where it already is: nothing drawn, no drop
+  if (why) {
+    row.classList.add('dstf-drop-no');
+    say(e.currentTarget, why);
+    e.dataTransfer.dropEffect = 'none';
+    return;
+  }
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  row.classList.add('dstf-drop-' + zone);
+}"""
+_DRAG_LEAVE = """(e) => {
+  __COMMON__
+  if (!e.currentTarget.contains(e.relatedTarget)) clear(e.currentTarget);
+}"""
+_DROP = """(e) => {
+  __COMMON__
+  const row = e.target.closest && e.target.closest('[data-tree-path]');
+  const src = D.src;
+  clear(e.currentTarget);
+  D.src = null;
+  if (!row || !src) return;
+  e.preventDefault();
+  const zone = zoneOf(row, e);
+  if ((D.map[row.dataset.treePath] || {})[zone] != null) return;
+  emit({src: src, target: row.dataset.treePath, zone: zone});
+}"""
+_DRAG_END = """(e) => {
+  __COMMON__
+  clear(e.currentTarget);
+  D.src = null;
+}"""
+
+
+def _drag_js(handler: str) -> str:
+    return handler.replace("__COMMON__", _DRAG_COMMON)
 
 
 def shape_of(view: dict | None) -> tuple[tuple[str, str, str, str], ...]:
@@ -149,10 +234,19 @@ class TreeCard:
         self.painters: dict[str, _Row] = {}
         #: Each node's row by its path: what a reveal brings into view.
         self.rows_by_path: dict[str, ui.row] = {}
+        #: Each node's row target by its path: where a drop lands and a
+        #: drag's zones come from (`Panel.movable`).
+        self.targets: dict[str, RowTarget] = {}
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
+        rows = self.rows
+        rows.on("dragstart", self._drag_start, js_handler=_drag_js(_DRAG_START))
+        rows.on("dragover", js_handler=_drag_js(_DRAG_OVER))
+        rows.on("dragleave", js_handler=_drag_js(_DRAG_LEAVE))
+        rows.on("drop", self._drop, js_handler=_drag_js(_DROP))
+        rows.on("dragend", js_handler=_drag_js(_DRAG_END))
         # Not refreshed here: the page builds this card before it knows
         # whether the test is one of the open project's, and `_view` raises
         # for a model the project has not got. The page's own `sync` fills
@@ -161,6 +255,38 @@ class TreeCard:
 
     def _view(self) -> dict | None:
         return self.page.shell.session.tree_view(self.page.model_id)
+
+    # -- the drag ------------------------------------------------------------------
+
+    def zones_for(self, src: str) -> dict[str, dict[str, str | None]]:
+        """What a drag from ``src``'s row draws over every row: its panel's
+        answer, read NOW — the tree may have moved since the rows were
+        built — and nothing where no panel made that row draggable."""
+        target = self.targets.get(src)
+        if target is None or target.zones is None:
+            return {}
+        return target.zones()
+
+    def _drag_start(self, e: Any) -> None:
+        src = str(e.args)
+        zones = self.zones_for(src)
+        # Only while that drag is the browser's: a reply arriving after
+        # another drag started would draw it with this one's map.
+        self.page.client.run_javascript(
+            f"if (window.dstfMove && window.dstfMove.src === {json.dumps(src)})"
+            f" window.dstfMove.map = {json.dumps(zones)};"
+        )
+
+    def _drop(self, e: Any) -> None:
+        self.dropped(e.args)
+
+    def dropped(self, args: dict) -> None:
+        """A drop the browser allowed: the row it landed on hands it to the
+        panel that registered for it there, if one did."""
+        target = self.targets.get(str(args.get("target")))
+        if target is None or target.on_drop is None:
+            return
+        target.on_drop(str(args.get("src")), str(args.get("zone")))
 
     def toggle(self) -> None:
         self.is_open = not self.is_open
@@ -175,7 +301,7 @@ class TreeCard:
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.named = [], {}, []
-        self.rows_by_path = {}
+        self.rows_by_path, self.targets = {}, {}
         self.root_pill = None
         self.is_open = False
         self._shape = ()
@@ -275,6 +401,7 @@ class TreeCard:
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.rows_by_path = [], {}, {}
+        self.targets = {}
         self.rows.clear()
         with self.rows:
             self._row(view, 0)
@@ -283,7 +410,25 @@ class TreeCard:
         path, model = str(node["path"]), self.page.model_id
         row = ui.row().classes("dstf-tree-row items-center no-wrap gap-3 w-full")
         self.rows_by_path[path] = row
-        with row.style(f"padding-left: {16 * depth}px").mark(f"tree-row:{path}"):
+        # What the drag's script reads: the row's node, and the root's one
+        # zone. `--indent` is where a "before" line starts (its depth).
+        row.props["data-tree-path"] = path
+        if depth == 0:
+            row.props["data-root"] = "1"
+        indent = f"padding-left: {16 * depth}px; --indent: {16 * depth}px"
+        with row.style(indent).mark(f"tree-row:{path}"):
+            # The drag handle's place, before the pill: hidden — its width
+            # kept, so every pill stays in line — until a panel makes the
+            # row draggable (`Panel.movable`). The root's holds no handle:
+            # nothing sits beside it.
+            grip = ui.element("span").classes("dstf-grip").mark(f"grip:{path}")
+            if depth:
+                grip.props["draggable"] = "true"
+                grip.props["aria-label"] = "Drag to move"
+                grip.props["title"] = "Drag to move"
+                with grip:
+                    ui.icon("drag_indicator").props('aria-hidden="true"')
+            grip.set_visibility(False)
             pill = Pill(node_status(node), f"tree-pill:{path}")
             # A combinator's lead place, right after its pill: where its
             # kind is read (`Panel.lead`) — a leaf has none.
@@ -303,6 +448,8 @@ class TreeCard:
             target.lead = lead
             # The tree card's rows are where a node moves from (V2).
             target.drag = True
+            target.grip = grip if depth else None
+            self.targets[path] = target
             host = InlineHost(
                 self.page.shell,
                 Placement.NODE,

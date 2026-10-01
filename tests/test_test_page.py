@@ -7127,7 +7127,9 @@ async def test_the_root_rows_kind_is_a_dropdown_and_its_text_the_count(page_shel
         lead = kind.parent_slot.parent
         assert "dstf-node-lead" in lead.classes and lead.parent_slot.parent is row
         children = list(row.default_slot.children)
-        assert children.index(lead) == 1  # right after the pill
+        # The grip's place, the pill, then the lead: right after the pill.
+        assert "dstf-grip" in children[0].classes
+        assert children.index(lead) == 2
         assert _one(user, "tree-text:/metrics").text == "3 criteria"
         assert list(kind.options) == ["and", "or", "k-of-n", "warn", "weighted"]
         assert _none(user, "edit:/metrics")  # an `and` has no fields
@@ -9077,3 +9079,125 @@ async def test_move_to_is_on_the_tree_rows_only_and_never_on_the_root(nested_she
             marks = _marks(host.column)
             assert any(m.startswith("wrap:") for m in marks)  # the controls are
             assert not [m for m in marks if m.startswith("move:")]
+
+
+# -- move a subtree (U4): the drag's two ends, without a browser -----------
+
+
+@pytest.mark.parametrize(
+    ("src", "target", "zone", "order"),
+    [
+        # before a row: at its index in its parent (the top half)
+        (N_Y, N_T2, "before", ["y", "pipe.T[2]", None, "x"]),
+        (N_T2, N_Y, "before", [None, "x", "pipe.T[2]", "y"]),
+        # onto a combinator: at its end (the bottom half)
+        (N_Y, N_K, "onto", ["pipe.T[2]", None, "x"]),
+        # onto a criterion: both wrapped in `and`, the target first
+        (N_Y, N_T2, "onto", [None, None, "x"]),
+        # onto the root, its only zone: at its end
+        (N_T2, "/metrics", "onto", [None, "x", "y", "pipe.T[2]"]),
+    ],
+)
+async def test_a_drop_maps_its_zone_to_a_place(nested_shell, src, target, zone, order):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.dropped({"src": src, "target": target, "zone": zone})
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        kids = shell.session.tree(A)["children"]
+        assert [c.get("variable") for c in kids] == order
+
+
+async def test_a_drop_where_no_place_is_stages_nothing(nested_shell):
+    """Beside the root, an "after" zone the owner's ruling took away, and
+    a place the tree refuses (into the k-of-n's own criterion): nothing is
+    staged, and the refusal is said under the row."""
+    from dstf.authoring.tree_move import INTO_ITSELF
+
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.dropped({"src": N_Y, "target": "/metrics", "zone": "before"})
+        page.tree.dropped({"src": N_T2, "target": N_Y, "zone": "after"})
+        page.tree.dropped({"src": N_K, "target": N_KX, "zone": "onto"})
+        await _settled(lambda: _one(user, f"tree-row:{N_KX}") is not None)
+        assert shell.session.spec.pending == []
+        errors = page.tree.targets[N_KX].slot.descendants()
+        assert [e.text for e in errors if isinstance(e, ui.label) and e.visible] == [
+            INTO_ITSELF
+        ]
+
+
+async def test_a_drags_zones_are_its_sources_read_at_its_start(nested_shell):
+    """The map a drag draws by: the dragged row's own, from the tree as it
+    is when the drag starts — a second drag from another row reads ITS
+    map, and one after a move reads the moved tree."""
+    from dstf.authoring.tree_move import INTO_ITSELF
+
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        zones = page.tree.zones_for(N_K)
+        assert zones["/metrics"] == {"onto": None}
+        assert zones[N_K] == {"before": "", "onto": INTO_ITSELF}
+        assert zones[N_KX] == {"before": INTO_ITSELF, "onto": INTO_ITSELF}
+        assert zones[N_Y] == {"before": None, "onto": None}
+        zones = page.tree.zones_for(N_Y)
+        assert zones[N_Y] == {"before": "", "onto": INTO_ITSELF}
+        assert zones[N_KX] == {"before": None, "onto": None}
+        assert page.tree.zones_for("/metrics") == {}  # the root is no source
+        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        await _settled(lambda: page.tree.targets[N_Y].zones is not None)
+        # y is the first child now: the k-of-n is child 2, its rows keyed so.
+        zones = page.tree.zones_for(N_T2)
+        assert zones[N_T2] == {"before": "", "onto": INTO_ITSELF}
+        assert "/metrics/children/2/children/1" in zones
+
+
+async def test_only_the_tree_rows_take_a_drag(nested_shell):
+    """V2: every tree row takes a drop and every one but the root's is
+    draggable, its handle shown; a plot's criteria row takes neither."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        targets = page.tree.targets
+        assert targets["/metrics"].on_drop is not None
+        assert targets["/metrics"].zones is None and targets["/metrics"].grip is None
+        root_grip = list(_one(user, "tree-row:/metrics").default_slot.children)[0]
+        assert "dstf-grip" in root_grip.classes and "draggable" not in root_grip.props
+        for path in (N_T2, N_K, N_KX, N_KT1, N_X2, N_Y):
+            assert targets[path].on_drop is not None
+            assert targets[path].zones is not None
+            grip = _one(user, f"grip:{path}")
+            assert grip.visible and grip.props["draggable"] == "true"
+            assert grip.props["aria-label"] == "Drag to move"
+        page.open_criterion(N_Y)
+        await _settled(lambda: page.open is not None)
+        rows = [row for card in page.cards for row in card.rows.values()]
+        assert rows  # not vacuous: the criteria rows are drawn
+        for row in rows:
+            assert not row.target.drag and row.target.on_drop is None
+            assert row.target.zones is None
+
+
+async def test_a_locked_rows_handle_goes_with_its_controls(nested_shell):
+    """A job's lock rebuilds every row's host to its why-line: the row
+    takes no drop and offers no handle until the job ends."""
+    shell = nested_shell
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        grip = _one(user, f"grip:{N_Y}")
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await _settled(lambda: not grip.visible)
+        assert page.tree.targets[N_Y].on_drop is None
+        assert page.tree.targets[N_Y].zones is None
+        gate.release.set()
+        await _settled(lambda: grip.visible)
+        assert page.tree.targets[N_Y].zones is not None

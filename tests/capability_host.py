@@ -80,6 +80,9 @@ class HostPanel:
     #: No tree card here: the host offers no moving (U4).
     can_move = False
 
+    def movable(self, on_drop: Any, zones: Any = None) -> bool:
+        return False
+
 
 @asynccontextmanager
 async def host(

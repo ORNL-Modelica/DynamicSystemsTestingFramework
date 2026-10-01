@@ -88,6 +88,32 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* The drag (U4): a handle before the pill, its place kept while hidden so
+   the pills stay in line. Over a row: a line at the row's indent where the
+   node would go before it, an outline onto it, a red outline where the
+   move is refused — its reason then fills the card's header line, in place
+   of the line's text (`.dstf-line-why`): said in the row it reflowed the
+   row's icons. */
+.dstf-tree-row { position: relative; }
+.dstf-grip {
+  width: 20px; flex: none; display: inline-flex; justify-content: center;
+  color: var(--dstf-text-muted); cursor: grab;
+}
+.dstf-grip.hidden { display: inline-flex !important; visibility: hidden; }
+.dstf-drop-before::before {
+  content: ""; position: absolute; top: -2px; right: 0;
+  left: var(--indent, 0px); height: 3px; background: var(--dstf-accent);
+  pointer-events: none;
+}
+.dstf-drop-onto { outline: 2px solid var(--dstf-accent); outline-offset: -2px; }
+.dstf-drop-no {
+  outline: 2px solid var(--dstf-fail-border); outline-offset: -2px;
+  cursor: not-allowed;
+}
+.dstf-tree-line.dstf-line-why > * { display: none !important; }
+.dstf-tree-line.dstf-line-why::before {
+  content: attr(data-why); color: var(--dstf-fail-dark);
+}
 /* Move to… (U4): a place per line, its node's text cut in the middle and
    where in it kept whole; the menu no wider than the page allows. */
 .dstf-move-menu { max-width: min(560px, 92vw); }

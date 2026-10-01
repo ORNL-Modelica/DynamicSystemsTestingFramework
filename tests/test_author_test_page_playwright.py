@@ -2661,6 +2661,176 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
 
 
+def _tree_row(page, path: str):
+    return page.locator(f'.dstf-tree-row[data-tree-path="{path}"]')
+
+
+def _show_tree(page, rows: int) -> None:
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
+    expect(page.locator(".dstf-tree-row")).to_have_count(rows, timeout=EXPECT_TIMEOUT)
+
+
+#: A target row's place for a real mouse: its top half is before it, its
+#: bottom half onto it (D1 as amended).
+BEFORE, ONTO = 0.2, 0.8
+
+
+def _mouse_drag(page, src: str, target: str, frac: float, during=None):
+    """A REAL mouse from ``src``'s handle to ``frac`` of ``target``'s row
+    height — `page.mouse` down / move / up, which Chromium turns into
+    dragstart / dragover / drop — and ``during(page)``'s answer, read while
+    the button is still down."""
+    grip = _tree_row(page, src).locator(".dstf-grip").bounding_box()
+    assert grip is not None
+    page.mouse.move(grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(grip["x"] + 12, grip["y"] + 8, steps=4)
+    box = _tree_row(page, target).bounding_box()
+    assert box is not None
+    x, y = box["x"] + box["width"] * 0.4, box["y"] + box["height"] * frac
+    page.mouse.move(x, y, steps=10)
+    page.wait_for_timeout(300)  # the zones' map: one round trip
+    page.mouse.move(x + 2, y, steps=2)
+    page.wait_for_timeout(100)
+    seen = during(page) if during is not None else None
+    page.mouse.up()
+    return seen
+
+
+def _classes(path: str):
+    return lambda page: _tree_row(page, path).get_attribute("class") or ""
+
+
+def _plot_titles(page) -> list[str]:
+    return [
+        t.strip()
+        for t in page.locator(".dstf-plot .dstf-card-title .dstf-mid").all_inner_texts()
+    ]
+
+
+def test_a_drag_before_a_row_reorders_the_tree_and_the_plots(
+    tmp_path, playwright_browser
+):
+    """range · y by its handle to the k-of-n row's top half: an accent line
+    drawn from that row's indent, then y is the root's first child and its
+    plot the first plot (the plots follow the tree, D140)."""
+    k, y = "/metrics/children/0", "/metrics/children/1"
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        assert _plot_titles(page)[:2] == ["x", "y"]
+
+        def during(page):
+            row = _tree_row(page, k)
+            line = page.evaluate(
+                "(p) => getComputedStyle(document.querySelector("
+                "`[data-tree-path=\"${p}\"]`), '::before').left",
+                k,
+            )
+            return row.get_attribute("class") or "", line
+
+        classes, line = _mouse_drag(page, y, k, BEFORE, during)
+        assert "dstf-drop-before" in classes, classes
+        assert line == "16px"  # the k-of-n's depth: one level in (C15)
+        expect(_tree_row(page, "/metrics/children/0")).to_contain_text(
+            "range · y", timeout=EXPECT_TIMEOUT
+        )
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+        expect(
+            page.locator(".dstf-plot .dstf-card-title .dstf-mid").first
+        ).to_have_text("y", timeout=EXPECT_TIMEOUT)
+
+
+def test_a_drag_onto_a_combinator_appends_and_onto_a_criterion_wraps(
+    tmp_path, playwright_browser
+):
+    k, kx, ky = (
+        "/metrics/children/0",
+        "/metrics/children/0/children/0",
+        "/metrics/children/0/children/1",
+    )
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        classes = _mouse_drag(page, "/metrics/children/1", k, ONTO, _classes(k))
+        assert "dstf-drop-onto" in classes, classes
+        expect(_tree_row(page, f"{k}/children/2")).to_contain_text(
+            "range · y", timeout=EXPECT_TIMEOUT
+        )
+        # range · x onto tube · x: both wrapped in an `and`, the target first.
+        classes = _mouse_drag(page, ky, kx, ONTO, _classes(kx))
+        assert "dstf-drop-onto" in classes, classes
+        expect(_tree_row(page, f"{kx}/children/1")).to_contain_text(
+            "range · x", timeout=EXPECT_TIMEOUT
+        )
+        expect(_tree_row(page, f"{kx}/children/0")).to_contain_text("tube · x")
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+
+
+def test_a_refused_place_says_why_in_the_header_line_and_takes_nothing(
+    tmp_path, playwright_browser
+):
+    """The k-of-n onto its own criterion: the row outlined as refused, the
+    reason in the tree card's header line in place of its text — the row's
+    icons stay where they were — and nothing staged. A second drag, from
+    another row, draws by ITS map: there the same zone is a wrap."""
+    from dstf.authoring.tree_move import INTO_ITSELF
+
+    k, kx = "/metrics/children/0", "/metrics/children/0/children/0"
+    icons = (
+        '(p) => Math.round(document.querySelector(`[data-tree-path="${p}"]`)'
+        ".querySelector('.dstf-node-host').getBoundingClientRect().x)"
+    )
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        line = page.locator(".dstf-tree-line")
+        x_before = page.evaluate(icons, kx)
+
+        def during(page):
+            return (
+                _tree_row(page, kx).get_attribute("class") or "",
+                line.get_attribute("data-why"),
+                line.locator("button").first.is_visible(),
+                page.evaluate(icons, kx),
+            )
+
+        classes, why, toggle_shown, x_during = _mouse_drag(page, k, kx, ONTO, during)
+        assert "dstf-drop-no" in classes, classes
+        assert why == INTO_ITSELF
+        assert not toggle_shown  # the reason is the line's whole text
+        assert x_during == x_before
+        page.wait_for_timeout(300)
+        assert line.get_attribute("data-why") is None
+        expect(line.get_by_role("button", name="Hide tree")).to_be_visible()
+        expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")
+        classes = _mouse_drag(page, "/metrics/children/1", kx, ONTO, _classes(kx))
+        assert "dstf-drop-onto" in classes and "dstf-drop-no" not in classes
+        expect(_tree_row(page, f"{kx}/children/1")).to_contain_text(
+            "range · y", timeout=EXPECT_TIMEOUT
+        )
+
+
+#: Starts a drag on ``p``'s handle with a stale map in place and reads the
+#: map in the SAME task — before any server reply can land — then ends it.
+STALE_MAP = """(p) => {
+  window.dstfMove = window.dstfMove || {src: null, map: {}};
+  window.dstfMove.map = {stale: {onto: 'the last drag'}};
+  const grip = document.querySelector(`[data-tree-path="${p}"] .dstf-grip`);
+  const dt = new DataTransfer();
+  grip.dispatchEvent(new DragEvent('dragstart', {bubbles: true, dataTransfer: dt}));
+  const seen = JSON.stringify(window.dstfMove.map);
+  grip.dispatchEvent(new DragEvent('dragend', {bubbles: true, dataTransfer: dt}));
+  return seen;
+}"""
+
+
+def test_a_drag_starts_with_no_map_until_its_own_arrives(tmp_path, playwright_browser):
+    """C17: a reply slower than the next drag must not draw that drag with
+    the last one's refusals — every drag starts from an empty map."""
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        assert page.evaluate(STALE_MAP, "/metrics/children/1") == "{}"
+
+
 # -- the plot's +, inline; the editor opens after Add (Q3 A) ----------------
 
 

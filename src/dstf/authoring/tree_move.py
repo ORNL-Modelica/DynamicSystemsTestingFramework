@@ -369,3 +369,52 @@ def move_destinations(
 
     walk(tree, ROOT)
     return rows
+
+
+#: A drag's zones on a row (D1 as amended by the owner): its top half is
+#: before it, its bottom half onto it — no "after": every pixel line means
+#: one place. To put a node last at an outer level, drop onto that outer
+#: combinator. The root has only "onto": nothing sits beside it.
+ZONES = ("before", "onto")
+
+
+def zone_dest(path: str, zone: str) -> Dest | None:
+    """The destination a drop in ``zone`` of ``path``'s row means: before
+    it among its siblings, or onto it (a criterion: wrap both in ``and``;
+    a combinator: its end). None for a zone the row has not got."""
+    if zone == "onto":
+        return Dest("onto", path)
+    if zone == "before" and path != ROOT:
+        parent, index = _parent(path)
+        return Dest("at", parent, index)
+    return None
+
+
+def zone_map(
+    tree: dict, src: str, *, validate: Callable[[dict], None] | None = None
+) -> dict[str, dict[str, str | None]]:
+    """``{row path: {zone: reason}}`` over every row of ``tree`` for a drag
+    of the node at ``src``: ``None`` allowed, ``""`` where it already is,
+    else the sentence that refuses it. The page asks once per drag and
+    draws every zone from the answer, with no round trip while dragging:
+    it grows with the square of the tree (134 nodes ~0.2 s)."""
+    out: dict[str, dict[str, str | None]] = {}
+
+    def walk(node: dict, path: str) -> None:
+        zones: dict[str, str | None] = {}
+        for zone in ZONES:
+            dest = zone_dest(path, zone)
+            if dest is None:
+                continue
+            try:
+                planned = plan_move(tree, src, dest, validate=validate)
+            except MoveRefused as e:
+                zones[zone] = str(e)
+                continue
+            zones[zone] = "" if planned is None else None
+        out[path] = zones
+        for i, child in enumerate(node.get("children") or []):
+            walk(child, f"{path}/children/{i}")
+
+    walk(tree, ROOT)
+    return out

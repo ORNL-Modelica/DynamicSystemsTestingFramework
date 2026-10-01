@@ -42,6 +42,8 @@ from ..tree_move import (
     move_destinations,
     plan_move,
     validator_for,
+    zone_dest,
+    zone_map,
 )
 from ..tree_pointer import node_or_none
 from ..tree_text import node_text, nodes_of
@@ -794,6 +796,7 @@ def _cluster(
                 .mark(f"apply-edit:{path}")
             )
 
+    _drag(s, ui_panel, model_id, path)
     if is_combinator:
         ui_panel.lead(
             partial(
@@ -925,6 +928,26 @@ def _validator(s: SessionView, model_id: str) -> Callable[[dict], None]:
     project = s.project
     assert project is not None  # a tree came from it
     return validator_for(project.role_lookup(model_id))
+
+
+def _drag(s: SessionView, ui_panel: Panel, model_id: str, path: str) -> None:
+    """The node's part in the host's drag (U4): a drop on its row is a
+    move to that zone's place (`zone_dest`); a drag from it — never from
+    the root — asks the tree as it is at that moment which zones refuse,
+    and why (`zone_map`, once per drag)."""
+
+    def on_drop(src: str, zone: str) -> None:
+        dest = zone_dest(path, zone)
+        if dest is not None:  # a zone the row has not got moves nothing
+            ui_panel.submit(model_id=model_id, action="move", path=src, dest=dest)
+
+    def zones() -> dict[str, dict[str, str | None]]:
+        tree = s.tree(model_id)
+        if tree is None:
+            return {}
+        return zone_map(tree, path, validate=_validator(s, model_id))
+
+    ui_panel.movable(on_drop, None if path == ROOT else zones)
 
 
 def _move_menu(

@@ -89,6 +89,19 @@ class ShellPanel:
     def can_move(self) -> bool:
         return self._target is not None and self._target.drag
 
+    def movable(
+        self,
+        on_drop: Callable[[str, str], None],
+        zones: Callable[[], dict[str, dict[str, str | None]]] | None = None,
+    ) -> bool:
+        target = self._target
+        if target is None or not target.drag:
+            return False
+        target.on_drop, target.zones = on_drop, zones
+        if zones is not None and target.grip is not None:
+            target.grip.set_visibility(True)
+        return True
+
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
 
@@ -141,6 +154,13 @@ class RowTarget:
         #: Whether a node drawn in this row may be moved from it (U4, V2):
         #: set by the tree card, and by no other row's owner.
         self.drag = False
+        #: The row's drag handle (the tree card's, hidden until a panel
+        #: makes the row draggable; None on the root's), and what a panel
+        #: registered through `Panel.movable`: a drop on the row, the zones
+        #: of a drag from it.
+        self.grip: ui.element | None = None
+        self.on_drop: Callable[[str, str], None] | None = None
+        self.zones: Callable[[], dict[str, dict[str, str | None]]] | None = None
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -405,6 +425,11 @@ class InlineHost:
             # rebuilt to its why-line leaves the kind to the row's text.
             if self.row.lead is not None and not self.row.lead.is_deleted:
                 self.row.lead.clear()
+            # And what they registered for the drag: a host rebuilt under
+            # a job's lock takes no drop and offers no handle.
+            self.row.on_drop = self.row.zones = None
+            if self.row.grip is not None and not self.row.grip.is_deleted:
+                self.row.grip.set_visibility(False)
         self.column.clear()
         self.errors, self.cells, self.answers = {}, {}, {}
 

@@ -17,6 +17,8 @@ from dstf.authoring.tree_move import (
     move_destinations,
     plan_move,
     validator_for,
+    zone_dest,
+    zone_map,
 )
 from dstf.comparison.tree_spec import MetricSpecError, parse_metric_tree
 from dstf.comparison.validator import role_lookup_from_names, validate_tree
@@ -515,3 +517,43 @@ def test_d4_is_the_moves_own_rule_not_the_validators():
     with pytest.raises(MoveRefused) as e:
         plan_move(NESTED, p(2), Dest("at", p(1), 1))  # no validate=
     assert str(e.value) == WARN_UNDER
+
+
+# -- the drag's zones (U4, D1 as amended: a row's top half is before it, its
+# bottom half onto it; the root has only onto) -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "zone", "dest"),
+    [
+        (p(1, 0), "before", Dest("at", p(1), 0)),
+        (p(2), "before", Dest("at", R, 2)),
+        (p(0), "onto", Dest("onto", p(0))),  # a criterion: wrap both
+        (p(1), "onto", Dest("onto", p(1))),  # a combinator: its end
+        (R, "onto", Dest("onto", R)),
+        (R, "before", None),  # nothing sits beside the root
+        (p(0), "after", None),  # no such zone (the owner's ruling)
+    ],
+)
+def test_a_zone_is_a_destination(path, zone, dest):
+    assert zone_dest(path, zone) == dest
+
+
+def test_the_zone_map_says_every_rows_zones_for_one_source():
+    """For the k-of-n: allowed (None), where it is (""), or the refusal."""
+    zones = zone_map(NESTED, p(1), validate=VALIDATE)
+    assert list(zones) == [R, p(0), p(1), p(1, 0), p(1, 1), p(2), p(2, 0)]
+    assert zones[R] == {"onto": None}
+    assert zones[p(0)] == {"before": None, "onto": None}
+    assert zones[p(1)] == {"before": "", "onto": INTO_ITSELF}
+    assert zones[p(1, 0)] == {"before": INTO_ITSELF, "onto": INTO_ITSELF}
+    assert zones[p(2)] == {"before": "", "onto": INTO_WARN}
+    assert zones[p(2, 0)]["before"] == INTO_WARN
+
+
+def test_the_zone_map_is_the_sources_own():
+    """Another source, another map: d's own row is where it is."""
+    zones = zone_map(NESTED, p(2, 0), validate=VALIDATE)
+    assert zones[p(2, 0)] == {"before": "", "onto": INTO_ITSELF}
+    assert zones[p(1)]["onto"] is None  # a criterion can fail: a k-of-n takes it
+    assert zones[p(0)] == {"before": None, "onto": None}
