@@ -674,25 +674,27 @@ async def test_a_tree_criterion_capability_is_the_editor_under_a_tree_row(shell)
 
 async def test_a_node_capability_says_what_a_tree_rows_click_does(shell):
     """`Panel.on_click` (U5, Q6): a NODE capability the shell never heard
-    of registers a click; the tree row's click calls it, and a plot's
-    criteria row — the same NODE placement — takes none."""
+    of registers a click; a tree GROUP row's click calls it. A criterion's
+    row — a plot's criteria row or the tree's, the same NODE placement —
+    takes none: its click is the shell's, its editor (J4)."""
     clicked: list[str] = []
-    offered: list[bool] = []
+    offered: dict[str, bool] = {}
 
     class _Clicking(_Dummy):
         def panel(self, s, panel):
             path = s.selection.node_path
-            offered.append(panel.on_click(lambda: clicked.append(path)))
+            offered[path] = panel.on_click(lambda: clicked.append(path))
             super().panel(s, panel)
 
     only(_Clicking("clicking", {Placement.NODE}))
     shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
-        assert offered and not any(offered)  # the plot's criteria rows
+        assert offered and not any(offered.values())  # the plot's criteria rows
         offered.clear()
         page.tree.toggle()
-        assert offered and all(offered)  # every tree row
+        # The tree's rows: its one group, the root, and none of its criteria.
+        assert offered == {path: path == "/metrics" for path in TREE_NODES}
         page.tree_row_click("/metrics")
         assert clicked == ["/metrics"]
 

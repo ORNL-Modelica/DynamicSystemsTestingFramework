@@ -257,9 +257,10 @@ class Panel(Protocol):
         """What a click on the row this panel is drawn in does (U5, Q6):
         ``handler()``, called when the row itself is clicked — or, from the
         keyboard, Enter or Space on it — never a control inside it. Offered
-        by the tree card's rows and nowhere else (`can_move`'s rule): a
-        plot's criteria row has a click of its own, its editor. Elsewhere
-        it registers nothing and returns False. One per row; a later call
+        by the tree card's GROUP rows (a combinator's) and nowhere else
+        (`can_move`'s rule): a criterion's row — a plot's criteria row or
+        the tree's — has a click of its own, its editor. Elsewhere it
+        registers nothing and returns False. One per row; a later call
         replaces it, and it goes with the panel."""
         ...
 

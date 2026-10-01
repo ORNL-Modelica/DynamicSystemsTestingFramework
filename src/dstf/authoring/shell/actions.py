@@ -109,8 +109,9 @@ class ShellPanel:
         return True
 
     def on_click(self, handler: Callable[[], None]) -> bool:
-        # The tree card's rows are clicked (U5, Q6); a plot's criteria row
-        # has a click of its own — its editor — and takes no handler.
+        # The tree card's group rows are clicked (U5, Q6); a criterion's
+        # row, on a plot or in the tree, has a click of its own — its
+        # editor — and takes no handler.
         target = self._target
         if target is None or not target.clickable:
             return False
@@ -193,7 +194,7 @@ class RowTarget:
         #: is set: no default, which nothing could reach.
         self.refuse: Callable[[BaseException], None]
         #: Whether a click on this row is the panels' to say (U5, Q6): set
-        #: by the tree card, and by no other row's owner. What a panel
+        #: by the tree card on a group's row, and by no other row's owner. What a panel
         #: registered for it (`Panel.on_click`), or None.
         self.clickable = False
         self.click: Callable[[], None] | None = None

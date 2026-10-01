@@ -1134,8 +1134,9 @@ class TreeCard:
             # The tree card's rows are where a node moves from (V2).
             target.drag = True
             target.grip = grip if depth else None
-            # And where a click is a panel's to say (Q6, `Panel.on_click`).
-            target.clickable = True
+            # And, on a group's row, where a click is a panel's to say (Q6,
+            # `Panel.on_click`); a criterion's click is its editor (J4).
+            target.clickable = group
             self.targets[path] = target
             host = InlineHost(
                 self.page.shell,
