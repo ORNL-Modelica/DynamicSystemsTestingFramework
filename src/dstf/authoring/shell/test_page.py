@@ -549,10 +549,17 @@ class TestPage:
             self.open = (TREE, path)
         self._redraw_moved(view)
 
-    def edit_on_plot(self, path: str, index: int) -> None:
+    def edit_on_plot(self, path: str) -> None:
         """Q12: the tree editor's "Edit on its plot" — the criterion opens
-        on plot ``index`` (the tree's editor closes: one editor page-wide)
-        and its row is brought to the middle of the viewport."""
+        on the first plot holding it NOW, as a jump opens it (the tree's
+        editor closes: one editor page-wide), and its row is brought to the
+        middle of the viewport. Found at the click, never when the link was
+        drawn: the tree is refreshed before the cards rebuild, so an index
+        read then could name the plot it was on (J3). Nothing where no plot
+        holds it."""
+        index = next((c.index for c in self.cards if path in c.rows), None)
+        if index is None:
+            return
         self.open_criterion(path, index)
         self._scroll_to_open(path)
 

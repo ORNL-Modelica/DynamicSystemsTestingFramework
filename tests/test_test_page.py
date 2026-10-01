@@ -10845,6 +10845,50 @@ async def test_edit_on_its_plot_goes_when_the_mode_has_no_handles(shell):
         assert page.open == (TREE_OPEN, T0)
 
 
+#: A criterion that scores a statistic: on no plot.
+STAT_X = {"metric": "scalar", "variable": "x", "quantity": NONLINEAR}
+
+
+async def test_edit_on_its_plot_opens_on_the_plot_that_holds_it_at_the_click(
+    page_shell,
+):
+    """J3: "Edit on its plot" finds its plot when it is CLICKED. The tree
+    refreshes before the cards rebuild in a sync, so a link bound to the
+    index it read then named the plot the criterion WAS on until a later
+    sync drew it again: x's criteria made statistics, x's plot goes and
+    y's moves from 1 to 0, and a click landing right after that sync (the
+    review's sequence) opened nothing."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        await _open_tree(user)
+        _tree_click(user, RANGE_Y)
+        await _settled(lambda: page.open == (TREE_OPEN, RANGE_Y))
+        assert next(c.index for c in page.cards if RANGE_Y in c.rows) == 1
+        real_sync, opened = page.sync, []
+
+        def sync(force: bool = False) -> None:
+            shape = page._shape
+            real_sync(force)
+            if page._shape != shape and not opened:
+                # The click, before any later sync can draw the link again.
+                assert next(c.index for c in page.cards if RANGE_Y in c.rows) == 0
+                assert page.open == (TREE_OPEN, RANGE_Y)
+                with page.client:
+                    user.find(marker=f"tree-editor-on-plot:{RANGE_Y}").click()
+                opened.append(page.open)
+
+        page.sync = sync
+        shell.session.stage(
+            [
+                PatchOp(A, "replace", TUBE, dict(STAT_X)),
+                PatchOp(A, "replace", RANGE_X, dict(STAT_X)),
+            ]
+        )
+        await _settled(lambda: opened)
+        assert opened == [(0, RANGE_Y)]
+
+
 def _js_sent(page) -> list[str]:
     """Every script the page sends its client, recorded from now on."""
     sent: list[str] = []

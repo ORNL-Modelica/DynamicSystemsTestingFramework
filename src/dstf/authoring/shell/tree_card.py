@@ -472,13 +472,14 @@ class TreeCard:
         self.leaves: set[str] = set()
         #: The one criterion editor opened under a tree row (U5, Y4): its
         #: leaf, its host and box, the leaf as authored when its fields
-        #: were built, and its "Edit on its plot" link's place and plot.
+        #: were built, and its "Edit on its plot" link's place and whether
+        #: it is drawn.
         self.editor_path: str | None = None
         self.editor: InlineHost | None = None
         self.editor_box: ui.column | None = None
         self.link_slot: ui.element | None = None
         self._edited: str | None = None
-        self._link: int | None = None
+        self._link = False
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
@@ -794,7 +795,7 @@ class TreeCard:
             )
             self.editor.build()
         self._edited = self._edited_now()
-        self._link = None
+        self._link = False
         self._paint_link()
         self.paint_clicks()
         return True
@@ -811,7 +812,7 @@ class TreeCard:
             row.classes(remove="dstf-crit-open")
         was = self.editor_path
         self.editor, self.editor_box, self.link_slot = None, None, None
-        self.editor_path, self._edited, self._link = None, None, None
+        self.editor_path, self._edited, self._link = None, None, False
         if was is not None:
             self.paint_clicks()
 
@@ -852,7 +853,11 @@ class TreeCard:
         editor does: a capability placed at CRITERION and not here is
         available there (one that drags its handles). Asked of the
         placements, never of a capability by name; redrawn only when its
-        answer moves (a mode switched to one with no handles takes it)."""
+        answer moves (a mode switched to one with no handles takes it).
+        Bound to no plot: the page finds the plot when it is clicked
+        (`TestPage.edit_on_plot`) — this runs in a sync BEFORE the cards
+        rebuild, and an index read here named the plot the criterion was
+        on until a later sync drew the link again (J3)."""
         if self.link_slot is None or self.link_slot.is_deleted:
             return
         path = self.editor_path
@@ -872,16 +877,17 @@ class TreeCard:
             )
             if not more:
                 index = None
-        if index == self._link:
+        shown = index is not None and path is not None
+        if shown == self._link:
             return
-        self._link = index
+        self._link = shown
         self.link_slot.clear()
-        if index is None or path is None:
+        if not shown or path is None:
             return
         with self.link_slot:
             ui.button(
                 "Edit on its plot",
-                on_click=partial(page.edit_on_plot, path, index),
+                on_click=partial(page.edit_on_plot, path),
             ).props("flat dense no-caps").mark(f"tree-editor-on-plot:{path}")
 
     # -- the closed line -----------------------------------------------------------
