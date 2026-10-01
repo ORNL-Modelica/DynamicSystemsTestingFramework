@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from nicegui import app, ui
 
 from ...cli.common import _filter_tests
-from ...reporting.theme import css_variables, quasar_palette
+from ...reporting.theme import css_variables, level_variables, quasar_palette
 from ..capabilities import Capability, Placement, plural, registered_capabilities
 from ..session import Selection, Session, SessionView
 from .style import STYLE
@@ -391,7 +391,7 @@ class Shell:
         table for the dashboard, the report and the tool (roadmap §1
         predicate 2; the body font is this shell's to apply)."""
         ui.colors(**quasar_palette())
-        ui.add_css(css_variables() + STYLE)
+        ui.add_css(css_variables() + level_variables() + STYLE)
 
     def mount(self) -> None:
         """The routes beside the index: the Suite table's two scripts, the

@@ -176,7 +176,14 @@ def css_variables(theme: Mapping[str, str] = DEFAULT_THEME) -> str:
         lines += [
             f"  --dstf-role-{role}-{part}: {value};" for part, value in parts.items()
         ]
-    lines += [f"  --dstf-{name}: {value};" for name, value in LEVELS.items()]
+    return ":root {\n" + "\n".join(lines) + "\n}\n"
+
+
+def level_variables() -> str:
+    """The ``:root`` block of the tree card's level tokens: the tool's
+    alone (`Shell.page_setup`). In `css_variables` they were eight unused
+    properties on every report and dashboard (the U5 review, H5)."""
+    lines = [f"  --dstf-{name}: {value};" for name, value in LEVELS.items()]
     return ":root {\n" + "\n".join(lines) + "\n}\n"
 
 

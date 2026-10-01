@@ -86,6 +86,26 @@ class TestPages:
         assert _colours_outside_root(html) == []
         assert re.search(r"body\s*\{[^}]*font-family:\s*var\(--dstf-font\)", html)
 
+    def test_the_report_carries_no_level_tokens(self, tmp_path):
+        """The tree card's level bars are the tool's alone (U5, H5): the
+        per-test report and the dashboard declare none of their tokens."""
+        from dstf.reporting.dashboard_render import render_live
+        from report_fixtures import _context_with_figure, _render_with_context
+        from test_dashboard_render import _write_status_json
+
+        ctx, _ = _context_with_figure()
+        report = _render_with_context(tmp_path, ctx).read_text(encoding="utf-8")
+        _write_status_json(tmp_path, {"total": 0, "counts": {}, "tests": []})
+        render_live(tmp_path)
+        dashboard = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+        for html in (report, dashboard):
+            assert ":root {" in html
+            assert "--dstf-level" not in html
+        assert "--dstf-level" not in theme.css_variables()
+        tool = theme.level_variables()
+        for name, value in theme.LEVELS.items():
+            assert tool.count(f"--dstf-{name}: {value};") == 1
+
     def test_the_dashboard_carries_only_tokens(self, tmp_path):
         from dstf.reporting.dashboard_render import render_live
         from test_dashboard_render import _write_status_json
