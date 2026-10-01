@@ -946,10 +946,11 @@ selected plot as context series or takes them off (the plot's own variable is
 checked and grey), "+ new plot" makes a watch plot of one variable after the
 others (grey on a plot's variable, and on a family: open it and pick one).
 A run that failed has no plots: the drawer says "The run failed: no plots",
-and its checks and every "+ new plot" are grey. A run that never finished the
-test (stopped before it) is no result, not a failed run: the drawer says "No
-result yet: no plots", as the strip, the count line and the tree line say the
-test has no result.
+and its checks and every "+ new plot" are grey. A test with no result — never run, or
+a run that never finished it (stopped before it) — is NOT RUN, not a failed
+run: the drawer says "No plot yet: + new plot adds one", as for any test with
+no plot, while the strip, the count line and the tree line say the test has no
+result.
 Rows fold as the plots do: an array by result-file name into one row, a
 `UnitTests` element always a row of its own. A row's label has its first line
 to itself; its result-file name (where the names menu shows it), "plot N" and
