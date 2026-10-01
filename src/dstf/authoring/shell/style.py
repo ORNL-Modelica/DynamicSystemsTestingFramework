@@ -126,13 +126,14 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    TRANSFORM name has no space to break at — and its readout keeps one
    line, cut with an ellipsis, the whole of it in its title (`_Row.paint`).
    At 900 px a deep criterion's name and readout pushed the page 48 px
-   sideways. The readout takes its own width up to 40% of the row and never
-   shrinks below it: shrinking with the name, a 200-character name left it
-   71 px at 900 (J2). */
+   sideways. The readout shrinks with the name down to 80 px and no
+   further: shrinking from 0, a 200-character name left it 71 px at 900
+   (J2); kept whole up to 40% of the row, it left the J2 tests' names
+   119-143 px at 900, five lines and more, where now they have 290-350. */
 .dstf-tree-row > .dstf-tree-text { min-width: 0; overflow-wrap: anywhere; }
 .dstf-tree-row > .dstf-tree-readout {
-  flex: 0 0 auto; max-width: 40%;
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 1 auto; min-width: 80px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dstf-tree-row:not([data-folded="1"]) .dstf-fold-summary { display: none; }
 /* The root's tag (Q2): "and · 5 criteria · root". */

@@ -5015,6 +5015,7 @@ ROW_FIT = """() => ({
     return {path: r.dataset.treePath, right: r.getBoundingClientRect().right,
             card: r.closest('.dstf-tree').getBoundingClientRect().right,
             label: t.getBoundingClientRect().height,
+            name: t.getBoundingClientRect().width,
             line: parseFloat(getComputedStyle(t).lineHeight),
             spill: t.scrollWidth - t.clientWidth,
             readout: o && {cut: o.scrollWidth > o.clientWidth, title: o.title,
@@ -5059,7 +5060,9 @@ def test_a_long_tree_row_wraps_its_label_and_cuts_its_readout(
             assert deep["label"] > 1.5 * deep["line"], deep  # wrapped
             assert deep["spill"] <= 0, deep  # inside its own box
             readout = deep["readout"]
-            # Cut, never squeezed away by a name that cannot wrap.
+            # The name keeps room to read in (K3) and the readout is cut,
+            # never squeezed away by a name that cannot wrap.
+            assert deep["name"] >= 240, deep
             assert readout["width"] >= 80, readout
             assert readout["height"] <= 1.5 * readout["line"], readout  # one line
             assert readout["ellipsis"] == "ellipsis", readout
@@ -5071,9 +5074,9 @@ def test_a_200_character_name_leaves_every_readout_its_room(
     tmp_path, playwright_browser, width
 ):
     """J2: x reads a 200-character expression with no space to break at.
-    Every criterion row's readout keeps 80 px — the name wraps in what is
-    left — no row is wider than the card, and the page never scrolls
-    sideways."""
+    Every criterion row's readout keeps 80 px and its name 240 px (K3) —
+    the name wraps in that, the readout is cut — no row is wider than the
+    card, and the page never scrolls sideways."""
     served = _served(tmp_path, playwright_browser, project=_deep_project, hooks=True)
     with served as page:
         base = page.url.split("test/")[0]
@@ -5097,6 +5100,7 @@ def test_a_200_character_name_leaves_every_readout_its_room(
         for row in fit["rows"]:
             assert row["right"] <= row["card"] + 0.5, row
         for row in readouts:
+            assert row["name"] >= 240, row
             assert row["readout"]["width"] >= 80, row
         # The deepest x criterion's editor under its row: its right edge is
         # the row's (B12), however long the name it shows.
