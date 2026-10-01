@@ -124,7 +124,9 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # view, each with its criteria rows in tree order led by their ancestors (`and › k-of-n ›`),
 # a criterion's editor under its row (drag its handles on the plot above),
 # a status strip under the test's row saying its situation and filling the one next action,
-# +/wrap/− on every tree node (edit on a k-of-n or weighted one), each form an inline row under its
+# +/wrap/− on every tree node; the open tree draws a bar per level, folds its groups (the tab's,
+# per test), and a row's click opens its criterion's editor or a k-of-n's / weighted's fields under
+# it, its ⤓ showing a criterion where it is drawn (D146); each form an inline row under its
 # node: a `+` adds right after a criterion, last under a combinator, or from a plot's criteria
 # header; a combinator's kind is a dropdown in its row (unwrap in it); a ⋮⋮ grip or Move to… moves
 # a criterion or group: drop on the top half of a row to put it before, on the bottom half to put it

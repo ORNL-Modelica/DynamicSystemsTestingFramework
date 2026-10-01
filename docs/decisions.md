@@ -6400,3 +6400,151 @@ from drawn options: such a test gets a status of its own, **NOT RUN**.
 what it says for a test never run. `--rerun sim-failed` and `run -i
 sim-failed` still select NOT RUN tests: they match `sim_success=False`,
 which a comparison with no result carries (nothing succeeded).
+
+## D146 — The tree card shows where each row sits, folds its groups, and its rows open what they hold (2026-10-01)
+
+**Context.** The tree card's rows were indented 16 px per level, nothing
+folded, and a row's click did nothing: a criterion was edited on its plot
+only, and a `k-of-n`'s or a `weighted`'s fields behind a `tune` icon. On a
+tree several levels deep it was hard to tell what sat under what. The
+tree-card grill of 2026-10-01 put thirteen questions to the owner on a
+drawn board (Q1-Q13, confirmed); the controller made seven calls, said to
+the owner and reversible (Y1-Y7). Built from
+`docs/superpowers/plans/2026-10-01-tree-card-structure.md`, whose
+"Corrections 1" — two executing reviews, a spike, and two owner rulings
+(R1, R2) — override its task text, and from the fix batches of its review.
+
+**Decision.**
+
+1. *Where a row sits (Q1, Q2, Y1-Y3).* One 6 px bar per LEVEL at a row's
+   far left, 2 px apart, the row's full height, in place of the 16 px
+   indent: a row's content starts after its bars (8 px per level) and a
+   28 px chevron place, kept on every row — empty on a criterion — so the
+   pills line up. Level i's bar is coloured `--dstf-level-<(i-1) % 4 + 1>`:
+   blue, violet, cyan, slate (`#7fb0ec`, `#a990dc`, `#5fbfcf`, `#9aa8b8`),
+   never a status's green, red or amber. The tokens are
+   `reporting/theme.py::LEVELS`, declared by the tool's pages alone
+   (`level_variables`, added in `Shell.page_setup`): in `css_variables`
+   they were eight unused properties on every report. The root draws no
+   bar and carries a muted `root` tag ("and · 5 criteria · root").
+   Hovering a group's row deepens that group's level bar on its row and
+   every row under it (`--dstf-level-k-on`: `#2f7fd8`, `#7650c6`,
+   `#1f97ab`, `#6b7b8f`); hovering a criterion's row does the same for its
+   parent; the root deepens nothing. It is done in the page (no round
+   trip) by marking the BAR (`.dstf-lvl-on`), never the row (item 3).
+2. *Folding (Q3, Q4, Q8, Q10, Y6, Y7).* A chevron (a 28 px target, an
+   18 px glyph, `aria-expanded`, named "Fold …" / "Unfold …") on every
+   group's row but the root's — the root folds with the card's Show /
+   Hide tree. Everything is open by default. A folded group's row adds
+   "· N hidden · x pass · y fail" — every criterion under it, however
+   deep, each once, by verdict, with "· z advisory" and "· z unscored"
+   when there are any. Expand all / Collapse all are icon buttons beside
+   the tally (`unfold_more` / `unfold_less`, named "Expand all groups" /
+   "Collapse all groups"): as words they wrapped the line at 900 px.
+   Collapse all leaves the root open, and closes a form or an editor under
+   a row it hides — one under a folded group's own row stays. The folded
+   groups are the browser TAB's, per test (`TabState.tree_folded`: model
+   id → paths), so they survive a switch of test and the test opened again
+   in the tab.
+   While dragging (U4, D144), resting 700 ms on a folded group's row
+   (`REST_MS`) unfolds it as its chevron's click would; leaving the row,
+   the drop and the drag's end cancel the timer, and a drop onto it still
+   appends.
+3. *Why folding is attributes set in the page.* A server rebuild of the
+   rows bumps U4's revision token (`TreeCard.revision`), which refuses a
+   drag in progress. So the page's script folds by ATTRIBUTES alone —
+   `hidden` on every row and form slot (`data-slot-of`) under a folded
+   group, `data-folded="1"` on its row — and tells the server, which
+   records it and sets the same attributes by a props update, never a
+   rebuild; the revision stands. The plan's spike measured eight kinds of
+   server repaint on the real card: only `row.classes(...)` undoes a
+   client change, and it wipes EVERY client-set class on the row; client
+   attributes and inline style survive all eight. Hence attributes for
+   folding, and the hover's class on the bar, which the server never
+   re-classes.
+4. *Folds follow their groups (R1).* Every edit of the tree reports where
+   each node it kept went, old → new (`Panel.edited`, from
+   `tree_move.path_map(tree, ops)` by the ops' own semantics; a move's
+   `Moved.paths`), and the folded set is re-keyed through that map before
+   the rows are redrawn; a folded group that is deleted loses its fold. A
+   folded path that names no group after an edit that said nothing is
+   dropped when the rows are rebuilt.
+5. *A tree change this tab did not make unfolds every group (the owner's
+   ruling of 2026-10-01).* A Discard, a Save that reloads, another tab's
+   edit, a spec reload: any `spec` event for the test that no act of this
+   tab produced clears the test's folds. Every action bar and inline host
+   on the Test page applies through `TestPage.apply`, and a layout edit
+   through `_own`, which note the revisions the act produced in
+   `TabState.own_revisions`; `handle` clears the folds for a `spec` event
+   whose revision is not there. The record is the TAB's, not the page's:
+   a page navigated away from stays in `Shell.pages` until NiceGUI's
+   reconnect timeout and hears every event, and with a record of its own
+   it heard the new page's edit as foreign. A revision stays in the record
+   until a later one is heard, since the Shell hands each event to every
+   page before the next.
+6. *What unfolds a path (Q9 as narrowed by R2).* Only TREE events: a
+   move's line under its row, a refused act's sentence under a row, a form
+   row or a tree editor opened under a row — each unfolds the folded
+   groups it is inside, and nothing else. What is done outside the tree —
+   an add from a plot's `+`, a criterion opened on its plot, the ⤓, the
+   header's named jumps — leaves the folds alone, and a folded group's
+   summary updates. (The grill's Q9 said "a jump" too; the owner confirmed
+   the narrowing.)
+7. *A click on a row (Q5, Q6, Q11, Y4, Y5).* A criterion's row opens its
+   editor under the row — `Placement.TREE_CRITERION`, where `EditCriteria`
+   attaches (on a statistics criterion it hides what it hides on the
+   Statistics card), with no figure — and a second click closes it
+   (`TestPage.open == (TREE, path)`, `TREE = -2` beside `STATS = -1`). It
+   is the page's one editor (Q11): opening it closes one on a plot or the
+   Statistics card and any form row, and those close it; an edit typed in
+   it repaints the plot's row, its figure and the tree row's readout. A
+   `k-of-n`'s or a `weighted`'s row — the root's too, or a `k-of-n` root's
+   `k` could not be edited at all — opens its fields form, the one the
+   `tune` icon opened, and a second click closes it; an `and` / `or` /
+   `warn` row's click does nothing (its kind is its dropdown). A click on
+   a row with a form open under it closes the form. The capability says
+   what a group row's click does, `Panel.on_click(handler)`: offered on
+   the tree card's GROUP rows only (`RowTarget.clickable`) — a
+   criterion's row, in the tree or on a plot, has a click of its own, its
+   editor — so the shell names no capability. The chevron, the grip, the
+   kind dropdown, the ⤓ and the icon cluster stop their clicks before
+   they reach the row.
+8. *The keyboard (the controller's call, reversible).* The `tune` icon
+   was the only keyboard way to `k` and the weights. A row whose click
+   opens something is `role="button" tabindex="0"`, shows a focus ring,
+   Enter or Space on it is its click — a key pressed in a control inside
+   it is the control's — Space does not scroll the page, and
+   `aria-expanded` says whether its editor or fields are open.
+9. *"Edit on its plot" (Q12).* Drawn by the tree card beside the tree
+   editor's Done while some capability placed at CRITERION and not at
+   TREE_CRITERION is available for the criterion on its plot — one that
+   drags its handles — and repainted with the editor (a mode switched to
+   one with no handles takes it away). It moves the editor to the first
+   plot holding the criterion, found when it is clicked: a sync refreshes
+   the tree before the cards rebuild, and an index read when the link was
+   drawn could name the plot the criterion had been on.
+10. *The ⤓ (Q7, Q13).* A `vertical_align_bottom` icon at the start of a
+    criterion row's cluster, named "Show on its plot" or "Show on the
+    Statistics card" (repainted when a mode switch moves it): it scrolls
+    the criterion's row on its first plot to the middle of the viewport
+    and flashes it — drawing the plot, and ending a Focus that hides it —
+    or opens the Statistics card at its row. No editor opens or moves, and
+    no fold opens. The closed line's named jumps keep opening the
+    criterion on its plot (Q13); both scroll to a row found by its id.
+11. *A long row.* Its name wraps anywhere (a TRANSFORM name has no space
+    to break at); its readout keeps one line, cut with an ellipsis, the
+    whole in its title, taking its own width up to 40% of the row and
+    never shrinking below it — a 200-character name left it 71 px at
+    900 px. No row is wider than the card, and the page never scrolls
+    sideways.
+
+**What it removes.** The `tune` icon ("Change this combinator's fields",
+`edit:{path}`): a row's click opens those fields. The 16 px indent per
+level: the bars say the depth.
+
+**What it reverses.** Nothing.
+
+**Consequences.** Only the tool's tree card changes: no scoring, spec,
+patch or report change, and a plot's criteria rows are unchanged. Folds
+are volatile, the tab's, gone with it. Rows do not move by keyboard. The
+TRANSFORM gate is the controller's; nothing of it is recorded here.

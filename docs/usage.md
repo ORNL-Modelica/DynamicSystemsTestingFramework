@@ -891,7 +891,8 @@ in `test_spec.json`), and under a `warn` or `weighted` root.
 Below the card, the criteria tree is
 closed to a single line — the root's verdict, what the root is, the tally, and
 the first failures by name, each a button that jumps to its criterion — and
-"Show tree" opens it to a row per node. Then come the test's plots — derived
+"Show tree" opens it to a row per node (see "The open tree", below). Then come
+the test's plots — derived
 from its criteria, one per scored variable or family in the tree's order, then
 its watch plots (see "Plot layout"); a line above them says which ("3 plots ·
 derived from the criteria · 1 watch", "one per tracked variable or array"
@@ -1056,8 +1057,9 @@ A combinator's kind is a dropdown in its row — and, or, k-of-n, warn,
 weighted, and below a separator "unwrap — its children take its place" (left
 out on a root with several children, which cannot unwrap). And, or and warn
 stage at once; k-of-n and weighted open the node's form preset to that kind,
-since they need `k` or a threshold first. The tune icon, which opens that form,
-is on k-of-n and weighted nodes only: and, or and warn have no fields.
+since they need `k` or a threshold first. A click on a k-of-n's or a weighted's
+row — the root's too — opens that form, and a second click closes it; and, or
+and warn have no fields, and a click on their row does nothing.
 
 Each form opens as a row under the node's row, titled for the node, and it is
 the one thing open on the page: it replaces an open criterion's editor, and an
@@ -1078,11 +1080,34 @@ all of them, in order — which the root, having no parent, cannot do. `+` is
 grey under a `warn` (it takes exactly one child) and under a `weighted` node
 (one weight per child), with that reason as its tooltip.
 
+**The open tree.** Each row shows where it sits: a 6 px bar per level at its
+left — level 1 blue, 2 violet, 3 cyan, 4 slate, then again — in place of an
+indent, and the root row, which has no bar, ends "· root". Hovering a group's
+row deepens its level's bar on it and every row under it; hovering a
+criterion's row does the same for its group. Every group but the root has a
+chevron that folds it: its rows hide, and its row says what it hides — "· 3
+hidden · 2 pass · 1 fail", every criterion under it counted once by verdict.
+Expand all and Collapse all are the two icons beside the tally (Collapse all
+leaves the root open). The folds are the browser tab's, per test: they stay
+when you switch tests and come back, and follow their groups through every
+edit you make in that tab; any other change to the test's tree — a Discard, a
+Save that reloads, an edit in another tab — opens every group. Only the tree
+opens a folded group by itself: a form or an editor opened under a row, a
+refusal said under one, or a move's line opens the groups around it; while
+dragging, resting on a folded group's row for 0.7 s opens it. Clicking a
+criterion's row opens its editor under it — the page's one editor, so one
+open on a plot closes, and the plot and its row follow what you type — with
+**Edit on its plot**, where its plot can drag its handles, to move the editor
+there. The ⤓ on a criterion's row scrolls to it on its plot (or on the
+Statistics card) and flashes it, opening nothing. A row whose click opens
+something is also a button to the keyboard: Tab to it, Enter or Space.
+
 **Moving a criterion or group.** In the open tree, every row but the root's
 has a ⋮⋮ grip before its pill and a **Move to…** icon among its controls; both
 move that criterion, or a combinator with everything under it, to another
 place in the same test's tree. Drag it by the grip: over a row's top half the
-drop puts it BEFORE that row (an accent line from the row's indent), over its
+drop puts it BEFORE that row (an accent line from where its content starts,
+right of its bars), over its
 bottom half ONTO the row (an outline) — a combinator takes it as its last
 child, a criterion is wrapped with it in an `and`, the criterion first. The
 root's row is all "onto", and there is no "after": to put a node last at an
