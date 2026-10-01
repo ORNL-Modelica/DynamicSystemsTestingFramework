@@ -21,7 +21,7 @@ from .actions import ActionBar
 from .header import Header
 from .runs import RunsCard
 from .suite_grid import GRID_CSS, STORAGE, SuiteGrid, scripts_html
-from .tabstate import TabState, connected_tab_state
+from .tabstate import TabState, caught_up, connected_tab_state, heard_spec
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -70,6 +70,7 @@ class SuitePage:
         if state is None:
             return
         self.state: TabState = state
+        caught_up(state, self.shell.session.spec_revision)
         self.shell.page_setup()
         ui.page_title("DSTF")
         self.header = Header(self.shell)
@@ -147,6 +148,9 @@ class SuitePage:
         event touches are collected; `flush` sends them."""
         self.header.handle(event)
         kind = event["event"]
+        if kind == "spec":
+            # The tab's folds: every page of it hears the rule (K1).
+            heard_spec(self.state, event)
         if kind in ("job", "poll", "opened", "spec"):
             self.runs.refresh()  # `spec`: an open or a close resets the card's sources
         if kind in ("results", "job", "spec", "opened") or (

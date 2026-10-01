@@ -1436,6 +1436,115 @@ async def test_another_tabs_edit_unfolds_this_tabs_groups(page_shell):
         assert _all_open(page)
 
 
+async def _folded_then_removed(shell, user) -> TestPage:
+    """A's /1 folded, /0 removed here (the fold follows its group to /0)
+    over a saved TWO_GROUPS: a Discard brings /1 back."""
+    p0, p1 = "/metrics/children/0", "/metrics/children/1"
+    _stage_tree(shell, A, TWO_GROUPS)
+    shell.session.save()
+    page = await _test_page(shell, user)
+    user.find(marker="tree:toggle").click()
+    await _settled(lambda: page.tree.rows.visible)
+    _fold(user, p1)
+    await _settled(lambda: page.state.tree_folded.get(A) == [p1])
+    _click_in(user, f"remove:{p0}", within=f"tree-row:{p0}")
+    await _settled(lambda: p1 not in page.tree.rows_by_path)
+    assert page.state.tree_folded == {A: [p0]}
+    return page
+
+
+def _heard_all(shell, state) -> bool:
+    return state.seen_revision == shell.session.spec_revision
+
+
+async def test_a_discard_heard_on_another_test_unfolds_this_ones_groups(shell):
+    """K1: the clearing rule is the TAB's, heard by every page of it. The
+    tab moved to D and A's page is gone (NiceGUI's reconnect timeout), then
+    A's edits are discarded: back on A, the folds that followed the removed
+    group are not left on the group the Discard put back there."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _folded_then_removed(shell, user)
+        here = await _test_page(shell, user, D)
+        shell.pages.remove(page)
+        shell.session.discard()  # the header's Discard
+        await _settled(lambda: _heard_all(shell, here.state))
+        assert not here.state.tree_folded.get(A)
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        assert "/metrics/children/1" in page.tree.rows_by_path
+        assert _all_open(page)
+
+
+async def test_a_discard_heard_on_the_suite_page_unfolds_the_tests_groups(shell):
+    """K1: the Suite page hears the rule too."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _folded_then_removed(shell, user)
+        state = page.state
+        await _open(user, "/")
+        shell.pages.remove(page)
+        shell.session.discard()
+        await _settled(lambda: _heard_all(shell, state))
+        assert not state.tree_folded.get(A)
+
+
+async def test_another_tabs_edit_heard_on_another_test_unfolds_the_groups(shell):
+    """K1: another tab's edit of A, heard while this tab shows D."""
+    from nicegui.testing import User
+
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, TWO_GROUPS)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        here = await _test_page(shell, user, D)
+        shell.pages.remove(page)
+        other = User(user.http_client)
+        await _open(other, f"/test/{A}")
+        there = _page(shell, other)
+        assert there.state is not here.state
+        with there.client:
+            there.apply(Patch(ops=(PatchOp(A, "remove", p0),)))
+        await _settled(lambda: _heard_all(shell, here.state))
+        assert not here.state.tree_folded.get(A)
+
+
+async def test_an_edit_of_another_test_leaves_this_tests_folds(shell):
+    """K1: a `spec` event clears the folds of the tests it NAMES, and no
+    other's: an edit of D, made from no page of this tab, keeps A's."""
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, TWO_GROUPS)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        _stage_tree(shell, D)
+        await _settled(lambda: _heard_all(shell, page.state))
+        assert page.state.tree_folded == {A: [p0]}
+        assert _hidden(page) == _under(page, p0)
+
+
+async def test_an_edit_made_while_the_tab_had_no_page_unfolds_on_open(shell):
+    """K2: a tab with no live page hears nothing. Its pages gone (NiceGUI's
+    reconnect timeout), A is edited elsewhere; the test opened again in
+    the tab finds a revision it neither heard nor made, and every group is
+    open."""
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, TWO_GROUPS)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        state = page.state
+        for gone in [p for p in shell.pages if p.client is user.client]:
+            shell.pages.remove(gone)
+        shell.session.stage([PatchOp(A, "replace", f"{p0}/children/0/min_value", -5)])
+        shell.tick()
+        assert state.tree_folded == {A: [p0]}  # nobody heard it
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        assert _all_open(page)
+
+
 async def test_rows_built_folded_hide_their_slots_and_name_the_chevron(shell):
     """Q3 / E2: rows BUILT under a folded group — the test opened again in
     the tab — hide their form slots as their rows, and the folded group's

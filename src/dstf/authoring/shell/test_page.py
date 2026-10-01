@@ -38,7 +38,7 @@ from .plot_card import UNREAD, PlotCard, folded
 from .rail import Rail
 from .stats_card import StatsCard
 from .strip import StatusStrip
-from .tabstate import connected_tab_state
+from .tabstate import caught_up, connected_tab_state, heard_spec
 from .tree_card import TreeCard, leaf_status
 
 if TYPE_CHECKING:
@@ -148,6 +148,7 @@ class TestPage:
         if state is None:
             return
         self.state = state  # the tab's, shared with its Suite page
+        caught_up(state, self.shell.session.spec_revision)
         self.shell.page_setup()
         self.model_id = model_id
         ui.page_title(f"DSTF — {model_id.rsplit('.', 1)[-1]}")
@@ -631,24 +632,9 @@ class TestPage:
         try:
             act()
         finally:
-            self.state.own_revisions.update(
-                range(before + 1, session.spec_revision + 1)
-            )
-
-    def _heard_spec(self, event: dict[str, Any]) -> None:
-        """A `spec` event (H2): one this tab's own edits did not produce
-        unfolds every group of this test — its folds followed only the
-        tab's edits (`edited`): a Discard, a Save that reloads, another
-        tab's edit, a spec reload. Every page of the tab hears this event
-        and reads the same record, so the event's own revision stays in it
-        and only those BELOW it go: the Shell hands each event to every
-        page before the next (`Shell.tick`), so every page has heard them."""
-        revision = event["revision"]
-        own_revisions = self.state.own_revisions
-        own = revision in own_revisions
-        own_revisions.difference_update([r for r in own_revisions if r < revision])
-        if not own and self._mine(event):
-            self.state.tree_folded.pop(self.model_id, None)
+            state = self.state
+            state.own_revisions.update(range(before + 1, session.spec_revision + 1))
+            state.seen_revision = max(state.seen_revision, session.spec_revision)
 
     def edited(self, paths: dict[str, str]) -> None:
         """An edit of the tree went through (`Panel.edited`, U5 R1):
@@ -1221,7 +1207,7 @@ class TestPage:
             # (another test's) still moves its availability.
             self.actions.refresh()
         if event["event"] == "spec":
-            self._heard_spec(event)
+            heard_spec(self.state, event)
         if event["event"] == "job":
             # A finished job reloaded the trajectories under every plot and
             # no leaf's signature sees that (decision 10). The other states
