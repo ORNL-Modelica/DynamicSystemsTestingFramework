@@ -88,6 +88,25 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* Where a row sits (U5, Q1): a 6 px bar per level, 2 px apart, the row's
+   full height, in place of an indent; the hovered group's branch takes its
+   level's deeper shade on that level's bar (`.dstf-lvl-on`, set by the
+   page's script on the BAR, never the row). Then the chevron's place,
+   kept on every row so the pills stay in line. */
+.dstf-bars { display: flex; flex: none; align-self: stretch; gap: 2px; }
+.dstf-bar { width: 6px; flex: none; }
+.dstf-lvl-1 { background: var(--dstf-level-1); }
+.dstf-lvl-2 { background: var(--dstf-level-2); }
+.dstf-lvl-3 { background: var(--dstf-level-3); }
+.dstf-lvl-4 { background: var(--dstf-level-4); }
+.dstf-lvl-1.dstf-lvl-on { background: var(--dstf-level-1-on); }
+.dstf-lvl-2.dstf-lvl-on { background: var(--dstf-level-2-on); }
+.dstf-lvl-3.dstf-lvl-on { background: var(--dstf-level-3-on); }
+.dstf-lvl-4.dstf-lvl-on { background: var(--dstf-level-4-on); }
+.dstf-chev-slot { width: 28px; flex: none; display: inline-flex; justify-content: center; }
+/* The root's tag (Q2): "and · 5 criteria · root". */
+.dstf-root-tag { color: var(--dstf-text-muted); font-size: 12px; }
+.dstf-root-tag::before { content: "· "; }
 /* The drag (U4): a handle before the pill, its place kept while hidden so
    the pills stay in line (`.dstf-grip-off`: never Quasar's `.hidden`, whose
    cascade layer beats an unlayered `!important`). Over a row: a line at the row's indent where the

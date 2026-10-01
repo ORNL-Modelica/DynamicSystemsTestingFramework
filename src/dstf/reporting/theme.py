@@ -145,6 +145,23 @@ ROLES: Mapping[str, Mapping[str, str]] = MappingProxyType(
     }
 )
 
+#: The tree card's level bars (U5, Q1): level i's bar takes ``level-<(i-1)
+#: % 4 + 1>``, and the deeper ``-on`` shade while its group is hovered.
+#: Blue, violet, cyan, slate — never a status's green, red or amber: a bar
+#: says where a row sits, never how it scored.
+LEVELS: Mapping[str, str] = MappingProxyType(
+    {
+        "level-1": "#7fb0ec",
+        "level-2": "#a990dc",
+        "level-3": "#5fbfcf",
+        "level-4": "#9aa8b8",
+        "level-1-on": "#2f7fd8",
+        "level-2-on": "#7650c6",
+        "level-3-on": "#1f97ab",
+        "level-4-on": "#6b7b8f",
+    }
+)
+
 
 def css_variables(theme: Mapping[str, str] = DEFAULT_THEME) -> str:
     """The ``:root`` block every page starts its stylesheet with."""
@@ -159,6 +176,7 @@ def css_variables(theme: Mapping[str, str] = DEFAULT_THEME) -> str:
         lines += [
             f"  --dstf-role-{role}-{part}: {value};" for part, value in parts.items()
         ]
+    lines += [f"  --dstf-{name}: {value};" for name, value in LEVELS.items()]
     return ":root {\n" + "\n".join(lines) + "\n}\n"
 
 

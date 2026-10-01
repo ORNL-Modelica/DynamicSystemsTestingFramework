@@ -2810,6 +2810,22 @@ def _plot_titles(page) -> list[str]:
     ]
 
 
+#: Where ``p``'s row content starts, from the row's left: its chevron's place.
+CONTENT_LEFT = """(p) => {
+  const r = document.querySelector(`[data-tree-path="${p}"]`);
+  return Math.round(r.querySelector(':scope > .dstf-chev-slot').getBoundingClientRect().x
+    - r.getBoundingClientRect().x);
+}"""
+#: The "Moved." line's text start and its row's pill start, page x.
+MOVED_LINE = """(p) => {
+  const r = document.querySelector(`[data-tree-path="${p}"]`);
+  const l = document.querySelector('.dstf-moved');
+  return {pill: Math.round(r.querySelector('.dstf-pill').getBoundingClientRect().x),
+          text: Math.round(l.getBoundingClientRect().x
+            + parseFloat(getComputedStyle(l).paddingLeft))};
+}"""
+
+
 def test_a_drag_before_a_row_reorders_the_tree_and_the_plots(
     tmp_path, playwright_browser
 ):
@@ -2830,12 +2846,19 @@ def test_a_drag_before_a_row_reorders_the_tree_and_the_plots(
             )
             return row.get_attribute("class") or "", line
 
+        content = page.evaluate(CONTENT_LEFT, k)
         classes, line = _mouse_drag(page, y, k, BEFORE, during)
         assert "dstf-drop-before" in classes, classes
-        assert line == "16px"  # the k-of-n's depth: one level in (C15)
+        # From the k-of-n's content, right of its one bar (C15, U5 E4).
+        assert line == f"{content}px", (line, content)
+        assert content == 8 + 12
         expect(_tree_row(page, "/metrics/children/0")).to_contain_text(
             "range · y", timeout=EXPECT_TIMEOUT
         )
+        # The move's line starts under the moved row's pill (E4).
+        expect(page.locator(".dstf-moved")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        at = page.evaluate(MOVED_LINE, "/metrics/children/0")
+        assert at["text"] == at["pill"], at
         expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
         expect(
             page.locator(".dstf-plot .dstf-card-title .dstf-mid").first
@@ -3166,7 +3189,7 @@ def test_a_hidden_handle_keeps_its_place_and_a_lock_shifts_no_pill(
     tmp_path, playwright_browser
 ):
     """The root's handle is hidden and keeps its 20 px, so the root's pill
-    and a depth-1 pill stand exactly one indent step (16 px) apart; a job's
+    and a depth-1 pill stand exactly one level's bar (8 px) apart; a job's
     lock hides every handle and moves no pill. Quasar's `.hidden` (what
     `set_visibility(False)` adds) sits in a cascade layer that beats an
     unlayered `!important`, so it took the handle's width with it."""
@@ -3178,7 +3201,7 @@ def test_a_hidden_handle_keeps_its_place_and_a_lock_shifts_no_pill(
         free = {g["path"]: g for g in page.evaluate(GRIPS)}
         assert free["/metrics"]["w"] == 20 and not free["/metrics"]["shown"]
         assert free[k]["shown"] and free[k]["w"] == 20
-        assert free[k]["pill"] - free["/metrics"]["pill"] == 16
+        assert free[k]["pill"] - free["/metrics"]["pill"] == 8
         base = page.url.split("test/")[0]
         try:
             with urllib.request.urlopen(f"{base}__lock?model={A}") as r:
@@ -4441,3 +4464,119 @@ def test_a_statistics_criterion_is_edited_under_its_row(tmp_path, playwright_bro
         expect(row).to_contain_text("±2", timeout=EXPECT_TIMEOUT)
         editor.get_by_role("button", name="Done").click()
         expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+
+# -- where each row sits (U5 Task 1) ------------------------------------------
+
+
+def _deep_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` with A's tree four levels deep and a sibling group:
+    and[and[tube · x, and[range · x, and[range · y]]], and[range · y]]."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            tube, range_x, range_y = entry["metrics"]["children"]
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {
+                        "combinator": "and",
+                        "children": [
+                            tube,
+                            {
+                                "combinator": "and",
+                                "children": [
+                                    range_x,
+                                    {"combinator": "and", "children": [range_y]},
+                                ],
+                            },
+                        ],
+                    },
+                    {"combinator": "and", "children": [dict(range_y)]},
+                ],
+            }
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+DEEP_ROWS = 9
+G1, G2, G3 = (
+    "/metrics/children/0",
+    "/metrics/children/0/children/1",
+    "/metrics/children/0/children/1/children/1",
+)
+SIB = "/metrics/children/1"
+
+#: Every row's bars: its path, and each bar's computed colour.
+BARS = """() => [...document.querySelectorAll('.dstf-tree-row')].map(r => ({
+  path: r.dataset.treePath,
+  bars: [...r.querySelector(':scope > .dstf-bars').children].map(
+    b => getComputedStyle(b).backgroundColor),
+}))"""
+TOKENS = """() => Object.fromEntries([1, 2, 3, 4].flatMap(i => [
+  [`${i}`, getComputedStyle(document.documentElement).getPropertyValue(`--dstf-level-${i}`).trim()],
+  [`${i}-on`, getComputedStyle(document.documentElement).getPropertyValue(`--dstf-level-${i}-on`).trim()],
+]))"""
+
+
+def _rgb(hex_: str) -> str:
+    h = hex_.lstrip("#")
+    return "rgb({}, {}, {})".format(*(int(h[i : i + 2], 16) for i in (0, 2, 4)))
+
+
+def _depth(path: str) -> int:
+    return path.count("/children/")
+
+
+def _expected_bars(tokens, path: str, on: str | None) -> list[str]:
+    """``path``'s bars when the branch of group ``on`` is hovered."""
+    k = _depth(on) if on else 0
+    lit = on is not None and (path == on or path.startswith(on + "/"))
+    return [
+        _rgb(tokens[f"{(i - 1) % 4 + 1}{'-on' if lit and i == k else ''}"])
+        for i in range(1, _depth(path) + 1)
+    ]
+
+
+def test_each_level_draws_its_bar_in_its_colour_and_a_hover_deepens_its_branch(
+    tmp_path, playwright_browser
+):
+    """Q1 / Y2 with a real mouse: every bar is its level's token; hovering a
+    group deepens that group's level bar on it and its descendants and
+    nothing else — its sibling group stays; hovering a criterion deepens
+    its parent's branch; the root deepens nothing. The root says "· root"
+    (Q2; E7: the separator is U+00B7, not an escape printed as text)."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        tokens = page.evaluate(TOKENS)
+        assert tokens["1"] == "#7fb0ec" and tokens["4-on"] == "#6b7b8f"
+        tag = _tree_row(page, "/metrics").locator(".dstf-root-tag")
+        expect(tag).to_have_text("root")
+        before = tag.evaluate("e => getComputedStyle(e, '::before').content")
+        assert before == '"\u00b7 "', before
+        page.mouse.move(2, 2)
+
+        def check(on):
+            page.wait_for_timeout(150)
+            for row in page.evaluate(BARS):
+                assert row["bars"] == _expected_bars(tokens, row["path"], on), (
+                    on,
+                    row,
+                )
+
+        check(None)
+        for hovered, on in (
+            (G2, G2),
+            (G1, G1),
+            (f"{G3}/children/0", G3),  # a criterion: its parent's branch
+            (f"{G1}/children/0", G1),
+            (SIB, SIB),
+            ("/metrics", None),
+            (f"{SIB}/children/0", SIB),
+        ):
+            _tree_row(page, hovered).locator(".dstf-pill").first.hover()
+            check(on)
+        page.mouse.move(2, 2)
+        check(None)

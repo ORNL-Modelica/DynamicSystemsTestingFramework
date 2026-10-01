@@ -802,18 +802,96 @@ async def test_a_repainted_row_says_the_new_readout_the_new_text_and_the_new_k(s
         assert _one(user, f"tree-row:{combinator}") is krow
 
 
-async def test_a_rows_indent_is_its_depth_in_the_tree(shell):
-    """The rows are one flat column: the indent is the only thing that says
-    what is under what."""
-    _stage_tree(shell)
+#: A tree five levels deep: and[and[r, and[r, and[r, and[r]]]], r] — the
+#: fifth level's bar takes the first level's colour again.
+DEEP = {
+    "combinator": "and",
+    "children": [
+        {
+            "combinator": "and",
+            "children": [
+                _range(-1),
+                {
+                    "combinator": "and",
+                    "children": [
+                        _range(5),
+                        {
+                            "combinator": "and",
+                            "children": [
+                                _range(-3),
+                                {"combinator": "and", "children": [_range(-4)]},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+        _range(-5),
+    ],
+}
+
+
+def _bars(row) -> list[str]:
+    """The level classes of ``row``'s bars, in order."""
+    (bars,) = [c for c in row.default_slot.children if "dstf-bars" in c.classes]
+    return [
+        next(k for k in bar.classes if k.startswith("dstf-lvl-"))
+        for bar in bars.default_slot.children
+    ]
+
+
+async def test_a_rows_bars_say_its_depth_and_the_root_says_root(shell):
+    """The rows are one flat column: a bar per level is what says what is
+    under what (Q1) — level i's bar in level i's colour, the cycle
+    repeating at five — and the root draws none and says `root` (Q2). No
+    indent: the bars are it (Y3)."""
+    from dstf.authoring.tree_text import nodes_of
+
+    _stage_tree(shell, A, DEEP)
     async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user, D)
+        page = await _test_page(shell, user)
         user.find(marker="tree:toggle").click()
         await _settled(lambda: page.tree.rows.visible)
-        root = _one(user, "tree-row:/metrics")
-        child = _one(user, "tree-row:/metrics/children/0")
-        assert dict(root.style).get("padding-left") == "0px"
-        assert dict(child.style).get("padding-left") == "16px"
+        view = shell.session.tree_view(A)
+        depths = []
+        for node in nodes_of(view):
+            path = str(node["path"])
+            depth = path.count("/children/")
+            depths.append(depth)
+            row = _one(user, f"tree-row:{path}")
+            assert row.props["data-tree-path"] == path
+            assert row.props["data-depth"] == str(depth), path
+            group = node.get("kind") != "leaf"
+            assert (row.props.get("data-group") == "1") is group, path
+            assert _bars(row) == [
+                f"dstf-lvl-{(i - 1) % 4 + 1}" for i in range(1, depth + 1)
+            ], path
+            assert "padding-left" not in dict(row.style), path
+            # The bars first, then the chevron's place: a criterion's empty.
+            first, second = list(row.default_slot.children)[:2]
+            assert "dstf-bars" in first.classes and "dstf-chev-slot" in second.classes
+        assert max(depths) == 5
+        assert _bars(_one(user, "tree-row:/metrics")) == []
+        tag = _one(user, "tree:root-tag")
+        assert tag.text == "root"
+        assert _one(user, "tree-row:/metrics") in list(_ancestors(tag))
+
+
+async def test_a_moves_line_starts_under_the_moved_rows_pill(shell):
+    """E4: the "Moved." line under a row is indented to that row's pill —
+    its bars, the chevron's place and the handle's, each with its gap."""
+    from dstf.authoring.shell.tree_card import pill_left
+
+    _stage_tree(shell, A, DEEP)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        path = "/metrics/children/0/children/1"
+        page.tree.say(path, "Moved.")
+        line = _one(user, "moved-note")
+        assert dict(line.style)["padding-left"] == f"{pill_left(2)}px"
+        assert pill_left(2) == 8 * 2 + 12 + 28 + 12 + 20 + 12
 
 
 async def test_the_closed_line_follows_the_session_with_the_tree_hidden(shell):
@@ -7144,9 +7222,10 @@ async def test_the_root_rows_kind_is_a_dropdown_and_its_text_the_count(page_shel
         lead = kind.parent_slot.parent
         assert "dstf-node-lead" in lead.classes and lead.parent_slot.parent is row
         children = list(row.default_slot.children)
-        # The grip's place, the pill, then the lead: right after the pill.
-        assert "dstf-grip" in children[0].classes
-        assert children.index(lead) == 2
+        # The bars, the chevron's place, the grip's place, the pill, then
+        # the lead: right after the pill (E4).
+        assert "dstf-grip" in children[2].classes
+        assert children.index(lead) == 4
         assert _one(user, "tree-text:/metrics").text == "3 criteria"
         assert list(kind.options) == ["and", "or", "k-of-n", "warn", "weighted"]
         assert _none(user, "edit:/metrics")  # an `and` has no fields
@@ -9225,7 +9304,7 @@ async def test_only_the_tree_rows_take_a_drag(nested_shell):
         targets = page.tree.targets
         assert targets["/metrics"].on_drop is not None
         assert targets["/metrics"].zones is None and targets["/metrics"].grip is None
-        root_grip = list(_one(user, "tree-row:/metrics").default_slot.children)[0]
+        root_grip = list(_one(user, "tree-row:/metrics").default_slot.children)[2]
         assert "dstf-grip" in root_grip.classes and "draggable" not in root_grip.props
         assert "dstf-grip-off" in root_grip.classes  # hidden, its place kept
         for path in (N_T2, N_K, N_KX, N_KT1, N_X2, N_Y):

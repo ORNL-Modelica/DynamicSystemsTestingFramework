@@ -32,6 +32,24 @@ if TYPE_CHECKING:
 
 NAMED = 2  #: failures the closed line names; the rest are counted
 
+#: One level's bar and the gap after it (U5, Q1): 6 px + 2 px.
+BAR_STEP = 8
+#: The row's gap between its parts (`gap-3`), the chevron's place and the
+#: drag handle's (`.dstf-chev-slot`, `.dstf-grip`), px.
+_GAP, _CHEVRON, _GRIP = 12, 28, 20
+
+
+def content_left(depth: int) -> int:
+    """Where a row's content starts, right of its bars: its chevron's place
+    (U5, E4) — where a drag's "before" line starts (U4 C15)."""
+    return BAR_STEP * depth + _GAP
+
+
+def pill_left(depth: int) -> int:
+    """Where a row's pill starts: past its chevron's place and its handle."""
+    return content_left(depth) + _CHEVRON + _GAP + _GRIP + _GAP
+
+
 #: Appended to a move's announcement when the live region already holds
 #: that text: a live region is read out when its text CHANGES, and a
 #: second "Moved." would not change it (`TreeCard.say`).
@@ -129,6 +147,45 @@ _DRAG_END = """(e) => {
   D.src = null;
 }"""
 
+
+#: The hovered branch (U5, Y2), drawn in the browser: hovering a group's
+#: row deepens that group's level bar on its row and every row under it; a
+#: criterion's row does the same for its parent group; the root, and a
+#: criterion right under it, deepen nothing. Marked on the BAR, never the
+#: row: a server repaint of a row's classes (`row.classes`) writes the
+#: row's whole class attribute and takes a client-set row class with it —
+#: the U5 spike measured it — and the server never re-classes a bar.
+_BRANCH = """(e) => {
+  const rows = e.currentTarget;
+  const row = e.target.closest && e.target.closest('[data-tree-path]');
+  let group = null;
+  if (row && row.dataset.root !== '1') {
+    const p = row.dataset.group === '1' ? row.dataset.treePath
+      : row.dataset.treePath.slice(0, row.dataset.treePath.lastIndexOf('/children/'));
+    group = rows.querySelector(`[data-tree-path="${p}"]`);
+    if (group && group.dataset.root === '1') group = null;
+  }
+  // The rows' revision in the key: rows rebuilt under a resting pointer
+  // are new rows, and are marked again.
+  const at = group ? group.dataset.treePath : '';
+  const key = `${rows.dataset.rev}|${at}`;
+  if (rows.dataset.branch === key) return;
+  rows.querySelectorAll('.dstf-lvl-on').forEach(b => b.classList.remove('dstf-lvl-on'));
+  rows.dataset.branch = key;
+  if (!group) return;
+  const k = Number(group.dataset.depth);
+  const mark = (r) => {
+    const b = r.querySelector(':scope > .dstf-bars').children[k - 1];
+    if (b) b.classList.add('dstf-lvl-on');
+  };
+  mark(group);
+  rows.querySelectorAll(`[data-tree-path^="${at}/"]`).forEach(mark);
+}"""
+_BRANCH_OFF = """(e) => {
+  const rows = e.currentTarget;
+  rows.querySelectorAll('.dstf-lvl-on').forEach(b => b.classList.remove('dstf-lvl-on'));
+  rows.dataset.branch = '';
+}"""
 
 #: The drag's own MIME type (`_DRAG_COMMON`).
 MIME = "application/x-dstf-node"
@@ -287,6 +344,8 @@ class TreeCard:
         rows.on("dragleave", js_handler=_drag_js(_DRAG_LEAVE))
         rows.on("drop", self._drop, js_handler=_drag_js(_DROP))
         rows.on("dragend", js_handler=_drag_js(_DRAG_END))
+        rows.on("mouseover", js_handler=_BRANCH)
+        rows.on("mouseleave", js_handler=_BRANCH_OFF)
         # Not refreshed here: the page builds this card before it knows
         # whether the test is one of the open project's, and `_view` raises
         # for a model the project has not got. The page's own `sync` fills
@@ -343,11 +402,12 @@ class TreeCard:
             return
         depth = path.count("/children/")
         with target.slot:
-            # Under the row's pill: its indent, the handle's place and a gap.
+            # Under the row's pill: its bars, the chevron's place and the
+            # handle's (E4).
             self.said = (
                 ui.label(text)
                 .classes("dstf-moved text-xs")
-                .style(f"padding-left: {16 * depth + 32}px")
+                .style(f"padding-left: {pill_left(depth)}px")
                 .mark("moved-note")
             )
         self.live.set_text(text if self.live.text != text else text + _AGAIN)
@@ -492,15 +552,35 @@ class TreeCard:
 
     def _row(self, node: dict, depth: int) -> None:
         path, model = str(node["path"]), self.page.model_id
+        group = node.get("kind") != "leaf"
         row = ui.row().classes("dstf-tree-row items-center no-wrap gap-3 w-full")
         self.rows_by_path[path] = row
-        # What the drag's script reads: the row's node, and the root's one
-        # zone. `--indent` is where a "before" line starts (its depth).
+        # What the page's scripts read: the row's node, its depth and
+        # whether it is a group (the hovered branch, U5 Y2), and the root's
+        # one drop zone.
         row.props["data-tree-path"] = path
+        row.props["data-depth"] = str(depth)
+        if group:
+            row.props["data-group"] = "1"
         if depth == 0:
             row.props["data-root"] = "1"
-        indent = f"padding-left: {16 * depth}px; --indent: {16 * depth}px"
-        with row.style(indent).mark(f"tree-row:{path}"):
+        # `--indent` is where a "before" line starts: the row's content,
+        # right of its bars (U4 C15, U5 E4).
+        with row.style(f"--indent: {content_left(depth)}px").mark(f"tree-row:{path}"):
+            # A bar per level (U5, Q1): what says what is under what, in
+            # place of an indent (Y3). Level i's colour cycles every four;
+            # the root draws none.
+            with (
+                ui.element("span")
+                .classes("dstf-bars")
+                .style(f"width: {BAR_STEP * depth}px")
+                .props('aria-hidden="true"')
+            ):
+                for i in range(1, depth + 1):
+                    ui.element("span").classes(f"dstf-bar dstf-lvl-{(i - 1) % 4 + 1}")
+            # The chevron's place (Q3), kept on every row — empty on a
+            # criterion — so the pills stay in line.
+            ui.element("span").classes("dstf-chev-slot")
             # The drag handle's place, before the pill: hidden — its width
             # kept, so every pill stays in line — until a panel makes the
             # row draggable (`Panel.movable`). The root's holds no handle:
@@ -522,13 +602,16 @@ class TreeCard:
             # A combinator's lead place, right after its pill: where its
             # kind is read (`Panel.lead`) — a leaf has none.
             lead: ui.element | None = None
-            if node.get("kind") != "leaf":
+            if group:
                 lead = ui.element("span").classes("dstf-node-lead")
             text = (
                 ui.label(node_text(node))
                 .classes("text-body2")
                 .mark(f"tree-text:{path}")
             )
+            if depth == 0:
+                # Q2: "and · 5 criteria · root" — the "· " is the tag's CSS.
+                ui.label("root").classes("dstf-root-tag").mark("tree:root-tag")
             readout: ui.label | None = None
             if node.get("kind") == "leaf":
                 readout = ui.label(leaf_readout(node)).classes("dstf-mono text-xs")
