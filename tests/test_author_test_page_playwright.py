@@ -5098,6 +5098,16 @@ def test_a_200_character_name_leaves_every_readout_its_room(
             assert row["right"] <= row["card"] + 0.5, row
         for row in readouts:
             assert row["readout"]["width"] >= 80, row
+        # The deepest x criterion's editor under its row: its right edge is
+        # the row's (B12), however long the name it shows.
+        deep = f"{G2}/children/0"
+        _row_text_click(page, deep)
+        editor = page.locator(".dstf-tree .dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        box, row = editor.bounding_box(), _tree_row(page, deep).bounding_box()
+        assert box and row
+        assert abs(box["x"] + box["width"] - (row["x"] + row["width"])) <= 1, (row, box)
+        assert page.evaluate("document.documentElement.scrollWidth") <= width
 
 
 # -- a click on a tree row (U5 Task 3) ----------------------------------------
