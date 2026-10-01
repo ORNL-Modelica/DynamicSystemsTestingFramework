@@ -1408,6 +1408,34 @@ async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):
         assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
 
 
+async def test_a_result_held_while_its_run_is_pending_reads_as_that_result(shell):
+    """The tool's own Rerun locks D and stamps its manifest entry pending; a
+    reload meanwhile (an Accept of another test) keeps D's result in memory
+    (`_reload_results`), and a Rerun that fails reloads nothing after it.
+    The page reads the result it holds, never the manifest: the badge and
+    the strip agree on D's verdict, and no line says it has no result."""
+    from dstf.authoring.session import RunningJob
+
+    session = shell.session
+    path = session.project.config.work_dir / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert manifest["test_0004"]["model_id"] == D
+    manifest["test_0004"]["last_run_status"] = "pending"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    held = session.project.results[D]
+    session.running = RunningJob(label="Rerun", models=frozenset({D}))
+    session._reload_results()
+    assert session.project.results[D] is held
+    session.running = None  # the Rerun failed: `_finish_job` reloads nothing
+    async with user_simulation(root=shell.index) as user:
+        page = await _drawer(shell, user, D)
+        assert page.run_state() == "ok"
+        assert page.badge.text == "PASS"
+        said = {m: _one(user, m).text for m in _RUN_LINES}
+        assert said["strip-text"] == "Passes against its baseline."
+        assert not [t for t in said.values() if "no result" in t.lower()]
+
+
 async def test_an_empty_plots_key_is_no_extras(shell):
     """`"plots": []` asks for no context and no watch plot: the derived
     plots are the tree's, and stay."""
