@@ -9187,11 +9187,13 @@ async def test_only_the_tree_rows_take_a_drag(nested_shell):
         assert targets["/metrics"].zones is None and targets["/metrics"].grip is None
         root_grip = list(_one(user, "tree-row:/metrics").default_slot.children)[0]
         assert "dstf-grip" in root_grip.classes and "draggable" not in root_grip.props
+        assert "dstf-grip-off" in root_grip.classes  # hidden, its place kept
         for path in (N_T2, N_K, N_KX, N_KT1, N_X2, N_Y):
             assert targets[path].on_drop is not None
             assert targets[path].zones is not None
             grip = _one(user, f"grip:{path}")
-            assert grip.visible and grip.props["draggable"] == "true"
+            assert "dstf-grip-off" not in grip.classes
+            assert grip.props["draggable"] == "true"
             assert grip.props["aria-label"] == "Drag to move"
         page.open_criterion(N_Y)
         await _settled(lambda: page.open is not None)
@@ -9212,11 +9214,11 @@ async def test_a_locked_rows_handle_goes_with_its_controls(nested_shell):
         await _open_tree(user)
         grip = _one(user, f"grip:{N_Y}")
         shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await _settled(lambda: not grip.visible)
+        await _settled(lambda: "dstf-grip-off" in grip.classes)
         assert page.tree.targets[N_Y].on_drop is None
         assert page.tree.targets[N_Y].zones is None
         gate.release.set()
-        await _settled(lambda: grip.visible)
+        await _settled(lambda: "dstf-grip-off" not in grip.classes)
         assert page.tree.targets[N_Y].zones is not None
 
 

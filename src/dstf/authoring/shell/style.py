@@ -89,7 +89,8 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
 /* The drag (U4): a handle before the pill, its place kept while hidden so
-   the pills stay in line. Over a row: a line at the row's indent where the
+   the pills stay in line (`.dstf-grip-off`: never Quasar's `.hidden`, whose
+   cascade layer beats an unlayered `!important`). Over a row: a line at the row's indent where the
    node would go before it, an outline onto it, a red outline where the
    move is refused — its reason then fills the card's header line, in place
    of the line's text (`.dstf-line-why`): said in the row it reflowed the
@@ -99,7 +100,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   width: 20px; flex: none; display: inline-flex; justify-content: center;
   color: var(--dstf-text-muted); cursor: grab;
 }
-.dstf-grip.hidden { display: inline-flex !important; visibility: hidden; }
+.dstf-grip-off { visibility: hidden; }
 .dstf-drop-before::before {
   content: ""; position: absolute; top: -2px; right: 0;
   left: var(--indent, 0px); height: 3px; background: var(--dstf-accent);

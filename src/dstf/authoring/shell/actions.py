@@ -99,7 +99,7 @@ class ShellPanel:
             return False
         target.on_drop, target.zones = on_drop, zones
         if zones is not None and target.grip is not None:
-            target.grip.set_visibility(True)
+            target.grip.classes(remove="dstf-grip-off")
         return True
 
     def moved(self, node_path: str, text: str) -> None:
@@ -434,7 +434,7 @@ class InlineHost:
             # a job's lock takes no drop and offers no handle.
             self.row.on_drop = self.row.zones = None
             if self.row.grip is not None and not self.row.grip.is_deleted:
-                self.row.grip.set_visibility(False)
+                self.row.grip.classes(add="dstf-grip-off")
         self.column.clear()
         self.errors, self.cells, self.answers = {}, {}, {}
 

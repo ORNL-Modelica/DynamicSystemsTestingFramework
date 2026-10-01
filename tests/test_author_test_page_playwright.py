@@ -2840,6 +2840,50 @@ def test_a_drag_starts_with_no_map_until_its_own_arrives(tmp_path, playwright_br
         assert page.evaluate(STALE_MAP, "/metrics/children/1") == "{}"
 
 
+#: Each tree row's handle: its width, whether it shows, and where the pill
+#: right after it starts.
+GRIPS = """() => [...document.querySelectorAll('.dstf-tree-row')].map(r => {
+  const g = r.querySelector('.dstf-grip');
+  return {path: r.dataset.treePath, w: g.getBoundingClientRect().width,
+          shown: getComputedStyle(g).visibility !== 'hidden',
+          pill: Math.round(g.nextElementSibling.getBoundingClientRect().x)};
+})"""
+
+
+def test_a_hidden_handle_keeps_its_place_and_a_lock_shifts_no_pill(
+    tmp_path, playwright_browser
+):
+    """The root's handle is hidden and keeps its 20 px, so the root's pill
+    and a depth-1 pill stand exactly one indent step (16 px) apart; a job's
+    lock hides every handle and moves no pill. Quasar's `.hidden` (what
+    `set_visibility(False)` adds) sits in a cascade layer that beats an
+    unlayered `!important`, so it took the handle's width with it."""
+    k = "/metrics/children/0"
+    with _served(
+        tmp_path, playwright_browser, project=_nested_project, hooks=True
+    ) as page:
+        _show_tree(page, 5)
+        free = {g["path"]: g for g in page.evaluate(GRIPS)}
+        assert free["/metrics"]["w"] == 20 and not free["/metrics"]["shown"]
+        assert free[k]["shown"] and free[k]["w"] == 20
+        assert free[k]["pill"] - free["/metrics"]["pill"] == 16
+        base = page.url.split("test/")[0]
+        try:
+            with urllib.request.urlopen(f"{base}__lock?model={A}") as r:
+                json.loads(r.read())
+            expect(page.locator(".dstf-tree .dstf-why").first).to_contain_text(
+                "rerun is running", timeout=EXPECT_TIMEOUT
+            )
+            locked = {g["path"]: g for g in page.evaluate(GRIPS)}
+            assert all(not g["shown"] and g["w"] == 20 for g in locked.values())
+            assert {p: g["pill"] for p, g in locked.items()} == {
+                p: g["pill"] for p, g in free.items()
+            }
+        finally:
+            with urllib.request.urlopen(f"{base}__unlock") as r:
+                json.loads(r.read())
+
+
 # -- the plot's +, inline; the editor opens after Add (Q3 A) ----------------
 
 

@@ -453,15 +453,20 @@ class TreeCard:
             # The drag handle's place, before the pill: hidden — its width
             # kept, so every pill stays in line — until a panel makes the
             # row draggable (`Panel.movable`). The root's holds no handle:
-            # nothing sits beside it.
-            grip = ui.element("span").classes("dstf-grip").mark(f"grip:{path}")
+            # nothing sits beside it. Hidden by its own class, never
+            # `set_visibility`: Quasar's `.hidden` sits in a cascade layer
+            # that beats an unlayered `!important`, and took the width too.
+            grip = (
+                ui.element("span")
+                .classes("dstf-grip dstf-grip-off")
+                .mark(f"grip:{path}")
+            )
             if depth:
                 grip.props["draggable"] = "true"
                 grip.props["aria-label"] = "Drag to move"
                 grip.props["title"] = "Drag to move"
                 with grip:
                     ui.icon("drag_indicator").props('aria-hidden="true"')
-            grip.set_visibility(False)
             pill = Pill(node_status(node), f"tree-pill:{path}")
             # A combinator's lead place, right after its pill: where its
             # kind is read (`Panel.lead`) — a leaf has none.

@@ -55,3 +55,34 @@ async def _touch() -> list[str]:
         grid.classes(add="touched")
         out.append(str(grid.id))
     return out
+
+
+#: The gates of the jobs `/__lock` started, opened by `/__unlock`.
+_GATES: list = []
+
+
+@app.get("/__lock")
+async def _lock(model: str = "FakeLib.A") -> dict:
+    """A job holding ``model`` until `/__unlock`: its rows rebuilt under
+    the lock, as a Rerun's are. It reloads nothing when it ends."""
+    import threading
+
+    from dstf.authoring.capabilities import Job
+
+    gate = threading.Event()
+    _GATES.append(gate)
+    job = Job(
+        run=lambda _ctx: gate.wait(30),
+        label="rerun",
+        models=frozenset({model}),
+        reloads_results=False,
+    )
+    _shell().session.apply(job)
+    return {"locked": model}
+
+
+@app.get("/__unlock")
+async def _unlock() -> dict:
+    for gate in _GATES:
+        gate.set()
+    return {"released": len(_GATES)}
