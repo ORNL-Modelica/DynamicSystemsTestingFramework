@@ -308,12 +308,16 @@ class TreeCard:
                 .mark("moved-note")
             )
         # To THIS page's client: `sync` runs from the Shell's timer, whose
-        # context is no page's (`TestPage._reveal`).
+        # context is no page's (`TestPage._reveal`). The row, then the line
+        # under it: the row alone, scrolled to its nearest edge from above,
+        # left the line below the fold.
         self.page.client.run_javascript(
             f'const r = document.getElementById("{row.html_id}");'
+            f'const l = document.getElementById("{self.said.html_id}");'
             'if (r) { r.scrollIntoView({block: "nearest"});'
             ' r.classList.remove("dstf-flash"); void r.offsetWidth;'
             ' r.classList.add("dstf-flash"); }'
+            'if (l) l.scrollIntoView({block: "nearest"});'
         )
 
     def unsay(self) -> None:

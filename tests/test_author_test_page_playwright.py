@@ -2840,6 +2840,32 @@ def test_a_drag_starts_with_no_map_until_its_own_arrives(tmp_path, playwright_br
         assert page.evaluate(STALE_MAP, "/metrics/children/1") == "{}"
 
 
+def test_a_move_below_the_fold_brings_its_row_and_its_line_into_view(
+    tmp_path, playwright_browser
+):
+    """A 330 px window: the k-of-n moved to the root's end lands below the
+    fold. Its row comes into view AND the "Moved." line under it: scrolling
+    the row alone to its nearest edge left the line under the fold."""
+    k, y = "/metrics/children/0", "/metrics/children/1"
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        page.set_viewport_size({"width": 1280, "height": 330})
+        _show_tree(page, 5)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        _tree_row(page, k).get_by_role("button", name="Move to…").click()
+        items = page.get_by_role("menuitem")
+        expect(items.first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        items.filter(has_text="(root)").filter(has_text="at the end").first.click()
+        said = page.locator(".dstf-moved")
+        expect(said).to_have_text("Moved.", timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        row, line = _tree_row(page, y).bounding_box(), said.bounding_box()
+        assert row is not None and line is not None
+        expect(_tree_row(page, y)).to_contain_text("k-of-n")
+        height = page.evaluate("() => window.innerHeight")
+        assert 0 <= row["y"] and row["y"] + row["height"] <= height + 1, row
+        assert line["y"] + line["height"] <= height, (line, height)
+
+
 #: Each tree row's handle: its width, whether it shows, and where the pill
 #: right after it starts.
 GRIPS = """() => [...document.querySelectorAll('.dstf-tree-row')].map(r => {
