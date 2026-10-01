@@ -3063,8 +3063,9 @@ def test_a_drag_that_carries_no_node_draws_and_drops_nothing(
 ):
     """A drag of text or a file over the tree is not a move: the rows read
     the drag's own MIME type, so it outlines no row and takes no drop —
-    while one carrying that type does. And a node's drag carries no text:
-    released over a text field it types nothing there."""
+    while one carrying that type does. And a node's drag, by a real mouse,
+    carries that type ALONE: no text a field it is released over would
+    take."""
     from dstf.authoring.shell.tree_card import MIME
 
     k, y = "/metrics/children/0", "/metrics/children/1"
@@ -3073,25 +3074,21 @@ def test_a_drag_that_carries_no_node_draws_and_drops_nothing(
         assert page.evaluate(FOREIGN, [k, "text/plain", True]) == [False, False, False]
         assert page.evaluate(FOREIGN, [k, "Files", True]) == [False, False, False]
         assert page.evaluate(FOREIGN, [k, MIME, False]) == [True, True]
+        # On the window, so after the rows' own handler has set its data.
         page.evaluate(
-            """() => { const i = document.createElement('input');
-              i.id = 'plain-field';
-              i.style = 'position:fixed;right:20px;bottom:20px;width:300px;'
-                + 'height:30px;z-index:9999';
-              document.body.appendChild(i); }"""
+            """() => window.addEventListener('dragstart', (e) => {
+              window.dragTypes = [...e.dataTransfer.types]; })"""
         )
-        field = page.locator("#plain-field").bounding_box()
-        assert field is not None
         grip = _tree_row(page, y).locator(".dstf-grip").bounding_box()
         assert grip is not None
         page.mouse.move(grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
         page.mouse.down()
         page.mouse.move(grip["x"] + 12, grip["y"] + 8, steps=4)
-        page.mouse.move(field["x"] + 150, field["y"] + 15, steps=15)
+        page.mouse.move(5, 5, steps=10)  # off the tree: no drop there
         page.wait_for_timeout(300)
+        assert page.evaluate("() => window.dragTypes") == [MIME]
         page.mouse.up()
         page.wait_for_timeout(300)
-        assert page.locator("#plain-field").input_value() == ""
         expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")
 
 
