@@ -4938,10 +4938,12 @@ def test_a_tree_rows_click_answers_the_keyboard(tmp_path, playwright_browser):
         expect(k_of_n).to_have_attribute("aria-expanded", "true")
         page.keyboard.press(" ")
         expect(forms).to_have_count(0, timeout=EXPECT_TIMEOUT)
-        # Enter on the k-of-n's `+`: its Add form, and nothing of the row's.
-        k_of_n.get_by_role("button", name=re.compile("^Add a criterion")).focus()
+        # Enter on the k-of-n's chevron: it folds, and nothing of the row's.
+        k_of_n.locator(".dstf-chev").focus()
         page.keyboard.press("Enter")
-        expect(forms).to_contain_text("Add a criterion", timeout=EXPECT_TIMEOUT)
+        expect(k_of_n).to_have_attribute("data-folded", "1", timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(400)
-        expect(forms).to_have_count(1)
-        expect(forms).to_contain_text("Add a criterion")
+        assert forms.count() == 0
+        expect(k_of_n).to_have_attribute("aria-expanded", "false")
+        page.keyboard.press("Enter")
+        expect(_tree_row(page, K_TUBE)).to_be_visible(timeout=EXPECT_TIMEOUT)
