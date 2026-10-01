@@ -453,13 +453,22 @@ class TestPage:
                 )
             return
         self.open_criterion(path, index)
-        if self.open is not None and self.open[1] == path:
-            self.client.run_javascript(
-                'document.querySelector(".dstf-crit-open")'
-                '?.scrollIntoView({block: "nearest"});'
-                'document.querySelector(".dstf-editor")'
-                '?.scrollIntoView({block: "nearest"})'
-            )
+        # BY THEIR IDS (H6, F3's hazard): a `.dstf-crit-open` query found the
+        # tree row an open had just closed, and a `.dstf-editor` one that
+        # row's editor — both going with the next update, which this
+        # script can overtake (`_scroll_to_open`).
+        row = self._drawn_row(path)
+        if row is None or self.open is None or not 0 <= self.open[0] < len(self.cards):
+            return
+        editor = self.cards[self.open[0]].editor_box
+        if editor is None:
+            return
+        self.client.run_javascript(
+            f'document.getElementById("{row.html_id}")'
+            '?.scrollIntoView({block: "nearest"});'
+            f'document.getElementById("{editor.html_id}")'
+            '?.scrollIntoView({block: "nearest"})'
+        )
 
     def toggle_criterion(self, index: int, path: str) -> None:
         """A criteria row's own click: its editor opens, or closes if that

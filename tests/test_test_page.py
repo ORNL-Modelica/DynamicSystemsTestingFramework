@@ -10823,6 +10823,31 @@ async def test_a_jump_from_an_open_tree_editor_scrolls_to_the_plots_row(shell):
         assert not any(".dstf-crit-open" in js for js in sent)
 
 
+async def test_a_reveal_from_an_open_tree_editor_scrolls_to_the_plots_row(shell):
+    """H6 (F3's hazard in `_reveal`): an add's reveal, with a tree editor
+    open, finds the row it opened and its editor BY THEIR IDS — a
+    `.dstf-crit-open` query found the tree row the open had just closed,
+    and a `.dstf-editor` one the tree's editor, going with the same
+    update the script can overtake."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        await _open_tree(user)
+        _tree_click(user, T1)
+        await _settled(lambda: page.open == (TREE_OPEN, T1))
+        sent = _js_sent(page)
+        with page.client:
+            page._reveal(T1, None)
+        assert page.open is not None and page.open[0] >= 0
+        card = page.cards[page.open[0]]
+        row, editor = card.rows[T1].row, card.editor_box
+        assert editor is not None
+        scrolls = [js for js in sent if "scrollIntoView" in js]
+        assert scrolls, sent
+        assert all(row.html_id in js and editor.html_id in js for js in scrolls), sent
+        assert not any("querySelector" in js for js in scrolls), sent
+
+
 # -- U5 Task 4: the jump icon ------------------------------------------------
 
 
