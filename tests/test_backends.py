@@ -1152,6 +1152,47 @@ class TestDymolaStatisticsFromLogs:
         assert "simulation" not in stats
         assert "dslog.txt" in capsys.readouterr().err
 
+    def test_a_malformed_translation_log_keeps_the_dslogs_statistics(
+        self, tmp_path, capsys
+    ):
+        """The translation log goes through the same warning as the dslog:
+        a number in it that is no number costs that log's statistics, and
+        the one warning names the file and the error's type."""
+        import shutil
+
+        from dstf.backends.dymola.log_parser import parse_dslog, parse_test_logs
+
+        name = "dslog.txt"
+        shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, tmp_path / name)
+        translation_log = tmp_path / "translation_log.txt"
+        translation_log.write_text(
+            "CPU-time for integration      : 1.2.3 s\n", encoding="utf-8"
+        )
+        assert parse_test_logs(tmp_path) == parse_dslog(tmp_path / name)
+        (warn,) = [
+            line
+            for line in capsys.readouterr().err.splitlines()
+            if line.startswith("# WARN:")
+        ]
+        assert str(translation_log) in warn and "ValueError" in warn
+
+    def test_a_parser_bug_is_not_a_malformed_log(self, tmp_path, monkeypatch):
+        """Only a ValueError is the log's text: anything else the parse
+        raises is the parser's own error, and is not read as a warning."""
+        import shutil
+
+        from dstf.backends.dymola import log_parser
+
+        name = "dslog.txt"
+        shutil.copy(FIXTURES_DIR / "results" / "Dymola" / name, tmp_path / name)
+
+        def broken(text, stats):
+            raise AttributeError("a programming error")
+
+        monkeypatch.setattr(log_parser, "_parse_simulation_stats", broken)
+        with pytest.raises(AttributeError):
+            log_parser.parse_test_logs(tmp_path)
+
     def test_no_logs_reads_as_before(self, tmp_path):
         self._test_dir(tmp_path, logs=False)
         test = _tm("Lib.A", variable_patterns=["x"])

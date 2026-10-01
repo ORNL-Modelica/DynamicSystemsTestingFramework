@@ -63,12 +63,18 @@ def parse_test_logs(test_dir: Path) -> dict | None:
 
 def _parse_or_warn(path: Path) -> dict | None:
     """:func:`parse_dslog`, or None with a warning when the log's text
-    breaks the parse. A log is data a simulator wrote, so any error parsing
-    it is that file's, not the read's."""
+    breaks the parse. A log is data a simulator wrote, so an error its text
+    raises is that file's, not the read's — and the only one it can raise
+    is a ValueError (``int`` / ``float`` over a matched number: ``1.2.3``,
+    or past ``int``'s digit limit on 3.11+). Anything else is the parser's
+    own bug, and propagates."""
     try:
         return parse_dslog(path)
-    except Exception as exc:
-        print(f"# WARN: could not parse {path}: {exc}", file=sys.stderr)
+    except ValueError as exc:
+        print(
+            f"# WARN: could not parse {path}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return None
 
 
