@@ -137,10 +137,6 @@ class ShellPanel:
             self._reveal(leaf_path)
 
 
-def _say_nothing(_e: BaseException) -> None:
-    """`RowTarget.refuse` where no panel has registered a drop."""
-
-
 class RowTarget:
     """Where an InlineHost's panels open their rows: a slot the page owns
     under one row, and the page's one-open-at-a-time rule. ``key`` names the
@@ -177,8 +173,11 @@ class RowTarget:
         self.on_drop: Callable[[str, str], None] | None = None
         self.zones: Callable[[], dict[str, dict[str, str | None]]] | None = None
         #: Says a drop refused before it reached the panel's act, the way
-        #: that panel says its own refusals (`TreeCard.dropped`).
-        self.refuse: Callable[[BaseException], None] = _say_nothing
+        #: that panel says its own refusals (`TreeCard.dropped`). Set with
+        #: `on_drop`, by `Panel.movable` — every panel in a row has a way
+        #: to say a refusal (`InlineHost`) — and read only where `on_drop`
+        #: is set: no default, which nothing could reach.
+        self.refuse: Callable[[BaseException], None]
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -446,7 +445,6 @@ class InlineHost:
             # And what they registered for the drag: a host rebuilt under
             # a job's lock takes no drop and offers no handle.
             self.row.on_drop = self.row.zones = None
-            self.row.refuse = _say_nothing
             if self.row.grip is not None and not self.row.grip.is_deleted:
                 self.row.grip.classes(add="dstf-grip-off")
         self.column.clear()
