@@ -9413,3 +9413,21 @@ async def test_a_move_by_the_menu_says_it_too(nested_shell):
         _click(user, _one(user, f"move-dest:{N_Y}:0"))  # the root, at 1
         await _settled(lambda: not _none(user, "moved-note"))
         assert _one(user, "moved-note").text == "Moved."
+
+
+async def test_a_failed_runs_statistics_line_says_there_is_no_run_result(
+    stats_shell,
+):
+    """A run that failed recorded no statistics: nothing on its side was
+    compared, so its closed line is no "all match" — it says the run has
+    no result to compare, as a test with no run does."""
+    from dstf.backends.types import TestResult
+
+    shell = stats_shell
+    result = shell.session.project.results[A]
+    shell.session.project.results[A] = TestResult(
+        model_id=A, success=False, variables=list(result.variables)
+    )
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        assert _line_text(user) == "no run result"

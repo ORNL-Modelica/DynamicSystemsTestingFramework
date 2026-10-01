@@ -73,7 +73,8 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
     section order, at most `NAMED` named, then `+N more` — or `no count
     changed`; then, after a `·`, the changed times, the farthest moved
     first, at most `TIMES`. `all match` where no count and no time
-    changed; or why it names none. The owner's ruling
+    changed; or why it names none — "no run result" where ``has_run`` is
+    false: no run, or one that failed. The owner's ruling
     (2026-09-30): over TRANSFORM CPUtime ran ~2.2x its baseline on 324 of
     331 tests, so a line naming times among the counts named CPUtime on
     every test; the open table still tints a changed time."""
@@ -330,7 +331,9 @@ class StatsCard:
                 )
         assert self._summary is not None
         self._toggle.props(f"icon={'expand_more' if self.is_open else 'chevron_right'}")
-        self._summary.set_text(line_text(stats, self.page.result() is not None))
+        # A failed run is no result to compare: it recorded no statistics,
+        # and its line read "all match" with nothing on the run's side.
+        self._summary.set_text(line_text(stats, self.page.run_state() == "ok"))
 
     # -- the rows ----------------------------------------------------------------
 
