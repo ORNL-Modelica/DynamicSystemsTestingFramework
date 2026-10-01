@@ -9413,9 +9413,24 @@ async def test_the_moved_row_says_what_changed(
         _drop(page, src, target, zone)
         await _settled(lambda: not _none(user, "moved-note"))
         line = _one(user, "moved-note")
-        assert line.text == note
+        await _settled(lambda: line.text == note)
         if zone == "before" and target == "/metrics/children/0":
             assert page.tree.targets[landed].slot in list(_ancestors(line))
+
+
+async def test_the_moved_line_is_a_live_region_filled_once_drawn(nested_shell):
+    """`role="status"`, created EMPTY and its text set in a later update:
+    a live region is read out when its text changes, and one that arrives
+    already holding it is not."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.say(N_Y, "Moved.")
+        line = page.tree.said
+        assert line is not None and line.props["role"] == "status"
+        assert line.text == ""
+        await _settled(lambda: line.text == "Moved.")
 
 
 async def test_the_moved_line_goes_with_the_next_form(nested_shell):
@@ -9426,7 +9441,7 @@ async def test_the_moved_line_goes_with_the_next_form(nested_shell):
         _drop(page, N_Y, N_T2, "before")
         await _settled(lambda: not _none(user, "moved-note"))
         line = _one(user, "moved-note")
-        assert line.text == "Moved."
+        await _settled(lambda: line.text == "Moved.")
         # y is the first child now: the line is under ITS row.
         assert page.tree.targets[N_T2].slot in list(_ancestors(line))
         _click_in(user, f"wrap:{N_T2}", f"node:{N_T2}")
@@ -9466,7 +9481,7 @@ async def test_a_move_by_the_menu_says_it_too(nested_shell):
         await _open_move_menu(user, N_Y)
         _click(user, _one(user, f"move-dest:{N_Y}:0"))  # the root, at 1
         await _settled(lambda: not _none(user, "moved-note"))
-        assert _one(user, "moved-note").text == "Moved."
+        await _settled(lambda: _one(user, "moved-note").text == "Moved.")
 
 
 async def test_an_event_ahead_of_the_moves_own_spec_event_keeps_the_line(

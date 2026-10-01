@@ -6,10 +6,11 @@ every place a node can go from `move_destinations`.
 The owner's rulings it implements: a move that empties a combinator
 removes it, up the tree (D2); a ``k-of-n`` whose ``k`` exceeds its
 criteria lowers ``k``, a weight leaves a ``weighted`` with its child and a
-node moved into one gets weight 1 — each said in the move's notes (D3); a move that puts under an ``or`` or
-a ``k-of-n`` a child that can never fail is refused (D4, by D142's reason:
-it would pass its parent with nothing else passing). Only a pairing the
-move MAKES is refused — a tree as it is stays as it is.
+node moved into one gets weight 1 — each said in the move's notes (D3); a
+move that puts under an ``or`` or a ``k-of-n`` a child that can never fail
+is refused (D4, by D142's reason: it would pass its parent with nothing
+else passing). Only a pairing the move MAKES is refused — a tree as it is
+stays as it is.
 """
 
 from __future__ import annotations

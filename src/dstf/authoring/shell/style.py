@@ -120,8 +120,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 @keyframes dstf-flash { from { background: var(--dstf-selection); } }
 .dstf-flash { animation: dstf-flash 1.2s ease-out; }
 /* Its scroll margin: what is above the tree settles a pixel lower after
-   the line is scrolled to (the page's header row and strip repaint). */
-.dstf-moved { color: var(--dstf-text-secondary); scroll-margin-bottom: 8px; }
+   the line is scrolled to (the page's header row and strip repaint). Its
+   line's height while it is still empty (`TreeCard.say`): scrolled to
+   empty, it then grew below the fold. */
+.dstf-moved {
+  color: var(--dstf-text-secondary); scroll-margin-bottom: 8px; min-height: 1lh;
+}
 /* Move to… (U4): a place per line, its node's text cut in the middle and
    where in it kept whole; the menu no wider than the page allows. */
 .dstf-move-menu { max-width: min(560px, 92vw); }

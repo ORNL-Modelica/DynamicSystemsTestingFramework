@@ -13,11 +13,12 @@ sync with the tree open)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from nicegui import ui
+from nicegui import background_tasks, ui
 
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
@@ -31,6 +32,10 @@ if TYPE_CHECKING:
     from .test_page import TestPage
 
 NAMED = 2  #: failures the closed line names; the rest are counted
+
+#: How long a move's line stands empty before its text: long enough for
+#: the browser to have it (`TreeCard.say`).
+SAY_AFTER = 0.05
 
 #: The drag (U4), drawn in the browser — only the drag's start and the drop
 #: reach the server. A row's top half is BEFORE it, its bottom half ONTO
@@ -243,6 +248,15 @@ class _Row:
             self.readout.set_text(leaf_readout(node))
 
 
+async def _fill(said: ui.label, text: str) -> None:
+    """A move's line's text, in an update of its own after the one that
+    created it — never the same: the outbox sends one tick's updates as
+    one message."""
+    await asyncio.sleep(SAY_AFTER)
+    if not said.is_deleted:
+        said.set_text(text)
+
+
 class TreeCard:
     def __init__(self, page: TestPage) -> None:
         self.page = page
@@ -327,8 +341,11 @@ class TreeCard:
         depth = path.count("/children/")
         with target.slot:
             # Under the row's pill: its indent, the handle's place and a gap.
+            # Empty, its text set once the browser has it (`_fill`): a live
+            # region is read out when its text CHANGES, and one that arrives
+            # holding it already is not.
             self.said = (
-                ui.label(text)
+                ui.label("")
                 .classes("dstf-moved text-xs")
                 .style(f"padding-left: {16 * depth + 32}px")
                 .props('role="status"')
@@ -346,6 +363,7 @@ class TreeCard:
             ' r.classList.add("dstf-flash"); }'
             'if (l) l.scrollIntoView({block: "nearest"});'
         )
+        background_tasks.create(_fill(self.said, text), name="moved-note")
 
     def unsay(self) -> None:
         if self.said is not None and not self.said.is_deleted:

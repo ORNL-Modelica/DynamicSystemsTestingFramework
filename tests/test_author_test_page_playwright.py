@@ -2630,6 +2630,15 @@ def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
 
 MENU_ACTIVE = "() => document.activeElement.innerText.replace(/\\s+/g, ' ').trim()"
 
+#: Records each move's line as it enters the page: its text right then.
+SAID_AT_FIRST = """() => {
+  window.saidAtFirst = [];
+  new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach(
+    (n) => n.nodeType === 1 && [n, ...n.querySelectorAll('*')].forEach(
+      (e) => e.matches('.dstf-moved') && window.saidAtFirst.push(e.textContent)))))
+    .observe(document.body, {childList: true, subtree: true});
+}"""
+
 
 def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_browser):
     """range · y's Move to…, by the keyboard alone: Enter opens its menu
@@ -2656,6 +2665,7 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         assert page.evaluate(MENU_ACTIVE) == "k-of-n · 2 criteria · k=1 — at the end"
         page.keyboard.press("Home")
         assert page.evaluate(MENU_ACTIVE) == "and · 3 criteria (root) — at 1"
+        page.evaluate(SAID_AT_FIRST)
         page.keyboard.press("Enter")
         expect(rows.nth(1)).to_contain_text("range · y", timeout=EXPECT_TIMEOUT)
         expect(items).to_have_count(0)
@@ -2663,6 +2673,9 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         # The moved row, in view, says it moved on one line right under it.
         said = page.locator(".dstf-moved")
         expect(said).to_have_text("Moved.", timeout=EXPECT_TIMEOUT)
+        # A live region, drawn empty and then given its text: read out.
+        assert page.evaluate("() => window.saidAtFirst") == [""]
+        expect(said).to_have_attribute("role", "status")
         page.wait_for_timeout(300)
         line, row = said.bounding_box(), rows.nth(1).bounding_box()
         assert line is not None and row is not None

@@ -913,8 +913,9 @@ def planned_move(s: SessionView, model_id: str, src: str, dest: Dest) -> Moved |
     through; `act` stages this plan's tree, so the two cannot disagree.
     Compute it BEFORE `submit`: afterwards ``src`` names another node (in
     ``[x, y]``, child 1 to the front gives ``[y, x]``; once that went
-    through, the same call moves x back). Checked against the test's baseline roles as `Session.stage` checks
-    it, so a refusal is the validator's sentence, raised here."""
+    through, the same call moves x back). Checked against the test's
+    baseline roles as `Session.stage` checks it, so a refusal is the
+    validator's sentence, raised here."""
     tree, why = s.tree_or_reason(model_id)
     if tree is None:
         assert why is not None  # `tree` is None
