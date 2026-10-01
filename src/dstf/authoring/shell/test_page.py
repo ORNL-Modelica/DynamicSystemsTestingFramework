@@ -231,8 +231,9 @@ class TestPage:
     def plots_withheld(self) -> bool:
         """O2's gate: a result that is not a success has no plots whatever
         its tree and extras say, and a watch plot made on it would draw
-        nothing — a run that failed, or one that never finished the test
-        and left a partial result. `run_state` words it."""
+        nothing — a run that failed (`run_state`'s "failed"). A run that
+        never finished the test hands in no result (D145), and withholds
+        nothing: there is nothing to draw."""
         result = self.result()
         return result is not None and not result.success
 

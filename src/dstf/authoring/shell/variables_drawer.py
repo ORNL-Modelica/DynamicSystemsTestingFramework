@@ -58,10 +58,9 @@ _RAMP = HUES[0]
 
 _SPACE = re.compile(r"\s+")
 
-#: The target line and the grey "+ new plot"'s reason on a run that failed,
-#: and on one that never finished the test (`TestPage.run_state`).
+#: The target line and the grey "+ new plot"'s reason on a run that failed
+#: (`TestPage.run_state`). A test with no result reads as one never run.
 RUN_FAILED = "The run failed: no plots"
-NO_RESULT = "No result yet: no plots"
 
 
 def marker(kind: str, row_id: str) -> str:
@@ -289,21 +288,15 @@ class VariablesDrawer:
             return
         n = len(page.cards)
         # O2's gate: a result that is not a success has no plots — nothing
-        # to add context to, and a watch plot made on it would draw nothing
-        # — worded by the run state, as every line of the page is.
+        # to add context to, and a watch plot made on it would draw nothing.
+        # Its run failed (`run_state`), as every line of the page says.
         run = page.run_state()
-        self.withheld = (
-            (RUN_FAILED if run == "failed" else NO_RESULT)
-            if page.plots_withheld()
-            else None
-        )
+        self.withheld = RUN_FAILED if page.plots_withheld() else None
         self.target.set_text(
             f"Checkboxes add context to plot {page.selected + 1} of {n}"
             if n
             else RUN_FAILED
             if run == "failed"
-            else NO_RESULT
-            if run == "none" and page.result() is not None
             else "No plot yet: + new plot adds one"
         )
         try:
