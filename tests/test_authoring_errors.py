@@ -48,6 +48,24 @@ def test_a_config_error_is_not_logged_and_a_bare_value_error_is(caplog):
     assert [r.exc_info[1] for r in caplog.records if r.exc_info] == [e]
 
 
+def test_a_refused_move_is_a_persons_error_shown_and_not_logged(caplog):
+    """A Move to… menu or a drag map gone stale under a staged edit offers
+    a move the tree now refuses: its sentence is shown, never logged as a
+    bug with a traceback."""
+    pytest.importorskip("nicegui")
+    from dstf.authoring.errors import USER_ERRORS
+    from dstf.authoring.shell.actions import log_unless_users
+    from dstf.authoring.tree_move import INTO_ITSELF, MoveRefused
+
+    assert MoveRefused in USER_ERRORS
+    try:
+        raise MoveRefused(INTO_ITSELF)
+    except ValueError as raised:
+        log_unless_users(raised, "probe")
+        assert user_text(raised) == INTO_ITSELF
+    assert not caplog.records
+
+
 def test_an_unexpected_error_keeps_its_class_name():
     assert user_text(KeyError("k")) == "KeyError: 'k'"
 

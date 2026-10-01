@@ -896,7 +896,9 @@ def planned_move(s: SessionView, model_id: str, src: str, dest: Dest) -> Moved |
     """The move `EditTree.act` stages, with where the node lands and what
     else changed — what a panel reveals and says after its ``submit`` went
     through; `act` stages this plan's tree, so the two cannot disagree.
-    Checked against the test's baseline roles as `Session.stage` checks
+    Compute it BEFORE `submit`: afterwards ``src`` names another node (in
+    ``[x, y]``, child 1 to the front gives ``[y, x]``; once that went
+    through, the same call moves x back). Checked against the test's baseline roles as `Session.stage` checks
     it, so a refusal is the validator's sentence, raised here."""
     tree, why = s.tree_or_reason(model_id)
     if tree is None:

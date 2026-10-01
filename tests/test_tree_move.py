@@ -19,7 +19,7 @@ from dstf.authoring.tree_move import (
     validator_for,
 )
 from dstf.comparison.tree_spec import MetricSpecError, parse_metric_tree
-from dstf.comparison.validator import role_lookup_from_names
+from dstf.comparison.validator import role_lookup_from_names, validate_tree
 
 R = "/metrics"
 
@@ -195,7 +195,23 @@ def test_out_of_a_weighted_its_weight_leaves():
     tree = C("and", L("a"), _weighted(L("b"), L("c"), L("d"), weights=[2, 3, 5]))
     moved = move(tree, p(1, 1), Dest("at", R, 0))
     assert moved.tree["children"][2] == _weighted(L("b"), L("d"), weights=[2, 5])
-    assert moved.notes == ()
+    # The row says what changed (D3): the weight left with its child.
+    assert moved.notes == ("weight 3 went with it",)
+
+
+def test_from_one_weighted_into_another_both_weights_are_said():
+    tree = C(
+        "and",
+        _weighted(L("a"), L("b"), weights=[2.5, 3]),
+        _weighted(L("c"), L("d"), weights=[4, 5]),
+    )
+    moved = move(tree, p(0, 0), Dest("at", p(1), 1))
+    assert moved.tree == C(
+        "and",
+        _weighted(L("b"), weights=[3]),
+        _weighted(L("c"), L("a"), L("d"), weights=[4, 1, 5]),
+    )
+    assert moved.notes == ("weight 2.5 went with it", "weight 1 given")
 
 
 def test_inside_one_weighted_the_weight_travels_with_its_child():
@@ -211,6 +227,7 @@ def test_a_weighted_that_loses_an_emptied_child_loses_its_weight():
     tree = C("and", L("a"), _weighted(C("and", L("b")), L("c"), weights=[2, 3]))
     moved = move(tree, p(1, 0, 0), Dest("at", R, 0))
     assert moved.tree["children"][2] == _weighted(L("c"), weights=[3])
+    assert moved.notes == ("the empty and was removed", "weight 2 went with it")
 
 
 # -- refusals (V5, in its order) ---------------------------------------------
@@ -259,6 +276,14 @@ def test_a_move_that_changes_nothing_is_none():
     assert move(FLAT, p(1), Dest("at", R, 2)) is None
     assert move(FLAT, p(3), Dest("at", R, None)) is None
     assert move(FLAT, p(3), Dest("onto", R)) is None
+
+
+def test_a_move_among_identical_siblings_that_leaves_the_tree_as_it_is_is_none():
+    """Two equal criteria trading places change no tree: nothing to stage."""
+    tree = C("and", L("x"), L("x"), L("y", metric="range"))
+    assert move(tree, p(0), Dest("at", R, 2)) is None
+    # A wrap is a change, even of two equal criteria.
+    assert move(tree, p(0), Dest("onto", p(1))) is not None
 
 
 # -- D4 by its reason: a child that can never fail, under or / k-of-n ------
@@ -412,3 +437,81 @@ def test_move_destinations_of_a_combinator_refuse_its_own_subtree():
     rows = move_destinations(NESTED, p(2), validate=VALIDATE)
     why = {label: w for label, _, w in rows}
     assert why["k-of-n · 2 criteria · k=2 — at 1"] == WARN_UNDER
+
+
+# -- what the mutation review of Part A found unpinned ------------------------
+
+
+def test_a_warn_moves_into_a_weighted_d4_is_or_and_k_of_n_only():
+    tree = C(
+        "and",
+        L("z"),
+        C("warn", L("a")),
+        C("weighted", L("b"), L("c"), weights=[2, 3], threshold=1.0),
+    )
+    moved = move(tree, p(1), Dest("at", p(2), None))
+    assert moved.tree == C(
+        "and",
+        L("z"),
+        C(
+            "weighted",
+            L("b"),
+            L("c"),
+            C("warn", L("a")),
+            weights=[2, 3, 1],
+            threshold=1.0,
+        ),
+    )
+    assert moved.notes == ("weight 1 given",)
+
+
+def test_a_weighted_can_always_fail_so_it_moves_into_an_or():
+    group = C("weighted", C("warn", L("a")), weights=[1], threshold=1.0)
+    tree = C("and", L("z"), group, C("or", L("b"), L("c")))
+    assert move(tree, p(1), Dest("at", p(2), 0)) is not None
+
+
+def test_validator_for_joins_the_messages_with_one_space_as_stage_does():
+    raw = C("and", C("warn", L("a")), L("s", against="sc"), L("c", against="co"))
+    errors = validate_tree(
+        parse_metric_tree(raw), role_lookup_from_names(soft_checks=["sc"])
+    )
+    assert len(errors) >= 2
+    with pytest.raises(MoveRefused) as e:
+        VALIDATE(raw)
+    assert str(e.value) == " ".join(err.message for err in errors)
+
+
+def test_d4_is_said_before_the_validators_sentence():
+    """p onto q wraps it inside the warn: the and it leaves always passes
+    under the or (D4) AND no primary is left outside a warn (validator)."""
+    tree = C("and", C("or", C("and", L("p"), C("warn", L("q"))), C("warn", L("r"))))
+    with pytest.raises(MoveRefused) as e:
+        move(tree, p(0, 0, 0), Dest("onto", p(0, 0, 1, 0)))
+    assert str(e.value) == WARN_UNDER
+    after = C(
+        "and", C("or", C("and", C("warn", C("and", L("q"), L("p")))), C("warn", L("r")))
+    )
+    with pytest.raises(MoveRefused, match="primary"):
+        VALIDATE(after)  # not vacuous: the validator refuses it too
+
+
+def test_at_on_a_criterion_is_a_callers_error_not_a_refusal():
+    with pytest.raises(ValueError, match="is a criterion") as e:
+        plan_move(FLAT, p(0), Dest("at", p(1), 0))
+    assert not isinstance(e.value, MoveRefused)
+
+
+@pytest.mark.parametrize(
+    ("src", "dest"), [(p(9), Dest("at", R, 0)), (p(0), Dest("at", p(9), 0))]
+)
+def test_a_path_that_names_no_node_is_a_callers_error(src, dest):
+    with pytest.raises(ValueError, match="names no node") as e:
+        plan_move(FLAT, src, dest)
+    assert not isinstance(e.value, MoveRefused)
+
+
+def test_d4_is_the_moves_own_rule_not_the_validators():
+    with pytest.raises(MoveRefused) as e:
+        plan_move(NESTED, p(2), Dest("at", p(1), 1))  # no validate=
+    assert str(e.value) == WARN_UNDER

@@ -1,7 +1,7 @@
 """What the tool says when an action fails.
 
 The errors a person can cause — a patch the validator refuses, a drag a
-criterion cannot take, a value out of range, a locked spec, a running job —
+criterion cannot take, a move the tree refuses, a value out of range, a locked spec, a running job —
 read as their plain reason: the location is already on the screen, beside
 the row or the plot it came from. The validator's refusal of a tree of
 warnings read "PatchError: validator rejected the patched tree: metrics:
@@ -15,6 +15,7 @@ from ..comparison.handles import HandleEditError
 from ..config import ConfigError
 from ..discovery.patch_apply import PatchError
 from .session import JobRunningError, LockedError
+from .tree_move import MoveRefused
 
 #: What a person's own edit raises. Shown as its reason and never logged.
 USER_ERRORS: tuple[type[BaseException], ...] = (
@@ -23,6 +24,9 @@ USER_ERRORS: tuple[type[BaseException], ...] = (
     ConfigError,
     LockedError,
     JobRunningError,
+    # A move the tree refuses — a Move to… menu or a drag map gone stale
+    # under an edit staged since offers one — is said, not a bug.
+    MoveRefused,
 )
 
 

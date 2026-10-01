@@ -6,7 +6,7 @@ every place a node can go from `move_destinations`.
 The owner's rulings it implements: a move that empties a combinator
 removes it, up the tree (D2); a ``k-of-n`` whose ``k`` exceeds its
 criteria lowers ``k``, a weight leaves a ``weighted`` with its child and a
-node moved into one gets weight 1 (D3); a move that puts under an ``or`` or
+node moved into one gets weight 1 — each said in the move's notes (D3); a move that puts under an ``or`` or
 a ``k-of-n`` a child that can never fail is refused (D4, by D142's reason:
 it would pass its parent with nothing else passing). Only a pairing the
 move MAKES is refused — a tree as it is stays as it is.
@@ -215,9 +215,12 @@ def plan_move(
         index = dest.index if dest.kind == "at" else None
         anchor = kids[index] if index is not None and index < len(kids) else None
 
-    # Out: the node leaves its parent; its weight goes with it.
+    # Out: the node leaves its parent; its weight goes with it — said,
+    # unless it only moves among the same weighted's children.
     del old_parent["children"][old_index]
     weight = _drop_weight(old_parent, old_index)
+    if weight is not None and into is not old_parent:
+        notes.append(_went(weight))
     # In, BEFORE any repair: the destination then holds the node, so the
     # prune below never removes it nor anything holding it, and a place
     # before a combinator the prune removes is where that combinator was.
@@ -246,13 +249,20 @@ def plan_move(
             break
         i = _index_of(up["children"], node)
         del up["children"][i]
-        _drop_weight(up, i)
         notes.append(f"the empty {node['combinator']} was removed")
+        pruned = _drop_weight(up, i)
+        if pruned is not None:
+            notes.append(_went(pruned))
     for node in chain:
         k, n = node.get("k"), len(node["children"])
         if node.get("combinator") == "k-of-n" and n and isinstance(k, int) and k > n:
             node["k"] = n
             notes.append(f"k {k} → {n}")
+
+    if not wrap and new == tree:
+        # Two equal siblings trading places: the tree is as it was, and a
+        # pending edit that changes nothing is no edit.
+        return None
 
     # D4, by D142's reason: a child that can never fail under an `or` or
     # a `k-of-n` is refused where the move made that pairing; one the old
@@ -285,6 +295,12 @@ def _drop_weight(node: dict, index: int) -> float | None:
     if not isinstance(weights, list) or index >= len(weights):
         return None
     return weights.pop(index)
+
+
+def _went(weight: object) -> str:
+    """The note for a weight that left its ``weighted`` with its child."""
+    text = format(weight, "g") if isinstance(weight, (int, float)) else str(weight)
+    return f"weight {text} went with it"
 
 
 def _view(node: dict, names: Mapping[str, str]) -> dict:

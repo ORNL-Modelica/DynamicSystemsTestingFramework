@@ -3175,3 +3175,30 @@ def test_an_unknown_action_is_refused_before_its_inputs_are_read(session):
     view = SessionView(session, _node(A, ROOT))
     with pytest.raises(ValueError, match="unknown action 'swap'"):
         EditTree().act(view, action="swap", model_id=A, path=ROOT)
+
+
+def test_a_move_after_rescore_folds_the_materialization_and_is_unmarked(
+    two_var_session,
+):
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    s.rescore(A)
+    (marked,) = s.spec.pending
+    assert marked.materializes  # the op the move folds is the marked one
+    s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
+    (pending,) = s.spec.pending
+    assert (pending.op, pending.path, pending.materializes) == ("add", ROOT, False)
+
+
+def test_a_move_onto_a_criterion_stages_the_wrap(two_var_session):
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    x, y = s.tree(A)["children"]
+    patch = _move(s, "/metrics/children/1", Dest("onto", "/metrics/children/0"))
+    (op,) = patch.ops
+    assert op.value == {
+        "combinator": "and",
+        "children": [{"combinator": "and", "children": [x, y]}],
+    }
