@@ -63,11 +63,13 @@ ROWS = [
         "grey",
         "No result yet — rerun to simulate it.",
     ),
+    # The classifier's SIM_FAIL is a run that reached a verdict (D145): the
+    # strip says it failed, as the badge does, whatever result is held.
     (
         dict(status="SIM_FAIL", has_result=False),
-        S.NO_RESULT,
-        "grey",
-        "No result yet — rerun to simulate it.",
+        S.SIM_FAIL,
+        "red",
+        "The simulation failed. Fix the model or its settings, then rerun.",
     ),
     (
         dict(status="SIM_FAIL", has_result=True),

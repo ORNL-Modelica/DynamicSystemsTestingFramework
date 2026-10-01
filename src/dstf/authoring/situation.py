@@ -147,8 +147,9 @@ def strip_for(
     if status is None and (has_result or loading):
         return Strip(S.WAITING, "grey", "Scoring…")
     # NOT RUN is the classifier's word for this situation (D145): the
-    # header's badge and the strip say one thing.
-    if status == NOT_RUN or (not has_result and status in (None, SIM_FAIL)):
+    # header's badge and the strip say one thing. A SIM_FAIL is a run that
+    # reached a verdict, and reads as one below.
+    if status == NOT_RUN or (not has_result and status is None):
         return Strip(S.NO_RESULT, "grey", "No result yet — rerun to simulate it.")
     if status == SIM_FAIL:
         return Strip(
