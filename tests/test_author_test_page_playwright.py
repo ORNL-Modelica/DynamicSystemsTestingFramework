@@ -2840,6 +2840,102 @@ def test_a_drag_starts_with_no_map_until_its_own_arrives(tmp_path, playwright_br
         assert page.evaluate(STALE_MAP, "/metrics/children/1") == "{}"
 
 
+#: Over ``p``'s row, onto it: a dragover carrying ``mime`` alone and, when
+#: ``drop``, a drop — with a source in place, as a drag of ours leaves it.
+#: Whether the row was drawn on and whether each event was taken.
+FOREIGN = """([p, mime, drop]) => {
+  const D = window.dstfMove || (window.dstfMove = {src: null, map: {}});
+  D.src = '/metrics/children/1'; D.map = {};
+  const row = document.querySelector(`[data-tree-path="${p}"]`);
+  const r = row.getBoundingClientRect();
+  const at = {bubbles: true, cancelable: true,
+              clientX: r.x + r.width * 0.4, clientY: r.y + r.height * 0.8};
+  const dt = new DataTransfer();
+  dt.setData(mime, 'x');
+  const over = new DragEvent('dragover', {...at, dataTransfer: dt});
+  row.dispatchEvent(over);
+  const out = [/dstf-drop/.test(row.className), over.defaultPrevented];
+  if (drop) {
+    const ev = new DragEvent('drop', {...at, dataTransfer: dt});
+    row.dispatchEvent(ev);
+    out.push(ev.defaultPrevented);
+  }
+  row.dispatchEvent(new DragEvent('dragend', {bubbles: true, dataTransfer: dt}));
+  return out;
+}"""
+
+
+def test_a_drag_that_carries_no_node_draws_and_drops_nothing(
+    tmp_path, playwright_browser
+):
+    """A drag of text or a file over the tree is not a move: the rows read
+    the drag's own MIME type, so it outlines no row and takes no drop —
+    while one carrying that type does. And a node's drag carries no text:
+    released over a text field it types nothing there."""
+    from dstf.authoring.shell.tree_card import MIME
+
+    k, y = "/metrics/children/0", "/metrics/children/1"
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        assert page.evaluate(FOREIGN, [k, "text/plain", True]) == [False, False, False]
+        assert page.evaluate(FOREIGN, [k, "Files", True]) == [False, False, False]
+        assert page.evaluate(FOREIGN, [k, MIME, False]) == [True, True]
+        page.evaluate(
+            """() => { const i = document.createElement('input');
+              i.id = 'plain-field';
+              i.style = 'position:fixed;right:20px;bottom:20px;width:300px;'
+                + 'height:30px;z-index:9999';
+              document.body.appendChild(i); }"""
+        )
+        field = page.locator("#plain-field").bounding_box()
+        assert field is not None
+        grip = _tree_row(page, y).locator(".dstf-grip").bounding_box()
+        assert grip is not None
+        page.mouse.move(grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(grip["x"] + 12, grip["y"] + 8, steps=4)
+        page.mouse.move(field["x"] + 150, field["y"] + 15, steps=15)
+        page.wait_for_timeout(300)
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        assert page.locator("#plain-field").input_value() == ""
+        expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")
+
+
+def test_a_drag_over_no_row_draws_no_place(tmp_path, playwright_browser):
+    """From a row's place to a "Moved." line under another row — inside
+    the rows, on no row: the outline the row drew goes, and nothing is
+    drawn there or dropped."""
+    k, y = "/metrics/children/0", "/metrics/children/1"
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        _tree_row(page, y).get_by_role("button", name="Move to…").click()
+        items = page.get_by_role("menuitem")
+        expect(items.first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        items.first.click()  # y to the root's front: its line under it
+        said = page.locator(".dstf-moved")
+        expect(said).to_have_text("Moved.", timeout=EXPECT_TIMEOUT)
+        expect(_tree_row(page, k)).to_contain_text("range · y")
+
+        def over_the_line(page):
+            drawn = page.locator(".dstf-tree-row.dstf-drop").count()
+            box = said.bounding_box()
+            assert box is not None
+            x, y_ = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            page.mouse.move(x, y_, steps=6)
+            page.wait_for_timeout(200)
+            page.mouse.move(x + 2, y_, steps=2)
+            page.wait_for_timeout(100)
+            return drawn, page.locator(".dstf-tree-row.dstf-drop").count()
+
+        # the k-of-n over y's top half (before it), then over y's line
+        drawn, after = _mouse_drag(page, y, k, BEFORE, over_the_line)
+        assert (drawn, after) == (1, 0)
+        page.wait_for_timeout(300)
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+        expect(_tree_row(page, k)).to_contain_text("range · y")
+
+
 def test_a_move_below_the_fold_brings_its_row_and_its_line_into_view(
     tmp_path, playwright_browser
 ):

@@ -9101,6 +9101,14 @@ async def test_move_to_is_on_the_tree_rows_only_and_never_on_the_root(nested_she
 # -- move a subtree (U4): the drag's two ends, without a browser -----------
 
 
+def _drop(page, src: str, target: str, zone: str) -> None:
+    """A drop as the browser sends it: with the revision of the rows its
+    drag started on (`TreeCard.revision`)."""
+    page.tree.dropped(
+        {"src": src, "target": target, "zone": zone, "rev": str(page.tree.revision)}
+    )
+
+
 @pytest.mark.parametrize(
     ("src", "target", "zone", "order"),
     [
@@ -9120,7 +9128,7 @@ async def test_a_drop_maps_its_zone_to_a_place(nested_shell, src, target, zone, 
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        page.tree.dropped({"src": src, "target": target, "zone": zone})
+        _drop(page, src, target, zone)
         await _settled(lambda: len(shell.session.spec.pending) == 1)
         kids = shell.session.tree(A)["children"]
         assert [c.get("variable") for c in kids] == order
@@ -9136,15 +9144,46 @@ async def test_a_drop_where_no_place_is_stages_nothing(nested_shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        page.tree.dropped({"src": N_Y, "target": "/metrics", "zone": "before"})
-        page.tree.dropped({"src": N_T2, "target": N_Y, "zone": "after"})
-        page.tree.dropped({"src": N_K, "target": N_KX, "zone": "onto"})
+        _drop(page, N_Y, "/metrics", "before")
+        _drop(page, N_T2, N_Y, "after")
+        _drop(page, N_K, N_KX, "onto")
         await _settled(lambda: _one(user, f"tree-row:{N_KX}") is not None)
         assert shell.session.spec.pending == []
         errors = page.tree.targets[N_KX].slot.descendants()
         assert [e.text for e in errors if isinstance(e, ui.label) and e.visible] == [
             INTO_ITSELF
         ]
+
+
+async def test_a_drop_on_rows_rebuilt_since_its_drag_started_is_refused(
+    nested_shell, caplog
+):
+    """A drag carries the rows' revision from its start. An edit staged
+    mid-drag rebuilt the rows, and the drag's paths name the nodes of a
+    tree that is gone: its drop is refused under its row — a refusal said,
+    never logged as a bug — and stages nothing. The same drop from the
+    rows as they are goes through."""
+    from dstf.authoring.tree_move import TREE_CHANGED
+
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        started = str(page.tree.revision)
+        shell.session.stage([PatchOp(A, "remove", N_Y)])
+        await _settled(lambda: str(page.tree.revision) != started)
+        page.tree.dropped({"src": N_T2, "target": N_K, "zone": "onto", "rev": started})
+        await asyncio.sleep(0.2)
+        assert len(shell.session.spec.pending) == 1  # the remove alone
+        errors = page.tree.targets[N_K].slot.descendants()
+        assert [e.text for e in errors if isinstance(e, ui.label) and e.visible] == [
+            TREE_CHANGED
+        ]
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        _drop(page, N_T2, N_K, "onto")
+        await _settled(lambda: len(shell.session.tree(A)["children"]) == 2)
+        kids = shell.session.tree(A)["children"][0]["children"]
+        assert [c["variable"] for c in kids] == ["x", "pipe.T[1]", "pipe.T[2]"]
 
 
 async def test_a_drags_zones_are_its_sources_read_at_its_start(nested_shell):
@@ -9166,7 +9205,7 @@ async def test_a_drags_zones_are_its_sources_read_at_its_start(nested_shell):
         assert zones[N_Y] == {"before": "", "onto": INTO_ITSELF}
         assert zones[N_KX] == {"before": None, "onto": None}
         assert page.tree.zones_for("/metrics") == {}  # the root is no source
-        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        _drop(page, N_Y, N_T2, "before")
         await _settled(lambda: len(shell.session.spec.pending) == 1)
         await _settled(lambda: page.tree.targets[N_Y].zones is not None)
         # y is the first child now: the k-of-n is child 2, its rows keyed so.
@@ -9253,9 +9292,7 @@ async def test_a_move_closes_the_open_editor_rather_than_rebind_it(nested_shell)
         page.open_criterion(first)
         await _settled(lambda: page.open is not None and page.open[1] == first)
         shape = page.shape(page._view())
-        page.tree.dropped(
-            {"src": "/metrics/children/1", "target": first, "zone": "before"}
-        )
+        _drop(page, "/metrics/children/1", first, "before")
         await _settled(
             lambda: shell.session.tree(A)["children"][0].get("max_value") == 100.0
         )
@@ -9276,9 +9313,7 @@ async def test_a_move_closes_an_open_form_row(nested_shell):
         await _open_tree(user)
         _click_in(user, f"wrap:{first}", f"node:{first}")
         await _settled(lambda: page.form is not None)
-        page.tree.dropped(
-            {"src": "/metrics/children/1", "target": first, "zone": "before"}
-        )
+        _drop(page, "/metrics/children/1", first, "before")
         await _settled(lambda: not _none(user, "moved-note"))
         assert page.form is None
 
@@ -9375,7 +9410,7 @@ async def test_the_moved_row_says_what_changed(
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        page.tree.dropped({"src": src, "target": target, "zone": zone})
+        _drop(page, src, target, zone)
         await _settled(lambda: not _none(user, "moved-note"))
         line = _one(user, "moved-note")
         assert line.text == note
@@ -9388,7 +9423,7 @@ async def test_the_moved_line_goes_with_the_next_form(nested_shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        _drop(page, N_Y, N_T2, "before")
         await _settled(lambda: not _none(user, "moved-note"))
         line = _one(user, "moved-note")
         assert line.text == "Moved."
@@ -9403,7 +9438,7 @@ async def test_the_moved_line_goes_with_the_next_editor(nested_shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        _drop(page, N_Y, N_T2, "before")
         await _settled(lambda: not _none(user, "moved-note"))
         page.open_criterion(N_T2)
         await _settled(lambda: _none(user, "moved-note"))
@@ -9414,7 +9449,7 @@ async def test_the_moved_line_goes_with_the_next_edit(nested_shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        _drop(page, N_Y, N_T2, "before")
         await _settled(lambda: not _none(user, "moved-note"))
         await asyncio.sleep(0.3)  # the move's own events have all arrived
         assert not _none(user, "moved-note")
@@ -9446,7 +9481,7 @@ async def test_an_event_ahead_of_the_moves_own_spec_event_keeps_the_line(
         await _open_tree(user)
         await asyncio.sleep(0.3)
         shell._events.put({"event": "results", "models": {A}})
-        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        _drop(page, N_Y, N_T2, "before")
         await asyncio.sleep(0.6)  # both events have been handled
         assert page.pending_moved is None
         assert not _none(user, "moved-note")

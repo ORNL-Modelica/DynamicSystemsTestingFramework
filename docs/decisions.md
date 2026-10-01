@@ -6261,7 +6261,16 @@ task text, and one fix batch from the review of its first part.
    row red, takes no drop, and says its reason in ONE place, the tree
    card's header line, in place of the line's text while it is dragged
    over (C14, the controller's call): said inside the row it reflowed the
-   row's icons, and the browser shows no title while it drags.
+   row's icons, and the browser shows no title while it drags. Over no
+   row — a form row, a move's line — nothing is drawn. The drag carries
+   its own MIME type (`application/x-dstf-node`), never text: a drag of
+   text or a file over the tree draws nothing and drops nothing, and a
+   node released over a text field types nothing into it. It carries the
+   revision of the rows it started on, too (`TreeCard.revision`): a drop
+   on rows rebuilt since — an edit staged mid-drag — is refused under its
+   row, "The tree changed while you dragged: try again."
+   (`tree_move.TREE_CHANGED`, a `MoveRefused`), since its paths name the
+   nodes of a tree that is gone.
 8. *After a move (V4, C11).* The panel plans the move BEFORE it submits
    (`edit_tree.planned_move`; afterwards `src` names another node) and,
    once the submit went through, calls `Panel.moved`: every open editor

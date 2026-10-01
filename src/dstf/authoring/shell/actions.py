@@ -79,8 +79,12 @@ class ShellPanel:
         reveal: Callable[[str], None] | None = None,
         lead: ui.element | None = None,
         target: RowTarget | None = None,
+        fail: Callable[[BaseException], None] | None = None,
     ) -> None:
         self._submit, self.figure = submit, figure
+        #: Says a refusal the way a failed `submit` does (a drop refused
+        #: before it reaches the act); None where nothing is said.
+        self._fail = fail
         self._row, self._reveal, self._lead = row, reveal, lead
         #: The row this panel is drawn in, where there is one.
         self._target = target
@@ -98,6 +102,8 @@ class ShellPanel:
         if target is None or not target.drag:
             return False
         target.on_drop, target.zones = on_drop, zones
+        if self._fail is not None:
+            target.refuse = self._fail
         if zones is not None and target.grip is not None:
             target.grip.classes(remove="dstf-grip-off")
         return True
@@ -129,6 +135,10 @@ class ShellPanel:
         # Quiet where there is no page (a dialog): the contract's no-op.
         if self._reveal is not None:
             self._reveal(leaf_path)
+
+
+def _say_nothing(_e: BaseException) -> None:
+    """`RowTarget.refuse` where no panel has registered a drop."""
 
 
 class RowTarget:
@@ -166,6 +176,9 @@ class RowTarget:
         self.grip: ui.element | None = None
         self.on_drop: Callable[[str, str], None] | None = None
         self.zones: Callable[[], dict[str, dict[str, str | None]]] | None = None
+        #: Says a drop refused before it reached the panel's act, the way
+        #: that panel says its own refusals (`TreeCard.dropped`).
+        self.refuse: Callable[[BaseException], None] = _say_nothing
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -433,6 +446,7 @@ class InlineHost:
             # And what they registered for the drag: a host rebuilt under
             # a job's lock takes no drop and offers no handle.
             self.row.on_drop = self.row.zones = None
+            self.row.refuse = _say_nothing
             if self.row.grip is not None and not self.row.grip.is_deleted:
                 self.row.grip.classes(add="dstf-grip-off")
         self.column.clear()
@@ -508,14 +522,17 @@ class InlineHost:
                 ui.label(sentence).classes("dstf-why").mark(f"why:{cap.name}")
             return
 
+        def fail(e: BaseException) -> None:
+            log_unless_users(e, cap.name)
+            error.set_text(user_text(e))
+            error.set_visibility(True)
+
         def submit(**inputs: Any) -> bool:
             try:
                 outcome = cap.act(view, **inputs)
                 self.shell.session.apply(outcome)
             except Exception as e:  # shown, and changes nothing
-                log_unless_users(e, cap.name)
-                error.set_text(user_text(e))
-                error.set_visibility(True)
+                fail(e)
                 return False
             error.set_visibility(False)
             if outcome is not None and self.on_applied is not None:
@@ -538,6 +555,7 @@ class InlineHost:
                         else partial(self.row.page.reveal, index=self.row.index),
                         lead=None if self.row is None else self.row.lead,
                         target=self.row,
+                        fail=fail,
                     ),
                 )
             except Exception as e:  # shown in the slot, never breaks the page

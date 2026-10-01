@@ -22,6 +22,7 @@ from nicegui import ui
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
+from ..tree_move import TREE_CHANGED, MoveRefused
 from ..tree_text import count_text, leaf_name, node_text, nodes_of
 from .actions import InlineHost, RowTarget
 from .widgets import Pill
@@ -41,7 +42,15 @@ NAMED = 2  #: failures the closed line names; the rest are counted
 #: refused zone outlines its row and says why in the card's header line,
 #: in place of the line's text — said in the row, it reflowed the row's
 #: icons, and the browser shows no title while it drags.
+#:
+#: The drag carries its own MIME type, never text: a drag that does not
+#: (a file, a selection) draws nothing and drops nothing here, and ours,
+#: released over a text field, types no path into it. It carries the
+#: rows' revision from its start too (`TreeCard.revision`): a drop on rows
+#: rebuilt since is refused (`TreeCard.dropped`).
 _DRAG_COMMON = """const D = window.dstfMove || (window.dstfMove = {src: null, map: {}});
+const MIME = __MIME__;
+const ours = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes(MIME);
 const zoneOf = (row, e) => {
   if (row.dataset.root === '1') return 'onto';
   const r = row.getBoundingClientRect();
@@ -64,16 +73,19 @@ _DRAG_START = """(e) => {
   const row = grip && grip.closest('[data-tree-path]');
   if (!row) return;
   D.src = row.dataset.treePath;
+  D.rev = e.currentTarget.dataset.rev;
   D.map = {};
   e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', D.src);
+  e.dataTransfer.setData(MIME, D.src);
   e.dataTransfer.setDragImage(row, 12, row.offsetHeight / 2);
   emit(D.src);
 }"""
 _DRAG_OVER = """(e) => {
   __COMMON__
+  if (!D.src || !ours(e)) return;
   const row = e.target.closest && e.target.closest('[data-tree-path]');
-  if (!row || !D.src) return;
+  // Over no row (a form row, a slot, a move's line): no place, nothing drawn.
+  if (!row) { clear(e.currentTarget); return; }
   const zone = zoneOf(row, e);
   const why = (D.map[row.dataset.treePath] || {})[zone];
   clear(e.currentTarget);
@@ -95,6 +107,7 @@ _DRAG_LEAVE = """(e) => {
 }"""
 _DROP = """(e) => {
   __COMMON__
+  if (!ours(e)) return;
   const row = e.target.closest && e.target.closest('[data-tree-path]');
   const src = D.src;
   clear(e.currentTarget);
@@ -103,7 +116,7 @@ _DROP = """(e) => {
   e.preventDefault();
   const zone = zoneOf(row, e);
   if ((D.map[row.dataset.treePath] || {})[zone] != null) return;
-  emit({src: src, target: row.dataset.treePath, zone: zone});
+  emit({src: src, target: row.dataset.treePath, zone: zone, rev: D.rev});
 }"""
 _DRAG_END = """(e) => {
   __COMMON__
@@ -112,8 +125,14 @@ _DRAG_END = """(e) => {
 }"""
 
 
+#: The drag's own MIME type (`_DRAG_COMMON`).
+MIME = "application/x-dstf-node"
+
+
 def _drag_js(handler: str) -> str:
-    return handler.replace("__COMMON__", _DRAG_COMMON)
+    return handler.replace("__COMMON__", _DRAG_COMMON).replace(
+        "__MIME__", json.dumps(MIME)
+    )
 
 
 def shape_of(view: dict | None) -> tuple[tuple[str, str, str, str], ...]:
@@ -239,6 +258,9 @@ class TreeCard:
         self.targets: dict[str, RowTarget] = {}
         #: A move's line, under the moved row (`say`).
         self.said: ui.label | None = None
+        #: The rows' revision, one up at each rebuild: what a drag carries
+        #: from its start and its drop is checked against (`dropped`).
+        self.revision = 0
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
@@ -284,9 +306,14 @@ class TreeCard:
 
     def dropped(self, args: dict) -> None:
         """A drop the browser allowed: the row it landed on hands it to the
-        panel that registered for it there, if one did."""
+        panel that registered for it there, if one did. A drag that started
+        on rows rebuilt since is refused under that row: its paths name the
+        nodes of a tree that is no longer there."""
         target = self.targets.get(str(args.get("target")))
         if target is None or target.on_drop is None:
+            return
+        if str(args.get("rev")) != str(self.revision):
+            target.refuse(MoveRefused(TREE_CHANGED))
             return
         target.on_drop(str(args.get("src")), str(args.get("zone")))
 
@@ -440,6 +467,9 @@ class TreeCard:
         self.hosts, self.painters, self.rows_by_path = [], {}, {}
         self.targets = {}
         self.rows.clear()
+        self.revision += 1
+        self.rows.props["data-rev"] = str(self.revision)
+        self.rows.update()
         with self.rows:
             self._row(view, 0)
 

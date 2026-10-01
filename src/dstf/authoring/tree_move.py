@@ -36,6 +36,9 @@ WARN_UNDER = (
     "A warning passes whatever it scores: under or / k-of-n it would pass its "
     "parent with nothing else passing."
 )
+#: Not the tree's refusal but the drag's: one that started on rows rebuilt
+#: before its drop (`TreeCard.dropped`), whose paths name another tree.
+TREE_CHANGED = "The tree changed while you dragged: try again."
 
 #: The place a node already is, as `move_destinations` lists it.
 WHERE_IT_IS = "where it is"
