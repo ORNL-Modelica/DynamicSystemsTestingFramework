@@ -3,10 +3,14 @@ parsing. Everything here has callers in more than one command module."""
 
 import argparse
 import fnmatch
+import sys
+from collections.abc import Iterable
 from pathlib import Path
 
+from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.test_registry import TestModel
+from ..reporting.status import NOT_RUN, exit_code, nothing_ran
 
 
 def _build_config(args: argparse.Namespace) -> Config:
@@ -158,6 +162,21 @@ _VALID_REVIEW_FILTERS = {
     "sim-failed",
     "passed",
 }
+
+
+def _exit_code(comparisons: Iterable[TestComparison]) -> int:
+    """`run` and `compare`'s exit code on every route (``exit_code``), and
+    when it is 1 because nothing ran, ONE stderr line saying so: a junit or
+    html report, or ``--report``'s pages, exited 1 without a word (D145
+    §5)."""
+    comps = list(comparisons)
+    if nothing_ran(comps):
+        print(
+            f"Nothing ran: no test in scope has a result ({len(comps)} "
+            f"{NOT_RUN}) — exit 1.",
+            file=sys.stderr,
+        )
+    return exit_code(comps)
 
 
 def _parse_review_filter(filter_str: str) -> set[str]:

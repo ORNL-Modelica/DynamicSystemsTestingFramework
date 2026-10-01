@@ -6217,7 +6217,9 @@ from drawn options: such a test gets a status of its own, **NOT RUN**.
    comparison, or every one NOT RUN (`nothing_ran`) — exits 1 on every
    route (console, `--report-format junit`, `--report-format html`,
    `--report`, `run -i`), as the console's "No comparisons to report"
-   always did. NOT RUN arises four ways, and the exit code in each:
+   always did, and says so in ONE stderr line from one CLI helper over
+   `exit_code` (`cli.common._exit_code`): "Nothing ran: no test in scope
+   has a result (N NOT RUN) — exit 1." NOT RUN arises four ways, and the exit code in each:
    a test never in a run, beside tests that ran — 0 when those passed;
    a run aborted by its process ending (Ctrl+C, a crash) — a later
    `compare` exits by every result the work dir holds — this run's and

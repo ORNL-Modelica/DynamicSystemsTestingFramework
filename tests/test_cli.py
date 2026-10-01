@@ -962,6 +962,17 @@ _ROUTES = {
 
 _T1, _T2 = "Lib.T1", "Lib.T2"
 
+
+def _said_nothing_ran(err: str) -> list[str]:
+    """The lines of ``err`` that say nothing ran — ONE when nothing did, on
+    every route (D145 §5)."""
+    return [line for line in err.splitlines() if line.startswith("Nothing ran")]
+
+
+def _nothing_ran_line(n: int) -> str:
+    return f"Nothing ran: no test in scope has a result ({n} NOT RUN) — exit 1."
+
+
 #: T1 has a baseline, T2 has none; neither has a result unless one is named.
 _SITUATIONS = {
     "not run + pass": ({_T1: None}, 0),
@@ -1004,8 +1015,13 @@ class TestTheExitCodeOnEveryRoute:
         [("run", r) for r in _ROUTES]
         + [("compare", r) for r in _ROUTES if r != "interactive"],
     )
-    def test_the_exit_code(self, routed, command, route, situation):
+    def test_the_exit_code(self, routed, capsys, command, route, situation):
+        """The exit code, and when nothing ran the one stderr line that says
+        why it is 1 — the junit, html and --report routes said nothing."""
+        capsys.readouterr()
         assert routed(command, route, situation) == _SITUATIONS[situation][1]
+        said = _said_nothing_ran(capsys.readouterr().err)
+        assert said == ([_nothing_ran_line(2)] if situation == "nothing ran" else [])
 
 
 class TestNothingRanOverTheRealLibrary:
@@ -1037,9 +1053,11 @@ class TestNothingRanOverTheRealLibrary:
         return [a.format(out=tmp_path / route) for a in _ROUTES[route]]
 
     @pytest.mark.parametrize("route", ROUTES)
-    def test_a_compare_over_a_work_dir_nothing_ran_in(self, lib, route):
+    def test_a_compare_over_a_work_dir_nothing_ran_in(self, lib, route, capsys):
         dstf, tmp_path = lib
         assert dstf("compare", *self._route(tmp_path, route)) == 1
+        # The example library's three tests, none with a result.
+        assert _said_nothing_ran(capsys.readouterr().err) == [_nothing_ran_line(3)]
 
     def test_a_compare_after_a_pool_that_never_started(self, lib, monkeypatch):
         from dstf.backends.python.backend import PythonBackend
@@ -1161,14 +1179,16 @@ class TestInteractiveReviewExitCode:
         assert "Status: NOT RUN" in out and "SIM_FAIL" not in out
         assert "Skipping (not run)" in out
 
-    def test_a_review_in_which_nothing_ran_exits_one(self, tmp_path):
+    def test_a_review_in_which_nothing_ran_exits_one(self, tmp_path, capsys):
         """D145 §5: `run -i` exits as `run` does — nothing ran is not a
-        green run. (A review is quit only at a prompt, which only a test
-        that ran is offered.)"""
+        green run, and it says so. (A review is quit only at a prompt,
+        which only a test that ran is offered.)"""
         config, store = _review_env(tmp_path)
         not_run = _FakeComp("Lib.A", passed=False, sim_success=False, ran=False)
         assert _interactive_review([], {}, [not_run], store, config) == 1
+        assert _said_nothing_ran(capsys.readouterr().err) == [_nothing_ran_line(1)]
         assert _interactive_review([], {}, [], store, config) == 1
+        assert _said_nothing_ran(capsys.readouterr().err) == [_nothing_ran_line(0)]
 
     def test_accepting_the_failure_resolves_it(self, monkeypatch, tmp_path, capsys):
         config, store = _review_env(tmp_path)

@@ -390,8 +390,19 @@ class TestReportFormatRouting:
                 report_format=fmt, output=str(tmp_path / f"r.{fmt}")
             )
             config = _fake_config(work_dir)
+            capsys.readouterr()
             assert _output_report([], args, config, {}) == 1, fmt
             assert _output_report([_not_run(), _not_run("L.M")], args, config, {}) == 1
+            # One line each, on stderr, saying why (D145 §5).
+            said = [
+                line
+                for line in capsys.readouterr().err.splitlines()
+                if line.startswith("Nothing ran")
+            ]
+            assert said == [
+                "Nothing ran: no test in scope has a result (0 NOT RUN) — exit 1.",
+                "Nothing ran: no test in scope has a result (2 NOT RUN) — exit 1.",
+            ], fmt
         assert exit_code([]) == 1
         assert exit_code(iter([_not_run()])) == 1
         assert exit_code([_not_run(), _passing()]) == 0

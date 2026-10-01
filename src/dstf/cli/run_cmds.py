@@ -10,9 +10,9 @@ from ..backends.progress import recorded_backend
 from ..config import ConfigError
 from ..discovery.test_registry import discover_tests
 from ..pipeline import run_pipeline, wipe_stale_state_for_scope, write_id_mapping
-from ..reporting.status import exit_code
 from .common import (
     _build_config,
+    _exit_code,
     _filter_tests,
     _find_orphan_manifest_entries,
     _parse_review_filter,
@@ -410,7 +410,7 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
 
     # A test NOT RUN, or with no baseline, does not fail the run; a run in
     # which nothing ran does (D145).
-    return exit_code(comparisons)
+    return _exit_code(comparisons)
 
 
 def _output_report(
@@ -425,7 +425,7 @@ def _output_report(
         out = Path(getattr(args, "output", None) or "test-results.xml")
         generate_junit_report(comparisons, out)
         print(f"JUnit report written to {out}")
-        return exit_code(comparisons)
+        return _exit_code(comparisons)
     elif fmt == "html":
         # One HTML surface, not three: --report-format html writes the same
         # dashboard page render_final produces (both callers have already
@@ -453,8 +453,9 @@ def _output_report(
                 f"reports/) resolve only inside {config.work_dir}",
                 file=sys.stderr,
             )
-        return exit_code(comparisons)
+        return _exit_code(comparisons)
     else:
         from ..reporting.console_report import print_report
 
-        return print_report(comparisons)
+        print_report(comparisons)
+        return _exit_code(comparisons)

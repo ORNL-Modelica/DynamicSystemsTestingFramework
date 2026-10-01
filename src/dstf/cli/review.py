@@ -4,7 +4,7 @@ from ..backends.types import label_with_name
 from ..discovery.test_registry import TestModel
 from ..reporting.status import NOT_RUN, STATUS_LABELS, nothing_ran
 from ..storage.accept import accept_run_results
-from .common import _parse_review_filter, _should_review
+from .common import _exit_code, _parse_review_filter, _should_review
 
 
 def _interactive_review(
@@ -239,8 +239,11 @@ def _interactive_review(
 
     auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
     print(f"\nDone. Accepted {n_accepted}, skipped {n_skipped}{auto}.")
-    # review 2026-07-06 finding 62: see n_unresolved above.
-    return 1 if n_unresolved or nothing_ran(comparisons) else 0
+    # review 2026-07-06 finding 62: see n_unresolved above. A review in
+    # which nothing ran exits as `run` does, saying so (D145 §5).
+    if nothing_ran(comparisons):
+        return _exit_code(comparisons)
+    return 1 if n_unresolved else 0
 
 
 def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -> None:
