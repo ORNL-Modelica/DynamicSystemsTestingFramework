@@ -1250,11 +1250,10 @@ async def test_a_form_under_a_folded_row_opens_just_the_path_to_it(page_shell):
 
 
 async def test_an_edit_outside_the_tree_leaves_the_folds_alone(page_shell):
-    """R2: what is done outside the tree unfolds nothing. A plot's `+` adds
-    at the root's end; a criterion staged into a folded group from
-    anywhere else leaves it folded, its summary counting the new one; the
-    header's named jump opens a criterion inside a folded group on its
-    plot."""
+    """R2: what this page does outside the tree unfolds nothing. A plot's
+    `+` adds at the root's end; the header's named jump opens a criterion
+    inside a folded group on its plot. (An edit staged from anywhere else
+    unfolds every group: the owner's ruling, H2.)"""
     shell = page_shell
     tree = {
         "combinator": "and",
@@ -1276,16 +1275,108 @@ async def test_an_edit_outside_the_tree_leaves_the_folds_alone(page_shell):
         await _settled(lambda: "/metrics/children/1" in page.tree.rows_by_path)
         assert page.state.tree_folded == {A: [group]}
         assert _hidden(page) == _under(page, group)
-        shell.session.stage([PatchOp(A, "add", f"{group}/children/-", _range(-6))])
-        await _settled(lambda: f"{group}/children/3" in page.tree.rows_by_path)
-        assert page.state.tree_folded == {A: [group]}
-        assert (
-            _one(user, f"tree-summary:{group}").text == "· 4 hidden · 3 pass · 1 fail"
-        )
-        assert _hidden(page) == _under(page, group)
         with page.client:
             page.jump_to(f"{group}/children/2")
         await _settled(lambda: page.open is not None)
+        assert page.state.tree_folded == {A: [group]}
+        assert _hidden(page) == _under(page, group)
+
+
+#: and[and[r], and[r, r]]: the group at /1 moves to /0 when /0 goes.
+TWO_GROUPS = {
+    "combinator": "and",
+    "children": [
+        {"combinator": "and", "children": [_range(-1)]},
+        {"combinator": "and", "children": [_range(-2), _range(-3)]},
+    ],
+}
+
+
+def _all_open(page) -> bool:
+    return (
+        not page.state.tree_folded.get(A)
+        and not _hidden(page)
+        and not any(
+            row.props.get("data-folded") for row in page.tree.rows_by_path.values()
+        )
+    )
+
+
+async def test_a_discard_unfolds_every_group(shell):
+    """H2, the owner's ruling (2026-10-01): a tree change this page did not
+    make itself unfolds every group of the test. Fold /1, remove /0 here
+    (the fold follows its group to /0), then Discard: the tree is the
+    saved one again and every group is open."""
+    p0, p1 = "/metrics/children/0", "/metrics/children/1"
+    _stage_tree(shell, A, TWO_GROUPS)
+    shell.session.save()
+    assert not shell.session.spec.pending
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        _fold(user, p1)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p1])
+        _click_in(user, f"remove:{p0}", within=f"tree-row:{p0}")
+        await _settled(lambda: p1 not in page.tree.rows_by_path)
+        assert page.state.tree_folded == {A: [p0]}
+        rev = page.tree.revision
+        shell.session.discard(models={A})
+        await _settled(lambda: page.tree.revision != rev)
+        assert p1 in page.tree.rows_by_path
+        assert _all_open(page)
+
+
+async def test_an_edit_this_page_did_not_make_unfolds_every_group(shell):
+    """H2: another tab's edit — a stage that is no act of this page — unfolds
+    every group, though it moved no row (the rows are painted, not
+    rebuilt)."""
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, TWO_GROUPS)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        rev = page.tree.revision
+        shell.session.stage([PatchOp(A, "replace", f"{p0}/children/0/min_value", -5)])
+        await _settled(lambda: not page.state.tree_folded.get(A))
+        assert page.tree.revision == rev
+        assert _all_open(page)
+
+
+async def test_this_pages_own_edits_keep_the_folds(page_shell):
+    """H2: an edit this page made is no reason to unfold — a criterion's
+    editor on its plot (the folded group's summary follows the verdict it
+    moved, painted in place) and a layout edit."""
+    from dstf.authoring.layout import new_watch
+
+    shell = page_shell
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "and", "children": [_range(-1), _range(5)]},
+            _range(-2),
+        ],
+    }
+    group, failing = "/metrics/children/0", "/metrics/children/0/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        _fold(user, group)
+        await _settled(lambda: page.state.tree_folded.get(A) == [group])
+        summary = _one(user, f"tree-summary:{group}")
+        assert summary.text == "· 2 hidden · 1 pass · 1 fail"
+        rev = page.tree.revision
+        user.find(marker=f"criterion:0:{failing}").click()
+        await _settled(lambda: page.open == (0, failing))
+        (lower,) = _numbers(page, "Lower bound (optional)")
+        with page.client:
+            lower.set_value(-5.0)
+        await _settled(lambda: summary.text == "· 2 hidden · 2 pass")
+        assert page.tree.revision == rev  # painted, not rebuilt
+        assert page.state.tree_folded == {A: [group]}
+        cards = len(page.cards)
+        with page.client:
+            assert page.stage_layout(new_watch(shell.session.layout(A), "y"))
+        await _settled(lambda: len(page.cards) == cards + 1)
         assert page.state.tree_folded == {A: [group]}
         assert _hidden(page) == _under(page, group)
 

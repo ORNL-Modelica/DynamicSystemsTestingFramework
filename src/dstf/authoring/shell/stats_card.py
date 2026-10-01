@@ -399,6 +399,7 @@ class StatsCard:
                         figure=None,
                         marker=f"statistic:{path}",
                         row=target,
+                        apply=self.page.apply,
                     )
                     host.column.classes(remove="w-full", add="dstf-node-host")
         if leaves:
@@ -475,6 +476,7 @@ class StatsCard:
                 figure=None,
                 marker=f"stats-editor:{leaf_path}",
                 on_applied=self._applied,
+                apply=self.page.apply,
             )
             self.editor.build()
         self._edited = self._edited_now()

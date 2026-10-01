@@ -790,6 +790,7 @@ class TreeCard:
                 figure=None,
                 marker=f"tree-editor:{path}",
                 on_applied=self._applied,
+                apply=self.page.apply,
             )
             self.editor.build()
         self._edited = self._edited_now()
@@ -1129,6 +1130,7 @@ class TreeCard:
                 figure=None,
                 marker=f"node:{path}",
                 row=target,
+                apply=self.page.apply,
             )
             # A host drawn inside a row keeps to its own width, or the
             # cluster sits left of where it belongs (the 3b review, in

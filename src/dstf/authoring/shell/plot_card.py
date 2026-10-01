@@ -243,6 +243,7 @@ class CriterionRow:
                 figure=None,
                 marker=f"node:{index}:{path}",
                 row=self.target,
+                apply=card.page.apply,
             )
             # A host drawn inside a row keeps to its own width, or the
             # cluster takes the rest of the row and sits left of the end
@@ -500,6 +501,7 @@ class PlotCard:
                 figure=self.hook,
                 marker=f"variable:{index}",
                 row=target,
+                apply=self.page.apply,
             )
             # Its own width, pushed to the header's right end (style.py).
             self.variable_host.column.classes(remove="w-full", add="dstf-node-host")
@@ -873,6 +875,7 @@ class PlotCard:
                 figure=self.hook,
                 marker=f"editor:{index}:{path}",
                 on_applied=self._applied,
+                apply=self.page.apply,
             )
             self.editor.build()
         self._edited = self._edited_now(self._view(view))

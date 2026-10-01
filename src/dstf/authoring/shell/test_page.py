@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -26,7 +26,7 @@ from ...discovery.plots import PlotExtra, ResolvedPlot
 from ...reporting.status import SCORING_FAILED, classify, classify_with_class
 from ...reporting.tree_rows import leaves_of
 from ...storage.ref_index import RefIndex
-from ..capabilities import plural
+from ..capabilities import Outcome, plural
 from ..errors import user_text
 from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..session import JobRunningError, LockedError
@@ -128,6 +128,13 @@ class TestPage:
         #: of the move's own, and either one, handled first, cleared the
         #: flag — the move's own event then took its line away.
         self.move_revision: int | None = None
+        #: The revisions of the `spec` events this page's own acts produced
+        #: (`_own`), not yet heard. Any other `spec` event for this test —
+        #: a Discard, a Save that reloads, another tab's edit, a spec
+        #: reload — is a tree change this page did not make, and unfolds
+        #: every group of the test (the owner's ruling, U5 H2; `handle`).
+        #: Its folds followed only this page's own edits (`edited`).
+        self.own_revisions: set[int] = set()
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -596,6 +603,35 @@ class TestPage:
         self.pending_moved = (path, text)
         self.move_revision = self.shell.session.spec_revision
 
+    def apply(self, outcome: Outcome | Sequence[Outcome]) -> None:
+        """Apply what one of this page's own acts returned — every action
+        bar and inline host on the page applies through here."""
+        self._own(lambda: self.shell.session.apply(outcome))
+
+    def _own(self, act: Callable[[], None]) -> None:
+        """Run ``act``, one of this page's own edits, and note the `spec`
+        revisions it produced: all of them, a sequence of outcomes stages
+        once per patch. Nothing else stages between the two reads: the
+        Session is driven from the UI loop, a job's or a scan's work posted
+        to it (`Session._post`), and ``act`` runs to its end on it."""
+        session = self.shell.session
+        before = session.spec_revision
+        try:
+            act()
+        finally:
+            self.own_revisions.update(range(before + 1, session.spec_revision + 1))
+
+    def _heard_spec(self, event: dict[str, Any]) -> None:
+        """A `spec` event (H2): one this page's own edit did not produce
+        unfolds every group of this test — its folds followed only this
+        page's edits. Every revision up to the event's has been heard
+        (the Shell's queue keeps their order), so they are forgotten."""
+        revision = event["revision"]
+        own = revision in self.own_revisions
+        self.own_revisions = {r for r in self.own_revisions if r > revision}
+        if not own and self._mine(event):
+            self.state.tree_folded.pop(self.model_id, None)
+
     def edited(self, paths: dict[str, str]) -> None:
         """An edit of the tree went through (`Panel.edited`, U5 R1):
         ``paths`` says where each node it kept went, and the tree card's
@@ -826,7 +862,7 @@ class TestPage:
         if select is not None:
             self.selected, self.follow = select, None
         try:
-            session.stage([op])
+            self._own(lambda: session.stage([op]))
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
             self.selected, self.follow = before
             ui.notify(user_text(e), type="warning")
@@ -861,7 +897,7 @@ class TestPage:
         and watch plot goes; the derived plots stay. Refused, it is said,
         like any layout edit."""
         try:
-            self.shell.session.stage([reset_op(self.model_id)])
+            self._own(lambda: self.shell.session.stage([reset_op(self.model_id)]))
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
             ui.notify(user_text(e), type="warning")
 
@@ -1166,6 +1202,8 @@ class TestPage:
             # A sync's paint refreshes the bar; an event that does not sync
             # (another test's) still moves its availability.
             self.actions.refresh()
+        if event["event"] == "spec":
+            self._heard_spec(event)
         if event["event"] == "job":
             # A finished job reloaded the trajectories under every plot and
             # no leaf's signature sees that (decision 10). The other states

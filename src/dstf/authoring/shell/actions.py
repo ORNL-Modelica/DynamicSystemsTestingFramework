@@ -23,13 +23,13 @@ draws a panel's row inside the dialog, below the panel."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
-from ..capabilities import Capability, Emphasis, Placement
+from ..capabilities import Capability, Emphasis, Outcome, Placement
 from ..capabilities import FigureHook as FigureHookProtocol
 from ..errors import USER_ERRORS, user_text
 from ..session import Selection
@@ -214,9 +214,14 @@ class ActionBar:
         marker: str,
         icons: bool = False,
         emphasis: Callable[[Capability], Emphasis | None] | None = None,
+        apply: Callable[[Outcome | Sequence[Outcome]], None] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.marker = marker
+        #: How an act's outcome is applied: the Session's own, unless the
+        #: page the bar is on applies it (`TestPage.apply`, which notes the
+        #: `spec` revisions its own acts produced).
+        self.apply = apply
         #: Draw each capability that declares an ``icon`` (a Material icon
         #: name) as an icon button; one that declares none keeps its text.
         self.icons = icons
@@ -343,7 +348,7 @@ class ActionBar:
             def submit(**inputs: Any) -> bool:
                 try:
                     outcome = cap.act(view, **inputs)
-                    self.shell.session.apply(outcome)
+                    (self.apply or self.shell.session.apply)(outcome)
                 except Exception as e:  # shown here; a raising act changes nothing
                     log_unless_users(e, cap.name)
                     self.errors[cap.name] = user_text(e)
@@ -414,10 +419,13 @@ class InlineHost:
         marker: str,
         on_applied: Callable[[str], None] | None = None,
         row: RowTarget | None = None,
+        apply: Callable[[Outcome | Sequence[Outcome]], None] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
         self.row = row
+        #: As `ActionBar.apply`: the page's, where the host is on one.
+        self.apply = apply
         if row is not None:
             row.hush = self.hush
         self.errors: dict[str, ui.label] = {}
@@ -553,7 +561,7 @@ class InlineHost:
         def submit(**inputs: Any) -> bool:
             try:
                 outcome = cap.act(view, **inputs)
-                self.shell.session.apply(outcome)
+                (self.apply or self.shell.session.apply)(outcome)
             except Exception as e:  # shown, and changes nothing
                 fail(e)
                 return False

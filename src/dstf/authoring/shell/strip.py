@@ -60,6 +60,7 @@ class StatusStrip:
                     Placement.TEST,
                     lambda: Selection(tests=frozenset({page.model_id})),
                     marker="test-actions",
+                    apply=page.apply,
                     emphasis=lambda cap: getattr(cap, "emphasis", {}).get(
                         self.situation
                     ),
