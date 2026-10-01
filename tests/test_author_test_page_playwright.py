@@ -2855,6 +2855,107 @@ def test_a_drag_starts_with_no_map_until_its_own_arrives(tmp_path, playwright_br
         assert page.evaluate(STALE_MAP, "/metrics/children/1") == "{}"
 
 
+#: What a drag has drawn: the header line's reason, each row outlined
+#: (path:class), and the drag's source in the page's record of it.
+DRAWN = """() => {
+  const line = document.querySelector('.dstf-tree-line');
+  const drop = [...document.querySelectorAll('.dstf-tree-row')]
+    .filter((r) => /dstf-drop-(before|onto|no)/.test(r.className))
+    .map((r) => r.dataset.treePath + ':'
+      + r.className.match(/dstf-drop-(before|onto|no)/)[0]);
+  return {why: line.dataset.why ?? null, drop,
+          src: window.dstfMove ? window.dstfMove.src : 'none'};
+}"""
+
+
+def _grab(page, src: str) -> None:
+    """A REAL mouse down on ``src``'s handle, moved enough to start a drag."""
+    grip = _tree_row(page, src).locator(".dstf-grip").bounding_box()
+    assert grip is not None
+    x, y = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 12, y + 8, steps=4)
+
+
+def _hover(page, target: str, frac: float) -> None:
+    """The held mouse to ``frac`` of ``target``'s row height, settled."""
+    box = _tree_row(page, target).bounding_box()
+    assert box is not None
+    x, y = box["x"] + box["width"] * 0.4, box["y"] + box["height"] * frac
+    page.mouse.move(x, y, steps=10)
+    page.wait_for_timeout(300)  # the zones' map: one round trip
+    page.mouse.move(x + 2, y, steps=2)
+    page.wait_for_timeout(100)
+
+
+def test_a_drag_ended_anywhere_leaves_nothing_drawn(tmp_path, playwright_browser):
+    """Every way a drag ends or leaves leaves no outline, no reason in the
+    header line and no source behind: Escape over a refused place; out of
+    the tree with the button held, then released outside; from an allowed
+    place to the dragged row itself (where it is: nothing drawn); released
+    on its own handle. And the root's row is all "onto": its top half is no
+    "before". Nothing is staged by any of it."""
+    k, kx = "/metrics/children/0", "/metrics/children/0/children/0"
+    y = "/metrics/children/1"
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        _show_tree(page, 5)
+        none = "0 pending edits"
+        # Escape over a refused place (the k-of-n onto its own criterion).
+        _grab(page, k)
+        _hover(page, kx, ONTO)
+        held = page.evaluate(DRAWN)
+        assert held["drop"] == [f"{kx}:dstf-drop-no"] and held["why"]
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        assert page.evaluate(DRAWN)["drop"] == []
+        assert page.evaluate(DRAWN)["why"] is None
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        assert page.evaluate(DRAWN)["src"] is None
+        expect(page.locator(".dstf-header-row")).to_contain_text(none)
+        # Out of the tree with the button held, released outside.
+        _grab(page, k)
+        _hover(page, kx, ONTO)
+        plot = page.locator(".js-plotly-plot").first.bounding_box()
+        assert plot is not None
+        page.mouse.move(
+            plot["x"] + plot["width"] / 2, plot["y"] + plot["height"] / 2, steps=12
+        )
+        page.wait_for_timeout(300)
+        outside = page.evaluate(DRAWN)
+        assert outside["drop"] == [] and outside["why"] is None
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        assert page.evaluate(DRAWN)["src"] is None
+        expect(page.locator(".dstf-header-row")).to_contain_text(none)
+        # From an allowed place to the dragged row's own top half.
+        _grab(page, y)
+        _hover(page, kx, ONTO)
+        assert page.evaluate(DRAWN)["drop"] == [f"{kx}:dstf-drop-onto"]
+        _hover(page, y, BEFORE)
+        assert page.evaluate(DRAWN)["drop"] == []
+        # Released on its own handle: nothing staged, nothing said.
+        grip = _tree_row(page, y).locator(".dstf-grip").bounding_box()
+        assert grip is not None
+        page.mouse.move(
+            grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2, steps=8
+        )
+        page.wait_for_timeout(200)
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        expect(page.locator(".dstf-header-row")).to_contain_text(none)
+        assert page.locator(".text-negative:visible").all_inner_texts() == []
+        # The root's top half: onto it, never before it.
+        _grab(page, kx)
+        _hover(page, "/metrics", 0.15)
+        assert page.evaluate(DRAWN)["drop"] == ["/metrics:dstf-drop-onto"]
+        page.keyboard.press("Escape")
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        expect(page.locator(".dstf-header-row")).to_contain_text(none)
+
+
 #: Over ``p``'s row, onto it: a dragover carrying ``mime`` alone and, when
 #: ``drop``, a drop — with a source in place, as a drag of ours leaves it.
 #: Whether the row was drawn on and whether each event was taken.

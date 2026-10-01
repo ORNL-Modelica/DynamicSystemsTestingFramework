@@ -9485,6 +9485,111 @@ async def test_a_move_by_the_menu_says_it_too(nested_shell):
         await _settled(lambda: _one(user, "moved-note").text == "Moved.")
 
 
+async def test_a_move_the_submit_refuses_says_nothing_and_closes_nothing(
+    nested_shell, monkeypatch
+):
+    """The move planned, its submit refused (a lock that raced the drop):
+    no "Moved." line, and the open editor stays open — only a move that
+    went through closes what is open."""
+    from dstf.authoring.session import LockedError
+
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.open_criterion(N_T2)
+        await _settled(lambda: page.open is not None)
+
+        def refuse(outcome):
+            raise LockedError([A], "rerun")
+
+        monkeypatch.setattr(shell.session, "apply", refuse)
+        _drop(page, N_Y, N_T2, "before")
+        await asyncio.sleep(0.3)
+        monkeypatch.undo()
+        assert shell.session.spec.pending == []
+        assert _none(user, "moved-note")
+        assert page.open is not None and page.pending_moved is None
+
+
+async def test_a_move_menu_reopened_lists_each_place_once(nested_shell):
+    """The menu is filled at each click, emptied first: a second opening
+    lists the same eleven places, not twenty-two."""
+    shell = nested_shell
+
+    def places() -> int:
+        return sum(
+            1
+            for e in _one(user, f"move-menu:{N_Y}").descendants()
+            if any(m.startswith("move-dest:") for m in e._markers)
+        )
+
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _open_tree(user)
+        await _open_move_menu(user, N_Y)
+        first = places()
+        _click(user, _one(user, f"move:{N_Y}"))
+        await asyncio.sleep(0.3)
+        assert first == places() == 11
+
+
+async def test_a_chosen_place_closes_the_menu_and_its_button_says_so(nested_shell):
+    """A swap (`SWAP`) rebuilds no row, so the menu chosen from is the one
+    still there: choosing closes it, the button says it is closed, and its
+    tooltip — hidden while the menu was open — is back."""
+    shell = nested_shell
+    _stage_tree(shell, A, SWAP)
+    second = "/metrics/children/1"
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _open_tree(user)
+        button = _one(user, f"move:{second}")
+        (tip,) = [e for e in button.descendants() if isinstance(e, ui.tooltip)]
+        assert tip.visible
+        await _open_move_menu(user, second)
+        menu = _one(user, f"move-menu:{second}")
+        assert menu.value is True and button.props["aria-expanded"] == "true"
+        assert not tip.visible
+        _click(user, _one(user, f"move-dest:{second}:0"))  # the root, at 1
+        await _settled(
+            lambda: shell.session.tree(A)["children"][0].get("max_value") == 100.0
+        )
+        await _settled(lambda: not _none(user, "moved-note"))
+        assert not menu.is_deleted  # no rebuild: the same menu
+        assert menu.value is False
+        assert button.props["aria-expanded"] == "false"
+        assert tip.visible
+
+
+async def test_a_move_closes_the_statistics_cards_editor(stats_shell):
+    """Two statistics criteria on one quantity trading places move no
+    shape: the Statistics card's open editor would show the other one, so
+    the move closes it as it closes a plot's."""
+    shell = stats_shell
+    leaf = {"metric": "scalar", "quantity": NONLINEAR}
+    swap = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {**leaf, "tolerance": 0},
+            {**leaf, "tolerance": 5},
+        ],
+    }
+    shell.session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(swap))])
+    first = "/metrics/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.open_criterion(first)
+        await _settled(lambda: page.open == (STATS, first))
+        _drop(page, "/metrics/children/2", first, "before")
+        await _settled(lambda: shell.session.tree(A)["children"][1]["tolerance"] == 5)
+        await _settled(lambda: not _none(user, "moved-note"))
+        assert page.open is None
+        assert page.stats.open_path is None
+
+
 async def test_an_event_ahead_of_the_moves_own_spec_event_keeps_the_line(
     nested_shell,
 ):
