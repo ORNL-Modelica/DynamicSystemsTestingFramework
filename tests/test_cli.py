@@ -970,6 +970,8 @@ def _said_nothing_ran(err: str) -> list[str]:
 
 
 def _nothing_ran_line(n: int) -> str:
+    if not n:  # no test in scope at all: there is nothing to count
+        return "Nothing ran: no test in scope."
     return f"Nothing ran: no test in scope has a result ({n} NOT RUN) — exit 1."
 
 

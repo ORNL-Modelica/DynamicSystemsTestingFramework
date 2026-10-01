@@ -6376,7 +6376,10 @@ from drawn options: such a test gets a status of its own, **NOT RUN**.
    `--report`, `run -i`), as the console's "No comparisons to report"
    always did, and says so in ONE stderr line from one CLI helper over
    `exit_code` (`cli.common._exit_code`): "Nothing ran: no test in scope
-   has a result (N NOT RUN) — exit 1." NOT RUN arises four ways, and the exit code in each:
+   has a result (N NOT RUN) — exit 1.", or, with no test in scope at all,
+   "Nothing ran: no test in scope." — with nothing in scope there is
+   nothing to count, and "(0 NOT RUN)" counted it anyway (the
+   controller's call after the review of the build). NOT RUN arises four ways, and the exit code in each:
    a test never in a run, beside tests that ran — 0 when those passed;
    a run aborted by its process ending (Ctrl+C, a crash) — a later
    `compare` exits by every result the work dir holds — this run's and

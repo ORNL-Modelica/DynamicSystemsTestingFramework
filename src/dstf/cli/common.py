@@ -168,9 +168,12 @@ def _exit_code(comparisons: Iterable[TestComparison]) -> int:
     """`run` and `compare`'s exit code on every route (``exit_code``), and
     when it is 1 because nothing ran, ONE stderr line saying so: a junit or
     html report, or ``--report``'s pages, exited 1 without a word (D145
-    §5)."""
+    §5). With no test in scope at all there is nothing to count, and the
+    line says that instead of "(0 NOT RUN)"."""
     comps = list(comparisons)
-    if nothing_ran(comps):
+    if not comps:
+        print("Nothing ran: no test in scope.", file=sys.stderr)
+    elif nothing_ran(comps):
         print(
             f"Nothing ran: no test in scope has a result ({len(comps)} "
             f"{NOT_RUN}) — exit 1.",

@@ -400,7 +400,7 @@ class TestReportFormatRouting:
                 if line.startswith("Nothing ran")
             ]
             assert said == [
-                "Nothing ran: no test in scope has a result (0 NOT RUN) — exit 1.",
+                "Nothing ran: no test in scope.",
                 "Nothing ran: no test in scope has a result (2 NOT RUN) — exit 1.",
             ], fmt
         assert exit_code([]) == 1
