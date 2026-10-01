@@ -10954,7 +10954,9 @@ async def test_the_show_icon_flashes_a_family_plots_row(nested_shell):
             html_id = page.cards[0].rows[path].row.html_id
 
             def flashed(html_id=html_id, sent=sent) -> bool:
-                return any(html_id in js and "dstf-flash" in js for js in sent)
+                return any(
+                    html_id in js and 'classList.add("dstf-flash")' in js for js in sent
+                )
 
             await _settled(flashed)
             assert page.open is None
