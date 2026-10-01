@@ -5063,6 +5063,40 @@ def test_a_long_tree_row_wraps_its_label_and_cuts_its_readout(
             assert readout["title"] == readout["text"] != "", readout
 
 
+@pytest.mark.parametrize("width", [900, 1280])
+def test_a_200_character_name_leaves_every_readout_its_room(
+    tmp_path, playwright_browser, width
+):
+    """J2: x reads a 200-character expression with no space to break at.
+    Every criterion row's readout keeps 80 px — the name wraps in what is
+    left — no row is wider than the card, and the page never scrolls
+    sideways."""
+    served = _served(tmp_path, playwright_browser, project=_deep_project, hooks=True)
+    with served as page:
+        base = page.url.split("test/")[0]
+        long200 = (LONG_X.replace(" ", "") * 3)[:200]
+        assert len(long200) == 200
+        for name, text in (("x", long200), ("y", (LONG_X + " ") * 2)):
+            query = urllib.parse.urlencode({"name": name, "expression": text})
+            with urllib.request.urlopen(f"{base}__expression?{query}") as r:
+                assert json.loads(r.read()) == {"stamped": 1}
+        page.set_viewport_size({"width": width, "height": 900})
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _show_tree(page, DEEP_ROWS)
+        page.mouse.move(2, 2)
+        _shot(page, tmp_path, f"tree-200-{width}")
+        fit = page.evaluate(ROW_FIT)
+        scroll, client = fit["page"]
+        assert scroll <= client, fit["page"]
+        readouts = [row for row in fit["rows"] if row["readout"]]
+        assert len(readouts) == 4  # tube · x, range · x, range · y twice
+        for row in fit["rows"]:
+            assert row["right"] <= row["card"] + 0.5, row
+        for row in readouts:
+            assert row["readout"]["width"] >= 80, row
+
+
 # -- a click on a tree row (U5 Task 3) ----------------------------------------
 
 K_OF_N, K_TUBE, K_RANGE_X, K_RANGE_Y = (

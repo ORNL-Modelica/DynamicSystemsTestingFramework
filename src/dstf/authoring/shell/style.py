@@ -126,9 +126,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    TRANSFORM name has no space to break at — and its readout keeps one
    line, cut with an ellipsis, the whole of it in its title (`_Row.paint`).
    At 900 px a deep criterion's name and readout pushed the page 48 px
-   sideways. */
+   sideways. The readout takes its own width up to 40% of the row and never
+   shrinks below it: shrinking with the name, a 200-character name left it
+   71 px at 900 (J2). */
 .dstf-tree-row > .dstf-tree-text { min-width: 0; overflow-wrap: anywhere; }
 .dstf-tree-row > .dstf-tree-readout {
+  flex: 0 0 auto; max-width: 40%;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dstf-tree-row:not([data-folded="1"]) .dstf-fold-summary { display: none; }
