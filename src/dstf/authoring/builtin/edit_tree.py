@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
 from ..tree_move import (
+    BEFORE,
     WHERE_IT_IS,
     Dest,
     Moved,
@@ -986,7 +987,8 @@ def _move_menu(
     one per row built with the rows was ~20 s of rebuild on a 134-node
     tree (Q6). A refused place is greyed with its reason as a second line,
     where the node is greyed with none; the arrow keys skip both. Each
-    place reads its node's text cut in the middle, then where in it."""
+    place reads its node's text cut in the middle, then where in it — the
+    row a "before" names cut in the middle too."""
     from ..shell.drawer_controls import menu_keys
     from ..shell.widgets import MiddleCut
 
@@ -1041,7 +1043,14 @@ def _move_menu(
                 with item, ui.item_section():
                     with ui.item_label().classes("dstf-move-label"):
                         MiddleCut(text)
-                        ui.label(f"— {where}").classes("dstf-move-where")
+                        with ui.element("span").classes("dstf-move-where"):
+                            if where.startswith(f"{BEFORE} "):
+                                # The row it names, cut in the middle too:
+                                # whole, a long one ran past the menu.
+                                ui.label(f"— {BEFORE}")
+                                MiddleCut(where[len(BEFORE) + 1 :])
+                            else:
+                                ui.label(f"— {where}")
                     if reason is not None:
                         ui.item_label(reason).props("caption").mark("move-why")
                 if reason is not None or where == WHERE_IT_IS:

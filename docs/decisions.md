@@ -6289,9 +6289,11 @@ task text, and one fix batch from the review of its first part.
 9. *Move to… (C7, C13).* An icon among a row's controls, tooltip "Move
    to…", whose menu is built when it opens, from the tree as it is then
    (see Consequences). Each place reads its node's text — the page's
-   labels, cut in the middle — then where in it, whole ("— before range ·
-   x"); a refused place is greyed with
-   its reason as a second line, "where it is" greyed with none; the node's
+   labels, cut in the middle — then where in it ("— before range · x").
+   The menu cuts the row a "before" names in the middle too, ahead of the
+   node's text and with "— before" whole: kept whole, a 100-character name
+   ran past the menu's edge. A refused place is greyed with its reason as
+   a second line, "where it is" greyed with none; the node's
    own row is not listed, and its subtree's places are, refused. The arrow
    keys move among the places, skipping the greyed ones, Enter chooses,
    and the button shows no tooltip while its menu is open.

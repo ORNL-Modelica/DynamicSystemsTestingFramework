@@ -2685,6 +2685,60 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         assert 0 <= line["y"] - (row["y"] + row["height"]) < 12, (row, line)
 
 
+#: A 100-character expression for x: its rows' names, and "before" them.
+LONG_X = (
+    "pipe.mediums[3].state.T - pipe.mediums[2].state.T + "
+    "heatTransfer.surfaceConductance[1].Q_flow * 1e-3"
+)
+
+#: Each Move to… place's widths against its menu's: the item's and its
+#: label's, the node text's (the label's first cut), and the menu's own.
+MOVE_WIDTHS = """() => {
+  const menu = document.querySelector('.dstf-move-menu');
+  return [...menu.querySelectorAll('[role="menuitem"]')].map(i => {
+    const l = i.querySelector('.dstf-move-label');
+    return {text: l.innerText.replace(/\\s+/g, ' ').slice(0, 50),
+            item: i.scrollWidth, label: l.scrollWidth,
+            node: l.querySelector(':scope > .dstf-mid').getBoundingClientRect().width,
+            menu: menu.clientWidth, menuScroll: menu.scrollWidth};
+  });
+}"""
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+def test_a_long_place_is_cut_in_the_middle_inside_the_menu(
+    tmp_path, playwright_browser, width
+):
+    """x reads a 100-character expression: y's Move to… names it in its
+    places ("— before range · <x>") and as a node ("range · <x>"). The
+    named row is cut in its middle, "— before" stays whole, and the node's
+    text keeps a width: no place is wider than the menu."""
+    assert len(LONG_X) == 100
+    served = _served(tmp_path, playwright_browser, project=_nested_project, hooks=True)
+    with served as page:
+        base = page.url.split("test/")[0]
+        query = urllib.parse.urlencode({"name": "x", "expression": LONG_X})
+        with urllib.request.urlopen(f"{base}__expression?{query}") as r:
+            assert json.loads(r.read()) == {"stamped": 1}
+        page.set_viewport_size({"width": width, "height": 900})
+        page.reload()
+        expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _show_tree(page, 5)
+        _tree_row(page, "/metrics/children/1").get_by_role(
+            "button", name="Move to…"
+        ).click()
+        items = page.get_by_role("menuitem")
+        expect(items.first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)  # the menu's transition
+        places = page.evaluate(MOVE_WIDTHS)
+        _shot(page, tmp_path, f"move-long-{width}")
+        assert any(LONG_X[:20] in p["text"] for p in places), places
+        for p in places:
+            assert p["item"] <= p["menu"] and p["label"] <= p["menu"], p
+            assert p["menuScroll"] <= p["menu"], p
+            assert p["node"] > 0, p
+
+
 def _tree_row(page, path: str):
     return page.locator(f'.dstf-tree-row[data-tree-path="{path}"]')
 

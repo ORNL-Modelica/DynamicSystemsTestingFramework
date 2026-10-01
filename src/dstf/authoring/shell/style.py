@@ -126,13 +126,24 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-moved {
   color: var(--dstf-text-secondary); scroll-margin-bottom: 8px; min-height: 1lh;
 }
-/* Move to… (U4): a place per line, its node's text cut in the middle and
-   where in it kept whole; the menu no wider than the page allows. */
+/* Move to… (U4): a place per line, its node's text cut in the middle,
+   then where in it — "— before" whole and the row it names cut in the
+   middle too; the menu no wider than the page allows. Kept whole, a
+   100-character name ran past the menu's edge and squeezed the node's
+   text to 0 px. The named row takes what the node's text and "— before"
+   leave (a basis of 0), so it is cut first; the node's text is cut only
+   past that, to no less than 6ch — shrunk alike, a k-of-n's read only
+   its tail. "Where" lays its parts out in the label's own row
+   (`contents`): as a box of its own, its minimum width was its whole
+   text, cut or not. */
 .dstf-move-menu { max-width: min(560px, 92vw); }
 .dstf-move-label {
   display: flex; gap: .4em; min-width: 0; white-space: nowrap;
 }
-.dstf-move-where { flex: none; }
+.dstf-move-label > .dstf-mid { flex: 0 1 auto; min-width: 6ch; }
+.dstf-move-where { display: contents; }
+.dstf-move-where > * { flex: none; }
+.dstf-move-where > .dstf-mid { flex: 1 1 0; min-width: 0; }
 /* A combinator's kind dropdown, in its row's lead place: a dense Quasar
    field is 40 px tall, which stood a combinator's row well above a
    leaf's; at 28 px the rows read as one list. */

@@ -8989,18 +8989,18 @@ N_K = "/metrics/children/1"
 
 def _move_items(user, path: str) -> list[tuple[str, str, str | None, bool]]:
     """The Move to… menu of ``path``'s row, in order: each destination's
-    node text, its place, its reason line (None) and whether it is
+    node text, its place — "— before" and the row it names, cut in the
+    middle, read as one — its reason line (None) and whether it is
     enabled."""
     out = []
     i = 0
     while not _none(user, f"move-dest:{path}:{i}"):
         item = _one(user, f"move-dest:{path}:{i}")
-        (text,) = [e.text for e in item.descendants() if isinstance(e, MiddleCut)]
-        (where,) = [
-            e.text
-            for e in item.descendants()
-            if isinstance(e, ui.label) and "dstf-move-where" in e.classes
-        ]
+        text = next(e.text for e in item.descendants() if isinstance(e, MiddleCut))
+        (place,) = [e for e in item.descendants() if "dstf-move-where" in e.classes]
+        parts = place.default_slot.children
+        assert all(isinstance(e, (ui.label, MiddleCut)) for e in parts)
+        where = " ".join(e.text for e in parts)
         why = [e.text for e in item.descendants() if "move-why" in e._markers]
         out.append((text, where, why[0] if why else None, item.enabled))
         i += 1

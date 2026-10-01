@@ -43,6 +43,9 @@ TREE_CHANGED = "The tree changed while you dragged: try again."
 
 #: The place a node already is, as `move_destinations` lists it.
 WHERE_IT_IS = "where it is"
+#: A place before a combinator's child, as `move_destinations` says it:
+#: this, a space, and that child's text (the menu cuts that in its middle).
+BEFORE = "before"
 
 #: The combinators a child that can never fail may not newly sit under.
 _NO_FREE_PASS_UNDER = ("or", "k-of-n")
@@ -372,7 +375,8 @@ def move_destinations(
         befores = [node_text(_view(child, names)) for child in kids]
         for i, child in enumerate(kids):
             before = befores[i]
-            where = f"before {before}" if befores.count(before) == 1 else f"at {i + 1}"
+            unique = befores.count(before) == 1
+            where = f"{BEFORE} {before}" if unique else f"at {i + 1}"
             one(text, where, Dest("at", path, i))
             walk(child, f"{path}/children/{i}")
         one(text, "at the end", Dest("at", path, None))
