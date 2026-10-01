@@ -529,6 +529,10 @@ class InlineHost:
             log_unless_users(e, cap.name)
             error.set_text(user_text(e))
             error.set_visibility(True)
+            if self.row is not None:
+                # Said under its row: a tree row inside a folded group is
+                # shown (U5, R2).
+                self.row.page.unfold_to(self.row)
 
         def submit(**inputs: Any) -> bool:
             try:

@@ -39,6 +39,9 @@ class TabState:
     vars_group: str = "component"  # "component" | "flat" | "tracked"
     vars_names: str = "both"  # "expression" | "file" | "both"
     vars_sort: str = "file"  # "file" | "name"
+    #: The tree card's folded groups (U5, Q8 / Y6): model id -> the folded
+    #: groups' node paths. The tab's, so a switch of test keeps them.
+    tree_folded: dict[str, list[str]] = field(default_factory=dict)
 
 
 async def connected_tab_state(client: Any) -> TabState | None:

@@ -104,6 +104,19 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-lvl-3.dstf-lvl-on { background: var(--dstf-level-3-on); }
 .dstf-lvl-4.dstf-lvl-on { background: var(--dstf-level-4-on); }
 .dstf-chev-slot { width: 28px; flex: none; display: inline-flex; justify-content: center; }
+/* A group's chevron (U5, Q3): a 28 px target, an 18 px glyph, turned
+   right while its row is folded; the row then says what it hides. */
+.dstf-chev {
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--dstf-text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.dstf-chev:hover { background: var(--dstf-surface-active); }
+.dstf-chev:focus-visible { outline: 2px solid var(--dstf-accent); }
+.dstf-chev .q-icon { font-size: 18px; transition: transform .12s; }
+.dstf-tree-row[data-folded="1"] .dstf-chev .q-icon { transform: rotate(-90deg); }
+.dstf-fold-summary { color: var(--dstf-text-secondary); font-size: 12px; }
+.dstf-tree-row:not([data-folded="1"]) .dstf-fold-summary { display: none; }
 /* The root's tag (Q2): "and · 5 criteria · root". */
 .dstf-root-tag { color: var(--dstf-text-muted); font-size: 12px; }
 .dstf-root-tag::before { content: "· "; }

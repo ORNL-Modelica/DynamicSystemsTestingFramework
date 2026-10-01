@@ -894,6 +894,402 @@ async def test_a_moves_line_starts_under_the_moved_rows_pill(shell):
         assert pill_left(2) == 8 * 2 + 12 + 28 + 12 + 20 + 12
 
 
+# -- folding (U5 Task 2) -----------------------------------------------------
+
+G0, G1, G2, G3 = (
+    "/metrics/children/0",
+    "/metrics/children/0/children/1",
+    "/metrics/children/0/children/1/children/1",
+    "/metrics/children/0/children/1/children/1/children/1",
+)
+
+
+def _hidden(page) -> set[str]:
+    """The tree rows the server renders hidden."""
+    return {
+        path for path, row in page.tree.rows_by_path.items() if row.props.get("hidden")
+    }
+
+
+def _under(page, group: str) -> set[str]:
+    return {p for p in page.tree.rows_by_path if p.startswith(group + "/")}
+
+
+async def _deep_open(shell, user, tree=None) -> TestPage:
+    _stage_tree(shell, A, tree or DEEP)
+    page = await _test_page(shell, user)
+    user.find(marker="tree:toggle").click()
+    await _settled(lambda: page.tree.rows.visible)
+    return page
+
+
+def _fold(user, path: str) -> None:
+    user.find(marker=f"fold:{path}").click()
+
+
+def test_a_folded_groups_text_counts_its_criteria_by_verdict():
+    """Q4 / E6: every criterion under the group, however deep — each once —
+    by verdict; fail, advisory and unscored only when there are any."""
+    from dstf.authoring.shell.tree_card import fold_text
+
+    def leaf(passed, advisory=False):
+        return {"kind": "leaf", "passed": passed, "advisory": advisory}
+
+    node = {
+        "kind": "combinator",
+        "children": [
+            leaf(True),
+            {"kind": "combinator", "children": [leaf(False), leaf(True)]},
+            {"kind": "combinator", "children": [leaf(False, advisory=True)]},
+            leaf(None),
+        ],
+    }
+    assert fold_text(node) == ("· 5 hidden · 2 pass · 1 fail · 1 advisory · 1 unscored")
+    assert fold_text({"kind": "combinator", "children": [leaf(True)]}) == (
+        "· 1 hidden · 1 pass"
+    )
+
+
+async def test_a_folded_group_hides_its_rows_and_says_what_it_hides(shell):
+    """Q3 / Q4 / Y6 / E2: a group's chevron folds it — its descendants'
+    rows AND form slots hidden (attributes, set by a props update), the
+    path in the tab's state, its row saying what it hides counted by
+    verdict, a nested folded group's criteria counted once — and unfolds
+    it, rebuilding nothing."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        rev = page.tree.revision
+        assert _none(user, "fold:/metrics")  # the root folds with Show/Hide
+        assert _none(user, f"fold:{G0}/children/0")  # a criterion has none
+        chev = _one(user, f"fold:{G1}")
+        assert chev.props["aria-expanded"] == "true"
+        assert chev.props["aria-label"] == "Fold and · 3 criteria"
+        _fold(user, G1)
+        await _settled(lambda: _hidden(page))
+        assert page.state.tree_folded == {A: [G1]}
+        assert _hidden(page) == _under(page, G1)
+        slots = {
+            path
+            for path, target in page.tree.targets.items()
+            if target.slot is not None and target.slot.props.get("hidden")
+        }
+        assert slots == _under(page, G1)
+        assert page.tree.rows_by_path[G1].props.get("data-folded") == "1"
+        assert chev.props["aria-expanded"] == "false"
+        assert chev.props["aria-label"] == "Unfold and · 3 criteria"
+        assert _one(user, f"tree-summary:{G1}").text == "· 3 hidden · 2 pass · 1 fail"
+        _fold(user, G3)  # inside it: hidden already, folded too
+        _fold(user, G0)
+        await _settled(lambda: len(page.state.tree_folded[A]) == 3)
+        assert _one(user, f"tree-summary:{G0}").text == "· 4 hidden · 3 pass · 1 fail"
+        assert page.tree.revision == rev  # nothing rebuilt
+        _fold(user, G0)
+        await _settled(lambda: G0 not in page.state.tree_folded[A])
+        # G1 is still folded: what is under it stays hidden.
+        assert _hidden(page) == _under(page, G1)
+        assert "data-folded" not in page.tree.rows_by_path[G0].props
+        _fold(user, G1)
+        _fold(user, G3)
+        await _settled(lambda: not page.state.tree_folded)
+        assert _hidden(page) == set()
+        assert page.tree.revision == rev
+
+
+async def test_collapse_all_and_expand_all(shell):
+    """Y7: Collapse all folds every group but the root; Expand all none."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        user.find(marker="tree:collapse-all").click()
+        await _settled(lambda: _hidden(page))
+        assert sorted(page.state.tree_folded[A]) == [G0, G1, G2, G3]
+        assert _hidden(page) == _under(page, G0)
+        user.find(marker="tree:expand-all").click()
+        await _settled(lambda: not _hidden(page))
+        assert not page.state.tree_folded
+
+
+async def test_a_tree_of_criteria_alone_has_no_collapse_all(shell):
+    _stage_tree(shell, A, {"combinator": "and", "children": [_range(-1), _range(5)]})
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        assert _none(user, "tree:collapse-all") and _none(user, "tree:expand-all")
+
+
+async def test_the_folded_set_is_the_tabs_per_test(shell):
+    """Q8: switching to another test and back keeps it, and so does opening
+    the test again in the tab (the tab's state)."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        _fold(user, G1)
+        await _settled(lambda: _hidden(page))
+        for model in (D, A, A):
+            page = await _test_page(shell, user, model)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        assert page.state.tree_folded == {A: [G1]}
+        assert _hidden(page) == _under(page, G1)
+        assert page.tree.rows_by_path[G1].props.get("data-folded") == "1"
+
+
+async def test_a_move_rekeys_the_folded_groups_it_shifts(shell):
+    """Q8 / R1 / E1: a folded group that moved is folded at its new path —
+    and a folded group whose path a move SHIFTED (a sibling left before it)
+    is folded at ITS new path, not lost, and no other group takes its
+    place."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "and", "children": [_range(-1)]},
+            {"combinator": "and", "children": [_range(-2)]},
+            {"combinator": "or", "children": [_range(-3), _range(-4)]},
+        ],
+    }
+    a, b, c = (f"/metrics/children/{i}" for i in range(3))
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        _fold(user, a)
+        _fold(user, c)
+        await _settled(lambda: page.state.tree_folded.get(A) == [a, c])
+        # a onto the root: appended last. b and c each move up one.
+        page.tree.dropped(
+            {"src": a, "target": "/metrics", "zone": "onto", "rev": page.tree.revision}
+        )
+        await _settled(lambda: page.tree.said is not None)
+        # The `or`, now second; a, moved, folded where it went.
+        assert page.state.tree_folded == {A: [b, c]}
+        assert _hidden(page) == {
+            f"{b}/children/0",
+            f"{b}/children/1",
+            f"{c}/children/0",
+        }
+
+
+#: and[r, and[r], and[r, r]]: a folded group after a criterion and a group.
+SHIFTED = {
+    "combinator": "and",
+    "children": [
+        _range(-1),
+        {"combinator": "and", "children": [_range(-2)]},
+        {"combinator": "and", "children": [_range(-3), _range(-4)]},
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    ("marker", "at", "folded"),
+    [
+        # The criterion before it removed: it moves up one.
+        ("remove", "/metrics/children/0", ["/metrics/children/1"]),
+        # A criterion added after the first one: it moves down one.
+        ("add", "/metrics/children/0", ["/metrics/children/3"]),
+        # It wrapped: one level down, folded still.
+        ("wrap", "/metrics/children/2", ["/metrics/children/2/children/0"]),
+    ],
+)
+async def test_a_fold_follows_its_group_through_an_edit(shell, marker, at, folded):
+    """R1: every tree edit says where each node went, and the folded set
+    follows it — a group shifted by an add or a remove before it, or pushed
+    down by a wrap, is folded where it went."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, SHIFTED)
+        _fold(user, "/metrics/children/2")
+        await _settled(lambda: page.state.tree_folded.get(A) == ["/metrics/children/2"])
+        rev = page.tree.revision
+        _click_in(user, f"{marker}:{at}", within=f"tree-row:{at}")
+        if marker != "remove":
+            await _settled(lambda: not _none(user, f"apply-{marker}:{at}"))
+            user.find(marker=f"apply-{marker}:{at}").click()
+        await _settled(lambda: page.tree.revision != rev)
+        assert page.state.tree_folded == {A: folded}
+        assert _hidden(page) == _under(page, folded[0])
+        assert page.tree.rows_by_path[folded[0]].props.get("data-folded") == "1"
+
+
+async def test_an_unwrap_lifts_a_folded_group_and_keeps_it_folded(shell):
+    """R1: the group's parent unwrapped (the kind dropdown's last entry):
+    the folded group takes its parent's place, folded still; the parent's
+    own fold goes with it."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            _range(-1),
+            {
+                "combinator": "or",
+                "children": [
+                    {"combinator": "and", "children": [_range(-2), _range(-3)]},
+                ],
+            },
+        ],
+    }
+    inner, outer = "/metrics/children/1/children/0", "/metrics/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        _fold(user, inner)
+        await _settled(lambda: page.state.tree_folded.get(A) == [inner])
+        rev = page.tree.revision
+        (kind,) = _inside(user, f"kind:{outer}", f"tree-row:{outer}")
+        kind.set_value("unwrap…")
+        await _settled(lambda: page.tree.revision != rev)
+        assert page.state.tree_folded == {A: [outer]}
+        assert _hidden(page) == _under(page, outer)
+
+
+async def test_a_removed_groups_fold_is_dropped(shell):
+    """Q8: removed through its own control (its path in no edit's map) or
+    staged from anywhere else (its path naming no group at the sync)."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        _fold(user, G3)
+        _fold(user, G2)
+        await _settled(lambda: len(page.state.tree_folded.get(A, [])) == 2)
+        _click_in(user, f"remove:{G3}", within=f"tree-row:{G3}")
+        await _settled(lambda: G3 not in page.tree.rows_by_path)
+        assert page.state.tree_folded == {A: [G2]}
+        shell.session.stage([PatchOp(A, "remove", G2)])
+        await _settled(lambda: G2 not in page.tree.rows_by_path)
+        assert not page.state.tree_folded.get(A)
+
+
+async def test_a_move_into_a_folded_group_opens_just_the_path_to_it(shell):
+    """R2: a move landing inside a folded group unfolds that group and its
+    folded ancestors — and no other folded group."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        leaf = "/metrics/children/1"
+        _fold(user, G2)
+        _fold(user, G1)
+        _fold(user, G3)
+        await _settled(lambda: len(page.state.tree_folded.get(A, [])) == 3)
+        # The leaf onto G2: appended inside G1 > G2; G3 (G2's child) stays.
+        page.tree.dropped(
+            {"src": leaf, "target": G2, "zone": "onto", "rev": page.tree.revision}
+        )
+        await _settled(lambda: page.tree.said is not None)
+        assert sorted(page.state.tree_folded[A]) == [G3]
+        assert _hidden(page) == {f"{G3}/children/0"}
+
+
+async def test_a_refusal_under_a_folded_row_opens_just_the_path_to_it(shell):
+    """R2: a refused act's sentence under a row inside a folded group — a
+    drop that started on rows rebuilt since — unfolds the path to it."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        for group in (G3, G2, G1, G0):
+            _fold(user, group)
+        await _settled(lambda: len(page.state.tree_folded.get(A, [])) == 4)
+        target = f"{G2}/children/0"
+        page.tree.dropped(
+            {
+                "src": "/metrics/children/1",
+                "target": target,
+                "zone": "before",
+                "rev": -1,
+            }
+        )
+        await _settled(lambda: len(page.state.tree_folded[A]) == 1)
+        assert page.state.tree_folded[A] == [G3]  # its sibling's fold stays
+        assert _hidden(page) == _under(page, G3)
+        await user.should_see("The tree changed while you dragged: try again.")
+
+
+async def test_a_form_under_a_folded_row_opens_just_the_path_to_it(page_shell):
+    """R2: a form row opened under a row inside a folded group unfolds the
+    path to it; another folded group stays folded."""
+    shell = page_shell
+    _only(_RowProbe())
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "and", "children": [_range(-1), _range(-2)]},
+            {"combinator": "and", "children": [_range(-3)]},
+        ],
+    }
+    inner = "/metrics/children/0/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        _fold(user, "/metrics/children/0")
+        _fold(user, "/metrics/children/1")
+        await _settled(lambda: len(page.state.tree_folded.get(A, [])) == 2)
+        # Under the same criterion's row on its PLOT: outside the tree.
+        _click_in(user, f"probe-open:{inner}", within=f"criterion:0:{inner}")
+        await user.should_see(marker=f"form-row:crit:0:{inner}")
+        assert len(page.state.tree_folded[A]) == 2
+        _click_in(user, f"probe-open:{inner}", within=f"tree-row:{inner}")
+        await user.should_see(marker=f"form-row:tree:{inner}")
+        assert page.state.tree_folded == {A: ["/metrics/children/1"]}
+        assert _hidden(page) == {"/metrics/children/1/children/0"}
+
+
+async def test_an_edit_outside_the_tree_leaves_the_folds_alone(page_shell):
+    """R2: what is done outside the tree unfolds nothing. A plot's `+` adds
+    at the root's end; a criterion staged into a folded group from
+    anywhere else leaves it folded, its summary counting the new one; the
+    header's named jump opens a criterion inside a folded group on its
+    plot."""
+    shell = page_shell
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "and", "children": [_range(-1), _range(-2), _range(5)]},
+        ],
+    }
+    group = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        _fold(user, group)
+        await _settled(lambda: page.state.tree_folded.get(A) == [group])
+        assert (
+            _one(user, f"tree-summary:{group}").text == "· 3 hidden · 2 pass · 1 fail"
+        )
+        _click_in(user, "add-for:x", within="criteria-header:0")
+        await _settled(lambda: not _none(user, "apply-add:x"))
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: "/metrics/children/1" in page.tree.rows_by_path)
+        assert page.state.tree_folded == {A: [group]}
+        assert _hidden(page) == _under(page, group)
+        shell.session.stage([PatchOp(A, "add", f"{group}/children/-", _range(-6))])
+        await _settled(lambda: f"{group}/children/3" in page.tree.rows_by_path)
+        assert page.state.tree_folded == {A: [group]}
+        assert (
+            _one(user, f"tree-summary:{group}").text == "· 4 hidden · 3 pass · 1 fail"
+        )
+        assert _hidden(page) == _under(page, group)
+        with page.client:
+            page.jump_to(f"{group}/children/2")
+        await _settled(lambda: page.open is not None)
+        assert page.state.tree_folded == {A: [group]}
+        assert _hidden(page) == _under(page, group)
+
+
+async def test_collapse_all_closes_a_form_under_a_row_it_hides(page_shell):
+    """E6, as Hide tree: folding a group takes a form open under one of its
+    descendants away; one under the folded group's own row stays."""
+    shell = page_shell
+    _only(_RowProbe())
+    tree = {
+        "combinator": "and",
+        "children": [{"combinator": "and", "children": [_range(-1), _range(-2)]}],
+    }
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        inner = "/metrics/children/0/children/0"
+        _click_in(user, f"probe-open:{inner}", within=f"tree-row:{inner}")
+        await user.should_see(marker=f"form-row:tree:{inner}")
+        user.find(marker="tree:collapse-all").click()
+        await _settled(lambda: page.form is None)
+        _click_in(
+            user,
+            "probe-open:/metrics/children/0",
+            within="tree-row:/metrics/children/0",
+        )
+        await user.should_see(marker="form-row:tree:/metrics/children/0")
+        user.find(marker="tree:collapse-all").click()
+        await asyncio.sleep(0.2)
+        assert page.form is not None
+
+
 async def test_the_closed_line_follows_the_session_with_the_tree_hidden(shell):
     """The line is five elements and is rebuilt on every sync, open or
     closed: a tree hidden again must not freeze on the verdict it had."""

@@ -85,6 +85,20 @@ const say = (rows, why) => {
   if (why) { line.dataset.why = why; line.classList.add('dstf-line-why'); }
   else { delete line.dataset.why; line.classList.remove('dstf-line-why'); }
 };
+//: The drag resting on a folded group (U5, Q10): 700 ms over its row
+//: unfolds it, as its chevron's click would; leaving the row, the drop
+//: and the drag's end cancel it (E6).
+const unhover = () => { if (D.hover) { clearTimeout(D.hover.t); D.hover = null; } };
+const hover = (row) => {
+  const at = row && row.dataset.folded === '1' ? row : null;
+  if (D.hover && D.hover.row === at) return;
+  unhover();
+  if (!at) return;
+  D.hover = {row: at, t: setTimeout(() => {
+    D.hover = null;
+    if (at.dataset.folded === '1') at.querySelector(':scope > .dstf-chev-slot > .dstf-chev')?.click();
+  }, __REST__)};
+};
 const clear = (rows) => {
   rows.querySelectorAll('.dstf-drop').forEach(el => el.classList.remove(
     'dstf-drop', 'dstf-drop-before', 'dstf-drop-onto', 'dstf-drop-no'));
@@ -107,6 +121,7 @@ _DRAG_OVER = """(e) => {
   __COMMON__
   if (!D.src || !ours(e)) return;
   const row = e.target.closest && e.target.closest('[data-tree-path]');
+  hover(row);
   // Over no row (a form row, a slot, a move's line): no place, nothing drawn.
   if (!row) { clear(e.currentTarget); return; }
   const zone = zoneOf(row, e);
@@ -126,13 +141,14 @@ _DRAG_OVER = """(e) => {
 }"""
 _DRAG_LEAVE = """(e) => {
   __COMMON__
-  if (!e.currentTarget.contains(e.relatedTarget)) clear(e.currentTarget);
+  if (!e.currentTarget.contains(e.relatedTarget)) { unhover(); clear(e.currentTarget); }
 }"""
 _DROP = """(e) => {
   __COMMON__
   if (!ours(e)) return;
   const row = e.target.closest && e.target.closest('[data-tree-path]');
   const src = D.src;
+  unhover();
   clear(e.currentTarget);
   D.src = null;
   if (!row || !src) return;
@@ -143,6 +159,7 @@ _DROP = """(e) => {
 }"""
 _DRAG_END = """(e) => {
   __COMMON__
+  unhover();
   clear(e.currentTarget);
   D.src = null;
 }"""
@@ -187,13 +204,44 @@ _BRANCH_OFF = """(e) => {
   rows.dataset.branch = '';
 }"""
 
+#: A group folded or unfolded in the page (U5, Q3): its row's
+#: ``data-folded``, and every row and form slot under a folded group
+#: ``hidden`` — attributes, never classes (E2): a server repaint of a
+#: row's classes writes its whole class attribute (the U5 spike) and leaves
+#: its other attributes alone. No rows are rebuilt, so a drag's revision
+#: stays (U4 W5). The server is told, records it in the tab and sets the
+#: same attributes, so a later rebuild draws them too.
+_FOLD_CLICK = """(e) => {
+  e.stopPropagation();  // a chevron's click is never its row's
+  const row = e.target.closest('[data-tree-path]');
+  if (!row) return;
+  const rows = row.parentElement;
+  const on = row.dataset.folded !== '1';
+  if (on) row.dataset.folded = '1'; else delete row.dataset.folded;
+  const chev = e.currentTarget;
+  chev.setAttribute('aria-expanded', on ? 'false' : 'true');
+  chev.setAttribute('aria-label', (on ? 'Unfold ' : 'Fold ') + chev.dataset.name);
+  const shut = [...rows.querySelectorAll(':scope > [data-folded="1"]')].map(
+    r => r.dataset.treePath + '/');
+  rows.querySelectorAll(':scope > [data-tree-path], :scope > [data-slot-of]').forEach(el => {
+    const p = el.dataset.treePath || el.dataset.slotOf;
+    el.hidden = shut.some(s => p.startsWith(s));
+  });
+  emit(on);
+}"""
+
 #: The drag's own MIME type (`_DRAG_COMMON`).
 MIME = "application/x-dstf-node"
 
+#: How long a drag rests on a folded group before it unfolds (Q10), ms.
+REST_MS = 700
+
 
 def _drag_js(handler: str) -> str:
-    return handler.replace("__COMMON__", _DRAG_COMMON).replace(
-        "__MIME__", json.dumps(MIME)
+    return (
+        handler.replace("__COMMON__", _DRAG_COMMON)
+        .replace("__MIME__", json.dumps(MIME))
+        .replace("__REST__", str(REST_MS))
     )
 
 
@@ -282,6 +330,45 @@ def summary_text(view: dict) -> tuple[str, list[dict], int]:
     return " · ".join(parts), failed[:NAMED], max(len(failed) - NAMED, 0)
 
 
+def fold_text(node: dict) -> str:
+    """What a folded group's row adds (Q4, E6): its criteria, however deep,
+    counted by verdict — "· 3 hidden · 2 pass · 1 fail", with an advisory
+    and an unscored count when either is non-zero, as the closed line's
+    tally. A folded group inside it is inside it: each criterion is counted
+    once."""
+    statuses = [leaf_status(leaf) for leaf in leaves_of(node)]
+    parts = [f"{len(statuses)} hidden", f"{statuses.count('pass')} pass"]
+    for status, word in (
+        ("fail", "fail"),
+        ("warn", "advisory"),
+        ("queued", "unscored"),
+    ):
+        if statuses.count(status):
+            parts.append(f"{statuses.count(status)} {word}")
+    return "· " + " · ".join(parts)
+
+
+def _ancestors(path: str) -> list[str]:
+    """Every proper ancestor's path of ``path``, the root's included."""
+    out = []
+    while "/children/" in path:
+        path = path.rsplit("/children/", 1)[0]
+        out.append(path)
+    return out
+
+
+def _set_prop(element: ui.element, key: str, value: str | bool | None) -> bool:
+    """``element``'s prop ``key`` set to ``value`` (None: removed), and
+    whether it moved; the caller sends the element once."""
+    if element.props.get(key) == value:
+        return False
+    if value is None:
+        del element.props[key]
+    else:
+        element.props[key] = value
+    return True
+
+
 class _Row:
     """One node's row, and what a repaint writes into it."""
 
@@ -291,10 +378,30 @@ class _Row:
         text: ui.label,
         readout: ui.label | None,
         lead: ui.element | None = None,
+        summary: ui.label | None = None,
+        chevron: ui.element | None = None,
     ) -> None:
         self.pill, self.text, self.readout, self.lead = pill, text, readout, lead
+        #: A group's fold summary (Q4), shown by CSS while its row is
+        #: folded: painted every time, so a fold needs no round trip.
+        self.summary = summary
+        #: A group's chevron (Q3): named by the group's text.
+        self.chevron = chevron
 
     def paint(self, node: dict) -> None:
+        if self.summary is not None:
+            self.summary.set_text(fold_text(node))
+        if self.chevron is not None:
+            name = node_text(node)
+            if self.chevron.props.get("data-name") != name:
+                self.chevron.props["data-name"] = name
+                verb = (
+                    "Fold"
+                    if self.chevron.props.get("aria-expanded") == "true"
+                    else "Unfold"
+                )
+                self.chevron.props["aria-label"] = f"{verb} {name}"
+                self.chevron.update()
         self.pill.set(node_status(node))
         # A lead holding the kind (a combinator's dropdown) leaves the text
         # the count; an empty one — a host that cannot draw, under a job's
@@ -324,6 +431,8 @@ class TreeCard:
         #: from its start and its drop is checked against (`dropped`).
         self.revision = 0
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
+        #: Each group's chevron by its path (U5, Q3): the root has none.
+        self.chevrons: dict[str, ui.element] = {}
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
@@ -400,6 +509,7 @@ class TreeCard:
         target, row = self.targets.get(path), self.rows_by_path.get(path)
         if target is None or target.slot is None or row is None:
             return
+        self.open_path(path)  # R2: a tree event shows its row
         depth = path.count("/children/")
         with target.slot:
             # Under the row's pill: its bars, the chevron's place and the
@@ -429,6 +539,86 @@ class TreeCard:
             self.said.delete()
         self.said = None
 
+    # -- folding (U5) --------------------------------------------------------------
+
+    @property
+    def folded(self) -> set[str]:
+        """This test's folded groups, the tab's (Q8)."""
+        return set(self.page.state.tree_folded.get(self.page.model_id, []))
+
+    def _keep(self, folded: set[str]) -> None:
+        store = self.page.state.tree_folded
+        if folded:
+            store[self.page.model_id] = sorted(folded)
+        else:
+            store.pop(self.page.model_id, None)
+
+    def _apply_folds(self) -> None:
+        """The rows as the tab's folded set says — the attributes the page's
+        script sets, by a props update of the elements that moved and no
+        rebuild (E2), so the two agree and the drag's revision stands. A
+        form under a row that is now hidden goes (E6: a form nobody can see
+        is no form, as Hide tree)."""
+        folded = self.folded
+        for path, row in self.rows_by_path.items():
+            hide = any(up in folded for up in _ancestors(path))
+            target = self.targets.get(path)
+            slot = target.slot if target is not None else None
+            if slot is not None and _set_prop(slot, "hidden", True if hide else None):
+                slot.update()
+            moved = _set_prop(row, "hidden", True if hide else None)
+            chev = self.chevrons.get(path)
+            if chev is not None:
+                on = path in folded
+                moved |= _set_prop(row, "data-folded", "1" if on else None)
+                name = chev.props.get("data-name", "")
+                turned = _set_prop(chev, "aria-expanded", "false" if on else "true")
+                turned |= _set_prop(
+                    chev, "aria-label", f"{'Unfold' if on else 'Fold'} {name}"
+                )
+                if turned:
+                    chev.update()
+            if moved:
+                row.update()
+            if hide and target is not None:
+                self.page.drop_row(target)
+
+    def _fold(self, path: str, e: Any) -> None:
+        """A chevron's click (or a drag resting on its row, Q10): the page
+        has folded or unfolded the group already; the tab records it."""
+        folded = self.folded
+        on = e.args if isinstance(e.args, bool) else path not in folded
+        if on:
+            folded.add(path)
+        else:
+            folded.discard(path)
+        self._keep(folded)
+        self._apply_folds()
+
+    def fold_all(self, on: bool) -> None:
+        """Collapse all / Expand all (Y7): every group of the test but the
+        root, which is the tree (Show / Hide tree folds it)."""
+        self._keep(set(self.chevrons) if on else set())
+        self._apply_folds()
+
+    def open_path(self, path: str) -> None:
+        """R2: unfold every folded group ``path`` is inside, and nothing
+        else — a group at ``path`` itself stays as it is. Only for what the
+        tree itself shows under a row (a move's line, a refusal, a form);
+        what is done outside the tree leaves the folds alone."""
+        folded = self.folded
+        opened = folded - set(_ancestors(path))
+        if opened != folded:
+            self._keep(opened)
+            self._apply_folds()
+
+    def rekey(self, paths: dict[str, str]) -> None:
+        """An edit went through (R1): every folded group is folded where the
+        edit put it (``paths``: each kept node, before -> after); one the
+        edit removed is dropped. Applied by the sync that redraws the rows
+        — the rows standing now are the old tree's."""
+        self._keep({paths[p] for p in self.folded if p in paths})
+
     def toggle(self) -> None:
         self.is_open = not self.is_open
         self.refresh(self._view())
@@ -442,7 +632,7 @@ class TreeCard:
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.named = [], {}, []
-        self.rows_by_path, self.targets = {}, {}
+        self.rows_by_path, self.targets, self.chevrons = {}, {}, {}
         self.root_pill = None
         self.is_open = False
         self._shape = ()
@@ -534,6 +724,16 @@ class TreeCard:
                     ui.tooltip(str(leaf["path"]))
             if more:
                 ui.label(f"+{more} more").classes("text-secondary").mark("tree:more")
+            if self.is_open and any(
+                n.get("kind") != "leaf" for n in nodes_of(view)[1:]
+            ):
+                # Y7: beside the tally, while the rows show and hold a group.
+                ui.button("Expand all", on_click=lambda: self.fold_all(False)).props(
+                    "flat dense no-caps"
+                ).mark("tree:expand-all")
+                ui.button("Collapse all", on_click=lambda: self.fold_all(True)).props(
+                    "flat dense no-caps"
+                ).mark("tree:collapse-all")
             self._reset_layout()
 
     # -- the rows ------------------------------------------------------------------
@@ -542,17 +742,25 @@ class TreeCard:
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters, self.rows_by_path = [], {}, {}
-        self.targets = {}
+        self.targets, self.chevrons = {}, {}
+        # A folded path that names no group any more is dropped (Y6): an
+        # edit that said where its nodes went has re-keyed the set already
+        # (`rekey`); this is for any other.
+        groups = {
+            str(n.get("path")) for n in nodes_of(view)[1:] if n.get("kind") != "leaf"
+        }
+        self._keep(self.folded & groups)
         self.rows.clear()
         self.revision += 1
         self.rows.props["data-rev"] = str(self.revision)
         self.rows.update()
         with self.rows:
-            self._row(view, 0)
+            self._row(view, 0, self.folded)
 
-    def _row(self, node: dict, depth: int) -> None:
+    def _row(self, node: dict, depth: int, folded: set[str]) -> None:
         path, model = str(node["path"]), self.page.model_id
         group = node.get("kind") != "leaf"
+        hide = any(up in folded for up in _ancestors(path))
         row = ui.row().classes("dstf-tree-row items-center no-wrap gap-3 w-full")
         self.rows_by_path[path] = row
         # What the page's scripts read: the row's node, its depth and
@@ -564,6 +772,11 @@ class TreeCard:
             row.props["data-group"] = "1"
         if depth == 0:
             row.props["data-root"] = "1"
+        # The tab's folds, drawn at build as the page's script draws them.
+        if hide:
+            row.props["hidden"] = True
+        if path in folded:
+            row.props["data-folded"] = "1"
         # `--indent` is where a "before" line starts: the row's content,
         # right of its bars (U4 C15, U5 E4).
         with row.style(f"--indent: {content_left(depth)}px").mark(f"tree-row:{path}"):
@@ -579,8 +792,29 @@ class TreeCard:
                 for i in range(1, depth + 1):
                     ui.element("span").classes(f"dstf-bar dstf-lvl-{(i - 1) % 4 + 1}")
             # The chevron's place (Q3), kept on every row — empty on a
-            # criterion — so the pills stay in line.
-            ui.element("span").classes("dstf-chev-slot")
+            # criterion — so the pills stay in line. The root's folds with
+            # the card's Show / Hide tree.
+            chevron: ui.element | None = None
+            with ui.element("span").classes("dstf-chev-slot"):
+                if group and depth:
+                    on, name = path in folded, node_text(node)
+                    chevron = (
+                        ui.element("button")
+                        .classes("dstf-chev")
+                        .props('type="button"')
+                        .mark(f"fold:{path}")
+                    )
+                    # Set as items, not through the props string, whose
+                    # parser a quote in a node's text would break.
+                    chevron.props["data-name"] = name
+                    chevron.props["aria-expanded"] = "false" if on else "true"
+                    chevron.props["aria-label"] = f"{'Unfold' if on else 'Fold'} {name}"
+                    with chevron:
+                        ui.icon("expand_more").props('aria-hidden="true"')
+                    chevron.on(
+                        "click", partial(self._fold, path), js_handler=_FOLD_CLICK
+                    )
+                    self.chevrons[path] = chevron
             # The drag handle's place, before the pill: hidden — its width
             # kept, so every pill stays in line — until a panel makes the
             # row draggable (`Panel.movable`). The root's holds no handle:
@@ -612,6 +846,13 @@ class TreeCard:
             if depth == 0:
                 # Q2: "and · 5 criteria · root" — the "· " is the tag's CSS.
                 ui.label("root").classes("dstf-root-tag").mark("tree:root-tag")
+            summary: ui.label | None = None
+            if chevron is not None:
+                summary = (
+                    ui.label(fold_text(node))
+                    .classes("dstf-fold-summary")
+                    .mark(f"tree-summary:{path}")
+                )
             readout: ui.label | None = None
             if node.get("kind") == "leaf":
                 readout = ui.label(leaf_readout(node)).classes("dstf-mono text-xs")
@@ -637,11 +878,15 @@ class TreeCard:
         # The row's form slot, between it and the next node's row; the
         # host is built once its panels have somewhere to open a row.
         target.slot = ui.column().classes("w-full gap-0")
+        # What the fold's script hides with the row (`_FOLD_CLICK`).
+        target.slot.props["data-slot-of"] = path
+        if hide:
+            target.slot.props["hidden"] = True
         host.build()
         self.hosts.append(host)
-        self.painters[path] = _Row(pill, text, readout, lead)
+        self.painters[path] = _Row(pill, text, readout, lead, summary, chevron)
         # Once the host has drawn: whether its lead holds the kind decides
         # the text.
         self.painters[path].paint(node)
         for child in node.get("children") or []:
-            self._row(child, depth + 1)
+            self._row(child, depth + 1, folded)

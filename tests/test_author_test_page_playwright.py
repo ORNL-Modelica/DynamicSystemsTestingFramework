@@ -4580,3 +4580,140 @@ def test_each_level_draws_its_bar_in_its_colour_and_a_hover_deepens_its_branch(
             check(on)
         page.mouse.move(2, 2)
         check(None)
+
+
+# -- folding (U5 Task 2) ------------------------------------------------------
+
+#: Every tree row's and form slot's shown state, by path.
+SHOWN = """() => Object.fromEntries([...document.querySelectorAll(
+  '.dstf-tree [data-tree-path], .dstf-tree [data-slot-of]')].map(el => [
+  (el.dataset.treePath ? 'row ' + el.dataset.treePath : 'slot ' + el.dataset.slotOf),
+  getComputedStyle(el).display !== 'none']))"""
+REV = "() => document.querySelector('.dstf-tree [data-rev]').dataset.rev"
+
+
+def _fold_click(page, path: str) -> None:
+    _tree_row(page, path).locator(".dstf-chev").click()
+
+
+def test_a_chevron_folds_its_group_in_the_page_and_says_what_it_hides(
+    tmp_path, playwright_browser
+):
+    """Q3 / Q4 / E2: a 28 px chevron with an 18 px glyph; a click hides
+    every row and form slot under the group — rebuilding nothing (the rows'
+    revision stands), the server's answer undoing nothing — and the row
+    says what it hides; a second click shows them. Collapse all hides all
+    but the root's children; Expand all shows every row."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        chev = _tree_row(page, G2).locator(".dstf-chev")
+        box = chev.bounding_box()
+        assert box is not None and (box["width"], box["height"]) == (28, 28), box
+        glyph = chev.locator(".q-icon").evaluate("e => getComputedStyle(e).fontSize")
+        assert glyph == "18px"
+        assert chev.get_attribute("aria-expanded") == "true"
+        assert chev.get_attribute("aria-label") == "Fold and · 2 criteria"
+        assert _tree_row(page, "/metrics").locator(".dstf-chev").count() == 0
+        rev = page.evaluate(REV)
+        _fold_click(page, G2)
+        shown = page.evaluate(SHOWN)
+        under = [k for k in shown if k.split(" ", 1)[1].startswith(G2 + "/")]
+        assert len(under) == 6  # 3 rows, 3 slots
+        assert not any(shown[k] for k in under)
+        assert all(v for k, v in shown.items() if k not in under)
+        expect(_tree_row(page, G2).locator(".dstf-fold-summary")).to_have_text(
+            "· 2 hidden · 1 pass · 1 fail", timeout=EXPECT_TIMEOUT
+        )
+        expect(chev).to_have_attribute("aria-expanded", "false")
+        expect(chev).to_have_attribute("aria-label", "Unfold and · 2 criteria")
+        page.wait_for_timeout(500)  # the server's answer: still folded
+        assert not any(page.evaluate(SHOWN)[k] for k in under)
+        assert page.evaluate(REV) == rev
+        _fold_click(page, G2)
+        page.wait_for_timeout(300)
+        assert all(page.evaluate(SHOWN).values())
+        expect(_tree_row(page, G2).locator(".dstf-fold-summary")).to_be_hidden()
+        assert page.evaluate(REV) == rev
+        line = page.locator(".dstf-tree-line")
+        line.get_by_role("button", name="Collapse all").click()
+        expect(_tree_row(page, f"{G1}/children/0")).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        shown = page.evaluate(SHOWN)
+        assert {k for k, v in shown.items() if v and k.startswith("row ")} == {
+            "row /metrics",
+            f"row {G1}",
+            f"row {SIB}",
+        }
+        line.get_by_role("button", name="Expand all").click()
+        expect(_tree_row(page, f"{G3}/children/0")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        assert all(page.evaluate(SHOWN).values())
+        assert page.evaluate(REV) == rev
+
+
+def _drag_rest(
+    page, src: str, rest_on: str, rest_ms: int, then: str, frac: float, drop=True
+):
+    """A real-mouse drag from ``src``'s handle that rests ``rest_ms`` over
+    ``rest_on``'s row, then goes to ``then``'s row at ``frac`` of its
+    height — dropped there, or (``drop`` False) carried off the rows first.
+    Returns ``rest_on``'s ``data-folded`` at the end of the rest."""
+    grip = _tree_row(page, src).locator(".dstf-grip").bounding_box()
+    assert grip is not None
+    page.mouse.move(grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(grip["x"] + 12, grip["y"] + 8, steps=4)
+    box = _tree_row(page, rest_on).bounding_box()
+    assert box is not None
+    x, y = box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.8
+    page.mouse.move(x, y, steps=8)
+    # Chromium sends dragover every ~50 ms only while the mouse moves or
+    # rests; rest by small moves inside the row.
+    t = 0
+    while t < rest_ms:
+        page.wait_for_timeout(100)
+        t += 100
+        page.mouse.move(x + (t // 100) % 2, y)
+    folded = _tree_row(page, rest_on).get_attribute("data-folded")
+    box = _tree_row(page, then).bounding_box() if then else None
+    if box is not None:
+        page.mouse.move(
+            box["x"] + box["width"] * 0.4, box["y"] + box["height"] * frac, steps=8
+        )
+        page.wait_for_timeout(300)
+        page.mouse.move(
+            box["x"] + box["width"] * 0.4 + 2, box["y"] + box["height"] * frac, steps=2
+        )
+        page.wait_for_timeout(100)
+    if not drop:
+        line = page.locator(".dstf-tree-line").bounding_box()
+        page.mouse.move(line["x"] + 5, line["y"] + 5, steps=6)
+        page.wait_for_timeout(100)
+    page.mouse.up()
+    return folded
+
+
+def test_a_drag_resting_on_a_folded_group_unfolds_it_and_drops_inside(
+    tmp_path, playwright_browser
+):
+    """Q10 / E6 with a real mouse: 300 ms on a folded group, then away, and
+    it stays folded (the timer cancelled on leave); 900 ms unfolds it — in
+    the page, the rows not rebuilt — and a drop before its now-shown first
+    child lands there (the drag's revision still valid)."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        _fold_click(page, G2)
+        page.wait_for_timeout(300)
+        rev = page.evaluate(REV)
+        # A short rest: still folded once the mouse has gone.
+        _drag_rest(page, SIB, G2, 300, f"{G1}/children/0", BEFORE, drop=False)
+        page.wait_for_timeout(900)
+        assert _tree_row(page, G2).get_attribute("data-folded") == "1"
+        assert page.evaluate(REV) == rev
+        # A long one: unfolded during the drag, and the drop lands inside.
+        folded = _drag_rest(page, SIB, G2, 900, f"{G2}/children/0", BEFORE)
+        assert folded is None, folded
+        expect(_tree_row(page, f"{G2}/children/0")).to_contain_text(
+            "1 criterion", timeout=EXPECT_TIMEOUT
+        )
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")

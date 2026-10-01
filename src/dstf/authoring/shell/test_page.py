@@ -314,6 +314,7 @@ class TestPage:
         # stays with that row (`RowTarget.hush`).
         target.hush()
         self._redraw_moved(view)
+        self.unfold_to(target)  # R2: a form under a tree row is shown
         assert target.slot is not None  # set by the row's owner at build
         with target.slot:
             column = (
@@ -531,8 +532,19 @@ class TestPage:
 
     def edited(self, paths: dict[str, str]) -> None:
         """An edit of the tree went through (`Panel.edited`, U5 R1):
-        ``paths`` says where each node it kept went. Nothing on the page is
-        keyed by a node's path yet."""
+        ``paths`` says where each node it kept went, and the tree card's
+        folded groups follow it — before the sync that rebuilds the rows,
+        which drops a folded path naming no group (Y6)."""
+        if self.tree is not None:
+            self.tree.rekey(paths)
+
+    def unfold_to(self, target: RowTarget) -> None:
+        """R2: something shown under ``target``'s row — a form, a refused
+        act's sentence — unfolds the folded groups it is inside, when that
+        row is a TREE row. Under a plot's or the Statistics card's row it
+        is done outside the tree, and leaves the folds alone."""
+        if self.tree is not None and self.tree.targets.get(target.node) is target:
+            self.tree.open_path(target.node)
 
     def _unsay(self) -> None:
         """Take a move's line away: the next form, editor or edit."""
