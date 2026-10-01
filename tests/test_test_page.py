@@ -1381,6 +1381,74 @@ async def test_this_pages_own_edits_keep_the_folds(page_shell):
         assert _hidden(page) == _under(page, group)
 
 
+#: and[and[r, r], r]: a group to fold and a criterion outside it.
+GROUP_AND_LEAF = {
+    "combinator": "and",
+    "children": [
+        {"combinator": "and", "children": [_range(-1), _range(5)]},
+        _range(-2),
+    ],
+}
+
+
+async def test_a_tree_editors_edit_keeps_the_folds(page_shell):
+    """H2: the tree editor's edit is this page's own (`TreeCard`'s editor
+    applies through `TestPage.apply`)."""
+    shell = page_shell
+    group, leaf = "/metrics/children/0", "/metrics/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, GROUP_AND_LEAF)
+        _fold(user, group)
+        await _settled(lambda: page.state.tree_folded.get(A) == [group])
+        _tree_click(user, leaf)
+        await _settled(lambda: page.open is not None and page.open[1] == leaf)
+        (lower,) = _numbers(page, "Lower bound (optional)")
+        rev = shell.session.spec_revision
+        with page.client:
+            lower.set_value(-7.0)
+        await _settled(lambda: shell.session.spec_revision > rev)
+        shell.tick()  # every event of the edit heard
+        assert page.state.tree_folded == {A: [group]}
+
+
+async def test_reset_layout_keeps_the_folds(page_shell):
+    """H2: Reset layout is this page's own edit."""
+    from dstf.authoring.layout import new_watch
+
+    shell = page_shell
+    group = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, GROUP_AND_LEAF)
+        _fold(user, group)
+        await _settled(lambda: page.state.tree_folded.get(A) == [group])
+        cards = len(page.cards)
+        with page.client:
+            assert page.stage_layout(new_watch(shell.session.layout(A), "y"))
+        await _settled(lambda: len(page.cards) == cards + 1)
+        rev = shell.session.spec_revision
+        with page.client:
+            page.reset_layout()
+        await _settled(lambda: shell.session.spec_revision > rev)
+        await _settled(lambda: len(page.cards) != cards + 1)
+        shell.tick()  # every event of the edit heard
+        assert page.state.tree_folded == {A: [group]}
+
+
+async def test_a_plot_criteria_rows_remove_keeps_the_folds(page_shell):
+    """H2: a plot's criteria row's − (and wrap) is this page's own edit."""
+    shell = page_shell
+    group, leaf = "/metrics/children/0", "/metrics/children/1"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, GROUP_AND_LEAF)
+        _fold(user, group)
+        await _settled(lambda: page.state.tree_folded.get(A) == [group])
+        rev = shell.session.spec_revision
+        _click_in(user, f"remove:{leaf}", within=f"node:0:{leaf}")
+        await _settled(lambda: shell.session.spec_revision > rev)
+        shell.tick()  # every event of the edit heard
+        assert page.state.tree_folded == {A: [group]}
+
+
 async def test_a_page_left_in_the_tab_hears_the_new_pages_edit_as_the_tabs(
     page_shell,
 ):
