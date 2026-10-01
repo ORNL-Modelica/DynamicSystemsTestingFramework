@@ -9201,3 +9201,208 @@ async def test_a_locked_rows_handle_goes_with_its_controls(nested_shell):
         gate.release.set()
         await _settled(lambda: grip.visible)
         assert page.tree.targets[N_Y].zones is not None
+
+
+# -- move a subtree (U4): after a move -------------------------------------
+
+
+def _leaf(variable: str, metric: str = "range", **fields) -> dict:
+    return {"metric": metric, "variable": variable, **fields}
+
+
+#: Two criteria on x trading places move no shape of the page.
+SWAP = {
+    "combinator": "and",
+    "children": [
+        _leaf("x", min_value=-1.0),
+        _leaf("x", max_value=100.0),
+        _leaf("y", "nrmse"),
+    ],
+}
+
+
+async def test_a_move_closes_the_open_editor_rather_than_rebind_it(nested_shell):
+    """The swap hazard: the second criterion on x moved above the first —
+    the page's shape is what it was, and an editor left open at
+    /children/0 would show the OTHER criterion. The move closes it."""
+    shell = nested_shell
+    _stage_tree(shell, A, SWAP)
+    first = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.open_criterion(first)
+        await _settled(lambda: page.open is not None and page.open[1] == first)
+        shape = page.shape(page._view())
+        page.tree.dropped(
+            {"src": "/metrics/children/1", "target": first, "zone": "before"}
+        )
+        await _settled(
+            lambda: shell.session.tree(A)["children"][0].get("max_value") == 100.0
+        )
+        assert page.shape(page._view()) == shape  # the swap moved no shape
+        await _settled(lambda: not _none(user, "moved-note"))
+        assert page.open is None
+
+
+async def test_a_move_closes_an_open_form_row(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        _click_in(user, f"wrap:{N_X2}", f"node:{N_X2}")
+        await _settled(lambda: page.form is not None)
+        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        await _settled(lambda: not _none(user, "moved-note"))
+        assert page.form is None
+
+
+@pytest.mark.parametrize(
+    ("tree", "src", "target", "zone", "note"),
+    [
+        (
+            # out of a k-of-n 3 of 3: k comes down with it
+            {
+                "combinator": "and",
+                "children": [
+                    _leaf("y", "nrmse"),
+                    {
+                        "combinator": "k-of-n",
+                        "k": 3,
+                        "children": [
+                            _leaf("x", min_value=float(-i)) for i in (1, 2, 3)
+                        ],
+                    },
+                ],
+            },
+            "/metrics/children/1/children/2",
+            "/metrics/children/0",
+            "before",
+            "Moved. k 3 → 2.",
+        ),
+        (
+            # out of a warn: the warn goes
+            {
+                "combinator": "and",
+                "children": [
+                    _leaf("y", "nrmse"),
+                    {"combinator": "warn", "children": [_leaf("x", min_value=-1.0)]},
+                ],
+            },
+            "/metrics/children/1/children/0",
+            "/metrics",
+            "onto",
+            "Moved. The empty warn was removed.",
+        ),
+        (
+            # into a weighted: weight 1
+            {
+                "combinator": "and",
+                "children": [
+                    _leaf("y", "nrmse"),
+                    _leaf("x", min_value=-1.0),
+                    {
+                        "combinator": "weighted",
+                        "weights": [2.0, 3.0],
+                        "threshold": 10.0,
+                        "children": [_leaf("x", max_value=9.0), _leaf("y", "nrmse")],
+                    },
+                ],
+            },
+            "/metrics/children/1",
+            "/metrics/children/2/children/1",
+            "before",
+            "Moved. Weight 1 given.",
+        ),
+        (
+            # out of a weighted: its weight goes with it
+            {
+                "combinator": "and",
+                "children": [
+                    _leaf("y", "nrmse"),
+                    {
+                        "combinator": "weighted",
+                        "weights": [2.0, 3.0],
+                        "threshold": 10.0,
+                        "children": [_leaf("x", max_value=9.0), _leaf("y", "nrmse")],
+                    },
+                ],
+            },
+            "/metrics/children/1/children/0",
+            "/metrics/children/0",
+            "before",
+            "Moved. Weight 2 went with it.",
+        ),
+    ],
+)
+async def test_the_moved_row_says_what_changed(
+    nested_shell, tree, src, target, zone, note
+):
+    """One line under the moved node's row, in its NEW place: planned
+    before the move went through (afterwards ``src`` names another node,
+    and its plan another move)."""
+    from dstf.authoring.tree_move import Dest, plan_move
+
+    shell = nested_shell
+    _stage_tree(shell, A, tree)
+    landed = plan_move(tree, src, Dest("at", "/metrics", 0)).path
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.dropped({"src": src, "target": target, "zone": zone})
+        await _settled(lambda: not _none(user, "moved-note"))
+        line = _one(user, "moved-note")
+        assert line.text == note
+        if zone == "before" and target == "/metrics/children/0":
+            assert page.tree.targets[landed].slot in list(_ancestors(line))
+
+
+async def test_the_moved_line_goes_with_the_next_form(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        await _settled(lambda: not _none(user, "moved-note"))
+        line = _one(user, "moved-note")
+        assert line.text == "Moved."
+        # y is the first child now: the line is under ITS row.
+        assert page.tree.targets[N_T2].slot in list(_ancestors(line))
+        _click_in(user, f"wrap:{N_T2}", f"node:{N_T2}")
+        await _settled(lambda: _none(user, "moved-note"))
+
+
+async def test_the_moved_line_goes_with_the_next_editor(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        await _settled(lambda: not _none(user, "moved-note"))
+        page.open_criterion(N_T2)
+        await _settled(lambda: _none(user, "moved-note"))
+
+
+async def test_the_moved_line_goes_with_the_next_edit(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        await _settled(lambda: not _none(user, "moved-note"))
+        await asyncio.sleep(0.3)  # the move's own events have all arrived
+        assert not _none(user, "moved-note")
+        # x's max is the last child now: y moved to the front.
+        shell.session.stage([PatchOp(A, "replace", f"{N_Y}/max_value", 50.0)])
+        await _settled(lambda: _none(user, "moved-note"))
+
+
+async def test_a_move_by_the_menu_says_it_too(nested_shell):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _open_tree(user)
+        await _open_move_menu(user, N_Y)
+        _click(user, _one(user, f"move-dest:{N_Y}:0"))  # the root, at 1
+        await _settled(lambda: not _none(user, "moved-note"))
+        assert _one(user, "moved-note").text == "Moved."

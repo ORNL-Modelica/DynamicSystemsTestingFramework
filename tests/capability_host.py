@@ -35,7 +35,7 @@ class HostPanel:
     ``host-row:title``), and ``close`` empties it; ``lead`` draws into a
     span of its own above the panel (marked ``host-lead``), emptied first;
     ``reveal`` records the path in ``reveals`` — there is no page to open
-    it on."""
+    it on — and ``moved`` what it was told in ``moves``."""
 
     def __init__(
         self,
@@ -50,6 +50,8 @@ class HostPanel:
         self.slot: ui.column | None = None
         self.lead_slot: ui.element | None = None
         self.closed = 0
+        #: What `moved` was told: (node path, text), in order.
+        self.moves: list[tuple[str, str]] = []
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -82,6 +84,9 @@ class HostPanel:
 
     def movable(self, on_drop: Any, zones: Any = None) -> bool:
         return False
+
+    def moved(self, node_path: str, text: str) -> None:
+        self.moves.append((node_path, text))
 
 
 @asynccontextmanager

@@ -930,6 +930,32 @@ def _validator(s: SessionView, model_id: str) -> Callable[[dict], None]:
     return validator_for(project.role_lookup(model_id))
 
 
+def moved_text(notes: tuple[str, ...]) -> str:
+    """What a move's row says (V4): "Moved." and each other change as a
+    sentence of its own — "Moved. The empty warn was removed." A note that
+    starts with a field's name keeps it as written: "Moved. k 3 → 2." """
+
+    def sentence(note: str) -> str:
+        return note if note.startswith("k ") else note[:1].upper() + note[1:]
+
+    return " ".join(["Moved.", *(f"{sentence(n)}." for n in notes)])
+
+
+def _submit_move(
+    s: SessionView, ui_panel: Panel, model_id: str, src: str, dest: Dest
+) -> None:
+    """Stage the move; once it went through, the page closes what is open
+    and says where the node landed and what else changed (`Panel.moved`).
+    Planned BEFORE the submit: afterwards ``src`` names another node."""
+    try:
+        moved = planned_move(s, model_id, src, dest)
+    except Exception:  # the submit raises it again, and says or logs it
+        moved = None
+    went = ui_panel.submit(model_id=model_id, action="move", path=src, dest=dest)
+    if went and moved is not None:
+        ui_panel.moved(moved.path, moved_text(moved.notes))
+
+
 def _drag(s: SessionView, ui_panel: Panel, model_id: str, path: str) -> None:
     """The node's part in the host's drag (U4): a drop on its row is a
     move to that zone's place (`zone_dest`); a drag from it — never from
@@ -939,7 +965,7 @@ def _drag(s: SessionView, ui_panel: Panel, model_id: str, path: str) -> None:
     def on_drop(src: str, zone: str) -> None:
         dest = zone_dest(path, zone)
         if dest is not None:  # a zone the row has not got moves nothing
-            ui_panel.submit(model_id=model_id, action="move", path=src, dest=dest)
+            _submit_move(s, ui_panel, model_id, src, dest)
 
     def zones() -> dict[str, dict[str, str | None]]:
         tree = s.tree(model_id)
@@ -994,7 +1020,7 @@ def _move_menu(
 
     def choose(dest: Dest) -> None:
         menu.close()
-        ui_panel.submit(model_id=model_id, action="move", path=path, dest=dest)
+        _submit_move(s, ui_panel, model_id, path, dest)
 
     def fill() -> None:
         menu.clear()

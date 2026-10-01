@@ -2635,7 +2635,8 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
     """range · y's Move to…, by the keyboard alone: Enter opens its menu
     (the button says so), End goes to the last place that is a CHOICE —
     "where it is", greyed, is skipped — Home to the first, and Enter there
-    moves y to the root's front: the row moves, one edit is pending."""
+    moves y to the root's front: the row moves, one edit is pending, and
+    the moved row says so under it, in view (V4)."""
     with _served(tmp_path, playwright_browser, project=_nested_project) as page:
         page.evaluate("() => window.scrollTo(0, 0)")
         page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
@@ -2659,6 +2660,14 @@ def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_bro
         expect(rows.nth(1)).to_contain_text("range · y", timeout=EXPECT_TIMEOUT)
         expect(items).to_have_count(0)
         expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+        # The moved row, in view, says it moved on one line right under it.
+        said = page.locator(".dstf-moved")
+        expect(said).to_have_text("Moved.", timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        line, row = said.bounding_box(), rows.nth(1).bounding_box()
+        assert line is not None and row is not None
+        assert row["y"] >= 0 and line["y"] + line["height"] <= VIEWPORT["height"]
+        assert 0 <= line["y"] - (row["y"] + row["height"]) < 12, (row, line)
 
 
 def _tree_row(page, path: str):

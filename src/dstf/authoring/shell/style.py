@@ -114,6 +114,11 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-tree-line.dstf-line-why::before {
   content: attr(data-why); color: var(--dstf-fail-dark);
 }
+/* After a move (V4): its row flashed once as it comes into view, and one
+   line under it saying what the move changed. */
+@keyframes dstf-flash { from { background: var(--dstf-selection); } }
+.dstf-flash { animation: dstf-flash 1.2s ease-out; }
+.dstf-moved { color: var(--dstf-text-secondary); }
 /* Move to… (U4): a place per line, its node's text cut in the middle and
    where in it kept whole; the menu no wider than the page allows. */
 .dstf-move-menu { max-width: min(560px, 92vw); }

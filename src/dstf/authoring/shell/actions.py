@@ -102,6 +102,11 @@ class ShellPanel:
             target.grip.set_visibility(True)
         return True
 
+    def moved(self, node_path: str, text: str) -> None:
+        # Quiet where there is no page (a dialog): the contract's no-op.
+        if self._target is not None:
+            self._target.page.moved(node_path, text)
+
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
 

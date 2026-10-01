@@ -110,6 +110,9 @@ class TestPage:
         #: A criterion to open at the end of the next sync, and the plot
         #: it was asked from (`reveal`).
         self.pending_reveal: tuple[str, int | None] | None = None
+        #: A move's row to bring into view and the line it says, for the
+        #: end of the next sync (`moved`).
+        self.pending_moved: tuple[str, str] | None = None
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -297,6 +300,7 @@ class TestPage:
         view = self._view()
         self._close()
         self._close_row()
+        self._unsay()
         # Its own row's error goes as its form opens; any other row's
         # stays with that row (`RowTarget.hush`).
         target.hush()
@@ -441,6 +445,7 @@ class TestPage:
         cost fourteen reads for one row click on a twelve-plot page (the 3b
         review). A statistics criterion's editor is the Statistics card's
         (U3): it has no plot."""
+        self._unsay()
         if index is None and self.stats is not None:
             view = self._view()
             if self.stats.row_for(path) is not None:
@@ -498,6 +503,24 @@ class TestPage:
                 self.stats.close_editor()
             return
         self.cards[index].close_editor()
+
+    def moved(self, path: str, text: str) -> None:
+        """A move went through (U4, V4; `Panel.moved`): the editor and the
+        form row close NOW, before the sync the move's events bring — two
+        criteria on one variable trading places move no shape, and an
+        editor left open showed the other one — and the moved row and its
+        line wait for that sync, which draws the row."""
+        view = self._view()
+        self._close()
+        self._close_row()
+        self._redraw_moved(view)
+        self._unsay()
+        self.pending_moved = (path, text)
+
+    def _unsay(self) -> None:
+        """Take a move's line away: the next form, editor or edit."""
+        if self.tree is not None:
+            self.tree.unsay()
 
     def _redraw_moved(self, view: Any) -> None:
         """The signature is the one thing that decides a redraw: only the
@@ -920,6 +943,11 @@ class TestPage:
             # rebuild drew it.
             (path, index), self.pending_reveal = self.pending_reveal, None
             self._reveal(path, index)
+        if self.pending_moved is not None and self.tree is not None:
+            # After the tree's rows: the moved row exists once they are
+            # rebuilt.
+            (path, text), self.pending_moved = self.pending_moved, None
+            self.tree.say(path, text)
         # Last: the drawer's checks read the cards and the selection.
         self.rail.refresh()
 
@@ -940,7 +968,7 @@ class TestPage:
         self.gone = True
         self._close()
         self._close_row()
-        self.pending_reveal = None
+        self.pending_reveal = self.pending_moved = None
         if self.strip is not None:
             self.strip.forget()
         if self.badge is not None:
@@ -1000,6 +1028,10 @@ class TestPage:
             # signature sees an overlay, so the drawn plots are re-sent.
             self.sync(force=True)
         elif syncs:
+            if event["event"] == "spec" and self.pending_moved is None:
+                # An edit after a move: the move's line has said its piece.
+                # The move's own event finds its line still to be said.
+                self._unsay()
             self.sync()
 
     def _mine(self, event: dict[str, Any]) -> bool:

@@ -249,6 +249,15 @@ class Panel(Protocol):
         to the server."""
         ...
 
+    def moved(self, node_path: str, text: str) -> None:
+        """A move just went through (U4, V4): every open editor and form row
+        on the page closes NOW — two criteria on one variable trading
+        places move no shape, and an editor left open would show the other
+        one — and once the tree is redrawn ``node_path``'s row is brought
+        into view with ``text`` as one line under it, until the next form,
+        editor or edit. A no-op where no page shows the tree."""
+        ...
+
 
 @runtime_checkable
 class Capability(Protocol):

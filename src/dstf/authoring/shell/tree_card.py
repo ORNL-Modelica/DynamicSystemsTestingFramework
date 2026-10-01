@@ -237,6 +237,8 @@ class TreeCard:
         #: Each node's row target by its path: where a drop lands and a
         #: drag's zones come from (`Panel.movable`).
         self.targets: dict[str, RowTarget] = {}
+        #: A move's line, under the moved row (`say`).
+        self.said: ui.label | None = None
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
@@ -287,6 +289,37 @@ class TreeCard:
         if target is None or target.on_drop is None:
             return
         target.on_drop(str(args.get("src")), str(args.get("zone")))
+
+    def say(self, path: str, text: str) -> None:
+        """A move's line under ``path``'s row, the row brought into view and
+        flashed (V4). One at a time; `unsay` takes it away."""
+        self.unsay()
+        target, row = self.targets.get(path), self.rows_by_path.get(path)
+        if target is None or target.slot is None or row is None:
+            return
+        depth = path.count("/children/")
+        with target.slot:
+            # Under the row's pill: its indent, the handle's place and a gap.
+            self.said = (
+                ui.label(text)
+                .classes("dstf-moved text-xs")
+                .style(f"padding-left: {16 * depth + 32}px")
+                .props('role="status"')
+                .mark("moved-note")
+            )
+        # To THIS page's client: `sync` runs from the Shell's timer, whose
+        # context is no page's (`TestPage._reveal`).
+        self.page.client.run_javascript(
+            f'const r = document.getElementById("{row.html_id}");'
+            'if (r) { r.scrollIntoView({block: "nearest"});'
+            ' r.classList.remove("dstf-flash"); void r.offsetWidth;'
+            ' r.classList.add("dstf-flash"); }'
+        )
+
+    def unsay(self) -> None:
+        if self.said is not None and not self.said.is_deleted:
+            self.said.delete()
+        self.said = None
 
     def toggle(self) -> None:
         self.is_open = not self.is_open
