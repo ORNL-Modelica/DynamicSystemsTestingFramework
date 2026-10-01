@@ -77,6 +77,9 @@ class HostPanel:
     def reveal(self, leaf_path: str) -> None:
         self.reveals.append(leaf_path)
 
+    #: No tree card here: the host offers no moving (U4).
+    can_move = False
+
 
 @asynccontextmanager
 async def host(

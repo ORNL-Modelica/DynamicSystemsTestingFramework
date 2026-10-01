@@ -37,6 +37,9 @@ WARN_UNDER = (
     "parent with nothing else passing."
 )
 
+#: The place a node already is, as `move_destinations` lists it.
+WHERE_IT_IS = "where it is"
+
 #: The combinators a child that can never fail may not newly sit under.
 _NO_FREE_PASS_UNDER = ("or", "k-of-n")
 
@@ -346,7 +349,7 @@ def move_destinations(
         if planned is None:
             if not here:
                 here = True
-                rows.append((f"{text} — where it is", dest, None))
+                rows.append((f"{text} — {WHERE_IT_IS}", dest, None))
             return
         rows.append((f"{text} — {where}", dest, None))
 

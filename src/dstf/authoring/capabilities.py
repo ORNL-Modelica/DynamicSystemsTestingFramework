@@ -225,6 +225,13 @@ class Panel(Protocol):
         a dialog, the criterion editor."""
         ...
 
+    @property
+    def can_move(self) -> bool:
+        """Whether the host offers moving the node this panel is drawn for
+        (U4, V2): a tree card's row, and nowhere else — a plot's criteria
+        row hosts the same NODE placement and moves nothing."""
+        ...
+
 
 @runtime_checkable
 class Capability(Protocol):

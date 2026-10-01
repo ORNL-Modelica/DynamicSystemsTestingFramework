@@ -88,6 +88,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* Move to… (U4): a place per line, its node's text cut in the middle and
+   where in it kept whole; the menu no wider than the page allows. */
+.dstf-move-menu { max-width: min(560px, 92vw); }
+.dstf-move-label {
+  display: flex; gap: .4em; min-width: 0; white-space: nowrap;
+}
+.dstf-move-where { flex: none; }
 /* A combinator's kind dropdown, in its row's lead place: a dense Quasar
    field is 40 px tall, which stood a combinator's row well above a
    leaf's; at 28 px the rows read as one list. */

@@ -8961,3 +8961,119 @@ async def test_a_side_with_no_value_reads_a_dash(stats_shell):
         texts = [e.text for e in _one(user, f"stats:row:{NONLINEAR}").descendants()
                  if isinstance(e, ui.label)]  # fmt: skip
         assert texts[1:3] == ["3", "—"]
+
+
+# -- move a subtree (U4): Move to… in the tree card ------------------------
+
+N_K = "/metrics/children/1"
+
+
+def _move_items(user, path: str) -> list[tuple[str, str, str | None, bool]]:
+    """The Move to… menu of ``path``'s row, in order: each destination's
+    node text, its place, its reason line (None) and whether it is
+    enabled."""
+    out = []
+    i = 0
+    while not _none(user, f"move-dest:{path}:{i}"):
+        item = _one(user, f"move-dest:{path}:{i}")
+        (text,) = [e.text for e in item.descendants() if isinstance(e, MiddleCut)]
+        (where,) = [
+            e.text
+            for e in item.descendants()
+            if isinstance(e, ui.label) and "dstf-move-where" in e.classes
+        ]
+        why = [e.text for e in item.descendants() if "move-why" in e._markers]
+        out.append((text, where, why[0] if why else None, item.enabled))
+        i += 1
+    return out
+
+
+async def _open_move_menu(user, path: str) -> None:
+    _click(user, _one(user, f"move:{path}"))
+    await _settled(lambda: not _none(user, f"move-dest:{path}:0"))
+
+
+async def test_move_to_lists_every_destination_in_tree_order(nested_shell):
+    """y's menu: every place between rows and every criterion to wrap with,
+    in tree order; the places beside y read as ONE greyed "where it is",
+    with no reason. Built at the click, never with the rows (Q6)."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _open_tree(user)
+        assert _none(user, f"move-dest:{N_Y}:0")
+        await _open_move_menu(user, N_Y)
+        root, k = "and · 5 criteria (root)", "k-of-n · 2 criteria · k=1"
+        assert _move_items(user, N_Y) == [
+            (root, "— at 1", None, True),
+            ("range · pipe.T[2]", "— wrap both in and", None, True),
+            (root, "— at 2", None, True),
+            (k, "— at 1", None, True),
+            ("range · x", "— wrap both in and", None, True),
+            (k, "— at 2", None, True),
+            ("range · pipe.T[1]", "— wrap both in and", None, True),
+            (k, "— at the end", None, True),
+            (root, "— at 3", None, True),
+            ("range · x", "— wrap both in and", None, True),
+            (root, "— where it is", None, False),
+        ]
+
+
+async def test_a_refused_destination_is_greyed_with_its_reason(nested_shell):
+    """The k-of-n's menu: its own subtree is listed, greyed, each with the
+    reason as a second line; a click there stages nothing."""
+    from dstf.authoring.tree_move import INTO_ITSELF
+
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _open_tree(user)
+        await _open_move_menu(user, N_K)
+        items = _move_items(user, N_K)
+        inside = [item for item in items if item[2] is not None]
+        assert len(inside) == 5
+        assert all(why == INTO_ITSELF and not on for _t, _w, why, on in inside)
+        _click(user, _one(user, f"move-dest:{N_K}:3"))  # the k-of-n, at 1
+        await asyncio.sleep(0.2)
+        assert shell.session.spec.pending == []
+
+
+async def test_choosing_a_destination_stages_the_move_and_the_rows_follow(
+    nested_shell,
+):
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _open_tree(user)
+        await _open_move_menu(user, N_Y)
+        _click(user, _one(user, f"move-dest:{N_Y}:0"))  # the root, at 1
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        (op,) = shell.session.spec.pending
+        assert (op.op, op.path) == ("add", "/metrics")
+        kids = shell.session.tree(A)["children"]
+        assert [c.get("variable") for c in kids] == ["y", "pipe.T[2]", None, "x"]
+        await _settled(
+            lambda: _one(user, "tree-text:/metrics/children/0").text == "nrmse · y"
+        )
+
+
+async def test_move_to_is_on_the_tree_rows_only_and_never_on_the_root(nested_shell):
+    """V2: a plot's criteria row hosts the same NODE controls and moves
+    nothing; the root has nowhere to go."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        assert _none(user, "move:/metrics")
+        for path in (N_T2, N_K, N_KX, N_KT1, N_X2, N_Y):
+            (button,) = user.find(marker=f"move:{path}").elements
+            assert _one(user, f"tree-row:{path}") in list(_ancestors(button))
+            assert button.props["aria-label"] == "Move to…"
+        page.open_criterion(N_Y)
+        await _settled(lambda: page.open is not None)
+        hosts = [row.host for card in page.cards for row in card.rows.values()]
+        assert hosts  # not vacuous: the criteria rows are drawn
+        for host in hosts:
+            marks = _marks(host.column)
+            assert any(m.startswith("wrap:") for m in marks)  # the controls are
+            assert not [m for m in marks if m.startswith("move:")]

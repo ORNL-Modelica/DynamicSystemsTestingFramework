@@ -78,9 +78,16 @@ class ShellPanel:
         row: Callable[[str, RowBuild], None] | None = None,
         reveal: Callable[[str], None] | None = None,
         lead: ui.element | None = None,
+        target: RowTarget | None = None,
     ) -> None:
         self._submit, self.figure = submit, figure
         self._row, self._reveal, self._lead = row, reveal, lead
+        #: The row this panel is drawn in, where there is one.
+        self._target = target
+
+    @property
+    def can_move(self) -> bool:
+        return self._target is not None and self._target.drag
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -131,6 +138,9 @@ class RowTarget:
         #: what the node's kind is read from (`Panel.lead`); None in a row
         #: that has none (a criteria row). Emptied with the host.
         self.lead: ui.element | None = None
+        #: Whether a node drawn in this row may be moved from it (U4, V2):
+        #: set by the tree card, and by no other row's owner.
+        self.drag = False
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -497,6 +507,7 @@ class InlineHost:
                         if self.row is None
                         else partial(self.row.page.reveal, index=self.row.index),
                         lead=None if self.row is None else self.row.lead,
+                        target=self.row,
                     ),
                 )
             except Exception as e:  # shown in the slot, never breaks the page

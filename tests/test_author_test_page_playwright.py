@@ -2626,6 +2626,41 @@ def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
         expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")
 
 
+# -- move a subtree (U4) ----------------------------------------------------
+
+MENU_ACTIVE = "() => document.activeElement.innerText.replace(/\\s+/g, ' ').trim()"
+
+
+def test_move_to_answers_the_keyboard_and_moves_the_row(tmp_path, playwright_browser):
+    """range · y's Move to…, by the keyboard alone: Enter opens its menu
+    (the button says so), End goes to the last place that is a CHOICE —
+    "where it is", greyed, is skipped — Home to the first, and Enter there
+    moves y to the root's front: the row moves, one edit is pending."""
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
+        rows = page.locator(".dstf-tree-row")
+        expect(rows).to_have_count(5, timeout=EXPECT_TIMEOUT)
+        expect(rows.nth(4)).to_contain_text("range · y")
+        button = rows.nth(4).get_by_role("button", name="Move to…")
+        button.focus()
+        page.keyboard.press("Enter")
+        items = page.get_by_role("menuitem")
+        expect(items).to_have_count(7, timeout=EXPECT_TIMEOUT)
+        expect(button).to_have_attribute("aria-expanded", "true")
+        expect(items.nth(6)).to_have_attribute("aria-disabled", "true")
+        # The menu takes the focus once its transition ends.
+        expect(page.locator(".dstf-move-menu")).to_be_focused(timeout=EXPECT_TIMEOUT)
+        page.keyboard.press("End")
+        assert page.evaluate(MENU_ACTIVE) == "k-of-n · 2 criteria · k=1 — at the end"
+        page.keyboard.press("Home")
+        assert page.evaluate(MENU_ACTIVE) == "and · 3 criteria (root) — at 1"
+        page.keyboard.press("Enter")
+        expect(rows.nth(1)).to_contain_text("range · y", timeout=EXPECT_TIMEOUT)
+        expect(items).to_have_count(0)
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+
+
 # -- the plot's +, inline; the editor opens after Add (Q3 A) ----------------
 
 

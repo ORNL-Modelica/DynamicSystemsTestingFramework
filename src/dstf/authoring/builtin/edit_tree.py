@@ -35,7 +35,14 @@ from ..session import SIMULATE_ONLY, no_tree_error
 if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
-from ..tree_move import Dest, Moved, plan_move, validator_for
+from ..tree_move import (
+    WHERE_IT_IS,
+    Dest,
+    Moved,
+    move_destinations,
+    plan_move,
+    validator_for,
+)
 from ..tree_pointer import node_or_none
 from ..tree_text import node_text, nodes_of
 
@@ -151,6 +158,8 @@ _NO_THRESHOLD = "enter a threshold"
 _DEFAULT_DIRECTION = "less"
 #: A weighted node's ``direction``, as the Direction select reads it.
 _DIRECTIONS = {"less": "lower is better", "greater": "higher is better"}
+#: The Move to… icon's tooltip and accessible name (U4).
+_MOVE_TO = "Move to…"
 
 
 def seed_data(
@@ -831,6 +840,9 @@ def _cluster(
                 f"edit:{path}",
                 lambda: ui_panel.row("Edit this combinator", build_edit),
             )
+        if path != ROOT and ui_panel.can_move:
+            # Moving is the tree card's (V2); the root has nowhere to go.
+            _move_menu(ui, s, ui_panel, model_id, path)
         if path != ROOT:  # the root has nothing to be removed from
             icon(
                 "remove",
@@ -904,10 +916,92 @@ def planned_move(s: SessionView, model_id: str, src: str, dest: Dest) -> Moved |
     if tree is None:
         assert why is not None  # `tree` is None
         raise no_tree_error(model_id, why)
+    return plan_move(tree, src, dest, validate=_validator(s, model_id))
+
+
+def _validator(s: SessionView, model_id: str) -> Callable[[dict], None]:
+    """What a move's new tree is checked against: the test's baseline
+    roles, as `Session.stage` checks them."""
     project = s.project
     assert project is not None  # a tree came from it
-    validate = validator_for(project.role_lookup(model_id))
-    return plan_move(tree, src, dest, validate=validate)
+    return validator_for(project.role_lookup(model_id))
+
+
+def _move_menu(
+    ui: Any, s: SessionView, ui_panel: Panel, model_id: str, path: str
+) -> None:
+    """Move to… (U4): an icon whose menu lists every place the node can go
+    (`move_destinations`, in tree order) — BUILT AT THE CLICK, from the tree
+    as it is then, like a form: the list is every place of the tree, and
+    one per row built with the rows was ~20 s of rebuild on a 134-node
+    tree (Q6). A refused place is greyed with its reason as a second line,
+    where the node is greyed with none; the arrow keys skip both. Each
+    place reads its node's text cut in the middle, then where in it."""
+    from ..shell.drawer_controls import menu_keys
+    from ..shell.widgets import MiddleCut
+
+    button = ui.button(icon="open_with").props("flat dense round size=sm")
+    # Its accessible name is the tooltip; set as items, like the icons'.
+    button.props["aria-label"] = _MOVE_TO
+    button.props["aria-haspopup"] = "menu"
+    button.props["aria-expanded"] = "false"
+    with button:
+        tip = ui.tooltip(_MOVE_TO).props('anchor="top middle" self="bottom middle"')
+        # Opened by `fill`, not by the button's own click: it is filled
+        # first. Below the row's right end, and scrolling within its own
+        # height: a menu of every place in the tree is long.
+        menu = (
+            ui.menu()
+            .props(
+                'no-parent-event role="menu" anchor="bottom right" '
+                'self="top right" max-height="40vh"'
+            )
+            .classes("dstf-move-menu")
+            .mark(f"move-menu:{path}")
+        )
+    menu.on("keydown", js_handler=menu_keys(menu))
+
+    def toggled(e: Any) -> None:
+        # No tooltip while the menu is open: it covered the first place.
+        button.props["aria-expanded"] = "true" if e.value else "false"
+        button.update()
+        tip.set_visibility(not e.value)
+
+    menu.on_value_change(toggled)
+
+    def choose(dest: Dest) -> None:
+        menu.close()
+        ui_panel.submit(model_id=model_id, action="move", path=path, dest=dest)
+
+    def fill() -> None:
+        menu.clear()
+        tree = s.tree(model_id)
+        if tree is None:  # `available` already says why; a job may race
+            return
+        places = move_destinations(
+            tree, path, validate=_validator(s, model_id), names=s.labels(model_id)
+        )
+        with menu:
+            for i, (label, dest, reason) in enumerate(places):
+                text, where = label.rsplit(" — ", 1)
+                item = (
+                    ui.menu_item(on_click=partial(choose, dest), auto_close=False)
+                    .props('dense role="menuitem" tabindex="-1"')
+                    .mark(f"move-dest:{path}:{i}")
+                )
+                with item, ui.item_section():
+                    with ui.item_label().classes("dstf-move-label"):
+                        MiddleCut(text)
+                        ui.label(f"— {where}").classes("dstf-move-where")
+                    if reason is not None:
+                        ui.item_label(reason).props("caption").mark("move-why")
+                if reason is not None or where == WHERE_IT_IS:
+                    item.disable()
+                    item.props["aria-disabled"] = "true"
+        menu.open()
+
+    button.on_click(fill)
+    button.mark(f"move:{path}")
 
 
 def _locked_by(s: SessionView, model_id: str) -> str | None:

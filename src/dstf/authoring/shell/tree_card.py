@@ -301,6 +301,8 @@ class TreeCard:
             ui.space()
             target = RowTarget(self.page, f"tree:{path}", row, path, None)
             target.lead = lead
+            # The tree card's rows are where a node moves from (V2).
+            target.drag = True
             host = InlineHost(
                 self.page.shell,
                 Placement.NODE,

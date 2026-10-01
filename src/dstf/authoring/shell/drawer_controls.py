@@ -18,12 +18,15 @@ from nicegui import ui
 #: first / last. From outside the choices ArrowDown goes to the first and
 #: ArrowUp to the last. Tab closes it; the focus returns to its button (the
 #: menu pattern: its choices are out of the tab order, `tabindex="-1"`).
-#: ``__MENU_ID__`` is the menu's element id (`_menu_keys`).
+#: The choices are the menu's radio items, or its plain items that are not
+#: disabled (the tree card's Move to…: a refused place is no choice).
+#: ``__MENU_ID__`` is the menu's element id (`menu_keys`).
 _MENU_KEYS = """(e) => {
   if (e.key === 'Tab') { getElement(__MENU_ID__)?.hide(); return; }
   const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
   if (!keys.includes(e.key)) return;
-  const items = [...e.currentTarget.querySelectorAll('[role="menuitemradio"]')];
+  const items = [...e.currentTarget.querySelectorAll(
+    '[role="menuitemradio"], [role="menuitem"]:not([aria-disabled="true"])')];
   if (!items.length) return;
   e.preventDefault();
   const at = items.indexOf(document.activeElement);
@@ -42,7 +45,7 @@ _MENU_KEYS = """(e) => {
 TIP_ABOVE = 'anchor="top middle" self="bottom middle"'
 
 
-def _menu_keys(menu: ui.menu) -> str:
+def menu_keys(menu: ui.menu) -> str:
     """`_MENU_KEYS` for ``menu``."""
     return _MENU_KEYS.replace("__MENU_ID__", str(menu.id))
 
@@ -165,7 +168,7 @@ def menu_button(
         # the open menu's first choice and its check.
         ui.tooltip(tip).props(TIP_ABOVE)
         with ui.menu().props('role="menu"') as element:
-            element.on("keydown", js_handler=_menu_keys(element))
+            element.on("keydown", js_handler=menu_keys(element))
             for key, label in options:
                 item = (
                     ui.menu_item(on_click=partial(choose, key))
