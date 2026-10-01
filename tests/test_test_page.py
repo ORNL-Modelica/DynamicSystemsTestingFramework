@@ -10889,6 +10889,127 @@ async def test_edit_on_its_plot_opens_on_the_plot_that_holds_it_at_the_click(
         assert opened == [(0, RANGE_Y)]
 
 
+async def test_edit_on_its_plot_scrolls_to_the_plots_row(shell):
+    """Q12: the link opens the criterion on its plot AND brings that row to
+    the middle of the viewport, by its id."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        await _open_tree(user)
+        _tree_click(user, T0)
+        await _settled(lambda: page.open == (TREE_OPEN, T0))
+        sent = _js_sent(page)
+        user.find(marker=f"tree-editor-on-plot:{T0}").click()
+        await _settled(lambda: page.open is not None and page.open[0] >= 0)
+        assert page.open is not None
+        row = page.cards[page.open[0]].rows[T0].row
+        assert any(row.html_id in js and "scrollIntoView" in js for js in sent), sent
+
+
+async def test_a_tree_editor_closes_the_statistics_cards(stats_shell):
+    """Q11, one editor page-wide: a statistics criterion open in the
+    Statistics card closes when the tree opens it under its row."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        await _open_tree(user)
+        _tree_click(user, leaf)
+        await _settled(lambda: page.open == (TREE_OPEN, leaf))
+        assert page.stats.editor is None and _none(user, f"stats-editor:{leaf}")
+        assert "dstf-crit-open" not in _one(user, f"stats:row:{NONLINEAR}").classes
+
+
+async def test_a_statistics_editor_closes_the_tree_editor(stats_shell):
+    """Q11, the other way: the tree's editor closes when the Statistics card
+    opens the same criterion under its row."""
+    shell = stats_shell
+    leaf = _stats_leaf_staged(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        _tree_click(user, leaf)
+        await _settled(lambda: page.open == (TREE_OPEN, leaf))
+        page.stats.toggle()
+        _click(user, _one(user, f"stats:row:{NONLINEAR}"))
+        await _settled(lambda: page.open == (STATS, leaf))
+        assert page.tree.editor is None and _none(user, f"tree-editor:{leaf}")
+        assert page.tree.editor_path is None
+
+
+async def test_the_show_icon_flashes_a_family_plots_row(nested_shell):
+    """Q7 on a family's plot: the ⤓ of each criterion on it — at two depths
+    — draws the plot, scrolls to its row and flashes it; nothing opens."""
+    shell = nested_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        for path in (N_T2, N_KT1):
+            sent = _js_sent(page)
+            user.find(marker=f"show:{path}").click()
+            await _settled(lambda: page.cards[0].plot is not None)
+            html_id = page.cards[0].rows[path].row.html_id
+
+            def flashed(html_id=html_id, sent=sent) -> bool:
+                return any(html_id in js and "dstf-flash" in js for js in sent)
+
+            await _settled(flashed)
+            assert page.open is None
+
+
+async def test_moving_the_editor_into_the_tree_resends_its_plot(shell):
+    """Q11: the plot's editor draws its rings; opening the same criterion in
+    the tree closes it there, and the plot is re-sent without them."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.cards[0].show()
+        await _open_tree(user)
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        sent = _counted(page.cards[0])
+        _tree_click(user, T1)
+        await _settled(lambda: page.open == (TREE_OPEN, T1))
+        assert sent[0] >= 1
+
+
+async def test_a_leaf_click_with_a_k_of_n_form_open_opens_its_editor(nested_shell):
+    """F8: a click closes a form only when the form is under the clicked
+    row; a criterion clicked while its k-of-n's fields are open opens its
+    editor, and the fields go (one thing open)."""
+    shell = nested_shell
+    _stage_tree(shell, A, GROUPS)
+    leaf = f"{G_K}/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        _tree_click(user, G_K)
+        await _settled(lambda: page.form is not None)
+        _tree_click(user, leaf)
+        await _settled(lambda: page.open == (TREE_OPEN, leaf))
+        assert page.form is None
+
+
+async def test_opening_a_tree_editor_takes_the_moved_line_away(nested_shell):
+    """A move's line stays until the next form, editor or edit: a tree
+    editor opened takes it, as a plot's does."""
+    shell = nested_shell
+    _stage_tree(shell, A, SWAP)
+    first = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _open_tree(user)
+        _drop(page, "/metrics/children/1", first, "before")
+        await _settled(lambda: not _none(user, "moved-note"))
+        _tree_click(user, first)
+        await _settled(lambda: page.open == (TREE_OPEN, first))
+        assert _none(user, "moved-note")
+
+
 def _js_sent(page) -> list[str]:
     """Every script the page sends its client, recorded from now on."""
     sent: list[str] = []

@@ -5019,6 +5019,8 @@ ROW_FIT = """() => ({
             spill: t.scrollWidth - t.clientWidth,
             readout: o && {cut: o.scrollWidth > o.clientWidth, title: o.title,
                            width: o.clientWidth,
+                           height: o.getBoundingClientRect().height,
+                           line: parseFloat(getComputedStyle(o).lineHeight),
                            text: o.textContent,
                            ellipsis: getComputedStyle(o).textOverflow}};
   }),
@@ -5059,6 +5061,7 @@ def test_a_long_tree_row_wraps_its_label_and_cuts_its_readout(
             readout = deep["readout"]
             # Cut, never squeezed away by a name that cannot wrap.
             assert readout["width"] >= 80, readout
+            assert readout["height"] <= 1.5 * readout["line"], readout  # one line
             assert readout["ellipsis"] == "ellipsis", readout
             assert readout["title"] == readout["text"] != "", readout
 
@@ -5157,6 +5160,8 @@ def test_a_tree_rows_click_opens_its_editor_and_its_controls_keep_theirs(
         assert card and box and row
         assert box["y"] >= row["y"] + row["height"] - 1, (row, box)
         assert box["x"] + box["width"] <= card["x"] + card["width"] + 0.5, (card, box)
+        # Its right edge is its row's (B12: no wider, and no narrower).
+        assert abs(box["x"] + box["width"] - (row["x"] + row["width"])) <= 1, (row, box)
         assert page.evaluate("document.documentElement.scrollWidth") <= width
         tree_editor.locator(".dstf-why").first.click()  # the editor's own
         page.wait_for_timeout(300)
@@ -5239,6 +5244,17 @@ def test_a_tree_rows_click_answers_the_keyboard(tmp_path, playwright_browser):
         page.keyboard.press("Enter")
         expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
         expect(tube).to_have_attribute("aria-expanded", "false")
+        # Space on the tube's row, the page at its top: its editor, and the
+        # page does not scroll (Space's default would).
+        page.evaluate("() => window.scrollTo(0, 0)")
+        tube.focus()
+        top = page.evaluate("window.scrollY")
+        page.keyboard.press(" ")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        assert page.evaluate("window.scrollY") == top
+        page.keyboard.press(" ")
+        expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
         # Space on the k-of-n's row: its fields.
         k_of_n.focus()
         page.keyboard.press(" ")
