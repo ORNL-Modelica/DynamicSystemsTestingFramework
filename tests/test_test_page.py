@@ -5916,30 +5916,19 @@ class TestVariablesDrawer:
             check.click()  # drawn for plot 1, which shows z
             assert _op_value(shell) == [_ctx("x", "z"), _ctx("a0", "z")]
 
-    @pytest.mark.parametrize(
-        ("status", "why"),
-        [
-            ("passed", "The run failed: no plots"),
-            # A run left A pending and status.json recorded it failed: the
-            # reader hands in this failed result, the badge says SIM_FAIL,
-            # and so does every line (D145).
-            ("pending", "The run failed: no plots"),
-        ],
-    )
-    async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell, status, why):
+    async def test_a_failed_run_offers_no_plot_to_make(self, drawer_shell):
         """A result that is not a success has no plots (O2), and a watch
-        plot made on it would draw nothing: the drawer says why — worded
-        by the run state — its checks and every "+ new plot" are grey, and
-        a click that reaches `_new` anyway — drawn before the run failed —
-        stages nothing."""
+        plot made on it would draw nothing: the drawer says why — the run
+        failed — its checks and every "+ new plot" are grey, and a click
+        that reaches `_new` anyway — drawn before the run failed — stages
+        nothing. The page reads the result, never the manifest: a run that
+        left A pending with status.json recording it failed hands in this
+        same failed result (D145)."""
         from dstf.authoring.variable_rows import VarRow
         from dstf.backends.types import TestResult
 
         shell = drawer_shell
-        path = shell.session.project.config.work_dir / "batch_manifest.json"
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-        manifest["test_0001"]["last_run_status"] = status
-        path.write_text(json.dumps(manifest), encoding="utf-8")
+        why = "The run failed: no plots"
         result = shell.session.project.results[A]
         shell.session.project.results[A] = TestResult(
             model_id=A, success=False, variables=list(result.variables)
