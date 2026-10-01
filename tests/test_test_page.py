@@ -1381,6 +1381,102 @@ async def test_this_pages_own_edits_keep_the_folds(page_shell):
         assert _hidden(page) == _under(page, group)
 
 
+async def test_rows_built_folded_hide_their_slots_and_name_the_chevron(shell):
+    """Q3 / E2: rows BUILT under a folded group — the test opened again in
+    the tab — hide their form slots as their rows, and the folded group's
+    chevron says it is folded, as a fold made on the page does."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        _fold(user, G1)
+        await _settled(lambda: _hidden(page))
+        for model in (D, A):
+            page = await _test_page(shell, user, model)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        slots = {
+            path
+            for path, target in page.tree.targets.items()
+            if target.slot is not None and target.slot.props.get("hidden")
+        }
+        assert slots == _under(page, G1)
+        chevron = page.tree.chevrons[G1]
+        assert chevron.props["aria-expanded"] == "false"
+        assert chevron.props["aria-label"].startswith("Unfold ")
+
+
+async def test_removing_a_folded_group_does_not_fold_its_successor(shell):
+    """R1: a folded group removed here is dropped from the folds — the
+    group that takes its path is not folded in its place."""
+    p0 = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, TWO_GROUPS)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        rev = page.tree.revision
+        _click_in(user, f"remove:{p0}", within=f"tree-row:{p0}")
+        await _settled(lambda: page.tree.revision != rev)
+        assert "data-group" in page.tree.rows_by_path[p0].props
+        assert _all_open(page)
+
+
+async def test_a_k_change_renames_the_groups_chevron_in_place(shell):
+    """The chevron is named by its group's text (`k-of-n` says its k): a k
+    edited elsewhere renames it, painted, not rebuilt."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "k-of-n", "k": 1, "children": [_range(-1), _range(-2)]}
+        ],
+    }
+    group = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        chevron = page.tree.chevrons[group]
+        before = chevron.props["aria-label"]
+        rev = page.tree.revision
+        shell.session.stage([PatchOp(A, "replace", f"{group}/k", 2)])
+        await _settled(lambda: chevron.props["aria-label"] != before)
+        assert page.tree.revision == rev
+        assert chevron.props["aria-label"].startswith("Fold ")
+
+
+async def test_a_hidden_tree_has_no_expand_or_collapse_all(shell):
+    """Y7: Expand all / Collapse all are beside the tally while the rows
+    show; Hide tree takes them away."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user)
+        assert not _none(user, "tree:collapse-all")
+        assert not _none(user, "tree:expand-all")
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: not page.tree.rows.visible)
+        assert _none(user, "tree:collapse-all") and _none(user, "tree:expand-all")
+
+
+async def test_a_fold_whose_path_now_names_a_criterion_is_dropped(page_shell):
+    """Y6: an edit of this page that does not say where its nodes went (a
+    capability that never calls `Panel.edited`) leaves the folded set as it
+    was; a folded path that names a criterion when the rows are rebuilt is
+    dropped, not kept on the criterion now there."""
+    shell = page_shell
+    probe = _RowProbe()
+    _only(probe)
+    p0, p1 = "/metrics/children/0", "/metrics/children/1"
+    tree = {
+        "combinator": "and",
+        "children": [{"combinator": "and", "children": [_range(-1)]}, _range(-2)],
+    }
+    probe.stage = [PatchOp(A, "remove", p0)]
+    async with user_simulation(root=shell.index) as user:
+        page = await _deep_open(shell, user, tree)
+        _fold(user, p0)
+        await _settled(lambda: page.state.tree_folded.get(A) == [p0])
+        rev = page.tree.revision
+        _click_in(user, f"probe-act:{p1}", within=f"tree-row:{p1}")
+        await _settled(lambda: page.tree.revision != rev)
+        assert "data-group" not in page.tree.rows_by_path[p0].props
+        assert not page.state.tree_folded.get(A)
+
+
 async def test_collapse_all_closes_a_form_under_a_row_it_hides(page_shell):
     """E6, as Hide tree: folding a group takes a form open under one of its
     descendants away; one under the folded group's own row stays."""
