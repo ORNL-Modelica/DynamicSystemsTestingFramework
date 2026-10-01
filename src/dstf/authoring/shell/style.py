@@ -98,8 +98,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    full height, in place of an indent; the hovered group's branch takes its
    level's deeper shade on that level's bar (`.dstf-lvl-on`, set by the
    page's script on the BAR, never the row). Then the chevron's place,
-   kept on every row so the pills stay in line. */
-.dstf-bars { display: flex; flex: none; align-self: stretch; gap: 2px; }
+   kept on every row so the pills stay in line. The bars cover the row's
+   top border too (the -1 px): stretched inside it they stopped 1 px short
+   of the row above's, a gap in every branch. */
+.dstf-bars {
+  display: flex; flex: none; align-self: stretch; gap: 2px; margin-top: -1px;
+}
 .dstf-bar { width: 6px; flex: none; }
 .dstf-lvl-1 { background: var(--dstf-level-1); }
 .dstf-lvl-2 { background: var(--dstf-level-2); }

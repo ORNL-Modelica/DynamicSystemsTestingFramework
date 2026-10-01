@@ -4590,6 +4590,29 @@ def test_each_level_draws_its_bar_in_its_colour_and_a_hover_deepens_its_branch(
         check(None)
 
 
+#: Every row's box against each of its bars' (top, bottom).
+BAR_SPANS = """() => [...document.querySelectorAll('.dstf-tree-row')].map(r => {
+  const box = r.getBoundingClientRect();
+  return {path: r.dataset.treePath, row: [box.top, box.bottom],
+          bars: [...r.querySelector(':scope > .dstf-bars').children].map(b => {
+            const bb = b.getBoundingClientRect(); return [bb.top, bb.bottom]; })};
+})"""
+
+
+def test_a_level_bar_spans_its_rows_full_height(tmp_path, playwright_browser):
+    """Q1 (K5): a row's bars run its full height, its top border included,
+    so a branch's bars join from row to row — they stopped at the border,
+    1 px short."""
+    with _served(tmp_path, playwright_browser, project=_deep_project) as page:
+        _show_tree(page, DEEP_ROWS)
+        spans = page.evaluate(BAR_SPANS)
+        assert sum(len(r["bars"]) for r in spans) > 0
+        for r in spans:
+            top, bottom = r["row"]
+            for bar in r["bars"]:
+                assert abs(bar[0] - top) <= 0.5 and abs(bar[1] - bottom) <= 0.5, r
+
+
 # -- folding (U5 Task 2) ------------------------------------------------------
 
 #: Every tree row's and form slot's shown state, by path.
@@ -5295,6 +5318,23 @@ def test_a_tree_rows_click_answers_the_keyboard(tmp_path, playwright_browser):
 #: The flash's own class, on the row the ⤓ landed on.
 FLASHED = re.compile(r"dstf-flash")
 
+#: A row's centre against the viewport's — the part of it below the page's
+#: `scroll-padding-top` (the sticky header's; 124 px at 1280), which
+#: `scrollIntoView` centres in — and whether the page's scroll is at either
+#: end (a row near the top or foot cannot be brought to the middle).
+CENTRED = """e => { const b = e.getBoundingClientRect(), d = document.documentElement;
+  const pad = parseFloat(getComputedStyle(d).scrollPaddingTop) || 0;
+  return {off: (b.top + b.bottom) / 2 - (pad + innerHeight) / 2, pad,
+          clamped: scrollY <= 0 || scrollY >= d.scrollHeight - innerHeight - 1}; }"""
+
+
+def _centred(locator) -> None:
+    """``locator``'s row sits at the viewport's middle, ±20 px, unless the
+    scroll is clamped (K5: the ⤓ scrolls to the centre, not the nearest
+    edge)."""
+    at = locator.evaluate(CENTRED)
+    assert at["clamped"] or abs(at["off"]) <= 20, at
+
 
 @pytest.mark.parametrize("width", [1280, 900])
 def test_the_jump_icon_scrolls_to_the_plot_row_and_flashes_it(
@@ -5322,6 +5362,7 @@ def test_the_jump_icon_scrolls_to_the_plot_row_and_flashes_it(
         target = _crit(page, 1, "range · y")
         expect(target).to_be_in_viewport(timeout=EXPECT_TIMEOUT)
         expect(target).to_have_class(FLASHED)
+        _centred(target)
         page.mouse.move(5, 5)
         _shot(page, tmp_path, f"u5-jump-arrived-{width}")
         assert page.locator(".dstf-editor").count() == 0
@@ -5332,6 +5373,7 @@ def test_the_jump_icon_scrolls_to_the_plot_row_and_flashes_it(
         page.evaluate("() => window.scrollTo(0, 0)")
         icon.click()
         expect(target).to_be_in_viewport(timeout=EXPECT_TIMEOUT)
+        _centred(target)
         assert page.locator(".dstf-editor").count() == 0
 
 
@@ -5358,4 +5400,5 @@ def test_a_statistics_criterions_jump_icon_opens_its_card_row(
         icons.last.click()  # the criterion just added: the root's last child
         expect(row).to_be_in_viewport(timeout=EXPECT_TIMEOUT)
         expect(row).to_have_class(FLASHED)
+        _centred(row)
         assert page.locator(".dstf-editor").count() == 0

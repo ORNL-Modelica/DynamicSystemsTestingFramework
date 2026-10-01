@@ -9800,7 +9800,9 @@ async def test_opening_the_cards_editor_closes_a_form_row(stats_shell):
 
 
 async def test_a_plus_scrolls_the_new_editor_into_view(stats_shell, monkeypatch):
-    """The reveal brings the card's editor into view, as a plot's does."""
+    """The reveal brings the card's row and editor into view, as a plot's
+    does — BY THEIR IDS (K5): a class query can find an editor the next
+    update takes away."""
     shell = stats_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
@@ -9811,9 +9813,13 @@ async def test_a_plus_scrolls_the_new_editor_into_view(stats_shell, monkeypatch)
         )
         _click(user, _one(user, f"add-statistic:{NONLINEAR}"))
         await _settled(lambda: page.open is not None and page.open[0] == STATS)
-        assert any(
-            ".dstf-stats .dstf-editor" in c and "scrollIntoView" in c for c in sent
-        )
+        await _settled(lambda: any("scrollIntoView" in c for c in sent))
+        row = page.stats.rows_by_path[NONLINEAR]
+        editor = page.stats.editor_box
+        assert editor is not None
+        (scroll,) = [c for c in sent if "scrollIntoView" in c]
+        assert row.html_id in scroll and editor.html_id in scroll, scroll
+        assert "querySelector" not in scroll, scroll
 
 
 async def test_a_criterion_on_a_list_statistic_has_a_home_on_the_card(

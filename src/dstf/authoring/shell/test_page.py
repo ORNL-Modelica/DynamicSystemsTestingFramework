@@ -437,24 +437,18 @@ class TestPage:
             0 <= index < len(self.cards) and path in self.cards[index].rows
         ):
             index = None
-        if not any(path in card.rows for card in self.cards):
-            # A statistics criterion has no plot: the card is its home.
-            self.open_criterion(path, None)
-            if self.open == (STATS, path):
-                self.client.run_javascript(
-                    'document.querySelector(".dstf-stats .dstf-editor")'
-                    '?.scrollIntoView({block: "nearest"})'
-                )
-            return
+        # A statistics criterion has no plot: the card is its home, and
+        # `open_criterion` opens it there.
         self.open_criterion(path, index)
         # BY THEIR IDS (H6, F3's hazard): a `.dstf-crit-open` query found the
         # tree row an open had just closed, and a `.dstf-editor` one that
         # row's editor — both going with the next update, which this
-        # script can overtake (`_scroll_to_open`).
+        # script can overtake (`_scroll_to_open`). The Statistics card's
+        # too: a `.dstf-stats .dstf-editor` query was the same hazard.
         row = self._drawn_row(path)
-        if row is None or self.open is None or not 0 <= self.open[0] < len(self.cards):
+        if row is None or self.open is None:
             return
-        editor = self.cards[self.open[0]].editor_box
+        editor = self._editor_on(self.open[0])
         if editor is None:
             return
         self.client.run_javascript(
@@ -623,10 +617,13 @@ class TestPage:
     def _own(self, act: Callable[[], None]) -> None:
         """Run ``act``, one of this page's own edits, and note the `spec`
         revisions it produced in the TAB's record (`TabState.own_revisions`):
-        all of them, a sequence of outcomes stages once per patch. Nothing
-        else stages between the two reads: the Session is driven from the
-        UI loop, a job's or a scan's work posted to it (`Session._post`),
-        and ``act`` runs to its end on it."""
+        all of them, a sequence of outcomes stages once per patch. A job's
+        or a scan's work is posted to the UI loop (`Session._post`) and
+        cannot stage while ``act`` runs on it. The open is not:
+        `Shell.open_async` runs `Session.open` on a thread of its own, whose
+        merge emits a `spec` event (`Session._emit_spec`); one emitted
+        between the two reads is counted as this tab's and keeps its folds.
+        Not guarded."""
         session = self.shell.session
         before = session.spec_revision
         try:
@@ -691,6 +688,15 @@ class TestPage:
         if self.open is None or self.open[1] != path:
             return None
         return self._row_on(self.open[0], path)
+
+    def _editor_on(self, index: int) -> ui.element | None:
+        """The open editor's box on plot ``index``, or on the Statistics
+        card for STATS — None where none is open."""
+        if index == STATS:
+            return None if self.stats is None else self.stats.editor_box
+        if 0 <= index < len(self.cards):
+            return self.cards[index].editor_box
+        return None
 
     def _row_on(self, index: int, path: str) -> ui.element | None:
         """``path``'s criteria row on plot ``index``, or its Statistics row
