@@ -9246,13 +9246,20 @@ async def test_a_move_closes_the_open_editor_rather_than_rebind_it(nested_shell)
 
 
 async def test_a_move_closes_an_open_form_row(nested_shell):
+    """The swap again, with a form open under the first criterion's row:
+    no row is rebuilt, and the form left open would follow its path to
+    the OTHER criterion. The move closes it."""
     shell = nested_shell
+    _stage_tree(shell, A, SWAP)
+    first = "/metrics/children/0"
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        _click_in(user, f"wrap:{N_X2}", f"node:{N_X2}")
+        _click_in(user, f"wrap:{first}", f"node:{first}")
         await _settled(lambda: page.form is not None)
-        page.tree.dropped({"src": N_Y, "target": N_T2, "zone": "before"})
+        page.tree.dropped(
+            {"src": "/metrics/children/1", "target": first, "zone": "before"}
+        )
         await _settled(lambda: not _none(user, "moved-note"))
         assert page.form is None
 
