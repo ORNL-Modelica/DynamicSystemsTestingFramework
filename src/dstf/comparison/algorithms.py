@@ -13,7 +13,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
-from .sides import Sides, parse_sides
+from .sides import Sides, as_written, parse_sides
 from .types import _EPS, VariableComparison
 
 
@@ -249,6 +249,102 @@ def _compare_trajectories(
     )
 
 
+def _box_candidates(
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    t_lo: float,
+    t_hi: float,
+) -> list[tuple[float, float]]:
+    """The time-ordered ``(t, v)`` points a box check evaluates: the
+    interpolated ends ``t_lo`` / ``t_hi`` (where inside the trajectory) and
+    every sample between them. Empty for an empty box."""
+    if len(act_time) == 0 or t_hi < t_lo:
+        return []
+    candidates: list[tuple[float, float]] = []
+    if act_time[0] <= t_lo <= act_time[-1]:
+        candidates.append((t_lo, float(np.interp(t_lo, act_time, act_values))))
+    for i, t in enumerate(act_time):
+        if t_lo <= t <= t_hi:
+            candidates.append((float(t), float(act_values[i])))
+    if act_time[0] <= t_hi <= act_time[-1]:
+        candidates.append((t_hi, float(np.interp(t_hi, act_time, act_values))))
+    # A NaN sample is no evidence of anything: it cannot be the closest
+    # approach, and treating it as one side of a sign change made a curve
+    # 3 units off everywhere "cross" the target and pass. Drop it; a window
+    # holding nothing but NaN then reports no comparable sample (inf).
+    candidates = [(t, v) for t, v in candidates if not np.isnan(v)]
+    # Sort by time so adjacent-pair crossing detection is well-defined.
+    candidates.sort(key=lambda tv: tv[0])
+    return candidates
+
+
+def _violation_in_box(
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    t_lo: float,
+    t_hi: float,
+    target: float,
+    lower: float,
+    upper: float,
+) -> tuple[float, float]:
+    """How far the piecewise-linear actual stays outside the band
+    ``-lower <= act - target <= upper`` over ``[t_lo, t_hi]``, and the value
+    that comes closest to it.
+
+    The violation is ``0.0`` when a candidate (:func:`_box_candidates`) lies
+    in the band, or two adjacent candidates lie on opposite sides of it —
+    the curve crossed it between them; else the smallest distance to the
+    band; ``inf`` for a box with no candidate.
+
+    Judged on ``d = v - target``, never on the edges ``target ± limit``: the
+    two differ by a rounding step at the edge (``1.0 + 0.1`` is ``1.1``
+    while ``1.1 - 1.0`` exceeds ``0.1``), and with equal sides this must be
+    ``|d| <= limit`` to the bit — the verdict a number always gave. A band
+    inverted by a negative side (``-lower > upper``) holds nothing and is
+    crossed by nothing, as a negative tolerance never passed.
+    """
+    candidates = _box_candidates(act_time, act_values, t_lo, t_hi)
+    best, closest = float("inf"), float("nan")
+    for _, v in candidates:
+        d = v - target
+        if -lower <= d <= upper:
+            return 0.0, v
+        gap = d - upper if d > upper else -lower - d
+        if gap < best:
+            best, closest = gap, v
+    if -lower <= upper:
+        for (_, v1), (_, v2) in zip(candidates, candidates[1:]):
+            d1, d2 = v1 - target, v2 - target
+            if (d1 < -lower and d2 > upper) or (d1 > upper and d2 < -lower):
+                return 0.0, target
+    return best, closest
+
+
+def _point_tolerances(
+    points: list[dict] | None, tolerance: Sides
+) -> list[tuple[Sides, Sides]]:
+    """Each declared point's ``(tolerance, time_tolerance)``: its own, else
+    the leaf's ``tolerance`` (value) or none at all (time); a ``null`` is an
+    absent key. A malformed one is a ``ValueError`` naming the row —
+    ``PointsMode.__init__`` calls this too, because ``resolve_mode``'s
+    callers are where a ``ValueError`` becomes the leaf's config error on
+    both scoring paths."""
+    out = []
+    for i, point in enumerate(points or []):
+        value, time = point.get("tolerance"), point.get("time_tolerance")
+        out.append(
+            (
+                tolerance
+                if value is None
+                else parse_sides(value, f"points[{i}].tolerance"),
+                Sides(0.0, 0.0)
+                if time is None
+                else parse_sides(time, f"points[{i}].time_tolerance"),
+            )
+        )
+    return out
+
+
 def _min_delta_in_box(
     act_time: np.ndarray,
     act_values: np.ndarray,
@@ -269,27 +365,9 @@ def _min_delta_in_box(
     the trajectory, returns (inf, t_lo) — caller decides whether that
     counts as a fail or a skip.
     """
-    if len(act_time) == 0 or t_hi < t_lo:
-        return float("inf"), t_lo
-    # Build the ordered list of (t, v) eval points: interpolated
-    # endpoints t_lo / t_hi (if inside trajectory) + interior samples.
-    candidates: list[tuple[float, float]] = []
-    if act_time[0] <= t_lo <= act_time[-1]:
-        candidates.append((t_lo, float(np.interp(t_lo, act_time, act_values))))
-    for i, t in enumerate(act_time):
-        if t_lo <= t <= t_hi:
-            candidates.append((float(t), float(act_values[i])))
-    if act_time[0] <= t_hi <= act_time[-1]:
-        candidates.append((t_hi, float(np.interp(t_hi, act_time, act_values))))
-    # A NaN sample is no evidence of anything: it cannot be the closest
-    # approach, and treating it as one side of a sign change made a curve
-    # 3 units off everywhere "cross" the target and pass. Drop it; a window
-    # holding nothing but NaN then reports no comparable sample (inf).
-    candidates = [(t, v) for t, v in candidates if not np.isnan(v)]
+    candidates = _box_candidates(act_time, act_values, t_lo, t_hi)
     if not candidates:
         return float("inf"), t_lo
-    # Sort by time so adjacent-pair zero-crossing detection is well-defined.
-    candidates.sort(key=lambda tv: tv[0])
     best_delta = float("inf")
     best_t = t_lo
     for t, v in candidates:
@@ -337,10 +415,13 @@ def _compare_points(
       ``time_tolerance`` — x-tolerance for the box check (Task 4 of
         the points-mode plan; defaults to 0 = strict-time).
 
-    Pass iff every scored point's delta is within its y-limit.
+    Every tolerance is a number (both sides equal) or a lower/upper pair.
+    With ``d = actual − target``, a declared point passes iff the actual
+    curve meets ``−lower <= d <= upper`` somewhere in its time box
+    ``[time − lower, time + upper]`` (``lower``: how much earlier); the
+    final-value check passes iff ``−lower < d < upper`` (strict).
     """
-    # One number until this scorer applies the two sides separately.
-    tolerance = parse_sides(tolerance, "tolerance").upper
+    tolerance = parse_sides(tolerance, "tolerance")
     if not points:
         # Implicit final-only — legacy behavior.
         if len(ref_values) == 0 or len(act_values) == 0:
@@ -360,8 +441,9 @@ def _compare_points(
             )
         ref_final = float(ref_values[-1])
         act_final = float(act_values[-1])
-        delta = abs(act_final - ref_final)
-        passed = delta < tolerance
+        d = act_final - ref_final
+        delta = abs(d)
+        passed = -tolerance.lower < d < tolerance.upper
         t_final = float(ref_time[-1]) if len(ref_time) else 0.0
         return VariableComparison(
             index=0,
@@ -375,7 +457,7 @@ def _compare_points(
             reference_final=ref_final,
             actual_final=act_final,
             mode="points",
-            diagnostics={"tolerance": tolerance, "delta": delta},
+            diagnostics={"tolerance": as_written(tolerance), "delta": delta},
             geometry=(
                 Marker(
                     id="points/target/final",
@@ -389,8 +471,8 @@ def _compare_points(
                     kind="handle",
                     t0=t_final,
                     t1=t_final,
-                    y0=ref_final - tolerance,
-                    y1=ref_final + tolerance,
+                    y0=ref_final - tolerance.lower,
+                    y1=ref_final + tolerance.upper,
                     passed=passed,
                 ),
             ),
@@ -415,6 +497,7 @@ def _compare_points(
     # the report.
     geometry: list[Primitive] = []
     point_failures: list[dict] = []
+    row_tolerances = _point_tolerances(points, tolerance)
     for i, point in enumerate(points):
         t = point.get("time")
         t = trace_end if t is None else float(t)
@@ -443,20 +526,19 @@ def _compare_points(
                 continue
             target = float(np.interp(t, ref_time, ref_values))
         # Resolve tolerance + mode.
-        per_tol = point.get("tolerance")
-        per_tol = float(per_tol) if per_tol is not None else float(tolerance)
+        per_tol, x_tol = row_tolerances[i]
         mode = point.get("tolerance_mode", "abs")
-        y_limit = per_tol * abs(target) if mode == "rel" else per_tol
-        x_tol = point.get("time_tolerance", 0)
-        x_tol = float(x_tol) if x_tol is not None else 0.0
+        # ``rel``: each side is that fraction of |target|.
+        lower_limit = per_tol.lower * abs(target) if mode == "rel" else per_tol.lower
+        upper_limit = per_tol.upper * abs(target) if mode == "rel" else per_tol.upper
         if len(act_time) == 0:
             failed += 1
             point_failures.append(
                 {"time": t, "reason": "no actual samples (empty trajectory)"}
             )
             continue
-        t_lo = max(t - x_tol, float(act_time[0]))
-        t_hi = min(t + x_tol, float(act_time[-1]))
+        t_lo = max(t - x_tol.lower, float(act_time[0]))
+        t_hi = min(t + x_tol.upper, float(act_time[-1]))
         if t_hi < t_lo:
             # Time box entirely outside the actual trajectory — the
             # simulation never reached this checkpoint.
@@ -476,7 +558,13 @@ def _compare_points(
         if delta > worst_delta:
             worst_delta = delta
             worst_t = t_at_min
-        point_passed = delta <= y_limit
+        # ``delta`` (the closest approach to the target itself) stays the
+        # reported score; the verdict is the band's.
+        violation, closest = _violation_in_box(
+            act_time, act_values, t_lo, t_hi, target, lower_limit, upper_limit
+        )
+        point_passed = violation == 0.0
+        lo, hi = target - lower_limit, target + upper_limit
         geometry.append(
             Marker(
                 id=f"points/target/{i}",
@@ -490,18 +578,21 @@ def _compare_points(
             Box(
                 id=f"points/box/{i}",
                 kind="handle",
-                t0=t - x_tol,
-                t1=t + x_tol,
-                y0=target - y_limit,
-                y1=target + y_limit,
+                t0=t - x_tol.lower,
+                t1=t + x_tol.upper,
+                y0=lo,
+                y1=hi,
                 passed=point_passed,
             )
         )
         if not point_passed:
             failed += 1
-            point_failures.append(
-                {"time": t, "reason": f"delta {delta:.6g} exceeds limit {y_limit:.6g}"}
+            reason = (
+                f"delta {delta:.6g} exceeds limit {upper_limit:.6g}"
+                if per_tol.equal
+                else f"closest value {closest:.6g} is outside [{lo:.6g}, {hi:.6g}]"
             )
+            point_failures.append({"time": t, "reason": reason})
 
     passed = scored > 0 and failed == 0
     return VariableComparison(

@@ -3319,7 +3319,7 @@ _S_PAIR_FIELDS = {
 }
 #: The fields whose scorer does not take two sides yet: each scoring task
 #: removes its own, and the last one removes this list.
-_S_NOT_SCORED_YET = list(_S_PAIR_FIELDS)
+_S_NOT_SCORED_YET = [n for n in _S_PAIR_FIELDS if not n.startswith("points ")]
 
 
 class TestAnUnevenPairIsNotScoredWrongly:
@@ -3429,3 +3429,293 @@ class TestABaseToleranceIsANumber:
         )
         assert comp.passed and comp.error_message is None
         assert comp.variables[0].tolerance_used == Sides(0.5, 0.5)
+
+
+# ---------------------------------------------------------------------------
+# Points: a lower and an upper tolerance, in value and in time
+# ---------------------------------------------------------------------------
+
+import random  # noqa: E402
+
+from dstf.comparison.algorithms import (  # noqa: E402
+    _min_delta_in_box,
+    _violation_in_box,
+)
+
+_P_T = np.linspace(0.0, 10.0, 101)
+_P_FLAT = np.full_like(_P_T, 2.0)
+
+
+def _pts(act, points, tolerance=1e-4, ref=_P_FLAT, time=_P_T):
+    return _compare_points(time, ref, time, act, points=points, tolerance=tolerance)
+
+
+class TestPointsValueSides:
+    """``d = actual − target`` passes iff ``−lower <= d <= upper``."""
+
+    def test_above_passes_with_room_above_and_fails_with_the_sides_swapped(self):
+        act = _P_FLAT + 0.03
+        ok = _pts(act, [{"time": 5.0, "tolerance": {"lower": 0.01, "upper": 0.05}}])
+        bad = _pts(act, [{"time": 5.0, "tolerance": {"lower": 0.05, "upper": 0.01}}])
+        assert ok.passed and not bad.passed
+
+    def test_below_is_the_mirror(self):
+        act = _P_FLAT - 0.03
+        ok = _pts(act, [{"time": 5.0, "tolerance": {"lower": 0.05, "upper": 0.01}}])
+        bad = _pts(act, [{"time": 5.0, "tolerance": {"lower": 0.01, "upper": 0.05}}])
+        assert ok.passed and not bad.passed
+
+    def test_a_row_without_one_takes_the_leafs_pair(self):
+        act = _P_FLAT + 0.03
+        assert _pts(act, [{"time": 5.0}], tolerance=Sides(0.01, 0.05)).passed
+        assert not _pts(act, [{"time": 5.0}], tolerance=Sides(0.05, 0.01)).passed
+        # ``null`` is "not set", as an absent key is.
+        assert _pts(
+            act, [{"time": 5.0, "tolerance": None}], tolerance=Sides(0.01, 0.05)
+        ).passed
+
+    def test_rel_scales_each_side_by_the_targets_magnitude(self):
+        ref = np.full_like(_P_T, -10.0)
+        row = {"time": 5.0, "tolerance_mode": "rel"}
+        wide_up = {**row, "tolerance": {"lower": 0.01, "upper": 0.05}}
+        wide_down = {**row, "tolerance": {"lower": 0.05, "upper": 0.01}}
+        # 0.3 above −10: +5 % of |−10| is 0.5, +1 % is 0.1.
+        assert _pts(ref + 0.3, [wide_up], ref=ref).passed
+        assert not _pts(ref + 0.3, [wide_down], ref=ref).passed
+        # 0.3 below: a scale applied to one side only passes or fails these.
+        assert _pts(ref - 0.3, [wide_down], ref=ref).passed
+        assert not _pts(ref - 0.3, [wide_up], ref=ref).passed
+
+    def test_a_curve_above_the_band_at_one_sample_and_below_at_the_next_crossed_it(
+        self,
+    ):
+        time = np.array([0.0, 1.0, 2.0, 3.0])
+        act = np.array([5.0, 5.0, -5.0, -5.0])
+        row = {
+            "time": 1.5,
+            "value": 1.0,
+            "time_tolerance": 0.5,
+            "tolerance": {"lower": 0.1, "upper": 0.3},
+        }
+        vc = _compare_points(time, np.zeros(4), time, act, points=[row])
+        assert vc.passed
+        # Without the box in time there is one candidate, far above: no crossing.
+        assert not _compare_points(
+            time, np.zeros(4), time, act, points=[{**row, "time_tolerance": 0}]
+        ).passed
+
+    def test_the_reason_names_the_band_for_unequal_sides_only(self):
+        vc = _pts(
+            _P_FLAT + 1.0, [{"time": 5.0, "tolerance": {"lower": 0.1, "upper": 0.4}}]
+        )
+        assert vc.diagnostics["point_failures"][0]["reason"] == (
+            "closest value 3 is outside [1.9, 2.4]"
+        )
+        even = _pts(_P_FLAT + 1.0, [{"time": 5.0, "tolerance": 0.25}])
+        assert even.diagnostics["point_failures"][0]["reason"] == (
+            "delta 1 exceeds limit 0.25"
+        )
+        pair = _pts(
+            _P_FLAT + 1.0, [{"time": 5.0, "tolerance": {"lower": 0.25, "upper": 0.25}}]
+        )
+        assert pair.diagnostics == even.diagnostics
+
+
+class TestPointsTimeSides:
+    """The time box is ``[t − lower, t + upper]``: ``lower`` is how much
+    EARLIER, ``upper`` how much LATER."""
+
+    def test_a_late_crossing_is_caught_and_an_early_one_is_not(self):
+        late = np.where(_P_T >= 6.0, 2.0, 0.0)  # reaches the target 1 s late
+        early = np.where(_P_T <= 4.0, 2.0, 0.0)  # was there 1 s early, then left
+        row = {"time": 5.0, "value": 2.0, "tolerance": 0.01}
+        after = {**row, "time_tolerance": {"lower": 0.0, "upper": 1.5}}
+        before = {**row, "time_tolerance": {"lower": 1.5, "upper": 0.0}}
+        assert _pts(late, [after]).passed
+        assert not _pts(early, [after]).passed
+        assert _pts(early, [before]).passed
+        assert not _pts(late, [before]).passed
+
+
+class TestPointsFinalCheckSides:
+    @pytest.mark.parametrize(
+        "offset,tol,ok",
+        [
+            (0.375, Sides(0.125, 0.5), True),
+            (0.375, Sides(0.5, 0.125), False),
+            (-0.375, Sides(0.5, 0.125), True),
+            (-0.375, Sides(0.125, 0.5), False),
+            (0.5, Sides(0.25, 0.5), False),  # strict on the upper side
+            (-0.25, Sides(0.25, 0.5), False),  # strict on the lower side
+            (0.25, Sides(0.25, 0.5), True),
+            (-0.125, Sides(0.25, 0.5), True),
+        ],
+    )
+    def test_it_is_strict_on_each_side(self, offset, tol, ok):
+        vc = _pts(_P_FLAT + offset, None, tolerance=tol)
+        assert vc.passed is ok
+        assert vc.nrmse == abs(offset) and vc.diagnostics["delta"] == abs(offset)
+        # Leaves Python as data: the pair, serialisable.
+        assert vc.diagnostics["tolerance"] == {"lower": tol.lower, "upper": tol.upper}
+        json.dumps(vc.diagnostics)
+
+    def test_equal_sides_are_written_as_the_number(self):
+        vc = _pts(_P_FLAT, None, tolerance=Sides(0.25, 0.25))
+        assert vc.diagnostics["tolerance"] == 0.25
+        assert isinstance(vc.diagnostics["tolerance"], float)
+
+
+class TestPointsIdentity:
+    """A number scores as it did before a pair existed — to the bit."""
+
+    def test_violation_is_zero_exactly_when_delta_is_within_the_limit(self):
+        # ``lo <= v <= hi`` with ``lo = target − limit`` is NOT today's
+        # ``|v − target| <= limit``: the two differ by a rounding step at the
+        # edge. So half the cases put a sample exactly ON an edge, as floating
+        # point computes it, and one step either side of it.
+        rng = random.Random(20261002)
+        checked = on_edge = flipped_by_band_edges = 0
+        for k in range(20000):
+            m = rng.randint(2, 12)
+            at = np.sort(np.array([rng.uniform(0, 10) for _ in range(m)]))
+            av = np.array(
+                [round(rng.uniform(-3, 3), rng.choice([1, 6])) for _ in range(m)]
+            )
+            if rng.random() < 0.1:
+                av[rng.randrange(m)] = np.nan
+            target = round(rng.uniform(-3, 3), rng.choice([1, 6]))
+            lim = rng.choice(
+                [round(rng.uniform(0, 2), 1), rng.uniform(0, 2), 0.0, -0.5]
+            )
+            t = rng.uniform(-1, 11)
+            xt = rng.choice([0.0, rng.uniform(0, 3)])
+            edge = None
+            if k % 2:
+                i = edge = rng.randrange(m)
+                av[i] = rng.choice(
+                    [
+                        target + lim,
+                        target - lim,
+                        np.nextafter(target + lim, 9),
+                        np.nextafter(target - lim, -9),
+                    ]
+                )
+                t = float(at[i])
+                on_edge += 1
+            t_lo, t_hi = max(t - xt, float(at[0])), min(t + xt, float(at[-1]))
+            if t_hi < t_lo:
+                continue
+            delta, _ = _min_delta_in_box(at, av, t_lo, t_hi, target)
+            violation, _ = _violation_in_box(at, av, t_lo, t_hi, target, lim, lim)
+            assert (violation == 0.0) == (delta <= lim), (k, target, lim, delta)
+            checked += 1
+            # The sweep must reach the cases where judging the sample against
+            # the band's edges (``target ± limit``) would have flipped today's
+            # verdict.
+            if (
+                edge is not None
+                and target - lim <= av[edge] <= target + lim
+                and not delta <= lim
+            ):
+                flipped_by_band_edges += 1
+        assert checked > 15000 and on_edge == 10000
+        assert flipped_by_band_edges > 100
+
+    def test_the_edge_case_keeps_todays_verdict(self):
+        # |1.1 − 1.0| is 0.10000000000000009 in floating point: today's FAIL,
+        # and a PASS if the sample were tested against 1.0 + 0.1 == 1.1.
+        time = np.array([0.0, 1.0])
+        for tol in (0.1, {"lower": 0.1, "upper": 0.1}):
+            vc = _compare_points(
+                time,
+                np.ones(2),
+                time,
+                np.full(2, 1.1),
+                points=[{"time": 1.0, "value": 1.0, "tolerance": tol}],
+            )
+            assert not vc.passed
+
+    def test_a_negative_side_keeps_failing_as_a_negative_number_does(self):
+        # An inverted band holds nothing — a curve that "straddles" it too.
+        time = np.array([0.0, 1.0, 2.0])
+        act = np.array([5.0, -5.0, 5.0])
+        row = {"time": 1.0, "value": 0.0, "time_tolerance": 1.0}
+        for tol in (
+            -0.5,
+            {"lower": -0.5, "upper": -0.5},
+            {"lower": -0.5, "upper": 0.1},
+        ):
+            vc = _compare_points(
+                time, np.zeros(3), time, act, points=[{**row, "tolerance": tol}]
+            )
+            assert not vc.passed, tol
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_rows_number_and_its_equal_pair_score_the_same(self, flat):
+        def leaf(pair):
+            def v(x):
+                return {"lower": x, "upper": x} if pair else x
+
+            return {
+                "metric": "points",
+                "tolerance": v(0.02),
+                "points": [
+                    {"time": 2.0},
+                    {"time": 5.0, "tolerance": v(0.05), "tolerance_mode": "rel"},
+                    {
+                        "time": 7.3,
+                        "value": 1.5,
+                        "tolerance": v(0.2),
+                        "time_tolerance": v(0.4),
+                    },
+                    {"time": None, "tolerance": v(0.001)},
+                    {"time": 3.0, "time_tolerance": v(0.1)},
+                ],
+            }
+
+        a = _sides_compare(leaf(False), flat=flat).variables[0]
+        b = _sides_compare(leaf(True), flat=flat).variables[0]
+        assert "config_error" not in a.diagnostics, a.diagnostics
+        assert a.diagnostics["scored_points"] == 5
+        assert _sides_fields(a) == _sides_fields(b)
+        assert _sides_coords(a) == _sides_coords(b)
+
+
+class TestPointsThroughBothPaths:
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_an_uneven_pair_in_each_of_its_fields_scores(self, flat):
+        leaf = {
+            "metric": "points",
+            "tolerance": {"lower": 0.5, "upper": 0.1},
+            "points": [
+                {"time": 1.0, "value": 0.9, "time_tolerance": {"lower": 0, "upper": 1}},
+                {"time": 2.0, "tolerance": {"lower": 0.001, "upper": 0.5}},
+            ],
+        }
+        comp = _sides_compare(leaf, flat=flat)
+        vc = comp.variables[0]
+        assert "config_error" not in vc.diagnostics, vc.diagnostics
+        assert comp.passed and vc.diagnostics["scored_points"] == 2
+        assert vc.tolerance_used == Sides(0.5, 0.1)
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("key", ["tolerance", "time_tolerance"])
+    @pytest.mark.parametrize("bad", [{"lower": 1}, "abc", True], ids=repr)
+    def test_a_malformed_row_is_the_leafs_config_error_naming_the_row(
+        self, bad, key, flat
+    ):
+        leaf = {"metric": "points", "points": [{"time": 1.0}, {"time": 2.0, key: bad}]}
+        comp = _sides_compare(
+            leaf, flat=flat, extra={"metric": "nrmse", "tolerance": 0.5}
+        )
+        x, y = comp.variables
+        assert x.diagnostics["config_error"] is True
+        assert x.diagnostics["error"].endswith(
+            f'points[1].{key} must be a number or {{"lower": …, "upper": …}}, '
+            f"got {bad!r}"
+        )
+        assert y.passed and not comp.passed  # the run goes on
+
+    def test_the_scorer_called_directly_names_the_row_too(self):
+        with pytest.raises(ValueError, match=r"^points\[0\]\.tolerance must be"):
+            _pts(_P_FLAT, [{"time": 1.0, "tolerance": {"upper": 1}}])

@@ -20,7 +20,7 @@ from typing import Literal
 
 import numpy as np
 
-from .algorithms import SCALAR_REDUCTIONS
+from .algorithms import SCALAR_REDUCTIONS, _point_tolerances
 from .comparator import (
     VariableComparison,
     _compare_dominant_frequency,
@@ -496,6 +496,10 @@ class PointsMode(ComparisonMode):
         self.config = config
         # A config built with a number (a seed's, a test's) is both sides.
         self.tolerance = parse_sides(config.tolerance, "tolerance")
+        # The rows' tolerances are read here as well as in ``compare``: a
+        # malformed one must be a ``ValueError`` where ``resolve_mode``'s
+        # callers catch it — out of ``compare`` the flat path catches nothing.
+        _point_tolerances(config.points, self.tolerance)
 
     @property
     def name(self) -> str:
@@ -726,10 +730,6 @@ _TUBE_KEYS = frozenset(
 #: upper side. Each scoring task of step E1 deletes its mode's entry; the
 #: last deletes the table.
 _NOT_SCORED_YET: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {
-    "points": (
-        ("tolerance",),
-        (("points", "tolerance"), ("points", "time_tolerance")),
-    ),
     "scalar": (("tolerance",), ()),
     "tube": (("tube_abs", "tube_rel"), ()),
     "event-timing": (("time_tolerance",), (("events", "tolerance"),)),

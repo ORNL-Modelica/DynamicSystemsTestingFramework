@@ -304,6 +304,32 @@ class TestPointsGeometry:
         box = next(p for p in vc.geometry if p.id == "points/box/0")
         assert box.passed is False
 
+    def test_a_box_has_its_two_sides_in_value_and_in_time(self):
+        t = np.linspace(0.0, 10.0, 101)
+        flat = np.full_like(t, 2.0)
+        row = {
+            "time": 5.0,
+            "tolerance": {"lower": 0.125, "upper": 0.5},
+            "time_tolerance": {"lower": 1.0, "upper": 2.0},
+        }
+        vc = _compare_points(t, flat, t, flat, points=[row])
+        box = next(p for p in vc.geometry if p.id == "points/box/0")
+        assert (box.t0, box.t1, box.y0, box.y1) == (4.0, 7.0, 1.875, 2.5)
+        # rel: each side is that fraction of |target|, below and above it.
+        ref = np.full_like(t, -8.0)
+        vc = _compare_points(t, ref, t, ref, points=[{**row, "tolerance_mode": "rel"}])
+        box = next(p for p in vc.geometry if p.id == "points/box/0")
+        assert (box.y0, box.y1) == (-9.0, -4.0)
+
+    def test_the_final_checks_box_has_its_two_sides(self):
+        from dstf.comparison.sides import Sides
+
+        t = np.linspace(0.0, 10.0, 11)
+        flat = np.full_like(t, 2.0)
+        vc = _compare_points(t, flat, t, flat, tolerance=Sides(0.125, 0.5))
+        box = next(p for p in vc.geometry if p.id == "points/box/final")
+        assert (box.t0, box.t1, box.y0, box.y1) == (10.0, 10.0, 1.875, 2.5)
+
     def test_a_window_of_only_nan_samples_fails(self):
         t = np.linspace(0.0, 10.0, 11)
         act = t.copy()

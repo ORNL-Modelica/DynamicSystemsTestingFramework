@@ -186,3 +186,16 @@ class TestTheToleranceInACriterionSentence:
         assert summarize(_vc(mode="nope", tolerance_used=uneven)).criterion == (
             "NRMSE 1.000e-03 vs tolerance −1.000e-02 / +2.000e-02 → PASS"
         )
+
+
+def test_a_points_criterion_says_both_sides_of_the_leafs_tolerance():
+    from dstf.comparison.modes import resolve_mode
+
+    t = np.linspace(0.0, 10.0, 11)
+    mode = resolve_mode({"mode": "points"}, {"lower": 0.25, "upper": 0.5})
+    vc = mode.compare(t, t, t, t + 0.375)
+    vc.tolerance_used = mode.tolerance  # as both scoring paths stamp it
+    assert vc.passed
+    assert summarize(vc).criterion == (
+        "Final value error 3.750e-01 vs tolerance −2.500e-01 / +5.000e-01 → PASS"
+    )
