@@ -3501,14 +3501,27 @@ class TestBaselineFreeCheckTakesAnyTolerance:
         assert _test_is_baseline_free(flat, 1e-4) is free
 
 
+def _cut(value):
+    """``value`` as the refusal prints it: its repr, cut at 60 characters."""
+
+    class _Repr:
+        def __repr__(self):
+            text = repr(value)
+            return text if len(text) <= 60 else text[:60] + "…"
+
+    return _Repr()
+
+
 class TestABaseToleranceIsANumber:
     """C1: the pair belongs on a criterion; ``comparison.tolerance`` — the
     spec's or the reference JSON's — is one number. Anything else there
     refuses the test: it is never scored at the next tolerance down."""
 
-    SENTENCE = (
+    RULE = (
         "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
     )
+    SPEC = "test_spec.json comparison.tolerance"
+    BASELINE = "the baseline's comparison.tolerance"
 
     #: What a JSON file can hold there that is no number.
     NOT_NUMBERS = pytest.mark.parametrize(
@@ -3517,8 +3530,9 @@ class TestABaseToleranceIsANumber:
         ids=["pair", "even-pair", "one-sided", "string", "digits", "list", "bool"],
     )
 
-    def _refused(self, comp):
-        assert not comp.passed and comp.error_message == self.SENTENCE
+    def _refused(self, comp, where, bad):
+        assert comp.error_message == f"{self.RULE} ({where} is {bad!r})"
+        assert not comp.passed
         assert comp.sim_success and comp.variables == []
         assert comp.test_id == "0001"
         assert classify(comp) == "FAIL"
@@ -3554,7 +3568,7 @@ class TestABaseToleranceIsANumber:
         comp = _sides_compare(
             None, flat=flat, test=test, ref_comparison={"tolerance": 0.5}
         )
-        self._refused(comp)
+        self._refused(comp, self.SPEC, bad)
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_a_number_in_the_spec_file_is_scored(self, tmp_path, flat):
@@ -3581,7 +3595,109 @@ class TestABaseToleranceIsANumber:
         comp = _sides_compare(
             {"metric": "points"}, flat=flat, ref_comparison={"tolerance": bad}
         )
-        self._refused(comp)
+        self._refused(comp, self.BASELINE, bad)
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize(
+        "bad", [float("nan"), float("inf"), -float("inf"), 10**400], ids=repr
+    )
+    def test_a_base_that_is_not_finite_is_refused_from_either(self, bad, flat):
+        comp = _sides_compare(
+            {"metric": "points"}, flat=flat, ref_comparison={"tolerance": bad}
+        )
+        self._refused(comp, self.BASELINE, _cut(bad))
+        comp = _sides_compare({"metric": "points"}, flat=flat, comparison_tolerance=bad)
+        self._refused(comp, self.SPEC, _cut(bad))
+
+    def test_the_sentence_cuts_a_long_value_at_60_characters(self):
+        from dstf.comparison.comparator import base_tolerance_refused
+
+        at_60 = "a" * 58  # repr adds the two quotes
+        assert base_tolerance_refused("X", at_60) == f"{self.RULE} (X is {at_60!r})"
+        over = repr("a" * 59)
+        assert base_tolerance_refused("X", "a" * 59) == (
+            f"{self.RULE} (X is {over[:60]}…)"
+        )
+
+    def test_a_direct_callers_project_tolerance_is_judged_too(self):
+        test = _make_test()
+        test.variable_patterns = ["x"]
+        time, ref, act = _S_DATA["x"]
+        result = TestResult(
+            model_id="Test.Model",
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=time, values=act)],
+        )
+        comp = compare_test(
+            test, result, {"test_id": "0001"}, default_tolerance=float("nan")
+        )
+        self._refused(comp, "the project's tolerance", _cut(float("nan")))
+
+    @pytest.mark.parametrize("raw", [0, 0.0, -0.0])
+    def test_an_explicit_zero_in_the_spec_file_is_carried(self, tmp_path, raw):
+        """Zero is the strictest tolerance, not an unset one: read with a
+        truthiness test it fell to the baseline's 0.5."""
+        test = self._discovered(tmp_path, raw, flat=False)
+        assert test.comparison_tolerance == 0 and test.comparison_tolerance is not None
+        comp = _sides_compare(
+            None, flat=False, test=test, ref_comparison={"tolerance": 0.5}
+        )
+        assert comp.variables[0].tolerance_used == Sides(0.0, 0.0)
+        assert comp.error_message is None
+
+    def test_a_simulate_only_test_is_refused_as_any_other(self):
+        """One decision: the base is judged before the test is anything else."""
+        test = _make_test(comparison_tolerance="abc")
+        test.simulate_only = True
+        result = TestResult(model_id="Test.Model", success=True, variables=[])
+        comp = compare_test(test, result, {"test_id": "0001"})
+        self._refused(comp, self.SPEC, "abc")
+        test.comparison_tolerance = 0.5
+        assert compare_test(test, result, {"test_id": "0001"}).passed
+
+    def test_a_failed_simulation_and_no_result_keep_their_own_status(self):
+        """Nothing ran, so nothing was refused: SIM_FAIL and NOT RUN say what
+        happened, whatever the spec holds."""
+        from dstf.comparison.comparator import compare_one
+
+        class _Store:
+            def get_reference(self, model_id):
+                return None
+
+        test = _make_test(comparison_tolerance="abc")
+        failed = TestResult(model_id="Test.Model", success=False)
+        assert classify(compare_one(test, failed, _Store())) == "SIM_FAIL"
+        assert classify(compare_one(test, None, _Store())) == "NOT RUN"
+
+    @pytest.mark.parametrize("kind", ["nrmse", "range"])
+    @NOT_NUMBERS
+    def test_no_baseline_is_the_refusal_not_no_ref(self, bad, kind):
+        """``compare_one`` judges the base BEFORE the no-baseline
+        short-circuit: NO_REF tells the person to accept, and a
+        baseline-free test passed over the base it could not read."""
+        from dstf.comparison.comparator import compare_one
+
+        class _Store:
+            def get_reference(self, model_id):
+                return None
+
+        test = _make_test(comparison_tolerance=bad)
+        test.variable_patterns = ["x"]
+        if kind == "range":
+            test.variable_overrides = {"x": {"mode": "range", "min_value": -1e9}}
+        time, _ref, act = _S_DATA["x"]
+        result = TestResult(
+            model_id="Test.Model",
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=time, values=act)],
+        )
+        comp = compare_one(test, result, _Store())
+        assert comp.error_message == f"{self.RULE} ({self.SPEC} is {bad!r})"
+        assert classify(comp) == "FAIL" and comp.variables == []
+        assert comp.has_reference is False and comp.test_id is None
+        from dstf.reporting.status import refusal
+
+        assert refusal(comp) == comp.error_message
 
     def test_a_number_in_either_is_scored_as_before(self):
         comp = _sides_compare(

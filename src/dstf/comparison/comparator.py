@@ -24,7 +24,7 @@ should import them from :mod:`.types` and :mod:`.algorithms` directly.
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -73,11 +73,66 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: What a test whose base tolerance is no number is refused with — the
-#: comparison's ``error_message``, and so what every surface says of it.
-BASE_TOLERANCE_REFUSED = (
-    "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
-)
+#: How a refusal says WHERE the base tolerance it read is written, by the
+#: source the resolution names.
+_BASE_TOLERANCE_WHERE = {
+    "test": "test_spec.json comparison.tolerance",
+    "reference": "the baseline's comparison.tolerance",
+    "project": "the project's tolerance",
+}
+
+
+def base_tolerance_refused(where: str, value: object) -> str:
+    """What a test whose base tolerance is no number is refused with — the
+    comparison's ``error_message``, and so what every surface says of it:
+    the rule, then where the value is written (``where``, in words) and
+    what it is, cut to 60 characters."""
+    text = repr(value)
+    if len(text) > 60:
+        text = text[:60] + "…"
+    return (
+        "the base tolerance must be a number; a lower/upper pair belongs on a "
+        f"criterion ({where} is {text})"
+    )
+
+
+def _base_tolerance(
+    test: TestModel, reference: dict, default_tolerance: object
+) -> tuple[Any, str]:
+    """The test's base tolerance and its source: per-test > reference >
+    project. An ``is not None`` chain, NOT ``or`` — an explicit tolerance of
+    0 (strictest possible) must be honored (review 2026-07-06, finding 7)."""
+    ref_comparison = reference.get("comparison", {})
+    if test.comparison_tolerance is not None:
+        return test.comparison_tolerance, "test"
+    if ref_comparison.get("tolerance") is not None:
+        return ref_comparison["tolerance"], "reference"
+    return default_tolerance, "project"
+
+
+def refused_base_tolerance(
+    test: TestModel, reference: dict | None, default_tolerance: object
+) -> TestComparison | None:
+    """The refusal of a test whose base tolerance — the one in effect — is
+    not ONE finite number, or ``None``. nrmse, the default metric, has one
+    ceiling, and every leaf without a tolerance of its own would inherit the
+    pair; whatever else a spec or a reference JSON holds there (a string, a
+    list, a bool, NaN) goes with it: never scored at the next tolerance down.
+
+    THE one decision, and the first thing a comparison of a test that ran
+    makes (``compare_one``; ``compare_test`` for a direct caller). Decided
+    later, a test with no baseline read NO_REF — "accept it" — and one whose
+    every criterion scores without a baseline passed over it."""
+    value, source = _base_tolerance(test, reference or {}, default_tolerance)
+    if is_base_tolerance(value):
+        return None
+    return TestComparison(
+        model_id=test.model_id,
+        passed=False,
+        test_id=(reference or {}).get("test_id"),
+        has_reference=reference is not None,
+        error_message=base_tolerance_refused(_BASE_TOLERANCE_WHERE[source], value),
+    )
 
 
 def _check_structural_changes(
@@ -392,6 +447,10 @@ def compare_test(
             error_message=result.error_message or "Simulation failed",
         )
 
+    refused = refused_base_tolerance(test, reference, default_tolerance)
+    if refused is not None:
+        return refused
+
     # PTA.5 — simulate_only short-circuit: when the recognizer marked this
     # test as "just check that it simulates", skip per-variable comparison
     # and the whole baseline machinery. The sim already succeeded above.
@@ -431,29 +490,10 @@ def compare_test(
         shared_ref_time = np.array(shared_ref_time)
     comparisons = []
 
-    # Resolve base comparison tolerance: per-test > reference > config >
-    # default. `is not None` chain, NOT `or` — an explicit tolerance of 0
-    # (strictest possible) must be honored (review 2026-07-06, finding 7).
     ref_comparison = reference.get("comparison", {})
-    if test.comparison_tolerance is not None:
-        base_tolerance, tolerance_source = test.comparison_tolerance, "test"
-    elif ref_comparison.get("tolerance") is not None:
-        base_tolerance, tolerance_source = ref_comparison["tolerance"], "reference"
-    else:
-        base_tolerance, tolerance_source = default_tolerance, "project"
-    if not is_base_tolerance(base_tolerance):
-        # A base tolerance is ONE number: nrmse, the default metric, has one
-        # ceiling, and every leaf without a tolerance of its own would
-        # inherit the pair. Refused for the whole test rather than handed to
-        # each leaf to refuse in its own words — and whatever else a spec or
-        # a reference JSON holds there (a string, a list, a bool) with it:
-        # never scored at the next tolerance down.
-        return TestComparison(
-            model_id=test.model_id,
-            passed=False,
-            test_id=ref_test_id,
-            error_message=BASE_TOLERANCE_REFUSED,
-        )
+    base_tolerance, tolerance_source = _base_tolerance(
+        test, reference, default_tolerance
+    )
 
     # Phase 3.3: when the spec provides an explicit MetricTree, it fully
     # replaces the implicit flat-AND + per-variable overrides. The user's
@@ -819,6 +859,11 @@ def compare_one(
         )
 
     reference = store.get_reference(test.model_id)
+    # The base tolerance is judged HERE, before the test is anything else: a
+    # test with no baseline is not NO_REF over a base no accept may store.
+    refused = refused_base_tolerance(test, reference, default_tolerance)
+    if refused is not None:
+        return refused
     # simulate_only tests don't need a baseline — their pass criterion
     # is "did it simulate successfully?". Dispatch to compare_test with
     # an empty dict reference so its simulate_only short-circuit runs

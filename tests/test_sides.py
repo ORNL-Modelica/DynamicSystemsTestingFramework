@@ -128,3 +128,49 @@ class TestText:
     def test_equal_text_is_the_plain_format(self):
         v = math.pi
         assert sides_text(Sides(v, v)) == f"{v:.3e}"
+
+
+class TestIsBaseTolerance:
+    """A test's base tolerance is ONE finite number: what ``parse_sides``
+    reads as a number, and nothing else."""
+
+    @pytest.mark.parametrize(
+        "ok", [0, 0.0, -0.0, 1e-4, -1, -0.5, 10**300, 5e-324], ids=repr
+    )
+    def test_a_finite_number_is_one_zero_and_negative_included(self, ok):
+        from dstf.comparison.sides import is_base_tolerance
+
+        assert is_base_tolerance(ok) is True
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            float("nan"),
+            float("inf"),
+            -float("inf"),
+            10**400,
+            -(10**400),
+            True,
+            False,
+            "0.5",
+            "abc",
+            [1],
+            {},
+            {"lower": 0.1, "upper": 0.1},
+            None,
+        ],
+        ids=repr,
+    )
+    def test_anything_else_is_not(self, bad):
+        from dstf.comparison.sides import is_base_tolerance
+
+        assert is_base_tolerance(bad) is False
+
+    def test_a_numpy_scalar_is_judged_as_the_number_it_is(self):
+        import numpy as np
+
+        from dstf.comparison.sides import is_base_tolerance
+
+        assert is_base_tolerance(np.float64(0.5)) and is_base_tolerance(np.int32(2))
+        for bad in (np.float64("nan"), np.float32("inf"), np.bool_(True)):
+            assert not is_base_tolerance(bad)

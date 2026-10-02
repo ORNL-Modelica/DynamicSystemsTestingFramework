@@ -61,6 +61,7 @@ def _sim_failed(model_id="Lib.Examples.C"):
 
 REFUSED = (
     "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
+    " (the baseline's comparison.tolerance is {'lower': 0.1, 'upper': 0.2})"
 )
 
 

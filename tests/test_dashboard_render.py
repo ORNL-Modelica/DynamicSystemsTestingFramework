@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+import markupsafe
+
 from dstf.reporting.dashboard_render import (
     build_dashboard_context,
     render_final,
@@ -1085,7 +1087,8 @@ def test_a_refused_tests_reason_is_its_message(tmp_path):
     render_final(tmp_path, comparisons=comparisons)
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     refused, failing = _body_rows(html)
-    assert REFUSED in refused and REFUSED not in failing
+    said = markupsafe.escape(REFUSED)  # the sentence quotes the value it read
+    assert said in refused and said not in failing
 
 
 def test_a_test_with_no_result_reads_not_run_in_grey(tmp_path):

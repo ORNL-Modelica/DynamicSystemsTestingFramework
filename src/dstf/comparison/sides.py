@@ -41,17 +41,11 @@ def _is_number(value: object) -> TypeGuard[int | float]:
 
 def is_base_tolerance(value: object) -> bool:
     """Whether ``value`` can be a test's BASE tolerance (the spec entry's or
-    the reference JSON's ``comparison.tolerance``): one number. Not a pair —
-    nrmse, the default metric, has one ceiling — and not a bool, a string or
-    a list, which ``float()`` took or raised on. Not ``_is_number``: a base
-    that is not finite is a number, scored as it always was."""
-    if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return False
-    try:
-        float(value)
-    except OverflowError:
-        return False
-    return True
+    the reference JSON's ``comparison.tolerance``, the project's): ONE finite
+    number. Not a pair — nrmse, the default metric, has one ceiling — and
+    not a bool, a string or a list, which ``float()`` took or raised on;
+    not NaN or an infinity, which every leaf then refused in its own words."""
+    return _is_number(value)
 
 
 def parse_sides(value: object, what: str) -> Sides:

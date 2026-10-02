@@ -273,7 +273,7 @@ def spec_models_from_document(
             comp = {}
         # The base tolerance is carried as written, number or not. One that
         # is no number (a lower/upper pair, a string, a list) refuses the
-        # test at compare (`compare_test`); dropped here like a simulation
+        # test at compare (`refused_base_tolerance`); dropped here like a simulation
         # value, the test was scored — and could pass — at the project's.
         raw_tolerance = comp.get("tolerance")
         if raw_tolerance is not None:
