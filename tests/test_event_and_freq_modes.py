@@ -16,6 +16,7 @@ from dstf.comparison.modes import (
     EventTimingMode,
     resolve_mode,
 )
+from dstf.comparison.sides import Sides
 
 EMPTY = np.array([])
 
@@ -60,7 +61,7 @@ class TestEventTimingMode:
             tolerance=1e-4,
         )
         assert isinstance(mode, EventTimingMode)
-        assert mode.config.time_tolerance == 5e-3
+        assert mode.config.time_tolerance == Sides(5e-3, 5e-3)
 
 
 class TestDominantFrequencyMode:

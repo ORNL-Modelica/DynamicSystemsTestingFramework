@@ -9015,6 +9015,17 @@ def test_a_scored_rows_summary_says_the_requirement():
     assert summary(leaf(min_value=1, max_value=4)) == "in [1, 4]"
     assert summary(leaf(min_value=1)) == "≥ 1"
     assert summary(leaf(max_value=4)) == "≤ 4"
+    # A leaf that leaves its tolerance out reads the scalar mode's default,
+    # and a pair says each side: equal sides as the number does.
+    assert summary({"params": {}}) == "±0.0001"
+    assert summary(leaf()) == "±0.0001"
+    assert summary(leaf(tolerance={"lower": 0.5, "upper": 0.5})) == "±0.5"
+    assert summary(leaf(tolerance={"lower": 0.5, "upper": 1})) == "−0.5 / +1"
+    assert (
+        summary(leaf(tolerance={"lower": 0.05, "upper": 0.1}, tolerance_mode="rel"))
+        == "−5% / +10%"
+    )
+    assert summary(leaf(tolerance={"lower": 0, "upper": 0})) == "exact"
 
 
 async def test_the_statistics_card_sits_before_the_tree_card_closed(stats_shell):

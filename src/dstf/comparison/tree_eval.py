@@ -33,6 +33,7 @@ from .modes import resolve_mode
 from .registry import DEFAULT_METRIC, MetricDescriptor
 from .registry import combinator as registry_combinator
 from .registry import metric as registry_metric
+from .sides import Sides, parse_sides
 from .tree_spec import CombinatorSpec, LeafSpec, SpecNode, resolves_a_variable
 
 logger = logging.getLogger(__name__)
@@ -334,9 +335,10 @@ def _evaluate_leaf(
     try:
         tolerance = _leaf_tolerance(leaf, base_tolerance)
     except ValueError as exc:
-        # A tolerance that is no number fails its leaf, not the run (D107);
-        # the base is the one it reports as applied.
-        tolerance = float(base_tolerance)
+        # A tolerance that is neither a number nor a lower/upper pair fails
+        # its leaf, not the run (D107); the base is the one it reports as
+        # applied.
+        tolerance = Sides(float(base_tolerance), float(base_tolerance))
         return _leaf(_leaf_config_error_comparison(leaf, exc))
 
     # A metric declares which dataset kinds it can score. Unscorable input
@@ -615,15 +617,12 @@ def _slice_window(
     return t[mask], v[mask]
 
 
-def _leaf_tolerance(leaf: LeafSpec, base: float) -> float:
+def _leaf_tolerance(leaf: LeafSpec, base: float) -> Sides:
     """The tolerance ``leaf`` applies: its own, else the test's ``base``.
-    One that is no number (``"abc"``, ``null``) is a ``ValueError`` naming
-    it, which the caller turns into the leaf's config error (D107)."""
-    value = leaf.params.get("tolerance", base)
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"tolerance must be a number, got {value!r}") from None
+    One that is neither a number nor a lower/upper pair (``"abc"``,
+    ``null``, a pair missing a side) is a ``ValueError`` naming it, which
+    the caller turns into the leaf's config error (D107)."""
+    return parse_sides(leaf.params.get("tolerance", base), "tolerance")
 
 
 def _leaf_override_dict(leaf: LeafSpec) -> dict:

@@ -362,3 +362,14 @@ def test_a_run_sides_empty_list_gives_its_summaries():
     rows = _by_path(statistics_rows({"translation": {"nonlinear": []}}, {}))
     row = rows["translation.nonlinear_count"]
     assert (row.kind, row.run, row.baseline) == ("count", 0, None)
+
+
+def test_changed_scores_the_seeds_number_as_a_tolerance():
+    """`changed` builds a `ScalarMode` from the seed `+` writes, whose
+    tolerance is a NUMBER (0 for a count, 0.1 rel for a time) while
+    `ScalarConfig.tolerance` is `Sides`: the number is both sides."""
+    assert changed("translation.nonlinear_count", "count", 3, 3) is False
+    assert changed("translation.nonlinear_count", "count", 4, 3) is True
+    assert changed("simulation.wall_time", "time", 1.09, 1.0) is False
+    assert changed("simulation.wall_time", "time", 0.91, 1.0) is False
+    assert changed("simulation.wall_time", "time", 1.2, 1.0) is True

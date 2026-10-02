@@ -22,6 +22,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Union
 
+from .sides import Sides
+
 # ---------------------------------------------------------------------------
 # Schema types
 # ---------------------------------------------------------------------------
@@ -127,6 +129,10 @@ def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:
     # Plain scalars.
     if hint is float:
         return "float", False, None
+    if hint is Sides:
+        # A stand-in until the `sides` field kind exists (step E1, Task 7):
+        # the forms and the exported schema keep showing one number.
+        return "float", False, None
     if hint is bool:
         return "bool", False, None
     if hint is int:
@@ -140,6 +146,9 @@ def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:
 
 def _field_default(f: dataclasses.Field) -> Any:
     if f.default is not dataclasses.MISSING:
+        if isinstance(f.default, Sides):
+            # The stand-in's other half (Task 7 writes the pair): the number.
+            return f.default.upper
         return f.default
     if f.default_factory is not dataclasses.MISSING:
         try:

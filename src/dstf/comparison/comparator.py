@@ -57,6 +57,7 @@ from .algorithms import (  # noqa: F401
     _split_segments,
 )
 from .registry import metric as registry_metric
+from .sides import parse_sides
 from .types import (
     DEFAULT_TOLERANCE,
     StructuralWarning,
@@ -434,6 +435,20 @@ def compare_test(
         base_tolerance, tolerance_source = ref_comparison["tolerance"], "reference"
     else:
         base_tolerance, tolerance_source = default_tolerance, "project"
+    if isinstance(base_tolerance, dict):
+        # A base tolerance is ONE number: nrmse, the default metric, has one
+        # ceiling, and every leaf without a tolerance of its own would
+        # inherit the pair. Refused for the whole test rather than handed to
+        # each leaf to refuse in its own words.
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            test_id=ref_test_id,
+            error_message=(
+                "the base tolerance must be a number; a lower/upper pair "
+                "belongs on a criterion"
+            ),
+        )
 
     # Phase 3.3: when the spec provides an explicit MetricTree, it fully
     # replaces the implicit flat-AND + per-variable overrides. The user's
@@ -530,10 +545,14 @@ def compare_test(
         name = var_result.name
 
         var_override = merged_overrides.get(name, {})
-        tolerance = var_override.get("tolerance", base_tolerance)
         try:
+            tolerance = parse_sides(
+                var_override.get("tolerance", base_tolerance), "tolerance"
+            )
             mode = resolve_mode(var_override, tolerance, default_points=default_points)
         except ValueError as exc:
+            # A tolerance that is neither a number nor a lower/upper pair
+            # fails the variable, as a leaf's does on the tree path (D107).
             # An unrecognized mode string must fail the variable loudly —
             # silently falling back to NRMSE changed the scoring algorithm
             # on a typo (review 2026-07-06). ``mode=""`` rather than the
@@ -703,12 +722,15 @@ def _test_is_baseline_free(
             return False
         for leaf in leaves:
             override = _leaf_override_dict(leaf)
-            tol = float(leaf.params.get("tolerance", default_tolerance))
             try:
+                tol = parse_sides(
+                    leaf.params.get("tolerance", default_tolerance), "tolerance"
+                )
                 mode = resolve_mode(override, tol, default_points=False)
             except Exception:
-                # A leaf whose config doesn't resolve to a valid mode can't
-                # be baseline-free by our check — fall back to NO_REF.
+                # A leaf whose config doesn't resolve to a valid mode — a
+                # malformed tolerance included — can't be baseline-free by
+                # our check — fall back to NO_REF.
                 return False
             if not mode.is_baseline_free():
                 return False
@@ -739,8 +761,8 @@ def _test_is_baseline_free(
         else default_tolerance
     )
     for override in test.variable_overrides.values():
-        tol = float(override.get("tolerance", base_tolerance))
         try:
+            tol = parse_sides(override.get("tolerance", base_tolerance), "tolerance")
             mode = resolve_mode(override, tol, default_points=False)
         except Exception:
             return False

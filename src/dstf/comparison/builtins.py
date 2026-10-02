@@ -50,6 +50,7 @@ from .registry import (
     register_metric,
 )
 from .seeds import seed_dominant_frequency, seed_range, seed_scalar, seed_tube
+from .sides import Sides, parse_sides
 from .summaries import (
     summarize_dominant_frequency,
     summarize_event_timing,
@@ -61,16 +62,21 @@ from .summaries import (
 )
 
 
-def _build_nrmse(override: dict, tolerance: float) -> NrmseMode:
-    return NrmseMode(NrmseConfig(tolerance=tolerance))
+def _build_nrmse(override: dict, tolerance: Sides) -> NrmseMode:
+    if not tolerance.equal:
+        raise ValueError("nrmse has one ceiling: tolerance must be a number")
+    return NrmseMode(NrmseConfig(tolerance=tolerance.upper))
 
 
-def _build_tube(override: dict, tolerance: float) -> TubeMode:
+def _build_tube(override: dict, tolerance: Sides) -> TubeMode:
     tube_kwargs = {k: override[k] for k in _TUBE_KEYS if k in override}
+    for key in ("tube_abs", "tube_rel"):
+        if key in tube_kwargs:
+            tube_kwargs[key] = parse_sides(tube_kwargs[key], key)
     return TubeMode(TubeConfig(**tube_kwargs))
 
 
-def _build_points(override: dict, tolerance: float) -> PointsMode:
+def _build_points(override: dict, tolerance: Sides) -> PointsMode:
     return PointsMode(
         PointsConfig(
             points=override.get("points"),
@@ -79,7 +85,7 @@ def _build_points(override: dict, tolerance: float) -> PointsMode:
     )
 
 
-def _build_range(override: dict, tolerance: float) -> RangeMode:
+def _build_range(override: dict, tolerance: Sides) -> RangeMode:
     # ``min_value`` / ``max_value`` only — the names the ``RangeConfig``
     # dataclass, the auto-derived UI and MetricTree leaf params all use.
     return RangeMode(
@@ -90,10 +96,12 @@ def _build_range(override: dict, tolerance: float) -> RangeMode:
     )
 
 
-def _build_event_timing(override: dict, tolerance: float) -> EventTimingMode:
+def _build_event_timing(override: dict, tolerance: Sides) -> EventTimingMode:
     return EventTimingMode(
         EventTimingConfig(
-            time_tolerance=override.get("time_tolerance", 1e-3),
+            time_tolerance=parse_sides(
+                override.get("time_tolerance", 1e-3), "time_tolerance"
+            ),
             count_must_match=override.get("count_must_match", True),
             events=override.get("events"),
         )
@@ -101,7 +109,7 @@ def _build_event_timing(override: dict, tolerance: float) -> EventTimingMode:
 
 
 def _build_dominant_frequency(
-    override: dict, tolerance: float
+    override: dict, tolerance: Sides
 ) -> DominantFrequencyMode:
     return DominantFrequencyMode(
         DominantFrequencyConfig(
@@ -110,7 +118,7 @@ def _build_dominant_frequency(
     )
 
 
-def _build_scalar(override: dict, tolerance: float) -> ScalarMode:
+def _build_scalar(override: dict, tolerance: Sides) -> ScalarMode:
     return ScalarMode(
         ScalarConfig(
             quantity=override.get("quantity"),

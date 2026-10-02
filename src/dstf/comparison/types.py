@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .geometry import Primitive
+from .sides import Sides, parse_sides
 
 if TYPE_CHECKING:
     # Annotation-only — runtime import is inside compare_test() in
@@ -51,7 +52,8 @@ class VariableComparison:
     reference_final: float
     actual_final: float
     is_constant: bool = False  # True if reference signal has zero range
-    tolerance_used: float = 0.0  # The tolerance threshold applied for this variable
+    # The tolerance applied for this variable, per side (a number is both).
+    tolerance_used: Sides = Sides(0.0, 0.0)
     mode: str = "nrmse"  # Comparison mode: "nrmse" or "tube"
     # Tube-specific metrics (populated when mode="tube")
     tube_points_inside: float | None = None  # Fraction of points inside tube (0-1)
@@ -67,6 +69,10 @@ class VariableComparison:
     # What the mode scored against, as drawable data (see geometry.py).
     # Ids are local until the evaluator prefixes them with the leaf path.
     geometry: tuple[Primitive, ...] = ()
+
+    def __post_init__(self) -> None:
+        # A number handed in (a fixture, a third-party metric) is both sides.
+        self.tolerance_used = parse_sides(self.tolerance_used, "tolerance_used")
 
 
 @dataclass(frozen=True)

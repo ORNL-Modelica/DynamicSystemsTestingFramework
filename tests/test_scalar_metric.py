@@ -16,6 +16,7 @@ import pytest
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.algorithms import SCALAR_REDUCTIONS
 from dstf.comparison.modes import ScalarConfig, ScalarMode, resolve_mode
+from dstf.comparison.sides import Sides
 from dstf.comparison.tree_eval import (
     PRIMARY_BASELINE,
     BaselineView,
@@ -97,7 +98,7 @@ class TestScalarConfigValidation:
         )
         assert isinstance(mode, ScalarMode)
         assert mode.reduction == "mean"
-        assert mode.config.tolerance == 0.05
+        assert mode.config.tolerance == Sides(0.05, 0.05)
         assert mode.config.tolerance_mode == "rel"
 
     def test_stats_path_quantity_defaults_to_final_reduction(self):
@@ -812,7 +813,7 @@ class TestScalarReporterSurfaces:
         from dstf.comparison.registry import summarize
 
         vc = _mode(tolerance=0.1).compare(*_series([0.0, 10.0]), *_series([0.0, 10.05]))
-        vc.tolerance_used = 0.1
+        vc.tolerance_used = Sides(0.1, 0.1)
         summary = summarize(vc)
         score, criterion = summary.display, summary.criterion
         assert score.startswith("|Δ|")
@@ -847,7 +848,7 @@ class TestScalarReporterSurfaces:
         vc = _mode(tolerance=0.1, tolerance_mode="rel").compare(
             *_series([1.0, 0.0]), *_series([1.0, 0.05])
         )
-        vc.tolerance_used = 0.1
+        vc.tolerance_used = Sides(0.1, 0.1)
         summary = summarize(vc)
         score, criterion = summary.display, summary.criterion
         assert score.startswith("|Δ|")

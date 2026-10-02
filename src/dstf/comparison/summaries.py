@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 
+from .sides import sides_text
 from .types import ScoreSummary, VariableComparison
 
 
@@ -46,7 +47,8 @@ def summarize_default(vc: VariableComparison) -> ScoreSummary:
     return ScoreSummary(
         display=f"NRMSE {vc.nrmse:.3e}",
         criterion=(
-            f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} → {_verdict(vc)}"
+            f"NRMSE {vc.nrmse:.3e} vs tolerance {sides_text(vc.tolerance_used)} → "
+            f"{_verdict(vc)}"
         ),
         score=float(vc.nrmse),
         score_label="NRMSE",
@@ -134,7 +136,7 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
         display=f"|err| {vc.max_abs_error:.3e}",
         criterion=(
             f"Final value error {vc.max_abs_error:.3e} vs tolerance "
-            f"{vc.tolerance_used:.3e} → {_verdict(vc)}"
+            f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
         ),
         score=float(vc.max_abs_error),
         score_label="|err|",
@@ -175,7 +177,7 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
         criterion=(
             f"Scalar {vc.actual_final:.6g} vs baseline {vc.reference_final:.6g}: "
             f"{criterion} deviation {vc.nrmse:.3e} vs "
-            f"tolerance {vc.tolerance_used:.3e}{note} → {verdict}"
+            f"tolerance {sides_text(vc.tolerance_used)}{note} → {verdict}"
         ),
         score=float(vc.nrmse),
         score_label="rel Δ" if rel else "|Δ|",

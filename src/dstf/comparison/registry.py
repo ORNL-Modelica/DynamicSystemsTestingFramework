@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from ..backends.types import DatasetType
+from .sides import Sides
 from .summaries import summarize_default
 from .types import ScoreSummary, VariableComparison
 
@@ -86,7 +87,7 @@ class MetricDescriptor:
 
     name: str
     config_cls: type
-    build: Callable[[dict, float], ComparisonMode]
+    build: Callable[[dict, Sides], ComparisonMode]
     accepted_datasets: frozenset[DatasetType] = TIME_SERIES_ONLY
     score_direction: Literal["lower", "higher"] = "lower"
     accepts_quantity: bool = False

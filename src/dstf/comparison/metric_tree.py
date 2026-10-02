@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from .comparator import VariableComparison
+from .sides import as_written
 
 # ---------------------------------------------------------------------------
 # Uniform metric result (combinator output shape)
@@ -287,7 +288,7 @@ def leaf_from_variable(vc: VariableComparison) -> MetricResult:
         label=vc.name,
         diagnostics={
             "mode": vc.mode,
-            "tolerance": vc.tolerance_used,
+            "tolerance": as_written(vc.tolerance_used),
             "max_abs_error": vc.max_abs_error,
             "variable": vc,
         },

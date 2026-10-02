@@ -2813,7 +2813,7 @@ async def test_the_editor_says_the_tolerance_in_effect_until_the_mode_moves(sess
     """K3: a leaf without a tolerance of its own is scored with the base
     one, and the editor says which on the field's hint line — never
     written. A switched mode's fields were never applied: no hint."""
-    tol = session.comparisons[A].variables[0].tolerance_used
+    tol = session.comparisons[A].variables[0].tolerance_used.upper
     async with host(session, EditCriteria(), LEAF0) as (user, _errors, _):
         await user.should_see("Tolerance")
         assert _hints(user) == {
@@ -2835,7 +2835,7 @@ async def test_an_own_tolerance_cleared_says_the_base_in_effect(session):
     with its own 0.5 opens with no hint; cleared, the field says the base
     the leaf would be scored with — it said nothing, because the view
     carried the base only for a leaf without its own."""
-    base = session.comparisons[A].variables[0].tolerance_used  # none of its own
+    base = session.comparisons[A].variables[0].tolerance_used.upper  # none of its own
     session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 0.5)])
     async with host(session, EditCriteria(), LEAF0) as (user, _errors, _):
         await user.should_see("Tolerance")

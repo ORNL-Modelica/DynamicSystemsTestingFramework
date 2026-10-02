@@ -11,6 +11,7 @@ from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
 from dstf.comparison.geometry import Band, Window
 from dstf.comparison.metric_tree import implicit_and_tree
+from dstf.comparison.sides import Sides
 from dstf.comparison.tree_eval import (
     PRIMARY_BASELINE,
     BaselineView,
@@ -932,7 +933,9 @@ class TestLeafPathStamping:
             "tolerance" in vc.diagnostics["error"]
             and repr(bad) in vc.diagnostics["error"]
         )
-        assert vc.tolerance_used == 1e-4  # the base: the leaf's own is none
+        assert vc.tolerance_used == Sides(
+            1e-4, 1e-4
+        )  # the base: the leaf's own is none
         assert by_path["/metrics/children/1"].passed
 
     def test_a_config_error_leaf_still_carries_its_path(self):
@@ -1110,3 +1113,64 @@ class TestSentinelLeavesKeepTheirName:
         error = vc.diagnostics["error"]
         assert "timing.nope" in error
         assert "current run" in error
+
+
+# ---------------------------------------------------------------------------
+# A leaf's tolerance is a number or a lower/upper pair
+# ---------------------------------------------------------------------------
+
+
+class TestALeafsToleranceIsSides:
+    def _evaluate(self, tolerance, base=1e-4):
+        t, ref = _linear()
+        children = [
+            {"metric": "points", "variable": "x", "tolerance": tolerance},
+            {"metric": "nrmse", "variable": "y", "tolerance": 0.5},
+        ]
+        return evaluate_spec(
+            parse_metric_tree({"combinator": "and", "children": children}),
+            var_results_by_name={
+                n: VariableResult(index=i + 1, name=n, time=t, values=ref)
+                for i, n in enumerate(("x", "y"))
+            },
+            baselines=_primary(
+                {
+                    n: {"name": n, "time": t.tolist(), "values": ref.tolist()}
+                    for n in "xy"
+                }
+            ),
+            base_tolerance=base,
+        )
+
+    def test_the_view_writes_an_equal_pair_as_the_number(self):
+        from dstf.comparison.tree_eval import to_view
+
+        tree = self._evaluate({"lower": 0.05, "upper": 0.05})
+        assert tree.passed
+        x = tree.children[0]
+        assert x.diagnostics["variable"].tolerance_used == Sides(0.05, 0.05)
+        assert x.diagnostics["tolerance"] == 0.05
+        leaf = to_view(tree)["children"][0]
+        assert leaf["tolerance"] == 0.05 and isinstance(leaf["tolerance"], float)
+        # The same as the number's.
+        assert leaf == to_view(self._evaluate(0.05))["children"][0]
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["abc", "0.01", None, True, {"lower": 1}, {"lower": 1, "upper": 2, "x": 3}],
+        ids=repr,
+    )
+    def test_a_malformed_one_fails_its_leaf_and_the_rest_is_scored(self, bad):
+        from dstf.comparison.tree_eval import to_view
+
+        tree = self._evaluate(bad, base=0.25)
+        x, y = (c.diagnostics["variable"] for c in tree.children)
+        assert not tree.passed and y.passed
+        assert x.diagnostics["config_error"] is True
+        assert x.diagnostics["error"] == (
+            "metric 'points' misconfigured: tolerance must be a number or "
+            f'{{"lower": …, "upper": …}}, got {bad!r}'
+        )
+        # The base is the one it reports as applied, as both sides.
+        assert x.tolerance_used == Sides(0.25, 0.25)
+        assert to_view(tree)["children"][0]["tolerance"] == 0.25

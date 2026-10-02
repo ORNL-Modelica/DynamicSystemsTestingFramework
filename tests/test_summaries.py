@@ -148,3 +148,41 @@ class TestDetails:
     def test_an_error_sentinel_has_no_details(self):
         s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
         assert s.details == ()
+
+
+class TestTheToleranceInACriterionSentence:
+    """`tolerance_used` is `Sides`: one number when the sides are equal —
+    the text a number always gave — and `−lower / +upper` otherwise."""
+
+    def test_equal_sides_read_as_the_number_did(self):
+        from dstf.comparison.sides import Sides
+
+        for mode, text in (
+            ("nrmse", "NRMSE 1.000e-03 vs tolerance 1.000e-04 → PASS"),
+            ("points", "Final value error 2.000e-03 vs tolerance 1.000e-04 → PASS"),
+        ):
+            assert summarize(_vc(mode=mode)).criterion == text
+            assert (
+                summarize(_vc(mode=mode, tolerance_used=Sides(1e-4, 1e-4))).criterion
+                == text
+            )
+        scalar = summarize(_vc(mode="scalar", diagnostics={"tolerance_mode": "abs"}))
+        assert scalar.criterion == (
+            "Scalar 1 vs baseline 1: absolute deviation 1.000e-03 vs "
+            "tolerance 1.000e-04 → PASS"
+        )
+
+    def test_unequal_sides_read_as_minus_and_plus(self):
+        from dstf.comparison.sides import Sides
+
+        uneven = Sides(0.01, 0.02)
+        assert summarize(_vc(mode="points", tolerance_used=uneven)).criterion == (
+            "Final value error 2.000e-03 vs tolerance −1.000e-02 / +2.000e-02 → PASS"
+        )
+        assert summarize(_vc(mode="scalar", tolerance_used=uneven)).criterion == (
+            "Scalar 1 vs baseline 1: absolute deviation 1.000e-03 vs "
+            "tolerance −1.000e-02 / +2.000e-02 → PASS"
+        )
+        assert summarize(_vc(mode="nope", tolerance_used=uneven)).criterion == (
+            "NRMSE 1.000e-03 vs tolerance −1.000e-02 / +2.000e-02 → PASS"
+        )

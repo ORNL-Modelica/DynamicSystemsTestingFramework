@@ -393,3 +393,75 @@ def test_a_metric_says_whether_its_drawing_shows_by_default():
     }
     # A third-party metric registered without the field draws by default.
     assert _final_slope_descriptor().drawn_by_default is True
+
+
+class TestABuilderTakesSides:
+    """`MetricDescriptor.build(override, tolerance)`: the resolved tolerance
+    arrives as `Sides`, and `resolve_mode` makes one of a number."""
+
+    def test_resolve_mode_hands_the_builder_sides(self):
+        from dstf.comparison.sides import Sides
+
+        seen = []
+
+        def build(override, tolerance):
+            seen.append(tolerance)
+            return registry.metric("nrmse").build(override, tolerance)
+
+        register_metric(
+            MetricDescriptor(name="spy", config_cls=FinalSlopeConfig, build=build)
+        )
+        resolve_mode({"mode": "spy"}, 0.25)
+        resolve_mode({"mode": "spy"}, Sides(0.25, 0.25))
+        assert seen == [Sides(0.25, 0.25), Sides(0.25, 0.25)]
+
+    def test_the_builtins_keep_the_sides(self):
+        from dstf.comparison.sides import Sides
+
+        build = lambda name, override=None: registry.metric(name).build(  # noqa: E731
+            override or {}, Sides(0.25, 0.25)
+        )
+        assert build("points").config.tolerance == Sides(0.25, 0.25)
+        assert build("scalar", {"quantity": "a.b"}).config.tolerance == Sides(
+            0.25, 0.25
+        )
+        assert build("event-timing").config.time_tolerance == Sides(1e-3, 1e-3)
+        assert build("event-timing", {"time_tolerance": 2}).config.time_tolerance == (
+            Sides(2.0, 2.0)
+        )
+        tube = build("tube", {"tube_width_mode": "band", "tube_abs": 0.5}).config
+        assert (tube.tube_abs, tube.tube_rel) == (Sides(0.5, 0.5), Sides(0.0, 0.0))
+        # nrmse is one ceiling: a float, and unequal sides are refused.
+        nrmse = build("nrmse").config.tolerance
+        assert nrmse == 0.25 and isinstance(nrmse, float)
+        with pytest.raises(
+            ValueError, match="^nrmse has one ceiling: tolerance must be a number$"
+        ):
+            registry.metric("nrmse").build({}, Sides(0.1, 0.2))
+
+    def test_a_mode_built_from_a_config_holding_a_number_scores(self):
+        from dstf.comparison.modes import (
+            EventTimingConfig,
+            EventTimingMode,
+            PointsConfig,
+            PointsMode,
+            ScalarConfig,
+            ScalarMode,
+            TubeConfig,
+            TubeMode,
+        )
+
+        t = np.linspace(0.0, 1.0, 11)
+        for mode in (
+            PointsMode(PointsConfig(tolerance=0.5)),
+            ScalarMode(ScalarConfig(quantity={"reduce": "max"}, tolerance=0.5)),
+            EventTimingMode(EventTimingConfig(time_tolerance=0.5)),
+            TubeMode(TubeConfig(tube_width_mode="band", tube_abs=0.5)),
+            PointsMode(PointsConfig()),
+            ScalarMode(ScalarConfig(quantity={"reduce": "max"})),
+            EventTimingMode(EventTimingConfig()),
+        ):
+            assert mode.compare(t, t, t, t + 0.25).passed is (
+                mode.config != PointsConfig()
+                and mode.config != ScalarConfig(quantity={"reduce": "max"})
+            )

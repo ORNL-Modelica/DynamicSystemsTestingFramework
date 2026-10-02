@@ -34,6 +34,7 @@ from .comparator import (
 from .registry import DEFAULT_METRIC
 from .registry import metric as registry_metric
 from .registry import metrics as registered_metrics
+from .sides import Sides, parse_sides
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -120,15 +121,15 @@ class TubeConfig:
             ),
         },
     )
-    tube_abs: float = field(
-        default=0.0,
+    tube_abs: Sides = field(
+        default=Sides(0.0, 0.0),
         metadata={
             "label": "Tube abs",
             "help": "Absolute offset from reference (used when width_mode='band').",
         },
     )
-    tube_rel: float = field(
-        default=0.0,
+    tube_rel: Sides = field(
+        default=Sides(0.0, 0.0),
         metadata={
             "label": "Tube rel",
             "help": "Fractional offset from |reference| (e.g. 0.02 = 2%).",
@@ -170,10 +171,11 @@ class TubeConfig:
         d: dict = {}
         if self.tube_width_mode is not None:
             d["tube_width_mode"] = self.tube_width_mode
-        if self.tube_abs:
-            d["tube_abs"] = self.tube_abs
-        if self.tube_rel:
-            d["tube_rel"] = self.tube_rel
+        for key in ("tube_abs", "tube_rel"):
+            # A config built with a number holds the number: both sides.
+            sides = parse_sides(getattr(self, key), key)
+            if sides.upper:
+                d[key] = sides
         if self.tube_min_width:
             d["tube_min_width"] = self.tube_min_width
         if self.tube_points is not None:
@@ -217,8 +219,8 @@ class PointsConfig:
             ),
         },
     )
-    tolerance: float = field(
-        default=1e-4,
+    tolerance: Sides = field(
+        default=Sides(1e-4, 1e-4),
         metadata={
             "label": "Default tolerance",
             "help": (
@@ -275,8 +277,8 @@ class EventTimingConfig:
     fails. Mirrors the dominant-frequency declared-peaks semantics (D75).
     """
 
-    time_tolerance: float = field(
-        default=1e-3,
+    time_tolerance: Sides = field(
+        default=Sides(1e-3, 1e-3),
         metadata={
             "label": "Time tolerance (s)",
             "help": (
@@ -394,8 +396,8 @@ class ScalarConfig:
             ),
         },
     )
-    tolerance: float = field(
-        default=1e-4,
+    tolerance: Sides = field(
+        default=Sides(1e-4, 1e-4),
         metadata={
             "label": "Tolerance",
             "help": (
@@ -492,6 +494,8 @@ class PointsMode(ComparisonMode):
 
     def __init__(self, config: PointsConfig):
         self.config = config
+        # A config built with a number (a seed's, a test's) is both sides.
+        self.tolerance = parse_sides(config.tolerance, "tolerance")
 
     @property
     def name(self) -> str:
@@ -504,7 +508,7 @@ class PointsMode(ComparisonMode):
             act_time,
             act_values,
             points=self.config.points,
-            tolerance=self.config.tolerance,
+            tolerance=self.tolerance,
         )
 
     def is_baseline_free(self) -> bool:
@@ -524,6 +528,7 @@ class EventTimingMode(ComparisonMode):
 
     def __init__(self, config: EventTimingConfig):
         self.config = config
+        self.time_tolerance = parse_sides(config.time_tolerance, "time_tolerance")
 
     @property
     def name(self) -> str:
@@ -533,7 +538,7 @@ class EventTimingMode(ComparisonMode):
         return _compare_event_timing(
             ref_time,
             act_time,
-            time_tolerance=self.config.time_tolerance,
+            time_tolerance=self.time_tolerance,
             count_must_match=self.config.count_must_match,
             declared_events=self.config.events,
         )
@@ -617,6 +622,7 @@ class ScalarMode(ComparisonMode):
     def __init__(self, config: ScalarConfig):
         _validate_scalar_config(config)
         self.config = config
+        self.tolerance = parse_sides(config.tolerance, "tolerance")
         quantity = config.quantity
         self.reduction = quantity["reduce"] if isinstance(quantity, dict) else "final"
 
@@ -631,7 +637,7 @@ class ScalarMode(ComparisonMode):
             act_time,
             act_values,
             reduction=self.reduction,
-            tolerance=self.config.tolerance,
+            tolerance=self.tolerance,
             tolerance_mode=self.config.tolerance_mode,
             min_value=self.config.min_value,
             max_value=self.config.max_value,
@@ -712,9 +718,48 @@ _TUBE_KEYS = frozenset(
 )
 
 
+#: The fields whose scorer still reads ONE number (it takes ``.upper``), per
+#: mode: its leaf keys, and its ``(list field, row key)`` pairs. Until a
+#: mode's scorer applies the two sides separately, :func:`resolve_mode`
+#: refuses an unequal pair under a leaf key and ANY pair under a row key (a
+#: row is read with ``float(...)``) — so a pair is never scored as its
+#: upper side. Each scoring task of step E1 deletes its mode's entry; the
+#: last deletes the table.
+_NOT_SCORED_YET: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {
+    "points": (
+        ("tolerance",),
+        (("points", "tolerance"), ("points", "time_tolerance")),
+    ),
+    "scalar": (("tolerance",), ()),
+    "tube": (("tube_abs", "tube_rel"), ()),
+    "event-timing": (("time_tolerance",), (("events", "tolerance"),)),
+    "dominant-frequency": ((), (("peaks", "tolerance"),)),
+}
+
+
+def _refuse_unscored_pairs(
+    mode_name: str, var_override: dict, tolerance: Sides
+) -> None:
+    leaf_keys, row_keys = _NOT_SCORED_YET.get(mode_name, ((), ()))
+    for key in leaf_keys:
+        if key == "tolerance":
+            sides = tolerance  # resolved: the leaf's own, else the base
+        elif key in var_override:
+            sides = parse_sides(var_override[key], key)
+        else:
+            continue
+        if not sides.equal:
+            raise ValueError("two-sided tolerance is not scored yet")
+    for field_name, key in row_keys:
+        rows = var_override.get(field_name)
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and isinstance(row.get(key), dict):
+                raise ValueError("two-sided tolerance is not scored yet")
+
+
 def resolve_mode(
     var_override: dict,
-    tolerance: float,
+    tolerance: Sides | float,
     default_points: bool = False,
 ) -> ComparisonMode:
     """Build the appropriate ComparisonMode from a per-variable override dict.
@@ -741,4 +786,7 @@ def resolve_mode(
         valid = ", ".join(d.name for d in registered_metrics())
         raise ValueError(f"unknown comparison mode {mode_name!r}; valid: {valid}")
 
+    # A number (a caller with the base in hand) is both sides.
+    tolerance = parse_sides(tolerance, "tolerance")
+    _refuse_unscored_pairs(mode_name, var_override, tolerance)
     return desc.build(var_override, tolerance)

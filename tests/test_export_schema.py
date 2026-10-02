@@ -352,3 +352,22 @@ def test_the_plots_schema_refuses_what_the_parser_refuses():
     assert extra["var"]["pattern"] == "^[^*?]*[^*?\\s][^*?]*$"
     assert extra["context"]["uniqueItems"] is True
     assert extra["context"]["items"]["pattern"] == extra["var"]["pattern"]
+
+
+def test_a_tolerance_field_exports_as_the_number_it_was():
+    """The configs hold `Sides` now; the exported schema is unchanged."""
+    from dstf.reporting.schema_export import build_schema
+
+    defs = build_schema()["$defs"]
+    for mode, name, default, title in (
+        ("mode_points", "tolerance", 1e-4, "Default tolerance"),
+        ("mode_scalar", "tolerance", 1e-4, "Tolerance"),
+        ("mode_nrmse", "tolerance", 1e-4, "Tolerance"),
+        ("mode_event_timing", "time_tolerance", 1e-3, "Time tolerance (s)"),
+        ("mode_tube", "tube_abs", 0.0, "Tube abs"),
+        ("mode_tube", "tube_rel", 0.0, "Tube rel"),
+    ):
+        node = dict(defs[mode]["properties"][name])
+        node.pop("description")
+        assert node == {"type": "number", "default": default, "title": title}
+    json.dumps(defs)

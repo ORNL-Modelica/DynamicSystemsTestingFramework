@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
+from .sides import Sides, parse_sides
 from .types import _EPS, VariableComparison
 
 
@@ -321,7 +322,7 @@ def _compare_points(
     act_time: np.ndarray,
     act_values: np.ndarray,
     points: list[dict] | None = None,
-    tolerance: float = 1e-4,
+    tolerance: Sides | float = 1e-4,
 ) -> VariableComparison:
     """Compare actual vs reference at declared time points.
 
@@ -338,6 +339,8 @@ def _compare_points(
 
     Pass iff every scored point's delta is within its y-limit.
     """
+    # One number until this scorer applies the two sides separately.
+    tolerance = parse_sides(tolerance, "tolerance").upper
     if not points:
         # Implicit final-only — legacy behavior.
         if len(ref_values) == 0 or len(act_values) == 0:
@@ -590,8 +593,9 @@ def _tube_bounds(
         # Constant-tube shorthand — only 'band' and 'rel' supported. 'abs'
         # (literal y-bounds) needs both bounds explicitly, so it must use
         # tube_points.
-        const_abs = tube_config.get("tube_abs", 0.0)
-        const_rel = tube_config.get("tube_rel", 0.0)
+        # One number until the band takes its two sides separately.
+        const_abs = parse_sides(tube_config.get("tube_abs", 0.0), "tube_abs").upper
+        const_rel = parse_sides(tube_config.get("tube_rel", 0.0), "tube_rel").upper
         if tube_width_mode == "band":
             raw_upper = np.full_like(eval_time, const_abs)
             raw_lower = raw_upper.copy()
@@ -993,7 +997,7 @@ def _compare_scalar(
     act_values: np.ndarray,
     *,
     reduction: str,
-    tolerance: float,
+    tolerance: Sides | float,
     tolerance_mode: str,
     min_value: float | None,
     max_value: float | None,
@@ -1075,6 +1079,8 @@ def _compare_scalar(
             "scalar",
             f"{reduction} of the reference samples is not finite",
         )
+    # One number until this scorer applies the two sides separately.
+    tolerance = parse_sides(tolerance, "tolerance").upper
     err = abs(act_scalar - ref_scalar)
     # A zero-magnitude reference makes the relative criterion degenerate —
     # fall back to the absolute test and record that it fired, so the report
@@ -1148,7 +1154,7 @@ def _event_geometry(
 def _compare_event_timing(
     ref_time: np.ndarray,
     act_time: np.ndarray,
-    time_tolerance: float = 1e-3,
+    time_tolerance: Sides | float = 1e-3,
     count_must_match: bool = True,
     declared_events: list[dict] | None = None,
 ) -> VariableComparison:
@@ -1172,6 +1178,8 @@ def _compare_event_timing(
     The score (``nrmse`` field — repurposed for reporting uniformity) is
     the max event-time delta across matched pairs.
     """
+    # One number until this scorer applies the two sides separately.
+    time_tolerance = parse_sides(time_tolerance, "time_tolerance").upper
     act_boundaries = _find_event_boundaries(act_time)
     act_events = [float(act_time[b[0]]) for b in act_boundaries]
 

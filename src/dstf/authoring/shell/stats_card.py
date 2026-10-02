@@ -27,6 +27,7 @@ from nicegui import ui
 
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
+from ...comparison.sides import parse_sides, sides_text
 from ...reporting.stats_rows import SECTION_TITLES, StatRow, card_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
@@ -112,7 +113,8 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
 
 def summary(leaf: dict) -> str:
     """A scored row's requirement in a word or two (B11): `exact`, `±0.5`,
-    `±10%`, `in [a, b]`, `≥ a`, `≤ b`. A value the leaf leaves out is the
+    `±10%`, `in [a, b]`, `≥ a`, `≤ b`; a tolerance whose two sides differ
+    reads `−0.5 / +1`, `−5% / +10%`. A value the leaf leaves out is the
     scalar mode's default."""
     p = leaf.get("params") or {}
     lo, hi = p.get("min_value"), p.get("max_value")
@@ -122,10 +124,15 @@ def summary(leaf: dict) -> str:
         return f"≥ {lo:g}"
     if hi is not None:
         return f"≤ {hi:g}"
-    tol = float(p.get("tolerance", ScalarConfig.tolerance))
-    if p.get("tolerance_mode", ScalarConfig.tolerance_mode) == "rel":
-        return f"±{tol * 100:g}%"
-    return "exact" if tol == 0 else f"±{tol:g}"
+    tol = parse_sides(p.get("tolerance", ScalarConfig.tolerance), "tolerance")
+    rel = p.get("tolerance_mode", ScalarConfig.tolerance_mode) == "rel"
+    if not tol.equal:
+        if rel:
+            return f"−{tol.lower * 100:g}% / +{tol.upper * 100:g}%"
+        return sides_text(tol, "g")
+    if rel:
+        return f"±{tol.upper * 100:g}%"
+    return "exact" if tol.upper == 0 else f"±{tol.upper:g}"
 
 
 def cell_text(row: StatRow, value: Any) -> str:

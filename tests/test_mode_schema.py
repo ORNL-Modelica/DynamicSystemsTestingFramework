@@ -206,3 +206,22 @@ class TestDeriveSchemaEdgeCases:
 
         s = derive_schema(Cfg, mode="x")
         assert s.fields[0].label == "Tube min width"
+
+
+def test_a_sides_field_is_still_a_number_in_the_schema():
+    """A config field typed `Sides` (a tolerance: a number or a lower/upper
+    pair) derives as the `float` it was, with the number as its default —
+    the forms and the exported schema do not know a pair yet."""
+    from dstf.comparison.modes import ScalarConfig
+
+    for cls, name, default in (
+        (PointsConfig, "tolerance", 1e-4),
+        (ScalarConfig, "tolerance", 1e-4),
+        (EventTimingConfig, "time_tolerance", 1e-3),
+        (TubeConfig, "tube_abs", 0.0),
+        (TubeConfig, "tube_rel", 0.0),
+        (NrmseConfig, "tolerance", 1e-4),
+    ):
+        f = next(f for f in derive_schema(cls).fields if f.name == name)
+        assert (f.type, f.optional, f.choices) == ("float", False, None), (cls, name)
+        assert f.default == default and isinstance(f.default, float), (cls, name)

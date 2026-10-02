@@ -12,6 +12,7 @@ from dstf.comparison.comparator import (
     _find_event_boundaries,
     _split_segments,
 )
+from dstf.comparison.sides import Sides
 
 # ---------------------------------------------------------------------------
 # Event boundary detection
@@ -460,7 +461,7 @@ class TestToleranceResolution:
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # offset=0.001 on range=2.0 → NRMSE=5e-4, exceeds 1e-4
         assert not comp.passed
-        assert comp.variables[0].tolerance_used == 1e-4
+        assert comp.variables[0].tolerance_used == Sides(1e-4, 1e-4)
 
     def test_per_test_tolerance_overrides_config(self):
         """Per-test comparison_tolerance overrides config.tolerance."""
@@ -469,7 +470,7 @@ class TestToleranceResolution:
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # NRMSE=5e-4, tolerance=0.01 → passes
         assert comp.passed
-        assert comp.variables[0].tolerance_used == 0.01
+        assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
 
     def test_per_variable_tolerance_overrides_test(self):
         """Per-variable override takes precedence over per-test."""
@@ -481,7 +482,7 @@ class TestToleranceResolution:
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # Per-variable 0.01 used for x → passes despite tight per-test
         assert comp.passed
-        assert comp.variables[0].tolerance_used == 0.01
+        assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
 
     def test_reference_tolerance_used_as_fallback(self):
         """Comparison tolerance stored in reference JSON is used as fallback."""
@@ -491,7 +492,7 @@ class TestToleranceResolution:
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # ref comparison tolerance 0.01 used → passes
         assert comp.passed
-        assert comp.variables[0].tolerance_used == 0.01
+        assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
 
     def test_reference_variable_overrides(self):
         """Per-variable overrides from reference JSON are used."""
@@ -502,7 +503,7 @@ class TestToleranceResolution:
         }
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         assert comp.passed
-        assert comp.variables[0].tolerance_used == 0.01
+        assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
 
     def test_spec_overrides_reference(self):
         """Spec variable overrides take precedence over reference overrides."""
@@ -514,7 +515,7 @@ class TestToleranceResolution:
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # Spec override (1e-6) takes precedence over reference (0.1)
         assert not comp.passed
-        assert comp.variables[0].tolerance_used == 1e-6
+        assert comp.variables[0].tolerance_used == Sides(1e-6, 1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -877,8 +878,8 @@ class TestResolveMode:
         mode = resolve_mode(override, tolerance=1e-4)
         assert isinstance(mode, TubeMode)
         assert mode.name == "tube"
-        assert mode.config.tube_abs == 5.0
-        assert mode.config.tube_rel == 0.02
+        assert mode.config.tube_abs == Sides(5.0, 5.0)
+        assert mode.config.tube_rel == Sides(0.02, 0.02)
         assert mode.config.tube_width_mode == "band"
 
     def test_explicit_default_points(self):
@@ -886,7 +887,7 @@ class TestResolveMode:
         mode = resolve_mode({"mode": "points"}, tolerance=0.05)
         assert isinstance(mode, PointsMode)
         assert mode.name == "points"
-        assert mode.config.tolerance == 0.05
+        assert mode.config.tolerance == Sides(0.05, 0.05)
 
     def test_default_default_points_flag(self):
         """default_points=True with no explicit mode → PointsMode."""
@@ -922,7 +923,7 @@ class TestResolveMode:
         }
         mode = resolve_mode(override, tolerance=0.5)
         assert isinstance(mode, TubeMode)
-        assert mode.config.tube_abs == 3.0
+        assert mode.config.tube_abs == Sides(3.0, 3.0)
 
     def test_tube_with_time_varying_points(self):
         """Tube config with tube_points passes through correctly."""
@@ -953,7 +954,7 @@ class TestTubeConfigToDict:
         cfg = TubeConfig(tube_width_mode="band", tube_abs=5.0)
         d = cfg.to_dict()
         assert d["tube_width_mode"] == "band"
-        assert d["tube_abs"] == 5.0
+        assert d["tube_abs"] == Sides(5.0, 5.0)
         assert "tube_rel" not in d  # Zero values omitted
 
     def test_with_points(self):
@@ -1802,7 +1803,7 @@ class TestExplicitZeroTolerance:
         }
         comp = compare_test(test, result, reference)
         assert not comp.passed
-        assert comp.variables[0].tolerance_used == 0.0
+        assert comp.variables[0].tolerance_used == Sides(0.0, 0.0)
 
     def test_zero_reference_tolerance_honored(self):
         test = _mk_test(variable_patterns=["x"])
@@ -2147,14 +2148,15 @@ class TestVariableIdentity:
             _vi_result(off),
             _vi_reference(),
         )
-        assert by_name.passed and by_name.variables[0].tolerance_used == 0.5
+        assert by_name.passed and by_name.variables[0].tolerance_used == Sides(0.5, 0.5)
         by_expression = compare_test(
             _vi_test(variable_overrides={VI_EXPR: loose}),
             _vi_result(off),
             _vi_reference(),
         )
         assert not by_expression.passed
-        assert by_expression.variables[0].tolerance_used != 0.5
+        assert by_expression.variables[0].tolerance_used != Sides(0.5, 0.5)
+        assert by_expression.variables[0].tolerance_used == Sides(1e-4, 1e-4)
 
     def test_an_override_keyed_by_a_plain_expression_does_not_apply(self):
         """The shape a real spec has today: a key that WAS the stored name
@@ -2334,7 +2336,7 @@ class TestVariableIdentity:
                 _vi_result(),
                 _vi_reference(),
             )
-        assert comp.passed and comp.variables[0].tolerance_used == 0.5
+        assert comp.passed and comp.variables[0].tolerance_used == Sides(0.5, 0.5)
         assert not [r for r in caplog.records if "variable_overrides" in r.getMessage()]
 
     def test_the_baseline_free_check_reads_the_variables_names(self):
@@ -3073,3 +3075,357 @@ def test_a_tree_warns_only_of_the_tracked_variables_it_does_not_score():
     assert [(w.field, w.current_value) for w in comp.warnings] == [
         ("Tracked variables without a criterion", "y")
     ]
+
+
+# ---------------------------------------------------------------------------
+# A tolerance travels as Sides: a number, or a lower/upper pair
+# ---------------------------------------------------------------------------
+
+import dataclasses  # noqa: E402
+import json  # noqa: E402
+
+from dstf.comparison.types import VariableComparison  # noqa: E402
+
+_S_T = np.linspace(0.0, 10.0, 101)
+_S_REF = np.sin(_S_T)
+_S_ACT = _S_REF + 0.01
+#: Three events, as duplicated instants.
+_S_TE = np.array([0, 1, 2, 2, 3, 4, 5, 5, 6, 7, 8, 8, 9, 10], float)
+_S_VE = np.arange(len(_S_TE), dtype=float)
+_S_TF = np.linspace(0.0, 20.0, 2001)
+_S_SIG = np.sin(2 * np.pi * _S_TF)
+#: kind -> (time, reference values, actual values)
+_S_DATA = {
+    "x": (_S_T, _S_REF, _S_ACT),
+    "e": (_S_TE, _S_VE, _S_VE),
+    "f": (_S_TF, _S_SIG, _S_SIG),
+}
+_S_EVEN = {"lower": 0.05, "upper": 0.05}
+_S_UNEVEN = {"lower": 0.01, "upper": 0.05}
+_S_MALFORMED = [
+    "abc",
+    "0.01",
+    None,
+    True,
+    {"lower": 1},
+    {"lower": 1, "upper": 2, "x": 3},
+    [1],
+]
+
+
+def _sides_compare(
+    leaf,
+    *,
+    flat,
+    kind="x",
+    comparison_tolerance=None,
+    ref_comparison=None,
+    extra=None,
+):
+    """``leaf`` (a raw metrics leaf without its ``variable``) scored on the
+    tree path or, with ``flat``, as the same keys in ``variable_overrides``.
+    ``extra`` is a second leaf, on ``y``, beside it."""
+    time, ref, act = _S_DATA[kind]
+    names = ["x"] + (["y"] if extra is not None else [])
+    result = TestResult(
+        model_id="Test.Model",
+        success=True,
+        variables=[
+            VariableResult(index=i + 1, name=n, time=time, values=act)
+            for i, n in enumerate(names)
+        ],
+    )
+    reference = {
+        "test_id": "0001",
+        "variables": [
+            {"index": i + 1, "name": n, "time": time.tolist(), "values": ref.tolist()}
+            for i, n in enumerate(names)
+        ],
+    }
+    if ref_comparison is not None:
+        reference["comparison"] = ref_comparison
+    test = _make_test(comparison_tolerance=comparison_tolerance)
+    test.variable_patterns = names
+
+    def override(raw):
+        ov = {k: v for k, v in raw.items() if k != "metric"}
+        return {**ov, "mode": raw["metric"]}
+
+    if flat:
+        test.variable_overrides = {"x": override(leaf)}
+        if extra is not None:
+            test.variable_overrides["y"] = override(extra)
+    else:
+        tree = {**leaf, "variable": "x"}
+        if extra is not None:
+            tree = {"combinator": "and", "children": [tree, {**extra, "variable": "y"}]}
+        test.metric_tree_spec = parse_metric_tree(tree)
+    return compare_test(test, result, reference, default_tolerance=1e-4)
+
+
+def _sides_fields(vc) -> str:
+    """Every field of a comparison but its geometry, as comparable text."""
+    d = dataclasses.asdict(vc)
+    d.pop("geometry")
+    return json.dumps(d, sort_keys=True, default=repr)
+
+
+def _sides_coords(vc) -> list:
+    out = []
+    for p in vc.geometry:
+        d = {
+            f.name: getattr(p, f.name)
+            for f in dataclasses.fields(p)  # type: ignore[arg-type]
+        }
+        out.append(
+            {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in d.items()}
+        )
+    return out
+
+
+#: Every LEAF key that takes a pair: (kind, the leaf without it, the key, a number).
+_S_LEAF_KEYS = {
+    "points tolerance": ("x", {"metric": "points"}, "tolerance", 0.05),
+    "scalar tolerance": (
+        "x",
+        {"metric": "scalar", "quantity": {"reduce": "max"}},
+        "tolerance",
+        0.05,
+    ),
+    "tube_abs": ("x", {"metric": "tube", "tube_width_mode": "band"}, "tube_abs", 0.05),
+    "tube_rel": ("x", {"metric": "tube", "tube_width_mode": "rel"}, "tube_rel", 0.05),
+    "time_tolerance": ("e", {"metric": "event-timing"}, "time_tolerance", 0.05),
+}
+
+
+class TestATolerancesNumberAndEqualPairAreOne:
+    """The identity rule: a spec holding ``v`` and one holding
+    ``{"lower": v, "upper": v}`` score the same, on both paths."""
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("name", _S_LEAF_KEYS)
+    def test_a_leaf_key(self, name, flat):
+        kind, leaf, key, v = _S_LEAF_KEYS[name]
+        a = _sides_compare({**leaf, key: v}, flat=flat, kind=kind).variables[0]
+        b = _sides_compare(
+            {**leaf, key: {"lower": v, "upper": v}}, flat=flat, kind=kind
+        ).variables[0]
+        assert "config_error" not in a.diagnostics, a.diagnostics
+        assert _sides_fields(a) == _sides_fields(b)
+        assert _sides_coords(a) == _sides_coords(b)
+        assert a.passed is b.passed
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_the_tolerance_applied_is_sides(self, flat):
+        vc = _sides_compare(
+            {"metric": "points", "tolerance": _S_EVEN}, flat=flat
+        ).variables[0]
+        assert vc.tolerance_used == Sides(0.05, 0.05)
+        vc = _sides_compare({"metric": "points"}, flat=flat).variables[0]
+        assert vc.tolerance_used == Sides(1e-4, 1e-4)  # the base, as both sides
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_nrmse_takes_an_equal_pair(self, flat):
+        a = _sides_compare({"metric": "nrmse", "tolerance": 0.5}, flat=flat)
+        b = _sides_compare(
+            {"metric": "nrmse", "tolerance": {"lower": 0.5, "upper": 0.5}}, flat=flat
+        )
+        assert _sides_fields(a.variables[0]) == _sides_fields(b.variables[0])
+        assert a.passed and b.passed
+
+
+def test_a_number_handed_to_a_comparison_is_both_sides():
+    """A fixture, or a third-party metric, builds one with a float."""
+    vc = VariableComparison(
+        index=0,
+        name="x",
+        passed=True,
+        nrmse=0.0,
+        rmse=0.0,
+        signal_range=1.0,
+        max_abs_error=0.0,
+        max_abs_error_time=0.0,
+        reference_final=0.0,
+        actual_final=0.0,
+        tolerance_used=0.25,
+    )
+    assert vc.tolerance_used == Sides(0.25, 0.25)
+    assert dataclasses.replace(vc, tolerance_used=Sides(0.1, 0.2)).tolerance_used == (
+        Sides(0.1, 0.2)
+    )
+
+
+class TestAMalformedToleranceIsAConfigError:
+    @pytest.mark.parametrize("bad", _S_MALFORMED, ids=repr)
+    def test_flat_it_is_the_variables_and_the_rest_is_scored(self, bad):
+        comp = _sides_compare(
+            {"metric": "points", "tolerance": bad},
+            flat=True,
+            extra={"metric": "nrmse", "tolerance": 0.5},
+        )
+        x, y = comp.variables
+        assert x.diagnostics["config_error"] is True
+        assert x.diagnostics["error"] == (
+            f'tolerance must be a number or {{"lower": …, "upper": …}}, got {bad!r}'
+        )
+        assert y.passed and not comp.passed
+
+    @pytest.mark.parametrize("key", ["tube_abs", "time_tolerance"])
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_modes_own_key_names_itself(self, key, flat):
+        leaf = (
+            {"metric": "tube", "tube_width_mode": "band"}
+            if key == "tube_abs"
+            else {"metric": "event-timing"}
+        )
+        kind = "x" if key == "tube_abs" else "e"
+        vc = _sides_compare(
+            {**leaf, key: {"lower": 1}}, flat=flat, kind=kind
+        ).variables[0]
+        assert vc.diagnostics["config_error"] is True
+        assert f"{key} must be a number or " in vc.diagnostics["error"]
+        assert vc.diagnostics["error"].endswith("got {'lower': 1}")
+
+
+#: Every field that takes a pair (C1): the five leaf keys and the four row keys.
+_S_PAIR_FIELDS = {
+    **{
+        name: (kind, {**leaf, key: _S_UNEVEN})
+        for name, (kind, leaf, key, _) in _S_LEAF_KEYS.items()
+    },
+    "points row tolerance": (
+        "x",
+        {"metric": "points", "points": [{"time": 2.0, "tolerance": _S_UNEVEN}]},
+    ),
+    "points row time_tolerance": (
+        "x",
+        {
+            "metric": "points",
+            "tolerance": 0.5,
+            "points": [{"time": 2.0, "time_tolerance": _S_UNEVEN}],
+        },
+    ),
+    "events row tolerance": (
+        "e",
+        {"metric": "event-timing", "events": [{"time": 2.0, "tolerance": _S_UNEVEN}]},
+    ),
+    "peaks row tolerance": (
+        "f",
+        {
+            "metric": "dominant-frequency",
+            "peaks": [{"freq": 1.0, "tolerance": _S_UNEVEN}],
+        },
+    ),
+}
+#: The fields whose scorer does not take two sides yet: each scoring task
+#: removes its own, and the last one removes this list.
+_S_NOT_SCORED_YET = list(_S_PAIR_FIELDS)
+
+
+class TestAnUnevenPairIsNotScoredWrongly:
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("name", _S_NOT_SCORED_YET)
+    def test_a_field_whose_scorer_is_not_two_sided_yet_refuses_it(self, name, flat):
+        kind, leaf = _S_PAIR_FIELDS[name]
+        comp = _sides_compare(leaf, flat=flat, kind=kind)
+        vc = comp.variables[0]
+        assert not comp.passed
+        assert vc.diagnostics.get("config_error") is True, vc.diagnostics
+        assert vc.diagnostics["error"].endswith("two-sided tolerance is not scored yet")
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize(
+        "name",
+        [n for n in _S_NOT_SCORED_YET if " row " in n],
+    )
+    def test_a_row_refuses_an_equal_pair_too_until_its_scorer_reads_one(
+        self, name, flat
+    ):
+        kind, leaf = _S_PAIR_FIELDS[name]
+        text = json.dumps(leaf).replace(json.dumps(_S_UNEVEN), json.dumps(_S_EVEN))
+        vc = _sides_compare(json.loads(text), flat=flat, kind=kind).variables[0]
+        assert vc.diagnostics.get("config_error") is True, vc.diagnostics
+        assert vc.diagnostics["error"].endswith("two-sided tolerance is not scored yet")
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_nrmse_has_one_ceiling(self, flat):
+        vc = _sides_compare(
+            {"metric": "nrmse", "tolerance": _S_UNEVEN}, flat=flat
+        ).variables[0]
+        assert vc.diagnostics["config_error"] is True
+        # The tree path leads with "metric 'nrmse' misconfigured: ".
+        assert vc.diagnostics["error"].endswith(
+            "nrmse has one ceiling: tolerance must be a number"
+        )
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_mode_that_reads_no_tolerance_ignores_a_pair_in_it(self, flat):
+        comp = _sides_compare(
+            {"metric": "range", "min_value": -2.0, "tolerance": _S_UNEVEN}, flat=flat
+        )
+        assert comp.passed and "config_error" not in comp.variables[0].diagnostics
+
+
+class TestBaselineFreeCheckTakesAnyTolerance:
+    """Both sites parsed a tolerance OUTSIDE their ``try``: a pair raised
+    ``TypeError`` and a string ``ValueError`` out of the whole run."""
+
+    @pytest.mark.parametrize(
+        "tol,free",
+        [
+            (_S_UNEVEN, True),
+            (_S_EVEN, True),
+            (0.1, True),
+            ("abc", False),
+            (None, False),
+        ],
+        ids=repr,
+    )
+    def test_it_returns(self, tol, free):
+        # `range` reads no tolerance: a well-formed one never matters to it,
+        # and a malformed one means "not baseline-free", as a mode that does
+        # not resolve does.
+        tree = _make_test()
+        tree.metric_tree_spec = parse_metric_tree(
+            {"metric": "range", "variable": "x", "min_value": 0, "tolerance": tol}
+        )
+        flat = _make_test(
+            variable_overrides={
+                "x": {"mode": "range", "min_value": 0, "tolerance": tol}
+            }
+        )
+        assert _test_is_baseline_free(tree, 1e-4) is free
+        assert _test_is_baseline_free(flat, 1e-4) is free
+
+
+class TestABaseToleranceIsANumber:
+    """C1: the pair belongs on a criterion; ``comparison.tolerance`` — the
+    spec's or the reference JSON's — is one number."""
+
+    SENTENCE = (
+        "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
+    )
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("pair", [_S_UNEVEN, _S_EVEN], ids=["uneven", "even"])
+    def test_the_specs(self, pair, flat):
+        comp = _sides_compare(
+            {"metric": "points"}, flat=flat, comparison_tolerance=pair
+        )
+        assert not comp.passed and comp.error_message == self.SENTENCE
+        assert comp.sim_success and comp.variables == []
+        assert classify(comp) == "FAIL"
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_the_reference_jsons(self, flat):
+        comp = _sides_compare(
+            {"metric": "points"}, flat=flat, ref_comparison={"tolerance": _S_UNEVEN}
+        )
+        assert not comp.passed and comp.error_message == self.SENTENCE
+
+    def test_a_number_in_either_is_scored_as_before(self):
+        comp = _sides_compare(
+            {"metric": "points"}, flat=False, ref_comparison={"tolerance": 0.5}
+        )
+        assert comp.passed and comp.error_message is None
+        assert comp.variables[0].tolerance_used == Sides(0.5, 0.5)
