@@ -57,7 +57,7 @@ from .algorithms import (  # noqa: F401
     _split_segments,
 )
 from .registry import metric as registry_metric
-from .sides import parse_sides
+from .sides import is_base_tolerance, parse_sides
 from .types import (
     DEFAULT_TOLERANCE,
     StructuralWarning,
@@ -72,6 +72,12 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+#: What a test whose base tolerance is no number is refused with — the
+#: comparison's ``error_message``, and so what every surface says of it.
+BASE_TOLERANCE_REFUSED = (
+    "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
+)
 
 
 def _check_structural_changes(
@@ -435,19 +441,18 @@ def compare_test(
         base_tolerance, tolerance_source = ref_comparison["tolerance"], "reference"
     else:
         base_tolerance, tolerance_source = default_tolerance, "project"
-    if isinstance(base_tolerance, dict):
+    if not is_base_tolerance(base_tolerance):
         # A base tolerance is ONE number: nrmse, the default metric, has one
         # ceiling, and every leaf without a tolerance of its own would
         # inherit the pair. Refused for the whole test rather than handed to
-        # each leaf to refuse in its own words.
+        # each leaf to refuse in its own words — and whatever else a spec or
+        # a reference JSON holds there (a string, a list, a bool) with it:
+        # never scored at the next tolerance down.
         return TestComparison(
             model_id=test.model_id,
             passed=False,
             test_id=ref_test_id,
-            error_message=(
-                "the base tolerance must be a number; a lower/upper pair "
-                "belongs on a criterion"
-            ),
+            error_message=BASE_TOLERANCE_REFUSED,
         )
 
     # Phase 3.3: when the spec provides an explicit MetricTree, it fully

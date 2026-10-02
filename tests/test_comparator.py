@@ -3123,10 +3123,13 @@ def _sides_compare(
     comparison_tolerance=None,
     ref_comparison=None,
     extra=None,
+    test=None,
 ):
     """``leaf`` (a raw metrics leaf without its ``variable``) scored on the
     tree path or, with ``flat``, as the same keys in ``variable_overrides``.
-    ``extra`` is a second leaf, on ``y``, beside it."""
+    ``extra`` is a second leaf, on ``y``, beside it. ``test`` is a discovered
+    :class:`TestModel` scored as discovery left it: ``leaf`` and ``flat``
+    are then the spec file's, not this helper's."""
     time, ref, act = _S_DATA[kind]
     names = ["x"] + (["y"] if extra is not None else [])
     result = TestResult(
@@ -3146,6 +3149,8 @@ def _sides_compare(
     }
     if ref_comparison is not None:
         reference["comparison"] = ref_comparison
+    if test is not None:
+        return compare_test(test, result, reference, default_tolerance=1e-4)
     test = _make_test(comparison_tolerance=comparison_tolerance)
     test.variable_patterns = names
 
@@ -3413,28 +3418,85 @@ class TestBaselineFreeCheckTakesAnyTolerance:
 
 class TestABaseToleranceIsANumber:
     """C1: the pair belongs on a criterion; ``comparison.tolerance`` — the
-    spec's or the reference JSON's — is one number."""
+    spec's or the reference JSON's — is one number. Anything else there
+    refuses the test: it is never scored at the next tolerance down."""
 
     SENTENCE = (
         "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
     )
 
-    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
-    @pytest.mark.parametrize("pair", [_S_UNEVEN, _S_EVEN], ids=["uneven", "even"])
-    def test_the_specs(self, pair, flat):
-        comp = _sides_compare(
-            {"metric": "points"}, flat=flat, comparison_tolerance=pair
-        )
+    #: What a JSON file can hold there that is no number.
+    NOT_NUMBERS = pytest.mark.parametrize(
+        "bad",
+        [_S_UNEVEN, _S_EVEN, {"lower": 0.01}, "abc", "0.5", [1], True],
+        ids=["pair", "even-pair", "one-sided", "string", "digits", "list", "bool"],
+    )
+
+    def _refused(self, comp):
         assert not comp.passed and comp.error_message == self.SENTENCE
         assert comp.sim_success and comp.variables == []
+        assert comp.test_id == "0001"
         assert classify(comp) == "FAIL"
 
+    @staticmethod
+    def _discovered(tmp_path, tolerance, flat):
+        """The test as ``discover_tests`` reads it from a spec FILE: a
+        ``TestModel`` built by hand holds a base no discovery produced."""
+        from dstf.config import Config
+        from dstf.discovery.test_registry import discover_tests
+
+        entry = {
+            "model": "Test.Model",
+            "variables": ["x"],
+            "comparison": {"tolerance": tolerance},
+        }
+        if flat:
+            entry["comparison"]["variable_overrides"] = {"x": {"mode": "points"}}
+        else:
+            entry["metrics"] = {"metric": "points", "variable": "x"}
+        spec = tmp_path / "test_spec.json"
+        spec.write_text(json.dumps({"tests": [entry]}), encoding="utf-8")
+        config = Config(source_path=tmp_path, source_type="python", test_spec_file=spec)
+        (test,) = discover_tests(config)
+        return test
+
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
-    def test_the_reference_jsons(self, flat):
+    @NOT_NUMBERS
+    def test_the_spec_files(self, tmp_path, bad, flat):
+        test = self._discovered(tmp_path, bad, flat)
+        # The reference JSON holds a number the test would be scored with,
+        # were the spec's dropped.
         comp = _sides_compare(
-            {"metric": "points"}, flat=flat, ref_comparison={"tolerance": _S_UNEVEN}
+            None, flat=flat, test=test, ref_comparison={"tolerance": 0.5}
         )
-        assert not comp.passed and comp.error_message == self.SENTENCE
+        self._refused(comp)
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_number_in_the_spec_file_is_scored(self, tmp_path, flat):
+        test = self._discovered(tmp_path, 0.5, flat)
+        assert test.comparison_tolerance == 0.5
+        comp = _sides_compare(None, flat=flat, test=test)
+        assert comp.passed and comp.error_message is None
+        assert comp.variables[0].tolerance_used == Sides(0.5, 0.5)
+
+    def test_a_simulation_number_that_is_none_is_still_dropped(self, tmp_path, caplog):
+        from dstf.discovery.spec_parser import parse_test_spec
+
+        spec = tmp_path / "test_spec.json"
+        entry = {"model": "Test.Model", "simulation": {"stop_time": {"lower": 1}}}
+        spec.write_text(json.dumps({"tests": [entry]}), encoding="utf-8")
+        with caplog.at_level("WARNING"):
+            (test,) = parse_test_spec(spec)
+        assert "stop_time" not in test.field_sources
+        assert "ignoring non-numeric" in caplog.text
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @NOT_NUMBERS
+    def test_the_reference_jsons(self, bad, flat):
+        comp = _sides_compare(
+            {"metric": "points"}, flat=flat, ref_comparison={"tolerance": bad}
+        )
+        self._refused(comp)
 
     def test_a_number_in_either_is_scored_as_before(self):
         comp = _sides_compare(

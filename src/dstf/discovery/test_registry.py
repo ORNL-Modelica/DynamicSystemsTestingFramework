@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..config import (
     DEFAULT_METHOD,
@@ -63,7 +63,9 @@ class TestModel:
     variable_patterns: list[str] = field(default_factory=list)
 
     # Comparison settings (per-test and per-variable overrides)
-    comparison_tolerance: float | None = None  # Overrides config.tolerance
+    #: Overrides config.tolerance. As the spec wrote it: a value that is no
+    #: number is carried to ``compare_test``, which refuses the test.
+    comparison_tolerance: Any = None
     variable_overrides: dict[str, dict] = field(default_factory=dict)
     # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
 

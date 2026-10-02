@@ -271,9 +271,19 @@ def spec_models_from_document(
                 comp,
             )
             comp = {}
-        comparison_tolerance = _spec_number(comp, "tolerance", float, model_id)
-        if comparison_tolerance is not None:
-            test.comparison_tolerance = comparison_tolerance
+        # The base tolerance is carried as written, number or not. One that
+        # is no number (a lower/upper pair, a string, a list) refuses the
+        # test at compare (`compare_test`); dropped here like a simulation
+        # value, the test was scored — and could pass — at the project's.
+        raw_tolerance = comp.get("tolerance")
+        if raw_tolerance is not None:
+            from ..comparison.sides import is_base_tolerance
+
+            test.comparison_tolerance = (
+                float(raw_tolerance)
+                if is_base_tolerance(raw_tolerance)
+                else raw_tolerance
+            )
         if "variable_overrides" in comp:
             test.variable_overrides = comp["variable_overrides"]
 
