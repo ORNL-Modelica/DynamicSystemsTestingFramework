@@ -2252,6 +2252,41 @@ def _c_run(tmp_path, status: str | None, live: str | None = None) -> Shell:
 
 
 #: The lines of the Test page that say why a test has nothing to show.
+_REFUSED = (
+    "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
+)
+
+
+async def test_a_refused_test_says_why_on_the_tree_line_and_the_strip(tmp_path):
+    """D's reference JSON holds a lower/upper pair as its base tolerance:
+    the comparison refuses the test (FAIL, a reason, nothing scored). D has
+    a baseline, so "no baseline" names the wrong cause, and accepting keeps
+    the reference's tolerance, so the strip must not offer it."""
+    cfg, work = _two_var_project(tmp_path)
+    changed = 0
+    for path in cfg.parent.rglob("ref_*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("model_id") == D:
+            data.setdefault("comparison", {})["tolerance"] = {
+                "lower": 0.1,
+                "upper": 0.2,
+            }
+            path.write_text(json.dumps(data), encoding="utf-8")
+            changed += 1
+    assert changed == 1
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    assert shell.session.comparisons[D].error_message == _REFUSED
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        assert page.badge.text == "FAIL"
+        assert _one(user, "tree:summary").text == f"nothing scored: {_REFUSED}"
+        assert _one(user, "strip-text").text == f"Not scored: {_REFUSED}."
+        assert "dstf-strip-red" in _one(user, "strip").classes
+        assert _strip_buttons(user).get("accept") != "filled"
+
+
 _RUN_LINES = ("strip-text", "plots:count", "tree:summary", "var-target")
 
 

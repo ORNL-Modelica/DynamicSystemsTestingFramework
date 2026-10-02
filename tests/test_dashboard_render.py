@@ -1059,6 +1059,35 @@ def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
     assert statuses == ["pass", "fail", "pass"]
 
 
+def test_a_refused_tests_reason_is_its_message(tmp_path):
+    """A test the comparison refused (a FAIL with a reason and no variable)
+    says the reason in the Message column — the tool's Suite row does —
+    and a FAIL scored variable by variable keeps what the run said."""
+    from test_reporters import REFUSED, _failing, _refused
+
+    snapshot = _one_test_snapshot()
+    (entry,) = snapshot["tests"]
+    snapshot["tests"] = [
+        {**entry, "model_id": "Lib.R"},
+        {**entry, "model_id": "Lib.F", "test_key": "test_0002", "detail": "3 events"},
+    ]
+    for t in snapshot["tests"]:
+        t["report_dir"] = t["test_key"]
+    _write_status_json(tmp_path, snapshot)
+    comparisons = [_refused("Lib.R"), _failing("Lib.F")]
+    rows = build_dashboard_context(tmp_path, mode="final", comparisons=comparisons)[
+        "tests"
+    ]
+    assert [(r.status, r.message) for r in rows] == [
+        ("FAIL", REFUSED),
+        ("FAIL", "3 events"),
+    ]
+    render_final(tmp_path, comparisons=comparisons)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    refused, failing = _body_rows(html)
+    assert REFUSED in refused and REFUSED not in failing
+
+
 def test_a_test_with_no_result_reads_not_run_in_grey(tmp_path):
     """D145: a test the last run never finished (a status.json row still
     queued, as an aborted run leaves it) and one it never ran (no row at

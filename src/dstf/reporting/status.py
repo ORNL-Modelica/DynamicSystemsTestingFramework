@@ -120,6 +120,17 @@ def classify(comp: TestComparison) -> str:
     return PASS
 
 
+def refusal(comp: TestComparison) -> str | None:
+    """Why the comparison REFUSED this test — FAILED it without scoring a
+    variable (a base tolerance that is no number) — or ``None``. The reason
+    is the whole finding: there is no failing variable to name and no tree
+    to draw, so every surface says it where it would name those. Not a
+    SIM_FAIL's or a NO_REF's message, which their own status says."""
+    if classify(comp) == FAIL and not comp.variables and comp.error_message:
+        return comp.error_message
+    return None
+
+
 def classify_with_class(comp: TestComparison) -> tuple[str, str]:
     """Return ``(status_text, css_class)`` for the HTML surfaces."""
     state = classify(comp)

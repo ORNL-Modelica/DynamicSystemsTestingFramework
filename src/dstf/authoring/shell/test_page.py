@@ -23,7 +23,12 @@ from ...comparison.tree_spec import reads_a_statistic
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
-from ...reporting.status import SCORING_FAILED, classify, classify_with_class
+from ...reporting.status import (
+    SCORING_FAILED,
+    classify,
+    classify_with_class,
+    refusal,
+)
 from ...reporting.tree_rows import leaves_of
 from ...storage.ref_index import RefIndex
 from ..capabilities import Outcome, plural
@@ -267,16 +272,19 @@ class TestPage:
         """Why this test has no tree, as a clause the line it is read into
         completes ("nothing scored: this test has no baseline"): its run
         failed or it has no result (`run_state`, first), its scoring
-        raised, or it has no baseline to be scored against. A model whose
+        raised, the comparison refused it (its reason, as written), or it
+        has no baseline to be scored against. A model whose
         scoring raised keeps its result and has no comparison at all — the
         Suite row says `scoring failed` for the same state — so "no
         baseline" would name the wrong cause."""
         reason = self._state_reason()
         if reason is not None:
             return reason
-        if self.shell.session.comparisons.get(self.model_id) is None:
+        comp = self.shell.session.comparisons.get(self.model_id)
+        if comp is None:
             return SCORING_FAILED
-        return "this test has no baseline"
+        # A test the comparison refused has a baseline, and a reason.
+        return refusal(comp) or "this test has no baseline"
 
     def _no_plots_reason(self, from_tree: bool) -> str:
         """Why there is no PLOT, which is not why there is no tree: a test
@@ -1095,6 +1103,7 @@ class TestPage:
                 self.result() if has_result else None,
                 project.config.diagnostic_variables,
             ),
+            refused=refusal(comp) if comp is not None else None,
         )
 
     def sync(self, force: bool = False) -> None:

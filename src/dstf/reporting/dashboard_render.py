@@ -47,7 +47,7 @@ from .rows import (
     row_from_status,
     summary_fields,
 )
-from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER
+from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER, refusal
 from .theme import css_variables
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -201,6 +201,9 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     survives only when its ref_id is the comparison's: otherwise it opens
     the other baseline. A comparison with no stored baseline names none,
     and the row keeps whatever it had.
+
+    The Message is the run's (status.json's ``detail``) — but for a test
+    the comparison refused, whose reason is the one thing to read of it.
     """
     summary = summary_fields(comp)
     ref_id, ref_file = row.ref_id, row.ref_file
@@ -218,6 +221,7 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
         n_warnings=summary["n_warnings"],
         ref_id=ref_id,
         ref_file=ref_file,
+        message=refusal(comp) or row.message,
     )
 
 

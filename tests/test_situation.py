@@ -104,6 +104,14 @@ ROWS = [
         "Fails against its baseline. If the new behaviour is right, accept it as the baseline.",
     ),
     (
+        # A test the comparison refused: the reason is the sentence, and
+        # accepting is not offered — it would not clear it.
+        dict(status="FAIL", has_result=True, refused="the base is a pair"),
+        S.REFUSED,
+        "red",
+        "Not scored: the base is a pair.",
+    ),
+    (
         dict(status="PASS", has_result=True, simulate_only=True),
         S.SIMULATE_ONLY,
         "grey",
@@ -231,6 +239,11 @@ def test_nothing_new_is_todays_sentence():
         (dict(status=None, has_result=True, new_variables=1), S.WAITING),
         (dict(scoring_failed=True, new_variables=1), S.SCORING_FAILED),
         (dict(status="PASS", has_result=True, new_variables=1), S.NEW_VARIABLES),
+        # A rerun records the variable and the test is refused all the same.
+        (
+            dict(status="FAIL", has_result=True, refused="why", new_variables=1),
+            S.REFUSED,
+        ),
     ],
 )
 def test_new_variables_come_after_sim_fail_and_before_no_ref(inputs, first):
@@ -318,3 +331,18 @@ def test_a_simulate_only_test_counts_nothing_new():
     )
     result = TestResult(model_id="L.A", success=True, variables=[])
     assert new_variables(test, result, []) == 0
+
+
+def test_a_refused_test_does_not_offer_accept_as_the_next_action():
+    """Accepting keeps the reference JSON's ``comparison.tolerance``, so it
+    would not clear a refusal that came from there."""
+    from dstf.authoring.builtin.accept import Accept
+    from dstf.authoring.builtin.rerun import Rerun
+
+    assert Accept.emphasis.get(S.REFUSED) is None
+    assert Rerun.emphasis.get(S.REFUSED) is None
+    # The sentence of a FAIL that was scored is the one that offers it.
+    assert "accept" in strip_for(status="FAIL", has_result=True).sentence
+    assert (
+        "accept" not in strip_for(status="FAIL", has_result=True, refused="x").sentence
+    )

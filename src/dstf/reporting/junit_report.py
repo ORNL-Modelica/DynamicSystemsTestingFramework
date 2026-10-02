@@ -14,6 +14,7 @@ from .status import (
     classify,
     count_by_status,
     not_scored_reason,
+    refusal,
 )
 
 
@@ -114,15 +115,18 @@ def generate_junit_report(
                             f"ref_final={var.reference_final:.6e}, "
                             f"act_final={var.actual_final:.6e}"
                         )
+                # A test the comparison refused has no failing variable to
+                # count: its reason is the message and the body.
+                refused = refusal(comp)
                 fail = ET.SubElement(
                     tc,
                     "failure",
                     {
-                        "message": f"{len(msgs)} variable(s) failed",
+                        "message": refused or f"{len(msgs)} variable(s) failed",
                         "type": "RegressionFailure",
                     },
                 )
-                fail.text = "\n".join(msgs)
+                fail.text = refused or "\n".join(msgs)
 
         total_tests += n_tests
         total_failures += n_failures

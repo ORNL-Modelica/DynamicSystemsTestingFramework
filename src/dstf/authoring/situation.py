@@ -42,6 +42,10 @@ class Situation(Enum):
     #: baseline accepted now would not hold it (the owner's O3)
     NEW_VARIABLES = "new_variables"
     NO_REF = "no_ref"
+    #: the comparison refused the test (`reporting.status.refusal`): it
+    #: fails with a reason and nothing scored, and accepting does not
+    #: clear it — no capability names this as its next action
+    REFUSED = "refused"
     FAIL = "fail"
     SIMULATE_ONLY = "simulate_only"
     PASS = "pass"
@@ -120,6 +124,7 @@ def strip_for(
     criteria: int = 0,
     advisory: int = 0,
     new_variables: int = 0,
+    refused: str | None = None,
 ) -> Strip:
     """The strip for one test. ``running`` is the label of the job that
     locks it; ``edits`` its pending ops; ``status`` / ``saved_status`` the
@@ -132,7 +137,8 @@ def strip_for(
     it, never without a result, which may not be read yet; ``fails`` /
     ``criteria`` / ``advisory`` its leaves failing, in all, and failing
     inside a warn; ``new_variables`` the variables its criteria name that
-    the last run did not record (:func:`new_variables`)."""
+    the last run did not record (:func:`new_variables`); ``refused`` why
+    the comparison refused the test (`reporting.status.refusal`), or None."""
     S = Situation
     if running is not None:
         return Strip(S.RUNNING, "grey", f"{running} is running on this test.")
@@ -157,6 +163,11 @@ def strip_for(
             "red",
             "The simulation failed. Fix the model or its settings, then rerun.",
         )
+    if refused and status == FAIL:
+        # Before NEW_VARIABLES: a rerun records the variable, and the test
+        # is refused all the same. The reason, never "accept it": accepting
+        # keeps the reference's comparison settings, the refusal with them.
+        return Strip(S.REFUSED, "red", f"Not scored: {refused}.")
     if new_variables:
         return Strip(
             S.NEW_VARIABLES,

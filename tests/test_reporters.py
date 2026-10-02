@@ -59,6 +59,40 @@ def _sim_failed(model_id="Lib.Examples.C"):
     )
 
 
+REFUSED = (
+    "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
+)
+
+
+def _refused(model_id="Lib.Examples.R"):
+    """A test `compare_test` refuses: its reference JSON holds a lower/upper
+    pair as the base tolerance. FAIL, with the reason and no variable."""
+    import numpy as np
+
+    from conftest import make_test_model
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.comparator import compare_test
+
+    t = np.linspace(0.0, 1.0, 5)
+    comp = compare_test(
+        make_test_model(model_id, variable_patterns=["h"]),
+        TestResult(
+            model_id=model_id,
+            success=True,
+            variables=[VariableResult(index=1, name="h", time=t, values=t)],
+        ),
+        {
+            "test_id": "0007",
+            "comparison": {"tolerance": {"lower": 0.1, "upper": 0.2}},
+            "variables": [
+                {"index": 1, "name": "h", "time": t.tolist(), "values": t.tolist()}
+            ],
+        },
+    )
+    assert not comp.passed and comp.variables == []
+    return comp
+
+
 def _no_ref(model_id="Lib.Examples.D"):
     # Mirrors compare_all's NO_REF short-circuit: passed=True, nothing
     # evaluated. (A comp with passed=False now classifies as FAILED even
@@ -171,6 +205,26 @@ class TestJUnitReport:
         assert "min_value / max_value" in failure.text
         # The meaningless numeric block is suppressed for this leaf.
         assert "NRMSE=" not in failure.text
+
+    def test_a_refused_test_says_why_in_the_message_and_the_body(self, tmp_path):
+        """A FAIL with no variable is one the comparison refused: its reason
+        is the whole finding, where the element read "0 variable(s) failed"
+        over an empty body."""
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_refused()], out)
+        root = ET.parse(out).getroot()
+        assert root.get("failures") == "1" and root.get("errors") == "0"
+        failure = root.find(".//failure")
+        assert failure is not None
+        assert failure.get("type") == "RegressionFailure"
+        assert failure.get("message") == REFUSED
+        assert failure.text == REFUSED
+
+    def test_a_failing_variable_keeps_the_count_as_the_message(self, tmp_path):
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_failing()], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "1 variable(s) failed"
 
     def test_sim_failure_becomes_error_element(self, tmp_path):
         out = tmp_path / "junit.xml"
