@@ -196,7 +196,11 @@ details summary:hover { color: var(--dstf-text); }
 
 {# === SUMMARY === #}
 <div class="summary" id="summary">
-{% if is_simulate_only %}
+{# A refused test FIRST: it has no scored variable, so the branches below
+   read it as a test with no baseline — whether or not it has one. #}
+{% if refused %}
+  <span class="fail"><strong>Not scored:</strong> {{ refused }}</span>
+{% elif is_simulate_only %}
   <span class="pass"><strong>Simulate-only:</strong> simulation succeeded</span>
 {% elif nobaseline_trajectories %}
   <strong>{{ nobaseline_trajectories | length }}</strong> variables (no baseline)

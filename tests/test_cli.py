@@ -1103,6 +1103,10 @@ class _FakeComp:
     test_id: int | None = None
     metric_tree: object = None
     ran: bool = True
+    # What `reporting.status.classify` reads, which the review asks for a
+    # refused test.
+    simulate_only: bool = False
+    evaluated: bool = False
 
 
 def _review_env(tmp_path, statuses=None):

@@ -21,7 +21,7 @@ from ..comparison.comparator import VariableComparison
 from ..comparison.types import TestComparison
 from .context_builder import _build_template_context
 from .rows import summary_fields
-from .status import classify_with_class
+from .status import classify_with_class, refusal
 from .tree_rows import criteria_rows
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -567,6 +567,9 @@ def generate_comparison_plots(
     # handoff artifact dashboard_render reads) does not change.
     context.update(page_keys)
     context.update(_build_figures(context, max_embedded_samples))
+    # Why the comparison refused the test, for the summary line: the page's
+    # own flags read a test with no scored variable as one with no baseline.
+    context["refused"] = refusal(comparison) if comparison is not None else None
 
     # ORDER CONSTRAINT: the page context is built LAST — after the sidecar
     # write (which needs the full-resolution arrays) and after the figure

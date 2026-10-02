@@ -2261,8 +2261,8 @@ _REFUSED = (
 async def test_a_refused_test_says_why_on_the_tree_line_and_the_strip(tmp_path):
     """D's reference JSON holds a lower/upper pair as its base tolerance:
     the comparison refuses the test (FAIL, a reason, nothing scored). D has
-    a baseline, so "no baseline" names the wrong cause, and accepting keeps
-    the reference's tolerance, so the strip must not offer it."""
+    a baseline, so "no baseline" names the wrong cause, and accepting a
+    refused test is refused, so the strip greys Accept with the reason."""
     cfg, work = _two_var_project(tmp_path)
     changed = 0
     for path in cfg.parent.rglob("ref_*.json"):
@@ -2285,7 +2285,13 @@ async def test_a_refused_test_says_why_on_the_tree_line_and_the_strip(tmp_path):
         assert _one(user, "tree:summary").text == f"nothing scored: {_REFUSED}"
         assert _one(user, "strip-text").text == f"Not scored: {_REFUSED}."
         assert "dstf-strip-red" in _one(user, "strip").classes
-        assert _strip_buttons(user).get("accept") != "filled"
+        # Rerun, and an Accept no more prominent than a quiet button, greyed
+        # with the reason: accepting a refused test is refused.
+        assert _strip_buttons(user) == {"accept": "quiet", "rerun": "quiet"}
+        assert not _one(user, "action:accept").enabled
+        assert _one(user, "action:accept:why").text == _REFUSED
+        assert _one(user, "action:accept:why").visible
+        assert _one(user, "action:rerun").enabled
 
 
 _RUN_LINES = ("strip-text", "plots:count", "tree:summary", "var-target")

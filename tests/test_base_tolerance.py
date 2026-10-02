@@ -278,12 +278,86 @@ def test_the_interactive_review_does_not_accept_a_refused_test(
     project, capsys, monkeypatch, source
 ):
     said, before = _refuse(project, source)
-    typed = iter(["a"])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed, "q"))
+    typed = iter(["a", "s"])
+    prompts = []
+
+    def read(prompt):
+        prompts.append(prompt)
+        return next(typed)
+
+    monkeypatch.setattr("builtins.input", read)
     assert project.dstf("run", "-i", "failed") == 1
     out = capsys.readouterr().out
-    assert said in out and "Accepted (" not in out
+    assert "Accepted (" not in out
     assert project.reference(RAMP).read_bytes() == before
+    # The list says why, and the prompt does not offer what would be refused.
+    assert f"{RAMP}\x1b[0m\n  Status: \x1b[91mFAIL\x1b[0m\n  Error: {said}\n" in out
+    assert prompts == ["  [v]ariables  [s]kip  [d]etail  [p]lot  [q]uit > "] * 2
+    assert "Invalid choice. Enter v/s/d/p/q." in out
+
+
+def test_the_review_still_offers_accept_for_a_test_that_fails_its_criteria(
+    project, capsys, monkeypatch
+):
+    project.edit_spec(RAMP, "0", variables=["x"])
+    reference = project.reference(RAMP)
+    data = json.loads(reference.read_text(encoding="utf-8"))
+    data["variables"][0]["values"] = [v + 1.0 for v in data["variables"][0]["values"]]
+    reference.write_text(json.dumps(data), encoding="utf-8")
+    prompts = []
+
+    def read(prompt):
+        prompts.append(prompt)
+        return "a"
+
+    monkeypatch.setattr("builtins.input", read)
+    assert project.dstf("run", "-i", "failed") == 0
+    out = capsys.readouterr().out
+    assert prompts == ["  [a]ccept  [v]ariables  [s]kip  [d]etail  [p]lot  [q]uit > "]
+    assert "Accepted (1 variables)" in out and "Error:" not in out
+
+
+# ---------------------------------------------------------------------------
+# The per-test report page
+# ---------------------------------------------------------------------------
+
+
+def _report(project: Project) -> int:
+    """``compare --report`` into an empty reports dir: a page is named by
+    its reference id, so a test that lost its baseline leaves the old one."""
+    shutil.rmtree(project.config.work_dir / "reports", ignore_errors=True)
+    return project.dstf("compare", "--report")
+
+
+def _summary_line(project: Project, model_id: str) -> str:
+    import html
+    import re
+
+    (page,) = [
+        p
+        for p in (project.config.work_dir / "reports").rglob("interactive.html")
+        if f"<h1>{model_id}</h1>" in p.read_text(encoding="utf-8")
+    ]
+    text = page.read_text(encoding="utf-8")
+    block = re.search(r'<div class="summary" id="summary">(.*?)</div>', text, re.S)
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", block.group(1))).split())
+
+
+@pytest.mark.parametrize("kind", ["flat", "baseline-free flat"])
+@pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
+def test_the_report_page_says_the_refusal_not_no_baseline(project, baseline, kind):
+    model_id, fields = KINDS[kind]
+    project.edit_spec(model_id, json.dumps(PAIR), **fields)
+    if not baseline:
+        project.reference(model_id).unlink()
+    assert _report(project) == 1
+    assert _summary_line(project, model_id) == f"Not scored: {sentence(SPEC, PAIR)}"
+
+
+def test_the_report_page_of_a_test_with_no_baseline_still_says_so(project):
+    project.reference(RAMP).unlink()
+    assert _report(project) == 0
+    assert _summary_line(project, RAMP) == "1 variables (no baseline)"
 
 
 @pytest.mark.parametrize("source", list(SOURCES))

@@ -2,7 +2,7 @@
 
 from ..backends.types import label_with_name
 from ..discovery.test_registry import TestModel
-from ..reporting.status import NOT_RUN, STATUS_LABELS, nothing_ran
+from ..reporting.status import NOT_RUN, STATUS_LABELS, nothing_ran, refusal
 from ..storage.accept import accept_run_results
 from .common import _exit_code, _parse_review_filter, _should_review
 
@@ -97,7 +97,10 @@ def _interactive_review(
         print(f"[{idx}/{n_total}] {BOLD}{id_tag}{model_id}{RESET}")
         print(f"  Status: {status}{warn}")
 
-        if comp.error_message and not comp.sim_success:
+        # A refused test's reason is its whole finding: there is no failing
+        # variable below to say it, and accepting it is refused.
+        refused = refusal(comp)
+        if comp.error_message and (not comp.sim_success or refused):
             print(f"  Error: {comp.error_message}")
 
         # Brief variable summary
@@ -121,12 +124,15 @@ def _interactive_review(
         # Prompt
         result = results.get(model_id)
         has_result = result is not None and result.success
+        can_accept = has_result and not refused
         test = test_lookup.get(model_id)
         added_patterns = []  # Track patterns added via [v] this session
 
         while True:
-            if has_result:
+            if can_accept:
                 prompt = "  [a]ccept  [v]ariables  [s]kip  [d]etail  [p]lot  [q]uit > "
+            elif has_result:
+                prompt = "  [v]ariables  [s]kip  [d]etail  [p]lot  [q]uit > "
             else:
                 prompt = "  [s]kip  [d]etail  [p]lot  [q]uit > "
             try:
@@ -135,7 +141,7 @@ def _interactive_review(
                 print("\nAborted.")
                 return 1
 
-            if choice == "a" and has_result:
+            if choice == "a" and can_accept:
                 # If variables were added, re-read the .mat to resolve them
                 if added_patterns:
                     test.variable_patterns = list(
@@ -234,7 +240,13 @@ def _interactive_review(
                 return 1 if n_unresolved else 0
 
             else:
-                options = "a/v/s/d/p/q" if has_result else "s/d/p/q"
+                options = (
+                    "a/v/s/d/p/q"
+                    if can_accept
+                    else "v/s/d/p/q"
+                    if has_result
+                    else "s/d/p/q"
+                )
                 print(f"  Invalid choice. Enter {options}.")
 
     auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
