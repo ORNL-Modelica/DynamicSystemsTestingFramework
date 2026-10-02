@@ -57,7 +57,7 @@ from .algorithms import (  # noqa: F401
     _split_segments,
 )
 from .registry import metric as registry_metric
-from .sides import is_base_tolerance, parse_sides
+from .sides import base_tolerance_refused, is_base_tolerance, parse_sides
 from .types import (
     DEFAULT_TOLERANCE,
     StructuralWarning,
@@ -80,20 +80,6 @@ _BASE_TOLERANCE_WHERE = {
     "reference": "the baseline's comparison.tolerance",
     "project": "the project's tolerance",
 }
-
-
-def base_tolerance_refused(where: str, value: object) -> str:
-    """What a test whose base tolerance is no number is refused with — the
-    comparison's ``error_message``, and so what every surface says of it:
-    the rule, then where the value is written (``where``, in words) and
-    what it is, cut to 60 characters."""
-    text = repr(value)
-    if len(text) > 60:
-        text = text[:60] + "…"
-    return (
-        "the base tolerance must be a number; a lower/upper pair belongs on a "
-        f"criterion ({where} is {text})"
-    )
 
 
 def _base_tolerance(

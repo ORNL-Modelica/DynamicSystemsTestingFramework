@@ -652,6 +652,91 @@ class TestFinding12ToleranceFromFile:
         assert isinstance(config.tolerance, float)
 
 
+class TestTheProjectToleranceIsOneFiniteNumber:
+    """``tolerance`` in testing.json, and ``--tolerance``, is the project's
+    base tolerance: one finite number. Anything else is the config error
+    every other bad testing.json value is — never a traceback, and never
+    ``"0.5"`` or ``true`` read as a number."""
+
+    RULE = (
+        "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
+    )
+
+    def _write(self, tmp_path: Path, raw: str) -> Path:
+        cfg_dir = tmp_path / "proj"
+        _make_lib(cfg_dir)
+        text = json.dumps({"source_path": "Lib", "backend": "Dymola", "tolerance": 0})
+        path = cfg_dir / "testing.json"
+        path.write_text(text.replace('"tolerance": 0', f'"tolerance": {raw}'))
+        return path
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            '{"lower": 0.1, "upper": 0.2}',
+            "{}",
+            '"abc"',
+            '"0.5"',
+            "[1]",
+            "true",
+            "1" + "0" * 400,
+            "NaN",
+            "Infinity",
+            "-Infinity",
+        ],
+    )
+    def test_anything_else_in_the_file_is_a_config_error(self, tmp_path, raw):
+        path = self._write(tmp_path, raw)
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=str(path))
+        shown = repr(json.loads(raw))
+        if len(shown) > 60:
+            shown = shown[:60] + "…"
+        assert str(exc.value) == f"{self.RULE} (testing.json tolerance is {shown})"
+
+    @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("-1", -1.0)])
+    def test_null_is_the_default_and_a_number_is_itself(self, tmp_path, raw, value):
+        config = Config(config_file=str(self._write(tmp_path, raw)))
+        assert config.tolerance == value and type(config.tolerance) is float
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "0.5"], ids=repr)
+    def test_an_explicit_one_is_judged_too(self, tmp_path, bad):
+        path = self._write(tmp_path, "0.5")
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=str(path), tolerance=bad)
+        assert str(exc.value) == f"{self.RULE} (--tolerance is {bad!r})"
+
+    @pytest.mark.parametrize(
+        "file_raw,flag,said",
+        [
+            ('"0.5"', [], "testing.json tolerance is '0.5'"),
+            ("0.5", ["--tolerance", "nan"], "--tolerance is nan"),
+        ],
+    )
+    def test_the_cli_says_it_in_one_line_and_exits_2(
+        self, tmp_path, capsys, monkeypatch, file_raw, flag, said
+    ):
+        from dstf.cli import main
+
+        monkeypatch.chdir(tmp_path)
+        path = self._write(tmp_path, file_raw)
+        work = tmp_path / "work"
+        assert (
+            main(["--config", str(path), "compare", *flag, "--work-dir", str(work)])
+            == 2
+        )
+        err = capsys.readouterr().err
+        assert f"Config error: {self.RULE} ({said})" in err
+        assert "Traceback" not in err
+
+    def test_the_tool_refuses_to_open_it(self, tmp_path):
+        from dstf.authoring.session import Session
+
+        path = self._write(tmp_path, "[1]")
+        with pytest.raises(ConfigError, match=r"testing\.json tolerance is \[1\]"):
+            Session().open(path, work_dir=tmp_path / "work")
+
+
 # ---------------------------------------------------------------------------
 # Finding 15 — relative work_dir resolves against the config file's dir
 # ---------------------------------------------------------------------------

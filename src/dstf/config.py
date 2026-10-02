@@ -540,15 +540,22 @@ class Config:
         # documented testing.json `tolerance` key was never read). Precedence:
         # explicit constructor/CLI value > file > default, is-not-None
         # semantics so an explicit 0.0 anywhere is honored.
+        # The project's base tolerance, as a test's: ONE finite number
+        # (`is_base_tolerance`). Anything else is this config error, not a
+        # TypeError/OverflowError traceback — nor `"0.5"` or `true` read as
+        # a number by `float()`. `null` is unset.
+        from .comparison.sides import base_tolerance_refused, is_base_tolerance
+
         if self.tolerance is None:
-            file_tolerance = file_config.get("tolerance")
-            self.tolerance = (
-                float(file_tolerance)
-                if file_tolerance is not None
-                else DEFAULT_COMPARISON_TOLERANCE
-            )
+            tolerance, named = file_config.get("tolerance"), "testing.json tolerance"
         else:
-            self.tolerance = float(self.tolerance)
+            tolerance, named = self.tolerance, "--tolerance"
+        if tolerance is None:
+            self.tolerance = DEFAULT_COMPARISON_TOLERANCE
+        elif is_base_tolerance(tolerance):
+            self.tolerance = float(tolerance)
+        else:
+            raise ConfigError(base_tolerance_refused(named, tolerance))
 
         # Reporter payload budget
         if "max_embedded_samples" in file_config:

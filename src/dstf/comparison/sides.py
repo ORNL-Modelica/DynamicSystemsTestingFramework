@@ -48,6 +48,20 @@ def is_base_tolerance(value: object) -> bool:
     return _is_number(value)
 
 
+def base_tolerance_refused(where: str, value: object) -> str:
+    """What a base tolerance that is not :func:`is_base_tolerance` is refused
+    with — a test's comparison's ``error_message``, a project's config
+    error: the rule, then where the value is written (``where``, in words)
+    and what it is, cut to 60 characters."""
+    text = repr(value)
+    if len(text) > 60:
+        text = text[:60] + "…"
+    return (
+        "the base tolerance must be a number; a lower/upper pair belongs on a "
+        f"criterion ({where} is {text})"
+    )
+
+
 def parse_sides(value: object, what: str) -> Sides:
     """``value`` as :class:`Sides`: a number is both sides, a dict whose keys
     are exactly ``lower`` and ``upper`` is the pair, a :class:`Sides` is
