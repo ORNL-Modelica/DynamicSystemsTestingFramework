@@ -438,3 +438,89 @@ class TestMultiModelEnvelope:
         )
         assert _run_spec_update(spec, patch) == 1
         assert spec.read_bytes() == before
+
+
+class TestABaseToleranceThatIsNoNumberIsNotWritten:
+    """``comparison.tolerance`` is ONE finite number: a patch that would
+    leave the entry holding anything else there is refused with the
+    comparison's sentence and applies nothing — ``spec-update`` and the
+    tool's Save alike (`apply_validated_patches`)."""
+
+    RULE = (
+        "the base tolerance must be a number; a lower/upper pair belongs on a "
+        "criterion (test_spec.json comparison.tolerance is "
+    )
+
+    @staticmethod
+    def _spec(tmp_path, entry_extra):
+        spec = tmp_path / "test_spec.json"
+        spec.write_text(
+            json.dumps({"tests": [{"model": "MyLib.A", **entry_extra}]}, indent=2),
+            encoding="utf-8",
+        )
+        return spec
+
+    @staticmethod
+    def _patch(tmp_path, ops, model="MyLib.A"):
+        patch = tmp_path / "spec_patch.json"
+        patch.write_text(json.dumps({"model": model, "patch": ops}), encoding="utf-8")
+        return patch
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"lower": 0.1, "upper": 0.2},
+            {"lower": 0.1},
+            {},
+            "0.5",
+            "abc",
+            True,
+            [1],
+            float("nan"),
+            float("inf"),
+            10**400,
+        ],
+        ids=repr,
+    )
+    @pytest.mark.parametrize(
+        "how", ["replace", "add-tolerance", "add-comparison", "new-entry"]
+    )
+    def test_it_is_refused_and_nothing_is_applied(self, tmp_path, capsys, bad, how):
+        if how == "replace":
+            entry = {"comparison": {"tolerance": 1e-4}}
+            ops = [{"op": "replace", "path": "/comparison/tolerance", "value": bad}]
+        elif how == "add-tolerance":
+            entry = {"comparison": {}}
+            ops = [{"op": "add", "path": "/comparison/tolerance", "value": bad}]
+        else:
+            entry = {}
+            ops = [{"op": "add", "path": "/comparison", "value": {"tolerance": bad}}]
+        spec = self._spec(tmp_path, entry)
+        before = spec.read_bytes()
+        model = "MyLib.New" if how == "new-entry" else "MyLib.A"
+        assert _run_spec_update(spec, self._patch(tmp_path, ops, model)) == 1
+        out = capsys.readouterr().out
+        shown = repr(bad)
+        shown = shown if len(shown) <= 60 else shown[:60] + "…"
+        assert f"{self.RULE}{shown})" in out
+        assert "Applied" not in out
+        assert spec.read_bytes() == before
+
+    @pytest.mark.parametrize("value", [0, -1, 0.5, None])
+    def test_a_number_or_null_is_applied(self, tmp_path, capsys, value):
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": 1e-4}})
+        ops = [{"op": "replace", "path": "/comparison/tolerance", "value": value}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
+        (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
+        assert entry["comparison"]["tolerance"] == value
+
+    def test_a_bad_base_already_there_does_not_block_an_unrelated_patch(self, tmp_path):
+        """The patch did not write it: refusing would leave no way to edit
+        the entry's other fields — or to remove it — through a patch."""
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": "abc"}})
+        ops = [{"op": "add", "path": "/comparison/variable_overrides", "value": {}}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
+        ops = [{"op": "remove", "path": "/comparison/tolerance"}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
+        (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
+        assert entry["comparison"] == {"variable_overrides": {}}

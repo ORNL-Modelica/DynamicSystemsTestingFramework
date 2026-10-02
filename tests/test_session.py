@@ -1393,6 +1393,16 @@ class TestRescoreAndStage:
         assert classify(session.rescore(A)) == PASS
         assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
 
+    def test_save_refuses_a_base_tolerance_that_is_no_number(self, session):
+        """Save goes through `spec-update`'s check: the file is not written."""
+        from dstf.discovery.patch_apply import PatchError
+
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": [1]})])
+        before = session.spec.path.read_bytes()
+        with pytest.raises(PatchError, match=r"comparison\.tolerance is \[1\]\)"):
+            session.save()
+        assert session.spec.path.read_bytes() == before
+
     def test_a_bad_op_leaves_the_session_unchanged(self, session):
         from dstf.discovery.patch_apply import PatchError
 

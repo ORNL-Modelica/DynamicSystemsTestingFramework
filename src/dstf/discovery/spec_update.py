@@ -2,8 +2,9 @@
 
 The one read-modify-write both ``dstf spec-update`` and the authoring
 Session's ``save`` go through: materialize the implicit tree where a
-per-leaf op needs one, apply each model's ops to its entry, run the D66
-validator on every touched tree, then write once. Nothing is written
+per-leaf op needs one, apply each model's ops to its entry, refuse a base
+tolerance the patch made no number, run the D66 validator on every touched
+tree, then write once. Nothing is written
 unless every group passes.
 """
 
@@ -175,6 +176,27 @@ def validate_entry_metric_tree(
         )
 
 
+def _base_tolerance(entry: dict | None) -> object:
+    """The entry's ``comparison.tolerance`` as written, or ``None``."""
+    comparison = (entry or {}).get("comparison")
+    return comparison.get("tolerance") if isinstance(comparison, dict) else None
+
+
+def validate_entry_base_tolerance(data: dict, model_id: str, before: object) -> None:
+    """The patched entry's base tolerance is ONE finite number, or unset —
+    when the patch changed it from ``before``. The comparison refuses a test
+    whose base is anything else; a patch must not write one. One already
+    there is the comparison's to refuse, not this patch's: refusing it here
+    would leave no patch able to edit the entry, or remove it."""
+    from ..comparison.sides import base_tolerance_refused, is_base_tolerance
+
+    after = _base_tolerance(spec_entry(data, model_id))
+    if after is None or is_base_tolerance(after) or after is before or after == before:
+        return
+    text = base_tolerance_refused("test_spec.json comparison.tolerance", after)
+    raise PatchError(text, reason=text)
+
+
 def validate_entry_plots(data: dict, model_id: str) -> None:
     """The patched entry's ``plots`` extras, when it has the key, parse."""
     from .plots import PlotsSpecError, parse_plots
@@ -206,7 +228,9 @@ def apply_validated_patches(
     applied: list[tuple[str, list[dict]]] = []
     for model_id, ops in groups:
         full = materialize_implicit_metrics(spec_entry(data, model_id), ops)
+        before = _base_tolerance(spec_entry(data, model_id))
         apply_patch_to_document(data, model_id, full)
+        validate_entry_base_tolerance(data, model_id, before)
         validate_entry_metric_tree(data, model_id, config, store)
         validate_entry_plots(data, model_id)
         applied.append((model_id, full))
