@@ -199,3 +199,21 @@ def test_a_points_criterion_says_both_sides_of_the_leafs_tolerance():
     assert summarize(vc).criterion == (
         "Final value error 3.750e-01 vs tolerance −2.500e-01 / +5.000e-01 → PASS"
     )
+
+
+def test_an_event_timing_criterion_says_early_and_late():
+    from dstf.comparison.sides import Sides
+
+    ref = np.array([0.0, 5.0, 5.0, 10.0])
+    act = np.array([0.0, 5.25, 5.25, 10.0])
+    even = summarize(_compare_event_timing(ref, act, time_tolerance=0.5))
+    assert even.criterion == (
+        "Max event Δt 2.500e-01 vs 5.000e-01 (1 actual events / 1 reference) → PASS"
+    )
+    uneven = summarize(
+        _compare_event_timing(ref, act, time_tolerance=Sides(0.125, 0.5))
+    )
+    assert uneven.criterion == (
+        "Max event Δt 2.500e-01 vs −1.250e-01 / +5.000e-01 "
+        "(1 actual events / 1 reference) → PASS"
+    )

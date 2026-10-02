@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 
-from .sides import sides_text
+from .sides import parse_sides, sides_text
 from .types import ScoreSummary, VariableComparison
 
 
@@ -192,7 +192,7 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     diag = vc.diagnostics or {}
     ref_n = diag.get("ref_event_count", "?")
     act_n = diag.get("act_event_count", "?")
-    tol = diag.get("time_tolerance", 0.0)
+    tol = sides_text(parse_sides(diag.get("time_tolerance", 0.0), "time_tolerance"))
     details: list[tuple[str, str]] = [
         ("events", f"{act_n} actual / {ref_n} reference"),
         ("max Δt", _at(vc.nrmse, vc.max_abs_error_time)),
@@ -202,7 +202,7 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     return ScoreSummary(
         display=f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)",
         criterion=(
-            f"Max event Δt {vc.nrmse:.3e} vs {tol:.3e} "
+            f"Max event Δt {vc.nrmse:.3e} vs {tol} "
             f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
         ),
         score=float(vc.nrmse),

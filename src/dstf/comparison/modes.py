@@ -20,7 +20,12 @@ from typing import Literal
 
 import numpy as np
 
-from .algorithms import SCALAR_REDUCTIONS, _point_tolerances
+from .algorithms import (
+    SCALAR_REDUCTIONS,
+    _event_tolerances,
+    _peak_tolerance,
+    _point_tolerances,
+)
 from .comparator import (
     VariableComparison,
     _compare_dominant_frequency,
@@ -323,7 +328,8 @@ class DominantFrequencyConfig:
     """Configuration for dominant-frequency declared-peaks comparison (D75).
 
     Each entry in ``peaks`` is a dict:
-        {"freq": float, "tolerance": float, "tolerance_mode": "rel"|"abs"}
+        {"freq": float, "tolerance": float | {"lower": float, "upper": float},
+         "tolerance_mode": "rel"|"abs"}
 
     The algorithm finds the strongest local maximum in the *actual*
     spectrum within each declared peak's tolerance window; the leaf
@@ -535,6 +541,9 @@ class EventTimingMode(ComparisonMode):
     def __init__(self, config: EventTimingConfig):
         self.config = config
         self.time_tolerance = parse_sides(config.time_tolerance, "time_tolerance")
+        # As ``PointsMode`` reads its rows: here, where a ``ValueError`` is
+        # the leaf's config error on both scoring paths.
+        _event_tolerances(config.events, self.time_tolerance)
 
     @property
     def name(self) -> str:
@@ -561,6 +570,10 @@ class DominantFrequencyMode(ComparisonMode):
 
     def __init__(self, config: DominantFrequencyConfig):
         self.config = config
+        # As ``PointsMode`` reads its rows: here, where a ``ValueError`` is
+        # the leaf's config error on both scoring paths.
+        for i, declared in enumerate(config.peaks or []):
+            _peak_tolerance(declared, i)
 
     @property
     def name(self) -> str:
@@ -724,39 +737,6 @@ _TUBE_KEYS = frozenset(
 )
 
 
-#: The fields whose scorer still reads ONE number (it takes ``.upper``), per
-#: mode: its leaf keys, and its ``(list field, row key)`` pairs. Until a
-#: mode's scorer applies the two sides separately, :func:`resolve_mode`
-#: refuses an unequal pair under a leaf key and ANY pair under a row key (a
-#: row is read with ``float(...)``) — so a pair is never scored as its
-#: upper side. Each scoring task of step E1 deletes its mode's entry; the
-#: last deletes the table.
-_NOT_SCORED_YET: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {
-    "event-timing": (("time_tolerance",), (("events", "tolerance"),)),
-    "dominant-frequency": ((), (("peaks", "tolerance"),)),
-}
-
-
-def _refuse_unscored_pairs(
-    mode_name: str, var_override: dict, tolerance: Sides
-) -> None:
-    leaf_keys, row_keys = _NOT_SCORED_YET.get(mode_name, ((), ()))
-    for key in leaf_keys:
-        if key == "tolerance":
-            sides = tolerance  # resolved: the leaf's own, else the base
-        elif key in var_override:
-            sides = parse_sides(var_override[key], key)
-        else:
-            continue
-        if not sides.equal:
-            raise ValueError("two-sided tolerance is not scored yet")
-    for field_name, key in row_keys:
-        rows = var_override.get(field_name)
-        for row in rows if isinstance(rows, list) else []:
-            if isinstance(row, dict) and isinstance(row.get(key), dict):
-                raise ValueError("two-sided tolerance is not scored yet")
-
-
 def resolve_mode(
     var_override: dict,
     tolerance: Sides | float,
@@ -788,5 +768,4 @@ def resolve_mode(
 
     # A number (a caller with the base in hand) is both sides.
     tolerance = parse_sides(tolerance, "tolerance")
-    _refuse_unscored_pairs(mode_name, var_override, tolerance)
     return desc.build(var_override, tolerance)

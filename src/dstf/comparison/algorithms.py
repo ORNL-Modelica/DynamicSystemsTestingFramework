@@ -1216,11 +1216,12 @@ def _compare_scalar(
 def _event_geometry(
     ref_events: list[float],
     act_events: list[float],
-    tolerances: list[float],
+    tolerances: list[Sides],
     matched: Sequence[bool | None],
 ) -> tuple[Primitive, ...]:
     """Reference (or declared) events with their tolerance windows, and the
-    actual events. Windows span the panel height (``y0``/``y1`` ``None``).
+    actual events. Windows span the panel height (``y0``/``y1`` ``None``)
+    and run from ``lower`` before the event to ``upper`` after it.
 
     ``matched[i]`` is ``None`` for a window that was never scored — an
     auto-detected reference event beyond the paired count contributes
@@ -1233,8 +1234,8 @@ def _event_geometry(
             Box(
                 id=f"events/window/{i}",
                 kind="handle",
-                t0=float(t - tol),
-                t1=float(t + tol),
+                t0=float(t - tol.lower),
+                t1=float(t + tol.upper),
                 y0=None,
                 y1=None,
                 passed=None if ok is None else bool(ok),
@@ -1243,6 +1244,21 @@ def _event_geometry(
     for j, t in enumerate(act_events):
         out.append(VLine(id=f"events/act/{j}", kind="act", time=float(t)))
     return tuple(out)
+
+
+def _event_tolerances(events: list[dict] | None, time_tolerance: Sides) -> list[Sides]:
+    """Each declared event's window sides: its own ``tolerance``, else the
+    leaf's ``time_tolerance`` (a ``null`` is an absent key). ``lower`` is how
+    much EARLIER the actual event may come, ``upper`` how much LATER. A
+    malformed one is a ``ValueError`` naming the row;
+    ``EventTimingMode.__init__`` calls this too, so it is the leaf's config
+    error on both scoring paths."""
+    return [
+        time_tolerance
+        if event.get("tolerance") is None
+        else parse_sides(event["tolerance"], f"events[{k}].tolerance")
+        for k, event in enumerate(events or [])
+    ]
 
 
 def _compare_event_timing(
@@ -1258,8 +1274,10 @@ def _compare_event_timing(
 
     * ``declared_events is None`` (default): events are auto-detected
       from duplicate-time samples in BOTH arrays, then paired by index.
-      Pass when ``count_must_match`` is satisfied and every pair's time-
-      delta is within ``time_tolerance``.
+      Pass when ``count_must_match`` is satisfied and every pair's
+      ``d = actual − reference`` lies in ``[−lower, upper]`` of
+      ``time_tolerance`` (a number is both sides; ``lower`` is how much
+      earlier, ``upper`` how much later).
 
     * ``declared_events is not None``: the declared list IS the reference
       event set. The actual signal is still auto-detected; declared
@@ -1272,8 +1290,7 @@ def _compare_event_timing(
     The score (``nrmse`` field — repurposed for reporting uniformity) is
     the max event-time delta across matched pairs.
     """
-    # One number until this scorer applies the two sides separately.
-    time_tolerance = parse_sides(time_tolerance, "time_tolerance").upper
+    time_tolerance = parse_sides(time_tolerance, "time_tolerance")
     act_boundaries = _find_event_boundaries(act_time)
     act_events = [float(act_time[b[0]]) for b in act_boundaries]
 
@@ -1285,14 +1302,21 @@ def _compare_event_timing(
         n = min(len(ref_events), len(act_events))
         max_delta = 0.0
         delta_at = 0.0
+        # ``d > 0`` is LATE: the actual event came after the reference's.
+        in_window = []
         for i in range(n):
-            d = abs(ref_events[i] - act_events[i])
-            if d > max_delta:
-                max_delta = d
+            d = act_events[i] - ref_events[i]
+            in_window.append(-time_tolerance.lower <= d <= time_tolerance.upper)
+            if abs(d) > max_delta:
+                max_delta = abs(d)
                 delta_at = ref_events[i]
 
         counts_match = len(ref_events) == len(act_events)
-        passed = max_delta <= time_tolerance and (counts_match or not count_must_match)
+        # A window inverted by a negative side holds nothing — with no pair
+        # to score as well, as a negative number never passed
+        # (``max_delta <= time_tolerance`` with ``max_delta`` 0).
+        holds = -time_tolerance.lower <= time_tolerance.upper
+        passed = holds and all(in_window) and (counts_match or not count_must_match)
 
         return VariableComparison(
             index=0,
@@ -1310,19 +1334,14 @@ def _compare_event_timing(
                 "ref_event_count": len(ref_events),
                 "act_event_count": len(act_events),
                 "max_time_delta": max_delta,
-                "time_tolerance": time_tolerance,
+                "time_tolerance": as_written(time_tolerance),
                 "counts_match": counts_match,
             },
             geometry=_event_geometry(
                 ref_events,
                 act_events,
                 [time_tolerance] * len(ref_events),
-                [
-                    (abs(ref_events[i] - act_events[i]) <= time_tolerance)
-                    if i < n
-                    else None
-                    for i in range(len(ref_events))
-                ],
+                [in_window[i] if i < n else None for i in range(len(ref_events))],
             ),
         )
 
@@ -1333,7 +1352,7 @@ def _compare_event_timing(
     max_delta = 0.0
     delta_at = 0.0
     # Optimal 1-D interval matching (review 2026-07-06, greedy-stealing
-    # finding): each declared event defines a window [time-tol, time+tol].
+    # finding): each declared event defines a window [time-lower, time+upper].
     # Sorting windows by right endpoint and assigning each the SMALLEST
     # unclaimed actual event inside it is a maximum matching for interval
     # graphs — a feasible assignment is never missed because an earlier
@@ -1343,14 +1362,12 @@ def _compare_event_timing(
     all_matched = True
     windows = []
     declared_times: list[float] = []
-    declared_tols: list[float] = []
+    declared_tols = _event_tolerances(declared_events, time_tolerance)
     for k, e in enumerate(declared_events):
         target = float(e["time"])
-        _tol = e.get("tolerance")
-        tol = float(_tol if _tol is not None else time_tolerance)
+        tol = declared_tols[k]
         declared_times.append(target)
-        declared_tols.append(tol)
-        windows.append((target - tol, target + tol, target, k))
+        windows.append((target - tol.lower, target + tol.upper, target, k))
     windows.sort(key=lambda w: w[1])
     for lo, hi, target, k in windows:
         best_idx = -1
@@ -1386,7 +1403,7 @@ def _compare_event_timing(
             "ref_event_count": declared_count,
             "act_event_count": actual_count,
             "max_time_delta": max_delta,
-            "time_tolerance": time_tolerance,
+            "time_tolerance": as_written(time_tolerance),
             "counts_match": counts_match,
         },
         geometry=_event_geometry(
@@ -1569,11 +1586,7 @@ def _frequency_geometry(
 
     for i, (declared, pair) in enumerate(zip(peaks, paired)):
         f_decl = float(declared.get("freq", 0.0))
-        tol = float(declared.get("tolerance", 0.01))
-        if declared.get("tolerance_mode", "rel") == "rel":
-            lo, hi = f_decl * (1.0 - tol), f_decl * (1.0 + tol)
-        else:
-            lo, hi = f_decl - tol, f_decl + tol
+        lo, hi, _, _ = _peak_window(declared, i)
         ok = bool(pair["passed"])
         out.append(
             Marker(
@@ -1612,6 +1625,30 @@ def _frequency_geometry(
     return tuple(out)
 
 
+def _peak_tolerance(declared: dict, i: int) -> Sides:
+    """Declared peak ``i``'s tolerance: a number (both sides) or a
+    lower/upper pair; none (or ``null``) is 1 % each side. A malformed one
+    is a ``ValueError`` naming the row — ``DominantFrequencyMode.__init__``
+    calls this too, so it is the leaf's config error on both scoring paths."""
+    raw = declared.get("tolerance")
+    if raw is None:
+        return Sides(0.01, 0.01)
+    return parse_sides(raw, f"peaks[{i}].tolerance")
+
+
+def _peak_window(declared: dict, i: int) -> tuple[float, float, Sides, str]:
+    """Declared peak ``i``'s acceptance window ``(lo, hi)``, its sides and
+    its tolerance mode — the ONE place the window is computed: the scorer
+    matches in it and the figure draws it. ``rel``: ``f·(1 − lower)`` to
+    ``f·(1 + upper)``; ``abs``: ``f − lower`` to ``f + upper``."""
+    f = float(declared.get("freq", 0.0))
+    tol = _peak_tolerance(declared, i)
+    mode = declared.get("tolerance_mode", "rel")
+    if mode == "rel":
+        return f * (1.0 - tol.lower), f * (1.0 + tol.upper), tol, mode
+    return f - tol.lower, f + tol.upper, tol, mode
+
+
 def _compare_dominant_frequency(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -1628,7 +1665,8 @@ def _compare_dominant_frequency(
 
     For each declared peak the algorithm looks for the strongest local
     maximum in ``act_spectrum`` within the peak's tolerance window
-    (rel: ``[f*(1-tol), f*(1+tol)]``; abs: ``[f-tol, f+tol]``). The
+    (rel: ``[f*(1-lower), f*(1+upper)]``; abs: ``[f-lower, f+upper]``, a
+    number being both sides — :func:`_peak_window`). The
     leaf passes iff every declared peak has a match in its window.
     Unmatched declared peaks fail with ``matched_hz=None`` and a reason
     of "no peak in tolerance window".
@@ -1761,14 +1799,9 @@ def _compare_dominant_frequency(
         if len(act_spectrum)
         else 0.0
     )
-    for declared in peaks:
+    for i, declared in enumerate(peaks):
         f_decl = float(declared.get("freq", 0.0))
-        tol = float(declared.get("tolerance", 0.01))
-        mode = declared.get("tolerance_mode", "rel")
-        if mode == "rel":
-            lo, hi = f_decl * (1.0 - tol), f_decl * (1.0 + tol)
-        else:  # "abs"
-            lo, hi = f_decl - tol, f_decl + tol
+        lo, hi, tol, mode = _peak_window(declared, i)
 
         match = _find_strongest_peak_in_window(
             act_freqs,
@@ -1787,7 +1820,7 @@ def _compare_dominant_frequency(
                     "matched_hz": None,
                     "delta": None,
                     "passed": False,
-                    "tolerance": tol,
+                    "tolerance": as_written(tol),
                     "tolerance_mode": mode,
                     "reason": "no peak in tolerance window",
                 }
@@ -1808,7 +1841,7 @@ def _compare_dominant_frequency(
                     "matched_hz": matched_hz,
                     "delta": delta,
                     "passed": True,  # match-in-window guarantees pass for this peak
-                    "tolerance": tol,
+                    "tolerance": as_written(tol),
                     "tolerance_mode": mode,
                 }
             )

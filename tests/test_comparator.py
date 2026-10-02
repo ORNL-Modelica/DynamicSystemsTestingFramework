@@ -3195,7 +3195,8 @@ _S_LEAF_KEYS = {
         0.05,
     ),
     "tube_abs": ("x", {"metric": "tube", "tube_width_mode": "band"}, "tube_abs", 0.05),
-    "tube_rel": ("x", {"metric": "tube", "tube_width_mode": "rel"}, "tube_rel", 0.05),
+    # Away from zero: a relative width is nothing where the reference is 0.
+    "tube_rel": ("o", {"metric": "tube", "tube_width_mode": "rel"}, "tube_rel", 0.05),
     "time_tolerance": ("e", {"metric": "event-timing"}, "time_tolerance", 0.05),
 }
 
@@ -3309,7 +3310,11 @@ _S_PAIR_FIELDS = {
     ),
     "events row tolerance": (
         "e",
-        {"metric": "event-timing", "events": [{"time": 2.0, "tolerance": _S_UNEVEN}]},
+        {
+            "metric": "event-timing",
+            "count_must_match": False,
+            "events": [{"time": 2.0, "tolerance": _S_UNEVEN}],
+        },
     ),
     "peaks row tolerance": (
         "f",
@@ -3319,35 +3324,41 @@ _S_PAIR_FIELDS = {
         },
     ),
 }
-#: The fields whose scorer does not take two sides yet: each scoring task
-#: removes its own, and the last one removes this list.
-_S_NOT_SCORED_YET = ["time_tolerance", "events row tolerance", "peaks row tolerance"]
 
 
-class TestAnUnevenPairIsNotScoredWrongly:
+class TestEveryFieldThatTakesAPairScoresOne:
+    """C1's nine fields, on both scoring paths: none is refused, and none is
+    scored as one of its sides."""
+
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
-    @pytest.mark.parametrize("name", _S_NOT_SCORED_YET)
-    def test_a_field_whose_scorer_is_not_two_sided_yet_refuses_it(self, name, flat):
+    @pytest.mark.parametrize("name", _S_PAIR_FIELDS)
+    def test_an_uneven_pair_scores(self, name, flat):
         kind, leaf = _S_PAIR_FIELDS[name]
         comp = _sides_compare(leaf, flat=flat, kind=kind)
         vc = comp.variables[0]
-        assert not comp.passed
-        assert vc.diagnostics.get("config_error") is True, vc.diagnostics
-        assert vc.diagnostics["error"].endswith("two-sided tolerance is not scored yet")
+        assert "error" not in vc.diagnostics, vc.diagnostics
+        assert comp.passed, vc.diagnostics
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
-    @pytest.mark.parametrize(
-        "name",
-        [n for n in _S_NOT_SCORED_YET if " row " in n],
-    )
-    def test_a_row_refuses_an_equal_pair_too_until_its_scorer_reads_one(
-        self, name, flat
-    ):
+    @pytest.mark.parametrize("name", _S_PAIR_FIELDS)
+    def test_its_equal_pair_scores_as_the_number(self, name, flat):
         kind, leaf = _S_PAIR_FIELDS[name]
-        text = json.dumps(leaf).replace(json.dumps(_S_UNEVEN), json.dumps(_S_EVEN))
-        vc = _sides_compare(json.loads(text), flat=flat, kind=kind).variables[0]
-        assert vc.diagnostics.get("config_error") is True, vc.diagnostics
-        assert vc.diagnostics["error"].endswith("two-sided tolerance is not scored yet")
+        text = json.dumps(leaf)
+        pair = json.loads(text.replace(json.dumps(_S_UNEVEN), json.dumps(_S_EVEN)))
+        number = json.loads(text.replace(json.dumps(_S_UNEVEN), "0.05"))
+        a = _sides_compare(number, flat=flat, kind=kind).variables[0]
+        b = _sides_compare(pair, flat=flat, kind=kind).variables[0]
+        assert "error" not in a.diagnostics, a.diagnostics
+        # The declared peaks are echoed as authored: the one field that differs.
+        for vc in (a, b):
+            vc.diagnostics.pop("peaks_declared", None)
+        assert _sides_fields(a) == _sides_fields(b)
+        assert _sides_coords(a) == _sides_coords(b)
+
+    def test_the_stand_in_guard_is_gone(self):
+        from dstf.comparison import modes
+
+        assert not hasattr(modes, "_NOT_SCORED_YET")
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_nrmse_has_one_ceiling(self, flat):
