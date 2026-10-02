@@ -837,6 +837,11 @@ class TestScalarSides:
     def test_what_is_written_is_rounded_to_twelve_digits(self):
         # 4.3 − 4.0 is 0.2999999999999998 in floats.
         assert _side(BASELINE_SCALAR, "scalar/upper", 4.3)["tolerance"] == 0.3
+        # Whichever shape the leaf held: none, and a pair's one side.
+        absent = {k: v for k, v in BASELINE_SCALAR.items() if k != "tolerance"}
+        assert _side(absent, "scalar/upper", 4.3)["tolerance"] == 0.3
+        pair = _with(BASELINE_SCALAR, tolerance={"lower": 0.125, "upper": 0.25})
+        assert _side(pair, "scalar/upper", 4.3)["tolerance"]["upper"] == 0.3
 
     def test_a_side_dragged_across_its_target_is_refused(self):
         with pytest.raises(HandleEditError) as box:
