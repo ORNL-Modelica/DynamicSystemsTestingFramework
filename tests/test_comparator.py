@@ -3170,6 +3170,20 @@ def _sides_compare(
     return compare_test(test, result, reference, default_tolerance=1e-4)
 
 
+def _leaves(result):
+    """The leaf results of a MetricResult tree."""
+    if not result.children:
+        return [result]
+    return [leaf for child in result.children for leaf in _leaves(child)]
+
+
+def _view_leaves(view):
+    """The leaf nodes of a tree view (`to_view`)."""
+    if not view.get("children"):
+        return [view]
+    return [leaf for child in view["children"] for leaf in _view_leaves(child)]
+
+
 def _sides_fields(vc) -> str:
     """Every field of a comparison but its geometry, as comparable text."""
     d = dataclasses.asdict(vc)
@@ -3233,6 +3247,22 @@ class TestATolerancesNumberAndEqualPairAreOne:
         assert vc.tolerance_used == Sides(1e-4, 1e-4)  # the base, as both sides
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_leafs_unequal_pair_leaves_as_the_pair(self, flat):
+        """The leaf's diagnostics and the tree view carry the tolerance
+        applied as written: an unequal pair is the pair, never one side."""
+        from dstf.comparison.tree_eval import to_view
+
+        comp = _sides_compare({"metric": "points", "tolerance": _S_UNEVEN}, flat=flat)
+        (leaf,) = _leaves(comp.metric_tree)
+        assert leaf.diagnostics["tolerance"] == _S_UNEVEN
+        (node,) = _view_leaves(to_view(comp.metric_tree))
+        assert node["tolerance"] == _S_UNEVEN
+        # Equal sides are the number.
+        comp = _sides_compare({"metric": "points", "tolerance": _S_EVEN}, flat=flat)
+        (leaf,) = _leaves(comp.metric_tree)
+        assert leaf.diagnostics["tolerance"] == 0.05
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_nrmse_takes_an_equal_pair(self, flat):
         a = _sides_compare({"metric": "nrmse", "tolerance": 0.5}, flat=flat)
         b = _sides_compare(
@@ -3278,21 +3308,44 @@ class TestAMalformedToleranceIsAConfigError:
         )
         assert y.passed and not comp.passed
 
-    @pytest.mark.parametrize("key", ["tube_abs", "time_tolerance"])
+    @pytest.mark.parametrize("key", ["tube_abs", "tube_rel", "time_tolerance"])
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_a_modes_own_key_names_itself(self, key, flat):
-        leaf = (
-            {"metric": "tube", "tube_width_mode": "band"}
-            if key == "tube_abs"
-            else {"metric": "event-timing"}
-        )
-        kind = "x" if key == "tube_abs" else "e"
+        leaf = {
+            "tube_abs": {"metric": "tube", "tube_width_mode": "band"},
+            "tube_rel": {"metric": "tube", "tube_width_mode": "rel"},
+            "time_tolerance": {"metric": "event-timing"},
+        }[key]
+        kind = "e" if key == "time_tolerance" else "x"
         vc = _sides_compare(
             {**leaf, key: {"lower": 1}}, flat=flat, kind=kind
         ).variables[0]
         assert vc.diagnostics["config_error"] is True
         assert f"{key} must be a number or " in vc.diagnostics["error"]
         assert vc.diagnostics["error"].endswith("got {'lower': 1}")
+
+    @pytest.mark.parametrize(
+        ("mode", "key"), [("band", "tube_abs"), ("rel", "tube_rel")]
+    )
+    def test_the_tube_scorer_names_the_width_it_read(self, mode, key):
+        """The scorer reads a raw config too (`TubeMode` hands it Sides):
+        each width is refused under its own name."""
+        from dstf.comparison.algorithms import _tube_bounds
+
+        with pytest.raises(ValueError, match=f"^{key} must be a number or "):
+            _tube_bounds(_S_T, _S_REF, {"tube_width_mode": mode, key: {"lower": 1}})
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_event_timing_does_not_read_the_leafs_tolerance(self, flat):
+        """Its window is ``time_tolerance``; a ``tolerance`` on the leaf is
+        the value tolerance of other metrics and widens nothing here."""
+        vc = _sides_compare(
+            {"metric": "event-timing", "tolerance": 5.0}, flat=flat, kind="e"
+        ).variables[0]
+        plain = _sides_compare({"metric": "event-timing"}, flat=flat, kind="e")
+        assert "config_error" not in vc.diagnostics, vc.diagnostics
+        assert vc.diagnostics["time_tolerance"] == 1e-3
+        assert _sides_coords(vc) == _sides_coords(plain.variables[0])
 
 
 class TestATubeWidthOfNullIsAbsent:
@@ -3580,6 +3633,25 @@ class TestPointsValueSides:
         assert _pts(
             act, [{"time": 5.0, "tolerance": None}], tolerance=Sides(0.01, 0.05)
         ).passed
+
+    def test_a_row_without_one_takes_the_leafs_lower_side_too(self):
+        """Below the target it is the leaf's LOWER side that decides: a row
+        that took only the upper one, as both, gets each of these wrong."""
+        act = _P_FLAT - 0.03
+        assert _pts(act, [{"time": 5.0}], tolerance=Sides(0.05, 0.01)).passed
+        assert not _pts(act, [{"time": 5.0}], tolerance=Sides(0.01, 0.05)).passed
+
+    def test_a_rows_null_time_tolerance_is_absent(self):
+        """``"time_tolerance": null`` is "not set" — no time box — and not
+        a malformed pair."""
+        act = _P_FLAT + 0.03
+        null = _pts(act, [{"time": 5.0, "time_tolerance": None}], tolerance=0.05)
+        absent = _pts(act, [{"time": 5.0}], tolerance=0.05)
+        assert null.passed and absent.passed
+        assert _sides_fields(null) == _sides_fields(absent)
+        assert _sides_coords(null) == _sides_coords(absent)
+        (box,) = [p for p in null.geometry if p.id == "points/box/0"]
+        assert (box.t0, box.t1) == (5.0, 5.0)
 
     def test_a_box_with_no_comparable_sample_says_so(self):
         """Every sample in the box is NaN: there is no closest value to
