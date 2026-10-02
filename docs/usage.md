@@ -1091,7 +1091,9 @@ Expand all and Collapse all are the two icons beside the tally (Collapse all
 leaves the root open). The folds are the browser tab's, per test: they stay
 when you switch tests and come back, and follow their groups through every
 edit you make in that tab; any other change to the test's tree — a Discard, a
-Save that reloads, an edit in another tab — opens every group. Only the tree
+Save that reloads, an edit in another tab — opens every group, whichever page
+the tab is showing when it happens, and one made while the tab had no page
+open opens every group of every test when a page of the tab opens. Only the tree
 opens a folded group by itself: a form or an editor opened under a row, a
 refusal said under one, or a move's line opens the groups around it; while
 dragging, resting on a folded group's row for 0.7 s opens it. Clicking a

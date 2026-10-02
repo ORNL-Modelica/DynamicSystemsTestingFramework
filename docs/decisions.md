@@ -6471,17 +6471,25 @@ the owner and reversible (Y1-Y7). Built from
    dropped when the rows are rebuilt.
 5. *A tree change this tab did not make unfolds every group (the owner's
    ruling of 2026-10-01).* A Discard, a Save that reloads, another tab's
-   edit, a spec reload: any `spec` event for the test that no act of this
-   tab produced clears the test's folds. Every action bar and inline host
-   on the Test page applies through `TestPage.apply`, and a layout edit
-   through `_own`, which note the revisions the act produced in
-   `TabState.own_revisions`; `handle` clears the folds for a `spec` event
-   whose revision is not there. The record is the TAB's, not the page's:
-   a page navigated away from stays in `Shell.pages` until NiceGUI's
-   reconnect timeout and hears every event, and with a record of its own
-   it heard the new page's edit as foreign. A revision stays in the record
-   until a later one is heard, since the Shell hands each event to every
-   page before the next.
+   edit, a spec reload: any `spec` event that no act of this tab produced
+   clears the folds of every test it names — of every test when it names
+   none (a close). Every action bar and inline host on the Test page
+   applies through `TestPage.apply`, and a layout edit through `_own`,
+   which note the revisions the act produced in `TabState.own_revisions`.
+   The rule is one function, `tabstate.heard_spec`, and EVERY page of the
+   tab calls it — the Test page of any test and the Suite page: heard only
+   by a Test page of that test, a Discard, another tab's edit or a reload
+   heard while the tab showed another test or the Suite page left the
+   folds on the paths the change had moved. The record is the TAB's, not
+   the page's: a page navigated away from stays in `Shell.pages` until
+   NiceGUI's reconnect timeout and hears every event, and with a record
+   of its own it heard the new page's edit as foreign. A revision stays in
+   the record until a later one is heard, since the Shell hands each event
+   to every page before the next. A tab with no live page hears nothing:
+   `TabState.seen_revision` is the last revision a page of the tab heard
+   or produced, and a page opening on a later Session revision, with one
+   in between that no act of the tab produced, clears every fold
+   (`tabstate.caught_up`) — it cannot know which tests those named.
 6. *What unfolds a path (Q9 as narrowed by R2).* Only TREE events: a
    move's line under its row, a refused act's sentence under a row, a form
    row or a tree editor opened under a row — each unfolds the folded
@@ -6533,10 +6541,13 @@ the owner and reversible (Y1-Y7). Built from
     criterion on its plot (Q13); both scroll to a row found by its id.
 11. *A long row.* Its name wraps anywhere (a TRANSFORM name has no space
     to break at); its readout keeps one line, cut with an ellipsis, the
-    whole in its title, taking its own width up to 40% of the row and
-    never shrinking below it — a 200-character name left it 71 px at
-    900 px. No row is wider than the card, and the page never scrolls
-    sideways.
+    whole in its title, and shrinks with the name down to 80 px and no
+    further (`flex: 0 1 auto; min-width: 80px`). Shrinking from 0, a
+    200-character name left the readout 71 px at 900 px; kept whole up to
+    40% of the row, it left the name 119-143 px there, five lines and
+    more — now 290-350 px, three lines. The tests hold a name's box to at
+    least 240 px beside the readout's 80. No row is wider than the card,
+    and the page never scrolls sideways.
 
 **What it removes.** The `tune` icon ("Change this combinator's fields",
 `edit:{path}`): a row's click opens those fields. The 16 px indent per
