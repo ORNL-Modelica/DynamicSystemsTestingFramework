@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 
 from ..backends import TestResult
+from ..comparison.sides import is_base_tolerance
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from .baseline import PRIMARY_BASELINE, Baseline
@@ -255,15 +256,20 @@ class ReferenceStore(_RolesMixin):
         }
 
         # Comparison settings (per-test and per-variable tolerances)
+        # A base tolerance is written only when it is ONE finite number —
+        # the test's, or else the old reference's: whatever calls this, a
+        # reference JSON never holds a base the comparison refuses.
         comparison: dict[str, Any] = {}
-        if test.comparison_tolerance is not None:
+        if is_base_tolerance(test.comparison_tolerance):
             comparison["tolerance"] = test.comparison_tolerance
         if test.variable_overrides:
             comparison["variable_overrides"] = test.variable_overrides
         # Preserve existing comparison settings if not overridden
         if existing and "comparison" in existing:
             existing_comp = existing["comparison"]
-            if "tolerance" not in comparison and "tolerance" in existing_comp:
+            if "tolerance" not in comparison and is_base_tolerance(
+                existing_comp.get("tolerance")
+            ):
                 comparison["tolerance"] = existing_comp["tolerance"]
             if (
                 "variable_overrides" not in comparison

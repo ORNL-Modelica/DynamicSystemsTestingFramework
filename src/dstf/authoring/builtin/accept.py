@@ -5,7 +5,8 @@ current results become baselines through
 refuse.
 
 The confirm list says, per selected model, what accepting will do with it,
-including the aborted-run refusal, so it never promises what the shared
+including the aborted-run refusal and the comparison's own (a base tolerance
+that is no number, in the comparison's sentence), so it never promises what the shared
 function declines — with one exception it cannot see from here: a trajectory
 carrying NaN/Inf is refused by ``store_reference`` as it writes, and shows up
 in the write's own line instead. The button's own availability is read off
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...reporting.status import classify
+from ...reporting.status import classify, refusal
 from ...storage.accept import accept_run_results
 from ...storage.batch_manifest import unfinished_run_models
 from ..capabilities import Emphasis, Panel, Placement, StoreWrite, plural
@@ -69,6 +70,10 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
             action = NO_RESULT
         elif not result.success:
             action = SIM_FAILED
+        elif comp is not None and (refused := refusal(comp)) is not None:
+            # A test the comparison refused: the row says the comparison's
+            # own sentence, which `accept_run_results` skips it with.
+            action = refused
         elif test.simulate_only:
             # `accept_results` neither stores nor skips these, by design.
             action = SIMULATE_ONLY

@@ -219,3 +219,166 @@ def test_a_number_or_no_base_is_never_refused(project, tmp_path, raw, baseline):
         project.reference(CSV).unlink()
     rc, cases = project.junit(tmp_path)
     assert _case(cases, CSV) == ("pass", None) and rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Accepting a refused test is refused, on every accept path
+# ---------------------------------------------------------------------------
+
+PAIR = {"lower": 0.1, "upper": 0.2}
+
+#: Where the bad base is written, and how the refusal names it.
+SOURCES = {"spec": SPEC, "baseline": BASELINE}
+
+
+def _refuse(project: Project, source: str) -> tuple[str, bytes]:
+    """Make RAMP a refused test from ``source``; its sentence and its
+    reference file's bytes as accepting must leave them."""
+    if source == "spec":
+        project.edit_spec(RAMP, json.dumps(PAIR))
+    else:
+        project.edit_reference(RAMP, json.dumps(PAIR))
+    return sentence(SOURCES[source], PAIR), project.reference(RAMP).read_bytes()
+
+
+@pytest.mark.parametrize("source", list(SOURCES))
+@pytest.mark.parametrize("command", ["compare", "run"])
+def test_accept_skips_a_refused_test_and_accepts_the_others(
+    project, capsys, command, source
+):
+    said, before = _refuse(project, source)
+    others = {
+        m: project.reference(m).read_bytes()
+        for m in (CSV, RAMP.replace("SimpleRamp", "PointsCheck"))
+    }
+    capsys.readouterr()
+    # A partial accept exits 1, as it does for any other skipped test.
+    assert project.dstf(command, "--accept") == 1
+    out = capsys.readouterr().out
+    assert "Accepted 2 test baselines" in out
+    assert f"Skipped 1 test(s):\n  {RAMP}: {said}" in out
+    assert project.reference(RAMP).read_bytes() == before
+    # The others were written again: a new `last_updated`.
+    assert all(project.reference(m).read_bytes() != b for m, b in others.items())
+
+
+@pytest.mark.parametrize("command", ["compare", "run"])
+def test_accept_stores_no_baseline_for_a_refused_test_that_has_none(
+    project, capsys, command
+):
+    project.edit_spec(RAMP, json.dumps(PAIR))
+    project.reference(RAMP).unlink()
+    assert project.dstf(command, "--accept") == 1
+    assert f"{RAMP}: {sentence(SPEC, PAIR)}" in capsys.readouterr().out
+    assert project.reference(RAMP) is None
+
+
+@pytest.mark.parametrize("source", list(SOURCES))
+def test_the_interactive_review_does_not_accept_a_refused_test(
+    project, capsys, monkeypatch, source
+):
+    said, before = _refuse(project, source)
+    typed = iter(["a"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed, "q"))
+    assert project.dstf("run", "-i", "failed") == 1
+    out = capsys.readouterr().out
+    assert said in out and "Accepted (" not in out
+    assert project.reference(RAMP).read_bytes() == before
+
+
+@pytest.mark.parametrize("source", list(SOURCES))
+def test_the_tools_accept_does_not_accept_a_refused_test(project, source):
+    pytest.importorskip("nicegui")
+    from dstf.authoring.builtin.accept import Accept
+    from dstf.authoring.session import Selection, Session, SessionView
+
+    said, before = _refuse(project, source)
+    session = Session()
+    session.open(project.config.config_file, work_dir=project.config.work_dir)
+    assert session.comparisons[RAMP].error_message == said
+
+    # Alone, the button is greyed with the reason.
+    alone = SessionView(session, Selection(tests=frozenset({RAMP})))
+    assert Accept().available(alone) == said
+
+    # In a batch the refused test is skipped and named; the other is stored.
+    both = SessionView(session, Selection(tests=frozenset({RAMP, CSV})))
+    assert Accept().available(both) is True
+    assert Accept().caption(both) == "Accept 1 result as baselines"
+    from dstf.authoring.builtin.accept import _rows
+
+    assert {m: (status, action) for m, status, action in _rows(both)} == {
+        RAMP: ("FAIL", said),
+        CSV: ("PASS", "will store"),
+    }
+    # `act` alone is what a caller that skipped `available` reaches.
+    for view, stored in ((alone, 0), (both, 1)):
+        line = Accept().act(view).run(session.project.store)
+        assert line.startswith(f"Accept: stored {stored} baseline(s)")
+        assert f"; skipped {RAMP}: {said}" in line
+        assert project.reference(RAMP).read_bytes() == before
+
+
+def test_the_one_accept_path_refuses_only_what_the_comparison_refuses(project):
+    """`accept_run_results` asks the comparison's own decision: a base that
+    is a number, zero included, is stored as it always was."""
+    from dstf.discovery.test_registry import discover_tests
+    from dstf.storage.accept import accept_run_results
+    from dstf.storage.reference_store import ReferenceStore
+
+    project.edit_spec(RAMP, "0")
+    tests = [t for t in discover_tests(project.config) if t.model_id == RAMP]
+    session_results = _results(project, tests)
+    store = ReferenceStore(project.config)
+    assert accept_run_results(
+        store, tests, session_results, project.config.work_dir
+    ) == (1, [])
+    stored = json.loads(project.reference(RAMP).read_text(encoding="utf-8"))
+    assert stored["comparison"]["tolerance"] == 0
+
+
+def _results(project: Project, tests):
+    from dstf.backends import get_backend_class
+
+    backend = get_backend_class(project.config)(project.config)
+    return backend.read_last_results(tests)
+
+
+class TestTheStoreWritesNoBaseThatIsNoNumber:
+    """`store_reference` itself: whoever calls it, a reference JSON never
+    holds a base tolerance that is not one finite number."""
+
+    @staticmethod
+    def _store(project, tolerance, existing=None):
+        from dstf.discovery.test_registry import discover_tests
+        from dstf.storage.reference_store import ReferenceStore
+
+        if existing is not None:
+            project.edit_reference(RAMP, existing)
+        (test,) = [t for t in discover_tests(project.config) if t.model_id == RAMP]
+        result = _results(project, [test])[RAMP]
+        test.comparison_tolerance = tolerance
+        assert ReferenceStore(project.config).store_reference(test, result)
+        return json.loads(project.reference(RAMP).read_text(encoding="utf-8"))
+
+    @pytest.mark.parametrize(
+        "bad",
+        [PAIR, {"lower": 0.1}, "0.5", "abc", True, [1], float("nan"), float("inf")],
+        ids=repr,
+    )
+    def test_the_tests_is_not_written(self, project, bad):
+        assert "comparison" not in self._store(project, bad)
+
+    @pytest.mark.parametrize("raw", ['{"lower": 0.1, "upper": 0.2}', '"0.5"', "NaN"])
+    def test_an_existing_one_is_not_carried_over(self, project, raw):
+        assert "comparison" not in self._store(project, None, existing=raw)
+
+    @pytest.mark.parametrize("number", [0, 0.25, -1])
+    def test_a_number_is_written_and_an_existing_number_is_kept(self, project, number):
+        assert self._store(project, number)["comparison"] == {"tolerance": number}
+        kept = self._store(project, None, existing=json.dumps(number))
+        assert kept["comparison"] == {"tolerance": number}
+
+    def test_the_tests_number_wins_over_an_existing_one(self, project):
+        stored = self._store(project, 0.25, existing="0.5")
+        assert stored["comparison"] == {"tolerance": 0.25}
