@@ -112,6 +112,13 @@ def signed_sides(
     return f"{lower}{unit} / {upper}{unit}"
 
 
+def signed(value: float, fmt: str = ".3e") -> str:
+    """A deviation in a sentence: ``value`` with its sign always — ``+``, or
+    U+2212 for the minus, as :func:`signed_sides` writes an edge; a zero
+    reads ``+``."""
+    return _signed(value, fmt, zero="+")
+
+
 def _signed(value: float, fmt: str, *, zero: str) -> str:
     """``value`` with its sign, the minus as U+2212; a zero takes ``zero``.
     The sign only: an exponent's ``-`` stays as the format wrote it."""

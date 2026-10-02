@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 
-from .sides import parse_sides, sides_text
+from .sides import parse_sides, sides_text, signed
 from .types import ScoreSummary, VariableComparison
 
 
@@ -132,10 +132,19 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
             )
     else:
         details.append(_finals(vc))
+    # Equal sides: the magnitude, as a number always printed. Uneven ones:
+    # actual − target, signed, so the reader sees which side applies — the
+    # worst declared point's (recorded by the scorer), or the final value's.
+    error = f"{vc.max_abs_error:.3e}"
+    if not vc.tolerance_used.equal:
+        if "scored_points" in diag:
+            error = signed(diag.get("worst_signed_delta", vc.max_abs_error))
+        else:
+            error = signed(vc.actual_final - vc.reference_final)
     return ScoreSummary(
         display=f"|err| {vc.max_abs_error:.3e}",
         criterion=(
-            f"Final value error {vc.max_abs_error:.3e} vs tolerance "
+            f"Final value error {error} vs tolerance "
             f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
         ),
         score=float(vc.max_abs_error),
@@ -172,11 +181,17 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
     rel = diag.get("tolerance_mode") == "rel" and not fallback
     criterion = "relative" if rel else "absolute"
     note = " (|ref|=0 → absolute)" if fallback else ""
+    # Uneven sides: the signed score, as the scorer judged it (`d / |ref|`
+    # in rel) — the same two operations on the same two numbers.
+    deviation = f"{vc.nrmse:.3e}"
+    if not vc.tolerance_used.equal:
+        d = vc.actual_final - vc.reference_final
+        deviation = signed(d / abs(vc.reference_final) if rel else d)
     return ScoreSummary(
         display=(f"rel Δ {vc.nrmse:.3e}" if rel else f"|Δ| {vc.nrmse:.3e}"),
         criterion=(
             f"Scalar {vc.actual_final:.6g} vs baseline {vc.reference_final:.6g}: "
-            f"{criterion} deviation {vc.nrmse:.3e} vs "
+            f"{criterion} deviation {deviation} vs "
             f"tolerance {sides_text(vc.tolerance_used)}{note} → {verdict}"
         ),
         score=float(vc.nrmse),
@@ -192,7 +207,13 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     diag = vc.diagnostics or {}
     ref_n = diag.get("ref_event_count", "?")
     act_n = diag.get("act_event_count", "?")
-    tol = sides_text(parse_sides(diag.get("time_tolerance", 0.0), "time_tolerance"))
+    sides = parse_sides(diag.get("time_tolerance", 0.0), "time_tolerance")
+    tol = sides_text(sides)
+    # Uneven sides: the worst pair's Δt signed (late positive), recorded by
+    # the scorer.
+    delta = f"{vc.nrmse:.3e}"
+    if not sides.equal:
+        delta = signed(diag.get("max_time_delta_signed", vc.nrmse))
     details: list[tuple[str, str]] = [
         ("events", f"{act_n} actual / {ref_n} reference"),
         ("max Δt", _at(vc.nrmse, vc.max_abs_error_time)),
@@ -202,7 +223,7 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     return ScoreSummary(
         display=f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)",
         criterion=(
-            f"Max event Δt {vc.nrmse:.3e} vs {tol} "
+            f"Max event Δt {delta} vs {tol} "
             f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
         ),
         score=float(vc.nrmse),

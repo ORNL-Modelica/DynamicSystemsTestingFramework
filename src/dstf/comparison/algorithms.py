@@ -394,6 +394,27 @@ def _min_delta_in_box(
     return best_delta, best_t
 
 
+def _signed_delta_in_box(
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    t_lo: float,
+    t_hi: float,
+    target: float,
+    delta: float,
+) -> float:
+    """``actual − target`` at the value :func:`_min_delta_in_box` found
+    ``delta`` (its magnitude) at: the first candidate that far from the
+    target, as that scan keeps the first. ``0.0`` where the curve crosses
+    the target; ``delta`` itself where no candidate is that far (a box with
+    no comparable sample)."""
+    if delta == 0.0:
+        return 0.0
+    for _, v in _box_candidates(act_time, act_values, t_lo, t_hi):
+        if abs(v - target) == delta:
+            return v - target
+    return delta
+
+
 def _compare_points(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -490,6 +511,7 @@ def _compare_points(
     failed = 0
     worst_delta = 0.0
     worst_t = 0.0
+    worst_signed = 0.0
     # Review 2026-07-06 (finding 2): a checkpoint the simulation never
     # reached — or whose ref-relative target lies beyond the stored
     # baseline — FAILS instead of being skipped. Skipping let truncated
@@ -558,6 +580,9 @@ def _compare_points(
         if delta > worst_delta:
             worst_delta = delta
             worst_t = t_at_min
+            worst_signed = _signed_delta_in_box(
+                act_time, act_values, t_lo, t_hi, target, delta
+            )
         # ``delta`` (the closest approach to the target itself) stays the
         # reported score; the verdict is the band's.
         violation, closest = _violation_in_box(
@@ -620,6 +645,10 @@ def _compare_points(
             "worst_delta": worst_delta,
             "worst_time": worst_t,
             "point_failures": point_failures,
+            # Which side the worst point lies on, for a sentence whose
+            # sides differ (`summarize_points`): recorded only there, so a
+            # leaf with a number carries what it always carried.
+            **({} if tolerance.equal else {"worst_signed_delta": worst_signed}),
         },
         geometry=tuple(geometry),
     )
@@ -1282,6 +1311,14 @@ def _event_tolerances(events: list[dict] | None, time_tolerance: Sides) -> list[
     ]
 
 
+def _signed_time_delta(time_tolerance: Sides, max_signed: float) -> dict:
+    """The worst pair's ``actual − reference`` (late positive) under
+    ``max_time_delta_signed``, for a sentence whose sides differ
+    (`summarize_event_timing`): recorded only there, so a leaf with a
+    number carries what it always carried."""
+    return {} if time_tolerance.equal else {"max_time_delta_signed": max_signed}
+
+
 def _compare_event_timing(
     ref_time: np.ndarray,
     act_time: np.ndarray,
@@ -1322,6 +1359,7 @@ def _compare_event_timing(
 
         n = min(len(ref_events), len(act_events))
         max_delta = 0.0
+        max_signed = 0.0
         delta_at = 0.0
         # ``d > 0`` is LATE: the actual event came after the reference's.
         in_window = []
@@ -1330,6 +1368,7 @@ def _compare_event_timing(
             in_window.append(-time_tolerance.lower <= d <= time_tolerance.upper)
             if abs(d) > max_delta:
                 max_delta = abs(d)
+                max_signed = d
                 delta_at = ref_events[i]
 
         counts_match = len(ref_events) == len(act_events)
@@ -1357,6 +1396,7 @@ def _compare_event_timing(
                 "max_time_delta": max_delta,
                 "time_tolerance": as_written(time_tolerance),
                 "counts_match": counts_match,
+                **_signed_time_delta(time_tolerance, max_signed),
             },
             geometry=_event_geometry(
                 ref_events,
@@ -1371,6 +1411,7 @@ def _compare_event_timing(
     actual_count = len(act_events)
     counts_match = declared_count == actual_count
     max_delta = 0.0
+    max_signed = 0.0
     delta_at = 0.0
     # Optimal 1-D interval matching (review 2026-07-06, greedy-stealing
     # finding): each declared event defines a window [time-lower, time+upper].
@@ -1401,9 +1442,11 @@ def _compare_event_timing(
             continue
         claimed[best_idx] = True
         matched_flags[k] = True
-        d = abs(act_events[best_idx] - target)
+        signed_d = act_events[best_idx] - target
+        d = abs(signed_d)
         if d > max_delta:
             max_delta = d
+            max_signed = signed_d
             delta_at = target
 
     passed = all_matched and (counts_match or not count_must_match)
@@ -1426,6 +1469,7 @@ def _compare_event_timing(
             "max_time_delta": max_delta,
             "time_tolerance": as_written(time_tolerance),
             "counts_match": counts_match,
+            **_signed_time_delta(time_tolerance, max_signed),
         },
         geometry=_event_geometry(
             declared_times, act_events, declared_tols, matched_flags

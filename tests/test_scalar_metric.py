@@ -1068,6 +1068,6 @@ class TestScalarSides:
         vc.tolerance_used = mode.tolerance  # as both scoring paths stamp it
         assert vc.passed
         assert summarize(vc).criterion == (
-            "Scalar 96 vs baseline 100: relative deviation 4.000e-02 vs "
+            "Scalar 96 vs baseline 100: relative deviation −4.000e-02 vs "
             "tolerance −5.000e-02 / +1.000e-02 → PASS"
         )
