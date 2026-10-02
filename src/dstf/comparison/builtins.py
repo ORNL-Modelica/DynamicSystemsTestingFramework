@@ -71,7 +71,13 @@ def _build_nrmse(override: dict, tolerance: Sides) -> NrmseMode:
 def _build_tube(override: dict, tolerance: Sides) -> TubeMode:
     tube_kwargs = {k: override[k] for k in _TUBE_KEYS if k in override}
     for key in ("tube_abs", "tube_rel"):
-        if key in tube_kwargs:
+        if key not in tube_kwargs:
+            continue
+        if tube_kwargs[key] is None:
+            # ``null`` is "no width", as it was when a width was a number
+            # (a falsy one was left out): absent, not a config error.
+            del tube_kwargs[key]
+        else:
             tube_kwargs[key] = parse_sides(tube_kwargs[key], key)
     return TubeMode(TubeConfig(**tube_kwargs))
 

@@ -61,6 +61,29 @@ class TestParse:
             f"got {bad!r}"
         )
 
+    def test_any_real_number_that_is_no_bool(self):
+        """As ``float()`` took them: a numpy scalar is a number."""
+        import numpy as np
+
+        assert parse_sides(np.float32(0.5), "t") == Sides(0.5, 0.5)
+        assert parse_sides(np.int64(2), "t") == Sides(2.0, 2.0)
+        s = parse_sides({"lower": np.float64(0.1), "upper": np.int32(2)}, "t")
+        assert s == Sides(0.1, 2.0)
+        assert type(s.lower) is float and type(s.upper) is float
+        for bad in (np.bool_(True), np.float32("nan"), np.float64("inf")):
+            with pytest.raises(ValueError, match="t must be a number or "):
+                parse_sides(bad, "t")
+
+    @pytest.mark.parametrize(
+        "bad", [10**400, {"lower": 1, "upper": -(10**400)}], ids=["number", "side"]
+    )
+    def test_an_int_too_large_for_a_float_is_the_same_refusal(self, bad):
+        with pytest.raises(ValueError) as exc:
+            parse_sides(bad, "tolerance")
+        assert str(exc.value) == (
+            f'tolerance must be a number or {{"lower": …, "upper": …}}, got {bad!r}'
+        )
+
     def test_no_sign_check(self):
         assert parse_sides(-1, "t") == Sides(-1.0, -1.0)
         assert parse_sides({"lower": -1, "upper": 2}, "t") == Sides(-1.0, 2.0)
@@ -90,6 +113,17 @@ class TestText:
     def test_unequal(self):
         assert sides_text(Sides(0.01, 0.02)) == "−1.000e-02 / +2.000e-02"
         assert sides_text(Sides(0.5, 1.0), "g") == "−0.5 / +1"
+
+    def test_a_negative_side_is_the_signed_number(self):
+        """``−lower / +upper`` are the band's two edges, signed: a negative
+        lower puts its edge ABOVE the target, where "−-1.000e-01" said
+        nothing a person can read."""
+        assert sides_text(Sides(-0.1, 0.5)) == "+1.000e-01 / +5.000e-01"
+        assert sides_text(Sides(0.1, -0.5)) == "−1.000e-01 / −5.000e-01"
+        assert sides_text(Sides(-0.5, 1.0), "g") == "+0.5 / +1"
+        # The exponent's sign is not the number's.
+        assert sides_text(Sides(0.1, 0.5)) == "−1.000e-01 / +5.000e-01"
+        assert sides_text(Sides(0.0, 0.5)) == "−0.000e+00 / +5.000e-01"
 
     def test_equal_text_is_the_plain_format(self):
         v = math.pi

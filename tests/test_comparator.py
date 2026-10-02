@@ -3295,6 +3295,38 @@ class TestAMalformedToleranceIsAConfigError:
         assert vc.diagnostics["error"].endswith("got {'lower': 1}")
 
 
+class TestATubeWidthOfNullIsAbsent:
+    """``tube_abs: null`` / ``tube_rel: null`` say "no width", as they did
+    when the width was a number: not a config error."""
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize(
+        ("leaf", "stray"),
+        [
+            ({"metric": "tube", "tube_width_mode": "rel", "tube_rel": 0.5}, "tube_abs"),
+            (
+                {"metric": "tube", "tube_width_mode": "band", "tube_abs": 0.5},
+                "tube_rel",
+            ),
+        ],
+        ids=["rel", "band"],
+    )
+    def test_a_stray_null_beside_the_width_in_use(self, leaf, stray, flat):
+        with_null = _sides_compare({**leaf, stray: None}, flat=flat).variables[0]
+        without = _sides_compare(leaf, flat=flat).variables[0]
+        assert "config_error" not in with_null.diagnostics, with_null.diagnostics
+        assert _sides_fields(with_null) == _sides_fields(without)
+        assert _sides_coords(with_null) == _sides_coords(without)
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_null_for_the_width_in_use_is_no_width(self, flat):
+        leaf = {"metric": "tube", "tube_width_mode": "band"}
+        null = _sides_compare({**leaf, "tube_abs": None}, flat=flat).variables[0]
+        zero = _sides_compare({**leaf, "tube_abs": 0.0}, flat=flat).variables[0]
+        assert "config_error" not in null.diagnostics, null.diagnostics
+        assert _sides_fields(null) == _sides_fields(zero)
+
+
 #: Every field that takes a pair (C1): the five leaf keys and the four row keys.
 _S_PAIR_FIELDS = {
     **{
@@ -3548,6 +3580,20 @@ class TestPointsValueSides:
         assert _pts(
             act, [{"time": 5.0, "tolerance": None}], tolerance=Sides(0.01, 0.05)
         ).passed
+
+    def test_a_box_with_no_comparable_sample_says_so(self):
+        """Every sample in the box is NaN: there is no closest value to
+        name. Equal sides keep the sentence a number always gave."""
+        act = np.full_like(_P_T, np.nan)
+        uneven = _pts(act, [{"time": 5.0, "value": 2.0, "tolerance": _S_UNEVEN}])
+        assert not uneven.passed
+        assert uneven.diagnostics["point_failures"] == [
+            {"time": 5.0, "reason": "no comparable sample in the time box"}
+        ]
+        even = _pts(act, [{"time": 5.0, "value": 2.0, "tolerance": 0.05}])
+        assert even.diagnostics["point_failures"] == [
+            {"time": 5.0, "reason": "delta inf exceeds limit 0.05"}
+        ]
 
     def test_rel_scales_each_side_by_the_targets_magnitude(self):
         ref = np.full_like(_P_T, -10.0)

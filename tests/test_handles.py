@@ -854,12 +854,22 @@ class TestScalarSides:
         assert _side(BASELINE_SCALAR, "scalar/upper", 4.0)["tolerance"] == 0.0
         assert _side(BASELINE_SCALAR, "scalar/lower", 4.0)["tolerance"] == 0.0
 
+    def test_a_tiny_baseline_is_not_zero(self):
+        """ONE condition with the scorer, which falls back to the absolute
+        test only at a baseline of exactly 0: at 1e-20 it scores — and the
+        figure draws — a fraction of 1e-20, so the editor edits that."""
+        rel = _with(BASELINE_SCALAR, tolerance_mode="rel")
+        assert _side(rel, "scalar/upper", 3e-20, target=1e-20)["tolerance"] == 2.0
+        assert _side(rel, "scalar/lower", -3e-20, target=-1e-20)["tolerance"] == 2.0
+
     def test_refusals(self):
         with pytest.raises(HandleEditError, match="no baseline scalar to measure"):
             _side(BASELINE_SCALAR, "scalar/upper", 4.5, target=None)
         rel = _with(BASELINE_SCALAR, tolerance_mode="rel")
         with pytest.raises(HandleEditError, match="the baseline scalar is zero"):
             _side(rel, "scalar/upper", 0.5, target=0.0)
+        with pytest.raises(HandleEditError, match="the baseline scalar is zero"):
+            _side(rel, "scalar/lower", -0.5, target=-0.0)
         bad = _with(BASELINE_SCALAR, tolerance="abc")
         with pytest.raises(HandleEditError, match="tolerance must be a number or"):
             _side(bad, "scalar/upper", 4.5)

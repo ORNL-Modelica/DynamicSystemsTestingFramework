@@ -393,7 +393,10 @@ def _edit_scalar_side(edit: HandleEdit, side: str) -> dict:
     target = float(edit.target)
     value = edit.y - target if side == "upper" else target - edit.y
     if leaf.get("tolerance_mode", "abs") == "rel":
-        if abs(target) < _EPS:
+        # The scorer's condition (`_compare_scalar`'s ``abs_fallback``):
+        # only at exactly 0 does it leave the fraction for the absolute
+        # test. A tiny baseline is scored, and drawn, as a fraction of it.
+        if abs(target) == 0.0:
             raise _refuse(edit, "the baseline scalar is zero")
         value = value / abs(target)
     _set_side(edit, leaf, "tolerance", side, value)

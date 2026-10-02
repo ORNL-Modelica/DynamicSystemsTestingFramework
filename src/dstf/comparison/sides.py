@@ -27,13 +27,16 @@ class Sides:
 
 
 def _is_number(value: object) -> TypeGuard[int | float]:
-    """A finite number that is not a bool: stricter than ``float(value)``,
-    which also takes ``True`` and the string ``"0.01"``."""
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    """A finite real number that is not a bool: stricter than
+    ``float(value)``, which also takes ``True`` and the string ``"0.01"``,
+    and no stricter on a number — a numpy scalar is one. An int too large
+    for a float is not: it has no finite float."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def is_base_tolerance(value: object) -> bool:
@@ -81,7 +84,16 @@ def as_written(sides: Sides) -> float | dict:
 
 def sides_text(sides: Sides, fmt: str = ".3e") -> str:
     """``sides`` in a sentence: the one number when equal, else
-    ``−lower / +upper`` (U+2212, as the report's other signs)."""
+    ``−lower / +upper`` (U+2212, as the report's other signs) — the band's
+    two edges as signed numbers, so a negative lower side, whose edge lies
+    above the target, reads ``+…``."""
     if sides.equal:
         return format(sides.upper, fmt)
-    return f"−{sides.lower:{fmt}} / +{sides.upper:{fmt}}"
+    return f"{_signed(-sides.lower, fmt)} / {_signed(sides.upper, fmt)}"
+
+
+def _signed(value: float, fmt: str) -> str:
+    """``value`` with its sign, the minus as U+2212. The sign only: an
+    exponent's ``-`` stays as the format wrote it."""
+    text = format(value, f"+{fmt}")
+    return f"−{text[1:]}" if text.startswith("-") else text
