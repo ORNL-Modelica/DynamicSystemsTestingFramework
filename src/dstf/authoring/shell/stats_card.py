@@ -27,7 +27,7 @@ from nicegui import ui
 
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
-from ...comparison.sides import parse_sides, sides_text
+from ...comparison.sides import parse_sides, sides_text, signed_sides
 from ...reporting.stats_rows import SECTION_TITLES, StatRow, card_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
@@ -127,9 +127,9 @@ def summary(leaf: dict) -> str:
     tol = parse_sides(p.get("tolerance", ScalarConfig.tolerance), "tolerance")
     rel = p.get("tolerance_mode", ScalarConfig.tolerance_mode) == "rel"
     if not tol.equal:
-        if rel:
-            return f"−{tol.lower * 100:g}% / +{tol.upper * 100:g}%"
-        return sides_text(tol, "g")
+        return (
+            signed_sides(tol, "g", scale=100, unit="%") if rel else sides_text(tol, "g")
+        )
     if rel:
         return f"±{tol.upper * 100:g}%"
     return "exact" if tol.upper == 0 else f"±{tol.upper:g}"

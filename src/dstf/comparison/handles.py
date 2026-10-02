@@ -414,7 +414,10 @@ def _set_side(
     sides move); where it is a pair only ``side`` changes, and it stays a
     pair. A negative side — one dragged across its target — is refused; a
     zero one is not. A tolerance the scorer would refuse is refused in the
-    scorer's words."""
+    scorer's words, and one that is no finite number — a rel side over a
+    tiny baseline overflows — is refused before it is written."""
+    if not math.isfinite(value):
+        raise _refuse(edit, "the tolerance would not be a finite number")
     if value < 0:
         raise _refuse(edit, f"the {side} side would cross its target")
     current = holder.get(key)

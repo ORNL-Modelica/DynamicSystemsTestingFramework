@@ -9068,6 +9068,21 @@ def test_a_scored_rows_summary_says_the_requirement():
         == "−5% / +10%"
     )
     assert summary(leaf(tolerance={"lower": 0, "upper": 0})) == "exact"
+    # A negative side is its edge, signed, abs and rel alike (`sides_text`):
+    # "−-1% / +5%" said nothing a person can read.
+    rel = {"tolerance_mode": "rel"}
+    assert summary(leaf(tolerance={"lower": -0.01, "upper": 0.05}, **rel)) == (
+        "+1% / +5%"
+    )
+    assert summary(leaf(tolerance={"lower": 0.01, "upper": -0.05}, **rel)) == (
+        "−1% / −5%"
+    )
+    assert summary(leaf(tolerance={"lower": -0.5, "upper": 1})) == "+0.5 / +1"
+    assert summary(leaf(tolerance={"lower": -0.0, "upper": 0.05}, **rel)) == (
+        "−0% / +5%"
+    )
+    # A negative NUMBER is left as it reads.
+    assert summary(leaf(tolerance=-0.05, tolerance_mode="abs")) == "±-0.05"
 
 
 async def test_the_statistics_card_sits_before_the_tree_card_closed(stats_shell):

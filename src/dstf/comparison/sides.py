@@ -91,17 +91,31 @@ def as_written(sides: Sides) -> float | dict:
 
 
 def sides_text(sides: Sides, fmt: str = ".3e") -> str:
-    """``sides`` in a sentence: the one number when equal, else
-    ``−lower / +upper`` (U+2212, as the report's other signs) — the band's
-    two edges as signed numbers, so a negative lower side, whose edge lies
-    above the target, reads ``+…``."""
+    """``sides`` in a sentence: the one number when equal (a minus as
+    U+2212), else :func:`signed_sides`."""
     if sides.equal:
-        return format(sides.upper, fmt)
-    return f"{_signed(-sides.lower, fmt)} / {_signed(sides.upper, fmt)}"
+        text = format(sides.upper, fmt)
+        return f"−{text[1:]}" if text.startswith("-") else text
+    return signed_sides(sides, fmt)
 
 
-def _signed(value: float, fmt: str) -> str:
-    """``value`` with its sign, the minus as U+2212. The sign only: an
-    exponent's ``-`` stays as the format wrote it."""
-    text = format(value, f"+{fmt}")
+def signed_sides(
+    sides: Sides, fmt: str = ".3e", *, scale: float = 1.0, unit: str = ""
+) -> str:
+    """``−lower / +upper`` (U+2212, as the report's other signs) — the
+    band's two edges as signed numbers, each ``scale``d and followed by
+    ``unit`` (``100`` and ``%`` for a relative pair), so a negative lower
+    side, whose edge lies above the target, reads ``+…``. A zero side reads
+    by its side, not its sign bit: ``-0.0`` is ``0.0``."""
+    lower = _signed(-sides.lower * scale, fmt, zero="−")
+    upper = _signed(sides.upper * scale, fmt, zero="+")
+    return f"{lower}{unit} / {upper}{unit}"
+
+
+def _signed(value: float, fmt: str, *, zero: str) -> str:
+    """``value`` with its sign, the minus as U+2212; a zero takes ``zero``.
+    The sign only: an exponent's ``-`` stays as the format wrote it."""
+    text = format(abs(value) if value == 0 else value, f"+{fmt}")
+    if value == 0:
+        return zero + text[1:]
     return f"−{text[1:]}" if text.startswith("-") else text

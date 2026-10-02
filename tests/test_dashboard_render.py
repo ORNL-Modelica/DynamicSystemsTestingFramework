@@ -1943,3 +1943,38 @@ def test_a_kept_wall_wins_over_the_results_cpu_time(tmp_path):
     render_final(tmp_path, comparisons=[comp], results={"Lib.A": result})
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "<td>5.55</td>" in html and 'class="cell-tag"' not in html
+
+
+def test_only_a_refused_test_has_its_reason_as_the_message(tmp_path):
+    """A comparison carries an ``error_message`` for more than a refusal —
+    a NO_REF's "No reference baseline stored", a failed simulation's
+    reason, a scored FAIL's or a PASS's stray one: none of those replaces
+    what the run said in the Message column."""
+    from test_reporters import _failing, _no_ref, _passing, _sim_failed
+
+    makers = {
+        "Lib.N": _no_ref,
+        "Lib.S": _sim_failed,
+        "Lib.F": _failing,
+        "Lib.P": _passing,
+    }
+    snapshot = _one_test_snapshot()
+    (entry,) = snapshot["tests"]
+    snapshot["tests"] = [
+        {**entry, "model_id": m, "test_key": f"test_{i:04d}", "detail": f"said {m}"}
+        for i, m in enumerate(makers, 1)
+    ]
+    for t in snapshot["tests"]:
+        t["report_dir"] = t["test_key"]
+    _write_status_json(tmp_path, snapshot)
+    comparisons = []
+    for model_id, make in makers.items():
+        comp = make(model_id)
+        comp.error_message = comp.error_message or "some other reason"
+        comparisons.append(comp)
+    assert all(c.error_message for c in comparisons)
+    assert any(c.variables for c in comparisons if c.model_id == "Lib.F")
+    rows = build_dashboard_context(tmp_path, mode="final", comparisons=comparisons)[
+        "tests"
+    ]
+    assert {r.model_id: r.message for r in rows} == {m: f"said {m}" for m in makers}

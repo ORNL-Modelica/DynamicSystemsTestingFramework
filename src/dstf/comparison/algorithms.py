@@ -589,10 +589,14 @@ def _compare_points(
             failed += 1
             if per_tol.equal:
                 reason = f"delta {delta:.6g} exceeds limit {upper_limit:.6g}"
+            elif np.isnan(target):
+                reason = "the target is not a number"
             elif np.isnan(closest):
-                # No sample of the box compares (every one is NaN): there
-                # is no closest value to name.
-                reason = "no comparable sample in the time box"
+                # No sample compares (every one is NaN): there is no
+                # closest value to name. A row with no time tolerance has
+                # no box to name either.
+                in_box = x_tol.lower != 0 or x_tol.upper != 0
+                reason = "no comparable sample" + (" in the time box" if in_box else "")
             else:
                 reason = f"closest value {closest:.6g} is outside [{lo:.6g}, {hi:.6g}]"
             point_failures.append({"time": t, "reason": reason})

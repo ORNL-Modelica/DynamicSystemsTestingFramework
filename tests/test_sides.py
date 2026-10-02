@@ -125,6 +125,18 @@ class TestText:
         assert sides_text(Sides(0.1, 0.5)) == "−1.000e-01 / +5.000e-01"
         assert sides_text(Sides(0.0, 0.5)) == "−0.000e+00 / +5.000e-01"
 
+    def test_a_zero_side_reads_by_its_side_not_its_sign(self):
+        """``-0.0`` is zero: its edge reads as ``0.0``'s does."""
+        assert sides_text(Sides(-0.0, 0.5)) == "−0.000e+00 / +5.000e-01"
+        assert sides_text(Sides(0.5, -0.0)) == "−5.000e-01 / +0.000e+00"
+        assert sides_text(Sides(-0.0, 0.5), "g") == sides_text(Sides(0.0, 0.5), "g")
+
+    def test_equal_negative_sides_print_the_minus_as_unequal_ones_do(self):
+        assert sides_text(Sides(-0.05, -0.05)) == "−5.000e-02"
+        assert sides_text(Sides(-0.5, -0.5), "g") == "−0.5"
+        # The exponent's sign stays as the format wrote it.
+        assert sides_text(Sides(0.05, 0.05)) == "5.000e-02"
+
     def test_equal_text_is_the_plain_format(self):
         v = math.pi
         assert sides_text(Sides(v, v)) == f"{v:.3e}"

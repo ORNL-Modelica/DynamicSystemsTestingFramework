@@ -875,6 +875,15 @@ class TestScalarSides:
             _side(bad, "scalar/upper", 4.5)
         with pytest.raises(HandleEditError, match="not a finite number"):
             _side(BASELINE_SCALAR, "scalar/upper", float("nan"))
+
+    @pytest.mark.parametrize("side,y", [("upper", 1e10), ("lower", -1e10)])
+    def test_a_side_that_would_not_be_finite_is_refused(self, side, y):
+        """A rel side is the drag over |baseline|: over a tiny baseline a
+        long drag overflows, and the leaf would hold ``inf``."""
+        rel = _with(BASELINE_SCALAR, tolerance_mode="rel")
+        with pytest.raises(HandleEditError) as box:
+            _side(rel, f"scalar/{side}", y, target=1e-300)
+        assert box.value.reason == "the tolerance would not be a finite number"
         with pytest.raises(HandleEditError, match="cannot be moved"):
             _side(BASELINE_SCALAR, "scalar/upper/0", 4.5)
 

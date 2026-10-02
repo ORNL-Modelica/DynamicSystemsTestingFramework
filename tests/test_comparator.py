@@ -3372,6 +3372,26 @@ class TestATubeWidthOfNullIsAbsent:
         assert _sides_coords(with_null) == _sides_coords(without)
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("key", ["tube_abs", "tube_rel"])
+    @pytest.mark.parametrize("falsy", [False, ""], ids=repr)
+    def test_only_null_is_no_width_not_any_falsy_value(self, falsy, key, flat):
+        """``false`` and ``""`` are no width the scorer can read: a config
+        error, as any other non-number is — never dropped as ``null`` is."""
+        mode = "band" if key == "tube_abs" else "rel"
+        leaf = {"metric": "tube", "tube_width_mode": mode, key: falsy}
+        vc = _sides_compare(leaf, flat=flat).variables[0]
+        assert vc.diagnostics.get("config_error") is True, vc.diagnostics
+        assert f"{key} must be a number" in vc.diagnostics["error"]
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("key", ["tube_abs", "tube_rel"])
+    def test_a_width_of_zero_is_a_width(self, key, flat):
+        mode = "band" if key == "tube_abs" else "rel"
+        leaf = {"metric": "tube", "tube_width_mode": mode, key: 0}
+        vc = _sides_compare(leaf, flat=flat).variables[0]
+        assert "config_error" not in vc.diagnostics, vc.diagnostics
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_null_for_the_width_in_use_is_no_width(self, flat):
         leaf = {"metric": "tube", "tube_width_mode": "band"}
         null = _sides_compare({**leaf, "tube_abs": None}, flat=flat).variables[0]
@@ -3729,6 +3749,32 @@ def _pts(act, points, tolerance=1e-4, ref=_P_FLAT, time=_P_T):
 class TestPointsValueSides:
     """``d = actual − target`` passes iff ``−lower <= d <= upper``."""
 
+    _UNEVEN = {"lower": 0.01, "upper": 0.05}
+
+    @pytest.mark.parametrize(
+        "row,reason",
+        [
+            ({}, "no comparable sample"),
+            ({"time_tolerance": 0.2}, "no comparable sample in the time box"),
+        ],
+        ids=["no time box", "time box"],
+    )
+    def test_a_box_with_no_comparable_sample_says_whether_it_is_a_box(
+        self, row, reason
+    ):
+        act = _P_FLAT.copy()
+        act[40:61] = np.nan  # t in [4, 6]
+        vc = _pts(act, [{"time": 5.0, "tolerance": self._UNEVEN, **row}])
+        assert vc.diagnostics["point_failures"] == [{"time": 5.0, "reason": reason}]
+
+    @pytest.mark.parametrize("row", [{}, {"time_tolerance": 0.2}], ids=repr)
+    def test_a_target_that_is_not_a_number_says_so(self, row):
+        point = {"time": 5.0, "value": float("nan"), "tolerance": self._UNEVEN}
+        vc = _pts(_P_FLAT, [{**point, **row}])
+        assert vc.diagnostics["point_failures"] == [
+            {"time": 5.0, "reason": "the target is not a number"}
+        ]
+
     def test_above_passes_with_room_above_and_fails_with_the_sides_swapped(self):
         act = _P_FLAT + 0.03
         ok = _pts(act, [{"time": 5.0, "tolerance": {"lower": 0.01, "upper": 0.05}}])
@@ -3775,8 +3821,9 @@ class TestPointsValueSides:
         act = np.full_like(_P_T, np.nan)
         uneven = _pts(act, [{"time": 5.0, "value": 2.0, "tolerance": _S_UNEVEN}])
         assert not uneven.passed
+        # No time tolerance: no box to name.
         assert uneven.diagnostics["point_failures"] == [
-            {"time": 5.0, "reason": "no comparable sample in the time box"}
+            {"time": 5.0, "reason": "no comparable sample"}
         ]
         even = _pts(act, [{"time": 5.0, "value": 2.0, "tolerance": 0.05}])
         assert even.diagnostics["point_failures"] == [
