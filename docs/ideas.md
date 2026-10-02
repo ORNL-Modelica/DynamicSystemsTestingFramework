@@ -1859,3 +1859,20 @@ planning.
   `backends/common/statistics.py::read_summary`) calls the row changed.
   Reading the check's values through `read_summary` would close it. Not
   changed in U3: the plan left the check as it is.
+- **A profile plot for scalar criteria over an array (owner, 2026-10-02,
+  deferred while planning two-sided tolerance)**: a scalar criterion draws
+  horizontal lines on its variable's time plot — the result's number, the
+  baseline's, and the two it allows. That reads well for one level-type
+  reduction (`max`, `min`, `final`, `mean`) on one variable. An array is
+  one criterion per element on a shared family plot, so the same scalar
+  over `T[1..10]` is up to forty lines over ten curves. The picture that
+  fits is another plot kind: element index on x, the scalar on y, the
+  baseline as a profile and each element's lower/upper tolerance as a band
+  around it, so the element that is out shows at a glance. It is the
+  "profile" plot kind the redesign roadmap lists as deferred; take it up
+  when array criteria (3d: the slice field and save-time expansion) are
+  planned. Nothing in the tolerance shape blocks it — each element's
+  criterion carries its own number or pair. Beside it, to check in a
+  browser: an `integral` scalar is in y-times-time units, and the scorer
+  draws its lines on the y axis like any other reduction's; if they land
+  off the curve and stretch the axis, an `integral` should draw none.
