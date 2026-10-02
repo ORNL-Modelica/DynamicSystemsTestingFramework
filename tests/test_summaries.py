@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from dstf.comparison.algorithms import (
     _compare_event_timing,
@@ -250,6 +251,31 @@ class TestAnUnevenToleranceSaysWhichSide:
         assert self._points(act, 0.5, rows) == (
             "Final value error 5.000e-01 vs tolerance 5.000e-01 → PASS"
         )
+
+    def test_the_signed_keys_are_recorded_for_uneven_sides_only(self):
+        """A leaf with a number carries the diagnostics it always carried."""
+        from dstf.comparison.algorithms import _compare_points
+        from dstf.comparison.sides import Sides
+
+        rows = [{"time": 5.0}]
+        assert "worst_signed_delta" not in (
+            _compare_points(self.T, self.T, self.T, self.T + 0.1, rows, 0.5).diagnostics
+        )
+        uneven = Sides(0.25, 0.5)
+        assert _compare_points(
+            self.T, self.T, self.T, self.T + 0.1, rows, uneven
+        ).diagnostics["worst_signed_delta"] == pytest.approx(0.1)
+        ref = np.array([0.0, 5.0, 5.0, 10.0])
+        act = np.array([0.0, 4.75, 4.75, 10.0])
+        for declared in (None, [{"time": 5.0}]):
+            even = _compare_event_timing(
+                ref, act, time_tolerance=0.5, declared_events=declared
+            )
+            assert "max_time_delta_signed" not in even.diagnostics
+            odd = _compare_event_timing(
+                ref, act, time_tolerance=uneven, declared_events=declared
+            )
+            assert odd.diagnostics["max_time_delta_signed"] == -0.25
 
     def test_a_crossing_in_a_box_is_a_signed_zero(self):
         act = self.T.copy()
