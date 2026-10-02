@@ -3099,6 +3099,8 @@ _S_DATA = {
     "x": (_S_T, _S_REF, _S_ACT),
     "e": (_S_TE, _S_VE, _S_VE),
     "f": (_S_TF, _S_SIG, _S_SIG),
+    # Away from zero, where a relative width is not pinched to nothing.
+    "o": (_S_T, _S_REF + 3.0, _S_ACT + 3.0),
 }
 _S_EVEN = {"lower": 0.05, "upper": 0.05}
 _S_UNEVEN = {"lower": 0.01, "upper": 0.05}
@@ -3319,7 +3321,7 @@ _S_PAIR_FIELDS = {
 }
 #: The fields whose scorer does not take two sides yet: each scoring task
 #: removes its own, and the last one removes this list.
-_S_NOT_SCORED_YET = [n for n in _S_PAIR_FIELDS if not n.startswith("points ")]
+_S_NOT_SCORED_YET = ["time_tolerance", "events row tolerance", "peaks row tolerance"]
 
 
 class TestAnUnevenPairIsNotScoredWrongly:
@@ -3719,3 +3721,18 @@ class TestPointsThroughBothPaths:
     def test_the_scorer_called_directly_names_the_row_too(self):
         with pytest.raises(ValueError, match=r"^points\[0\]\.tolerance must be"):
             _pts(_P_FLAT, [{"time": 1.0, "tolerance": {"upper": 1}}])
+
+
+class TestScalarAndTubeThroughBothPaths:
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("name", ["scalar tolerance", "tube_abs", "tube_rel"])
+    def test_an_uneven_pair_scores(self, name, flat):
+        # The actual is 0.01 above the reference everywhere.
+        _, leaf, key, _ = _S_LEAF_KEYS[name]
+        room_above = {"lower": 0.0001, "upper": 0.5}
+        room_below = {"lower": 0.5, "upper": 0.0001}
+        ok = _sides_compare({**leaf, key: room_above}, flat=flat, kind="o")
+        bad = _sides_compare({**leaf, key: room_below}, flat=flat, kind="o")
+        for comp in (ok, bad):
+            assert "config_error" not in comp.variables[0].diagnostics
+        assert ok.passed and not bad.passed

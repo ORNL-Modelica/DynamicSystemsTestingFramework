@@ -172,9 +172,11 @@ class TubeConfig:
         if self.tube_width_mode is not None:
             d["tube_width_mode"] = self.tube_width_mode
         for key in ("tube_abs", "tube_rel"):
-            # A config built with a number holds the number: both sides.
+            # A config built with a number holds the number: both sides. A
+            # dataclass is always truthy, so "no width" is said: zero on
+            # both sides — one zero side is a width.
             sides = parse_sides(getattr(self, key), key)
-            if sides.upper:
+            if sides != Sides(0.0, 0.0):
                 d[key] = sides
         if self.tube_min_width:
             d["tube_min_width"] = self.tube_min_width
@@ -730,8 +732,6 @@ _TUBE_KEYS = frozenset(
 #: upper side. Each scoring task of step E1 deletes its mode's entry; the
 #: last deletes the table.
 _NOT_SCORED_YET: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {
-    "scalar": (("tolerance",), ()),
-    "tube": (("tube_abs", "tube_rel"), ()),
     "event-timing": (("time_tolerance",), (("events", "tolerance"),)),
     "dominant-frequency": ((), (("peaks", "tolerance"),)),
 }

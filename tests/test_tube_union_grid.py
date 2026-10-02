@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from dstf.comparison.algorithms import _compare_tube, _tube_bounds, _tube_eval_grid
+from dstf.comparison.sides import Sides
 
 BAND_HALF_WIDTH = {"tube_width_mode": "band", "tube_abs": 0.5}
 
@@ -262,3 +263,118 @@ class TestDegenerateInput:
             dict(BAND_HALF_WIDTH),
         )
         assert result.passed is False
+
+
+class TestAConstantBandsTwoSides:
+    """``tube_abs`` / ``tube_rel`` as a lower/upper pair: the band's edges
+    are ``ref + upper`` and ``ref − lower`` (those fractions of ``|ref|`` in
+    ``rel``)."""
+
+    T = np.linspace(0.0, 10.0, 11)
+
+    def _tube(self, offset, cfg):
+        ref = np.full_like(self.T, 10.0)
+        return _compare_tube(self.T, ref, self.T, ref + offset, cfg)
+
+    @pytest.mark.parametrize(
+        "cfg,off",
+        [
+            # band: −0.125 / +0.5 around 10.
+            ({"tube_width_mode": "band", "tube_abs": Sides(0.125, 0.5)}, 0.375),
+            # rel: −12.5 % / +50 % of |10| = −1.25 / +5.
+            ({"tube_width_mode": "rel", "tube_rel": Sides(0.125, 0.5)}, 3.75),
+            (
+                {"tube_width_mode": "band", "tube_abs": {"lower": 0.125, "upper": 0.5}},
+                0.375,
+            ),
+        ],
+        ids=["band", "rel", "band-from-a-dict"],
+    )
+    def test_it_holds_a_curve_above_and_fails_one_below(self, cfg, off):
+        assert self._tube(off, cfg).passed
+        assert not self._tube(-off, cfg).passed
+
+    def test_the_sides_swapped_is_the_mirror(self):
+        cfg = {"tube_width_mode": "band", "tube_abs": Sides(0.5, 0.125)}
+        assert self._tube(-0.375, cfg).passed
+        assert not self._tube(0.375, cfg).passed
+
+    @pytest.mark.parametrize("at", [2.5, 5.0], ids=["between-samples", "on-a-sample"])
+    def test_the_lower_side_is_enforced_between_reference_samples_and_on_them(self, at):
+        # An excursion BETWEEN two reference samples is seen on the union
+        # grid only; one ON a reference sample by either grid.
+        ref_t = np.array([0.0, 5.0, 10.0])
+        act_t = np.array([0.0, 2.5, 5.0, 10.0])
+        ref = np.full(3, 10.0)
+        cfg = {"tube_width_mode": "band", "tube_abs": Sides(0.125, 0.5)}
+
+        def act(offset):
+            return np.where(act_t == at, 10.0 + offset, 10.0)
+
+        above = _compare_tube(ref_t, ref, act_t, act(0.375), cfg)
+        below = _compare_tube(ref_t, ref, act_t, act(-0.375), cfg)
+        assert above.passed and not below.passed
+        assert below.tube_worst_violation == 0.25
+        assert below.tube_worst_violation_time == at
+
+    def test_the_band_carries_each_edge(self):
+        from dstf.comparison.geometry import Band
+
+        vc = self._tube(0.0, {"tube_width_mode": "band", "tube_abs": Sides(0.125, 0.5)})
+        band = next(p for p in vc.geometry if isinstance(p, Band))
+        assert np.array_equal(band.upper, np.full_like(band.time, 10.5))
+        assert np.array_equal(band.lower, np.full_like(band.time, 9.875))
+        vc = self._tube(0.0, {"tube_width_mode": "rel", "tube_rel": Sides(0.125, 0.5)})
+        band = next(p for p in vc.geometry if isinstance(p, Band))
+        assert np.array_equal(band.upper, np.full_like(band.time, 15.0))
+        assert np.array_equal(band.lower, np.full_like(band.time, 8.75))
+
+    def test_the_minimum_width_floors_both_sides(self):
+        cfg = {
+            "tube_width_mode": "band",
+            "tube_abs": Sides(0.0, 0.5),
+            "tube_min_width": 0.25,
+        }
+        upper, lower = _tube_bounds(self.T, np.full_like(self.T, 10.0), cfg)
+        assert (upper[0], lower[0]) == (10.5, 9.75)
+
+    def test_a_number_and_its_equal_pair_build_the_same_band(self):
+        ref = np.linspace(-1.0, 3.0, 11)
+        for key, mode in (("tube_abs", "band"), ("tube_rel", "rel")):
+            a = _tube_bounds(self.T, ref, {"tube_width_mode": mode, key: 0.3})
+            b = _tube_bounds(
+                self.T, ref, {"tube_width_mode": mode, key: Sides(0.3, 0.3)}
+            )
+            assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
+
+
+class TestTubeConfigKeepsAOneSidedWidth:
+    def test_to_dict_omits_only_a_width_that_is_zero_on_both_sides(self):
+        from dstf.comparison.modes import TubeConfig
+
+        assert TubeConfig().to_dict() == {}
+        # A dataclass is always truthy and its upper side may be the zero one.
+        assert TubeConfig(tube_abs=Sides(0.5, 0.0)).to_dict() == {
+            "tube_abs": Sides(0.5, 0.0)
+        }
+        assert TubeConfig(tube_rel=Sides(0.0, 0.5)).to_dict() == {
+            "tube_rel": Sides(0.0, 0.5)
+        }
+        assert "tube_rel" not in TubeConfig(tube_abs=Sides(0.0, 0.5)).to_dict()
+        assert TubeConfig(tube_abs=0.0, tube_rel=Sides(0.0, 0.0)).to_dict() == {}
+
+    def test_a_band_with_room_below_only_scores_through_the_mode(self):
+        from dstf.comparison.modes import resolve_mode
+
+        t = np.linspace(0.0, 10.0, 11)
+        ref = np.full_like(t, 10.0)
+        mode = resolve_mode(
+            {
+                "mode": "tube",
+                "tube_width_mode": "band",
+                "tube_abs": {"lower": 0.5, "upper": 0},
+            },
+            1e-4,
+        )
+        assert mode.compare(t, ref, t, ref - 0.375).passed
+        assert not mode.compare(t, ref, t, ref + 0.375).passed

@@ -683,16 +683,16 @@ def _tube_bounds(
     else:
         # Constant-tube shorthand — only 'band' and 'rel' supported. 'abs'
         # (literal y-bounds) needs both bounds explicitly, so it must use
-        # tube_points.
-        # One number until the band takes its two sides separately.
-        const_abs = parse_sides(tube_config.get("tube_abs", 0.0), "tube_abs").upper
-        const_rel = parse_sides(tube_config.get("tube_rel", 0.0), "tube_rel").upper
+        # tube_points. A number is both sides; a pair is the width above
+        # (``upper``) and below (``lower``) the reference.
+        const_abs = parse_sides(tube_config.get("tube_abs", 0.0), "tube_abs")
+        const_rel = parse_sides(tube_config.get("tube_rel", 0.0), "tube_rel")
         if tube_width_mode == "band":
-            raw_upper = np.full_like(eval_time, const_abs)
-            raw_lower = raw_upper.copy()
+            raw_upper = np.full_like(eval_time, const_abs.upper)
+            raw_lower = np.full_like(eval_time, const_abs.lower)
         elif tube_width_mode == "rel":
-            raw_upper = np.full_like(eval_time, const_rel)
-            raw_lower = raw_upper.copy()
+            raw_upper = np.full_like(eval_time, const_rel.upper)
+            raw_lower = np.full_like(eval_time, const_rel.lower)
         else:  # abs
             raise ValueError(
                 "tube_width_mode='abs' requires tube_points; "
@@ -1100,10 +1100,12 @@ def _compare_scalar(
     * **bounds** (``min_value`` / ``max_value`` set) — baseline-free; pass
       iff the actual scalar lies within the inclusive bounds. The score is
       the distance outside them (0.0 inside), mirroring ``_compare_range``.
-    * **baseline** — ``err = |act - ref|``; ``abs`` passes when
-      ``err <= tolerance``, ``rel`` when ``err <= tolerance * |ref|``. A
-      zero-magnitude reference makes the relative criterion degenerate, so
-      ``rel`` falls back to the absolute comparison when ``|ref| == 0``.
+    * **baseline** — ``d = act - ref``; ``abs`` passes when
+      ``-lower <= d <= upper``, ``rel`` when ``d / |ref|`` lies in that
+      range, ``tolerance`` being a number (both sides) or a lower/upper
+      pair. A zero-magnitude reference makes the relative criterion
+      degenerate, so ``rel`` falls back to the absolute comparison when
+      ``|ref| == 0``. The score stays the magnitude of the deviation.
 
     The evaluator hands stats-path leaves 1-sample arrays, so the same
     reduction path serves both quantity shapes.
@@ -1170,24 +1172,25 @@ def _compare_scalar(
             "scalar",
             f"{reduction} of the reference samples is not finite",
         )
-    # One number until this scorer applies the two sides separately.
-    tolerance = parse_sides(tolerance, "tolerance").upper
-    err = abs(act_scalar - ref_scalar)
+    tolerance = parse_sides(tolerance, "tolerance")
+    d = act_scalar - ref_scalar
+    err = abs(d)
     # A zero-magnitude reference makes the relative criterion degenerate —
     # fall back to the absolute test and record that it fired, so the report
     # can say which criterion actually decided the verdict.
     abs_fallback = tolerance_mode == "rel" and abs(ref_scalar) == 0.0
-    if tolerance_mode == "rel" and not abs_fallback:
-        score = err / abs(ref_scalar)
-    else:
-        score = err
+    signed = d / abs(ref_scalar) if tolerance_mode == "rel" and not abs_fallback else d
+    # What a ``weighted`` combinator reads stays a magnitude; the verdict is
+    # each side's.
+    score = abs(signed)
+    passed = bool(-tolerance.lower <= signed <= tolerance.upper)
     diagnostics["reference_scalar"] = ref_scalar
     diagnostics["abs_fallback"] = abs_fallback
 
     return VariableComparison(
         index=0,
         name="",
-        passed=bool(score <= tolerance),
+        passed=passed,
         nrmse=score,
         rmse=err,
         signal_range=abs(ref_scalar),
@@ -1205,7 +1208,7 @@ def _compare_scalar(
             None,
             None,
             ref_scalar=ref_scalar,
-            passed=bool(score <= tolerance),
+            passed=passed,
         ),
     )
 

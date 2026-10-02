@@ -955,3 +955,119 @@ class TestZeroCountRule:
         assert not node.passed
         error = node.diagnostics["variable"].diagnostics["error"]
         assert "not found in baseline" in error
+
+
+# ---------------------------------------------------------------------------
+# A lower and an upper tolerance
+# ---------------------------------------------------------------------------
+
+
+def _scalar_sides(ref, act, tol, mode="abs"):
+    from dstf.comparison.algorithms import _compare_scalar
+
+    t = np.linspace(0.0, 10.0, 11)
+    return _compare_scalar(
+        t,
+        np.full_like(t, ref),
+        t,
+        np.full_like(t, act),
+        reduction="final",
+        tolerance=tol,
+        tolerance_mode=mode,
+        min_value=None,
+        max_value=None,
+    )
+
+
+class TestScalarSides:
+    """``d = actual − baseline`` (over ``|baseline|`` in ``rel``) passes iff
+    ``−lower <= d <= upper``."""
+
+    def test_rel_four_percent_under(self):
+        assert _scalar_sides(100.0, 96.0, Sides(0.05, 0.01), "rel").passed
+        assert not _scalar_sides(100.0, 96.0, Sides(0.01, 0.05), "rel").passed
+        assert _scalar_sides(100.0, 104.0, Sides(0.01, 0.05), "rel").passed
+        assert not _scalar_sides(100.0, 104.0, Sides(0.05, 0.01), "rel").passed
+
+    def test_rel_scales_by_the_baselines_magnitude(self):
+        # −104 is BELOW −100: the lower side decides.
+        assert _scalar_sides(-100.0, -104.0, Sides(0.05, 0.01), "rel").passed
+        assert not _scalar_sides(-100.0, -104.0, Sides(0.01, 0.05), "rel").passed
+
+    def test_abs(self):
+        assert _scalar_sides(1.0, 1.375, Sides(0.125, 0.5)).passed
+        assert not _scalar_sides(1.0, 0.625, Sides(0.125, 0.5)).passed
+        assert _scalar_sides(1.0, 0.625, Sides(0.5, 0.125)).passed
+
+    def test_it_is_inclusive_on_each_side(self):
+        assert _scalar_sides(1.0, 1.5, Sides(0.25, 0.5)).passed
+        assert _scalar_sides(1.0, 0.75, Sides(0.25, 0.5)).passed
+        assert not _scalar_sides(1.0, 1.75, Sides(0.25, 0.5)).passed
+        assert not _scalar_sides(1.0, 0.5, Sides(0.25, 0.5)).passed
+
+    def test_a_zero_baseline_falls_back_to_absolute_with_a_pair(self):
+        vc = _scalar_sides(0.0, 0.375, Sides(0.125, 0.5), "rel")
+        assert vc.passed and vc.diagnostics["abs_fallback"] is True
+        assert not _scalar_sides(0.0, -0.375, Sides(0.125, 0.5), "rel").passed
+
+    def test_the_score_stays_a_magnitude(self):
+        # What a `weighted` combinator reads does not change meaning.
+        vc = _scalar_sides(100.0, 96.0, Sides(0.05, 0.01), "rel")
+        assert (vc.nrmse, vc.rmse, vc.max_abs_error) == (0.04, 4.0, 4.0)
+        assert vc.diagnostics["reference_scalar"] == 100.0
+
+    @pytest.mark.parametrize("mode", ["abs", "rel"])
+    def test_a_number_scores_as_it_did(self, mode):
+        import random
+
+        rng = random.Random(7)
+        on_edge = 0
+        for _ in range(3000):
+            ref = rng.choice([round(rng.uniform(-3, 3), 1), rng.uniform(-3, 3), 0.0])
+            tol = rng.choice(
+                [round(rng.uniform(0, 1), 1), rng.uniform(0, 1), 0.0, -0.1]
+            )
+            act = rng.choice(
+                [
+                    ref + tol,
+                    ref - tol,
+                    ref * (1 + tol),
+                    ref * (1 - tol),
+                    rng.uniform(-3, 3),
+                ]
+            )
+            new = _scalar_sides(ref, act, tol, mode)
+            pair = _scalar_sides(ref, act, {"lower": tol, "upper": tol}, mode)
+            # The arithmetic of the commit before a pair existed.
+            err = abs(act - ref)
+            score = err / abs(ref) if mode == "rel" and abs(ref) != 0.0 else err
+            assert new.passed == bool(score <= tol), (ref, act, tol)
+            assert (new.nrmse, new.rmse) == (score, err)
+            assert (pair.passed, pair.nrmse, pair.rmse) == (new.passed, score, err)
+            on_edge += score == tol
+        assert on_edge > 300  # the sweep reaches the edge itself
+
+    def test_the_bounds_form_is_untouched_by_a_pair(self):
+        vc = _mode(
+            tolerance={"lower": 0.1, "upper": 0.2}, min_value=0.0, max_value=1.0
+        ).compare(*_series([0.0, 10.0]), *_series([0.0, 0.5]))
+        assert vc.passed and vc.diagnostics["min_value"] == 0.0
+
+    def test_through_the_mode_and_the_criterion_sentence(self):
+        from dstf.comparison.registry import summarize
+
+        mode = resolve_mode(
+            {
+                "mode": "scalar",
+                "quantity": {"reduce": "final"},
+                "tolerance_mode": "rel",
+            },
+            {"lower": 0.05, "upper": 0.01},
+        )
+        vc = mode.compare(*_series([0.0, 100.0]), *_series([0.0, 96.0]))
+        vc.tolerance_used = mode.tolerance  # as both scoring paths stamp it
+        assert vc.passed
+        assert summarize(vc).criterion == (
+            "Scalar 96 vs baseline 100: relative deviation 4.000e-02 vs "
+            "tolerance −5.000e-02 / +1.000e-02 → PASS"
+        )
