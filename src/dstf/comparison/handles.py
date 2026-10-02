@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .sides import parse_sides
 from .types import _EPS
 
 
@@ -41,6 +42,10 @@ class HandleEdit:
     y: float | None
     #: The primary baseline ``(time, values)``, full resolution — unwindowed.
     reference: tuple[np.ndarray, np.ndarray] | None
+    #: The number a tolerance side is measured from where the leaf's own
+    #: geometry holds it: a scalar leaf's baseline scalar (its
+    #: ``scalar/reference`` line). ``None`` where there is none.
+    target: float | None = None
 
 
 class HandleEditError(ValueError):
@@ -363,8 +368,66 @@ def edit_scalar_handle(edit: HandleEdit) -> dict:
     """``scalar/min`` and ``scalar/max`` → ``min_value`` / ``max_value``, from
     ``y``; ``x`` is ignored. Refused when the result has ``min_value >=
     max_value`` — ``modes._validate_scalar_config`` requires them strictly
-    ordered."""
+    ordered.
+
+    ``scalar/upper`` and ``scalar/lower`` — the two lines of what the
+    baseline form allows — → that side of the leaf's ``tolerance``, from
+    ``y`` measured against the baseline's scalar (``edit.target``):
+    ``y − target`` for upper, ``target − y`` for lower, divided by
+    ``|target|`` in ``rel`` (refused where the baseline scalar is zero, or
+    where there is none). The side is written by :func:`_set_side`."""
+    segments = edit.local.split("/")
+    if len(segments) == 2 and segments[1] in ("upper", "lower"):
+        return _edit_scalar_side(edit, segments[1])
     return _edit_bounds(edit, strict=True)
+
+
+def _edit_scalar_side(edit: HandleEdit, side: str) -> dict:
+    _check_position(edit)
+    _parse(edit, "scalar", 2)
+    leaf = copy.deepcopy(edit.leaf)
+    if edit.y is None:
+        return leaf
+    if edit.target is None:
+        raise _refuse(edit, "there is no baseline scalar to measure from")
+    target = float(edit.target)
+    value = edit.y - target if side == "upper" else target - edit.y
+    if leaf.get("tolerance_mode", "abs") == "rel":
+        if abs(target) < _EPS:
+            raise _refuse(edit, "the baseline scalar is zero")
+        value = value / abs(target)
+    _set_side(edit, leaf, "tolerance", side, value)
+    return leaf
+
+
+def _set_side(
+    edit: HandleEdit, holder: dict, key: str, side: str, value: float
+) -> None:
+    """Write ``value`` as the ``side`` (``"lower"`` / ``"upper"``) of the
+    tolerance ``holder[key]`` — the one rule for a dragged tolerance side.
+
+    The shape in the spec is the link state: where ``holder[key]`` is
+    absent or a number the result is the NUMBER ``value`` (linked: both
+    sides move); where it is a pair only ``side`` changes, and it stays a
+    pair. A negative side — one dragged across its target — is refused; a
+    zero one is not. A tolerance the scorer would refuse is refused in the
+    scorer's words."""
+    if value < 0:
+        raise _refuse(edit, f"the {side} side would cross its target")
+    current = holder.get(key)
+    if current is None:
+        holder[key] = _written(value)
+        return
+    try:
+        sides = parse_sides(current, key)
+    except ValueError as err:
+        raise _refuse(edit, str(err)) from None
+    if isinstance(current, dict):
+        pair = {"lower": sides.lower, "upper": sides.upper}
+        pair[side] = _written(value)
+        holder[key] = pair
+    else:
+        holder[key] = _written(value)
 
 
 def _edit_bounds(edit: HandleEdit, *, strict: bool) -> dict:

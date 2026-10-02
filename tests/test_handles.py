@@ -773,3 +773,98 @@ def test_a_width_dragged_under_the_min_width_rescores_onto_the_minimum(session):
     prim = _marker(session, D, "/metrics/children/0/tube/upper/0")
     # D's baseline is x = t: ref(0.5) + tube_min_width.
     assert prim.y == pytest.approx(0.5 + 0.3)
+
+
+# -- scalar: the two lines of what the baseline form allows ---------------------
+
+BASELINE_SCALAR = {
+    "metric": "scalar",
+    "variable": "x",
+    "quantity": {"reduce": "max"},
+    "tolerance": 0.25,
+}
+
+
+def _side(leaf, local, y, target=4.0):
+    before = copy.deepcopy(leaf)
+    try:
+        return metric("scalar").edit_handle(
+            HandleEdit(
+                leaf=leaf, local=local, x=None, y=y, reference=REF, target=target
+            )
+        )
+    finally:
+        assert leaf == before
+
+
+class TestScalarSides:
+    """`scalar/upper` / `scalar/lower` → that side of the leaf's `tolerance`,
+    measured from the baseline's scalar (`HandleEdit.target`)."""
+
+    def test_a_number_stays_a_number_and_both_sides_move(self):
+        assert _side(BASELINE_SCALAR, "scalar/upper", 4.5)["tolerance"] == 0.5
+        assert _side(BASELINE_SCALAR, "scalar/lower", 3.5)["tolerance"] == 0.5
+        new = _side(BASELINE_SCALAR, "scalar/lower", 3.875)
+        assert new == {**BASELINE_SCALAR, "tolerance": 0.125}
+
+    def test_an_absent_tolerance_becomes_a_number(self):
+        leaf = {k: v for k, v in BASELINE_SCALAR.items() if k != "tolerance"}
+        assert _side(leaf, "scalar/upper", 4.5)["tolerance"] == 0.5
+
+    def test_a_pair_changes_only_that_side(self):
+        leaf = _with(BASELINE_SCALAR, tolerance={"lower": 0.125, "upper": 0.25})
+        assert _side(leaf, "scalar/upper", 4.5)["tolerance"] == {
+            "lower": 0.125,
+            "upper": 0.5,
+        }
+        assert _side(leaf, "scalar/lower", 3.0)["tolerance"] == {
+            "lower": 1.0,
+            "upper": 0.25,
+        }
+        # An equal pair stays a pair: only the editor's toggle changes the shape.
+        even = _with(BASELINE_SCALAR, tolerance={"lower": 0.25, "upper": 0.25})
+        assert _side(even, "scalar/upper", 4.5)["tolerance"] == {
+            "lower": 0.25,
+            "upper": 0.5,
+        }
+
+    def test_rel_divides_by_the_baselines_magnitude(self):
+        leaf = _with(BASELINE_SCALAR, tolerance_mode="rel")
+        # Baseline −4: the line at −2 is 2 above it, 50 % of |−4|.
+        assert _side(leaf, "scalar/upper", -2.0, target=-4.0)["tolerance"] == 0.5
+        assert _side(leaf, "scalar/lower", -5.0, target=-4.0)["tolerance"] == 0.25
+
+    def test_what_is_written_is_rounded_to_twelve_digits(self):
+        # 4.3 − 4.0 is 0.2999999999999998 in floats.
+        assert _side(BASELINE_SCALAR, "scalar/upper", 4.3)["tolerance"] == 0.3
+
+    def test_a_side_dragged_across_its_target_is_refused(self):
+        with pytest.raises(HandleEditError) as box:
+            _side(BASELINE_SCALAR, "scalar/upper", 3.9)
+        assert box.value.reason == "the upper side would cross its target"
+        assert str(box.value) == "scalar/upper: the upper side would cross its target"
+        with pytest.raises(HandleEditError, match="the lower side would cross"):
+            _side(BASELINE_SCALAR, "scalar/lower", 4.1)
+        # ON the target is a zero side, not a crossing.
+        assert _side(BASELINE_SCALAR, "scalar/upper", 4.0)["tolerance"] == 0.0
+        assert _side(BASELINE_SCALAR, "scalar/lower", 4.0)["tolerance"] == 0.0
+
+    def test_refusals(self):
+        with pytest.raises(HandleEditError, match="no baseline scalar to measure"):
+            _side(BASELINE_SCALAR, "scalar/upper", 4.5, target=None)
+        rel = _with(BASELINE_SCALAR, tolerance_mode="rel")
+        with pytest.raises(HandleEditError, match="the baseline scalar is zero"):
+            _side(rel, "scalar/upper", 0.5, target=0.0)
+        bad = _with(BASELINE_SCALAR, tolerance="abc")
+        with pytest.raises(HandleEditError, match="tolerance must be a number or"):
+            _side(bad, "scalar/upper", 4.5)
+        with pytest.raises(HandleEditError, match="not a finite number"):
+            _side(BASELINE_SCALAR, "scalar/upper", float("nan"))
+        with pytest.raises(HandleEditError, match="cannot be moved"):
+            _side(BASELINE_SCALAR, "scalar/upper/0", 4.5)
+
+    def test_a_horizontal_only_drag_changes_nothing(self):
+        assert _side(BASELINE_SCALAR, "scalar/upper", None) == BASELINE_SCALAR
+
+    def test_the_bounds_still_move(self):
+        assert _edit(SCALAR, "scalar/max", None, 1.0)["max_value"] == 1.0

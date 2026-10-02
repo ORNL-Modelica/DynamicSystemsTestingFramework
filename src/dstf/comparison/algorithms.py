@@ -1063,11 +1063,14 @@ def _scalar_geometry(
     *,
     ref_scalar: float | None,
     passed: bool,
+    allowed: tuple[float, float] | None = None,
 ) -> tuple[Primitive, ...]:
     """The scalar and what it was judged against, as horizontal lines.
 
     A scalar leaf on a statistics path has no trajectory at all; these
-    lines are then the whole figure.
+    lines are then the whole figure. ``allowed`` is what the baseline form
+    lets the scalar be, ``(lowest, highest)``: drawn, and dragged, as the
+    bounds form's bounds are.
     """
     out: list[Primitive] = [
         HLine(id="scalar/actual", kind="act", value=float(act_scalar), passed=passed)
@@ -1078,6 +1081,10 @@ def _scalar_geometry(
         out.append(HLine(id="scalar/min", kind="handle", value=float(min_value)))
     if max_value is not None:
         out.append(HLine(id="scalar/max", kind="handle", value=float(max_value)))
+    if allowed is not None:
+        lowest, highest = allowed
+        out.append(HLine(id="scalar/upper", kind="handle", value=float(highest)))
+        out.append(HLine(id="scalar/lower", kind="handle", value=float(lowest)))
     return tuple(out)
 
 
@@ -1179,6 +1186,9 @@ def _compare_scalar(
     # fall back to the absolute test and record that it fired, so the report
     # can say which criterion actually decided the verdict.
     abs_fallback = tolerance_mode == "rel" and abs(ref_scalar) == 0.0
+    # ``rel``: each side is that fraction of |ref| — the plain side under
+    # the fallback.
+    scale = abs(ref_scalar) if tolerance_mode == "rel" and not abs_fallback else 1.0
     signed = d / abs(ref_scalar) if tolerance_mode == "rel" and not abs_fallback else d
     # What a ``weighted`` combinator reads stays a magnitude; the verdict is
     # each side's.
@@ -1209,6 +1219,10 @@ def _compare_scalar(
             None,
             ref_scalar=ref_scalar,
             passed=passed,
+            allowed=(
+                ref_scalar - tolerance.lower * scale,
+                ref_scalar + tolerance.upper * scale,
+            ),
         ),
     )
 

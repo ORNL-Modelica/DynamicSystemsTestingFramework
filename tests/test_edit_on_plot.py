@@ -784,3 +784,74 @@ def test_add_row_lands_in_the_largest_gap_never_on_an_existing_time():
     ] == pytest.approx(0.7)
     assert _new_row(tube, [{"time": 0.2, "upper": 0.1}], None)["time"] == 1.2
     assert _new_row(tube, [], None)["time"] == 0.0
+
+
+# -- a scalar's two lines: what its baseline form allows ----------------------
+
+BASELINE_SCALAR_LEAF = {
+    "metric": "scalar",
+    "variable": "x",
+    "quantity": {"reduce": "final"},
+    "tolerance": 0.25,
+}
+
+
+def _scalar_reference(session) -> float:
+    lines = {
+        p.id: p.value for leaf in session.view(A, "x").leaves for p in leaf.geometry
+    }
+    assert {"/metrics/scalar/upper", "/metrics/scalar/lower"} <= set(lines)
+    return lines["/metrics/scalar/reference"]
+
+
+def test_a_drag_on_a_scalars_line_sets_that_side_of_its_tolerance(session):
+    """The baseline's number reaches the editor from the leaf's own
+    `scalar/reference` line."""
+    _root_leaf_on_a(session, copy.deepcopy(BASELINE_SCALAR_LEAF))
+    ref = _scalar_reference(session)
+    y = ref + 0.5
+    op = _only_op(
+        _drag(session, "/metrics/scalar/upper", {"y0": y, "y1": y}, model_id=A)
+    )
+    assert op == PatchOp(
+        A, "replace", "/metrics", {**BASELINE_SCALAR_LEAF, "tolerance": 0.5}
+    )
+    # A pair: the lower line moves the lower side alone.
+    pair = {**BASELINE_SCALAR_LEAF, "tolerance": {"lower": 0.25, "upper": 0.5}}
+    session.stage([PatchOp(A, "replace", "/metrics", copy.deepcopy(pair))])
+    y = _scalar_reference(session) - 1.0
+    op = _only_op(
+        _drag(session, "/metrics/scalar/lower", {"y0": y, "y1": y}, model_id=A)
+    )
+    assert op.value["tolerance"] == {"lower": 1.0, "upper": 0.5}
+
+
+def test_a_scalars_line_dragged_across_its_baseline_is_refused(session):
+    from dstf.authoring.errors import user_text
+
+    _root_leaf_on_a(session, copy.deepcopy(BASELINE_SCALAR_LEAF))
+    y = _scalar_reference(session) - 0.5
+    with pytest.raises(HandleEditError) as box:
+        _drag(session, "/metrics/scalar/upper", {"y0": y, "y1": y}, model_id=A)
+    assert str(box.value) == (
+        "/metrics: scalar/upper: the upper side would cross its target"
+    )
+    assert user_text(box.value) == "the upper side would cross its target"
+
+
+def test_a_scalars_line_of_a_criterion_that_is_not_open_is_refused(session):
+    _root_leaf_on_a(session, copy.deepcopy(BASELINE_SCALAR_LEAF))
+    y = _scalar_reference(session) + 0.5
+    elsewhere = Selection(
+        tests=frozenset({A}), variable="x", leaf_path="/metrics/children/9"
+    )
+    with pytest.raises(HandleEditError, match="is not a handle of") as box:
+        EditOnPlot().act(
+            SessionView(session, elsewhere),
+            kind="handle",
+            model_id=A,
+            variable="x",
+            handle="/metrics/scalar/upper",
+            shape={"y0": y, "y1": y},
+        )
+    assert box.value.reason == "Open that criterion to drag its lines."

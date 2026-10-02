@@ -1053,3 +1053,35 @@ def test_a_context_series_draws_no_criteria_of_its_own():
     added = fig["data"][len(alone["data"]) :]
     assert [tr["meta"]["kind"] for tr in added] == ["context"]
     assert fig["layout"]["shapes"] == alone["layout"]["shapes"]
+
+
+def test_a_scalars_allowed_lines_are_drawn_on_the_report():
+    """The one tolerance the report never drew: a scalar scored against its
+    baseline shows `baseline + upper` and `baseline − lower`."""
+    from dstf.comparison.algorithms import _compare_scalar
+    from dstf.comparison.sides import Sides
+
+    t = np.linspace(0.0, 10.0, 11)
+    flat = np.full_like(t, 4.0)
+    vc = _compare_scalar(
+        t,
+        flat,
+        t,
+        flat,
+        reduction="final",
+        tolerance=Sides(0.25, 0.5),
+        tolerance_mode="abs",
+        min_value=None,
+        max_value=None,
+    )
+    vc.name = "x"
+    view = build_view(
+        "x", act_time=t, act_values=flat, ref_time=t, ref_values=flat,
+        leaves=[_stamped(vc)],
+    )  # fmt: skip
+    shapes = {s.get("name"): s for s in variable_figure(view)["layout"]["shapes"]}
+    upper = shapes["/metrics/children/0/scalar/upper"]
+    lower = shapes["/metrics/children/0/scalar/lower"]
+    assert (upper["y0"], upper["y1"]) == (4.5, 4.5)
+    assert (lower["y0"], lower["y1"]) == (3.75, 3.75)
+    assert upper["type"] == lower["type"] == "line"

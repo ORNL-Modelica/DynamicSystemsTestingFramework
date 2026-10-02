@@ -38,6 +38,24 @@
     },
     {
       "type": "scatter",
+      "mode": "markers",
+      "name": null,
+      "id": "anchor:/metrics/children/0/scalar/upper",
+      "n": 1,
+      "xaxis": null,
+      "yaxis": null
+    },
+    {
+      "type": "scatter",
+      "mode": "markers",
+      "name": null,
+      "id": "anchor:/metrics/children/0/scalar/lower",
+      "n": 1,
+      "xaxis": null,
+      "yaxis": null
+    },
+    {
+      "type": "scatter",
       "mode": "lines",
       "name": "Signed error",
       "id": "error/signed",
@@ -74,6 +92,18 @@
     {
       "type": "line",
       "name": "/metrics/children/0/scalar/reference",
+      "xref": "x",
+      "yref": "y"
+    },
+    {
+      "type": "line",
+      "name": "/metrics/children/0/scalar/upper",
+      "xref": "x",
+      "yref": "y"
+    },
+    {
+      "type": "line",
+      "name": "/metrics/children/0/scalar/lower",
       "xref": "x",
       "yref": "y"
     }

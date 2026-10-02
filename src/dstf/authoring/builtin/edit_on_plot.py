@@ -338,6 +338,16 @@ class EditOnPlot:
             )
         # Several leaves on one variable can refuse the same local id: every
         # refusal below names its leaf.
+        # The number a tolerance side is measured from, where the leaf's own
+        # geometry holds one: a scalar's baseline scalar.
+        target = next(
+            (
+                p.value
+                for p in (leaf.geometry if leaf else ())
+                if isinstance(p, HLine) and p.id == f"{path}/scalar/reference"
+            ),
+            None,
+        )
         try:
             position = _position(primitive, shape if isinstance(shape, dict) else {})
             if position is None:
@@ -354,6 +364,7 @@ class EditOnPlot:
                         if view.ref_time is not None and view.ref_values is not None
                         else None
                     ),
+                    target=target,
                 )
             )
         except HandleEditError as e:

@@ -418,10 +418,61 @@ class TestScalarGeometry:
             max_value=None,
         )
         lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
-        assert set(lines) == {"scalar/actual", "scalar/reference"}
+        assert set(lines) == {
+            "scalar/actual",
+            "scalar/reference",
+            "scalar/upper",
+            "scalar/lower",
+        }
         assert lines["scalar/reference"].kind == "ref"
         assert lines["scalar/reference"].value == pytest.approx(1.0)
         assert lines["scalar/actual"].passed is True and vc.passed
+
+    @staticmethod
+    def _allowed(ref, tol, mode="abs", **bounds):
+        t = np.linspace(0.0, 1.0, 11)
+        vc = _compare_scalar(
+            t,
+            np.full_like(t, ref),
+            t,
+            np.full_like(t, ref),
+            reduction="final",
+            tolerance=tol,
+            tolerance_mode=mode,
+            min_value=bounds.get("lo"),
+            max_value=bounds.get("hi"),
+        )
+        return {p.id: (p.value, p.kind) for p in vc.geometry if isinstance(p, HLine)}
+
+    def test_the_baseline_form_draws_what_it_allows(self):
+        """Two lines, as the bounds form draws its bounds: `baseline + upper`
+        and `baseline − lower`."""
+        from dstf.comparison.sides import Sides
+
+        lines = self._allowed(4.0, Sides(0.25, 0.5))
+        assert lines["scalar/upper"] == (4.5, "handle")
+        assert lines["scalar/lower"] == (3.75, "handle")
+        # A number is both sides.
+        lines = self._allowed(4.0, 0.25)
+        assert (lines["scalar/upper"][0], lines["scalar/lower"][0]) == (4.25, 3.75)
+
+    def test_rel_draws_each_side_as_that_fraction_of_the_baselines_magnitude(self):
+        from dstf.comparison.sides import Sides
+
+        lines = self._allowed(-4.0, Sides(0.25, 0.5), "rel")
+        assert lines["scalar/upper"] == (-2.0, "handle")
+        assert lines["scalar/lower"] == (-5.0, "handle")
+
+    def test_a_zero_baseline_draws_the_plain_side_as_it_is_scored(self):
+        from dstf.comparison.sides import Sides
+
+        lines = self._allowed(0.0, Sides(0.25, 0.5), "rel")
+        assert lines["scalar/upper"] == (0.5, "handle")
+        assert lines["scalar/lower"] == (-0.25, "handle")
+
+    def test_the_bounds_form_draws_no_tolerance(self):
+        lines = self._allowed(4.0, 0.1, lo=0.0, hi=5.0)
+        assert set(lines) == {"scalar/actual", "scalar/min", "scalar/max"}
 
 
 class TestEventTimingGeometry:
