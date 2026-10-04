@@ -2254,7 +2254,7 @@ def _c_run(tmp_path, status: str | None, live: str | None = None) -> Shell:
 #: The lines of the Test page that say why a test has nothing to show.
 _REFUSED = (
     "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
-    " (the baseline's comparison.tolerance is {'lower': 0.1, 'upper': 0.2})"
+    ' (the baseline\'s comparison.tolerance is {"lower": 0.1, "upper": 0.2})'
 )
 
 

@@ -446,10 +446,16 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
     comparison's sentence and applies nothing — ``spec-update`` and the
     tool's Save alike (`apply_validated_patches`)."""
 
-    RULE = (
-        "the base tolerance must be a number; a lower/upper pair belongs on a "
-        "criterion (test_spec.json comparison.tolerance is "
-    )
+    WHERE = "test_spec.json comparison.tolerance"
+
+    def _said(self, bad) -> str:
+        shown = json.dumps(bad)
+        shown = shown if len(shown) <= 60 else shown[:60] + "…"
+        pair = "; a lower/upper pair belongs on a criterion"
+        return (
+            f"the base tolerance must be a number{pair if isinstance(bad, dict) else ''}"
+            f" ({self.WHERE} is {shown})"
+        )
 
     @staticmethod
     def _spec(tmp_path, entry_extra):
@@ -500,9 +506,7 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
         model = "MyLib.New" if how == "new-entry" else "MyLib.A"
         assert _run_spec_update(spec, self._patch(tmp_path, ops, model)) == 1
         out = capsys.readouterr().out
-        shown = repr(bad)
-        shown = shown if len(shown) <= 60 else shown[:60] + "…"
-        assert f"{self.RULE}{shown})" in out
+        assert self._said(bad) in out
         assert "Applied" not in out
         assert spec.read_bytes() == before
 
@@ -513,6 +517,34 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
         assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
         (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
         assert entry["comparison"]["tolerance"] == value
+
+    @pytest.mark.parametrize(
+        "before,after", [(1, True), (0, False), (1.0, True)], ids=repr
+    )
+    def test_a_bool_is_not_the_number_it_equals(self, tmp_path, capsys, before, after):
+        """Python's ``True == 1``: read as "unchanged", ``1 → true`` wrote a
+        bool base the comparison then refuses."""
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": before}})
+        on_disk = spec.read_bytes()
+        ops = [{"op": "replace", "path": "/comparison/tolerance", "value": after}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 1
+        out = capsys.readouterr().out
+        assert self._said(after) in out
+        assert "Applied" not in out
+        assert spec.read_bytes() == on_disk
+
+    @pytest.mark.parametrize("bad", ["NaN", "true", "false", '"abc"', "[1]"])
+    def test_a_bad_base_the_patch_did_not_touch_is_unchanged(self, tmp_path, bad):
+        """NaN is not equal to itself, and ``true`` is a bool both before
+        and after: neither is a base this patch wrote."""
+        spec = tmp_path / "test_spec.json"
+        spec.write_text(
+            '{"tests": [{"model": "MyLib.A", "comparison": {"tolerance": %s}}]}' % bad,
+            encoding="utf-8",
+        )
+        ops = [{"op": "add", "path": "/comparison/variable_overrides", "value": {}}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
+        assert '"variable_overrides": {}' in spec.read_text(encoding="utf-8")
 
     def test_a_bad_base_already_there_does_not_block_an_unrelated_patch(self, tmp_path):
         """The patch did not write it: refusing would leave no way to edit

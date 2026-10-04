@@ -10,6 +10,7 @@ earlier and ``upper`` how much later.
 
 from __future__ import annotations
 
+import json
 import math
 import numbers
 from dataclasses import dataclass
@@ -52,14 +53,20 @@ def base_tolerance_refused(where: str, value: object) -> str:
     """What a base tolerance that is not :func:`is_base_tolerance` is refused
     with — a test's comparison's ``error_message``, a project's config
     error: the rule, then where the value is written (``where``, in words)
-    and what it is, cut to 60 characters."""
-    text = repr(value)
+    and what it is, cut to 60 characters. The value reads as the JSON file
+    holds it (``true``, ``NaN``, ``{"lower": …}``), not as Python spells it;
+    its ``repr`` only where JSON cannot write it. Where a pair belongs is
+    said to a dict alone: a string or a list was no attempt at one."""
+    try:
+        text = json.dumps(value, allow_nan=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = repr(value)
     if len(text) > 60:
         text = text[:60] + "…"
-    return (
-        "the base tolerance must be a number; a lower/upper pair belongs on a "
-        f"criterion ({where} is {text})"
-    )
+    rule = "the base tolerance must be a number"
+    if isinstance(value, dict):
+        rule += "; a lower/upper pair belongs on a criterion"
+    return f"{rule} ({where} is {text})"
 
 
 def parse_sides(value: object, what: str) -> Sides:
@@ -92,9 +99,10 @@ def as_written(sides: Sides) -> float | dict:
 
 def sides_text(sides: Sides, fmt: str = ".3e") -> str:
     """``sides`` in a sentence: the one number when equal (a minus as
-    U+2212), else :func:`signed_sides`."""
+    U+2212; a zero reads as zero whatever its sign bit), else
+    :func:`signed_sides`."""
     if sides.equal:
-        text = format(sides.upper, fmt)
+        text = format(abs(sides.upper) if sides.upper == 0 else sides.upper, fmt)
         return f"−{text[1:]}" if text.startswith("-") else text
     return signed_sides(sides, fmt)
 

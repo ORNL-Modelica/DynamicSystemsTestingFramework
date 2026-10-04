@@ -3521,15 +3521,17 @@ class TestBaselineFreeCheckTakesAnyTolerance:
         assert _test_is_baseline_free(flat, 1e-4) is free
 
 
-def _cut(value):
-    """``value`` as the refusal prints it: its repr, cut at 60 characters."""
-
-    class _Repr:
-        def __repr__(self):
-            text = repr(value)
-            return text if len(text) <= 60 else text[:60] + "…"
-
-    return _Repr()
+def _said(where: str, value) -> str:
+    """The refusal of ``value``, written at ``where``: the value as JSON
+    holds it, cut at 60 characters; a dict alone is told where a pair
+    belongs."""
+    text = json.dumps(value)
+    text = text if len(text) <= 60 else text[:60] + "…"
+    pair = "; a lower/upper pair belongs on a criterion"
+    return (
+        f"the base tolerance must be a number{pair if isinstance(value, dict) else ''}"
+        f" ({where} is {text})"
+    )
 
 
 class TestABaseToleranceIsANumber:
@@ -3537,9 +3539,6 @@ class TestABaseToleranceIsANumber:
     spec's or the reference JSON's — is one number. Anything else there
     refuses the test: it is never scored at the next tolerance down."""
 
-    RULE = (
-        "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
-    )
     SPEC = "test_spec.json comparison.tolerance"
     BASELINE = "the baseline's comparison.tolerance"
 
@@ -3551,7 +3550,7 @@ class TestABaseToleranceIsANumber:
     )
 
     def _refused(self, comp, where, bad):
-        assert comp.error_message == f"{self.RULE} ({where} is {bad!r})"
+        assert comp.error_message == _said(where, bad)
         assert not comp.passed
         assert comp.sim_success and comp.variables == []
         assert comp.test_id == "0001"
@@ -3625,18 +3624,19 @@ class TestABaseToleranceIsANumber:
         comp = _sides_compare(
             {"metric": "points"}, flat=flat, ref_comparison={"tolerance": bad}
         )
-        self._refused(comp, self.BASELINE, _cut(bad))
+        self._refused(comp, self.BASELINE, bad)
         comp = _sides_compare({"metric": "points"}, flat=flat, comparison_tolerance=bad)
-        self._refused(comp, self.SPEC, _cut(bad))
+        self._refused(comp, self.SPEC, bad)
 
     def test_the_sentence_cuts_a_long_value_at_60_characters(self):
         from dstf.comparison.comparator import base_tolerance_refused
 
-        at_60 = "a" * 58  # repr adds the two quotes
-        assert base_tolerance_refused("X", at_60) == f"{self.RULE} (X is {at_60!r})"
-        over = repr("a" * 59)
+        at_60 = "a" * 58  # the two quotes make 60
+        assert base_tolerance_refused("X", at_60) == (
+            f'the base tolerance must be a number (X is "{at_60}")'
+        )
         assert base_tolerance_refused("X", "a" * 59) == (
-            f"{self.RULE} (X is {over[:60]}…)"
+            f'the base tolerance must be a number (X is "{"a" * 59}…)'
         )
 
     def test_a_direct_callers_project_tolerance_is_judged_too(self):
@@ -3651,7 +3651,7 @@ class TestABaseToleranceIsANumber:
         comp = compare_test(
             test, result, {"test_id": "0001"}, default_tolerance=float("nan")
         )
-        self._refused(comp, "the project's tolerance", _cut(float("nan")))
+        self._refused(comp, "the project's tolerance", float("nan"))
 
     @pytest.mark.parametrize("raw", [0, 0.0, -0.0])
     def test_an_explicit_zero_in_the_spec_file_is_carried(self, tmp_path, raw):
@@ -3712,7 +3712,7 @@ class TestABaseToleranceIsANumber:
             variables=[VariableResult(index=1, name="x", time=time, values=act)],
         )
         comp = compare_one(test, result, _Store())
-        assert comp.error_message == f"{self.RULE} ({self.SPEC} is {bad!r})"
+        assert comp.error_message == _said(self.SPEC, bad)
         assert classify(comp) == "FAIL" and comp.variables == []
         assert comp.has_reference is False and comp.test_id is None
         from dstf.reporting.status import refusal

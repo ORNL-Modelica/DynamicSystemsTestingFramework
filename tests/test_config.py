@@ -658,9 +658,18 @@ class TestTheProjectToleranceIsOneFiniteNumber:
     every other bad testing.json value is — never a traceback, and never
     ``"0.5"`` or ``true`` read as a number."""
 
-    RULE = (
-        "the base tolerance must be a number; a lower/upper pair belongs on a criterion"
-    )
+    RULE = "the base tolerance must be a number"
+
+    def _said(self, where: str, value: object) -> str:
+        """The value as JSON holds it, cut at 60 characters; a dict alone
+        is told where a pair belongs."""
+        shown = json.dumps(value)
+        if len(shown) > 60:
+            shown = shown[:60] + "…"
+        pair = "; a lower/upper pair belongs on a criterion"
+        return (
+            f"{self.RULE}{pair if isinstance(value, dict) else ''} ({where} is {shown})"
+        )
 
     def _write(self, tmp_path: Path, raw: str) -> Path:
         cfg_dir = tmp_path / "proj"
@@ -689,10 +698,7 @@ class TestTheProjectToleranceIsOneFiniteNumber:
         path = self._write(tmp_path, raw)
         with pytest.raises(ConfigError) as exc:
             Config(config_file=str(path))
-        shown = repr(json.loads(raw))
-        if len(shown) > 60:
-            shown = shown[:60] + "…"
-        assert str(exc.value) == f"{self.RULE} (testing.json tolerance is {shown})"
+        assert str(exc.value) == self._said("testing.json tolerance", json.loads(raw))
 
     @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("-1", -1.0)])
     def test_null_is_the_default_and_a_number_is_itself(self, tmp_path, raw, value):
@@ -704,13 +710,13 @@ class TestTheProjectToleranceIsOneFiniteNumber:
         path = self._write(tmp_path, "0.5")
         with pytest.raises(ConfigError) as exc:
             Config(config_file=str(path), tolerance=bad)
-        assert str(exc.value) == f"{self.RULE} (--tolerance is {bad!r})"
+        assert str(exc.value) == self._said("--tolerance", bad)
 
     @pytest.mark.parametrize(
         "file_raw,flag,said",
         [
-            ('"0.5"', [], "testing.json tolerance is '0.5'"),
-            ("0.5", ["--tolerance", "nan"], "--tolerance is nan"),
+            ('"0.5"', [], 'testing.json tolerance is "0.5"'),
+            ("0.5", ["--tolerance", "nan"], "--tolerance is NaN"),
         ],
     )
     def test_the_cli_says_it_in_one_line_and_exits_2(

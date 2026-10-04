@@ -141,6 +141,80 @@ class TestText:
         v = math.pi
         assert sides_text(Sides(v, v)) == f"{v:.3e}"
 
+    def test_equal_zero_sides_read_as_zero_whatever_the_sign_bit(self):
+        """``-0.0`` is zero for equal sides too: no minus."""
+        for sides in (Sides(-0.0, -0.0), Sides(0.0, -0.0), Sides(-0.0, 0.0)):
+            assert sides_text(sides) == "0.000e+00" == sides_text(Sides(0.0, 0.0))
+            assert sides_text(sides, "g") == "0"
+
+
+class TestTheRefusalSentence:
+    """`base_tolerance_refused`: the rule, where the value is written, and
+    the value as the JSON file holds it — not Python's spelling of it."""
+
+    RULE = "the base tolerance must be a number"
+    PAIR = "; a lower/upper pair belongs on a criterion"
+
+    @pytest.mark.parametrize(
+        "value,shown",
+        [
+            (True, "true"),
+            (False, "false"),
+            ("abc", '"abc"'),
+            ("0.5", '"0.5"'),
+            ("é", '"é"'),
+            ([1], "[1]"),
+            ([True, None], "[true, null]"),
+            (float("nan"), "NaN"),
+            (float("inf"), "Infinity"),
+            (-float("inf"), "-Infinity"),
+        ],
+        ids=repr,
+    )
+    def test_a_value_reads_as_json_and_only_a_dict_is_sent_to_a_criterion(
+        self, value, shown
+    ):
+        from dstf.comparison.sides import base_tolerance_refused
+
+        assert base_tolerance_refused("X", value) == f"{self.RULE} (X is {shown})"
+
+    @pytest.mark.parametrize(
+        "value,shown",
+        [
+            ({"lower": 0.1, "upper": 0.2}, '{"lower": 0.1, "upper": 0.2}'),
+            ({"lower": 0.1}, '{"lower": 0.1}'),
+            ({}, "{}"),
+        ],
+        ids=repr,
+    )
+    def test_a_dict_is_told_where_a_pair_belongs(self, value, shown):
+        from dstf.comparison.sides import base_tolerance_refused
+
+        assert base_tolerance_refused("X", value) == (
+            f"{self.RULE}{self.PAIR} (X is {shown})"
+        )
+
+    def test_a_long_value_is_cut_at_60_characters(self):
+        from dstf.comparison.sides import base_tolerance_refused
+
+        at_60 = "a" * 58  # the two quotes make 60
+        assert base_tolerance_refused("X", at_60) == f'{self.RULE} (X is "{at_60}")'
+        assert base_tolerance_refused("X", "a" * 59) == (
+            f'{self.RULE} (X is "{"a" * 59}…)'
+        )
+        assert base_tolerance_refused("X", 10**400) == (
+            f"{self.RULE} (X is 1{'0' * 59}…)"
+        )
+
+    def test_a_value_json_cannot_write_falls_back_to_its_repr(self):
+        from dstf.comparison.sides import base_tolerance_refused
+
+        assert base_tolerance_refused("X", {1, 2} - {2}) == f"{self.RULE} (X is {{1}})"
+        assert base_tolerance_refused("X", 1 + 2j) == f"{self.RULE} (X is (1+2j))"
+        cycle: list = []
+        cycle.append(cycle)
+        assert base_tolerance_refused("X", cycle) == f"{self.RULE} (X is [[...]])"
+
 
 class TestIsBaseTolerance:
     """A test's base tolerance is ONE finite number: what ``parse_sides``

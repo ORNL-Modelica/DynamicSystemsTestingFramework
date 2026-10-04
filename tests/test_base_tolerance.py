@@ -41,12 +41,15 @@ KINDS = {
 
 
 def sentence(source: str, value: object) -> str:
-    text = repr(value)
+    """The refusal: the value as the JSON file holds it, cut at 60
+    characters; a dict alone is told where a pair belongs."""
+    text = json.dumps(value)
     if len(text) > 60:
         text = text[:60] + "…"
+    pair = "; a lower/upper pair belongs on a criterion"
     return (
-        "the base tolerance must be a number; a lower/upper pair belongs on a "
-        f"criterion ({source} is {text})"
+        f"the base tolerance must be a number{pair if isinstance(value, dict) else ''}"
+        f" ({source} is {text})"
     )
 
 

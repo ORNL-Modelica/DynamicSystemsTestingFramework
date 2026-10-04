@@ -182,6 +182,17 @@ def _base_tolerance(entry: dict | None) -> object:
     return comparison.get("tolerance") if isinstance(comparison, dict) else None
 
 
+def _same_base(before: object, after: object) -> bool:
+    """Whether the patch left the base as it was: the same object (a NaN is
+    not equal to itself), or an equal value — and a bool is no number's
+    equal, though Python's ``True == 1``: ``1 → true`` is a change."""
+    if after is before:
+        return True
+    if isinstance(before, bool) != isinstance(after, bool):
+        return False
+    return after == before
+
+
 def validate_entry_base_tolerance(data: dict, model_id: str, before: object) -> None:
     """The patched entry's base tolerance is ONE finite number, or unset —
     when the patch changed it from ``before``. The comparison refuses a test
@@ -191,7 +202,7 @@ def validate_entry_base_tolerance(data: dict, model_id: str, before: object) -> 
     from ..comparison.sides import base_tolerance_refused, is_base_tolerance
 
     after = _base_tolerance(spec_entry(data, model_id))
-    if after is None or is_base_tolerance(after) or after is before or after == before:
+    if after is None or is_base_tolerance(after) or _same_base(before, after):
         return
     text = base_tolerance_refused("test_spec.json comparison.tolerance", after)
     raise PatchError(text, reason=text)
