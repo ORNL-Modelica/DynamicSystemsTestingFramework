@@ -332,6 +332,27 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    three lines with two single-line fields stranded below it. */
 .dstf-fields .dstf-field-wide { order: 1; }
 .dstf-field-wide { width: 100%; }
+/* A tolerance's two sides (`forms.sides_control`): the lower field, the
+   link toggle and the upper field, one group on one line, the toggle level
+   with the two input lines. A group with a hint ("in effect: …") makes its
+   first field wide enough for it on one line — never wider than the row
+   leaves beside the toggle and the second field. Under 420 px of row (the
+   editor beside an open drawer in a 900 px window: 415) that width is
+   dropped rather than push the editor wider than its card: the group takes
+   the row, its first field what the row has left, and it wraps where even
+   that is too little. The row a group sits in is the container that says
+   how much room there is: the form's, or a table's rows. */
+.dstf-fields, .dstf-table-scroll { container-type: inline-size; }
+.dstf-sides { flex-wrap: nowrap; gap: 4px; }
+.dstf-sides > .q-btn { flex: none; margin-top: 8px; }
+.dstf-sides-hinted > .q-field:first-child {
+  min-width: min(var(--dstf-hint-width), calc(100cqw - 180px));
+}
+@container (width < 420px) {
+  .dstf-sides { flex-wrap: wrap; }
+  .dstf-sides-hinted { flex: 1 1 100%; }
+  .dstf-sides-hinted > .q-field:first-child { min-width: 140px; flex: 1 1 140px; }
+}
 /* Focus (board 5A): "Showing 1 of N plots", the switcher naming it, and
    the way back to all of them, on the accent tint so the page says at a
    glance that what is below it is one plot of several. */

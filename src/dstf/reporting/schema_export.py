@@ -15,12 +15,26 @@ Downstream uses: IDE autocomplete, LLM authoring, tool handoff.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from ..comparison.mode_schema import derive_schema
 from ..comparison.registry import combinator_names, metric_names, metrics
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
+
+#: A tolerance with two sides: one number (both sides), or exactly
+#: ``lower`` and ``upper`` — what :func:`~dstf.comparison.sides.parse_sides`
+#: takes. A pair with one side, or with a third key, is neither.
+_SIDES = [
+    {"type": "number"},
+    {
+        "type": "object",
+        "properties": {"lower": {"type": "number"}, "upper": {"type": "number"}},
+        "required": ["lower", "upper"],
+        "additionalProperties": False,
+    },
+]
 
 #: One variable of the result: not blank, not a pattern.
 _PLOT_NAME = {"type": "string", "pattern": "^[^*?]*[^*?\\s][^*?]*$"}
@@ -43,6 +57,8 @@ def _field_to_schema(field) -> dict:
             node["oneOf"] = [base, {"type": "null"}]
         else:
             node.update(base)
+    elif field.type == "sides":
+        node["oneOf"] = copy.deepcopy(_SIDES)
     elif field.type == "passthrough":
         # Complex / unknown — allow any JSON shape. Documentation hints
         # via description if we have one.

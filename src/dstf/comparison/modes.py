@@ -216,13 +216,15 @@ class PointsConfig:
             ),
             # As ``_compare_points`` reads them, all with ``.get``: a blank
             # ``time`` is the documented trace-end sentinel (``time: null``),
-            # a blank ``value`` follows the baseline.
+            # a blank ``value`` follows the baseline. A ``sides?`` cell is a
+            # number or a lower/upper pair; a time tolerance's two sides are
+            # how much earlier and how much later.
             "columns": (
                 ("time", "float?"),
                 ("value", "float?"),
-                ("tolerance", "float?"),
+                ("tolerance", "sides?"),
                 ("tolerance_mode", ("abs", "rel")),
-                ("time_tolerance", "float?"),
+                ("time_tolerance", "sides?", ("before", "after")),
             ),
         },
     )
@@ -293,6 +295,7 @@ class EventTimingConfig:
                 "events. Per-event overrides in the declared ``events`` "
                 "list take precedence when present."
             ),
+            "side_labels": ("early", "late"),
         },
     )
     count_must_match: bool = field(
@@ -318,7 +321,10 @@ class EventTimingConfig:
                 "in ``ref_time``. Edit the table on the authoring tool's "
                 "Edit on plot tab."
             ),
-            "columns": (("time", "float"), ("tolerance", "float?")),
+            "columns": (
+                ("time", "float"),
+                ("tolerance", "sides?", ("early", "late")),
+            ),
         },
     )
 
@@ -354,7 +360,7 @@ class DominantFrequencyConfig:
             # meaningless. The reader defaults ``tolerance_mode`` to "rel".
             "columns": (
                 ("freq", "float"),
-                ("tolerance", "float?"),
+                ("tolerance", "sides?"),
                 ("tolerance_mode", ("rel", "abs")),
             ),
         },

@@ -6,10 +6,12 @@ from typing import Literal
 import pytest
 
 pytest.importorskip("nicegui")
+from nicegui import ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
-from dstf.authoring.forms import render_form  # noqa: E402
+from dstf.authoring.forms import SidesControl, render_form  # noqa: E402
 from dstf.comparison.mode_schema import derive_schema  # noqa: E402
+from dstf.comparison.sides import Sides  # noqa: E402
 
 
 @dataclasses.dataclass
@@ -203,3 +205,308 @@ async def test_a_field_with_a_hint_is_wide_enough_for_it_on_one_line():
         width = int(c["tolerance"]._style["min-width"].removesuffix("px"))
         assert width >= len(hint) * HINT_PX_PER_CHAR + HINT_PADDING_PX
         assert "min-width" not in c["note"]._style
+
+
+# -- a tolerance's two sides: two fields and a link toggle ---------------------
+
+HINT = "in effect: 0.01 (the test's tolerance)"
+
+
+def _sides(value, *, hint=None, side_labels=("−", "+")):
+    """A page holding one `sides_control`: what ``on_change`` was handed, in
+    order, the control once built, and the page's root."""
+    from dstf.authoring.forms import sides_control
+
+    seen: list = []
+    made: dict = {}
+
+    def root():
+        made["g"] = sides_control(
+            "Tol", value, seen.append, side_labels=side_labels, hint=hint, mark="t"
+        )
+
+    return seen, made, root
+
+
+async def test_linked_typing_in_either_field_sets_both_and_hands_over_once():
+    """The call COUNT: setting the other field from the server fires that
+    field's own change handler, and unguarded every keystroke reached
+    `on_change` twice — which "one pending edit" cannot see (the Session
+    folds two replaces of one leaf)."""
+    seen, made, root = _sides(None)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert g.linked and (g.lower.value, g.upper.value) == (None, None)
+        assert g.lower.props["label"] == "− Tol" and g.upper.props["label"] == "+ Tol"
+        g.lower.set_value(0.05)
+        assert g.upper.value == 0.05
+        assert seen == [0.05]
+        g.upper.set_value(0.07)
+        assert g.lower.value == 0.07
+        assert seen == [0.05, 0.07]
+        # Cleared in either: both clear, and the tolerance is unset.
+        g.upper.set_value(None)
+        assert g.lower.value is None
+        assert seen == [0.05, 0.07, None]
+        assert g.linked and not g.half()
+        assert g.lower.error is None and g.upper.error is None
+
+
+async def test_the_side_labels_and_the_marks_are_the_callers():
+    seen, made, root = _sides(0.2, side_labels=("before", "after"))
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert g.lower.props["label"] == "before Tol"
+        assert g.upper.props["label"] == "after Tol"
+        assert user.find(marker="t:lower").elements == {g.lower}
+        assert user.find(marker="t:upper").elements == {g.upper}
+        assert user.find(marker="t:link").elements == {g.link}
+        assert (g.lower.value, g.upper.value) == (0.2, 0.2)
+        # Both fields reserve the bottom line, as every field of a row does.
+        assert "bottom-slots" in g.lower.props and "bottom-slots" in g.upper.props
+
+
+async def test_the_toggle_says_its_state():
+    seen, made, root = _sides(0.2)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+
+        def state():
+            (tip,) = [c for c in g.link.default_slot.children]
+            return g.link.props["icon"], g.link.props["aria-pressed"], tip.text
+
+        assert state() == ("link", "true", "Linked: both sides change together")
+        assert g.link.props["aria-label"] == "Link the two sides of Tol"
+        user.find(marker="t:link").click()
+        assert state() == (
+            "link_off",
+            "false",
+            "Unlinked: each side is set on its own",
+        )
+        user.find(marker="t:link").click()
+        assert state() == ("link", "true", "Linked: both sides change together")
+
+
+async def test_a_pair_opens_unlinked_and_typing_hands_over_the_pair():
+    """The shape is the link state: a pair is unlinked — equal sides too."""
+    seen, made, root = _sides({"lower": 0.1, "upper": 0.3})
+    equal = _sides({"lower": 0.2, "upper": 0.2})
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert not g.linked and g.link.props["icon"] == "link_off"
+        assert (g.lower.value, g.upper.value) == (0.1, 0.3)
+        g.lower.set_value(0.2)
+        assert g.upper.value == 0.3  # its own side only
+        assert seen == [{"lower": 0.2, "upper": 0.3}]
+        g.upper.set_value(0.2)
+        assert seen[-1] == {"lower": 0.2, "upper": 0.2}  # equal, and still a pair
+        assert not g.linked
+    async with user_simulation(root=equal[2]) as user:
+        await user.open("/")
+        g = equal[1]["g"]
+        assert not g.linked and (g.lower.value, g.upper.value) == (0.2, 0.2)
+        g.lower.set_value(0.4)
+        assert g.upper.value == 0.2 and equal[0] == [{"lower": 0.4, "upper": 0.2}]
+
+
+async def test_a_pair_with_one_side_blank_hands_over_nothing_and_is_marked():
+    """Half a pair is no value: nothing is handed over, the blank field
+    says "required" through its own validation — the one mark NiceGUI does
+    not reset — and `half()` tells a caller its last value is stale."""
+    seen, made, root = _sides({"lower": 0.1, "upper": 0.3})
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert not g.half()
+        g.lower.set_value(None)
+        assert seen == []
+        assert g.half()
+        assert g.lower.error == "required" and g.upper.error is None
+        g.lower.set_value(0.25)
+        assert seen == [{"lower": 0.25, "upper": 0.3}]
+        assert not g.half() and g.lower.error is None
+        # The other side, and then both blank: unset, and linked again.
+        g.upper.set_value(None)
+        assert g.half() and g.upper.error == "required" and g.lower.error is None
+        assert seen == [{"lower": 0.25, "upper": 0.3}]
+        g.lower.set_value(None)
+        assert seen == [{"lower": 0.25, "upper": 0.3}, None]
+        assert g.linked and g.link.props["icon"] == "link"
+        assert not g.half()
+        assert g.lower.error is None and g.upper.error is None
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "larger"), [(0.5, 0.2, 0.5), (0.2, 0.5, 0.5), (0.3, 0.3, 0.3)]
+)
+async def test_unlinking_writes_the_number_twice_and_relinking_the_larger_side(
+    lower, upper, larger
+):
+    """Re-link takes the LARGER side for both, whichever it is: a re-link
+    never narrows what the criterion allows."""
+    seen, made, root = _sides(0.2)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        user.find(marker="t:link").click()
+        assert seen == [{"lower": 0.2, "upper": 0.2}]
+        assert not g.linked and (g.lower.value, g.upper.value) == (0.2, 0.2)
+        g.lower.set_value(lower)
+        g.upper.set_value(upper)
+        seen.clear()
+        user.find(marker="t:link").click()
+        assert seen == [larger]
+        assert g.linked and (g.lower.value, g.upper.value) == (larger, larger)
+        g.lower.set_value(0.9)  # linked again: both move, one call
+        assert g.upper.value == 0.9 and seen == [larger, 0.9]
+
+
+async def test_unset_unlinked_stays_unset_and_a_half_pair_relinks_to_its_side():
+    seen, made, root = _sides(None, hint=HINT)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        user.find(marker="t:link").click()
+        assert seen == [] and not g.linked
+        assert (g.lower.value, g.upper.value) == (None, None)
+        assert g.lower.error is None and g.upper.error is None  # nothing required
+        assert g.lower.props.get("hint") == HINT
+        # One side typed, unlinked: half a pair.
+        g.upper.set_value(0.4)
+        assert seen == [] and g.half() and g.lower.error == "required"
+        # Linked again: the one side there is both.
+        user.find(marker="t:link").click()
+        assert seen == [0.4] and (g.lower.value, g.upper.value) == (0.4, 0.4)
+        assert not g.half() and g.lower.error is None
+        # And unset, re-linked: nothing is written.
+        seen.clear()
+        g.lower.set_value(None)
+        assert seen == [None]
+        user.find(marker="t:link").click()
+        user.find(marker="t:link").click()
+        assert seen == [None] and g.linked
+
+
+async def test_the_hint_shows_under_the_first_field_only_while_both_are_empty():
+    from dstf.authoring.forms import hint_width
+
+    seen, made, root = _sides(None, hint=HINT)
+    pair = _sides({"lower": 0.1, "upper": 0.3}, hint=HINT)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert g.lower.props.get("hint") == HINT
+        assert not g.upper.props.get("hint")
+        g.upper.set_value(0.5)
+        assert not g.lower.props.get("hint") and not g.upper.props.get("hint")
+        g.lower.set_value(None)
+        assert g.lower.props.get("hint") == HINT
+        assert seen == [0.5, None]
+        # The width the hint needs on one line is the stylesheet's to apply
+        # (it drops it where the row has no room): a variable on the group,
+        # no min-width — and no inline `flex-wrap`, which no rule overrides.
+        assert "dstf-sides-hinted" in g.classes
+        assert g._style["--dstf-hint-width"] == f"{hint_width(HINT)}px"
+        assert hint_width(HINT) >= len(HINT) * 5.4 + 24
+        assert "min-width" not in g.lower._style and "min-width" not in g._style
+        assert "flex-wrap" not in g._style
+    async with user_simulation(root=pair[2]) as user:
+        await user.open("/")
+        g = pair[1]["g"]
+        assert "dstf-sides" in g.classes
+        assert not g.lower.props.get("hint")  # a side holds a value
+        g.lower.set_value(None)
+        assert not g.lower.props.get("hint")  # the other still does
+        g.upper.set_value(None)
+        assert g.lower.props.get("hint") == HINT
+
+
+@pytest.mark.parametrize(
+    "written", ["0.01", True, {"lower": 0.1}, {"lower": "a", "upper": 0.3}, [1]]
+)
+async def test_a_value_that_is_no_tolerance_still_opens(written):
+    """What the file holds may be the leaf's config error; its editor opens
+    all the same, each side that is no number shown blank."""
+    seen, made, root = _sides(written)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert g.linked == (not isinstance(written, dict))
+        assert g.lower.value in (None, 0.1) and g.upper.value in (None, 0.3)
+        assert seen == []
+
+
+@dataclasses.dataclass(frozen=True)
+class _Sided:
+    tolerance: Sides = dataclasses.field(
+        default=Sides(1e-4, 1e-4),
+        metadata={"label": "Tol", "help": "how far", "side_labels": ("early", "late")},
+    )
+    ceiling: float = 1e-4
+
+
+async def test_a_sides_field_renders_as_the_group_and_a_float_as_one_field():
+    seen = []
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Sided, mode="x"),
+            {"tolerance": {"lower": 0.1, "upper": 0.3}},
+            on_change=lambda values: seen.append(dict(values)),
+            classes="dstf-field",
+            in_effect={
+                "tolerance": {"value": 0.01, "source": "test"},
+                "ceiling": {"value": 0.01, "source": "test"},
+            },
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        form = forms["f"]
+        g = form.controls["tolerance"]
+        assert isinstance(g, SidesControl)
+        assert not g.linked and (g.lower.value, g.upper.value) == (0.1, 0.3)
+        assert g.lower.props["label"] == "early Tol"
+        assert g.upper.props["label"] == "late Tol"
+        assert user.find(marker="tolerance:link").elements == {g.link}
+        assert form.values() == {"tolerance": {"lower": 0.1, "upper": 0.3}}
+        # The row's classes are each field's, not the group's.
+        assert "dstf-field" in g.lower.classes and "dstf-field" in g.upper.classes
+        assert "dstf-field" not in g.classes
+        g.upper.set_value(0.4)
+        assert seen == [{"tolerance": {"lower": 0.1, "upper": 0.4}}]
+        user.find(marker="tolerance:link").click()
+        assert seen[-1] == {"tolerance": 0.4}
+        g.lower.set_value(None)  # unset: omitted, and the hint says what applies
+        assert seen[-1] == {} and form.values() == {}
+        assert g.lower.props.get("hint") == HINT
+        # A plain number stays ONE field, hinted as before.
+        assert isinstance(form.controls["ceiling"], ui.number)
+        assert form.controls["ceiling"].props.get("hint") == HINT
+
+
+async def test_an_unset_sides_field_shows_the_hint_and_writes_nothing():
+    seen = []
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Sided, mode="x"),
+            {},
+            on_change=lambda values: seen.append(dict(values)),
+            in_effect={"tolerance": {"value": 0.01, "source": "test"}},
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = forms["f"].controls["tolerance"]
+        assert g.linked and (g.lower.value, g.upper.value) == (None, None)
+        assert g.lower.props.get("hint") == HINT
+        # No placeholder beside it: the default is not what applies.
+        assert g.lower.props.get("placeholder") is None
+        assert forms["f"].values() == {} and seen == []

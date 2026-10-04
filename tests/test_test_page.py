@@ -9304,7 +9304,7 @@ async def test_a_click_on_a_scored_statistic_opens_its_editor_under_it(stats_she
         assert "dstf-crit-open" in _one(user, f"stats:row:{NONLINEAR}").classes
         assert "why:edit-on-plot" not in _marks(editor)
         (tolerance,) = [e for e in editor.descendants() if isinstance(e, ui.number)
-                        and e.props.get("label") == "Tolerance"]  # fmt: skip
+                        and e.props.get("label") == "− Tolerance"]  # fmt: skip
         n = len(shell.session.spec.pending)
         tolerance.set_value(2)
         assert len(shell.session.spec.pending) == n + 1
@@ -9384,7 +9384,7 @@ async def test_the_card_editor_follows_an_edit_staged_elsewhere(stats_shell):
         def tolerance():
             editor = _one(user, f"stats-editor:{leaf}")
             (field,) = [e for e in editor.descendants() if isinstance(e, ui.number)
-                        and e.props.get("label") == "Tolerance"]  # fmt: skip
+                        and e.props.get("label") == "− Tolerance"]  # fmt: skip
             return field
 
         tolerance().set_value(2)
@@ -9461,10 +9461,11 @@ async def test_a_row_the_authored_tree_scores_is_pending_with_no_verdict(stats_s
 
 
 def _stats_tolerance(user, leaf: str):
-    """The Tolerance field of the card's open editor on ``leaf``."""
+    """The tolerance's first field in the card's open editor on ``leaf`` —
+    a scalar's tolerance has two sides, and linked, either field sets both."""
     editor = _one(user, f"stats-editor:{leaf}")
     (field,) = [e for e in editor.descendants() if isinstance(e, ui.number)
-                and e.props.get("label") == "Tolerance"]  # fmt: skip
+                and e.props.get("label") == "− Tolerance"]  # fmt: skip
     return field
 
 
@@ -9800,7 +9801,7 @@ async def test_the_card_editors_own_edit_keeps_its_field(stats_shell):
         def tolerance():
             editor = _one(user, f"stats-editor:{leaf}")
             (field,) = [e for e in editor.descendants() if isinstance(e, ui.number)
-                        and e.props.get("label") == "Tolerance"]  # fmt: skip
+                        and e.props.get("label") == "− Tolerance"]  # fmt: skip
             return field
 
         field = tolerance()

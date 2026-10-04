@@ -2855,6 +2855,146 @@ async def test_an_own_tolerance_cleared_says_the_base_in_effect(session):
         )
 
 
+# -- a tolerance's two sides on the criterion's form ------------------------------
+
+
+def _marked(user, mark: str):
+    (element,) = user.find(marker=mark).elements
+    return element
+
+
+def _sides_of(user, field: str = "tolerance"):
+    """The lower field, the link toggle and the upper field of ``field``."""
+    return tuple(
+        _marked(user, f"{field}:{part}") for part in ("lower", "link", "upper")
+    )
+
+
+def _leaf0(session) -> dict:
+    return session.tree(A)["children"][0]
+
+
+async def test_the_editor_opens_on_a_pair_and_stages_each_transition(session):
+    """The shape in the file is the link state. Every transition stages
+    exactly the value the leaf then holds, as ONE pending replace of the
+    leaf; a pair with one side blank stages nothing."""
+    pair = {"lower": 0.1, "upper": 0.3}
+    leaf = {"metric": "points", "variable": "x", "tolerance": pair}
+    session.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
+    pending = len(session.spec.pending)
+    async with host(session, EditCriteria(), LEAF0) as (user, errors, _):
+        await user.should_see("− Default tolerance")
+        await user.should_see("+ Default tolerance")
+        lower, link, upper = _sides_of(user)
+        assert (lower.value, upper.value) == (0.1, 0.3)
+        assert link.props["icon"] == "link_off"
+        assert _hints(user) == {}  # a side holds a value: nothing else applies
+
+        def staged():
+            assert not errors and len(session.spec.pending) == pending
+            return _leaf0(session).get("tolerance")
+
+        upper.set_value(0.5)  # unlinked: its own side
+        assert staged() == {"lower": 0.1, "upper": 0.5}
+        user.find(marker="tolerance:link").click()  # re-link: the larger side
+        assert staged() == 0.5 and (lower.value, upper.value) == (0.5, 0.5)
+        lower.set_value(0.2)  # linked: both move
+        assert staged() == 0.2 and upper.value == 0.2
+        user.find(marker="tolerance:link").click()  # unlink: the number twice
+        assert staged() == {"lower": 0.2, "upper": 0.2}
+        lower.set_value(None)  # half a pair: nothing staged, the blank marked
+        assert staged() == {"lower": 0.2, "upper": 0.2}
+        assert lower.error == "required" and upper.error is None
+        upper.set_value(None)  # both blank: unset, linked again
+        assert staged() is None and "tolerance" not in _leaf0(session)
+        assert link.props["icon"] == "link" and lower.error is None
+
+
+async def test_an_unset_two_sided_tolerance_says_what_is_in_effect_and_writes_nothing(
+    session,
+):
+    """A scalar with no tolerance of its own: both fields empty, linked, the
+    base under the first — and opening its editor stages nothing."""
+    leaf = {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}}
+    session.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
+    before = [(op.path, op.value) for op in session.spec.pending]
+    base = session.comparisons[A].base_tolerance
+    async with host(session, EditCriteria(), LEAF0) as (user, errors, _):
+        await user.should_see("− Tolerance")
+        lower, link, upper = _sides_of(user)
+        assert (lower.value, upper.value) == (None, None)
+        assert link.props["icon"] == "link"
+        hint = f"in effect: {base:g} (the project's tolerance)"
+        assert _hints(user) == {"− Tolerance": hint}
+        assert [(op.path, op.value) for op in session.spec.pending] == before
+        upper.set_value(0.05)  # typed in either: the number, and no hint
+        assert _leaf0(session)["tolerance"] == 0.05 and lower.value == 0.05
+        assert _hints(user) == {} and not errors
+        lower.set_value(None)
+        assert "tolerance" not in _leaf0(session)
+        assert _hints(user) == {"− Tolerance": hint}
+
+
+async def test_nrmse_keeps_one_tolerance_field(session):
+    """nrmse is one ceiling: one field, no toggle."""
+    async with host(session, EditCriteria(), LEAF0) as (user, _errors, _):
+        await user.should_see("Tolerance")
+        labels = [
+            str(e.props.get("label"))
+            for e in user.find(ui.number).elements
+            if "olerance" in str(e.props.get("label"))
+        ]
+        assert labels == ["Tolerance"]
+        for part in ("lower", "upper", "link"):
+            with pytest.raises(AssertionError):
+                user.find(marker=f"tolerance:{part}")
+
+
+@pytest.mark.parametrize(
+    ("leaf", "field", "labels"),
+    [
+        (
+            {"metric": "event-timing", "variable": "x", "time_tolerance": 0.02},
+            "time_tolerance",
+            ("early Time tolerance (s)", "late Time tolerance (s)"),
+        ),
+        (
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "band",
+                "tube_abs": 0.02,
+            },
+            "tube_abs",
+            ("− Tube abs", "+ Tube abs"),
+        ),
+        (
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "rel",
+                "tube_rel": 0.02,
+            },
+            "tube_rel",
+            ("− Tube rel", "+ Tube rel"),
+        ),
+    ],
+)
+async def test_every_two_sided_field_of_a_form_is_named_by_its_sides(
+    session, leaf, field, labels
+):
+    session.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
+    async with host(session, EditCriteria(), LEAF0) as (user, errors, _):
+        await user.should_see(labels[0])
+        lower, _link, upper = _sides_of(user, field)
+        assert (lower.props["label"], upper.props["label"]) == labels
+        assert (lower.value, upper.value) == (0.02, 0.02)
+        user.find(marker=f"{field}:link").click()
+        upper.set_value(0.05)
+        assert not errors
+        assert _leaf0(session)[field] == {"lower": 0.02, "upper": 0.05}
+
+
 # -- a quantity added from the Statistics card (U3) -------------------------------
 
 _COUNT_LEAF = {
@@ -2991,12 +3131,9 @@ async def test_a_statistics_leafs_editor_has_no_mode_window_or_quantity(session)
         labels = _labels(user)
         assert "mode" not in labels and "Quantity" not in labels
         assert "window start" not in labels and "window end" not in labels
-        assert "Tolerance" in labels and "against" in labels
-        (tol,) = [
-            c
-            for c in user.find(ui.number).elements
-            if c.props.get("label") == "Tolerance"
-        ]
+        assert "− Tolerance" in labels and "+ Tolerance" in labels
+        assert "against" in labels
+        (tol,) = user.find(marker="tolerance:lower").elements
         tol.set_value(1)
         assert not errors
         op = session.spec.pending[-1]

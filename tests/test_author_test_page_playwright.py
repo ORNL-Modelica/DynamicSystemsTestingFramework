@@ -3889,7 +3889,10 @@ def test_the_editors_fields_line_up_and_say_the_value_in_effect(
             for ys in rows.values():
                 assert max(ys) - min(ys) <= 1, (name, fields)
             hints = {label: (hint, n) for label, _b, _t, hint, n in fields}
-            assert hints["Tolerance"] == (
+            # nrmse has one ceiling; a scalar's tolerance has two sides, and
+            # the first field says what is in effect.
+            tolerance = "Tolerance" if index == 0 else "− Tolerance"
+            assert hints[tolerance] == (
                 "in effect: 0.01 (the test's tolerance)",
                 1,
             ), fields
@@ -3946,6 +3949,255 @@ def test_an_own_tolerance_cleared_says_the_base_in_effect(tmp_path, playwright_b
             1,
         ], cleared
         _shot(page, tmp_path, "editor-own-tolerance-cleared")
+
+
+# -- a tolerance's two sides: two fields and a link toggle ----------------------
+
+
+def _sides_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A at a test tolerance of 0.01, scored by a
+    points leaf (the final value) and a scalar, neither with a tolerance of
+    its own: the two forms whose tolerance has two sides."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["comparison"] = {"tolerance": 0.01}
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {"metric": "points", "variable": "x"},
+                    {
+                        "metric": "scalar",
+                        "variable": "y",
+                        "quantity": {"reduce": "max"},
+                    },
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+#: Each two-sided control of the open editor (`.dstf-sides`), in document
+#: order: whether it may wrap, its box, and its children left to right —
+#: a field's label, box, input line (its control's bottom and middle), the
+#: min-width in effect, its message and whether it is marked an error; the
+#: toggle's label, box, icon and `aria-pressed`.
+READ_SIDES = """() => [...document.querySelectorAll('.dstf-editor .dstf-sides')]
+  .map(g => {
+    const box = e => { const r = e.getBoundingClientRect();
+                       return [r.left, r.top, r.right, r.bottom]; };
+    return {
+      wrap: getComputedStyle(g).flexWrap, box: box(g),
+      kids: [...g.children].map(k => {
+        const c = k.querySelector('.q-field__control');
+        if (!c) return {toggle: k.getAttribute('aria-label'), box: box(k),
+                        icon: k.innerText.trim(),
+                        pressed: k.getAttribute('aria-pressed')};
+        const r = c.getBoundingClientRect();
+        return {label: k.querySelector('.q-field__label').innerText,
+                box: box(k), line: r.bottom, middle: (r.top + r.bottom) / 2,
+                minWidth: getComputedStyle(k).minWidth,
+                message: (k.querySelector('.q-field__messages') || {}).innerText
+                         || '',
+                error: k.classList.contains('q-field--error')};
+      }),
+    };
+  })"""
+
+#: The page's and the open editor's `[scrollWidth, clientWidth]`, and the
+#: editor's right edge.
+OVERFLOW = """() => {
+  const e = document.querySelector('.dstf-editor');
+  const d = document.documentElement;
+  return [[d.scrollWidth, d.clientWidth], [e.scrollWidth, e.clientWidth],
+          e.getBoundingClientRect().right];
+}"""
+
+#: The preview's entry as Save would write it: every line of the open
+#: drawer's diff but the removed ones, without its `+` / two-space prefix.
+PREVIEW_AFTER = """() => [...document.querySelectorAll(
+    '.dstf-pending-drawer .dstf-diff-line:not(.dstf-diff-del)')]
+  .map(l => [...l.children].slice(1).map(c => c.innerText).join(''))
+  .join('')"""
+
+
+def _staged_in_preview(page) -> str:
+    """The entry the preview drawer shows for the staged edits, with no
+    whitespace; the drawer is closed again."""
+    page.get_by_role("button", name="Preview and save").click()
+    drawer = page.locator(".dstf-pending-drawer")
+    expect(drawer.locator(".dstf-diff-line").first).to_be_visible(
+        timeout=EXPECT_TIMEOUT
+    )
+    page.wait_for_timeout(400)  # the drawer's slide
+    text = re.sub(r"\s+", "", page.evaluate(PREVIEW_AFTER))
+    page.keyboard.press("Escape")
+    width = page.viewport_size["width"]
+    page.wait_for_function(
+        f"document.querySelector('.dstf-pending-drawer')"
+        f".getBoundingClientRect().x >= {width - 1}",
+        timeout=EXPECT_TIMEOUT,
+    )
+    return text
+
+
+def _retype(page, field, text: str) -> None:
+    """Replace ``field``'s content with real keystrokes; an empty ``text``
+    clears it."""
+    field.click()
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Delete")
+    if text:
+        page.keyboard.type(text)
+
+
+def test_a_tolerances_two_fields_and_link_toggle_under_real_keys(
+    tmp_path, playwright_browser
+):
+    """Round 1's Q5 A in Chromium, typed with real keystrokes: linked, what
+    is typed into `−` is read back from `+`; Tab reaches the toggle and
+    Space unlinks; unlinked, each side is its own and the preview shows the
+    leaf holding the pair; a side cleared says "required" — as a mark the
+    browser renders — and stages nothing; linking again takes the larger
+    side for both."""
+    pending = re.compile(r"1 pending edit")
+    with _served(tmp_path, playwright_browser, project=_sides_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "points · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        lower = editor.get_by_label("− Default tolerance", exact=True)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        toggle = editor.get_by_role(
+            "button", name="Link the two sides of Default tolerance"
+        )
+        expect(lower).to_have_value("")
+        expect(upper).to_have_value("")
+        expect(toggle).to_have_attribute("aria-pressed", "true")
+        (unset,) = page.evaluate(READ_SIDES)
+        assert unset["kids"][0]["message"] == "in effect: 0.01 (the test's tolerance)"
+        assert unset["kids"][1]["icon"] == "link"
+        _shot(page, tmp_path, "sides-points-unset")
+
+        lower.click()
+        page.keyboard.type("0.05")
+        expect(upper).to_have_value("0.05", timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            pending, timeout=EXPECT_TIMEOUT
+        )
+        # A side holds a value: the hint naming another is gone.
+        expect(editor.locator(".dstf-fields")).not_to_contain_text(
+            "in effect", timeout=EXPECT_TIMEOUT
+        )
+        assert '"tolerance":0.05' in _staged_in_preview(page)
+        _shot(page, tmp_path, "sides-points-linked")
+
+        # The keyboard: Tab from the first field reaches the toggle, Space
+        # flips it — unlinked, the number is the pair holding it twice.
+        lower.focus()
+        page.keyboard.press("Tab")
+        expect(toggle).to_be_focused()
+        page.keyboard.press("Space")
+        expect(toggle).to_have_attribute(
+            "aria-pressed", "false", timeout=EXPECT_TIMEOUT
+        )
+        expect(toggle).to_contain_text("link_off")
+        page.keyboard.press("Tab")
+        expect(upper).to_be_focused()
+        page.wait_for_timeout(500)
+        assert '"tolerance":{"lower":0.05,"upper":0.05}' in _staged_in_preview(page)
+
+        _retype(page, upper, "0.2")
+        page.wait_for_timeout(800)
+        expect(lower).to_have_value("0.05")  # its own side only
+        assert '"tolerance":{"lower":0.05,"upper":0.2}' in _staged_in_preview(page)
+        expect(page.locator(".dstf-header-row")).to_contain_text(pending)
+        _shot(page, tmp_path, "sides-points-unlinked")
+
+        # Half a pair: the blank side is marked where a person sees it, and
+        # the leaf keeps the last whole pair.
+        _retype(page, lower, "")
+        expect(
+            editor.locator(".q-field--error").filter(has_text="− Default tolerance")
+        ).to_contain_text("required", timeout=EXPECT_TIMEOUT)
+        expect(editor.locator(".q-field--error")).to_have_count(1)
+        page.wait_for_timeout(500)
+        assert '"tolerance":{"lower":0.05,"upper":0.2}' in _staged_in_preview(page)
+        _shot(page, tmp_path, "sides-points-half")
+        _retype(page, lower, "0.01")
+        expect(editor.locator(".q-field--error")).to_have_count(
+            0, timeout=EXPECT_TIMEOUT
+        )
+
+        # Linked again: the larger side, for both.
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-pressed", "true", timeout=EXPECT_TIMEOUT)
+        expect(lower).to_have_value("0.2", timeout=EXPECT_TIMEOUT)
+        expect(upper).to_have_value("0.2")
+        page.wait_for_timeout(500)
+        assert '"tolerance":0.2' in _staged_in_preview(page)
+        expect(page.locator(".dstf-header-row")).to_contain_text(pending)
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+@pytest.mark.parametrize("drawer", [False, True])
+def test_a_tolerances_two_fields_sit_on_the_rows_input_line(
+    tmp_path, playwright_browser, width, drawer
+):
+    """The lower field, the toggle and the upper field are one line: both
+    input lines at the y of the row's other fields (±1 px), the toggle
+    between them and level with them, the hint on ONE line — and nothing
+    wider than its card, at 1280 and 900 px, with the Variables drawer shut
+    and open. Beside the open drawer at 900 px the form's row is under
+    420 px: the width the hint asked for is dropped there, where it pushed
+    the editor 15 px past its card."""
+    with _served(tmp_path, playwright_browser, project=_sides_project) as page:
+        page.set_viewport_size({"width": width, "height": 900})
+        if drawer:
+            _open_vars(page)
+        page.wait_for_timeout(700)
+        for index, name in ((0, "points · x"), (1, "scalar · y")):
+            _open_crit(page, index, name)
+            editor = page.locator(".dstf-editor")
+            expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+            editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+            page.wait_for_timeout(400)
+            where = (width, drawer, name)
+            (group,) = page.evaluate(READ_SIDES)
+            lower, toggle, upper = group["kids"]
+            # One line: left to right, the two input lines level.
+            assert lower["box"][2] <= toggle["box"][0], where
+            assert toggle["box"][2] <= upper["box"][0], where
+            assert abs(lower["line"] - upper["line"]) <= 1, where
+            # The toggle is level with the inputs, not with the hint line.
+            middle = (toggle["box"][1] + toggle["box"][3]) / 2
+            assert abs(middle - lower["middle"]) <= 2, (where, toggle, lower)
+            # ... and with the row's other fields' input lines.
+            fields = page.evaluate(READ_FIELDS)
+            row = [f for f in fields if abs(f[2] - lower["box"][3]) <= 1]
+            assert {f[0] for f in row} >= {lower["label"], upper["label"]}, where
+            assert max(f[1] for f in row) - min(f[1] for f in row) <= 1, (where, row)
+            # The hint, on one line under the first field.
+            hints = {f[0]: (f[3], f[4]) for f in fields if f[3]}
+            assert hints == {
+                lower["label"]: ("in effect: 0.01 (the test's tolerance)", 1)
+            }, where
+            # Nothing is wider than what holds it.
+            (page_scroll, page_client), (scroll, client), right = page.evaluate(
+                OVERFLOW
+            )
+            assert page_scroll == page_client, where
+            assert scroll <= client, where
+            assert group["box"][2] <= right, where
+            narrow = width == 900 and drawer
+            assert group["wrap"] == ("wrap" if narrow else "nowrap"), where
+            assert lower["minWidth"] == ("140px" if narrow else "230px"), where
+            _shot(page, tmp_path, f"sides-{index}-{width}{'-drawer' if drawer else ''}")
+            editor.get_by_role("button", name="Done").click()
+            expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
 
 #: The open drawer's panel width, and the first plot's svg width.
@@ -4465,7 +4717,8 @@ def test_a_statistics_criterion_is_edited_under_its_row(tmp_path, playwright_bro
             assert inner["x"] + inner["width"] <= outer["x"] + outer["width"], width
         expect(editor.get_by_label("mode", exact=True)).to_have_count(0)
         expect(row).to_contain_text("exact")
-        tolerance = editor.get_by_label("Tolerance", exact=True)
+        # linked: either field of the tolerance's two sets both
+        tolerance = editor.get_by_label("− Tolerance", exact=True)
         tolerance.fill("2")
         tolerance.press("Tab")
         # staged and rescored: the row says the new requirement

@@ -10,16 +10,18 @@ from typing import Literal
 
 import pytest
 
-from dstf.comparison.mode_schema import derive_schema
+from dstf.comparison.mode_schema import FIELD_TYPES, derive_schema
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
     NrmseConfig,
     PointsConfig,
     RangeConfig,
+    ScalarConfig,
     TubeConfig,
 )
 from dstf.comparison.registry import metrics as registered_metrics
+from dstf.comparison.sides import Sides
 
 
 class TestDeriveSchemaPerMode:
@@ -77,7 +79,7 @@ class TestDeriveSchemaPerMode:
     def test_event_timing(self):
         s = derive_schema(EventTimingConfig, mode="event-timing")
         by_name = {f.name: f for f in s.fields}
-        assert by_name["time_tolerance"].type == "float"
+        assert by_name["time_tolerance"].type == "sides"
         assert by_name["time_tolerance"].default == pytest.approx(1e-3)
         assert by_name["count_must_match"].type == "bool"
         assert by_name["count_must_match"].default is True
@@ -112,7 +114,10 @@ class TestListFieldColumns:
 
     ``"float"`` is a key the reader in ``algorithms.py`` indexes
     (required), ``"float?"`` one it reads with ``.get`` (optional), a
-    tuple is the choices with the mode's default first. ``peaks.freq``
+    tuple is the choices with the mode's default first; ``"sides?"`` is
+    an optional tolerance — a number or a lower/upper pair — and an entry
+    may carry a third element, what its two sides are called (a time
+    tolerance's are not ``−`` and ``+``). ``peaks.freq``
     stays required although its reader tolerates a missing one: a peak
     without a frequency is meaningless. ``tube_points.time`` and
     ``events.time`` are required because their readers index them.
@@ -129,17 +134,17 @@ class TestListFieldColumns:
             (PointsConfig, "points"): (
                 ("time", "float?"),
                 ("value", "float?"),
-                ("tolerance", "float?"),
+                ("tolerance", "sides?"),
                 ("tolerance_mode", ("abs", "rel")),
-                ("time_tolerance", "float?"),
+                ("time_tolerance", "sides?", ("before", "after")),
             ),
             (EventTimingConfig, "events"): (
                 ("time", "float"),
-                ("tolerance", "float?"),
+                ("tolerance", "sides?", ("early", "late")),
             ),
             (DominantFrequencyConfig, "peaks"): (
                 ("freq", "float"),
-                ("tolerance", "float?"),
+                ("tolerance", "sides?"),
                 ("tolerance_mode", ("rel", "abs")),
             ),
         }
@@ -208,20 +213,48 @@ class TestDeriveSchemaEdgeCases:
         assert s.fields[0].label == "Tube min width"
 
 
-def test_a_sides_field_is_still_a_number_in_the_schema():
-    """A config field typed `Sides` (a tolerance: a number or a lower/upper
-    pair) derives as the `float` it was, with the number as its default —
-    the forms and the exported schema do not know a pair yet."""
-    from dstf.comparison.modes import ScalarConfig
+#: Every Config field that takes a lower/upper pair, its default as the
+#: schema says it and what its two sides are called.
+SIDES_FIELDS = [
+    (PointsConfig, "tolerance", 1e-4, ("−", "+")),
+    (ScalarConfig, "tolerance", 1e-4, ("−", "+")),
+    (EventTimingConfig, "time_tolerance", 1e-3, ("early", "late")),
+    (TubeConfig, "tube_abs", 0.0, ("−", "+")),
+    (TubeConfig, "tube_rel", 0.0, ("−", "+")),
+]
 
-    for cls, name, default in (
-        (PointsConfig, "tolerance", 1e-4),
-        (ScalarConfig, "tolerance", 1e-4),
-        (EventTimingConfig, "time_tolerance", 1e-3),
-        (TubeConfig, "tube_abs", 0.0),
-        (TubeConfig, "tube_rel", 0.0),
-        (NrmseConfig, "tolerance", 1e-4),
-    ):
-        f = next(f for f in derive_schema(cls).fields if f.name == name)
-        assert (f.type, f.optional, f.choices) == ("float", False, None), (cls, name)
-        assert f.default == default and isinstance(f.default, float), (cls, name)
+
+def _field(cls, name):
+    return next(f for f in derive_schema(cls).fields if f.name == name)
+
+
+@pytest.mark.parametrize(("cls", "name", "default", "labels"), SIDES_FIELDS)
+def test_a_sides_field_is_its_own_kind(cls, name, default, labels):
+    """A config field typed `Sides` (a tolerance: a number or a lower/upper
+    pair) derives as `sides`; its default is what a spec would hold for it
+    (`as_written`: the number, the two sides being equal), and it names its
+    two sides — `−` and `+` unless the field's metadata says otherwise."""
+    assert "sides" in FIELD_TYPES
+    f = _field(cls, name)
+    assert (f.type, f.optional, f.choices) == ("sides", False, None)
+    assert f.default == default and isinstance(f.default, float)
+    assert f.side_labels == labels
+
+
+def test_a_sides_default_with_two_sides_is_the_pair():
+    @dataclass(frozen=True)
+    class Cfg:
+        tolerance: Sides = Sides(0.1, 0.3)
+
+    (f,) = derive_schema(Cfg).fields
+    assert f.default == {"lower": 0.1, "upper": 0.3}
+
+
+def test_nrmse_has_one_ceiling_and_no_sides():
+    """nrmse's tolerance is one number: no pair, no side labels — as every
+    field that is not a `sides` one."""
+    f = _field(NrmseConfig, "tolerance")
+    assert (f.type, f.default, f.side_labels) == ("float", 1e-4, None)
+    for cls in (TubeConfig, PointsConfig, ScalarConfig, EventTimingConfig):
+        for other in derive_schema(cls).fields:
+            assert (other.side_labels is None) == (other.type != "sides"), other.name

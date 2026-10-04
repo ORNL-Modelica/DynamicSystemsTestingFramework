@@ -13,11 +13,12 @@ import json
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from nicegui import ui
 
-from ..comparison.mode_schema import FieldSpec, Schema
+from ..comparison.mode_schema import SIDE_LABELS, FieldSpec, Schema
 
 OnChange = Callable[[dict], None]
 
@@ -42,12 +43,23 @@ BOTTOM = "bottom-slots"
 #: that 38-character hint, 252 px for 50: 4.9-5.0 px, rounded up for a
 #: wider fallback font), plus the bottom line's 12 px padding each side.
 HINT_PX_PER_CHAR, HINT_PADDING_PX = 5.4, 24
+#: What the link toggle between a tolerance's two fields says, by state.
+LINK_TIPS = {
+    True: "Linked: both sides change together",
+    False: "Unlinked: each side is set on its own",
+}
+_OTHER = {"lower": "upper", "upper": "lower"}
 
 
 def in_effect_hint(entry: dict) -> str:
     """``in effect: 0.01 (the test's tolerance)``."""
     source = SOURCES.get(str(entry.get("source")), str(entry.get("source")))
     return f"in effect: {entry['value']:g} ({source})"
+
+
+def hint_width(hint: str) -> int:
+    """The px a field needs for ``hint`` on one line under it."""
+    return math.ceil(len(hint) * HINT_PX_PER_CHAR) + HINT_PADDING_PX
 
 
 @dataclass
@@ -116,6 +128,24 @@ def render_form(
             form._values[spec.name] = current
         effect = in_effect.get(spec.name)
         hint = in_effect_hint(effect) if effect is not None else None
+        if spec.type == "sides":
+            # A tolerance with two sides: one group, which keeps its own
+            # hint and reserves the bottom line under both its fields.
+            group = sides_control(
+                spec.label or spec.name,
+                current,
+                partial(_set, form, spec.name, on_change=on_change),
+                side_labels=spec.side_labels or SIDE_LABELS,
+                hint=hint,
+                mark=spec.name,
+            )
+            for side in (group.lower, group.upper):
+                if classes:
+                    side.classes(classes)
+                if spec.help:
+                    side.tooltip(spec.help)
+            form.controls[spec.name] = group
+            continue
         control = _control(
             spec,
             current,
@@ -128,9 +158,7 @@ def render_form(
                 control.props["hint"] = hint
             # Wide enough for it with a value too: clearing one does not
             # reflow the row.
-            control.style(
-                f"min-width: {math.ceil(len(hint) * HINT_PX_PER_CHAR) + HINT_PADDING_PX}px"
-            )
+            control.style(f"min-width: {hint_width(hint)}px")
         elif current is None and spec.default is not None:
             control.props(f'placeholder="{spec.default}"')
         if spec.type != "bool":
@@ -211,3 +239,196 @@ def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
         value="" if current is None else str(current),
         on_change=lambda e: set_value(e.value),
     ).props("dense")
+
+
+def _shown(value: object) -> Any:
+    """What a side's field shows for ``value``: a number, else blank — a
+    side the file holds as anything else is the leaf's config error, which
+    its criteria row says; the editor still opens."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
+
+
+class SidesControl(ui.row):
+    """A tolerance's two sides: the ``lower`` field, the ``link`` toggle and
+    the ``upper`` field, in one group. :func:`sides_control` says what it
+    shows and what it hands ``on_change``."""
+
+    def __init__(
+        self,
+        label: str,
+        value: Any,
+        on_change: Callable[[Any], None],
+        *,
+        side_labels: tuple[str, str],
+        hint: str | None,
+        mark: str | None,
+    ) -> None:
+        # Not `wrap=False`: that is an inline style, and whether the group
+        # wraps is the stylesheet's to say (it does where it has no room).
+        super().__init__()
+        self.classes("dstf-sides")
+        pair = isinstance(value, dict)
+        #: The shape the spec holds IS the link state: a number (or nothing)
+        #: is linked, a pair is not — equal sides or not.
+        self.linked = not pair
+        self._sides: dict[str, float | None] = {
+            side: _shown(value.get(side) if pair else value)
+            for side in ("lower", "upper")
+        }
+        self._on_change, self._hint, self._syncing = on_change, hint, False
+        with self:
+            self.lower = self._field("lower", f"{side_labels[0]} {label}")
+            self.link = ui.button(on_click=self.toggle).props(
+                f'flat dense round size=sm aria-label="Link the two sides of {label}"'
+            )
+            with self.link:
+                self._tip = ui.tooltip("")
+            self.upper = self._field("upper", f"{side_labels[1]} {label}")
+        if mark:
+            self.lower.mark(f"{mark}:lower")
+            self.upper.mark(f"{mark}:upper")
+            self.link.mark(f"{mark}:link")
+        if hint is not None:
+            # Wide enough for the hint on one line, as a single field is —
+            # but as a variable the stylesheet reads, not a min-width: where
+            # the row is too narrow for the group that width is dropped
+            # rather than push the editor wider than its card.
+            self.classes("dstf-sides-hinted")
+            self.style(f"--dstf-hint-width: {hint_width(hint)}px")
+        self._paint()
+        self._say_hint()
+        self._mark_blanks()
+
+    def half(self) -> bool:
+        """Whether one side is blank and the other is not, unlinked: a pair
+        with one side is no value, so nothing was handed to ``on_change``
+        and what it last got is stale."""
+        return self._blank("lower") or self._blank("upper")
+
+    def toggle(self) -> None:
+        """Unlink: the number becomes the pair holding it twice (nothing
+        stays nothing). Link: both sides take the LARGER one, so a re-link
+        never narrows what the criterion allows."""
+        self.linked = not self.linked
+        self._paint()
+        present = [v for v in self._sides.values() if v is not None]
+        if not self.linked:
+            if present:  # linked, both fields held the one number
+                self._on_change({"lower": present[0], "upper": present[0]})
+            return
+        if not present:
+            return
+        both = max(present)
+        for side in ("lower", "upper"):
+            self._sides[side] = both
+            self._show(side, both)
+        self._mark_blanks()
+        self._on_change(both)
+
+    def _field(self, side: str, label: str) -> ui.number:
+        # "required" through the field's own validation: NiceGUI validates
+        # a field after its change handlers and resets an `error` prop it
+        # did not set itself, so a mark written as a prop never showed.
+        return ui.number(
+            label=label,
+            value=self._sides[side],
+            on_change=lambda e: self._edited(side, e.value),
+            validation=lambda _value: "required" if self._blank(side) else None,
+        ).props(f"dense {BOTTOM}")
+
+    def _blank(self, side: str) -> bool:
+        return (
+            not self.linked
+            and self._sides[side] is None
+            and self._sides[_OTHER[side]] is not None
+        )
+
+    def _edited(self, side: str, value: Any) -> None:
+        if self._syncing:  # the other field, set from here: not an edit
+            return
+        value = None if value is None else float(value)
+        self._sides[side] = value
+        if self.linked:
+            self._sides[_OTHER[side]] = value
+            self._show(_OTHER[side], value)
+            self._say_hint()
+            self._on_change(value)
+            return
+        lower, upper = self._sides["lower"], self._sides["upper"]
+        if lower is None and upper is None:
+            self.linked = True  # nothing is one shape, and it is linked
+            self._paint()
+        self._mark_blanks()
+        self._say_hint()
+        if lower is None and upper is None:
+            self._on_change(None)
+        elif lower is not None and upper is not None:
+            self._on_change({"lower": lower, "upper": upper})
+
+    def _show(self, side: str, value: float | None) -> None:
+        """Set ``side``'s field without it counting as an edit: a value set
+        from the server fires the field's own change handler, and unguarded
+        every keystroke reached ``on_change`` twice."""
+        self._syncing = True
+        try:
+            (self.lower if side == "lower" else self.upper).value = value
+        finally:
+            self._syncing = False
+
+    def _paint(self) -> None:
+        self.link.icon = "link" if self.linked else "link_off"
+        self.link.props(f"aria-pressed={'true' if self.linked else 'false'}")
+        self._tip.text = LINK_TIPS[self.linked]
+
+    def _say_hint(self) -> None:
+        """The value in effect, under the first field while BOTH are empty:
+        with a side typed it named a value no longer applied."""
+        if self._hint is None:
+            return
+        empty = self._sides["lower"] is None and self._sides["upper"] is None
+        hint = self._hint if empty else None
+        if self.lower.props.get("hint") != hint:
+            self.lower.props["hint"] = hint
+            self.lower.update()
+
+    def _mark_blanks(self) -> None:
+        for side in (self.lower, self.upper):
+            side.validate(return_result=False)
+
+
+def sides_control(
+    label: str,
+    value: Any,
+    on_change: Callable[[Any], None],
+    *,
+    side_labels: tuple[str, str],
+    hint: str | None = None,
+    mark: str | None = None,
+) -> SidesControl:
+    """Two number fields and a link toggle for a tolerance that is a number
+    or a ``{"lower", "upper"}`` pair — the leaf form's control and a table
+    row's. The fields read ``{side_labels[0]} {label}`` and
+    ``{side_labels[1]} {label}``; ``mark`` marks them ``{mark}:lower`` and
+    ``{mark}:upper`` and the toggle ``{mark}:link``.
+
+    ``value`` is what the spec holds, and its shape is the link state:
+    ``None`` is unset (both fields empty, linked, ``hint`` — the value in
+    effect — under the first one while both are empty), a number is linked
+    (both fields show it), a pair is unlinked. ``on_change`` gets what the
+    spec should hold next:
+
+    - linked, typing in either field sets both and hands over the number;
+      clearing either clears both and hands over ``None``;
+    - unlinked, typing hands over the pair; while ONE side is blank nothing
+      is handed over and the blank field is marked "required"
+      (:meth:`SidesControl.half` says so to a caller holding a stale
+      value); both blank is ``None``, and the control is linked again;
+    - the toggle: unlinking hands over the pair holding the number twice
+      (unset stays unset, and unlinked); linking hands over the larger side
+      — of those present — for both.
+    """
+    return SidesControl(
+        label, value, on_change, side_labels=side_labels, hint=hint, mark=mark
+    )

@@ -33,7 +33,11 @@ if TYPE_CHECKING:
 # NO module-level `nicegui` import: `import dstf.authoring` runs
 # register_builtins(), and the Session must import without the extra.
 
-Columns = tuple[tuple[str, Any], ...]
+#: A list field's ``columns`` metadata: per row key its kind — ``"float"``,
+#: ``"float?"``, ``"sides"``, ``"sides?"`` or a tuple of choices — and, for a
+#: ``sides`` kind, optionally what its two sides are called. Read by INDEX:
+#: an entry is two or three long.
+Columns = tuple[tuple[Any, ...], ...]
 
 
 def _selected(s: SessionView) -> tuple[str, str, str] | None:
@@ -176,14 +180,14 @@ def _new_row(
     first. The one exception: a ``tube_points`` row gets ``upper`` and
     ``lower`` ``0.0`` — optional in the reader, which refuses a tube with no
     width at all."""
-    keys = [key for key, _ in columns]
+    keys = [column[0] for column in columns]
     if rows:
         last = copy.deepcopy(rows[-1])
         if "time" in keys:
             last["time"] = _new_time(rows, span)
         return last
     row: dict[str, Any] = {}
-    for key, kind in columns:
+    for key, kind, *_ in columns:
         if key == "time":
             row[key] = _new_time(rows, span)
         elif isinstance(kind, tuple):
@@ -388,7 +392,7 @@ class EditOnPlot:
         columns = dict(_list_fields(name)).get(field)
         if columns is None:
             raise ValueError(f"{name} has no table {field!r}")
-        required = [key for key, kind in columns if kind == "float"]
+        required = [column[0] for column in columns if column[1] == "float"]
         cleaned: list[dict] = []
         for i, row in enumerate(rows):
             for key in required:
@@ -402,7 +406,7 @@ class EditOnPlot:
             cleaned.append({k: v for k, v in row.items() if v is not None})
         # The reader's own refusal (`algorithms._interpolate_tube_widths`),
         # raised here by name rather than as the rescore's config error.
-        is_tube = [key for key, _ in columns] == ["time", "upper", "lower"]
+        is_tube = [column[0] for column in columns] == ["time", "upper", "lower"]
         if (
             is_tube
             and cleaned
@@ -442,7 +446,7 @@ def _table(
     whole list. (``act`` still refuses a blank, for a direct call.)"""
     container = ui.column().classes("w-full")
     mark = f"{path}:{field}"
-    required = [key for key, kind in columns if kind == "float"]
+    required = [column[0] for column in columns if column[1] == "float"]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
 
     def blanks() -> bool:
@@ -489,7 +493,7 @@ def _table(
             scroll = ui.column().classes("w-full dstf-table-scroll")
             for i, row in enumerate(rows):
                 with scroll, ui.row().classes("items-center no-wrap"):
-                    for key, kind in columns:
+                    for key, kind, *_ in columns:
                         if isinstance(kind, tuple):
                             value = row.get(key, kind[0])
                             # A value the author wrote outside the choices

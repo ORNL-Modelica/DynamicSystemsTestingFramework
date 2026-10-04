@@ -22,16 +22,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Union
 
-from .sides import Sides
+from .sides import Sides, as_written
 
 # ---------------------------------------------------------------------------
 # Schema types
 # ---------------------------------------------------------------------------
 
-#: Recognized field types. ``passthrough`` is the fallback for complex types
-#: (nested dataclasses, list[dict], etc.) that introspection cannot reduce to
-#: a scalar or an enum — a consumer renders those as raw JSON.
-FIELD_TYPES = {"float", "int", "bool", "str", "enum", "passthrough"}
+#: Recognized field types. ``sides`` is a tolerance with two sides
+#: (:class:`~.sides.Sides`): a number, or a ``{"lower", "upper"}`` pair.
+#: ``passthrough`` is the fallback for complex types (nested dataclasses,
+#: list[dict], etc.) that introspection cannot reduce to a scalar or an
+#: enum — a consumer renders those as raw JSON.
+FIELD_TYPES = {"float", "int", "bool", "str", "enum", "sides", "passthrough"}
+
+#: What the two sides of a ``sides`` field are called, lower first, unless
+#: its metadata says (``side_labels``): a value's are below and above its
+#: target. A time tolerance names its own — ``early`` / ``late``.
+SIDE_LABELS = ("−", "+")
 
 
 @dataclass
@@ -48,6 +55,8 @@ class FieldSpec:
     # clamping the value down.
     ui_min: float | None = None
     ui_max: float | None = None
+    # A ``sides`` field's two labels, lower first; None on every other kind.
+    side_labels: tuple[str, str] | None = None
 
 
 @dataclass
@@ -79,6 +88,8 @@ def derive_schema(config_cls: type, *, mode: str | None = None) -> Schema:
     Reads ``metadata`` from :func:`dataclasses.field` for display hints:
       - ``label``: human-readable label (defaults to a titleized name)
       - ``help``: tooltip text
+      - ``side_labels``: what a ``sides`` field's two sides are called,
+        lower first (defaults to :data:`SIDE_LABELS`)
     """
     if not dataclasses.is_dataclass(config_cls):
         raise TypeError(f"{config_cls!r} is not a dataclass")
@@ -101,6 +112,11 @@ def derive_schema(config_cls: type, *, mode: str | None = None) -> Schema:
                 help=meta.get("help"),
                 ui_min=meta.get("ui_min"),
                 ui_max=meta.get("ui_max"),
+                side_labels=(
+                    tuple(meta.get("side_labels") or SIDE_LABELS)
+                    if kind == "sides"
+                    else None
+                ),
             )
         )
     return Schema(mode=mode, fields=fields_out)
@@ -130,9 +146,7 @@ def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:
     if hint is float:
         return "float", False, None
     if hint is Sides:
-        # A stand-in until the `sides` field kind exists (step E1, Task 7):
-        # the forms and the exported schema keep showing one number.
-        return "float", False, None
+        return "sides", False, None
     if hint is bool:
         return "bool", False, None
     if hint is int:
@@ -147,8 +161,8 @@ def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:
 def _field_default(f: dataclasses.Field) -> Any:
     if f.default is not dataclasses.MISSING:
         if isinstance(f.default, Sides):
-            # The stand-in's other half (Task 7 writes the pair): the number.
-            return f.default.upper
+            # As a spec would hold it: the number while the sides are equal.
+            return as_written(f.default)
         return f.default
     if f.default_factory is not dataclasses.MISSING:
         try:

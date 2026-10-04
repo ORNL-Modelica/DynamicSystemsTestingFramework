@@ -68,6 +68,25 @@ def test_a_leaf_with_its_own_tolerance_carries_the_base_too(tmp_path):
     assert y["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
 
 
+def test_a_leaf_holding_a_pair_carries_the_base_as_one_holding_a_number(tmp_path):
+    """A lower/upper pair is the leaf's own tolerance like a number is: the
+    view carries the BASE — one number — for the field left empty, and the
+    editor shows no hint while either side holds a value."""
+    pair = {"lower": 0.1, "upper": 0.3}
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "points", "variable": "x", "tolerance": pair},
+            {"metric": "points", "variable": "y", "tolerance": 0.3},
+        ],
+    }
+    s = _session(tmp_path, test_tol=0.01, metrics=tree)
+    x, y = _leaves(s.tree_view(A))
+    assert x["params"]["tolerance"] == pair
+    assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
+    assert x["in_effect"] == y["in_effect"]
+
+
 @pytest.mark.parametrize(
     ("kw", "value", "source"),
     [
