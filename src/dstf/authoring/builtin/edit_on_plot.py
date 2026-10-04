@@ -1,6 +1,7 @@
 """Edit on plot (§4.6 table, §4.7): the CRITERION placement — the open
-criterion's handles drag on the plot its row sits under, and the op targets
-that leaf; a handle of any other leaf is refused by name. In the editor, a
+criterion's handles, and the grips on each side of its tolerances, drag on
+the plot its row sits under, and the op targets that leaf; a handle of any
+other leaf is refused by name. In the editor, a
 table per handle-bearing list field of that leaf (the Config fields that
 declare ``columns``: ``tube_points``, ``points``, ``events``, ``peaks``)
 with add and remove rows.
@@ -19,7 +20,7 @@ import math
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from ...comparison.geometry import HLine, Marker
+from ...comparison.geometry import HLine, Marker, VLine, grip_axis
 from ...comparison.handles import HandleEdit, HandleEditError
 from ...comparison.mode_schema import SIDE_LABELS
 from ...comparison.registry import DEFAULT_METRIC, metric
@@ -128,17 +129,48 @@ def _leaf_path_of(handle: str, paths: list[str]) -> str | None:
     return max(matches, key=len) if matches else None
 
 
+def _draggable(primitive: object) -> bool:
+    """Whether a drag of ``primitive`` is an edit: a handle's ring or line,
+    or a grip's arrow. By TYPE as well as by kind: a box (`points/box/i`,
+    `peaks/window/i`) is `kind="handle"` too, and no editor moves one."""
+    if isinstance(primitive, (Marker, HLine)) and primitive.kind == "handle":
+        return True
+    return isinstance(primitive, (Marker, VLine)) and primitive.kind == "grip"
+
+
+def _grip_position(
+    grip: Marker | VLine, shape: dict
+) -> tuple[float | None, float | None] | None:
+    """Where a dragged grip was released: its OWN axis from the payload,
+    the other from the grip itself. A release carries both anchors, and the
+    one off the grip's axis is not where the pointer went — Plotly re-snaps
+    it, and past 8 px of sideways drift moves it in full (Chromium,
+    2026-10-02); an event's or a peak's arrow is anchored to the paper in y,
+    which a diagonal drag moves too. None when its own anchor is absent."""
+    x = grip.time if isinstance(grip, VLine) else grip.x
+    y = None if isinstance(grip, VLine) else grip.y
+    if grip_axis(grip) == "x":
+        moved = shape.get("xanchor")
+        return None if moved is None else (moved, y)
+    moved = shape.get("yanchor")
+    return None if moved is None else (x, moved)
+
+
 def _position(
-    primitive: Marker | HLine, shape: dict
+    primitive: Marker | HLine | VLine, shape: dict
 ) -> tuple[float | None, float | None] | None:
     """The dragged position the hook's per-shape payload means for the
-    handle's PRIMITIVE TYPE, or None when it is no move. A Marker's ring
+    handle's PRIMITIVE TYPE, or None when it is no move. A grip moves on
+    one axis (:func:`_grip_position`). A Marker's ring
     moves only by ``xanchor``/``yanchor`` — the ``x0``..``y1`` of a
     pixel-sized shape are offsets about its anchor, never a position (a
     ring is a pixel ``path``, which sends none). An HLine moves by
     ``y0``/``y1``: both when the whole line was dragged, the one present
     when one end was, neither (a horizontal-only drag) is no move. Any
     other primitive never gets here: `_act_handle` snaps it back."""
+    if primitive.kind == "grip":
+        assert isinstance(primitive, (Marker, VLine))  # `_draggable`
+        return _grip_position(primitive, shape)
     if isinstance(primitive, Marker):
         x, y = shape.get("xanchor"), shape.get("yanchor")
         if x is None and y is None:
@@ -326,20 +358,19 @@ class EditOnPlot:
         primitive = next(
             (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
         )
-        # By TYPE, not only by kind: a box (`points/box/i`, `peaks/window/i`)
-        # is `kind="handle"` too, and no editor moves one. A window, a box, a
-        # result line is drawn, not editable; Plotly lets it be dragged all
-        # the same, and the figure hook's redraw snaps it back. Resolved
-        # before the open-leaf check: whichever criterion is open, such a
-        # drag is not an error the user made.
-        if not isinstance(primitive, (Marker, HLine)) or primitive.kind != "handle":
+        # A window, a box, a result line is drawn, not editable; Plotly lets
+        # it be dragged all the same, and the figure hook's redraw snaps it
+        # back. Resolved before the open-leaf check: whichever criterion is
+        # open, such a drag is not an error the user made.
+        if not _draggable(primitive):
             return None
+        assert isinstance(primitive, (Marker, HLine, VLine))  # `_draggable`
         open_leaf = s.selection.leaf_path
         if open_leaf is not None and path != open_leaf:
-            # Only the open leaf's rings are drawn (`Session.figure`'s
-            # `editing`), but every leaf's bound LINES are on the plot and
-            # Plotly lets them be dragged: one of those is not this
-            # editor's.
+            # Only the open leaf's rings and grips are drawn
+            # (`Session.figure`'s `editing`), but every leaf's bound LINES
+            # are on the plot and Plotly lets them be dragged: one of those
+            # is not this editor's.
             raise HandleEditError(
                 f"{handle} is not a handle of {open_leaf}",
                 reason="Open that criterion to drag its lines.",

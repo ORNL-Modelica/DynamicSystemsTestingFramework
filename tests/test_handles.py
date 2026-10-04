@@ -585,9 +585,16 @@ def test_a_non_numeric_position_is_refused(leaf, local, x, y, bad, axis):
 
 
 def test_the_builtins_that_have_editors():
+    # nrmse is one ceiling over a whole trajectory: nothing of it is drawn.
     assert metric("nrmse").edit_handle is None
-    assert metric("event-timing").edit_handle is None
-    for name in ("tube", "range", "scalar", "points", "dominant-frequency"):
+    for name in (
+        "tube",
+        "range",
+        "scalar",
+        "points",
+        "event-timing",
+        "dominant-frequency",
+    ):
         assert metric(name).edit_handle is not None, name
 
 
@@ -892,3 +899,437 @@ class TestScalarSides:
 
     def test_the_bounds_still_move(self):
         assert _edit(SCALAR, "scalar/max", None, 1.0)["max_value"] == 1.0
+
+
+# -- a dragged grip back to its side (D147) ------------------------------------
+
+
+def _grip(leaf, local, x=None, y=None, reference=REF):
+    return _edit(leaf, local, x, y, reference)
+
+
+POINTS_SIDES = {
+    "metric": "points",
+    "variable": "x",
+    "tolerance": 0.25,
+    "points": [
+        # 0: follows the baseline (ref(0.25) = 0.25) and the leaf's tolerance.
+        {"time": 0.25},
+        # 1: its own number, in value and in time.
+        {"time": 0.75, "value": 0.5, "tolerance": 0.125, "time_tolerance": 0.0625},
+        # 2: a pair in each, rel about a NEGATIVE target.
+        {
+            "time": 0.5,
+            "value": -4.0,
+            "tolerance": {"lower": 0.125, "upper": 0.25},
+            "tolerance_mode": "rel",
+            "time_tolerance": {"lower": 0.125, "upper": 0.25},
+        },
+    ],
+}
+
+
+class TestPointsSides:
+    """`points/upper|lower/i` → that side of the value tolerance row `i` is
+    held to; `points/before|after/i` → that side of its `time_tolerance`."""
+
+    def test_a_rows_own_number_stays_a_number_and_both_sides_move(self):
+        new = _grip(POINTS_SIDES, "points/upper/1", 0.75, 0.75)
+        assert new["points"][1]["tolerance"] == 0.25
+        new = _grip(POINTS_SIDES, "points/lower/1", 0.75, 0.25)
+        assert new["points"][1]["tolerance"] == 0.25
+        # Nothing else moved: not the row's time or value, not the leaf's.
+        expected = copy.deepcopy(POINTS_SIDES)
+        expected["points"][1]["tolerance"] = 0.25
+        assert new == expected
+
+    def test_a_pair_changes_only_that_side_and_rel_divides_by_the_magnitude(self):
+        # Target −4: −2 is 2 above it, 50 % of |−4|; −5 is 1 below, 25 %.
+        new = _grip(POINTS_SIDES, "points/upper/2", 0.5, -2.0)
+        assert new["points"][2]["tolerance"] == {"lower": 0.125, "upper": 0.5}
+        new = _grip(POINTS_SIDES, "points/lower/2", 0.5, -5.0)
+        assert new["points"][2]["tolerance"] == {"lower": 0.25, "upper": 0.25}
+
+    def test_a_row_that_defers_writes_the_criterions_tolerance(self):
+        """Row 0 holds no `tolerance`: its box is the leaf's, so its grip
+        moves the leaf's — and every other deferring row's box with it."""
+        new = _grip(POINTS_SIDES, "points/upper/0", 0.25, 0.75)
+        assert new["tolerance"] == 0.5 and "tolerance" not in new["points"][0]
+        # A `null` is an absent key, as the scorer reads it.
+        nulled = copy.deepcopy(POINTS_SIDES)
+        nulled["points"][0]["tolerance"] = None
+        new = _grip(nulled, "points/lower/0", 0.25, 0.125)
+        assert new["tolerance"] == 0.125 and new["points"][0]["tolerance"] is None
+        # The leaf holds none either (the test's is in effect): a number.
+        bare = {k: v for k, v in POINTS_SIDES.items() if k != "tolerance"}
+        assert _grip(bare, "points/upper/0", 0.25, 0.75)["tolerance"] == 0.5
+        # The leaf holds a pair: only that side.
+        paired = _with(POINTS_SIDES, tolerance={"lower": 0.125, "upper": 0.25})
+        new = _grip(paired, "points/upper/0", 0.25, 0.75)
+        assert new["tolerance"] == {"lower": 0.125, "upper": 0.5}
+
+    def test_the_time_grips_write_the_rows_time_tolerance(self):
+        new = _grip(POINTS_SIDES, "points/before/1", 0.5, 0.5)
+        assert new["points"][1]["time_tolerance"] == 0.25  # a number: both
+        new = _grip(POINTS_SIDES, "points/after/1", 0.875, 0.5)
+        assert new["points"][1]["time_tolerance"] == 0.125
+        new = _grip(POINTS_SIDES, "points/after/2", 1.0, -4.0)
+        assert new["points"][2]["time_tolerance"] == {"lower": 0.125, "upper": 0.5}
+        new = _grip(POINTS_SIDES, "points/before/2", 0.25, -4.0)
+        assert new["points"][2]["time_tolerance"] == {"lower": 0.25, "upper": 0.25}
+        # The value tolerance is not the time grip's to touch.
+        assert new["points"][2]["tolerance"] == POINTS_SIDES["points"][2]["tolerance"]
+
+    def test_only_the_grips_own_axis_is_read(self):
+        """A value grip is given its own resolved x and a time grip its own
+        y; neither is a position to write."""
+        assert _grip(POINTS_SIDES, "points/upper/1", 99.0, 0.75) == _grip(
+            POINTS_SIDES, "points/upper/1", None, 0.75
+        )
+        assert _grip(POINTS_SIDES, "points/before/1", 0.5, 99.0) == _grip(
+            POINTS_SIDES, "points/before/1", 0.5, None
+        )
+        # No move on its own axis: nothing changes.
+        assert _grip(POINTS_SIDES, "points/upper/1", 0.9, None) == POINTS_SIDES
+        assert _grip(POINTS_SIDES, "points/after/1", None, 0.9) == POINTS_SIDES
+
+    def test_a_side_dragged_across_its_target_is_refused(self):
+        with pytest.raises(HandleEditError) as box:
+            _grip(POINTS_SIDES, "points/upper/1", 0.75, 0.25)
+        assert box.value.reason == "the upper side would cross its target"
+        with pytest.raises(HandleEditError, match="the lower side would cross"):
+            _grip(POINTS_SIDES, "points/lower/2", 0.5, -3.0)
+        with pytest.raises(HandleEditError, match="the lower side would cross"):
+            _grip(POINTS_SIDES, "points/before/1", 0.875, 0.5)
+        with pytest.raises(HandleEditError, match="the upper side would cross"):
+            _grip(POINTS_SIDES, "points/after/1", 0.5, 0.5)
+        # ON the target is a zero side, not a crossing.
+        assert (
+            _grip(POINTS_SIDES, "points/upper/1", 0.75, 0.5)["points"][1]["tolerance"]
+            == 0.0
+        )
+        assert (
+            _grip(POINTS_SIDES, "points/after/1", 0.75, 0.5)["points"][1][
+                "time_tolerance"
+            ]
+            == 0.0
+        )
+
+    def test_refusals(self):
+        zero = copy.deepcopy(POINTS_SIDES)
+        zero["points"][2]["value"] = 0.0
+        with pytest.raises(HandleEditError, match="the target is zero"):
+            _grip(zero, "points/upper/2", 0.5, 0.5)
+        other = _with(POINTS_SIDES, against="golden")
+        with pytest.raises(HandleEditError, match="scores against 'golden'"):
+            _grip(other, "points/upper/0", 0.25, 0.75)
+        # A row with a value of its own is measured from that value.
+        assert (
+            _grip(other, "points/upper/1", 0.75, 0.75)["points"][1]["tolerance"] == 0.25
+        )
+        with pytest.raises(HandleEditError, match="needs a reference"):
+            _grip(POINTS_SIDES, "points/upper/0", 0.25, 0.75, reference=None)
+        with pytest.raises(HandleEditError, match="not a finite number"):
+            _grip(POINTS_SIDES, "points/upper/1", 0.75, float("nan"))
+        with pytest.raises(HandleEditError, match="not a finite number"):
+            _grip(POINTS_SIDES, "points/before/1", float("inf"), 0.5)
+        with pytest.raises(HandleEditError, match="holds no time_tolerance"):
+            _grip(POINTS_SIDES, "points/before/0", 0.125, 0.25)
+        with pytest.raises(HandleEditError, match="no entry 7"):
+            _grip(POINTS_SIDES, "points/upper/7", 0.5, 0.5)
+        with pytest.raises(HandleEditError, match="cannot be moved"):
+            _grip(POINTS_SIDES, "points/sideways/1", 0.5, 0.5)
+        bad = copy.deepcopy(POINTS_SIDES)
+        bad["points"][1]["tolerance"] = "abc"
+        with pytest.raises(HandleEditError, match="tolerance must be a number or"):
+            _grip(bad, "points/upper/1", 0.75, 0.75)
+
+    def test_the_final_checks_grips_write_the_criterions_tolerance(self):
+        final = {"metric": "points", "variable": "x", "tolerance": 0.25}
+        assert _grip(final, "points/upper/final", 1.0, 1.5)["tolerance"] == 0.5
+        assert _grip(final, "points/lower/final", 1.0, 0.875)["tolerance"] == 0.125
+        pair = _with(final, tolerance={"lower": 0.125, "upper": 0.25})
+        assert _grip(pair, "points/lower/final", 1.0, 0.5)["tolerance"] == {
+            "lower": 0.5,
+            "upper": 0.25,
+        }
+        bare = {"metric": "points", "variable": "x"}
+        assert _grip(bare, "points/upper/final", 1.0, 1.5)["tolerance"] == 0.5
+        with pytest.raises(HandleEditError, match="the upper side would cross"):
+            _grip(final, "points/upper/final", 1.0, 0.5)
+        with pytest.raises(HandleEditError, match="scores against 'golden'"):
+            _grip(_with(final, against="golden"), "points/upper/final", 1.0, 1.5)
+        with pytest.raises(HandleEditError, match="needs a reference"):
+            _grip(final, "points/upper/final", 1.0, 1.5, reference=None)
+        with pytest.raises(HandleEditError, match="cannot be moved"):
+            _grip(final, "points/before/final", 0.5, 1.0)
+
+    def test_the_final_checks_target_is_the_windowed_references(self):
+        """The scorer takes the final value of the reference AS WINDOWED:
+        with `window.end` 0.5 the target is 0.5, not the trace's 1.0."""
+        final = {"metric": "points", "variable": "x", "tolerance": 0.25}
+        ended = _with(final, window={"end": 0.5})
+        assert _grip(ended, "points/upper/final", 0.5, 0.75)["tolerance"] == 0.25
+        with pytest.raises(HandleEditError, match="the upper side would cross"):
+            _grip(ended, "points/upper/final", 0.5, 0.375)
+        # A start alone leaves the end where it was.
+        started = _with(final, window={"start": 0.3})
+        assert _grip(started, "points/upper/final", 1.0, 1.5)["tolerance"] == 0.5
+        # Between samples the window ends on the last one inside it.
+        between = _with(final, window={"start": 0.3, "end": 0.9})
+        assert _grip(between, "points/lower/final", 0.75, 0.5)["tolerance"] == 0.25
+
+
+CONST_BAND = {
+    "metric": "tube",
+    "variable": "x",
+    "tube_width_mode": "band",
+    "tube_abs": 0.125,
+}
+CONST_REL = {
+    "metric": "tube",
+    "variable": "x",
+    "tube_width_mode": "rel",
+    "tube_rel": 0.125,
+}
+#: A baseline below zero: ref(t) = −4 t.
+NEGATIVE = (REF[0], -4.0 * REF[1])
+
+
+class TestTubeConstantSides:
+    """`tube/upper|lower/const` → that side of `tube_abs` (band) or
+    `tube_rel` (rel), measured from the reference at the grip's own x."""
+
+    def test_a_number_stays_a_number(self):
+        assert _grip(CONST_BAND, "tube/upper/const", 0.5, 0.75) == {
+            **CONST_BAND,
+            "tube_abs": 0.25,
+        }
+        assert _grip(CONST_BAND, "tube/lower/const", 0.5, 0.25)["tube_abs"] == 0.25
+        bare = {k: v for k, v in CONST_BAND.items() if k != "tube_abs"}
+        assert _grip(bare, "tube/upper/const", 0.5, 0.75)["tube_abs"] == 0.25
+
+    def test_a_pair_changes_only_that_side(self):
+        pair = _with(CONST_BAND, tube_abs={"lower": 0.125, "upper": 0.25})
+        assert _grip(pair, "tube/lower/const", 0.5, 0.0)["tube_abs"] == {
+            "lower": 0.5,
+            "upper": 0.25,
+        }
+        assert _grip(pair, "tube/upper/const", 0.75, 1.75)["tube_abs"] == {
+            "lower": 0.125,
+            "upper": 1.0,
+        }
+
+    def test_rel_divides_by_the_references_magnitude_at_the_grips_time(self):
+        assert _grip(CONST_REL, "tube/upper/const", 0.5, 0.75)["tube_rel"] == 0.5
+        # ref(0.5) = −2: −1 is 1 above it, 50 % of |−2|; −2.5 is 25 % below.
+        assert (
+            _grip(CONST_REL, "tube/upper/const", 0.5, -1.0, reference=NEGATIVE)[
+                "tube_rel"
+            ]
+            == 0.5
+        )
+        assert (
+            _grip(CONST_REL, "tube/lower/const", 0.5, -2.5, reference=NEGATIVE)[
+                "tube_rel"
+            ]
+            == 0.25
+        )
+        assert "tube_abs" not in _grip(CONST_REL, "tube/upper/const", 0.5, 0.75)
+
+    def test_refusals(self):
+        with pytest.raises(HandleEditError) as box:
+            _grip(CONST_BAND, "tube/upper/const", 0.5, 0.25)
+        assert box.value.reason == "the upper side would cross its target"
+        with pytest.raises(HandleEditError, match="the lower side would cross"):
+            _grip(CONST_BAND, "tube/lower/const", 0.5, 0.75)
+        with pytest.raises(HandleEditError, match="the reference is zero at t=0"):
+            _grip(CONST_REL, "tube/upper/const", 0.0, 0.5)
+        with pytest.raises(HandleEditError, match="scores against 'golden'"):
+            _grip(_with(CONST_BAND, against="golden"), "tube/upper/const", 0.5, 0.75)
+        with pytest.raises(HandleEditError, match="needs a reference"):
+            _grip(CONST_BAND, "tube/upper/const", 0.5, 0.75, reference=None)
+        with pytest.raises(HandleEditError, match="not a finite number"):
+            _grip(CONST_BAND, "tube/upper/const", 0.5, float("nan"))
+        # `const` is no index: a tube WITH control points has no such grip,
+        # and says so rather than "there is no entry const".
+        with pytest.raises(HandleEditError, match="cannot be moved"):
+            _grip(BAND, "tube/upper/const", 0.5, 0.75)
+        with pytest.raises(HandleEditError, match="cannot be moved"):
+            _grip(CONST_BAND, "tube/middle/const", 0.5, 0.75)
+        with pytest.raises(HandleEditError, match="'abs' has no constant width"):
+            _grip(
+                _with(CONST_BAND, tube_width_mode="abs"), "tube/upper/const", 0.5, 0.75
+            )
+
+    def test_no_move_in_y_changes_nothing(self):
+        assert _grip(CONST_BAND, "tube/upper/const", 0.5, None) == CONST_BAND
+
+
+DECLARED = {
+    "metric": "event-timing",
+    "variable": "x",
+    "time_tolerance": 0.0625,
+    "events": [
+        {"time": 0.5},
+        {"time": 0.75, "tolerance": {"lower": 0.125, "upper": 0.25}},
+        {"time": 0.25, "tolerance": 0.125},
+    ],
+}
+AUTO = {"metric": "event-timing", "variable": "x", "time_tolerance": 0.0625}
+#: A baseline with an event (a duplicated time) at 0.25 and at 0.75.
+EVENTS_REF = (
+    np.array([0.0, 0.25, 0.25, 0.5, 0.75, 0.75, 1.0]),
+    np.array([0.0, 0.25, 1.25, 1.5, 1.75, 0.75, 1.0]),
+)
+
+
+class TestEventSides:
+    """`events/early|late/i` → that side of event `i`'s window: its row's
+    `tolerance` where it has one, else the criterion's `time_tolerance`."""
+
+    def test_a_declared_row_that_defers_writes_the_criterions(self):
+        new = _grip(DECLARED, "events/late/0", 0.75)
+        assert new["time_tolerance"] == 0.25 and "tolerance" not in new["events"][0]
+        assert _grip(DECLARED, "events/early/0", 0.375)["time_tolerance"] == 0.125
+        bare = {k: v for k, v in DECLARED.items() if k != "time_tolerance"}
+        assert _grip(bare, "events/late/0", 0.75)["time_tolerance"] == 0.25
+        pair = _with(DECLARED, time_tolerance={"lower": 0.0625, "upper": 0.125})
+        assert _grip(pair, "events/early/0", 0.25)["time_tolerance"] == {
+            "lower": 0.25,
+            "upper": 0.125,
+        }
+
+    def test_a_rows_own_tolerance_is_the_one_written(self):
+        new = _grip(DECLARED, "events/early/1", 0.25)
+        assert new["events"][1]["tolerance"] == {"lower": 0.5, "upper": 0.25}
+        assert new["time_tolerance"] == 0.0625
+        new = _grip(DECLARED, "events/late/2", 0.5)
+        assert new["events"][2]["tolerance"] == 0.25  # a number: both sides
+        # y — the arrow's paper anchor, moved by a diagonal drag — is not read.
+        assert _grip(DECLARED, "events/late/2", 0.5, 0.123) == new
+
+    def test_auto_detected_events_are_the_references(self):
+        """With no `events` the scorer's events are the baseline's own
+        duplicated times: event 1 is at 0.75."""
+        new = _grip(AUTO, "events/late/1", 1.0, reference=EVENTS_REF)
+        assert new == {**AUTO, "time_tolerance": 0.25}
+        new = _grip(AUTO, "events/early/0", 0.125, reference=EVENTS_REF)
+        assert new["time_tolerance"] == 0.125
+
+    def test_the_event_index_counts_inside_the_window(self):
+        """The scorer detects events on the reference AS WINDOWED: from 0.5
+        on, the one event left — at 0.75 — is event 0."""
+        windowed = _with(AUTO, window={"start": 0.5})
+        new = _grip(windowed, "events/late/0", 1.0, reference=EVENTS_REF)
+        assert new["time_tolerance"] == 0.25
+        with pytest.raises(HandleEditError, match="there is no event 1"):
+            _grip(windowed, "events/late/1", 1.0, reference=EVENTS_REF)
+
+    def test_refusals(self):
+        with pytest.raises(HandleEditError) as box:
+            _grip(DECLARED, "events/late/0", 0.25)
+        assert box.value.reason == "the upper side would cross its target"
+        with pytest.raises(HandleEditError, match="the lower side would cross"):
+            _grip(DECLARED, "events/early/1", 0.875)
+        assert _grip(DECLARED, "events/late/0", 0.5)["time_tolerance"] == 0.0
+        with pytest.raises(HandleEditError, match="scores against 'golden'"):
+            _grip(
+                _with(AUTO, against="golden"),
+                "events/late/0",
+                0.5,
+                reference=EVENTS_REF,
+            )
+        # A declared event's time is its own: another baseline moves nothing.
+        assert (
+            _grip(_with(DECLARED, against="golden"), "events/late/0", 0.75)[
+                "time_tolerance"
+            ]
+            == 0.25
+        )
+        with pytest.raises(HandleEditError, match="needs a reference"):
+            _grip(AUTO, "events/late/0", 0.5, reference=None)
+        with pytest.raises(HandleEditError, match="there is no event 0"):
+            _grip(AUTO, "events/late/0", 0.5)  # REF holds no event
+        with pytest.raises(HandleEditError, match="no entry 9"):
+            _grip(DECLARED, "events/late/9", 0.5)
+        with pytest.raises(HandleEditError, match="not a finite number"):
+            _grip(DECLARED, "events/late/0", float("nan"))
+        for local in (
+            "events/window/0",
+            "events/ref/0",
+            "events/late",
+            "peaks/lower/0",
+        ):
+            with pytest.raises(HandleEditError, match="cannot be moved"):
+                _grip(DECLARED, local, 0.75)
+
+    def test_no_move_in_x_changes_nothing(self):
+        assert _grip(DECLARED, "events/late/0", None, 0.3) == DECLARED
+
+
+PEAK_SIDES = {
+    "metric": "dominant-frequency",
+    "variable": "x",
+    "peaks": [
+        {"freq": 2.0, "tolerance": 0.125, "tolerance_mode": "rel"},
+        {"freq": 4.0, "tolerance": {"lower": 0.125, "upper": 0.25}},
+        {"freq": 8.0, "tolerance": 0.5, "tolerance_mode": "abs"},
+        {"freq": 16.0},
+    ],
+}
+
+
+class TestPeakSides:
+    """`peaks/lower|upper/i` → that side of `peaks[i]["tolerance"]`."""
+
+    def test_rel_is_the_fraction_of_the_declared_frequency(self):
+        new = _grip(PEAK_SIDES, "peaks/upper/0", 2.5)
+        assert new["peaks"][0] == {
+            "freq": 2.0,
+            "tolerance": 0.25,
+            "tolerance_mode": "rel",
+        }
+        assert _grip(PEAK_SIDES, "peaks/lower/0", 1.5)["peaks"][0]["tolerance"] == 0.25
+
+    def test_a_pair_changes_only_that_side(self):
+        # No `tolerance_mode`: rel, as the scorer reads it.
+        new = _grip(PEAK_SIDES, "peaks/lower/1", 2.0)
+        assert new["peaks"][1]["tolerance"] == {"lower": 0.5, "upper": 0.25}
+        new = _grip(PEAK_SIDES, "peaks/upper/1", 6.0)
+        assert new["peaks"][1]["tolerance"] == {"lower": 0.125, "upper": 0.5}
+
+    def test_abs_is_the_distance_in_hz(self):
+        assert _grip(PEAK_SIDES, "peaks/upper/2", 9.0)["peaks"][2]["tolerance"] == 1.0
+        assert _grip(PEAK_SIDES, "peaks/lower/2", 7.75)["peaks"][2]["tolerance"] == 0.25
+
+    def test_a_row_without_a_tolerance_gets_one_on_its_first_drag(self):
+        new = _grip(PEAK_SIDES, "peaks/upper/3", 20.0)
+        assert new["peaks"][3] == {"freq": 16.0, "tolerance": 0.25}
+
+    def test_the_amplitude_is_not_read(self):
+        assert _grip(PEAK_SIDES, "peaks/upper/0", 2.5, 123.0) == _grip(
+            PEAK_SIDES, "peaks/upper/0", 2.5
+        )
+        assert _grip(PEAK_SIDES, "peaks/upper/0", None, 123.0) == PEAK_SIDES
+
+    def test_refusals(self):
+        with pytest.raises(HandleEditError) as box:
+            _grip(PEAK_SIDES, "peaks/upper/0", 1.5)
+        assert box.value.reason == "the upper side would cross its target"
+        with pytest.raises(HandleEditError, match="the lower side would cross"):
+            _grip(PEAK_SIDES, "peaks/lower/2", 8.5)
+        assert _grip(PEAK_SIDES, "peaks/lower/0", 2.0)["peaks"][0]["tolerance"] == 0.0
+        zero = copy.deepcopy(PEAK_SIDES)
+        zero["peaks"][0]["freq"] = 0.0
+        with pytest.raises(HandleEditError, match="the declared frequency is zero"):
+            _grip(zero, "peaks/upper/0", 0.5)
+        with pytest.raises(HandleEditError, match="not a finite number"):
+            _grip(PEAK_SIDES, "peaks/upper/0", float("inf"))
+        with pytest.raises(HandleEditError, match="no entry 9"):
+            _grip(PEAK_SIDES, "peaks/upper/9", 2.5)
+        with pytest.raises(HandleEditError, match="cannot be moved"):
+            _grip(PEAK_SIDES, "peaks/window/0", 2.5)
+
+    def test_the_declared_peak_still_moves(self):
+        assert _edit(PEAK_SIDES, "peaks/declared/0", 3.0)["peaks"][0]["freq"] == 3.0

@@ -6372,6 +6372,7 @@ SHAPE_AT = """
                          : ya._offset + ya.d2p(s.yanchor)),
     ppx: xa._length / Math.abs(xa.range[1] - xa.range[0]),
     ppy: ya ? ya._length / Math.abs(ya.range[1] - ya.range[0]) : null,
+    x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1,
     box: b && b.width > 0
       ? {x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2,
          left: b.left, right: b.right, top: b.top, bottom: b.bottom}
@@ -6431,4 +6432,330 @@ def test_a_ring_pressed_off_its_centre_moves_its_point(tmp_path, playwright_brow
         assert abs(moved - (0.25 + 40 / ring["ppx"])) < 1 / ring["ppx"], (moved, ring)
         # The tolerance the row holds is what it held.
         expect(_table_cell(page, 0, "− tolerance")).to_have_value("0.05")
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.05")
+
+
+def _grips_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_tables_project` — on x: declared points, events and peaks, each
+    with a row holding a number and one holding a pair — and on y a tube of
+    constant width and a scalar scored against its baseline."""
+    cfg, work = _tables_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"]["children"] += [
+                {
+                    "metric": "tube",
+                    "variable": "y",
+                    "tube_width_mode": "band",
+                    "tube_abs": 0.3,
+                },
+                {
+                    "metric": "scalar",
+                    "variable": "y",
+                    "quantity": {"reduce": "max"},
+                    "tolerance": 0.5,
+                },
+            ]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def _open_for_grips(page, card: int, name: str) -> None:
+    """Open criterion ``name`` on plot ``card`` and bring that plot under
+    the mouse: the page scrolls an opening editor into view."""
+    _open_crit(page, card, name)
+    expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+    page.locator(".js-plotly-plot").nth(card).evaluate(
+        "e => e.scrollIntoView({block: 'center'})"
+    )
+    page.wait_for_timeout(400)
+
+
+def _drag_arrow(
+    page, tail: str, dx: float, dy: float, card: int = 0, during=None
+) -> dict:
+    """Bring the pointer to the grip's anchor — where a person aims, and
+    what shows it — then drag the arrow itself by ``(dx, dy)``. Returns
+    the shape as it was read with the pointer on it."""
+    at = _shape(page, tail, card)
+    page.mouse.move(at["x"] - 40, at["y"] - 40)
+    page.mouse.move(at["x"], at["y"], steps=4)
+    shown = _shape(page, tail, card)
+    assert shown["box"] is not None, (tail, shown)
+    x, y = shown["box"]["x"], shown["box"]["y"]
+    page.mouse.move(x, y, steps=3)
+    page.mouse.down()
+    page.mouse.move(x + dx, y + dy, steps=10)
+    if during is not None:
+        during()
+    page.mouse.up()
+    return shown
+
+
+def _settled_at(page, tail: str, key: str, value: float, card: int = 0) -> dict:
+    """The shape once the server's redraw put its ``key`` at ``value``."""
+    page.wait_for_function(
+        """([card, tail, key, value]) => {
+          const gd = document.querySelectorAll('.js-plotly-plot')[card];
+          const s = (gd.layout.shapes || []).find(x => (x.name || '').endsWith(tail));
+          return !!s && Math.abs(s[key] - value) <= 1e-9 * Math.max(1, Math.abs(value));
+        }""",
+        arg=[card, tail, key, value],
+        timeout=EXPECT_TIMEOUT,
+    )
+    return _shape(page, tail, card)
+
+
+def _staged_number(page, key: str) -> float:
+    """The number the preview shows staged under ``key``."""
+    found = re.search(rf'"{key}":(-?[0-9.eE+-]+)', _staged_in_preview(page))
+    assert found is not None, key
+    return float(found.group(1))
+
+
+def test_a_points_arrow_dragged_up_moves_that_side_and_the_box_follows(
+    tmp_path, playwright_browser
+):
+    """Each side of a checkpoint's tolerance is an arrow just outside its
+    box. Dragged up 30 px: a row holding a NUMBER moves both sides; a row
+    holding a pair only that one; the box's edge lands where the arrow was
+    released, and the arrow is shown for the whole of the drag."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.05")
+
+        mid: list = []
+        was = _drag_arrow(
+            page,
+            "/points/upper/0",
+            0,
+            -30,
+            during=lambda: mid.append(_shape(page, "/points/upper/0")["box"]),
+        )
+        to = was["yanchor"] + 30 / was["ppy"]
+        assert mid[0] is not None  # shown mid-drag
+        assert abs(mid[0]["y"] - (was["box"]["y"] - 30)) <= 1.5, (mid, was)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 0, "+ tolerance").input_value())
+        # The row's value is 0.3: the side is the edge's distance from it.
+        assert abs(upper - (to - 0.3)) * was["ppy"] < 0.5, (upper, to)
+        # A number: linked — the other side moved with it.
+        assert float(_table_cell(page, 0, "− tolerance").input_value()) == upper
+        # The box's top edge and the arrow's anchor are one place: where the
+        # arrow was released.
+        box = _settled_at(page, "/points/box/0", "y1", 0.3 + upper)
+        arrow = _shape(page, "/points/upper/0")
+        assert arrow["yanchor"] == box["y1"]
+        assert abs(box["y1"] - to) * was["ppy"] < 0.5, (box, to)
+        assert abs(box["y0"] - (0.3 - upper)) < 1e-9, box
+        # Neither the time nor the value moved with a sideways wobble.
+        expect(_table_cell(page, 0, "time")).to_have_value("0.25")
+        expect(_table_cell(page, 0, "value")).to_have_value("0.3")
+
+        # Row 1 holds a pair: its upper arrow moves the upper side alone.
+        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.08")
+        was = _drag_arrow(page, "/points/upper/1", 0, -30)
+        to = was["yanchor"] + 30 / was["ppy"]
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.08", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
+        assert abs(upper - (to - 0.9)) * was["ppy"] < 0.5, (upper, to)
+        expect(_table_cell(page, 1, "− tolerance")).to_have_value("0.02")
+        # Its `before` arrow, dragged left: how much EARLIER.
+        was = _drag_arrow(page, "/points/before/1", -30, 0)
+        expect(_table_cell(page, 1, "before time_tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        before = float(_table_cell(page, 1, "before time_tolerance").input_value())
+        assert abs(before - (0.05 + 30 / was["ppx"])) * was["ppx"] < 0.5, before
+        expect(_table_cell(page, 1, "after time_tolerance")).to_have_value("0.1")
+        expect(_table_cell(page, 1, "+ tolerance")).to_have_value(str(upper))
+        _shot(page, tmp_path, "grips-after-drags")
+
+
+def _thin_box_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by one checkpoint whose
+    tolerance is 0.001: its box is under a pixel tall."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "points",
+                "variable": "x",
+                "points": [{"time": 0.5, "value": 0.6, "tolerance": 0.001}],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_a_checkpoint_under_a_pixel_tall_still_moves_by_its_ring(
+    tmp_path, playwright_browser
+):
+    """With a tolerance of 0.001 the box is a line: rings on its edges sat
+    on the target's own, and a sideways drag of the checkpoint rewrote the
+    tolerance and left the time. The arrows stand outside the ring: the
+    ring takes the press, the time moves and the tolerance does not."""
+    with _served(tmp_path, playwright_browser, project=_thin_box_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        expect(_table_cell(page, 0, "time")).to_have_value("0.5")
+        ring = _shape(page, "/points/target/0")
+        box = _shape(page, "/points/box/0")
+        assert abs(box["y1"] - box["y0"]) * ring["ppy"] < 1, (box, ring)
+        _mouse_drag_by(page, ring["x"], ring["y"], 40, 0)
+        expect(_table_cell(page, 0, "time")).not_to_have_value(
+            "0.5", timeout=EXPECT_TIMEOUT
+        )
+        moved = float(_table_cell(page, 0, "time").input_value())
+        assert abs(moved - (0.5 + 40 / ring["ppx"])) < 1 / ring["ppx"], (moved, ring)
+        expect(_table_cell(page, 0, "− tolerance")).to_have_value("0.001")
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.001")
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+
+
+def test_an_events_and_a_peaks_window_drag_by_their_arrows(
+    tmp_path, playwright_browser
+):
+    """A window spans its panel, so its two arrows stand at mid-height.
+    An event's `late` arrow dragged right widens how much LATER it may
+    come; a peak's upper arrow, on the spectrum panel, its upper side."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "event-timing · x")
+        expect(_table_cell(page, 0, "late tolerance")).to_have_value("0.05")
+        # A diagonal drag: the arrow's paper anchor moves with it, and only
+        # its time is read.
+        was = _drag_arrow(page, "/events/late/0", 30, 25)
+        expect(_table_cell(page, 0, "late tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        late = float(_table_cell(page, 0, "late tolerance").input_value())
+        assert abs(late - (0.05 + 30 / was["ppx"])) * was["ppx"] < 0.5, (late, was)
+        # A number: both sides.
+        assert float(_table_cell(page, 0, "early tolerance").input_value()) == late
+        window = _settled_at(page, "/events/window/0", "x1", 0.25 + late)
+        arrow = _shape(page, "/events/late/0")
+        assert arrow["xanchor"] == window["x1"]
+        assert arrow["yanchor"] == was["yanchor"]  # back at mid-height
+        # Event 1 holds a pair: its early arrow moves the early side alone.
+        was = _drag_arrow(page, "/events/early/1", -30, 0)
+        expect(_table_cell(page, 1, "early tolerance")).not_to_have_value(
+            "0.01", timeout=EXPECT_TIMEOUT
+        )
+        early = float(_table_cell(page, 1, "early tolerance").input_value())
+        assert abs(early - (0.01 + 30 / was["ppx"])) * was["ppx"] < 0.5, (early, was)
+        expect(_table_cell(page, 1, "late tolerance")).to_have_value("0.04")
+
+        _open_for_grips(page, 0, "dominant-frequency · x")
+        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.2")
+        was = _drag_arrow(page, "/peaks/upper/1", 20, 0)
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.2", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
+        # rel: the fraction of the declared 2 Hz.
+        assert abs(upper - (0.2 + 20 / was["ppx"] / 2.0)) * was["ppx"] < 0.5, upper
+        expect(_table_cell(page, 1, "− tolerance")).to_have_value("0.05")
+        window = _settled_at(page, "/peaks/window/1", "x1", 2.0 * (1 + upper))
+        assert _shape(page, "/peaks/upper/1")["xanchor"] == window["x1"]
+
+
+#: A horizontal LINE of plot ``card``, where a press lands on it: a line is
+#: a pixel and a half thick, so the hit test sweeps as `FIND_LINE` does.
+LINE_AT = """
+([card, tail]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const xa = fl.xaxis, ya = fl.yaxis;
+  const shapes = gd.layout.shapes || [];
+  const s = shapes.find(x => (x.name || '').endsWith(tail));
+  if (!s) return null;
+  const cy0 = rect.top + ya._offset + ya.d2p(s.y0);
+  for (const fx of [0.5, 0.35, 0.65, 0.25, 0.75]) {
+    const cx = rect.left + xa._offset + xa._length * fx;
+    for (const dy of [0, -1, 1, -2, 2, -3, 3]) {
+      const el = document.elementFromPoint(cx, cy0 + dy);
+      if (el && el.closest('g.shapelayer')) {
+        return {x: cx, y: cy0 + dy, y0: s.y0,
+                ppy: ya._length / Math.abs(ya.range[1] - ya.range[0])};
+      }
+    }
+  }
+  return null;
+}
+"""
+
+
+def test_a_constant_tubes_arrow_and_a_scalars_line_drag_their_side(
+    tmp_path, playwright_browser
+):
+    """On y's plot: a tube of constant width has one arrow per side, on
+    the band's edges at mid-trace; a scalar scored against its baseline
+    draws what it allows as two lines, each dragged as a bound is."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 1, "tube · y")
+        was = _drag_arrow(page, "/tube/upper/const", 0, -20, card=1)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        width = _staged_number(page, "tube_abs")
+        assert abs(width - (0.3 + 20 / was["ppy"])) * was["ppy"] < 0.5, (width, was)
+        # The band's edge is where the arrow was released.
+        arrow = _settled_at(
+            page, "/tube/upper/const", "yanchor", was["yanchor"] - 0.3 + width, card=1
+        )
+        assert abs(arrow["yanchor"] - (was["yanchor"] + 20 / was["ppy"])) < (
+            0.5 / was["ppy"]
+        )
+
+        _open_for_grips(page, 1, "scalar · y")
+        line = page.evaluate(LINE_AT, [1, "/scalar/lower"])
+        assert line is not None, page.evaluate(READ_PLOT)
+        _mouse_drag_by(page, line["x"], line["y"], 0, 20)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "2 pending edits", timeout=EXPECT_TIMEOUT
+        )
+        staged = _staged_in_preview(page)
+        found = re.search(r'"reduce":"max"\},"tolerance":([0-9.eE+-]+)', staged)
+        assert found is not None, staged
+        tolerance = float(found.group(1))
+        assert abs(tolerance - (0.5 + 20 / line["ppy"])) * line["ppy"] < 1.0, (
+            tolerance,
+            line,
+        )
+
+
+def test_an_arrow_dragged_across_its_target_snaps_back_and_says_why(
+    tmp_path, playwright_browser
+):
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        was = _shape(page, "/points/upper/0")
+        # The box is 0.05 above its target: 60 px down is well past it.
+        assert 0.05 * was["ppy"] < 40, was
+        _drag_arrow(page, "/points/upper/0", 0, 60)
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_contain_text(
+            "the upper side would cross its target", timeout=EXPECT_TIMEOUT
+        )
+        # ABOVE the editor's fields, where the eye goes after the plot.
+        said = editor.get_by_text("the upper side would cross its target")
+        table = editor.locator(".dstf-table-row").first
+        assert said.bounding_box()["y"] < table.bounding_box()["y"]
+        back = _settled_at(page, "/points/upper/0", "yanchor", was["yanchor"])
+        assert back["yanchor"] == was["yanchor"]
+        assert _pending(page) == "0 pending edits"
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.05")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ..backends.types import DatasetType
 from .handles import (
+    edit_events_handle,
     edit_peaks_handle,
     edit_points_handle,
     edit_range_handle,
@@ -199,6 +200,7 @@ def register_builtins() -> None:
             build=_build_event_timing,
             score_direction="lower",
             summarize=summarize_event_timing,
+            edit_handle=edit_events_handle,
         )
     )
     register_metric(

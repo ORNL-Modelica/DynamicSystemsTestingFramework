@@ -15,6 +15,13 @@ or non-numeric position, a local it does not name, or a rule below broken. The l
 the ids the modes emit (``algorithms._tube_geometry`` and its siblings).
 Every number an editor writes is rounded to 12 significant digits
 (:func:`_written`).
+
+A ``kind="grip"`` primitive is one SIDE of a tolerance, and its editor
+writes that side through :func:`_set_side`: the value is the distance from
+the target to the dragged edge — in ``rel``, over the target's magnitude —
+and the holder is the row's own tolerance where the row has one, else the
+criterion's. A grip moves on ONE axis; the other reaches the editor as the
+grip's own resolved position, never as something to write.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .algorithms import _find_event_boundaries
 from .sides import parse_sides
 from .types import _EPS
 
@@ -37,7 +45,10 @@ class HandleEdit:
     leaf: dict
     #: The handle's id without its leaf path: ``"tube/upper/3"``.
     local: str
-    #: The dragged position; ``None`` where that axis did not move.
+    #: The dragged position; ``None`` where that axis did not move. For a
+    #: grip — which moves on one axis — the other axis carries where the
+    #: grip stands (a constant tube's side is measured from the reference
+    #: at the grip's own time).
     x: float | None
     y: float | None
     #: The primary baseline ``(time, values)``, full resolution — unwindowed.
@@ -189,6 +200,16 @@ def _time_span(
     so the span runs from the first reference sample ``>= window.start`` to
     the last ``<= window.end``, either end absent meaning the reference's
     own. With no reference, only the window's own ends apply."""
+    if reference is None:
+        start, end = _window_ends(edit, leaf)
+        lo = -math.inf if start is None else start
+        hi = math.inf if end is None else end
+        return lo, hi
+    inside, _ = _windowed(edit, leaf, reference)
+    return float(inside[0]), float(inside[-1])
+
+
+def _window_ends(edit: HandleEdit, leaf: dict) -> tuple[float | None, float | None]:
     window = leaf.get("window") or {}
     start = window.get("start")
     end = window.get("end")
@@ -196,20 +217,39 @@ def _time_span(
         start = _authored_number(edit, start, "window.start")
     if end is not None:
         end = _authored_number(edit, end, "window.end")
-    if reference is None:
-        lo = -math.inf if start is None else start
-        hi = math.inf if end is None else end
-        return lo, hi
+    return start, end
+
+
+def _windowed(
+    edit: HandleEdit, leaf: dict, reference: tuple[np.ndarray, np.ndarray]
+) -> tuple[np.ndarray, np.ndarray]:
+    """``reference`` as the SCORER receives it: the evaluator slices it to
+    the samples inside the leaf's ``window`` (inclusive) first, so whatever
+    a mode reads off the reference itself — its final value, its events —
+    it reads off this. Refused where the window holds no sample."""
+    start, end = _window_ends(edit, leaf)
     ref_time = np.asarray(reference[0], dtype=float)
     mask = np.ones(len(ref_time), dtype=bool)
     if start is not None:
         mask &= ref_time >= start
     if end is not None:
         mask &= ref_time <= end
-    inside = ref_time[mask]
-    if len(inside) == 0:
+    if not mask.any():
         raise _refuse(edit, "the leaf's window holds no reference sample")
-    return float(inside[0]), float(inside[-1])
+    return ref_time[mask], np.asarray(reference[1], dtype=float)[mask]
+
+
+def _measured_reference(
+    edit: HandleEdit, leaf: dict, what: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """The primary baseline a tolerance side is measured from, as the
+    scorer receives it (:func:`_windowed`) — refused on a leaf scored
+    against another baseline, and where there is none."""
+    _refuse_other_baseline(edit, leaf, what)
+    reference = _reference(edit)
+    if reference is None:
+        raise _refuse(edit, f"{what} needs a reference to measure from")
+    return _windowed(edit, leaf, reference)
 
 
 def _clamped_time(
@@ -264,6 +304,8 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
     if side not in ("upper", "lower"):
         raise _unnamed(edit)
     leaf = copy.deepcopy(edit.leaf)
+    if segment == "const":  # before `_index`: it is no index
+        return _edit_constant_tube(edit, leaf, side)
     i = _index(edit, segment, leaf.get("tube_points"))
     rows: list = leaf["tube_points"]
     point = rows[i]
@@ -294,6 +336,32 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
         raise HandleEditError(
             f"{err} {clamp}", reason=f"{err.reason} {clamp}"
         ) from None
+
+
+def _edit_constant_tube(edit: HandleEdit, leaf: dict, side: str) -> dict:
+    """``tube/upper/const`` and ``tube/lower/const`` — the grips of a tube
+    of constant width — → that side of ``tube_abs`` (``band``) or
+    ``tube_rel`` (``rel``), by :func:`_set_side`: ``y − ref(x)`` for upper,
+    ``ref(x) − y`` for lower, ``x`` being where the grip stands; in ``rel``
+    over ``|ref(x)|``, refused where the reference is zero there (below
+    ``types._EPS``, the control points' rule). A tube with control points
+    has no such grip: its widths are theirs."""
+    if leaf.get("tube_points"):
+        raise _unnamed(edit)
+    mode = leaf.get("tube_width_mode")
+    if mode not in ("band", "rel"):
+        raise _refuse(edit, f"tube_width_mode {mode!r} has no constant width")
+    ref_time, ref_values = _measured_reference(edit, leaf, "its width")
+    if edit.y is None or edit.x is None:
+        return leaf
+    ref_x = float(np.interp(float(edit.x), ref_time, ref_values))
+    width = edit.y - ref_x if side == "upper" else ref_x - edit.y
+    if mode == "rel":
+        if abs(ref_x) < _EPS:
+            raise _refuse(edit, f"the reference is zero at t={_num(edit.x)}")
+        width = width / abs(ref_x)
+    _set_side(edit, leaf, "tube_abs" if mode == "band" else "tube_rel", side, width)
+    return leaf
 
 
 def _set_tube_width(
@@ -487,9 +555,14 @@ def edit_points_handle(edit: HandleEdit) -> dict:
     code's test in ``algorithms._compare_points`` — so a checkpoint that
     follows the baseline (``value`` absent or null) moves in time only and a
     drag never makes it baseline-free. ``points/target/final`` (the final-value check
-    of an empty list) is refused: there is no declared point to move."""
+    of an empty list) is refused: there is no declared point to move.
+
+    ``points/upper|lower|before|after/i`` and ``points/upper|lower/final``
+    are the sides of a tolerance: :func:`_edit_points_side`."""
     _check_position(edit)
     _, role, segment = _parse(edit, "points", 3)
+    if role in _POINT_SIDES:
+        return _edit_points_side(edit, role, segment)
     if role != "target":
         raise _unnamed(edit)
     if segment == "final":
@@ -511,18 +584,163 @@ def edit_points_handle(edit: HandleEdit) -> dict:
     return leaf
 
 
+#: A point's grips: the side each writes, and of which tolerance.
+_POINT_SIDES = {
+    "upper": ("upper", "tolerance"),
+    "lower": ("lower", "tolerance"),
+    "before": ("lower", "time_tolerance"),
+    "after": ("upper", "time_tolerance"),
+}
+
+
+def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
+    """One side of a checkpoint's tolerance, by :func:`_set_side`.
+
+    ``upper`` / ``lower`` → the value tolerance the row is held to: its own
+    ``tolerance`` where the row has one (a ``null`` is an absent key, as
+    the scorer reads it), else the CRITERION's — so every row that defers
+    to it moves with it. From ``y``: ``y − target`` for upper, ``target −
+    y`` for lower, over ``|target|`` where the row's ``tolerance_mode`` is
+    ``rel`` (refused at a target of zero). The target is the row's
+    ``value``, else the reference at the row's time — refused on a leaf
+    scored against another baseline, and with no reference.
+
+    ``before`` / ``after`` → the row's ``time_tolerance``, from ``x``:
+    ``time − x`` and ``x − time``. Only a row that holds one has these.
+
+    ``upper/final`` / ``lower/final`` — the final-value check of an empty
+    list — → the criterion's ``tolerance``, measured from the reference's
+    final value AS WINDOWED (the scorer's)."""
+    side, key = _POINT_SIDES[role]
+    leaf = copy.deepcopy(edit.leaf)
+    if segment == "final":
+        if key != "tolerance":
+            raise _unnamed(edit)
+        _, ref_values = _measured_reference(edit, leaf, "the final value's tolerance")
+        if edit.y is None:
+            return leaf
+        target = float(ref_values[-1])
+        value = edit.y - target if side == "upper" else target - edit.y
+        _set_side(edit, leaf, "tolerance", side, value)
+        return leaf
+    i = _index(edit, segment, leaf.get("points"))
+    point = leaf["points"][i]
+    if key == "time_tolerance":
+        if point.get("time_tolerance") is None:
+            raise _refuse(edit, f"points[{i}] holds no time_tolerance")
+        if edit.x is None:
+            return leaf
+        t = _point_time(edit, leaf, point, i)
+        value = t - edit.x if side == "lower" else edit.x - t
+        _set_side(edit, point, "time_tolerance", side, value)
+        return leaf
+    if point.get("value") is not None:
+        target = _authored_number(edit, point["value"], f"points[{i}].value")
+    else:
+        ref_time, ref_values = _measured_reference(edit, leaf, "its tolerance")
+        t = _point_time(edit, leaf, point, i)
+        target = float(np.interp(t, ref_time, ref_values))
+    if edit.y is None:
+        return leaf
+    value = edit.y - target if side == "upper" else target - edit.y
+    if point.get("tolerance_mode", "abs") == "rel":
+        # The scorer's arithmetic, inverted: each side is that fraction of
+        # |target|, which only a target of exactly 0 cannot give back.
+        if abs(target) == 0.0:
+            raise _refuse(edit, "the target is zero")
+        value = value / abs(target)
+    holder = point if point.get("tolerance") is not None else leaf
+    _set_side(edit, holder, "tolerance", side, value)
+    return leaf
+
+
+def _point_time(edit: HandleEdit, leaf: dict, point: dict, i: int) -> float:
+    """Checkpoint ``i``'s time: its own, or — absent or null, the trace-end
+    sentinel — the last time of the reference as the scorer receives it."""
+    time = point.get("time")
+    if time is not None:
+        return _authored_number(edit, time, f"points[{i}].time")
+    ref_time, _ = _measured_reference(edit, leaf, "the trace's end")
+    return float(ref_time[-1])
+
+
+# -- event-timing --------------------------------------------------------------
+
+
+def edit_events_handle(edit: HandleEdit) -> dict:
+    """``events/early/i`` and ``events/late/i`` — the edges of event ``i``'s
+    window — → that side of the tolerance the event is held to, by
+    :func:`_set_side`, from ``x``: ``time − x`` for early (``lower``),
+    ``x − time`` for late (``upper``); ``y`` is ignored.
+
+    A DECLARED event (the leaf holds ``events``): its time is its row's,
+    and the holder its row's ``tolerance`` where the row has one, else the
+    criterion's ``time_tolerance``. AUTO-DETECTED events (no ``events``):
+    event ``i`` is the ``i``-th duplicated time of the reference as the
+    scorer receives it — windowed — found by the scorer's own detection;
+    the holder is the criterion's ``time_tolerance``, so every window
+    moves. Refused on a leaf scored against another baseline, and with no
+    reference. An event's own time has no handle."""
+    _check_position(edit)
+    _, role, segment = _parse(edit, "events", 3)
+    if role not in ("early", "late"):
+        raise _unnamed(edit)
+    side = "lower" if role == "early" else "upper"
+    leaf = copy.deepcopy(edit.leaf)
+    holder = leaf
+    key = "time_tolerance"
+    if leaf.get("events") is not None:
+        i = _index(edit, segment, leaf["events"])
+        event = leaf["events"][i]
+        t = _authored_number(edit, event.get("time"), f"events[{i}].time")
+        if event.get("tolerance") is not None:
+            holder, key = event, "tolerance"
+    else:
+        ref_time, _ = _measured_reference(edit, leaf, "an event's window")
+        events = [float(ref_time[b[0]]) for b in _find_event_boundaries(ref_time)]
+        if not (segment.isascii() and segment.isdigit()):
+            raise _unnamed(edit)
+        i = int(segment)
+        if i >= len(events):
+            raise _refuse(edit, f"there is no event {i} to move")
+        t = events[i]
+    if edit.x is None:
+        return leaf
+    value = t - edit.x if side == "lower" else edit.x - t
+    _set_side(edit, holder, key, side, value)
+    return leaf
+
+
 # -- dominant-frequency --------------------------------------------------------
 
 
 def edit_peaks_handle(edit: HandleEdit) -> dict:
     """``peaks/declared/i`` → ``peaks[i]["freq"]`` from ``x``, refused
-    ``<= 0``; ``y`` (the spectrum's amplitude) is ignored."""
+    ``<= 0``; ``y`` (the spectrum's amplitude) is ignored.
+
+    ``peaks/lower/i`` and ``peaks/upper/i`` — the edges of the peak's
+    window — → that side of ``peaks[i]["tolerance"]``, by
+    :func:`_set_side` (a row without one gets it on its first drag): in
+    ``rel`` (the default) ``1 − x/freq`` and ``x/freq − 1``, refused at a
+    declared frequency of zero; in ``abs`` ``freq − x`` and ``x − freq``."""
     _check_position(edit)
     _, role, segment = _parse(edit, "peaks", 3)
-    if role != "declared":
+    if role not in ("declared", "lower", "upper"):
         raise _unnamed(edit)
     leaf = copy.deepcopy(edit.leaf)
     i = _index(edit, segment, leaf.get("peaks"))
+    if role != "declared":
+        peak = leaf["peaks"][i]
+        if edit.x is None:
+            return leaf
+        freq = _authored_number(edit, peak.get("freq"), f"peaks[{i}].freq")
+        value = freq - edit.x if role == "lower" else edit.x - freq
+        if peak.get("tolerance_mode", "rel") == "rel":
+            if freq == 0.0:
+                raise _refuse(edit, "the declared frequency is zero")
+            value = value / abs(freq)
+        _set_side(edit, peak, "tolerance", role, value)
+        return leaf
     if edit.x is not None:
         if edit.x <= 0:
             raise _refuse(edit, f"frequency {_num(edit.x)} must be positive")

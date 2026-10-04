@@ -1277,3 +1277,220 @@ async def test_a_blank_required_sides_cell_is_marked_and_held(session, monkeypat
         upper.set_value(0.2)
         await _settled(lambda: _a_rows(session, "events")[0]["tolerance"] == 0.2)
         assert lower.error is None and upper.error is None
+
+
+# -- a dragged grip: one side of a tolerance (D147) ---------------------------
+
+C = "/metrics/children"
+
+#: One leaf per way a mode emits grips, on D's x (baseline x = t on 0..1).
+GRIP_TREE = {
+    "combinator": "and",
+    "children": [
+        {
+            "metric": "points",
+            "variable": "x",
+            "tolerance": 0.05,
+            "points": [
+                {"time": 0.25},
+                {
+                    "time": 0.75,
+                    "value": 0.75,
+                    "tolerance": 0.05,
+                    "time_tolerance": 0.1,
+                },
+            ],
+        },
+        {"metric": "points", "variable": "x", "tolerance": 0.3},
+        {
+            "metric": "tube",
+            "variable": "x",
+            "tube_width_mode": "band",
+            "tube_abs": 0.5,
+        },
+        {
+            "metric": "event-timing",
+            "variable": "x",
+            "time_tolerance": 0.02,
+            "events": [{"time": 0.5}, {"time": 0.75, "tolerance": 0.05}],
+        },
+        {
+            "metric": "dominant-frequency",
+            "variable": "x",
+            "peaks": [{"freq": 1.0, "tolerance": 0.1}],
+        },
+    ],
+}
+
+#: The claim: the address in its leaf each grip writes — the row's own
+#: tolerance where the row has one, else the criterion's.
+GRIP_ADDRESS = {
+    f"{C}/0/points/upper/0": "/tolerance",
+    f"{C}/0/points/lower/0": "/tolerance",
+    f"{C}/0/points/upper/1": "/points/1/tolerance",
+    f"{C}/0/points/lower/1": "/points/1/tolerance",
+    f"{C}/0/points/before/1": "/points/1/time_tolerance",
+    f"{C}/0/points/after/1": "/points/1/time_tolerance",
+    f"{C}/1/points/upper/final": "/tolerance",
+    f"{C}/1/points/lower/final": "/tolerance",
+    f"{C}/2/tube/upper/const": "/tube_abs",
+    f"{C}/2/tube/lower/const": "/tube_abs",
+    f"{C}/3/events/early/0": "/time_tolerance",
+    f"{C}/3/events/late/0": "/time_tolerance",
+    f"{C}/3/events/early/1": "/events/1/tolerance",
+    f"{C}/3/events/late/1": "/events/1/tolerance",
+    f"{C}/4/peaks/lower/0": "/peaks/0/tolerance",
+    f"{C}/4/peaks/upper/0": "/peaks/0/tolerance",
+}
+
+
+def _grips_on_d(session) -> dict:
+    """Every grip the view of D's x holds, by id: its primitive."""
+    return {
+        p.id: p
+        for leaf in session.view(D, "x").leaves
+        for p in leaf.geometry
+        if p.kind == "grip"
+    }
+
+
+def _own(grip) -> tuple[str, float]:
+    """The axis a grip moves on and where it stands on it."""
+    from dstf.comparison.geometry import VLine, grip_axis
+
+    axis = grip_axis(grip)
+    if isinstance(grip, VLine):
+        return axis, grip.time
+    return axis, grip.x if axis == "x" else grip.y
+
+
+def _released(grip, to: float) -> dict:
+    """The relayout a release carries: BOTH anchors and the path. The one
+    off the grip's axis has drifted — Plotly re-snaps it, and past 8 px of
+    sideways drift moves it in full."""
+    axis, _ = _own(grip)
+    drifted = 7.5
+    return {
+        "xanchor": to if axis == "x" else drifted,
+        "yanchor": to if axis == "y" else drifted,
+        "path": "M 0,10 L 6,17 L -6,17 Z",
+    }
+
+
+def test_the_tree_emits_exactly_the_grips_it_claims(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(GRIP_TREE))])
+    assert set(_grips_on_d(session)) == set(GRIP_ADDRESS)
+
+
+@pytest.mark.parametrize("handle", GRIP_ADDRESS)
+def test_a_dragged_grip_writes_its_side_and_stands_where_it_was_released(
+    session, handle
+):
+    """Every grip a mode emits reaches its editor through `act`, reads ONLY
+    its own axis, writes at the address it claims — and, staged and scored
+    again, stands where it was released: the edge it is anchored on is the
+    one that moved."""
+    from dstf.comparison.geometry import grip_outward
+    from test_handles import _diff, _walk
+
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(GRIP_TREE))])
+    grip = _grips_on_d(session)[handle]
+    axis, was = _own(grip)
+    to = was + 0.0625 * grip_outward(grip)  # outward: it cannot cross
+    op = _only_op(_drag(session, handle, _released(grip, to)))
+    leaf_path = handle[: handle.index("/", len(C) + 1)]
+    assert (op.op, op.path) == ("replace", leaf_path)
+    changed = list(_diff(_walk(session.tree(D), leaf_path), op.value))
+    address = GRIP_ADDRESS[handle]
+    assert changed and all(
+        pointer == address or pointer.startswith(address + "/") for pointer in changed
+    ), changed
+    session.stage([op])
+    moved = _grips_on_d(session)[handle]
+    assert _own(moved) == (axis, pytest.approx(to))
+    # The drifted anchor wrote nothing: off its axis the grip is where it was.
+    if not hasattr(grip, "time"):
+        assert (moved.x, moved.y)[axis == "x"] == pytest.approx(
+            (grip.x, grip.y)[axis == "x"]
+        )
+
+
+def test_a_grip_released_without_its_own_anchor_is_no_move(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(GRIP_TREE))])
+    pending = list(session.spec.pending)
+    for handle, shape in (
+        (f"{C}/0/points/upper/1", {"xanchor": 0.9}),
+        (f"{C}/0/points/before/1", {"yanchor": 0.9}),
+        (f"{C}/3/events/late/0", {"yanchor": 0.3}),
+        (f"{C}/4/peaks/upper/0", {"x0": 1.5, "x1": 1.5}),
+        (f"{C}/2/tube/upper/const", {}),
+    ):
+        assert _drag(session, handle, shape) is None, handle
+    assert session.spec.pending == pending
+
+
+def test_a_grip_dragged_across_its_target_is_refused_by_name(session):
+    from dstf.authoring.errors import user_text
+
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(GRIP_TREE))])
+    grips = _grips_on_d(session)
+    upper = f"{C}/0/points/upper/1"
+    with pytest.raises(HandleEditError) as box:
+        _drag(session, upper, _released(grips[upper], 0.5))  # the target is 0.75
+    assert str(box.value) == (
+        f"{C}/0: points/upper/1: the upper side would cross its target"
+    )
+    assert user_text(box.value) == "the upper side would cross its target"
+    early = f"{C}/3/events/early/0"
+    with pytest.raises(HandleEditError, match="the lower side would cross"):
+        _drag(session, early, _released(grips[early], 0.6))  # the event is at 0.5
+
+
+def test_a_grip_of_a_criterion_that_is_not_open_is_refused(session):
+    """Only the open criterion's grips are on the page, so this is reached
+    through `act` alone — where it is refused as another leaf's line is."""
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(GRIP_TREE))])
+    handle = f"{C}/0/points/upper/1"
+    grip = _grips_on_d(session)[handle]
+    elsewhere = Selection(tests=frozenset({D}), variable="x", leaf_path=f"{C}/2")
+    pending = list(session.spec.pending)
+    with pytest.raises(HandleEditError, match="is not a handle of") as box:
+        EditOnPlot().act(
+            SessionView(session, elsewhere),
+            kind="handle",
+            model_id=D,
+            variable="x",
+            handle=handle,
+            shape=_released(grip, 0.9),
+        )
+    assert box.value.reason == "Open that criterion to drag its lines."
+    assert session.spec.pending == pending
+
+
+def test_the_final_checks_grip_measures_from_the_windowed_reference(session):
+    """D's baseline ends at 1.0; windowed to end at 0.5, the final value the
+    scorer holds the result to — and the grip is measured from — is 0.5."""
+    leaf = {
+        "metric": "points",
+        "variable": "x",
+        "tolerance": 0.25,
+        "window": {"end": 0.5},
+    }
+    session.stage([PatchOp(D, "add", "/metrics", leaf)])
+    grips = _grips_on_d(session)
+    upper = grips["/metrics/points/upper/final"]
+    assert (upper.x, upper.y) == (0.5, 0.75)
+    op = _only_op(_drag(session, upper.id, _released(upper, 1.0)))
+    assert op.value == {**leaf, "tolerance": 0.5}
+    with pytest.raises(HandleEditError, match="the upper side would cross"):
+        _drag(session, upper.id, _released(upper, 0.375))
+
+
+def test_a_box_and_a_window_still_drag_nothing(session):
+    """A grip is accepted by its KIND and its type: a tolerance box and an
+    event's window are `handle` Boxes, drawn and never dragged."""
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(GRIP_TREE))])
+    for handle in (f"{C}/0/points/box/1", f"{C}/3/events/window/0"):
+        shape = {"x0": 0.1, "x1": 0.9, "y0": 0.1, "y1": 0.9}
+        assert _drag(session, handle, shape) is None, handle
+    assert _drag(session, f"{C}/3/events/ref/0", {"x0": 0.6, "x1": 0.6}) is None
