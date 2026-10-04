@@ -673,7 +673,10 @@ async def test_a_blank_required_cell_is_marked_and_held_until_it_is_filled(sessi
     """Clearing a required cell to retype it: nothing is submitted (a blank
     would be refused, standing as an error above a table whose cell says
     nothing), the cell is marked, and the keystroke that fills it submits
-    the whole list."""
+    the whole list. The mark is the cell's own VALIDATION: written as an
+    `error` prop it never showed in a browser — NiceGUI validates a field
+    after its change handlers and resets an `error` it did not set — while
+    this test, reading the prop's key, passed."""
     _tree_on_d(session)
     async with host(session, EditOnPlot(), ON_D) as (user, errors, _figure):
         marker = "/metrics/children/0:tube_points:0:time"
@@ -683,7 +686,9 @@ async def test_a_blank_required_cell_is_marked_and_held_until_it_is_filled(sessi
         await asyncio.sleep(0.25)  # two ticks: anything submitted has landed
         assert session.spec.pending == pending
         assert "edit-on-plot" not in errors
-        assert "error" in cell.props
+        assert cell.error == "time is required"
+        # Only the blank one: its neighbours say nothing.
+        assert _cell(user, "/metrics/children/0:tube_points:1:time").error is None
         assert _cell(user, marker) is cell  # not rebuilt
         cell.set_value(0.6)
         await _settled(
@@ -698,7 +703,7 @@ async def test_a_blank_required_cell_is_marked_and_held_until_it_is_filled(sessi
             {"time": 0.6, "upper": 0.1, "lower": 0.2},
             {"time": 0.9, "upper": 0.1, "lower": 0.1},
         ]
-        assert "error" not in cell.props
+        assert cell.error is None
         await asyncio.sleep(0.25)
         assert _cell(user, marker) is cell
 

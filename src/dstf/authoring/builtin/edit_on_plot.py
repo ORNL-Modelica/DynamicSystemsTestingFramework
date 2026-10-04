@@ -450,15 +450,16 @@ def _table(
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
 
     def blanks() -> bool:
-        """Mark each required cell blank or not; True when any is."""
-        found = False
-        for (i, key), cell in cells.items():
-            if rows[i].get(key) is None:
-                cell.props(f'error error-message="{key} is required"')
-                found = True
-            else:
-                cell.props(remove="error error-message")
-        return found
+        """Mark each required cell blank or not; True when any is. The mark
+        is the cell's own validation (`missing`): written as an `error`
+        prop it never showed — NiceGUI validates a field after its change
+        handlers and resets an `error` it did not set itself."""
+        for cell in cells.values():
+            cell.validate(return_result=False)
+        return any(rows[i].get(key) is None for i, key in cells)
+
+    def missing(i: int, key: str) -> str | None:
+        return f"{key} is required" if rows[i].get(key) is None else None
 
     def submit() -> None:
         if blanks():
@@ -514,6 +515,11 @@ def _table(
                                     value=row.get(key),
                                     on_change=lambda e, i=i, key=key: set_cell(
                                         i, key, e.value
+                                    ),
+                                    validation=(
+                                        (lambda _v, i=i, key=key: missing(i, key))
+                                        if key in required
+                                        else None
                                     ),
                                 )
                                 .props("dense")

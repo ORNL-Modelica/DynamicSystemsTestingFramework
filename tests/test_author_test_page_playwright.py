@@ -4200,6 +4200,40 @@ def test_a_tolerances_two_fields_sit_on_the_rows_input_line(
             expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
 
+def test_a_blank_required_table_cell_says_so_in_the_browser(
+    tmp_path, playwright_browser
+):
+    """A required cell cleared to retype it holds the whole list back, and
+    says why WHERE A PERSON SEES IT: the cell turns red with "time is
+    required" under it. It said nothing — the mark was an `error` prop,
+    which NiceGUI resets on the validation that follows every change — so
+    the table silently stopped staging."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "tube · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        row = editor.locator(".dstf-table-scroll > div").first
+        row.evaluate("e => e.scrollIntoView({block: 'center'})")
+        time_cell = row.get_by_label("time", exact=True)
+        expect(time_cell).to_have_value("0.5")
+        _retype(page, time_cell, "")
+        marked = editor.locator(".q-field--error")
+        expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(marked).to_contain_text("time is required")
+        page.wait_for_timeout(500)
+        assert _pending(page) == "0 pending edits"  # held, not refused
+        expect(editor.locator(".text-negative").filter(has_text="row 0")).to_have_count(
+            0
+        )
+        _shot(page, tmp_path, "table-required-cell")
+        page.keyboard.type("0.6")
+        expect(marked).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+
+
 #: The open drawer's panel width, and the first plot's svg width.
 WIDTHS = """() => {
   const panel = [...document.querySelectorAll('.dstf-drawer-panel')]
