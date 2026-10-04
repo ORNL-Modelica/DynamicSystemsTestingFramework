@@ -29,6 +29,7 @@ from ...comparison.seeds import (
     seed_quantity,
     seeded_leaf,
 )
+from ...comparison.sides import parse_sides, signed_sides
 from ..capabilities import Panel, Patch, Placement
 from ..session import SIMULATE_ONLY, no_tree_error
 
@@ -625,13 +626,24 @@ def _quantity_leaf(diagnostics: dict[str, Any], quantity: str, into: str) -> dic
 
 def _requirement(leaf: dict) -> str:
     """What a Statistics row's `+` adds, in the words of its seed — the
-    tolerance is the seed's, never a second copy of it."""
+    tolerance is the seed's, never a second copy of it. Read as any
+    tolerance is (`parse_sides`): a number, or a lower/upper pair, whose
+    two sides — where they differ — read as its two edges."""
     inner = leaf["children"][0] if "combinator" in leaf else leaf
-    tolerance = float(inner.get("tolerance") or 0)
-    if inner.get("tolerance_mode") == "rel":
-        what = f"within {tolerance * 100:g}%"
+    written = inner.get("tolerance")
+    tolerance = parse_sides(0 if written is None else written, "tolerance")
+    rel = inner.get("tolerance_mode") == "rel"
+    if not tolerance.equal:
+        edges = (
+            signed_sides(tolerance, "g", scale=100, unit="%")
+            if rel
+            else signed_sides(tolerance, "g")
+        )
+        what = f"within {edges}"
+    elif rel:
+        what = f"within {tolerance.upper * 100:g}%"
     else:
-        what = "exact match" if tolerance == 0 else f"within ±{tolerance:g}"
+        what = "exact match" if tolerance.upper == 0 else f"within ±{tolerance.upper:g}"
     warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
     return f"Add a requirement: {what}{warning}"
 

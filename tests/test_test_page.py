@@ -9085,6 +9085,36 @@ def test_a_scored_rows_summary_says_the_requirement():
     assert summary(leaf(tolerance=-0.05, tolerance_mode="abs")) == "±-0.05"
 
 
+def test_a_requirements_words_read_a_tolerance_as_a_number_or_a_pair():
+    """What a `+` says it adds reads the leaf's tolerance through
+    `parse_sides`: a seed's number as it always read, an equal pair as that
+    number, and an authored pair with two sides as its two edges — `float()`
+    of a pair raised `TypeError`."""
+    from dstf.authoring.builtin.edit_tree import _requirement
+
+    def leaf(**fields):
+        return {"metric": "scalar", "quantity": NONLINEAR, **fields}
+
+    rel = {"tolerance_mode": "rel"}
+    said = "Add a requirement: "
+    assert _requirement(leaf(tolerance=0)) == said + "exact match"
+    assert _requirement(leaf()) == said + "exact match"
+    assert _requirement(leaf(tolerance=None)) == said + "exact match"
+    assert _requirement(leaf(tolerance=0.5)) == said + "within ±0.5"
+    assert _requirement(leaf(tolerance=0.1, **rel)) == said + "within 10%"
+    pair = {"lower": 0.5, "upper": 0.5}
+    assert _requirement(leaf(tolerance=pair)) == said + "within ±0.5"
+    assert _requirement(leaf(tolerance={"lower": 0, "upper": 0})) == (
+        said + "exact match"
+    )
+    pair = {"lower": 0.5, "upper": 1}
+    assert _requirement(leaf(tolerance=pair)) == said + "within −0.5 / +1"
+    pair = {"lower": 0.05, "upper": 0.1}
+    assert _requirement(leaf(tolerance=pair, **rel)) == said + "within −5% / +10%"
+    warn = {"combinator": "warn", "children": [leaf(tolerance=pair, **rel)]}
+    assert _requirement(warn) == said + "within −5% / +10%, as a warning"
+
+
 async def test_the_statistics_card_sits_before_the_tree_card_closed(stats_shell):
     async with user_simulation(root=stats_shell.index) as user:
         page = await _test_page(stats_shell, user)
