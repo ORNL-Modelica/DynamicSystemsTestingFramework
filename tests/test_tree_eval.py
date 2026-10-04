@@ -2,6 +2,7 @@
 simulation + reference data, and the compare_test integration path.
 """
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -931,7 +932,7 @@ class TestLeafPathStamping:
         assert not vc.passed and vc.diagnostics["config_error"] is True
         assert (
             "tolerance" in vc.diagnostics["error"]
-            and repr(bad) in vc.diagnostics["error"]
+            and f"got {json.dumps(bad)}" in vc.diagnostics["error"]
         )
         assert vc.tolerance_used == Sides(
             1e-4, 1e-4
@@ -1169,7 +1170,7 @@ class TestALeafsToleranceIsSides:
         assert x.diagnostics["config_error"] is True
         assert x.diagnostics["error"] == (
             "metric 'points' misconfigured: tolerance must be a number or "
-            f'{{"lower": …, "upper": …}}, got {bad!r}'
+            f'{{"lower": …, "upper": …}}, got {json.dumps(bad)}'
         )
         # The base is the one it reports as applied, as both sides.
         assert x.tolerance_used == Sides(0.25, 0.25)

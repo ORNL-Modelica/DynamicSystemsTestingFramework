@@ -216,9 +216,11 @@ def _should_review(comp, filters: set[str]) -> bool:
     if "sim-failed" in filters and status in (SIM_FAIL, NOT_RUN):
         return True
     # A test the comparison FAILED is "failed" and nothing else, baseline or
-    # not: one it refused, or that fails a baseline-free criterion (range /
-    # declared events / declared peaks — review 2026-07-06, finding 5), is
-    # not one to accept a baseline for, so "no-baseline" does not select it.
+    # not, so "no-baseline" does not select it: one the comparison refused,
+    # or one with no reference that fails a baseline-free criterion (range /
+    # declared events / declared peaks — review 2026-07-06, finding 5).
+    # "failed" selects both. The review loop then offers the second
+    # [a]ccept — accepting it writes a reference — and the first none.
     if "no-baseline" in filters and not comp.has_reference and status != FAIL:
         return True
     if "failed" in filters and status == FAIL:

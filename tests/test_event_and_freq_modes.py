@@ -752,7 +752,7 @@ class TestAMalformedRowIsTheLeafsConfigError:
         assert vc.diagnostics["config_error"] is True
         assert vc.diagnostics["error"].endswith(
             f'events[1].tolerance must be a number or {{"lower": …, "upper": …}}, '
-            f"got {bad!r}"
+            f"got {json.dumps(bad)}"
         )
 
     def test_a_peaks_row(self, bad, flat):
@@ -764,7 +764,7 @@ class TestAMalformedRowIsTheLeafsConfigError:
         assert vc.diagnostics["config_error"] is True
         assert vc.diagnostics["error"].endswith(
             f'peaks[1].tolerance must be a number or {{"lower": …, "upper": …}}, '
-            f"got {bad!r}"
+            f"got {json.dumps(bad)}"
         )
 
 

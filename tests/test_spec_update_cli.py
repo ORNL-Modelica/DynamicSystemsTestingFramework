@@ -560,6 +560,78 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
         (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
         assert entry["comparison"] == {"tolerance": bad}
 
+    @pytest.mark.parametrize("bad", ["NaN", "[NaN]", '{"lower": NaN}'])
+    def test_writing_the_nan_already_there_again_changes_nothing(self, tmp_path, bad):
+        """A NaN is not equal to itself, and the one the patch carries is
+        another object than the entry's: still the base as it was."""
+        spec = tmp_path / "test_spec.json"
+        spec.write_text(
+            '{"tests": [{"model": "MyLib.A", "comparison": {"tolerance": %s}}]}' % bad,
+            encoding="utf-8",
+        )
+        patch = tmp_path / "spec_patch.json"
+        patch.write_text(
+            '{"model": "MyLib.A", "patch": [{"op": "replace", '
+            '"path": "/comparison/tolerance", "value": %s}]}' % bad,
+            encoding="utf-8",
+        )
+        assert _run_spec_update(spec, patch) == 0
+
+    @pytest.mark.parametrize(
+        "before,after",
+        [
+            ([1], [True]),
+            ([0], [False]),
+            ({"lower": 1, "upper": 1}, {"lower": True, "upper": True}),
+            (
+                {"lower": 0.1, "upper": [1, {"a": 0}]},
+                {"lower": 0.1, "upper": [1, {"a": False}]},
+            ),
+        ],
+        ids=repr,
+    )
+    def test_a_bool_inside_is_not_the_number_it_equals(
+        self, tmp_path, capsys, before, after
+    ):
+        """``[1] == [True]`` in Python, at any depth: read as "unchanged",
+        the patch wrote a bad base the entry did not hold."""
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": before}})
+        on_disk = spec.read_bytes()
+        ops = [{"op": "replace", "path": "/comparison/tolerance", "value": after}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 1
+        out = capsys.readouterr().out
+        assert self._said(after) in out
+        assert "Applied" not in out
+        assert spec.read_bytes() == on_disk
+
+    def test_unchanged_is_the_value_not_the_object(self):
+        """`json.loads` hands out ONE NaN object, so a spec and a patch read
+        from files agree by identity; a patch built in Python (the tool's
+        Save) carries its own."""
+        from dstf.discovery.spec_update import _same_base
+
+        nan = float("nan")
+        assert _same_base(nan, float("nan"))
+        assert _same_base([nan], [float("nan")])
+        assert _same_base({"lower": nan, "upper": 1}, {"upper": 1, "lower": nan})
+        assert not _same_base(nan, float("inf"))
+        assert not _same_base(1, True) and not _same_base([1], [True])
+        assert not _same_base("abc", "abd")
+        assert _same_base("abc", "abc")
+
+    def test_a_pairs_key_order_is_not_a_change(self, tmp_path):
+        spec = self._spec(
+            tmp_path, {"comparison": {"tolerance": {"lower": 1, "upper": 2}}}
+        )
+        ops = [
+            {
+                "op": "replace",
+                "path": "/comparison/tolerance",
+                "value": {"upper": 2, "lower": 1},
+            }
+        ]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
+
     def test_a_bad_base_already_there_does_not_block_an_unrelated_patch(self, tmp_path):
         """The patch did not write it: refusing would leave no way to edit
         the entry's other fields — or to remove it — through a patch."""

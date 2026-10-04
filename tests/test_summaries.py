@@ -488,6 +488,55 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         )
         assert vc.max_abs_error == pytest.approx(2.0)
 
+    # Binary-exact numbers: a tie is a tie to the bit.
+    TEN = np.linspace(0.0, 10.0, 11)
+    TIE = {"lower": 0.125, "upper": 0.25}
+
+    def _ten(self, deltas, tolerance=TIE, ref=None, **row):
+        """As ``_points``, on whole times, rows in the order given."""
+        from dstf.comparison.modes import resolve_mode
+
+        ref = self.TEN if ref is None else ref
+        act = ref.copy()
+        for i, d in deltas.items():
+            act[i] += d
+        rows = [{"time": float(i), **row} for i in deltas]
+        mode = resolve_mode({"mode": "points", "points": rows}, tolerance)
+        vc = mode.compare(self.TEN, ref, self.TEN, act)
+        vc.tolerance_used = mode.tolerance
+        return vc, summarize(vc).criterion
+
+    def test_points_equally_far_outside_say_the_first_row(self):
+        # +0.5 is 0.25 above the band, −0.375 is 0.25 below it.
+        _, crit = self._ten({5: +0.5, 8: -0.375})
+        assert crit.startswith("Point at t=5: error +5.000e-01 vs ")
+        _, crit = self._ten({8: -0.375, 5: +0.5})
+        assert crit.startswith("Point at t=8: error −3.750e-01 vs ")
+
+    def test_points_all_inside_and_equally_far_say_the_first_row(self):
+        vc, crit = self._ten({5: +0.125, 8: -0.125})
+        assert vc.passed
+        assert crit.startswith("Point at t=5: error +1.250e-01 vs ")
+        assert vc.max_abs_error_time == 5.0
+        vc, crit = self._ten({8: -0.125, 5: +0.125})
+        assert crit.startswith("Point at t=8: error −1.250e-01 vs ")
+        assert vc.max_abs_error_time == 8.0
+
+    def test_points_relative_rows_rank_by_the_distance_beyond_the_scaled_band(self):
+        """In the signal's units, not the band's: at target 1 the band is
+        [−0.125, +0.25] and +1.25 lies 1 beyond it — four band-heights; at
+        target 16 it is [−2, +4] and +6 lies 2 beyond — half of one. The
+        further in the signal's units is the reported one, first or not."""
+        ref = np.ones_like(self.TEN)
+        ref[5] = 16.0
+        for deltas in ({8: +1.25, 5: +6.0}, {5: +6.0, 8: +1.25}):
+            vc, crit = self._ten(deltas, ref=ref, tolerance_mode="rel")
+            assert vc.diagnostics["failed_points"] == 2
+            assert crit == (
+                "Point at t=5: error +6.000e+00 vs tolerance "
+                "−1.250e-01 / +2.500e-01 (relative) → FAIL"
+            )
+
     def test_points_equal_sides_say_what_a_number_said(self):
         for tolerance in (0.03, {"lower": 0.03, "upper": 0.03}):
             vc, crit = self._points({5: +0.04, 8: -0.02}, tolerance)
@@ -526,6 +575,24 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         assert crit.startswith("Max event Δt −4.000e-02 vs ")
         _, crit = self._events(+0.09, -0.04, self.BAND)
         assert crit.startswith("Max event Δt +9.000e-02 vs ")
+
+    def test_events_equally_far_outside_say_the_first_pair(self):
+        # 0.5 late is 0.25 past the window, 0.375 early is 0.25 before it.
+        _, crit = self._events(+0.5, -0.375, self.TIE)
+        assert crit.startswith("Max event Δt +5.000e-01 vs ")
+        _, crit = self._events(-0.375, +0.5, self.TIE)
+        assert crit.startswith("Max event Δt −3.750e-01 vs ")
+
+    def test_events_all_inside_and_equally_far_say_the_first_pair(self):
+        vc, crit = self._events(+0.125, -0.125, self.TIE)
+        assert vc.passed and crit.startswith("Max event Δt +1.250e-01 vs ")
+        assert vc.max_abs_error_time == 2.0
+        vc, crit = self._events(-0.125, +0.125, self.TIE)
+        assert crit.startswith("Max event Δt −1.250e-01 vs ")
+        declared = [{"time": 2.0}, {"time": 5.0}]
+        vc, crit = self._events(+0.125, -0.125, self.TIE, declared)
+        assert crit.startswith("Event at t=2: Δt +1.250e-01 vs ")
+        assert vc.max_abs_error_time == 2.0
 
     def test_events_all_inside_say_the_largest_delta(self):
         _, crit = self._events(-0.005, +0.04, self.BAND)

@@ -183,14 +183,15 @@ def _base_tolerance(entry: dict | None) -> object:
 
 
 def _same_base(before: object, after: object) -> bool:
-    """Whether the patch left the base as it was: the same object (a NaN is
-    not equal to itself), or an equal value — and a bool is no number's
-    equal, though Python's ``True == 1``: ``1 → true`` is a change."""
-    if after is before:
-        return True
-    if isinstance(before, bool) != isinstance(after, bool):
-        return False
-    return after == before
+    """Whether the patch left the base as it was: the same JSON text, keys
+    sorted. Not ``==``: Python's ``True == 1`` at any depth (``[1] → [true]``
+    is a change), and a NaN is not equal to itself (writing the NaN already
+    there is none) — as text, a bool is ``true`` and a NaN is ``NaN``."""
+
+    def text(value: object) -> str:
+        return json.dumps(value, sort_keys=True, allow_nan=True)
+
+    return text(before) == text(after)
 
 
 def validate_entry_base_tolerance(data: dict, model_id: str, before: object) -> None:

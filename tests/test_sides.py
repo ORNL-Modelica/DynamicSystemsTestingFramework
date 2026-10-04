@@ -1,10 +1,17 @@
 """Sides: a tolerance is a number or a lower/upper pair — one reader, one writer."""
 
+import json
 import math
 
 import pytest
 
-from dstf.comparison.sides import Sides, as_written, parse_sides, sides_text
+from dstf.comparison.sides import (
+    Sides,
+    as_written,
+    base_tolerance_refused,
+    parse_sides,
+    sides_text,
+)
 
 
 class TestParse:
@@ -58,8 +65,45 @@ class TestParse:
             parse_sides(bad, "points[1].tolerance")
         assert str(exc.value) == (
             'points[1].tolerance must be a number or {"lower": …, "upper": …}, '
-            f"got {bad!r}"
+            f"got {json.dumps(bad)}"
         )
+
+    @pytest.mark.parametrize(
+        "bad,shown",
+        [
+            (True, "true"),
+            (None, "null"),
+            ("abc", '"abc"'),
+            ({"lower": 1}, '{"lower": 1}'),
+            ({"lower": 1, "upper": None}, '{"lower": 1, "upper": null}'),
+            (float("nan"), "NaN"),
+            (-float("inf"), "-Infinity"),
+            ([1, "é"], '[1, "é"]'),
+        ],
+        ids=repr,
+    )
+    def test_the_value_reads_as_the_json_file_holds_it(self, bad, shown):
+        """Not as Python spells it (``True``, ``None``, ``{'lower': 1}``):
+        the reader is looking at a JSON file. The same text a refused base
+        tolerance shows (`base_tolerance_refused`)."""
+        with pytest.raises(ValueError) as exc:
+            parse_sides(bad, "tolerance")
+        assert str(exc.value).endswith(f", got {shown}")
+        assert base_tolerance_refused("X", bad).endswith(f"(X is {shown})")
+
+    def test_a_long_value_is_cut_at_60_characters(self):
+        at_60 = "a" * 58  # the two quotes make 60
+        with pytest.raises(ValueError) as exc:
+            parse_sides(at_60, "tolerance")
+        assert str(exc.value).endswith(f', got "{at_60}"')
+        with pytest.raises(ValueError) as exc:
+            parse_sides("a" * 59, "tolerance")
+        assert str(exc.value).endswith(f', got "{"a" * 59}…')
+
+    def test_a_value_json_cannot_write_reads_as_its_repr(self):
+        with pytest.raises(ValueError) as exc:
+            parse_sides(1 + 2j, "tolerance")
+        assert str(exc.value).endswith(", got (1+2j)")
 
     def test_any_real_number_that_is_no_bool(self):
         """As ``float()`` took them: a numpy scalar is a number."""
@@ -80,8 +124,10 @@ class TestParse:
     def test_an_int_too_large_for_a_float_is_the_same_refusal(self, bad):
         with pytest.raises(ValueError) as exc:
             parse_sides(bad, "tolerance")
+        shown = json.dumps(bad)[:60] + "…"
+        assert len(json.dumps(bad)) > 60
         assert str(exc.value) == (
-            f'tolerance must be a number or {{"lower": …, "upper": …}}, got {bad!r}'
+            f'tolerance must be a number or {{"lower": …, "upper": …}}, got {shown}'
         )
 
     def test_no_sign_check(self):

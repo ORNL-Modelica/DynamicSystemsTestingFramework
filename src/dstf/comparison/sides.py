@@ -49,30 +49,36 @@ def is_base_tolerance(value: object) -> bool:
     return _is_number(value)
 
 
-def base_tolerance_refused(where: str, value: object) -> str:
-    """What a base tolerance that is not :func:`is_base_tolerance` is refused
-    with — a test's comparison's ``error_message``, a project's config
-    error: the rule, then where the value is written (``where``, in words)
-    and what it is, cut to 60 characters. The value reads as the JSON file
-    holds it (``true``, ``NaN``, ``{"lower": …}``), not as Python spells it;
-    its ``repr`` only where JSON cannot write it. Where a pair belongs is
-    said to a dict alone: a string or a list was no attempt at one."""
+def _as_json(value: object) -> str:
+    """``value`` in a refusal, cut to 60 characters: as the JSON file holds
+    it (``true``, ``NaN``, ``{"lower": …}``), not as Python spells it; its
+    ``repr`` only where JSON cannot write it."""
     try:
         text = json.dumps(value, allow_nan=True, ensure_ascii=False)
     except (TypeError, ValueError):
         text = repr(value)
     if len(text) > 60:
         text = text[:60] + "…"
+    return text
+
+
+def base_tolerance_refused(where: str, value: object) -> str:
+    """What a base tolerance that is not :func:`is_base_tolerance` is refused
+    with — a test's comparison's ``error_message``, a project's config
+    error: the rule, then where the value is written (``where``, in words)
+    and what it is (:func:`_as_json`). Where a pair belongs is said to a
+    dict alone: a string or a list was no attempt at one."""
     rule = "the base tolerance must be a number"
     if isinstance(value, dict):
         rule += "; a lower/upper pair belongs on a criterion"
-    return f"{rule} ({where} is {text})"
+    return f"{rule} ({where} is {_as_json(value)})"
 
 
 def parse_sides(value: object, what: str) -> Sides:
     """``value`` as :class:`Sides`: a number is both sides, a dict whose keys
     are exactly ``lower`` and ``upper`` is the pair, a :class:`Sides` is
-    itself. Anything else is a ``ValueError`` naming ``what`` and the value.
+    itself. Anything else is a ``ValueError`` naming ``what`` and the value
+    (:func:`_as_json`).
     No sign check: a negative side is not refused here, as a negative number
     never was."""
     if isinstance(value, Sides):
@@ -84,7 +90,7 @@ def parse_sides(value: object, what: str) -> Sides:
         if _is_number(lower) and _is_number(upper):
             return Sides(float(lower), float(upper))
     raise ValueError(
-        f'{what} must be a number or {{"lower": …, "upper": …}}, got {value!r}'
+        f'{what} must be a number or {{"lower": …, "upper": …}}, got {_as_json(value)}'
     )
 
 

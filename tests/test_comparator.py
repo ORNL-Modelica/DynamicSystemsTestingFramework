@@ -3304,7 +3304,8 @@ class TestAMalformedToleranceIsAConfigError:
         x, y = comp.variables
         assert x.diagnostics["config_error"] is True
         assert x.diagnostics["error"] == (
-            f'tolerance must be a number or {{"lower": …, "upper": …}}, got {bad!r}'
+            f'tolerance must be a number or {{"lower": …, "upper": …}}, '
+            f"got {json.dumps(bad)}"
         )
         assert y.passed and not comp.passed
 
@@ -3322,7 +3323,7 @@ class TestAMalformedToleranceIsAConfigError:
         ).variables[0]
         assert vc.diagnostics["config_error"] is True
         assert f"{key} must be a number or " in vc.diagnostics["error"]
-        assert vc.diagnostics["error"].endswith("got {'lower': 1}")
+        assert vc.diagnostics["error"].endswith('got {"lower": 1}')
 
     @pytest.mark.parametrize(
         ("mode", "key"), [("band", "tube_abs"), ("rel", "tube_rel")]
@@ -4089,7 +4090,7 @@ class TestPointsThroughBothPaths:
         assert x.diagnostics["config_error"] is True
         assert x.diagnostics["error"].endswith(
             f'points[1].{key} must be a number or {{"lower": …, "upper": …}}, '
-            f"got {bad!r}"
+            f"got {json.dumps(bad)}"
         )
         assert y.passed and not comp.passed  # the run goes on
 
