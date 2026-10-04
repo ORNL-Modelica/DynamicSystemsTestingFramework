@@ -370,7 +370,14 @@ class TestAnUnevenToleranceSaysWhichSide:
                 ref, act, time_tolerance=sides, declared_events=[{"time": 5.0}]
             )
             assert declared.passed is (verdict == "PASS")
-            assert f" vs {band} " in summarize(declared).criterion
+            # Outside its window a declared event claims nothing: it is not
+            # found, and there is no Δt to print.
+            assert summarize(declared).criterion == (
+                f"Max event Δt {delta} vs {band} (1 actual events / 1 reference) → PASS"
+                if verdict == "PASS"
+                else f"1 of 1 declared events not found within tolerance {band} "
+                "(1 actual events) → FAIL"
+            )
 
     def test_event_timing_late_is_positive_early_negative(self):
         from dstf.comparison.sides import Sides
@@ -563,3 +570,167 @@ def test_an_event_timing_criterion_says_early_and_late():
         "Max event Δt +2.500e-01 vs −1.250e-01 / +5.000e-01 "
         "(1 actual events / 1 reference) → PASS"
     )
+
+
+class TestADeclaredEventNeverFound:
+    """A declared event with no actual event in its window fails the leaf —
+    and the sentence used to print the MATCHED events' largest Δt, a number
+    inside the tolerance, beside FAIL. It says what failed: how many of the
+    declared events were not found, and which."""
+
+    DECLARED = [{"time": 2.0}, {"time": 5.0}, {"time": 8.0}]
+
+    def _events(self, actual, tolerance, declared=DECLARED):
+        act = np.array([0.0, *(t for at in actual for t in (at, at)), 10.0])
+        ref = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 8.0, 8.0, 10.0])
+        vc = _compare_event_timing(
+            ref, act, time_tolerance=tolerance, declared_events=declared
+        )
+        return vc, summarize(vc)
+
+    def test_one_not_found_with_a_number(self):
+        vc, s = self._events([2.0, 5.2, 8.0], 0.1)
+        assert not vc.passed
+        assert s.criterion == (
+            "1 of 3 declared events not found within tolerance 1.000e-01 "
+            "(3 actual events) → FAIL"
+        )
+        assert s.details == (
+            ("events", "3 actual / 3 reference"),
+            ("max Δt", "0.000000e+00 at t=0"),
+            ("not found", "t=5"),
+        )
+        assert vc.diagnostics["unmatched_events"] == 1
+        assert vc.diagnostics["declared_events"] == 3
+        # The score is the matched events', as it was.
+        assert s.display == "Δt 0.000e+00 (3/3 events)" and s.score == 0.0
+
+    def test_one_not_found_with_an_uneven_pair(self):
+        # 0.2 late under an upper side of 0.1; 0.2 early would be inside.
+        vc, s = self._events([2.0, 5.2, 7.8], {"lower": 0.3, "upper": 0.1})
+        assert s.criterion == (
+            "1 of 3 declared events not found within tolerance "
+            "−3.000e-01 / +1.000e-01 (3 actual events) → FAIL"
+        )
+        assert dict(s.details)["not found"] == "t=5"
+        assert vc.diagnostics["unmatched_events"] == 1
+
+    def test_every_one_found_reads_as_it_did(self):
+        vc, s = self._events([2.0, 5.05, 8.0], 0.1)
+        assert vc.passed
+        assert s.criterion == (
+            "Max event Δt 5.000e-02 vs 1.000e-01 (3 actual events / 3 reference) → PASS"
+        )
+        assert s.details == (
+            ("events", "3 actual / 3 reference"),
+            ("max Δt", "5.000000e-02 at t=5"),
+        )
+        assert vc.diagnostics == {
+            "ref_event_count": 3,
+            "act_event_count": 3,
+            "max_time_delta": pytest.approx(0.05),
+            "time_tolerance": 0.1,
+            "counts_match": True,
+            "unmatched_events": 0,
+            "declared_events": 3,
+        }
+
+    def test_found_but_a_count_mismatch_reads_as_it_did(self):
+        """An extra actual event fails the leaf by its count: every declared
+        event was found, so the sentence is the Δt one."""
+        vc, s = self._events([2.0, 5.0, 6.5, 8.0], 0.1)
+        assert not vc.passed and vc.diagnostics["unmatched_events"] == 0
+        assert s.criterion == (
+            "Max event Δt 0.000e+00 vs 1.000e-01 (4 actual events / 3 reference) → FAIL"
+        )
+        assert s.details[-1] == ("event count", "mismatch")
+        assert "not found" not in dict(s.details)
+
+    def test_none_found(self):
+        vc, s = self._events([2.5, 5.5, 8.5], 0.1)
+        assert s.criterion == (
+            "3 of 3 declared events not found within tolerance 1.000e-01 "
+            "(3 actual events) → FAIL"
+        )
+        assert dict(s.details)["not found"] == "t=2, t=5, t=8"
+        assert vc.diagnostics["unmatched_events"] == 3
+
+    def test_not_found_and_a_count_mismatch_says_both(self):
+        vc, s = self._events([2.0, 8.0], 0.1)
+        assert s.criterion == (
+            "1 of 3 declared events not found within tolerance 1.000e-01 "
+            "(2 actual events) → FAIL"
+        )
+        assert s.details[-2:] == (("not found", "t=5"), ("event count", "mismatch"))
+
+    @pytest.mark.parametrize("flat", [False, True])
+    def test_both_scoring_paths_name_them(self, flat):
+        """The tree evaluator stamps a leaf's geometry ids with its path
+        (`/metrics/events/window/1`); the flat path leaves them local."""
+        from pathlib import Path
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.test_registry import TestModel
+
+        leaf = {"time_tolerance": 0.1, "events": self.DECLARED}
+        time = np.array([0.0, 2.0, 2.0, 5.2, 5.2, 8.3, 8.3, 10.0])
+        result = TestResult(
+            model_id="T.M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="e", time=time, values=np.arange(8.0))
+            ],
+        )
+        test = TestModel(
+            model_id="T.M",
+            source_file=Path(""),
+            source_package="T",
+            short_name="M",
+            n_vars=0,
+            source="spec",
+            variable_patterns=["e"],
+            **(
+                {"variable_overrides": {"e": {"mode": "event-timing", **leaf}}}
+                if flat
+                else {
+                    "metric_tree_spec": parse_metric_tree(
+                        {"metric": "event-timing", "variable": "e", **leaf}
+                    )
+                }
+            ),
+        )
+        reference = {
+            "test_id": "0001",
+            "variables": [
+                {"index": 1, "name": "e", "time": time.tolist(), "values": [0.0] * 8}
+            ],
+        }
+        (vc,) = compare_test(test, result, reference, default_tolerance=1e-4).variables
+        if not flat:
+            assert vc.geometry[0].id.startswith("/")  # stamped
+        s = summarize(vc)
+        assert s.criterion.startswith("2 of 3 declared events not found ")
+        assert dict(s.details)["not found"] == "t=5, t=8"
+
+    def test_the_times_read_as_numbers_do(self):
+        _, s = self._events([], 0.1, [{"time": 2.5}, {"time": 1e-7}, {"time": 4000}])
+        assert dict(s.details)["not found"] == "t=2.5, t=1e-07, t=4000"
+
+    def test_auto_detected_events_are_untouched(self):
+        ref = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 8.0, 8.0, 10.0])
+        act = np.array([0.0, 2.0, 2.0, 5.2, 5.2, 8.0, 8.0, 10.0])
+        vc = _compare_event_timing(ref, act, time_tolerance=0.1)
+        assert set(vc.diagnostics) == {
+            "ref_event_count",
+            "act_event_count",
+            "max_time_delta",
+            "time_tolerance",
+            "counts_match",
+        }
+        s = summarize(vc)
+        assert s.criterion == (
+            "Max event Δt 2.000e-01 vs 1.000e-01 (3 actual events / 3 reference) → FAIL"
+        )
+        assert [k for k, _ in s.details] == ["events", "max Δt"]

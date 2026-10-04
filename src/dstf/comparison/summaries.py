@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 
+from .geometry import Box, VLine
 from .sides import parse_sides, sides_text, signed
 from .types import ScoreSummary, VariableComparison
 
@@ -204,6 +205,20 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
     )
 
 
+def _events_not_found(vc: VariableComparison) -> list[float]:
+    """The declared events that claimed no actual event, in declared order:
+    the scorer draws each declared event as a line and its window, and a
+    window nothing was found in is the one not ``passed``. The ids are read
+    by their tail — the evaluator stamps a leaf's path before them."""
+    times = {p.id: p.time for p in vc.geometry if isinstance(p, VLine)}
+    missing = []
+    for p in vc.geometry:
+        head, window, k = p.id.rpartition("events/window/")
+        if isinstance(p, Box) and window and p.passed is False:
+            missing.append(times[f"{head}events/ref/{k}"])
+    return missing
+
+
 def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     diag = vc.diagnostics or {}
     ref_n = diag.get("ref_event_count", "?")
@@ -220,14 +235,26 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
         ("events", f"{act_n} actual / {ref_n} reference"),
         ("max Δt", _at(vc.nrmse, vc.max_abs_error_time)),
     ]
+    criterion = (
+        f"Max event Δt {delta} vs {tol} "
+        f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
+    )
+    # A declared event that was never found is what failed, and the Δt
+    # above is not it: that is the matched events', inside the tolerance.
+    unmatched = diag.get("unmatched_events", 0)
+    if unmatched:
+        criterion = (
+            f"{unmatched} of {diag['declared_events']} declared events not found "
+            f"within tolerance {tol} ({act_n} actual events) → {_verdict(vc)}"
+        )
+        details.append(
+            ("not found", ", ".join(f"t={t:g}" for t in _events_not_found(vc)))
+        )
     if "counts_match" in diag and not diag["counts_match"]:
         details.append(("event count", "mismatch"))
     return ScoreSummary(
         display=f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)",
-        criterion=(
-            f"Max event Δt {delta} vs {tol} "
-            f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
-        ),
+        criterion=criterion,
         score=float(vc.nrmse),
         score_label="Δt",
         details=tuple(details),

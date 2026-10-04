@@ -1462,7 +1462,6 @@ def _compare_event_timing(
     # declared event claimed the wrong actual event.
     claimed = [False] * actual_count
     matched_flags = [False] * declared_count
-    all_matched = True
     windows = []
     declared_times: list[float] = []
     declared_tols = _event_tolerances(declared_events, time_tolerance)
@@ -1479,7 +1478,6 @@ def _compare_event_timing(
                 best_idx = j
                 break  # act_events is time-sorted → first hit is smallest
         if best_idx < 0:
-            all_matched = False
             continue
         claimed[best_idx] = True
         matched_flags[k] = True
@@ -1492,7 +1490,12 @@ def _compare_event_timing(
             max_signed = signed_d
             delta_at = target
 
-    passed = all_matched and (counts_match or not count_must_match)
+    # A declared event that claimed nothing fails the leaf, and the score
+    # above says nothing of it (it is the matched pairs'): the count is what
+    # the sentence then says (`summarize_event_timing`); WHICH ones is the
+    # geometry's — a window that is not ``passed``.
+    unmatched = matched_flags.count(False)
+    passed = unmatched == 0 and (counts_match or not count_must_match)
 
     return VariableComparison(
         index=0,
@@ -1513,6 +1516,8 @@ def _compare_event_timing(
             "time_tolerance": as_written(time_tolerance),
             "counts_match": counts_match,
             **_signed_time_delta(time_tolerance, max_signed),
+            "unmatched_events": unmatched,
+            "declared_events": declared_count,
         },
         geometry=_event_geometry(
             declared_times, act_events, declared_tols, matched_flags
