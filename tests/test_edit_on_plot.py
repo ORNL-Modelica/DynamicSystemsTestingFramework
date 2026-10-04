@@ -1030,6 +1030,79 @@ async def test_a_half_pair_holds_the_whole_list_until_it_is_filled(session):
         ]
 
 
+def _two_rows_one_pair() -> dict:
+    """A points leaf of two rows, the first holding `PAIR`."""
+    return {
+        "metric": "points",
+        "variable": "x",
+        "points": [
+            {"time": 0.25, "value": 0.5, "tolerance": dict(PAIR)},
+            {"time": 0.75, "value": 0.5},
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("button", "rows_after"),
+    [("/metrics:points:add", 3), ("/metrics:points:1:remove", 1)],
+)
+async def test_add_row_and_remove_row_keep_a_half_pair_blank_and_stage_nothing(
+    session, button, rows_after
+):
+    """The same rule for the two buttons. Both rebuild the rows, and
+    rebuilt from what a row HOLDS the blank side came back filled with the
+    pair's old value — the list was staged with it, the held edits and the
+    new row too. The half cell is rebuilt as it stands: blank, marked
+    "required", holding the list back; the key that fills it stages the
+    lot."""
+    _root_leaf_on_a(session, _two_rows_one_pair())
+    cell = "/metrics:points:0:tolerance"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _cell(user, f"{cell}:lower").set_value(None)
+        _cell(user, "/metrics:points:0:time").set_value(0.3)  # held with it
+        user.find(marker=button).click()
+        await asyncio.sleep(0.25)  # two ticks: anything submitted has landed
+        assert session.spec.pending == pending and "edit-on-plot" not in errors
+        assert len(_a_rows(session, "points")) == 2
+        # The rows as the table shows them: one more, or one fewer.
+        drawn = user.find(marker=f"/metrics:points:{rows_after - 1}:remove").elements
+        assert len(drawn) == 1
+        with pytest.raises(AssertionError, match="expected to find"):
+            user.find(marker=f"/metrics:points:{rows_after}:remove")
+        lower = _cell(user, f"{cell}:lower")
+        assert lower.value is None and lower.error == "required"
+        assert _cell(user, f"{cell}:upper").value == 0.3
+        assert _cell(user, f"{cell}:upper").error is None
+        assert _cell(user, f"{cell}:link").props["icon"] == "link_off"
+        lower.set_value(0.2)
+        await _settled(lambda: len(_a_rows(session, "points")) == rows_after)
+        assert _a_rows(session, "points")[0] == {
+            "time": 0.3,
+            "value": 0.5,
+            "tolerance": {"lower": 0.2, "upper": 0.3},
+        }
+        assert not errors
+
+
+async def test_removing_the_row_whose_pair_is_half_stages_the_list_without_it(
+    session,
+):
+    """A removed row takes its controls with it: its half pair is no blank
+    of the table's any more, and the list — one row — is staged. Kept, the
+    removed control held the list back for good."""
+    _root_leaf_on_a(session, _two_rows_one_pair())
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _cell(user, "/metrics:points:0:tolerance:lower").set_value(None)
+        user.find(marker="/metrics:points:0:remove").click()
+        await _settled(lambda: len(_a_rows(session, "points")) == 1)
+        assert _a_rows(session, "points") == [{"time": 0.75, "value": 0.5}]
+        assert not errors
+        # ... and the row left is editable: its edit is staged.
+        _cell(user, "/metrics:points:0:time").set_value(0.8)
+        await _settled(lambda: _a_rows(session, "points")[0]["time"] == 0.8)
+
+
 async def test_add_row_after_a_row_holding_a_pair(session):
     leaf = copy.deepcopy(SIDED["points"][0])
     leaf["points"][0]["tolerance"] = dict(PAIR)

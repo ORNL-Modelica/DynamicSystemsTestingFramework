@@ -327,6 +327,11 @@ class SidesControl(ui.row):
         and what it last got is stale."""
         return self._blank("lower") or self._blank("upper")
 
+    def shown(self) -> dict[str, float | None]:
+        """What the two fields show, as the pair this control is rebuilt
+        from: a half pair too, which ``on_change`` never carried."""
+        return dict(self._sides)
+
     def toggle(self) -> None:
         """Unlink: the number becomes the pair holding it twice (nothing
         stays nothing). Link: both sides take the LARGER one, so a re-link

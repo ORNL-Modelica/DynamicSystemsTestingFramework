@@ -470,7 +470,11 @@ def _table(
     `forms.sides_control`: two fields and a link toggle, named by the
     column's own side labels. With ONE side of a pair blank the control
     hands the table nothing — the row still holds the pair it had — so a
-    half pair holds the whole list back as a blank required cell does."""
+    half pair holds the whole list back as a blank required cell does.
+    ``Add row`` and ``Remove row`` too: they rebuild the rows, and a half
+    cell is rebuilt as it stands — blank and marked — not from the pair
+    its row still holds, so nothing is staged until the blank is filled
+    (or its row is the one removed)."""
     from ..forms import SidesControl, sides_control
     from ..typed_number import TypedNumber
 
@@ -478,7 +482,9 @@ def _table(
     mark = f"{path}:{field}"
     required = [column[0] for column in columns if column[1] in _REQUIRED]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
-    pairs: list[SidesControl] = []  # the tolerance cells, as rendered
+    #: The tolerance cells, as rendered: the row each is on, its column and
+    #: the control.
+    pairs: list[tuple[dict, str, SidesControl]] = []
 
     def blanks() -> bool:
         """Mark each required cell blank or not; True when any is, or when
@@ -489,7 +495,7 @@ def _table(
         for cell in cells.values():
             cell.validate(return_result=False)
         return any(row.get(key) is None for row in rows for key in required) or any(
-            group.half() for group in pairs
+            group.half() for _row, _key, group in pairs
         )
 
     def missing(i: int, key: str) -> str | None:
@@ -521,6 +527,14 @@ def _table(
         submit()
 
     def render() -> None:
+        # A half pair lives in its control alone: rebuilt from its row, the
+        # blank side came back holding the pair's old value, no cell was
+        # half any more, and the list was staged with that value in it.
+        halves = {
+            (id(row), key): group.shown()
+            for row, key, group in pairs
+            if group.half() and any(row is kept for kept in rows)
+        }
         container.clear()
         cells.clear()
         pairs.clear()
@@ -535,7 +549,7 @@ def _table(
                         if kind in _SIDES:
                             group = sides_control(
                                 key,
-                                row.get(key),
+                                halves.get((id(row), key), row.get(key)),
                                 partial(set_cell, i, key),
                                 side_labels=labels[0] if labels else SIDE_LABELS,
                                 mark=f"{mark}:{i}:{key}",
@@ -543,7 +557,7 @@ def _table(
                             )
                             group.lower.props(_NO_BOTTOM)
                             group.upper.props(_NO_BOTTOM)
-                            pairs.append(group)
+                            pairs.append((row, key, group))
                         elif isinstance(kind, tuple):
                             value = row.get(key, kind[0])
                             # A value the author wrote outside the choices
