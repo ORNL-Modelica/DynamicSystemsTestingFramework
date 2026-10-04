@@ -1203,6 +1203,25 @@ GRIP_VIEWS = {
     "dominant-frequency": _peaks_grip_view,
 }
 
+#: The grips each of those views holds, by local id — said here, not read
+#: off the geometry's kinds: a side emitted as a `handle` is then a grip
+#: the report draws, and the tests below must see it.
+GRIP_IDS = {
+    "points": (
+        "points/upper/0",
+        "points/lower/0",
+        "points/upper/1",
+        "points/lower/1",
+        "points/before/1",
+        "points/after/1",
+    ),
+    "points-final": ("points/upper/final", "points/lower/final"),
+    "tube-constant": ("tube/upper/const", "tube/lower/const"),
+    "event-timing-declared": ("events/early/0", "events/late/0"),
+    "event-timing-auto": ("events/early/0", "events/late/0"),
+    "dominant-frequency": ("peaks/lower/0", "peaks/upper/0"),
+}
+
 
 def _grip_ids(view) -> set[str]:
     return {p.id for leaf in view.leaves for p in leaf.geometry if p.kind == "grip"}
@@ -1233,8 +1252,8 @@ def test_a_non_editable_figure_holds_no_grip(mode):
     figure is the one the same geometry WITHOUT its grips draws — what it
     drew before a tolerance had sides to drag."""
     view = GRIP_VIEWS[mode]()
-    grips = _grip_ids(view)
-    assert len(grips) >= 2, mode  # this fixture really emits them
+    grips = {f"{P0}/{local}" for local in GRIP_IDS[mode]}
+    assert _grip_ids(view) == grips
     fig = variable_figure(view)
     assert not grips & _named(fig)
     assert fig == variable_figure(_without_grips(view))
@@ -1243,7 +1262,7 @@ def test_a_non_editable_figure_holds_no_grip(mode):
 @pytest.mark.parametrize("mode", GRIP_VIEWS)
 def test_an_editable_figure_draws_every_grip_as_a_shape_and_no_trace(mode):
     view = GRIP_VIEWS[mode]()
-    grips = _grip_ids(view)
+    grips = {f"{P0}/{local}" for local in GRIP_IDS[mode]}
     fig = variable_figure(view, editable=True)
     shapes = [s for s in fig["layout"]["shapes"] if s["name"] in grips]
     assert {s["name"] for s in shapes} == grips and len(shapes) == len(grips)
