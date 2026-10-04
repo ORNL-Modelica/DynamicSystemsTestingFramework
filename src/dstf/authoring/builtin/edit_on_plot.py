@@ -133,8 +133,9 @@ def _position(
 ) -> tuple[float | None, float | None] | None:
     """The dragged position the hook's per-shape payload means for the
     handle's PRIMITIVE TYPE, or None when it is no move. A Marker's ring
-    moves only by ``xanchor``/``yanchor`` — its ``x0``..``y1`` are a pixel
-    RESIZE (an off-centre grab), never a position. An HLine moves by
+    moves only by ``xanchor``/``yanchor`` — the ``x0``..``y1`` of a
+    pixel-sized shape are offsets about its anchor, never a position (a
+    ring is a pixel ``path``, which sends none). An HLine moves by
     ``y0``/``y1``: both when the whole line was dragged, the one present
     when one end was, neither (a horizontal-only drag) is no move. Any
     other primitive never gets here: `_act_handle` snaps it back."""

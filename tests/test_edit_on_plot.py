@@ -145,10 +145,11 @@ def test_a_tube_ring_drag_stages_one_replace_that_collapses(session):
     assert ops[0].value["tube_points"][0]["upper"] == pytest.approx(0.4)
 
 
-def test_a_resized_ring_is_not_a_move(session):
-    """The review's off-centre grab, verbatim: a ring's x0..y1 are pixel
-    offsets, never a position (read as one, the band lower would accept
-    a width of 7.3)."""
+def test_a_rings_pixel_offsets_are_not_a_move(session):
+    """A payload naming no anchor: the x0..y1 of a pixel-sized shape are
+    offsets about its anchor, never a position (read as one, the band
+    lower would accept a width of 7.3). A circle ring sent them from an
+    off-centre grab; a path ring sends none."""
     _tree_on_d(session)
     pending = list(session.spec.pending)
     assert (

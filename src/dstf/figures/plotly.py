@@ -11,7 +11,7 @@ carry the ids in ``customdata`` and the family in ``meta``); every shape
 carries it as ``name``. Those are the handles on-plot editing attaches to.
 
 The editable figure (``editable=True``, the tool's; never the report's) adds
-one pixel-sized ring shape per ``kind="handle"`` marker, turns on
+one pixel-sized ring shape (a ``path``) per ``kind="handle"`` marker, turns on
 ``config.edits.shapePosition`` and turns OFF ``scrollZoom`` (:func:`_config`). That makes every shape draggable — plotly.js
 offers no per-shape switch that works (measured on plotly.js 3.1.1, the
 build NiceGUI 3.16 bundles; the bundle's "3.8.2" string is d3's) — and the
@@ -474,6 +474,18 @@ HANDLE_RING = "#2e7d32"
 HANDLE_RING_FILL = "rgba(46,125,50,0.25)"
 
 
+#: A ring, in pixels about its anchor: a circle of radius 7 as four cubic
+#: arcs. A ``path``, not a ``circle``: plotly.js gives a pixel-sized circle
+#: or rect larger than 10 px in both dimensions RESIZE zones, so a ring
+#: pressed 3 px off its centre was resized and staged nothing; a path has
+#: none and moves from wherever it is pressed (Chromium, plotly.js 3.1.1,
+#: 2026-10-02).
+RING_PATH = (
+    "M 7,0 C 7,3.866 3.866,7 0,7 C -3.866,7 -7,3.866 -7,0 "
+    "C -7,-3.866 -3.866,-7 0,-7 C 3.866,-7 7,-3.866 7,0 Z"
+)
+
+
 def _handle_rings(markers: list[Marker]) -> list[dict]:
     """One draggable ring per handle marker, named with the marker's id.
 
@@ -482,17 +494,14 @@ def _handle_rings(markers: list[Marker]) -> list[dict]:
     """
     return [
         {
-            "type": "circle",
+            "type": "path",
             "xref": _xref(m),
             "yref": "y2" if m.panel == "spectrum" else "y",
             "xsizemode": "pixel",
             "ysizemode": "pixel",
             "xanchor": m.x,
             "yanchor": m.y,
-            "x0": -7,
-            "x1": 7,
-            "y0": -7,
-            "y1": 7,
+            "path": RING_PATH,
             "line": {"color": HANDLE_RING, "width": 2},
             "fillcolor": HANDLE_RING_FILL,
             "name": m.id,

@@ -38,6 +38,7 @@ pytestmark = pytest.mark.playwright
 
 from playwright.sync_api import expect  # noqa: E402
 
+from dstf.figures.plotly import RING_PATH  # noqa: E402
 from test_author_suite_playwright import (  # noqa: E402
     EXPECT_TIMEOUT,
     READY_TIMEOUT,
@@ -185,9 +186,11 @@ def _open_crit(page, index: int, name: str) -> dict:
 # -- the page's own JavaScript --------------------------------------------
 #
 # Plotly is reached the way the page reaches it (NiceGUI's import map), and
-# every geometric read goes through the axis objects: a ring is grabbed at
-# its CENTRE, because an off-centre grab is a pixel RESIZE that stages
-# nothing.
+# every geometric read goes through the axis objects. A ring is a pixel
+# `path` (`RING_PATH`), which moves from wherever it is pressed.
+
+#: `RING_PATH` as the page's scripts spell it.
+_RING = json.dumps(RING_PATH)
 
 ZOOM_AND_STAMP = """
 async ([xrange, yrange]) => {
@@ -213,10 +216,10 @@ READ_PLOT = """
     stamp: gd.__dstfStamp,
     xrange: fl.xaxis.range.slice(),
     yrange: fl.yaxis.range.slice(),
-    shapes: (fl.shapes || []).map(s => [s.type, s.name]),
+    shapes: (fl.shapes || []).map(s => [s.path === __RING__ ? 'ring' : s.type, s.name]),
   };
 }
-"""
+""".replace("__RING__", _RING)
 
 #: The first ring whose pixel centre really belongs to a shape: a grab that
 #: lands on anything drawn over the ring drags nothing.
@@ -228,7 +231,7 @@ FIND_RING = """
   const shapes = fl.shapes || [];
   for (let i = 0; i < shapes.length; i++) {
     const s = shapes[i];
-    if (s.type !== 'circle') continue;
+    if (s.path !== __RING__) continue;
     const cx = rect.left + xa._offset + xa.l2p(s.xanchor);
     const cy = rect.top + ya._offset + ya.l2p(s.yanchor);
     const el = document.elementFromPoint(cx, cy);
@@ -238,7 +241,7 @@ FIND_RING = """
   }
   return null;
 }
-"""
+""".replace("__RING__", _RING)
 
 #: Every visible ring inside the zoomed ranges, and whether its pixel centre
 #: hits the shape layer: the legend above the plot area and the vertical
@@ -250,7 +253,7 @@ ALL_RINGS = """
   const xa = fl.xaxis, ya = fl.yaxis;
   const inside = (v, r) => v >= Math.min(r[0], r[1]) && v <= Math.max(r[0], r[1]);
   return (fl.shapes || [])
-    .filter(s => s.type === 'circle' && s.visible !== false
+    .filter(s => s.path === __RING__ && s.visible !== false
       && inside(s.xanchor, xa.range) && inside(s.yanchor, ya.range))
     .map(s => {
       const cx = rect.left + xa._offset + xa.l2p(s.xanchor);
@@ -259,7 +262,7 @@ ALL_RINGS = """
       return [s.name, !!(el && el.closest('g.shapelayer'))];
     });
 }
-"""
+""".replace("__RING__", _RING)
 
 #: A bound LINE is a one-and-a-half pixel target, so the hit test sweeps a
 #: few pixels either side of it and a few positions along it.
@@ -775,9 +778,9 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         state = page.evaluate(READ_PLOT)
         assert state["stamp"] == "before-open", state  # the same graph div
         assert [round(v, 6) for v in state["xrange"]] == ZOOM_X, state
-        circles = [name for kind, name in state["shapes"] if kind == "circle"]
-        assert circles, state
-        assert all(n.startswith(f"{TUBE}/") for n in circles), state
+        rings = [name for kind, name in state["shapes"] if kind == "ring"]
+        assert rings, state
+        assert all(n.startswith(f"{TUBE}/") for n in rings), state
         ed_box = editor.bounding_box()
         assert ed_box is not None
         assert ed_box["y"] >= row_box["y"] + row_box["height"] - 1, (row_box, ed_box)
@@ -810,7 +813,7 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
             )
         ).to_be_visible(timeout=EXPECT_TIMEOUT)
 
-        # 5. A ring dragged by its CENTRE stages an edit; the zoom and the
+        # 5. A dragged ring stages an edit; the zoom and the
         #    graph div survive it.
         _open_crit(page, 0, "tube · x")
         expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
@@ -6340,3 +6343,92 @@ def test_a_statistics_criterions_jump_icon_opens_its_card_row(
         expect(row).to_have_class(FLASHED)
         _centred(row)
         assert page.locator(".dstf-editor").count() == 0
+
+
+# -- rings and tolerance grips on the plot (D147) --------------------------
+
+#: The shape of plot ``card`` whose name ends with ``tail``, as the page
+#: holds it NOW: its anchor in data and in viewport pixels (a paper-anchored
+#: y from the plot's own size), the pixels per data unit of its axes, and
+#: the box of its SVG path — None while the path is not displayed. Read
+#: again after every relayout: the plot area shifts when tick labels widen.
+SHAPE_AT = """
+([card, tail]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const shapes = gd.layout.shapes || [];
+  const i = shapes.findIndex(s => (s.name || '').endsWith(tail));
+  if (i < 0) return null;
+  const s = shapes[i];
+  const xa = fl['xaxis' + (s.xref || 'x').slice(1)];
+  const paper = s.yref === 'paper';
+  const ya = paper ? null : fl['yaxis' + (s.yref || 'y').slice(1)];
+  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  const b = el ? el.getBoundingClientRect() : null;
+  return {
+    index: i, name: s.name, xanchor: s.xanchor, yanchor: s.yanchor,
+    x: rect.left + xa._offset + xa.d2p(s.xanchor),
+    y: rect.top + (paper ? fl._size.t + fl._size.h * (1 - s.yanchor)
+                         : ya._offset + ya.d2p(s.yanchor)),
+    ppx: xa._length / Math.abs(xa.range[1] - xa.range[0]),
+    ppy: ya ? ya._length / Math.abs(ya.range[1] - ya.range[0]) : null,
+    box: b && b.width > 0
+      ? {x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2,
+         left: b.left, right: b.right, top: b.top, bottom: b.bottom}
+      : null,
+  };
+}
+"""
+
+
+def _shape(page, tail: str, card: int = 0) -> dict:
+    shape = page.evaluate(SHAPE_AT, [card, tail])
+    assert shape is not None, (tail, page.evaluate(READ_PLOT))
+    return shape
+
+
+def _mouse_drag_by(page, x: float, y: float, dx: float, dy: float) -> None:
+    """A person's drag: the pointer arrives, presses, moves in steps and
+    lets go."""
+    page.mouse.move(x - 30, y - 30)
+    page.mouse.move(x, y, steps=4)
+    page.mouse.down()
+    page.mouse.move(x + dx, y + dy, steps=10)
+    page.mouse.up()
+
+
+def _table_cell(page, row: int, label: str):
+    return (
+        page.locator(".dstf-editor .dstf-table-row")
+        .nth(row)
+        .get_by_label(label, exact=True)
+    )
+
+
+def test_a_ring_pressed_off_its_centre_moves_its_point(tmp_path, playwright_browser):
+    """A checkpoint's ring pressed 5 px off its centre and dragged sideways
+    moves the checkpoint's time. As a pixel circle the ring had resize
+    zones outside its middle third: that press resized it and staged
+    nothing."""
+    with _served(tmp_path, playwright_browser, project=_tables_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "points · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(_table_cell(page, 0, "time")).to_have_value(
+            "0.25", timeout=EXPECT_TIMEOUT
+        )
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+        ring = _shape(page, "/points/target/0")
+        _mouse_drag_by(page, ring["x"] + 5, ring["y"], 40, 0)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_table_cell(page, 0, "time")).not_to_have_value(
+            "0.25", timeout=EXPECT_TIMEOUT
+        )
+        moved = float(_table_cell(page, 0, "time").input_value())
+        assert abs(moved - (0.25 + 40 / ring["ppx"])) < 1 / ring["ppx"], (moved, ring)
+        # The tolerance the row holds is what it held.
+        expect(_table_cell(page, 0, "− tolerance")).to_have_value("0.05")
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.05")

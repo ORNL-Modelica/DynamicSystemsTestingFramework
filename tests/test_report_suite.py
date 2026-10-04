@@ -627,8 +627,10 @@ class TestEmbeddedFigures:
         )
         for fig in [*figures, *diag, *nb]:
             assert "edits" not in fig["config"]
+            # No pixel-sized shape: a draggable ring is one, and only the
+            # tool's figure has any.
             assert not any(
-                s.get("type") == "circle" for s in fig["layout"].get("shapes") or []
+                s.get("xsizemode") == "pixel" for s in fig["layout"].get("shapes") or []
             )
 
     def test_the_banner_names_every_decimated_trace(self, tmp_path):

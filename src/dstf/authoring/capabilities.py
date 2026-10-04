@@ -160,8 +160,8 @@ class FigureHook(Protocol):
       payload — under x-unified hover a click lists every trace at that x.
     - ``plotly_relayout`` moving shapes: once PER SHAPE, the payload being
       that shape's keys without their ``shapes[N].`` prefix
-      (``{"y0": 6.0, "y1": 6.0}``, ``{"xanchor": 4.0, "yanchor": 2.99}``, or a
-      ring's pixel resize ``{"x0": -7, ..., "y1": 7}``), in data coordinates.
+      (``{"y0": 6.0, "y1": 6.0}`` for a line; ``{"xanchor": 4.0, "yanchor":
+      2.99, "path": "M …"}`` for a ring), in data coordinates.
       Plotly's payload never names the shape; the shell resolves the id from
       the rendered figure's ``layout.shapes[N].name``, ``""`` when it cannot.
       The shell does not interpret positions: the capability does, from the

@@ -30,6 +30,7 @@ from dstf.discovery.patch_apply import PatchError
 from dstf.discovery.plots import PlotExtra, parse_plots
 from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
 from dstf.discovery.test_registry import TestModel
+from dstf.figures.plotly import RING_PATH
 from dstf.reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL, classify
 from dstf.storage.reference_store import ReferenceStore
 
@@ -1633,7 +1634,9 @@ class TestView:
         session.stage([PatchOp(D, "add", "/metrics", tree)])
         fig = session.figure(D, "x")
         assert fig["config"]["edits"] == {"shapePosition": True}
-        rings = {s["name"] for s in fig["layout"]["shapes"] if s["type"] == "circle"}
+        rings = {
+            s["name"] for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH
+        }
         c = "/metrics/children"
         assert rings == {
             f"{c}/0/tube/upper/0",
@@ -1651,7 +1654,7 @@ class TestView:
         # Real modes over several leaves: every ring is drawn after every other
         # shape (the later shape takes a drag).
         shapes = fig["layout"]["shapes"]
-        assert all(s["type"] == "circle" for s in shapes[-len(rings) :])
+        assert all(s.get("path") == RING_PATH for s in shapes[-len(rings) :])
 
     def test_editing_names_the_leaves_that_get_rings(self, session):
         import copy
@@ -1661,7 +1664,9 @@ class TestView:
         session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
 
         def rings(fig):
-            return {s["name"] for s in fig["layout"]["shapes"] if s["type"] == "circle"}
+            return {
+                s["name"] for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH
+            }
 
         every = rings(session.figure(D, "x"))
         leaf = "/metrics/children/0"
@@ -2997,9 +3002,9 @@ class TestPlots:
         session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(TREE))])
         every = session.plot_figure(A, 0)
-        assert [s for s in every["layout"]["shapes"] if s.get("type") == "circle"]
+        assert [s for s in every["layout"]["shapes"] if s.get("path") == RING_PATH]
         fig = session.plot_figure(A, 0, editing=())
-        assert not [s for s in fig["layout"]["shapes"] if s.get("type") == "circle"]
+        assert not [s for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH]
         # `editing` moves the rings and NOTHING else: same traces, and the
         # same config (react, never newPlot) — as on the single figure.
         assert fig["config"] == every["config"] and fig["data"] == every["data"]
@@ -3018,7 +3023,7 @@ class TestPlots:
         view = SessionView(s, Selection())
 
         def rings(fig):
-            return [sh for sh in fig["layout"]["shapes"] if sh.get("type") == "circle"]
+            return [sh for sh in fig["layout"]["shapes"] if sh.get("path") == RING_PATH]
 
         assert s.plots(A)[0].series == ("x",)  # the default layout: one series
         assert rings(view.figure(A, "x"))

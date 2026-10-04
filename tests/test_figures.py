@@ -16,7 +16,7 @@ from dstf.comparison.algorithms import (
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, Window
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.figures.decimate import decimate_band
-from dstf.figures.plotly import PLOT_CONFIG, variable_figure
+from dstf.figures.plotly import PLOT_CONFIG, RING_PATH, variable_figure
 from dstf.figures.view import OverlayView, build_view, decimate_view
 
 
@@ -433,7 +433,7 @@ class TestEditableFigure:
         view = _handle_view()
         plain = variable_figure(view)
         fig = variable_figure(view, editable=True)
-        rings = [s for s in fig["layout"]["shapes"] if s["type"] == "circle"]
+        rings = [s for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH]
         p = "/metrics/children/0"
         expected = {
             f"{p}/tube/upper/0": (0.5, 0.6, "x", "y"),
@@ -446,6 +446,12 @@ class TestEditableFigure:
         }
         assert got == expected
         assert all(r["xsizemode"] == r["ysizemode"] == "pixel" for r in rings)
+        # A pixel `path`, never a circle or a rect: plotly.js gives a pixel
+        # shape larger than 10 px in both dimensions RESIZE zones, so a
+        # ring pressed 3 px off its centre was resized and staged nothing.
+        # A path has none: pressed anywhere, it moves.
+        assert all(r["type"] == "path" for r in rings)
+        assert not any(k in r for r in rings for k in ("x0", "x1", "y0", "y1"))
         # Neither non-handle Marker gets a ring: not the detected peak, and
         # not one at the default "result" kind.
         assert f"{p}/peaks/detected/0" not in got
@@ -454,10 +460,34 @@ class TestEditableFigure:
         # target ring sits at the centre of its box rect.
         shapes = fig["layout"]["shapes"]
         assert shapes[-len(rings) :] == rings
-        others = [s for s in shapes if s["type"] != "circle"]
+        others = [s for s in shapes if s.get("path") != RING_PATH]
         assert others == plain["layout"]["shapes"]
         assert {s["name"] for s in others} >= {f"{p}/range/max", f"{p}/points/box/0"}
         assert fig["data"] == plain["data"]
+
+    def test_the_ring_path_is_a_closed_circle_of_radius_7(self):
+        """`RING_PATH` in pixels about the anchor: four cubic arcs whose
+        end points lie on the circle, and whose curve nowhere leaves it by
+        a tenth of a pixel."""
+        import re
+
+        assert RING_PATH.startswith("M 7,0 ") and RING_PATH.endswith(" Z")
+        numbers = [float(n) for n in re.findall(r"-?[0-9.]+", RING_PATH)]
+        points = list(zip(numbers[::2], numbers[1::2]))
+        assert len(points) == 13  # the start, then 4 x (2 controls + 1 end)
+        start, arcs = points[0], [points[i : i + 3] for i in range(1, 13, 3)]
+        assert [arc[2] for arc in arcs] == [(0, 7), (-7, 0), (0, -7), (7, 0)]
+        for (c1, c2, end), p0 in zip(arcs, [start, *(arc[2] for arc in arcs)]):
+            for step in range(1, 10):
+                t = step / 10
+                at = [
+                    (1 - t) ** 3 * a
+                    + 3 * (1 - t) ** 2 * t * b
+                    + 3 * (1 - t) * t**2 * c
+                    + t**3 * d
+                    for a, b, c, d in zip(p0, c1, c2, end)
+                ]
+                assert abs((at[0] ** 2 + at[1] ** 2) ** 0.5 - 7) < 0.1, (t, at)
 
     def test_rings_follow_every_leafs_shapes(self):
         """Rings are collected across ALL leaves and appended once: a later
@@ -481,11 +511,11 @@ class TestEditableFigure:
             ],
         )
         shapes = variable_figure(view, editable=True)["layout"]["shapes"]
-        rings = [s for s in shapes if s["type"] == "circle"]
+        rings = [s for s in shapes if s.get("path") == RING_PATH]
         assert [r["name"] for r in rings] == ["/metrics/children/0/tube/lower/0"]
         # The second leaf really draws a non-ring shape, after the ring's leaf.
         assert any(
-            s["name"].startswith("/metrics/children/1/") and s["type"] != "circle"
+            s["name"].startswith("/metrics/children/1/") and s.get("path") != RING_PATH
             for s in shapes
         )
         assert shapes[-len(rings) :] == rings
@@ -494,7 +524,7 @@ class TestEditableFigure:
         view = _handle_view()
         plain = variable_figure(view)
         assert "edits" not in plain["config"]
-        assert not any(s["type"] == "circle" for s in plain["layout"]["shapes"])
+        assert not any(s.get("path") == RING_PATH for s in plain["layout"]["shapes"])
         assert plain == variable_figure(view, editable=False)
 
 
@@ -516,7 +546,7 @@ def _two_ring_view(name="x", paths=("/metrics/children/0", "/metrics/children/1"
 
 
 def _ring_names(fig: dict) -> set[str]:
-    return {s["name"] for s in fig["layout"]["shapes"] if s.get("type") == "circle"}
+    return {s["name"] for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH}
 
 
 def test_rings_for_limits_the_rings_to_the_named_leaves():
@@ -559,7 +589,7 @@ def test_rings_for_changes_nothing_but_the_rings():
     none = variable_figure(view, None, editable=True, rings_for=())
     assert none["data"] == full["data"] and none["config"] == full["config"]
     assert [s for s in none["layout"]["shapes"]] == [
-        s for s in full["layout"]["shapes"] if s.get("type") != "circle"
+        s for s in full["layout"]["shapes"] if s.get("path") != RING_PATH
     ]
 
 
@@ -832,7 +862,7 @@ def test_visibility_hides_a_leafs_traces_and_shapes():
     hid = [s for s in shapes if s["name"].startswith(RANGE_P + "/")]
     assert hid and all(s["visible"] is False for s in hid)
     rest = [s for s in shapes if not s["name"].startswith(RANGE_P + "/")]
-    assert any(s["type"] == "circle" for s in rest)
+    assert any(s.get("path") == RING_PATH for s in rest)
     assert all("visible" not in s for s in rest)
     # And a hidden OPEN leaf's rings go with it (the page never asks for
     # that — the open leaf always draws — but the figure does not care).
@@ -842,7 +872,9 @@ def test_visibility_hides_a_leafs_traces_and_shapes():
         rings_for=(TUBE_P,),
         visibility=Visibility(hidden=frozenset({TUBE_P})),
     )
-    circles = [s for s in rings_hidden["layout"]["shapes"] if s["type"] == "circle"]
+    circles = [
+        s for s in rings_hidden["layout"]["shapes"] if s.get("path") == RING_PATH
+    ]
     assert circles and all(s["visible"] is False for s in circles)
 
 

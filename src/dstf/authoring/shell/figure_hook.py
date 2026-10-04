@@ -35,8 +35,8 @@ class FigureHook:
       the hook resolves the id from the rendered figure's
       ``layout.shapes[N].name`` (``""`` when that lookup fails) and hands the
       handler that shape's keys with the ``shapes[N].`` prefix stripped —
-      ``{"y0": 6.0, "y1": 6.0}``, ``{"xanchor": 4.0, "yanchor": 2.99}``, or a
-      ring's pixel resize ``{"x0": -7, ..., "y1": 7}``. Positions arrive in
+      ``{"y0": 6.0, "y1": 6.0}`` for a line, ``{"xanchor": 4.0, "yanchor":
+      2.99, "path": "M …"}`` for a ring (a pixel path). Positions arrive in
       data coordinates. The hook does not interpret them: the capability does,
       from the handle's primitive type (a Marker's ring moves only by
       ``xanchor``/``yanchor``). ``on_shape_moved`` is then called once, in a

@@ -30,6 +30,7 @@ from dstf.authoring.shell.test_page import STATS, TestPage  # noqa: E402
 from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
 from dstf.authoring.shell.widgets import MiddleCut, middle_split  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.figures.plotly import RING_PATH  # noqa: E402
 from dstf.reporting.tree_rows import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import (  # noqa: E402
@@ -2056,7 +2057,7 @@ async def test_a_shown_plot_has_no_rings_until_a_criterion_opens(shell):
             D, 0, editing=(), visibility=page.cards[0].visibility()
         )
         assert _sans_rev(figure) != shell.session.plot_figure(D, 0)
-        assert not [s for s in figure["layout"]["shapes"] if s.get("type") == "circle"]
+        assert not [s for s in figure["layout"]["shapes"] if s.get("path") == RING_PATH]
 
 
 async def test_the_browser_event_shows_the_named_card(shell):
@@ -3558,7 +3559,7 @@ async def test_the_open_criterion_is_the_only_one_with_rings(shell):
         rings = {
             s["name"]
             for s in card.plot.figure["layout"]["shapes"]
-            if s.get("type") == "circle"
+            if s.get("path") == RING_PATH
         }
         assert rings and all(name.startswith(T0 + "/") for name in rings)
         user.find(marker=f"editor-done:0:{T0}").click()
@@ -5421,7 +5422,7 @@ def _next_sibling(element):
 
 
 def _has_rings(card) -> bool:
-    return any(s.get("type") == "circle" for s in card.plot.figure["layout"]["shapes"])
+    return any(s.get("path") == RING_PATH for s in card.plot.figure["layout"]["shapes"])
 
 
 async def test_a_panel_row_opens_in_a_dialogs_slot(shell):
