@@ -348,16 +348,24 @@ async def test_the_toggle_says_its_state():
             (tip,) = [c for c in g.link.default_slot.children]
             return g.link.props["icon"], g.link.props["aria-pressed"], tip.text
 
+        def name():
+            return g.link.props["aria-label"]
+
+        # The accessible name carries the state, and which tolerance: a
+        # name that read the same in both states left a screen reader the
+        # pressed flag alone.
         assert state() == ("link", "true", "Linked: both sides change together")
-        assert g.link.props["aria-label"] == "Link the two sides of Tol"
+        assert name() == "Linked: both sides of Tol change together"
         user.find(marker="t:link").click()
         assert state() == (
             "link_off",
             "false",
             "Unlinked: each side is set on its own",
         )
+        assert name() == "Unlinked: each side of Tol is set on its own"
         user.find(marker="t:link").click()
         assert state() == ("link", "true", "Linked: both sides change together")
+        assert name() == "Linked: both sides of Tol change together"
 
 
 async def test_a_pair_opens_unlinked_and_typing_hands_over_the_pair():

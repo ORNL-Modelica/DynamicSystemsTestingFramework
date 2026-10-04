@@ -345,6 +345,11 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-fields, .dstf-table-scroll { container-type: inline-size; }
 .dstf-sides { flex-wrap: nowrap; gap: 4px; }
 .dstf-sides > .q-btn { flex: none; margin-top: 8px; }
+/* The toggle's two states at a glance, as the board drew them: linked is
+   the accent, unlinked muted. Read off `aria-pressed` — an attribute the
+   server renders, not a class. */
+.dstf-sides > .q-btn[aria-pressed="true"] { color: var(--dstf-accent); }
+.dstf-sides > .q-btn[aria-pressed="false"] { color: var(--dstf-text-muted); }
 .dstf-sides-hinted > .q-field:first-child {
   min-width: min(var(--dstf-hint-width), calc(100cqw - 180px));
 }

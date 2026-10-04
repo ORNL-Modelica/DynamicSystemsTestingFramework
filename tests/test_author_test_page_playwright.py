@@ -4044,6 +4044,34 @@ def _staged_in_preview(page) -> str:
     return text
 
 
+def _link_toggle(scope, label: str):
+    """The link toggle of the tolerance ``label`` inside ``scope``, in
+    either state: its name says which it is in."""
+    return scope.get_by_role(
+        "button",
+        name=re.compile(
+            rf"^(Linked: both sides|Unlinked: each side) of {re.escape(label)} "
+        ),
+    )
+
+
+#: The colour a toggle's icon is drawn in.
+ICON_COLOUR = "e => getComputedStyle(e.querySelector('.q-icon')).color"
+
+
+def _icon_colour(toggle, page) -> str:
+    """The toggle's icon colour once it has stopped changing: a Quasar
+    button fades from one colour to the next."""
+    seen = toggle.evaluate(ICON_COLOUR)
+    for _ in range(40):
+        page.wait_for_timeout(100)
+        now = toggle.evaluate(ICON_COLOUR)
+        if now == seen:
+            break
+        seen = now
+    return seen
+
+
 def _retype(page, field, text: str) -> None:
     """Replace ``field``'s content with real keystrokes, as a person does:
     select it all and type over it (an empty ``text`` deletes it)."""
@@ -4073,12 +4101,20 @@ def test_a_tolerances_two_fields_and_link_toggle_under_real_keys(
         editor.evaluate("e => e.scrollIntoView({block: 'center'})")
         lower = editor.get_by_label("− Default tolerance", exact=True)
         upper = editor.get_by_label("+ Default tolerance", exact=True)
-        toggle = editor.get_by_role(
-            "button", name="Link the two sides of Default tolerance"
-        )
+        toggle = _link_toggle(editor, "Default tolerance")
         expect(lower).to_have_value("")
         expect(upper).to_have_value("")
         expect(toggle).to_have_attribute("aria-pressed", "true")
+        expect(toggle).to_have_attribute(
+            "aria-label", "Linked: both sides of Default tolerance change together"
+        )
+        tokens = page.evaluate(
+            "() => { const s = getComputedStyle(document.documentElement);"
+            " return ['--dstf-accent', '--dstf-text-muted']"
+            ".map(t => s.getPropertyValue(t).trim()); }"
+        )
+        accent, muted = (_rgb(token) for token in tokens)
+        assert _icon_colour(toggle, page) == accent != muted
         (unset,) = page.evaluate(READ_SIDES)
         assert unset["kids"][0]["message"] == "in effect: 0.01 (the test's tolerance)"
         assert unset["kids"][1]["icon"] == "link"
@@ -4107,6 +4143,12 @@ def test_a_tolerances_two_fields_and_link_toggle_under_real_keys(
             "aria-pressed", "false", timeout=EXPECT_TIMEOUT
         )
         expect(toggle).to_contain_text("link_off")
+        # The two states are told apart at a glance and by name: the icon,
+        # its colour — accent linked, muted unlinked — and what it is called.
+        expect(toggle).to_have_attribute(
+            "aria-label", "Unlinked: each side of Default tolerance is set on its own"
+        )
+        assert _icon_colour(toggle, page) == muted
         page.keyboard.press("Tab")
         expect(upper).to_be_focused()
         page.wait_for_timeout(500)
@@ -4295,31 +4337,40 @@ READ_TABLE = """() => {
   };
 }"""
 
-#: What each table's first row holds, left to right.
+
+def _control_name(cell: dict) -> str:
+    """A table control's name (`READ_TABLE`): a field's label, a button's
+    — a link toggle's without its state, as `link <tolerance>`."""
+    name = cell.get("label") or cell["button"]
+    toggle = re.match(r"(?:Linked: both sides|Unlinked: each side) of (\S+) ", name)
+    return f"link {toggle.group(1)}" if toggle else name
+
+
+#: What each table's row holds, left to right (`_control_name`).
 TABLE_ROWS = {
     "points · x": [
         "time",
         "value",
         "− tolerance",
-        "Link the two sides of tolerance",
+        "link tolerance",
         "+ tolerance",
         "tolerance_mode",
         "before time_tolerance",
-        "Link the two sides of time_tolerance",
+        "link time_tolerance",
         "after time_tolerance",
         "Remove row",
     ],
     "event-timing · x": [
         "time",
         "early tolerance",
-        "Link the two sides of tolerance",
+        "link tolerance",
         "late tolerance",
         "Remove row",
     ],
     "dominant-frequency · x": [
         "freq",
         "− tolerance",
-        "Link the two sides of tolerance",
+        "link tolerance",
         "+ tolerance",
         "tolerance_mode",
         "Remove row",
@@ -4362,7 +4413,7 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
             for row in table["rows"]:
                 assert row["wrap"] == "wrap", where
                 cells = row["cells"]
-                names = [c.get("label") or c["button"] for c in cells]
+                names = [_control_name(c) for c in cells]
                 assert names == expected, where
                 for cell in cells:
                     assert left - 0.5 <= cell["box"][0], (where, cell)
@@ -4374,7 +4425,7 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
                     if "line" in cell:
                         lines.setdefault(round(cell["box"][1]), []).append(cell)
                 for cell in cells:
-                    if str(cell.get("button", "")).startswith("Link"):
+                    if _control_name(cell).startswith("link "):
                         (top,) = [t for t in lines if t <= cell["box"][1] < t + 40]
                         middle = (cell["box"][1] + cell["box"][3]) / 2
                         assert abs(middle - lines[top][0]["middle"]) <= 2, where
@@ -4425,14 +4476,14 @@ def test_a_rows_tolerance_is_typed_as_two_sides_with_real_keys(
         first = rows.nth(0)
         lower = first.get_by_label("− tolerance", exact=True)
         upper = first.get_by_label("+ tolerance", exact=True)
-        toggle = first.get_by_role("button", name="Link the two sides of tolerance")
+        toggle = _link_toggle(first, "tolerance")
         expect(lower).to_have_value("0.05")
         expect(toggle).to_have_attribute("aria-pressed", "true")
         # The second row holds a pair: unlinked, each side its own.
         second = rows.nth(1)
-        expect(
-            second.get_by_role("button", name="Link the two sides of tolerance")
-        ).to_have_attribute("aria-pressed", "false")
+        expect(_link_toggle(second, "tolerance")).to_have_attribute(
+            "aria-pressed", "false"
+        )
         expect(second.get_by_label("− tolerance", exact=True)).to_have_value("0.02")
         expect(second.get_by_label("+ tolerance", exact=True)).to_have_value("0.08")
         expect(second.get_by_label("before time_tolerance")).to_have_value("0.05")

@@ -49,6 +49,12 @@ LINK_TIPS = {
     True: "Linked: both sides change together",
     False: "Unlinked: each side is set on its own",
 }
+#: The toggle's accessible name, by state: the state first, and whose sides.
+#: One name for both states left a screen reader the pressed flag alone.
+LINK_NAMES = {
+    True: "Linked: both sides of {label} change together",
+    False: "Unlinked: each side of {label} is set on its own",
+}
 _OTHER = {"lower": "upper", "upper": "lower"}
 
 
@@ -291,7 +297,7 @@ class SidesControl(ui.row):
             for side in ("lower", "upper")
         }
         self._on_change, self._hint, self._syncing = on_change, hint, False
-        self._required = required
+        self._required, self._label = required, label
         #: The spec holds something no side shows (``"0.1"``, ``true``, a
         #: list, a pair of two non-numbers): both fields are blank, and the
         #: hint is not said — it means nothing is set here. Until an edit.
@@ -300,8 +306,12 @@ class SidesControl(ui.row):
         )
         with self:
             self.lower = self._field("lower", f"{side_labels[0]} {label}")
-            self.link = ui.button(on_click=self.toggle).props(
-                f'flat dense round size=sm aria-label="Link the two sides of {label}"'
+            # Its icon, colour and name are the state's (`_paint`). The
+            # colour is the stylesheet's, read off `aria-pressed`, so the
+            # button takes none of Quasar's: its `text-primary` is
+            # `!important` in a layer, which no rule of ours overrides.
+            self.link = ui.button(on_click=self.toggle, color=None).props(
+                "flat dense round size=sm"
             )
             with self.link:
                 self._tip = ui.tooltip("")
@@ -410,7 +420,10 @@ class SidesControl(ui.row):
 
     def _paint(self) -> None:
         self.link.icon = "link" if self.linked else "link_off"
-        self.link.props(f"aria-pressed={'true' if self.linked else 'false'}")
+        self.link.props["aria-pressed"] = "true" if self.linked else "false"
+        self.link.props["aria-label"] = LINK_NAMES[self.linked].format(
+            label=self._label
+        )
         self._tip.text = LINK_TIPS[self.linked]
 
     def _say_hint(self) -> None:
