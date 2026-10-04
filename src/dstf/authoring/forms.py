@@ -140,6 +140,7 @@ def render_form(
                 mark=spec.name,
             )
             for side in (group.lower, group.upper):
+                side.props(BOTTOM)
                 if classes:
                     side.classes(classes)
                 if spec.help:
@@ -264,6 +265,7 @@ class SidesControl(ui.row):
         side_labels: tuple[str, str],
         hint: str | None,
         mark: str | None,
+        required: bool,
     ) -> None:
         # Not `wrap=False`: that is an inline style, and whether the group
         # wraps is the stylesheet's to say (it does where it has no room).
@@ -278,6 +280,7 @@ class SidesControl(ui.row):
             for side in ("lower", "upper")
         }
         self._on_change, self._hint, self._syncing = on_change, hint, False
+        self._required = required
         with self:
             self.lower = self._field("lower", f"{side_labels[0]} {label}")
             self.link = ui.button(on_click=self.toggle).props(
@@ -335,8 +338,8 @@ class SidesControl(ui.row):
             label=label,
             value=self._sides[side],
             on_change=lambda e: self._edited(side, e.value),
-            validation=lambda _value: "required" if self._blank(side) else None,
-        ).props(f"dense {BOTTOM}")
+            validation=lambda _value: "required" if self._missing(side) else None,
+        ).props("dense")
 
     def _blank(self, side: str) -> bool:
         return (
@@ -344,6 +347,11 @@ class SidesControl(ui.row):
             and self._sides[side] is None
             and self._sides[_OTHER[side]] is not None
         )
+
+    def _missing(self, side: str) -> bool:
+        """Whether ``side``'s field says "required": the blank half of a
+        pair, or — where the tolerance itself is required — any blank."""
+        return self._blank(side) or (self._required and self._sides[side] is None)
 
     def _edited(self, side: str, value: Any) -> None:
         if self._syncing:  # the other field, set from here: not an edit
@@ -406,6 +414,7 @@ def sides_control(
     side_labels: tuple[str, str],
     hint: str | None = None,
     mark: str | None = None,
+    required: bool = False,
 ) -> SidesControl:
     """Two number fields and a link toggle for a tolerance that is a number
     or a ``{"lower", "upper"}`` pair — the leaf form's control and a table
@@ -428,7 +437,18 @@ def sides_control(
     - the toggle: unlinking hands over the pair holding the number twice
       (unset stays unset, and unlinked); linking hands over the larger side
       — of those present — for both.
+
+    ``required`` (a table's required column) marks a blank field "required"
+    while the whole tolerance is unset too; ``None`` is still handed over,
+    and holding it back is the caller's. The fields reserve no bottom line
+    of their own: a form's row does (`render_form`), a table's does not.
     """
     return SidesControl(
-        label, value, on_change, side_labels=side_labels, hint=hint, mark=mark
+        label,
+        value,
+        on_change,
+        side_labels=side_labels,
+        hint=hint,
+        mark=mark,
+        required=required,
     )

@@ -363,6 +363,15 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* Eight rows of 42 px, and then the rows scroll (board 2A) — the
    container this sits on holds the rows alone, never `Add row`. */
 .dstf-table-scroll { max-height: 336px; overflow-y: auto; }
+/* A table's row: its cells on one line where they fit and wrapped INSIDE
+   the row where they do not (a points row is ten controls) — the table
+   never scrolls sideways. Top-aligned: a cell that grows a line to say
+   "required" leaves the row's input lines level. */
+.dstf-table-row { flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
+.dstf-table-row > .q-field, .dstf-table-row > .dstf-sides > .q-field {
+  width: 120px;
+}
+.dstf-table-row > .q-btn { margin-top: 6px; }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
 /* The pending drawer's preview (Q6 A): the entry as test_spec.json will
    hold it, one line per row, never wrapped — a long line scrolls INSIDE

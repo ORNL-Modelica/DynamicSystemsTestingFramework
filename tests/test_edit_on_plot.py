@@ -860,3 +860,324 @@ def test_a_scalars_line_of_a_criterion_that_is_not_open_is_refused(session):
             shape={"y0": y, "y1": y},
         )
     assert box.value.reason == "Open that criterion to drag its lines."
+
+
+# -- a row's tolerance has two sides ------------------------------------------
+
+#: Per list field whose rows take a two-sided tolerance: a leaf on A's root
+#: holding one row with the number 0.1, the field, and what the row's other
+#: keys are.
+SIDED = {
+    "points": (
+        {
+            "metric": "points",
+            "variable": "x",
+            "points": [{"time": 0.5, "value": 0.5, "tolerance": 0.1}],
+        },
+        {"time": 0.5, "value": 0.5},
+    ),
+    "events": (
+        {
+            "metric": "event-timing",
+            "variable": "x",
+            "events": [{"time": 0.5, "tolerance": 0.1}],
+        },
+        {"time": 0.5},
+    ),
+    "peaks": (
+        {
+            "metric": "dominant-frequency",
+            "variable": "x",
+            "peaks": [{"freq": 1.0, "tolerance": 0.1, "tolerance_mode": "rel"}],
+        },
+        {"freq": 1.0, "tolerance_mode": "rel"},
+    ),
+}
+PAIR = {"lower": 0.1, "upper": 0.3}
+
+
+def _a_rows(session, field: str) -> list[dict]:
+    return session.tree(A)[field]
+
+
+@pytest.mark.parametrize("field", list(SIDED))
+async def test_a_pair_typed_in_a_row_stages_one_replace_holding_it(session, field):
+    """A row's tolerance is the form's control: a number opens linked, the
+    toggle writes it twice, and a side typed stages the pair — under the
+    column's own key, in one pending replace of the leaf."""
+    leaf, rest = SIDED[field]
+    _root_leaf_on_a(session, leaf)
+    pending = len(session.spec.pending)
+    cell = f"/metrics:{field}:0:tolerance"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        lower, upper = _cell(user, f"{cell}:lower"), _cell(user, f"{cell}:upper")
+        link = _cell(user, f"{cell}:link")
+        assert (lower.value, upper.value) == (0.1, 0.1)
+        assert link.props["icon"] == "link"
+        user.find(marker=f"{cell}:link").click()
+        await _settled(
+            lambda: (
+                _a_rows(session, field)[0]["tolerance"] == {"lower": 0.1, "upper": 0.1}
+            )
+        )
+        upper.set_value(0.3)
+        await _settled(lambda: _a_rows(session, field)[0]["tolerance"] == PAIR)
+        assert not errors
+        # The pair, under `tolerance` and nowhere else.
+        assert _a_rows(session, field) == [{**rest, "tolerance": PAIR}]
+        assert len(session.spec.pending) == pending
+        op = session.spec.pending[-1]
+        assert (op.op, op.path) in (("add", "/metrics"), ("replace", "/metrics"))
+
+
+async def test_a_rows_pair_opens_unlinked_and_a_blank_one_is_left_out(session):
+    """What the file holds is what the row shows: a pair unlinked with both
+    values, a number linked, nothing as two empty fields — and an optional
+    tolerance left empty is not written (the row follows the criterion's)."""
+    leaf = {
+        "metric": "points",
+        "variable": "x",
+        "points": [{"time": 0.5, "tolerance": PAIR, "time_tolerance": 0.2}],
+    }
+    _root_leaf_on_a(session, leaf)
+    row = "/metrics:points:0"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        assert _cell(user, f"{row}:tolerance:link").props["icon"] == "link_off"
+        assert _cell(user, f"{row}:tolerance:lower").value == 0.1
+        assert _cell(user, f"{row}:tolerance:upper").value == 0.3
+        assert _cell(user, f"{row}:time_tolerance:link").props["icon"] == "link"
+        assert _cell(user, f"{row}:time_tolerance:lower").value == 0.2
+        _cell(user, f"{row}:time_tolerance:upper").set_value(None)
+        await _settled(lambda: "time_tolerance" not in _a_rows(session, "points")[0])
+        assert not errors
+        assert _a_rows(session, "points") == [{"time": 0.5, "tolerance": PAIR}]
+        assert _cell(user, f"{row}:time_tolerance:lower").value is None
+
+
+async def test_a_cells_sides_are_named_by_its_column(session):
+    """A value's sides are `−` and `+`; a point's time tolerance is how
+    much BEFORE and AFTER, an event's how much EARLY and LATE — the
+    column's own third element, not the default."""
+    points = {
+        "metric": "points",
+        "variable": "x",
+        "points": [{"time": 0.5, "time_tolerance": 0.1}],
+    }
+    _root_leaf_on_a(session, points)
+    async with host(session, EditOnPlot(), ON_A) as (user, _errors, _figure):
+        row = "/metrics:points:0"
+
+        def labels(key):
+            return tuple(
+                _cell(user, f"{row}:{key}:{side}").props["label"]
+                for side in ("lower", "upper")
+            )
+
+        assert labels("tolerance") == ("− tolerance", "+ tolerance")
+        assert labels("time_tolerance") == (
+            "before time_tolerance",
+            "after time_tolerance",
+        )
+        # The time column's write goes to the time column.
+        _cell(user, f"{row}:time_tolerance:lower").set_value(0.2)
+        await _settled(
+            lambda: _a_rows(session, "points") == [{"time": 0.5, "time_tolerance": 0.2}]
+        )
+    session.discard()
+    _root_leaf_on_a(session, SIDED["events"][0])
+    async with host(session, EditOnPlot(), ON_A) as (user, _errors, _figure):
+        cell = "/metrics:events:0:tolerance"
+        assert _cell(user, f"{cell}:lower").props["label"] == "early tolerance"
+        assert _cell(user, f"{cell}:upper").props["label"] == "late tolerance"
+
+
+async def test_a_half_pair_in_a_row_stages_nothing_and_marks_the_blank_side(session):
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"][0]["tolerance"] = dict(PAIR)
+    _root_leaf_on_a(session, leaf)
+    cell = "/metrics:points:0:tolerance"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        lower = _cell(user, f"{cell}:lower")
+        lower.set_value(None)
+        await asyncio.sleep(0.25)  # two ticks: anything submitted has landed
+        assert session.spec.pending == pending and "edit-on-plot" not in errors
+        assert lower.error == "required"
+        assert _cell(user, f"{cell}:upper").error is None
+        assert _cell(user, f"{cell}:lower") is lower  # not rebuilt
+
+
+async def test_a_half_pair_holds_the_whole_list_until_it_is_filled(session):
+    """With one side blank the control hands the table nothing, so the row
+    still holds the pair it had: another cell's edit, submitted, staged
+    that STALE pair beside the new value. While any cell is half a pair the
+    table submits nothing; the keystroke that fills it submits the list."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"][0]["tolerance"] = dict(PAIR)
+    _root_leaf_on_a(session, leaf)
+    row = "/metrics:points:0"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _cell(user, f"{row}:tolerance:lower").set_value(None)
+        _cell(user, f"{row}:time").set_value(0.6)
+        await asyncio.sleep(0.25)
+        assert session.spec.pending == pending and "edit-on-plot" not in errors
+        assert _a_rows(session, "points")[0]["time"] == 0.5
+        _cell(user, f"{row}:tolerance:lower").set_value(0.2)
+        await _settled(lambda: _a_rows(session, "points")[0]["time"] == 0.6)
+        assert _a_rows(session, "points") == [
+            {"time": 0.6, "value": 0.5, "tolerance": {"lower": 0.2, "upper": 0.3}}
+        ]
+
+
+async def test_add_row_after_a_row_holding_a_pair(session):
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"][0]["tolerance"] = dict(PAIR)
+    _root_leaf_on_a(session, leaf)
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        user.find(marker="/metrics:points:add").click()
+        await _settled(lambda: len(_a_rows(session, "points")) == 2)
+        first, second = _a_rows(session, "points")
+        assert second["tolerance"] == PAIR and second["time"] != first["time"]
+        assert second["tolerance"] is not first["tolerance"]  # a copy
+        new = "/metrics:points:1:tolerance"
+        assert _cell(user, f"{new}:link").props["icon"] == "link_off"
+        assert _cell(user, f"{new}:lower").value == 0.1
+        # The copy is its own: a side typed in the new row leaves the first.
+        _cell(user, f"{new}:upper").set_value(0.9)
+        await _settled(
+            lambda: (
+                _a_rows(session, "points")[1]["tolerance"]
+                == {"lower": 0.1, "upper": 0.9}
+            )
+        )
+        assert _a_rows(session, "points")[0]["tolerance"] == PAIR
+        assert not errors
+
+
+async def test_a_tables_row_wraps_inside_itself(session):
+    """A points row holds ten controls: it wraps inside the row rather
+    than run past the editor — no inline `flex-wrap`, no `no-wrap`."""
+    _root_leaf_on_a(session, SIDED["points"][0])
+    async with host(session, EditOnPlot(), ON_A) as (user, _errors, _figure):
+        cell = _cell(user, "/metrics:points:0:time")
+        (row,) = [a for a in cell.ancestors() if "dstf-table-row" in a.classes]
+        assert "no-wrap" not in row.classes and "flex-wrap" not in row._style
+        assert any("dstf-table-scroll" in a.classes for a in row.ancestors())
+        group = _cell(user, "/metrics:points:0:tolerance:lower").parent_slot.parent
+        assert group.parent_slot.parent is row
+        # No bottom line reserved in a table — a validated field holds one
+        # from its first validation on unless told not to: a row is one
+        # control high until a cell says "required".
+        for mark in ("tolerance:lower", "tolerance:upper", "time_tolerance:lower"):
+            props = _cell(user, f"/metrics:points:0:{mark}").props
+            assert "bottom-slots" not in props and "hide-bottom-space" in props
+    _tree_on_d(session)
+    async with host(session, EditOnPlot(), ON_D) as (user, _errors, _figure):
+        required = _cell(user, "/metrics/children/0:tube_points:0:time")
+        assert "hide-bottom-space" in required.props
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"lower": 1},
+        {"upper": 1},
+        {"lower": 1, "upper": float("inf")},
+        {"lower": float("nan"), "upper": 1},
+        {"lower": 1, "upper": 2, "extra": 3},
+        {"lower": "1", "upper": 2},
+        "0.1",
+        True,
+    ],
+)
+@pytest.mark.parametrize(
+    ("field", "key"),
+    [("points", "tolerance"), ("points", "time_tolerance"), ("events", "tolerance")],
+)
+def test_a_row_whose_tolerance_is_no_number_or_pair_is_refused_by_name(
+    session, field, key, bad
+):
+    """`parse_sides` is the check, and its sentence the refusal: the row and
+    the column, then what a tolerance is."""
+    _root_leaf_on_a(session, SIDED["events" if field == "events" else "points"][0])
+    pending = list(session.spec.pending)
+    with pytest.raises(ValueError, match=f"^row 1: {key} must be a number or "):
+        _rows(
+            session,
+            [{"time": 0.25}, {"time": 0.5, key: bad}],
+            model_id=A,
+            path="/metrics",
+            field=field,
+        )
+    assert session.spec.pending == pending
+
+
+def test_a_rows_edit_takes_a_pair_and_a_number_and_drops_a_blank(session):
+    _root_leaf_on_a(session, SIDED["points"][0])
+    rows = [
+        {"time": 0.25, "tolerance": {"lower": 1, "upper": 2}, "time_tolerance": None},
+        {"time": 0.5, "tolerance": 0.1, "time_tolerance": {"lower": 0, "upper": 0.2}},
+    ]
+    op = _only_op(_rows(session, rows, model_id=A, path="/metrics", field="points"))
+    assert op.value["points"] == [
+        {"time": 0.25, "tolerance": {"lower": 1, "upper": 2}},
+        {"time": 0.5, "tolerance": 0.1, "time_tolerance": {"lower": 0, "upper": 0.2}},
+    ]
+    # A non-finite NUMBER keeps the refusal it had.
+    with pytest.raises(ValueError, match="row 0: tolerance = nan is not a finite"):
+        _rows(
+            session,
+            [{"time": 0.5, "tolerance": float("nan")}],
+            model_id=A,
+            path="/metrics",
+            field="points",
+        )
+
+
+def test_a_required_sides_column_is_required(session, monkeypatch):
+    """The kind `sides` (no `?`) is a required tolerance: a blank one is
+    refused by name, as a blank required number is, and Add row on an empty
+    table starts it at 0."""
+    from dstf.authoring.builtin import edit_on_plot
+    from dstf.authoring.builtin.edit_on_plot import _new_row
+
+    columns = (("time", "float"), ("tolerance", "sides", ("early", "late")))
+    monkeypatch.setattr(
+        edit_on_plot, "_list_fields", lambda name: [("events", columns)]
+    )
+    _root_leaf_on_a(session, SIDED["events"][0])
+
+    def act(rows):
+        return _rows(session, rows, model_id=A, path="/metrics", field="events")
+
+    with pytest.raises(ValueError, match="^row 0: tolerance is required$"):
+        act([{"time": 0.5, "tolerance": None}])
+    with pytest.raises(ValueError, match="^row 0: tolerance is required$"):
+        act([{"time": 0.5}])
+    assert _only_op(act([{"time": 0.5, "tolerance": PAIR}])).value["events"] == [
+        {"time": 0.5, "tolerance": PAIR}
+    ]
+    assert _new_row(columns, [], (0.0, 1.0)) == {"time": 0.5, "tolerance": 0.0}
+
+
+async def test_a_blank_required_sides_cell_is_marked_and_held(session, monkeypatch):
+    from dstf.authoring.builtin import edit_on_plot
+
+    columns = (("time", "float"), ("tolerance", "sides", ("early", "late")))
+    monkeypatch.setattr(
+        edit_on_plot, "_list_fields", lambda name: [("events", columns)]
+    )
+    _root_leaf_on_a(session, SIDED["events"][0])
+    cell = "/metrics:events:0:tolerance"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        lower, upper = _cell(user, f"{cell}:lower"), _cell(user, f"{cell}:upper")
+        assert lower.error is None and upper.error is None
+        lower.set_value(None)  # linked: both clear
+        await asyncio.sleep(0.25)
+        assert session.spec.pending == pending and "edit-on-plot" not in errors
+        assert (lower.error, upper.error) == ("required", "required")
+        upper.set_value(0.2)
+        await _settled(lambda: _a_rows(session, "events")[0]["tolerance"] == 0.2)
+        assert lower.error is None and upper.error is None

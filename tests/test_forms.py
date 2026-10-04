@@ -264,8 +264,9 @@ async def test_the_side_labels_and_the_marks_are_the_callers():
         assert user.find(marker="t:upper").elements == {g.upper}
         assert user.find(marker="t:link").elements == {g.link}
         assert (g.lower.value, g.upper.value) == (0.2, 0.2)
-        # Both fields reserve the bottom line, as every field of a row does.
-        assert "bottom-slots" in g.lower.props and "bottom-slots" in g.upper.props
+        # The bottom line is the form's to reserve: a table's row does not.
+        assert "bottom-slots" not in g.lower.props
+        assert "bottom-slots" not in g.upper.props
 
 
 async def test_the_toggle_says_its_state():
@@ -475,9 +476,11 @@ async def test_a_sides_field_renders_as_the_group_and_a_float_as_one_field():
         assert g.upper.props["label"] == "late Tol"
         assert user.find(marker="tolerance:link").elements == {g.link}
         assert form.values() == {"tolerance": {"lower": 0.1, "upper": 0.3}}
-        # The row's classes are each field's, not the group's.
+        # The row's classes are each field's, not the group's; and both
+        # reserve the bottom line, as every one-line field of a form does.
         assert "dstf-field" in g.lower.classes and "dstf-field" in g.upper.classes
         assert "dstf-field" not in g.classes
+        assert "bottom-slots" in g.lower.props and "bottom-slots" in g.upper.props
         g.upper.set_value(0.4)
         assert seen == [{"tolerance": {"lower": 0.1, "upper": 0.4}}]
         user.find(marker="tolerance:link").click()
@@ -510,3 +513,28 @@ async def test_an_unset_sides_field_shows_the_hint_and_writes_nothing():
         # No placeholder beside it: the default is not what applies.
         assert g.lower.props.get("placeholder") is None
         assert forms["f"].values() == {} and seen == []
+
+
+async def test_a_required_tolerance_marks_both_fields_while_it_is_unset():
+    """A table's required column: blank, both fields say so — and `None` is
+    still handed over; holding the list back is the table's."""
+    from dstf.authoring.forms import sides_control
+
+    seen: list = []
+    made: dict = {}
+
+    def root():
+        made["g"] = sides_control(
+            "tol", None, seen.append, side_labels=("−", "+"), required=True
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert (g.lower.error, g.upper.error) == ("required", "required")
+        assert not g.half()  # nothing is not half a pair
+        g.upper.set_value(0.2)
+        assert seen == [0.2] and (g.lower.error, g.upper.error) == (None, None)
+        g.lower.set_value(None)
+        assert seen == [0.2, None]
+        assert (g.lower.error, g.upper.error) == ("required", "required")

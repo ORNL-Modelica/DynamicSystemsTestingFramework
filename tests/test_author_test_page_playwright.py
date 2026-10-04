@@ -4044,13 +4044,20 @@ def _staged_in_preview(page) -> str:
 
 
 def _retype(page, field, text: str) -> None:
-    """Replace ``field``'s content with real keystrokes; an empty ``text``
-    clears it."""
+    """Replace ``field``'s content with real keystrokes, as a person does:
+    select it all and type over it (an empty ``text`` deletes it). NOT
+    delete-then-type in one burst: a cleared number field that the server
+    then updates (a hint, a "required" mark) is sent `model-value: null`,
+    which NiceGUI does not recognise as the `""` the browser holds, so the
+    update overwrites whatever was typed before it arrived — the field
+    shows nothing while the value is staged. Keys a millisecond apart hit
+    that; a person's do not."""
     field.click()
     page.keyboard.press("Control+A")
-    page.keyboard.press("Delete")
     if text:
         page.keyboard.type(text)
+    else:
+        page.keyboard.press("Delete")
 
 
 def test_a_tolerances_two_fields_and_link_toggle_under_real_keys(
@@ -4112,6 +4119,7 @@ def test_a_tolerances_two_fields_and_link_toggle_under_real_keys(
 
         _retype(page, upper, "0.2")
         page.wait_for_timeout(800)
+        expect(upper).to_have_value("0.2")
         expect(lower).to_have_value("0.05")  # its own side only
         assert '"tolerance":{"lower":0.05,"upper":0.2}' in _staged_in_preview(page)
         expect(page.locator(".dstf-header-row")).to_contain_text(pending)
@@ -4131,6 +4139,8 @@ def test_a_tolerances_two_fields_and_link_toggle_under_real_keys(
         expect(editor.locator(".q-field--error")).to_have_count(
             0, timeout=EXPECT_TIMEOUT
         )
+        expect(lower).to_have_value("0.01")
+        expect(upper).to_have_value("0.2")
 
         # Linked again: the larger side, for both.
         toggle.click()
@@ -4198,6 +4208,280 @@ def test_a_tolerances_two_fields_sit_on_the_rows_input_line(
             _shot(page, tmp_path, f"sides-{index}-{width}{'-drawer' if drawer else ''}")
             editor.get_by_role("button", name="Done").click()
             expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+
+def _tables_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by the three criteria whose
+    rows carry a tolerance — declared points, declared events, declared
+    peaks — each with one row holding a number (linked) and one holding a
+    lower/upper pair (unlinked)."""
+    cfg, work = _two_var_project(tmp_path)
+
+    def pair(lower: float, upper: float) -> dict:
+        return {"lower": lower, "upper": upper}
+
+    tree = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "points",
+                "variable": "x",
+                "points": [
+                    {
+                        "time": 0.25,
+                        "value": 0.3,
+                        "tolerance": 0.05,
+                        "time_tolerance": 0.1,
+                    },
+                    {
+                        "time": 0.75,
+                        "value": 0.9,
+                        "tolerance": pair(0.02, 0.08),
+                        "time_tolerance": pair(0.05, 0.1),
+                    },
+                ],
+            },
+            {
+                "metric": "event-timing",
+                "variable": "x",
+                "events": [
+                    {"time": 0.25, "tolerance": 0.05},
+                    {"time": 0.75, "tolerance": pair(0.01, 0.04)},
+                ],
+            },
+            {
+                "metric": "dominant-frequency",
+                "variable": "x",
+                "peaks": [
+                    {"freq": 1.0, "tolerance": 0.1, "tolerance_mode": "rel"},
+                    {
+                        "freq": 2.0,
+                        "tolerance": pair(0.05, 0.2),
+                        "tolerance_mode": "rel",
+                    },
+                ],
+            },
+        ],
+    }
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = tree
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+#: The open editor's table: the rows' box as it scrolls (`[scrollWidth,
+#: clientWidth, left, right of what it shows]`) and, per row, every control
+#: in document order — a field's label, box, input line and whether its
+#: label is cut; a button's label and box.
+READ_TABLE = """() => {
+  const t = document.querySelector('.dstf-editor .dstf-table-scroll');
+  const r = t.getBoundingClientRect();
+  const box = e => { const b = e.getBoundingClientRect();
+                     return [b.left, b.top, b.right, b.bottom]; };
+  return {
+    scroll: [t.scrollWidth, t.clientWidth, r.left, r.left + t.clientWidth],
+    rows: [...t.children].map(row => ({
+      wrap: getComputedStyle(row).flexWrap, box: box(row),
+      cells: [...row.querySelectorAll('.q-field, .q-btn')].map(c => {
+        const control = c.querySelector('.q-field__control');
+        const label = c.querySelector('.q-field__label');
+        return control
+          ? {label: label.innerText, box: box(c),
+             line: control.getBoundingClientRect().bottom,
+             middle: (control.getBoundingClientRect().top
+                      + control.getBoundingClientRect().bottom) / 2}
+          : {button: c.getAttribute('aria-label') || c.innerText.trim(),
+             box: box(c)};
+      }),
+    })),
+  };
+}"""
+
+#: What each table's first row holds, left to right.
+TABLE_ROWS = {
+    "points · x": [
+        "time",
+        "value",
+        "− tolerance",
+        "Link the two sides of tolerance",
+        "+ tolerance",
+        "tolerance_mode",
+        "before time_tolerance",
+        "Link the two sides of time_tolerance",
+        "after time_tolerance",
+        "Remove row",
+    ],
+    "event-timing · x": [
+        "time",
+        "early tolerance",
+        "Link the two sides of tolerance",
+        "late tolerance",
+        "Remove row",
+    ],
+    "dominant-frequency · x": [
+        "freq",
+        "− tolerance",
+        "Link the two sides of tolerance",
+        "+ tolerance",
+        "tolerance_mode",
+        "Remove row",
+    ],
+}
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+@pytest.mark.parametrize("drawer", [False, True])
+def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
+    tmp_path, playwright_browser, width, drawer
+):
+    """A points row is ten controls wide. At 1280 and 900 px, the Variables
+    drawer shut and open, each of the three tables keeps every control
+    inside the rows' box — a row wraps INSIDE itself, the table never
+    scrolls sideways — with each visual line's inputs on one y and the link
+    toggles level with them; neither the editor nor the page is wider than
+    what holds it. One row holds a number (linked), one a pair (unlinked)."""
+    with _served(tmp_path, playwright_browser, project=_tables_project) as page:
+        page.set_viewport_size({"width": width, "height": 900})
+        if drawer:
+            _open_vars(page)
+        page.wait_for_timeout(700)
+        heights = {}
+        for name, expected in TABLE_ROWS.items():
+            _open_crit(page, 0, name)
+            editor = page.locator(".dstf-editor")
+            expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+            editor.locator(".dstf-table-scroll").evaluate(
+                "e => e.scrollIntoView({block: 'center'})"
+            )
+            page.wait_for_timeout(400)
+            where = (width, drawer, name)
+            said = editor.locator(".text-negative").all_inner_texts()
+            assert [text for text in said if text.strip()] == [], where
+            table = page.evaluate(READ_TABLE)
+            scroll_width, client_width, left, right = table["scroll"]
+            assert scroll_width == client_width, where  # never sideways
+            assert len(table["rows"]) == 2, where
+            for row in table["rows"]:
+                assert row["wrap"] == "wrap", where
+                cells = row["cells"]
+                names = [c.get("label") or c["button"] for c in cells]
+                assert names == expected, where
+                for cell in cells:
+                    assert left - 0.5 <= cell["box"][0], (where, cell)
+                    assert cell["box"][2] <= right + 0.5, (where, cell)
+                    assert cell["box"][3] <= row["box"][3] + 0.5, (where, cell)
+                # Each visual line: its inputs on one y, its toggles level.
+                lines: dict[int, list[dict]] = {}
+                for cell in cells:
+                    if "line" in cell:
+                        lines.setdefault(round(cell["box"][1]), []).append(cell)
+                for cell in cells:
+                    if str(cell.get("button", "")).startswith("Link"):
+                        (top,) = [t for t in lines if t <= cell["box"][1] < t + 40]
+                        middle = (cell["box"][1] + cell["box"][3]) / 2
+                        assert abs(middle - lines[top][0]["middle"]) <= 2, where
+                for fields in lines.values():
+                    ys = [f["line"] for f in fields]
+                    assert max(ys) - min(ys) <= 1, (where, fields)
+            first = table["rows"][0]["box"]
+            heights[name] = first[3] - first[1]
+            (page_scroll, page_client), (scroll, client), _right = page.evaluate(
+                OVERFLOW
+            )
+            assert page_scroll == page_client, where
+            assert scroll <= client, where
+            short = name.split(" ")[0]
+            _shot(
+                page,
+                tmp_path,
+                f"table-{short}-{width}{'-drawer' if drawer else ''}",
+            )
+            editor.get_by_role("button", name="Done").click()
+            expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        # How much of the 336 px scroll box one row takes: a line of
+        # controls is 40 px, and a points row is one line at 1280, two
+        # beside the drawer or at 900, three at 900 beside the drawer
+        # (where every control on its own line took 296 px).
+        lines = {(1280, False): 1, (1280, True): 2, (900, False): 2, (900, True): 3}
+        n = lines[(width, drawer)]
+        assert heights["points · x"] == pytest.approx(40 * n + 8 * (n - 1), abs=2)
+        assert heights["event-timing · x"] <= 40 * 2 + 8 + 2
+
+
+def test_a_rows_tolerance_is_typed_as_two_sides_with_real_keys(
+    tmp_path, playwright_browser
+):
+    """A table row's tolerance under real keystrokes: the linked row's `+`
+    follows what is typed into `−`; unlinked, the preview shows the row
+    holding the pair; a side cleared is marked "required" in the browser
+    and holds the WHOLE list — a time typed meanwhile is not staged beside
+    the stale pair — until the side is filled."""
+    with _served(tmp_path, playwright_browser, project=_tables_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "points · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        rows = editor.locator(".dstf-table-row")
+        expect(rows).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        rows.first.evaluate("e => e.scrollIntoView({block: 'center'})")
+        first = rows.nth(0)
+        lower = first.get_by_label("− tolerance", exact=True)
+        upper = first.get_by_label("+ tolerance", exact=True)
+        toggle = first.get_by_role("button", name="Link the two sides of tolerance")
+        expect(lower).to_have_value("0.05")
+        expect(toggle).to_have_attribute("aria-pressed", "true")
+        # The second row holds a pair: unlinked, each side its own.
+        second = rows.nth(1)
+        expect(
+            second.get_by_role("button", name="Link the two sides of tolerance")
+        ).to_have_attribute("aria-pressed", "false")
+        expect(second.get_by_label("− tolerance", exact=True)).to_have_value("0.02")
+        expect(second.get_by_label("+ tolerance", exact=True)).to_have_value("0.08")
+        expect(second.get_by_label("before time_tolerance")).to_have_value("0.05")
+        expect(second.get_by_label("after time_tolerance")).to_have_value("0.1")
+
+        _retype(page, lower, "0.07")
+        expect(upper).to_have_value("0.07", timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        toggle.click()
+        expect(toggle).to_have_attribute(
+            "aria-pressed", "false", timeout=EXPECT_TIMEOUT
+        )
+        _retype(page, upper, "0.2")
+        page.wait_for_timeout(800)
+        expect(upper).to_have_value("0.2")
+        expect(lower).to_have_value("0.07")
+        staged = _staged_in_preview(page)
+        assert '"tolerance":{"lower":0.07,"upper":0.2},"time_tolerance":0.1' in staged
+        _shot(page, tmp_path, "table-row-unlinked")
+
+        # Half a pair: marked, and the list is held — the time typed now
+        # is not staged beside the pair the row still holds.
+        _retype(page, lower, "")
+        marked = editor.locator(".q-field--error")
+        expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(marked).to_contain_text("required")
+        _retype(page, first.get_by_label("time", exact=True), "0.3")
+        page.wait_for_timeout(800)
+        expect(first.get_by_label("time", exact=True)).to_have_value("0.3")
+        expect(upper).to_have_value("0.2")  # the side that is not blank
+        held = _staged_in_preview(page)
+        assert '"time":0.25' in held and '"time":0.3,' not in held
+        assert '"tolerance":{"lower":0.07,"upper":0.2}' in held
+        expect(editor.locator(".text-negative").filter(has_text="row")).to_have_count(0)
+        _shot(page, tmp_path, "table-row-half")
+        _retype(page, lower, "0.01")
+        expect(marked).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(800)
+        expect(lower).to_have_value("0.01")
+        filled = _staged_in_preview(page)
+        assert '"time":0.3,"value":0.3,"tolerance":{"lower":0.01,"upper":0.2}' in filled
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
 
 
 def test_a_blank_required_table_cell_says_so_in_the_browser(

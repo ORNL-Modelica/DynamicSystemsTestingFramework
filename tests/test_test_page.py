@@ -3769,6 +3769,142 @@ def _spec_tree_shell(tmp_path, tree):
     return s
 
 
+def _pair(lower: float, upper: float) -> dict:
+    return {"lower": lower, "upper": upper}
+
+
+#: A lower/upper pair in each of the nine fields that take one, every side a
+#: number of its own: a leaf's `tolerance` on points and scalar; a points
+#: row's `tolerance` and `time_tolerance`; event-timing's `time_tolerance`
+#: and an events row's `tolerance`; a peaks row's `tolerance`; `tube_abs`;
+#: `tube_rel`.
+NINE_PAIRS = {
+    "combinator": "and",
+    "children": [
+        {
+            "metric": "points",
+            "variable": "x",
+            "tolerance": _pair(0.11, 0.12),
+            "points": [
+                {
+                    "time": 0.5,
+                    "value": 0.5,
+                    "tolerance": _pair(0.21, 0.22),
+                    "tolerance_mode": "abs",
+                    "time_tolerance": _pair(0.31, 0.32),
+                }
+            ],
+        },
+        {
+            "metric": "scalar",
+            "variable": "x",
+            "quantity": {"reduce": "max"},
+            "tolerance": _pair(0.41, 0.42),
+        },
+        {
+            "metric": "event-timing",
+            "variable": "x",
+            "time_tolerance": _pair(0.51, 0.52),
+            "events": [{"time": 0.5, "tolerance": _pair(0.61, 0.62)}],
+        },
+        {
+            "metric": "dominant-frequency",
+            "variable": "x",
+            "peaks": [
+                {"freq": 1.0, "tolerance": _pair(0.71, 0.72), "tolerance_mode": "rel"}
+            ],
+        },
+        {
+            "metric": "tube",
+            "variable": "x",
+            "tube_width_mode": "band",
+            "tube_abs": _pair(0.81, 0.82),
+        },
+        {
+            "metric": "tube",
+            "variable": "x",
+            "tube_width_mode": "rel",
+            "tube_rel": _pair(0.91, 0.92),
+        },
+    ],
+}
+#: Per leaf of `NINE_PAIRS`, in tree order: the mark of each two-sided
+#: control its editor draws (a form field's is the field's name, a table
+#: cell's `{path}:{field}:{row}:{key}`) and the pair it must show.
+NINE_SIDED = [
+    [
+        ("tolerance", (0.11, 0.12)),
+        ("{path}:points:0:tolerance", (0.21, 0.22)),
+        ("{path}:points:0:time_tolerance", (0.31, 0.32)),
+    ],
+    [("tolerance", (0.41, 0.42))],
+    [
+        ("time_tolerance", (0.51, 0.52)),
+        ("{path}:events:0:tolerance", (0.61, 0.62)),
+    ],
+    [("{path}:peaks:0:tolerance", (0.71, 0.72))],
+    [("tube_abs", (0.81, 0.82))],
+    [("tube_rel", (0.91, 0.92))],
+]
+
+
+def _descendants(element):
+    for slot in element.slots.values():
+        for child in slot.children:
+            yield child
+            yield from _descendants(child)
+
+
+def _error_lines(box) -> list[str]:
+    """Every error SHOWN inside ``box``: `InlineHost` writes a panel that
+    raised while it was built there (`TypeError: …`), and a refused act
+    above its panel — both a `text-negative` label."""
+    return [
+        e.text
+        for e in _descendants(box)
+        if isinstance(e, ui.label)
+        and "text-negative" in e.classes
+        and e.visible
+        and e.text
+    ]
+
+
+async def test_every_criterion_of_a_tree_holding_pairs_opens_without_an_error(
+    tmp_path,
+):
+    """A leaf holding a lower/upper pair is a leaf like any other: its
+    editor opens, both of its panels are drawn, and each of the nine fields
+    that take a pair shows the two sides the file holds. Handed a dict where
+    it expected a number, a number field raised while the panel was built
+    and the editor read `TypeError: int() argument must be … not 'dict'`."""
+    shell = _spec_tree_shell(tmp_path, NINE_PAIRS)
+    seen = 0
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        for k, sided in enumerate(NINE_SIDED):
+            path = f"/metrics/children/{k}"
+            with page.client:
+                page.open_criterion(path)
+            assert page.open is not None and page.open[1] == path, path
+            box = page._editor_on(page.open[0])
+            assert box is not None
+            assert _error_lines(box) == [], path
+            drawn = {m for e in _descendants(box) for m in e._markers}
+            assert {"panel:edit-criteria", "panel:edit-on-plot"} <= drawn, path
+            for mark, pair in sided:
+                mark = mark.format(path=path)
+                shown = tuple(
+                    e.value
+                    for side in ("lower", "upper")
+                    for e in _descendants(box)
+                    if f"{mark}:{side}" in e._markers
+                )
+                assert shown == pair, (path, mark)
+                seen += 1
+        assert shell.session.spec.pending == []  # opening an editor stages nothing
+    assert seen == 9
+
+
 async def test_every_figure_a_card_sends_carries_a_new_editrevision(shell):
     """The snap-back's own condition, in Chromium: the figure carries
     `uirevision: "keep"`, Plotly's `editrevision` DEFAULTS to it, and a

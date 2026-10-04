@@ -16,11 +16,14 @@ from __future__ import annotations
 import copy
 import dataclasses
 import math
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.geometry import HLine, Marker
 from ...comparison.handles import HandleEdit, HandleEditError
+from ...comparison.mode_schema import SIDE_LABELS
 from ...comparison.registry import DEFAULT_METRIC, metric
+from ...comparison.sides import parse_sides
 from ...figures.assemble import leaves_by_variable
 from ..capabilities import Panel, Patch, Placement
 from ..session import no_tree_error
@@ -174,12 +177,13 @@ def _new_row(
     columns: Columns, rows: list[dict], span: tuple[float, float] | None
 ) -> dict:
     """The row ``Add row`` appends; its ``time`` (when the table has one) is
-    :func:`_new_time`'s. After existing rows: a copy of the last one. On an
-    empty table: any other required float ``0.0``; any other optional float
-    blank, so omitted (a new checkpoint follows the baseline); a choice its
-    first. The one exception: a ``tube_points`` row gets ``upper`` and
-    ``lower`` ``0.0`` — optional in the reader, which refuses a tube with no
-    width at all."""
+    :func:`_new_time`'s. After existing rows: a copy of the last one — a
+    pair it holds copied too, never shared. On an empty table: any other
+    required float or tolerance ``0.0``; any other optional one blank, so
+    omitted (a new checkpoint follows the baseline, and the criterion's
+    tolerance); a choice its first. The one exception: a ``tube_points``
+    row gets ``upper`` and ``lower`` ``0.0`` — optional in the reader,
+    which refuses a tube with no width at all."""
     keys = [column[0] for column in columns]
     if rows:
         last = copy.deepcopy(rows[-1])
@@ -192,12 +196,23 @@ def _new_row(
             row[key] = _new_time(rows, span)
         elif isinstance(kind, tuple):
             row[key] = kind[0]
-        elif kind == "float":
+        elif kind in _REQUIRED:
             row[key] = 0.0
     if keys == ["time", "upper", "lower"]:  # tube_points
         row.update(upper=0.0, lower=0.0)
     return row
 
+
+#: The column kinds a row cannot leave blank, and those that are a
+#: tolerance with two sides (a number, or a lower/upper pair).
+_REQUIRED = ("float", "sides")
+_SIDES = ("sides", "sides?")
+
+#: A table cell reserves no line under it: a validated field holds one for
+#: its message from its first validation on (Quasar: any `error` prop, set
+#: or not), which made a row half again as tall the moment a cell was
+#: typed in. A cell grows that line only while it says "required".
+_NO_BOTTOM = "hide-bottom-space"
 
 _OUTSIDE = "/outside"
 
@@ -392,7 +407,8 @@ class EditOnPlot:
         columns = dict(_list_fields(name)).get(field)
         if columns is None:
             raise ValueError(f"{name} has no table {field!r}")
-        required = [column[0] for column in columns if column[1] == "float"]
+        required = [column[0] for column in columns if column[1] in _REQUIRED]
+        sided = {column[0] for column in columns if column[1] in _SIDES}
         cleaned: list[dict] = []
         for i, row in enumerate(rows):
             for key in required:
@@ -403,6 +419,11 @@ class EditOnPlot:
                     raise ValueError(
                         f"row {i}: {key} = {value!r} is not a finite number"
                     )
+                if key in sided and value is not None:
+                    # The one reader of a number-or-pair; its ValueError —
+                    # a missing side, a third key, a side that is no finite
+                    # number — is the refusal.
+                    parse_sides(value, f"row {i}: {key}")
             cleaned.append({k: v for k, v in row.items() if v is not None})
         # The reader's own refusal (`algorithms._interpolate_tube_widths`),
         # raised here by name rather than as the rescore's config error.
@@ -443,20 +464,32 @@ def _table(
     error stands above a table whose cell says nothing; so while any required
     cell is blank the table keeps its rows here, marks the blank cells and
     submits nothing — the keystroke that fills the last one submits the
-    whole list. (``act`` still refuses a blank, for a direct call.)"""
+    whole list. (``act`` still refuses a blank, for a direct call.)
+
+    A tolerance column (``sides`` / ``sides?``) is the form's control,
+    `forms.sides_control`: two fields and a link toggle, named by the
+    column's own side labels. With ONE side of a pair blank the control
+    hands the table nothing — the row still holds the pair it had — so a
+    half pair holds the whole list back as a blank required cell does."""
+    from ..forms import SidesControl, sides_control
+
     container = ui.column().classes("w-full")
     mark = f"{path}:{field}"
-    required = [column[0] for column in columns if column[1] == "float"]
+    required = [column[0] for column in columns if column[1] in _REQUIRED]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
+    pairs: list[SidesControl] = []  # the tolerance cells, as rendered
 
     def blanks() -> bool:
-        """Mark each required cell blank or not; True when any is. The mark
+        """Mark each required cell blank or not; True when any is, or when
+        a tolerance cell is half a pair (it marks its own fields). The mark
         is the cell's own validation (`missing`): written as an `error`
         prop it never showed — NiceGUI validates a field after its change
         handlers and resets an `error` it did not set itself."""
         for cell in cells.values():
             cell.validate(return_result=False)
-        return any(rows[i].get(key) is None for i, key in cells)
+        return any(row.get(key) is None for row in rows for key in required) or any(
+            group.half() for group in pairs
+        )
 
     def missing(i: int, key: str) -> str | None:
         return f"{key} is required" if rows[i].get(key) is None else None
@@ -489,13 +522,28 @@ def _table(
     def render() -> None:
         container.clear()
         cells.clear()
+        pairs.clear()
         with container:
             # The rows alone scroll; `Add row` follows their container.
             scroll = ui.column().classes("w-full dstf-table-scroll")
             for i, row in enumerate(rows):
-                with scroll, ui.row().classes("items-center no-wrap"):
-                    for key, kind, *_ in columns:
-                        if isinstance(kind, tuple):
+                # A row wraps INSIDE itself where it is wider than the
+                # editor (a points row is ten controls), never sideways.
+                with scroll, ui.row().classes("dstf-table-row"):
+                    for key, kind, *labels in columns:
+                        if kind in _SIDES:
+                            group = sides_control(
+                                key,
+                                row.get(key),
+                                partial(set_cell, i, key),
+                                side_labels=labels[0] if labels else SIDE_LABELS,
+                                mark=f"{mark}:{i}:{key}",
+                                required=key in required,
+                            )
+                            group.lower.props(_NO_BOTTOM)
+                            group.upper.props(_NO_BOTTOM)
+                            pairs.append(group)
+                        elif isinstance(kind, tuple):
                             value = row.get(key, kind[0])
                             # A value the author wrote outside the choices
                             # stays selectable rather than break the build.
@@ -522,7 +570,7 @@ def _table(
                                         else None
                                     ),
                                 )
-                                .props("dense")
+                                .props(f"dense {_NO_BOTTOM}")
                                 .mark(f"{mark}:{i}:{key}")
                             )
                             if key in required:
