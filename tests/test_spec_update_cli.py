@@ -546,6 +546,20 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
         assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
         assert '"variable_overrides": {}' in spec.read_text(encoding="utf-8")
 
+    @pytest.mark.parametrize(
+        "bad", ["abc", [1], {"lower": 0.1, "upper": 0.2}], ids=repr
+    )
+    def test_writing_the_bad_base_already_there_again_changes_nothing(
+        self, tmp_path, bad
+    ):
+        """An equal value is the base as it was, whatever object holds it:
+        the patch wrote no base the entry did not have."""
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": bad}})
+        ops = [{"op": "replace", "path": "/comparison/tolerance", "value": bad}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
+        (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
+        assert entry["comparison"] == {"tolerance": bad}
+
     def test_a_bad_base_already_there_does_not_block_an_unrelated_patch(self, tmp_path):
         """The patch did not write it: refusing would leave no way to edit
         the entry's other fields — or to remove it — through a patch."""
