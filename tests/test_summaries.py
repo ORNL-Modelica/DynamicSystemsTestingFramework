@@ -810,9 +810,10 @@ class TestADeclaredEventNeverFound:
 class TestARowsOwnToleranceIsTheBandTheSentenceNames:
     """A declared point (or event) with its own tolerance is judged on it,
     and the sentence printed the LEAF's: the reported number beside a band
-    it was never held to. Where a pair is in play — the leaf's, or the
-    reported row's own — the sentence names the row and ITS sides. Numbers
-    alone print what numbers always printed."""
+    it was never held to. Where the reported row's sides are not the leaf's
+    — a pair or a number of its own — or the leaf's are a pair, the
+    sentence names the row and ITS sides. Rows that all defer to a leaf's
+    one number print what they always printed."""
 
     T = np.linspace(0.0, 1.0, 11)
     PAIR = {"lower": 0.01, "upper": 0.05}
@@ -875,14 +876,31 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
-    def test_numbers_alone_read_as_they_did(self):
-        """No pair anywhere: what a number always printed, key for key —
-        the leaf's number, though the failing row has its own."""
+    def test_a_number_leaf_and_a_row_with_its_own_number(self):
+        """No pair anywhere, and the failing row is still the one named:
+        +0.002 breaks its own 0.001, and the sentence said "error 2.500e-02
+        vs tolerance 3.000e-02 → FAIL" — the other row's delta, inside the
+        leaf's number, beside a verdict neither explains."""
         vc, crit = self._points(
             0.03, [(5, +0.002, {"tolerance": 0.001}), (8, +0.025, {})]
         )
         assert not vc.passed
-        assert crit == "Final value error 2.500e-02 vs tolerance 3.000e-02 → FAIL"
+        assert crit == "Point at t=0.5: error 2.000e-03 vs tolerance 1.000e-03 → FAIL"
+        assert vc.diagnostics["worst_sides"] == 0.001
+        assert vc.diagnostics["worst_point_time"] == 0.5
+
+    def test_a_row_whose_own_number_is_the_leafs_reads_as_it_did(self):
+        """Its sides ARE the leaf's: nothing to name."""
+        vc, crit = self._points(0.03, [(5, +0.04, {"tolerance": 0.03}), (8, -0.02, {})])
+        assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert set(vc.diagnostics) == self.POINT_KEYS
+
+    def test_a_number_row_that_is_not_the_reported_one_changes_nothing(self):
+        # +0.0005 is inside the row's own 0.001; −0.05 breaks the leaf's.
+        vc, crit = self._points(
+            0.03, [(5, +0.0005, {"tolerance": 0.001}), (8, -0.05, {})]
+        )
+        assert crit == "Final value error 5.000e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
     def test_a_pair_row_that_is_not_the_reported_one_changes_nothing(self):
@@ -1029,14 +1047,30 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         )
         assert set(vc.diagnostics) == self.EVENT_KEYS
 
-    def test_event_numbers_alone_read_as_they_did(self):
+    def test_a_number_leaf_and_an_event_with_its_own_number(self):
+        """0.3 late is inside the event's own 0.5: the sentence said "Δt
+        3.000e-01 vs 1.000e-01 → PASS", three times the window it named."""
         vc, crit = self._events(
             [2.0, 5.3, 8.0],
             0.1,
             [{"time": 2.0}, {"time": 5.0, "tolerance": 0.5}, {"time": 8.0}],
         )
+        assert vc.passed
         assert crit == (
-            "Max event Δt 3.000e-01 vs 1.000e-01 (3 actual events / 3 reference) → PASS"
+            "Event at t=5: Δt 3.000e-01 vs 5.000e-01 "
+            "(3 actual events / 3 reference) → PASS"
+        )
+        assert vc.diagnostics["worst_sides"] == 0.5
+        assert vc.diagnostics["worst_event_time"] == 5.0
+
+    def test_an_event_whose_own_number_is_the_leafs_reads_as_it_did(self):
+        vc, crit = self._events(
+            [2.0, 5.05, 8.0],
+            0.1,
+            [{"time": 2.0}, {"time": 5.0, "tolerance": 0.1}, {"time": 8.0}],
+        )
+        assert crit == (
+            "Max event Δt 5.000e-02 vs 1.000e-01 (3 actual events / 3 reference) → PASS"
         )
         assert set(vc.diagnostics) == self.EVENT_KEYS
 

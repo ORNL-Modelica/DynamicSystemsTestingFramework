@@ -152,10 +152,10 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
         f"Final value error {error} vs tolerance "
         f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
     )
-    # A pair in play among declared points (the leaf's, or the reported
-    # point's own): the scorer recorded that point — the one furthest
-    # outside its band, or of the largest |Δ| when none is — with the sides
-    # IT was judged on, which a row's own tolerance makes not the leaf's.
+    # Among declared points, the reported one's sides are not the leaf's
+    # (its own pair or number), or the leaf's are a pair: the scorer
+    # recorded that point — the one furthest outside its band, or of the
+    # largest |Δ| when none is — with the sides IT was judged on.
     if "worst_sides" in diag:
         own = parse_sides(diag["worst_sides"], "worst_sides")
         error = _deviation(diag["worst_signed_delta"], own)
@@ -257,9 +257,9 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
         f"Max event Δt {delta} vs {tol} "
         f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
     )
-    # A pair in play among declared events (the leaf's, or the reported
-    # event's own): the window that Δt was held to is that event's, which
-    # its own tolerance makes not the leaf's (as `summarize_points`).
+    # Among declared events, the reported one's window is not the leaf's
+    # (its own pair or number), or the leaf's is a pair: the window that Δt
+    # was held to is that event's (as `summarize_points`).
     if "worst_sides" in diag:
         own = parse_sides(diag["worst_sides"], "worst_sides")
         criterion = (

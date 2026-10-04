@@ -423,13 +423,15 @@ def _reported_point(
     ``(actual − target, the sides it was judged on, whether they are
     relative, its time)``; ``None`` when no point was scored.
 
-    Recorded only where a pair is in play, the leaf's or that point's own:
-    its sides then say which band the number is held to and its signed delta
-    which side applies. A leaf of numbers carries what it always carried."""
+    Recorded where that point's sides are not the leaf's — a pair or a
+    number of its own: the band its delta was held to is then not the one
+    the leaf's sentence names — and where the leaf's are a pair, when its
+    signed delta says which side applies. A leaf of one number whose
+    reported point defers to it carries what it always carried."""
     if reported is None:
         return {} if tolerance.equal else {"worst_signed_delta": 0.0}
     signed_delta, sides, relative, time = reported
-    if tolerance.equal and sides.equal:
+    if sides == tolerance and tolerance.equal:
         return {}
     return {
         "worst_signed_delta": signed_delta,
@@ -1370,13 +1372,14 @@ def _reported_event(
     sides of its window, its declared time)``; ``None`` when no declared
     event was found.
 
-    As `_reported_point`: recorded only where a pair is in play, the leaf's
-    or that event's own, so the sentence names the window the Δt was held
-    to. A leaf of numbers carries what it always carried."""
+    As `_reported_point`: recorded where that event's window is not the
+    leaf's — a pair or a number of its own — or the leaf's is a pair, so
+    the sentence names the window the Δt was held to. A leaf of one number
+    whose reported event defers to it carries what it always carried."""
     if reported is None:
         return _signed_time_delta(time_tolerance, 0.0)
     signed_delta, sides, time = reported
-    if time_tolerance.equal and sides.equal:
+    if sides == time_tolerance and time_tolerance.equal:
         return {}
     return {
         "max_time_delta_signed": signed_delta,
