@@ -24,7 +24,6 @@ from typing import Any
 import numpy as np
 
 from ..backends import TestResult
-from ..comparison.sides import is_base_tolerance
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from .baseline import PRIMARY_BASELINE, Baseline
@@ -259,6 +258,10 @@ class ReferenceStore(_RolesMixin):
         # A base tolerance is written only when it is ONE finite number —
         # the test's, or else the old reference's: whatever calls this, a
         # reference JSON never holds a base the comparison refuses.
+        # Imported here: at module level it closes a cycle through
+        # `dstf.comparison` -> comparator -> this module.
+        from ..comparison.sides import is_base_tolerance
+
         comparison: dict[str, Any] = {}
         if is_base_tolerance(test.comparison_tolerance):
             comparison["tolerance"] = test.comparison_tolerance
