@@ -10,7 +10,16 @@ from pathlib import Path
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.test_registry import TestModel
-from ..reporting.status import NOT_RUN, exit_code, nothing_ran
+from ..reporting.status import (
+    FAIL,
+    NO_REF,
+    NOT_RUN,
+    PASS,
+    SIM_FAIL,
+    classify,
+    exit_code,
+    nothing_ran,
+)
 
 
 def _build_config(args: argparse.Namespace) -> Config:
@@ -197,20 +206,24 @@ def _parse_review_filter(filter_str: str) -> set[str]:
 
 
 def _should_review(comp, filters: set[str]) -> bool:
-    """Check if a comparison matches the active review filters."""
+    """Check if a comparison matches the active review filters (`-i` and
+    `--rerun`). A category selects by the ONE classifier's status
+    (``reporting.status.classify``), the status every surface shows."""
     if "all" in filters:
         return True
-    if "sim-failed" in filters and not comp.sim_success:
+    status = classify(comp)
+    # NOT RUN too: nothing succeeded (D145).
+    if "sim-failed" in filters and status in (SIM_FAIL, NOT_RUN):
         return True
-    if "no-baseline" in filters and not comp.has_reference:
+    # A test the comparison FAILED is "failed" and nothing else, baseline or
+    # not: one it refused, or that fails a baseline-free criterion (range /
+    # declared events / declared peaks — review 2026-07-06, finding 5), is
+    # not one to accept a baseline for, so "no-baseline" does not select it.
+    if "no-baseline" in filters and not comp.has_reference and status != FAIL:
         return True
-    # A failing test matches "failed" even without a baseline —
-    # baseline-free modes (range / declared events / declared peaks)
-    # carry a real verdict (review 2026-07-06, finding 5).
-    if "failed" in filters and comp.sim_success and not comp.passed:
+    if "failed" in filters and status == FAIL:
         return True
     if "warnings" in filters and comp.warnings:
         return True
-    return bool(
-        "passed" in filters and comp.sim_success and comp.passed and not comp.warnings
-    )
+    # NO_REF too: nothing was scored, and `compare_one` marks it passed.
+    return bool("passed" in filters and status in (PASS, NO_REF) and not comp.warnings)

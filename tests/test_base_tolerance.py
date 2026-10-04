@@ -296,6 +296,43 @@ def test_the_interactive_review_does_not_accept_a_refused_test(
     assert "Invalid choice. Enter v/s/d/p/q." in out
 
 
+def test_the_review_says_fail_for_a_refused_test_that_has_no_baseline(
+    project, capsys, monkeypatch
+):
+    """The status word is the classifier's: it read NO BASELINE — "accept
+    it" — above the refusal."""
+    project.edit_spec(RAMP, json.dumps(PAIR))
+    project.reference(RAMP).unlink()
+    prompts = []
+
+    def read(prompt):
+        prompts.append(prompt)
+        return "s"
+
+    monkeypatch.setattr("builtins.input", read)
+    assert project.dstf("run", "-i", "failed") == 1
+    out = capsys.readouterr().out
+    said = sentence(SPEC, PAIR)
+    assert f"{RAMP}\x1b[0m\n  Status: \x1b[91mFAIL\x1b[0m\n  Error: {said}\n" in out
+    assert "NO BASELINE" not in out
+    assert len(prompts) == 1
+    # ... and "no-baseline" does not stop at it.
+    prompts.clear()
+    assert project.dstf("run", "-i", "no-baseline") == 1
+    assert prompts == [] and "Status:" not in capsys.readouterr().out
+
+
+def test_rerun_selects_a_refused_test_that_has_no_baseline_as_failed(project, capsys):
+    project.edit_spec(RAMP, json.dumps(PAIR))
+    project.reference(RAMP).unlink()
+    assert project.dstf("run", "--rerun", "no-baseline") == 0
+    out = capsys.readouterr().out
+    assert "--rerun no-baseline: selected 0 of 3 tests" in out
+    assert "Nothing to rerun" in out
+    assert project.dstf("run", "--rerun", "failed") == 1
+    assert "--rerun failed: selected 1 of 3 tests" in capsys.readouterr().out
+
+
 def test_the_review_still_offers_accept_for_a_test_that_fails_its_criteria(
     project, capsys, monkeypatch
 ):

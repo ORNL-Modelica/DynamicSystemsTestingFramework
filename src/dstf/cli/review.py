@@ -2,7 +2,16 @@
 
 from ..backends.types import label_with_name
 from ..discovery.test_registry import TestModel
-from ..reporting.status import NOT_RUN, STATUS_LABELS, nothing_ran, refusal
+from ..reporting.status import (
+    FAIL,
+    NO_REF,
+    PASS,
+    SIM_FAIL,
+    STATUS_LABELS,
+    classify,
+    nothing_ran,
+    refusal,
+)
 from ..storage.accept import accept_run_results
 from .common import _exit_code, _parse_review_filter, _should_review
 
@@ -60,6 +69,7 @@ def _interactive_review(
     YELLOW = "\033[93m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
+    status_colors = {PASS: GREEN, FAIL: RED, SIM_FAIL: RED, NO_REF: YELLOW}
 
     filter_desc = f" (filter: {review_filter})" if "all" not in filters else ""
     print(f"\nInteractive review: {n_total} tests{filter_desc}\n")
@@ -72,17 +82,13 @@ def _interactive_review(
             continue
         model_id = comp.model_id
 
-        # Status line
-        if not comp.ran:
-            status = STATUS_LABELS[NOT_RUN]
-        elif not comp.sim_success:
-            status = f"{RED}SIM_FAIL{RESET}"
-        elif not comp.has_reference:
-            status = f"{YELLOW}NO BASELINE{RESET}"
-        elif comp.passed:
-            status = f"{GREEN}PASS{RESET}"
-        else:
-            status = f"{RED}FAIL{RESET}"
+        # Status line: the one classifier's status (`reporting.status`), as
+        # every other surface shows it — keyed on `has_reference` instead, a
+        # refused test with no baseline read "NO BASELINE" above its error.
+        state = classify(comp)
+        status = "NO BASELINE" if state == NO_REF else STATUS_LABELS[state]
+        if state in status_colors:
+            status = f"{status_colors[state]}{status}{RESET}"
 
         warn = ""
         if comp.warnings:

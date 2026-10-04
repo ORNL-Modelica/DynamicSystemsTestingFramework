@@ -28,6 +28,7 @@ from dstf.cli.common import (
 from dstf.cli.main import build_arg_parser
 from dstf.cli.review import _interactive_review
 from dstf.cli.run_cmds import cmd_compare, cmd_run
+from dstf.comparison.types import TestComparison
 from dstf.config import Config, detect_os
 from dstf.discovery.test_registry import TestModel
 from dstf.pipeline import write_id_mapping
@@ -35,15 +36,9 @@ from dstf.storage.batch_manifest import BatchManifest
 from dstf.storage.reference_store import ReferenceStore
 
 
-@dataclass
-class FakeComparison:
-    """Minimal stand-in for TestComparison for filter testing."""
-
-    model_id: str = "Test.Model"
-    passed: bool = True
-    sim_success: bool = True
-    has_reference: bool = True
-    warnings: list = field(default_factory=list)
+def _comparison(**fields) -> TestComparison:
+    """A passing comparison with ``fields`` over it, for filter testing."""
+    return TestComparison(**{"model_id": "Test.Model", "passed": True, **fields})
 
 
 # --- _parse_review_filter ---
@@ -85,17 +80,17 @@ def test_parse_filter_partial_invalid_raises():
 
 
 def test_should_review_all_matches_everything():
-    comp = FakeComparison()
+    comp = _comparison()
     assert _should_review(comp, {"all"}) is True
 
 
 def test_should_review_failed():
-    comp = FakeComparison(passed=False)
+    comp = _comparison(passed=False)
     assert _should_review(comp, {"failed"}) is True
 
 
 def test_should_review_failed_skips_passing():
-    comp = FakeComparison(passed=True)
+    comp = _comparison(passed=True)
     assert _should_review(comp, {"failed"}) is False
 
 
@@ -103,74 +98,153 @@ def test_should_review_failed_skips_no_baseline():
     """An unevaluated fresh test (production NO_REF shape: passed=True)
     is 'no-baseline', not 'failed'. Failing baseline-free tests DO match
     'failed' — covered in test_review_fixes_verdict.py."""
-    comp = FakeComparison(passed=True, has_reference=False)
+    comp = _comparison(passed=True, has_reference=False)
     assert _should_review(comp, {"failed"}) is False
 
 
 def test_should_review_failed_skips_sim_failed():
-    comp = FakeComparison(passed=False, sim_success=False)
+    comp = _comparison(passed=False, sim_success=False)
     assert _should_review(comp, {"failed"}) is False
 
 
 def test_should_review_no_baseline():
-    comp = FakeComparison(has_reference=False)
+    comp = _comparison(has_reference=False)
     assert _should_review(comp, {"no-baseline"}) is True
 
 
 def test_should_review_no_baseline_skips_existing():
-    comp = FakeComparison(has_reference=True)
+    comp = _comparison(has_reference=True)
     assert _should_review(comp, {"no-baseline"}) is False
 
 
 def test_should_review_warnings():
-    comp = FakeComparison(warnings=["something changed"])
+    comp = _comparison(warnings=["something changed"])
     assert _should_review(comp, {"warnings"}) is True
 
 
 def test_should_review_warnings_skips_clean():
-    comp = FakeComparison(warnings=[])
+    comp = _comparison(warnings=[])
     assert _should_review(comp, {"warnings"}) is False
 
 
 def test_should_review_sim_failed():
-    comp = FakeComparison(sim_success=False)
+    comp = _comparison(sim_success=False)
     assert _should_review(comp, {"sim-failed"}) is True
 
 
 def test_should_review_sim_failed_skips_success():
-    comp = FakeComparison(sim_success=True)
+    comp = _comparison(sim_success=True)
     assert _should_review(comp, {"sim-failed"}) is False
 
 
 def test_should_review_passed():
-    comp = FakeComparison(passed=True, warnings=[])
+    comp = _comparison(passed=True, warnings=[])
     assert _should_review(comp, {"passed"}) is True
 
 
 def test_should_review_passed_skips_with_warnings():
-    comp = FakeComparison(passed=True, warnings=["warn"])
+    comp = _comparison(passed=True, warnings=["warn"])
     assert _should_review(comp, {"passed"}) is False
 
 
 def test_should_review_passed_skips_failed():
-    comp = FakeComparison(passed=False)
+    comp = _comparison(passed=False)
     assert _should_review(comp, {"passed"}) is False
 
 
 def test_should_review_combined_filters():
     """Combined filters match if any filter matches."""
     filters = {"failed", "no-baseline"}
-    assert _should_review(FakeComparison(passed=False), filters) is True
-    assert _should_review(FakeComparison(has_reference=False), filters) is True
-    assert _should_review(FakeComparison(passed=True), filters) is False
+    assert _should_review(_comparison(passed=False), filters) is True
+    assert _should_review(_comparison(has_reference=False), filters) is True
+    assert _should_review(_comparison(passed=True), filters) is False
 
 
 def test_should_review_sim_failed_with_failed():
     """sim-failed + failed covers both crash and comparison failure."""
     filters = {"sim-failed", "failed"}
-    assert _should_review(FakeComparison(sim_success=False), filters) is True
-    assert _should_review(FakeComparison(passed=False), filters) is True
-    assert _should_review(FakeComparison(passed=True), filters) is False
+    assert _should_review(_comparison(sim_success=False), filters) is True
+    assert _should_review(_comparison(passed=False), filters) is True
+    assert _should_review(_comparison(passed=True), filters) is False
+
+
+# --- the review's status word and its categories are the classifier's ---
+
+
+def _comp_shapes() -> dict[str, TestComparison]:
+    """One comparison per shape `compare_one` builds."""
+    from dstf.comparison.metric_tree import MetricResult
+
+    def tree(passed):
+        return MetricResult(passed=passed, score=0.0, label="range")
+
+    return {
+        "not run": TestComparison("L.T", passed=False, sim_success=False, ran=False),
+        "sim failed": TestComparison("L.T", passed=False, sim_success=False),
+        "no baseline": TestComparison("L.T", passed=True, has_reference=False),
+        "pass": TestComparison("L.T", passed=True),
+        "pass, simulate-only": TestComparison(
+            "L.T", passed=True, has_reference=False, simulate_only=True
+        ),
+        "pass, baseline-free": TestComparison(
+            "L.T", passed=True, has_reference=False, metric_tree=tree(True)
+        ),
+        "fail": TestComparison("L.T", passed=False),
+        "fail, baseline-free": TestComparison(
+            "L.T", passed=False, has_reference=False, metric_tree=tree(False)
+        ),
+        "refused": TestComparison("L.T", passed=False, error_message="the base ..."),
+        "refused, no baseline": TestComparison(
+            "L.T", passed=False, has_reference=False, error_message="the base ..."
+        ),
+    }
+
+
+#: shape -> (the classifier's status, the `-i` / `--rerun` categories that
+#: select it, the review's status word).
+_REVIEWED_AS = {
+    "not run": ("NOT RUN", {"sim-failed"}, "NOT RUN"),
+    "sim failed": ("SIM_FAIL", {"sim-failed"}, "SIM_FAIL"),
+    "no baseline": ("NO_REF", {"no-baseline", "passed"}, "NO BASELINE"),
+    "pass": ("PASS", {"passed"}, "PASS"),
+    "pass, simulate-only": ("PASS", {"no-baseline", "passed"}, "PASS"),
+    "pass, baseline-free": ("PASS", {"no-baseline", "passed"}, "PASS"),
+    "fail": ("FAIL", {"failed"}, "FAIL"),
+    # A test the comparison FAILED is "failed" and nothing else, whether or
+    # not a baseline is stored: it is not one to accept a baseline for.
+    "fail, baseline-free": ("FAIL", {"failed"}, "FAIL"),
+    "refused": ("FAIL", {"failed"}, "FAIL"),
+    "refused, no baseline": ("FAIL", {"failed"}, "FAIL"),
+}
+
+
+@pytest.mark.parametrize("shape", list(_REVIEWED_AS))
+def test_a_category_selects_a_test_by_the_classifiers_status(shape):
+    from dstf.reporting.status import classify
+
+    comp = _comp_shapes()[shape]
+    status, categories, _ = _REVIEWED_AS[shape]
+    assert classify(comp) == status
+    selected = {
+        c
+        for c in ("failed", "no-baseline", "sim-failed", "passed", "warnings")
+        if _should_review(comp, {c})
+    }
+    assert selected == categories
+    comp.warnings = ["a structural change"]
+    assert _should_review(comp, {"warnings"}) is True
+    assert _should_review(comp, {"passed"}) is False
+
+
+@pytest.mark.parametrize("shape", list(_REVIEWED_AS))
+def test_the_review_says_the_classifiers_status(shape, monkeypatch, tmp_path, capsys):
+    """A refused test with no baseline read "NO BASELINE" above its error —
+    the word was keyed on `has_reference`, not on the one classifier."""
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    _interactive_review([], {}, [_comp_shapes()[shape]], store, config)
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert f"  Status: {_REVIEWED_AS[shape][2]}\n" in out
 
 
 # ---------------------------------------------------------------------------
