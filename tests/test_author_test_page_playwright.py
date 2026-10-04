@@ -4227,6 +4227,24 @@ def test_a_tolerances_two_fields_sit_on_the_rows_input_line(
             row = [f for f in fields if abs(f[2] - lower["box"][3]) <= 1]
             assert {f[0] for f in row} >= {lower["label"], upper["label"]}, where
             assert max(f[1] for f in row) - min(f[1] for f in row) <= 1, (where, row)
+            # ... which means a field that is NOT one of the two: the mode
+            # select beside the group, on its visual line (lines are 68 px
+            # apart). The two sides share a bottom with each other whatever
+            # they reserve, so `row` alone compared them with themselves —
+            # and passed with neither reserving the bottom line the row's
+            # other fields do, 20 px below them. Beside the open drawer at
+            # 900 px the group has the line to itself.
+            sides = {lower["label"], upper["label"]}
+            beside = [
+                f
+                for f in fields
+                if f[0] not in sides and abs(f[1] - lower["line"]) < 34
+            ]
+            narrow = width == 900 and drawer
+            assert narrow or "mode" in {f[0] for f in beside}, (where, fields)
+            for label, line, *_ in beside:
+                assert abs(line - lower["line"]) <= 1, (where, label, fields)
+                assert abs(line - upper["line"]) <= 1, (where, label, fields)
             # The hint, on one line under the first field.
             hints = {f[0]: (f[3], f[4]) for f in fields if f[3]}
             assert hints == {
@@ -4239,7 +4257,6 @@ def test_a_tolerances_two_fields_sit_on_the_rows_input_line(
             assert page_scroll == page_client, where
             assert scroll <= client, where
             assert group["box"][2] <= right, where
-            narrow = width == 900 and drawer
             assert group["wrap"] == ("wrap" if narrow else "nowrap"), where
             assert lower["minWidth"] == ("140px" if narrow else "230px"), where
             _shot(page, tmp_path, f"sides-{index}-{width}{'-drawer' if drawer else ''}")
@@ -4397,6 +4414,7 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
             _open_vars(page)
         page.wait_for_timeout(700)
         heights = {}
+        levelled = 0  # rows whose `Remove row` shares a line with inputs
         for name, expected in TABLE_ROWS.items():
             _open_crit(page, 0, name)
             editor = page.locator(".dstf-editor")
@@ -4433,6 +4451,15 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
                         (top,) = [t for t in lines if t <= cell["box"][1] < t + 40]
                         middle = (cell["box"][1] + cell["box"][3]) / 2
                         assert abs(middle - lines[top][0]["middle"]) <= 2, where
+                # `Remove row`, where it shares a line with inputs, is
+                # level with them: the row is top-aligned, and the button —
+                # shorter than a field — sat 6 px above their line.
+                (button,) = [c for c in cells if c.get("button") == "Remove row"]
+                for top in [t for t in lines if t <= button["box"][1] < t + 40]:
+                    middle = (button["box"][1] + button["box"][3]) / 2
+                    level = abs(middle - lines[top][0]["middle"])
+                    assert level <= 2, (where, button, lines[top][0])
+                    levelled += 1
                 for fields in lines.values():
                     ys = [f["line"] for f in fields]
                     assert max(ys) - min(ys) <= 1, (where, fields)
@@ -4462,6 +4489,7 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
         tall = {(1280, False): 40, (1280, True): 88, (900, False): 88, (900, True): 182}
         assert heights["points · x"] == pytest.approx(tall[(width, drawer)], abs=2)
         assert heights["event-timing · x"] <= 40 * 2 + 8 + 2
+        assert levelled >= 2  # an event-timing row is one line at every width
 
 
 @pytest.mark.parametrize("width", [1280, 900])
