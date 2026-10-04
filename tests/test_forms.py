@@ -1,6 +1,8 @@
 """NiceGUI controls from a mode's Config dataclass, via derive_schema."""
 
+import ast
 import dataclasses
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -9,7 +11,9 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
+import dstf.authoring  # noqa: E402
 from dstf.authoring.forms import SidesControl, render_form  # noqa: E402
+from dstf.authoring.typed_number import TypedNumber  # noqa: E402
 from dstf.comparison.mode_schema import derive_schema  # noqa: E402
 from dstf.comparison.sides import Sides  # noqa: E402
 
@@ -205,6 +209,71 @@ async def test_a_field_with_a_hint_is_wide_enough_for_it_on_one_line():
         width = int(c["tolerance"]._style["min-width"].removesuffix("px"))
         assert width >= len(hint) * HINT_PX_PER_CHAR + HINT_PADDING_PX
         assert "min-width" not in c["note"]._style
+
+
+# -- a number field keeps what is typed in it ----------------------------------
+
+
+def test_every_number_field_of_the_tool_is_a_typed_number():
+    """`ui.number` is called nowhere under `authoring/`: a plain one is
+    overwritten, under the keys, by the server's answer to an earlier key
+    (`typed_number.py`)."""
+    root = Path(dstf.authoring.__file__).parent
+    plain = [
+        f"{path.relative_to(root)}:{node.lineno}"
+        for path in sorted(root.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "number"
+    ]
+    assert plain == []
+
+
+async def test_a_typed_number_is_drawn_by_its_own_component():
+    """`ui.number` names `q-input` as its tag over the component a subclass
+    registers; left so, the browser draws the plain field."""
+    made = {}
+
+    def root():
+        made["n"] = TypedNumber(label="n", value=0.3)
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        component = TypedNumber.component
+        assert component.path.name == "typed_number.js" and component.path.is_file()
+        assert made["n"].tag == component.tag != "q-input"
+        assert isinstance(made["n"], ui.number) and made["n"].value == 0.3
+
+
+async def test_an_edit_resends_the_field_only_when_its_hint_changes(monkeypatch):
+    """A prop written is the whole field sent again. The hint is written
+    when a value takes it away and when a clearing brings it back, not on
+    every key between."""
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Cfg, mode="x"),
+            {},
+            on_change=lambda v: None,
+            in_effect=IN_EFFECT,
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        tol = forms["f"].controls["tolerance"]
+        assert isinstance(tol, TypedNumber)
+        sent = []
+        update = tol.update
+        monkeypatch.setattr(tol, "update", lambda: (sent.append(1), update())[1])
+        tol.set_value(0.5)  # the hint goes
+        assert not tol.props.get("hint") and len(sent) > 1
+        sent.clear()
+        tol.set_value(0.6)
+        assert len(sent) == 1  # the value's own
+        tol.set_value(None)
+        assert tol.props.get("hint") == "in effect: 0.01 (the test's tolerance)"
 
 
 # -- a tolerance's two sides: two fields and a link toggle ---------------------
@@ -489,7 +558,8 @@ async def test_a_sides_field_renders_as_the_group_and_a_float_as_one_field():
         assert seen[-1] == {} and form.values() == {}
         assert g.lower.props.get("hint") == HINT
         # A plain number stays ONE field, hinted as before.
-        assert isinstance(form.controls["ceiling"], ui.number)
+        assert isinstance(g.lower, TypedNumber) and isinstance(g.upper, TypedNumber)
+        assert isinstance(form.controls["ceiling"], TypedNumber)
         assert form.controls["ceiling"].props.get("hint") == HINT
 
 

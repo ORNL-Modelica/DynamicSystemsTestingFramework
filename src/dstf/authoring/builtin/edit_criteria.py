@@ -105,6 +105,7 @@ class EditCriteria:
         from nicegui import ui
 
         from ..forms import BOTTOM, render_form
+        from ..typed_number import TypedNumber
 
         sel = s.selection
         model_id = next(iter(sel.tests))
@@ -227,12 +228,12 @@ class EditCriteria:
                 ).props(f"dense {BOTTOM}").classes("dstf-field")
             form_slot = ui.column().classes("dstf-form")
             if not statistic:
-                ui.number(
+                TypedNumber(
                     label="window start",
                     value=state["window"].get("start"),
                     on_change=lambda e: set_window("start", e.value),
                 ).props(f"dense {BOTTOM}").classes("dstf-field")
-                ui.number(
+                TypedNumber(
                     label="window end",
                     value=state["window"].get("end"),
                     on_change=lambda e: set_window("end", e.value),

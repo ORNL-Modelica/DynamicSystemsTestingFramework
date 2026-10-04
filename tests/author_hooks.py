@@ -27,6 +27,39 @@ async def _stage(model: str = "FakeLib.A") -> dict:
     return {"pending": len(session.spec.pending)}
 
 
+#: One entry per stage `/__slow`'s Session has finished.
+_STAGED: list[int] = []
+
+
+@app.get("/__slow")
+async def _slow(ms: int = 250) -> dict:
+    """Every `Session.stage` from now on holds the UI loop ``ms`` longer, as
+    the rescore of a large test does: what the browser types meanwhile meets
+    the server's answer to an EARLIER keystroke."""
+    import time
+
+    from dstf.authoring.session import Session
+
+    stage = Session.stage
+
+    def slow(self, ops):
+        time.sleep(ms / 1000)
+        try:
+            return stage(self, ops)
+        finally:
+            _STAGED.append(ms)
+
+    Session.stage = slow
+    return {"slowed": ms}
+
+
+@app.get("/__staged")
+async def _staged() -> dict:
+    """How many stages have finished since `/__slow`. Asked during one, it
+    answers after it: the loop is held."""
+    return {"staged": len(_STAGED)}
+
+
 @app.get("/__expression")
 async def _expression(name: str, expression: str, model: str = "FakeLib.A") -> dict:
     """Stamp ``expression`` on ``name`` of ``model``'s loaded result and

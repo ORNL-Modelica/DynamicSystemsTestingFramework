@@ -38,7 +38,8 @@ def test_the_session_tier_imports_without_a_ui_framework():
 
 def test_the_shell_package_is_the_ui_tier():
     """The inverse: the shell package DOES import NiceGUI, and nothing
-    else under `authoring/` but `forms.py` and `builtin/` may."""
+    else under `authoring/` but `forms.py`, the number field it draws
+    (`typed_number.py`) and `builtin/` may."""
     import pathlib
 
     import dstf.authoring
@@ -48,6 +49,7 @@ def test_the_shell_package_is_the_ui_tier():
         str(p.relative_to(root))
         for p in root.rglob("*.py")
         if "nicegui" in p.read_text(encoding="utf-8")
-        and p.parts[len(root.parts)] not in ("shell", "builtin", "forms.py")
+        and p.parts[len(root.parts)]
+        not in ("shell", "builtin", "forms.py", "typed_number.py")
     )
     assert offenders == []

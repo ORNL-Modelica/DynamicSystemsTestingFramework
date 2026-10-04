@@ -19,6 +19,7 @@ from typing import Any
 from nicegui import ui
 
 from ..comparison.mode_schema import SIDE_LABELS, FieldSpec, Schema
+from .typed_number import TypedNumber
 
 OnChange = Callable[[dict], None]
 
@@ -185,8 +186,12 @@ def _edited(
     the hint needed is kept: the row does not reflow as a value is typed."""
     control = form.controls.get(name)
     if hint is not None and control is not None:
-        control.props["hint"] = None if value is not None else hint
-        control.update()
+        # Only when it changes, as `SidesControl._say_hint`: every write
+        # of a prop is a round trip that resends the field.
+        shown = None if value is not None else hint
+        if control.props.get("hint") != shown:
+            control.props["hint"] = shown
+            control.update()
     _set(form, name, value, on_change)
 
 
@@ -219,7 +224,7 @@ def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
         def on_number(e, cast=cast):
             set_value(None if e.value is None else cast(e.value))
 
-        return ui.number(
+        return TypedNumber(
             label=label, value=current, on_change=on_number, **kwargs
         ).props("dense")
     if spec.type == "bool":
@@ -330,11 +335,11 @@ class SidesControl(ui.row):
         self._mark_blanks()
         self._on_change(both)
 
-    def _field(self, side: str, label: str) -> ui.number:
+    def _field(self, side: str, label: str) -> TypedNumber:
         # "required" through the field's own validation: NiceGUI validates
         # a field after its change handlers and resets an `error` prop it
         # did not set itself, so a mark written as a prop never showed.
-        return ui.number(
+        return TypedNumber(
             label=label,
             value=self._sides[side],
             on_change=lambda e: self._edited(side, e.value),

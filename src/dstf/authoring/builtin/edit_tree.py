@@ -439,10 +439,12 @@ def _combinator_fields(
         return kept
 
     def rebuild() -> None:
+        from ..typed_number import TypedNumber
+
         fields.clear()
         with fields:
             if kind.value == "k-of-n":
-                ui.number(
+                TypedNumber(
                     label="k — how many must pass",
                     value=values["k"],
                     on_change=keep("k"),
@@ -453,7 +455,7 @@ def _combinator_fields(
                     value=values["weights"],
                     on_change=keep("weights"),
                 ).props("dense").classes("w-full")
-                ui.number(
+                TypedNumber(
                     label="Threshold",
                     value=values["threshold"],
                     on_change=keep("threshold"),

@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -4045,13 +4046,7 @@ def _staged_in_preview(page) -> str:
 
 def _retype(page, field, text: str) -> None:
     """Replace ``field``'s content with real keystrokes, as a person does:
-    select it all and type over it (an empty ``text`` deletes it). NOT
-    delete-then-type in one burst: a cleared number field that the server
-    then updates (a hint, a "required" mark) is sent `model-value: null`,
-    which NiceGUI does not recognise as the `""` the browser holds, so the
-    update overwrites whatever was typed before it arrived — the field
-    shows nothing while the value is staged. Keys a millisecond apart hit
-    that; a person's do not."""
+    select it all and type over it (an empty ``text`` deletes it)."""
     field.click()
     page.keyboard.press("Control+A")
     if text:
@@ -4516,6 +4511,243 @@ def test_a_blank_required_table_cell_says_so_in_the_browser(
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
+
+
+# -- a number field keeps what is typed in it ------------------------------------
+
+#: What `/__slow` adds to every stage: the rescore of a large test, during
+#: which a person goes on typing.
+STAGE_MS = 250
+#: A person's typing: ms between keys.
+KEY_MS = 100
+
+
+def _typing_project(tmp_path: Path, tolerance: float = 0.3) -> tuple[Path, Path]:
+    """`_two_var_project` with A at a test tolerance of 0.01, scored on x by
+    an nrmse leaf holding ``tolerance`` and a windowed range, and on y by a
+    points leaf holding 0.3 (linked) with one declared row."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["comparison"] = {"tolerance": 0.01}
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": tolerance},
+                    {
+                        "metric": "range",
+                        "variable": "x",
+                        "min_value": -1.0,
+                        "max_value": 2.0,
+                        "window": {"start": 0.3, "end": 0.9},
+                    },
+                    {
+                        "metric": "points",
+                        "variable": "y",
+                        "tolerance": 0.3,
+                        "points": [{"time": 0.3, "value": 0.6}],
+                    },
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+@contextmanager
+def _slow_editor(
+    tmp_path: Path,
+    playwright_browser,
+    index: int,
+    name: str,
+    project: Callable[[Path], tuple[Path, Path]] = _typing_project,
+):
+    """The open editor of criterion ``name`` on plot ``index``, over a server
+    whose every stage takes `STAGE_MS` longer: each keystroke's answer comes
+    back after the keys that followed it were typed."""
+    with _served(tmp_path, playwright_browser, project=project, hooks=True) as page:
+        base = page.url.split("test/")[0]
+        with urllib.request.urlopen(f"{base}__slow?ms={STAGE_MS}") as r:
+            assert json.loads(r.read()) == {"slowed": STAGE_MS}
+        page.wait_for_timeout(700)
+        _open_crit(page, index, name)
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        page.wait_for_timeout(400)
+        yield page, editor
+
+
+def _type_over(page, field, text: str, delay: int = KEY_MS) -> None:
+    """Select ``field``'s content and type ``text`` over it, a key every
+    ``delay`` ms."""
+    field.click()
+    page.keyboard.press("Control+A")
+    page.keyboard.type(text, delay=delay)
+
+
+#: Where the preview shows each leaf's own number.
+NRMSE_X = '"variable":"x","tolerance":'
+POINTS_Y = '"variable":"y","tolerance":'
+
+
+def _answered(page) -> None:
+    """Wait until the server has staged nothing new for a second, and its
+    last answer has had time to land — without touching the page: a click
+    anywhere takes the focus from the field being typed in."""
+    base = page.url.split("test/")[0]
+    count, since, deadline = None, time.monotonic(), time.monotonic() + 30
+    while time.monotonic() - since < 1.0:
+        assert time.monotonic() < deadline, "the server never went quiet"
+        with urllib.request.urlopen(f"{base}__staged") as r:
+            now = json.loads(r.read())["staged"]
+        if now != count:
+            count, since = now, time.monotonic()
+        page.wait_for_timeout(100)
+    page.wait_for_timeout(300)
+
+
+def _shown_and_staged(page, field, before: str) -> tuple[str, str | None]:
+    """What ``field`` reads once the server has answered every key, read
+    while it still has the focus, and the number the preview then shows
+    right after ``before`` (None where there is none)."""
+    _answered(page)
+    shown = field.input_value()
+    staged = _staged_in_preview(page)
+    number = re.search(re.escape(before) + r"(-?[0-9.e-]+)", staged)
+    return shown, number.group(1) if number else None
+
+
+def test_a_number_typed_over_at_a_persons_speed_is_what_the_field_shows(
+    tmp_path, playwright_browser
+):
+    """An nrmse tolerance of 0.3, selected and typed over with `0.25` at a
+    person's speed while each stage takes 250 ms: the field reads `0.25` and
+    0.25 is staged. It read `0.025` and staged it — the server's answer to
+    the `0` came back as `0.0` under the keys that followed, the `.` was
+    swallowed and `25` appended."""
+    with _slow_editor(tmp_path, playwright_browser, 0, "nrmse · x") as (page, editor):
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        expect(tolerance).to_have_value("0.3")
+        tolerance.click()
+        page.keyboard.press("Control+A")
+        page.keyboard.type("0.2", delay=KEY_MS)
+        _shot(page, tmp_path, "typing-mid")
+        page.keyboard.type("5", delay=KEY_MS)
+        assert _shown_and_staged(page, tolerance, NRMSE_X) == ("0.25", "0.25")
+
+
+def test_a_number_cleared_and_typed_at_once_is_what_the_field_shows(
+    tmp_path, playwright_browser
+):
+    """Select all, Delete, and `0.7` typed before the server answered the
+    clearing: the field reads `0.7` and 0.7 is staged. It showed nothing
+    while 0.7 was staged — the answer to the clearing carried
+    `model-value: null`, which is not the `""` the browser sent, and blanked
+    the field under the keys."""
+    with _slow_editor(tmp_path, playwright_browser, 0, "nrmse · x") as (page, editor):
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        tolerance.click()
+        page.keyboard.press("Control+A")
+        page.keyboard.press("Delete")
+        page.keyboard.type("0.7")
+        assert _shown_and_staged(page, tolerance, NRMSE_X) == ("0.7", "0.7")
+
+
+def test_a_number_backspaced_away_leaves_the_field_empty_and_unset(
+    tmp_path, playwright_browser
+):
+    """`0.25` backspaced away, each key after the server answered the one
+    before: the field is empty, the leaf holds no tolerance and the hint
+    says the one in effect. It stuck at `0.` — the answer to `0.` came back
+    as `0.0` and put back the digit just deleted."""
+    project = partial(_typing_project, tolerance=0.25)
+    with _slow_editor(tmp_path, playwright_browser, 0, "nrmse · x", project) as (
+        page,
+        editor,
+    ):
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        expect(tolerance).to_have_value("0.25")
+        tolerance.click()
+        page.keyboard.press("End")
+        for _ in range(4):
+            page.keyboard.press("Backspace")
+            page.wait_for_timeout(STAGE_MS + 150)
+        _answered(page)
+        shown = tolerance.input_value()
+        staged = _staged_in_preview(page)
+        assert (shown, NRMSE_X in staged) == ("", False), staged
+        assert '{"metric":"nrmse","variable":"x"}' in staged, staged
+        fields = {f[0]: f for f in page.evaluate(READ_FIELDS)}
+        assert fields["Tolerance"][3] == "in effect: 0.01 (the test's tolerance)"
+
+
+@pytest.mark.parametrize(("typed", "staged_as"), [("-0.5", "-0.5"), ("1e-3", "0.001")])
+def test_a_sign_and_an_exponent_are_staged_as_typed(
+    tmp_path, playwright_browser, typed, staged_as
+):
+    """`-0.5` keeps its minus and `1e-3` its exponent: the field reads what
+    was typed and that number is staged. Both pass through text that is no
+    number yet (`-`, `1e`, `1e-`), which the server's answer rewrote."""
+    with _slow_editor(tmp_path, playwright_browser, 0, "nrmse · x") as (page, editor):
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        _type_over(page, tolerance, typed)
+        assert _shown_and_staged(page, tolerance, NRMSE_X) == (typed, staged_as)
+
+
+def test_a_linked_twin_typed_in_before_the_mirror_lands_keeps_what_was_typed(
+    tmp_path, playwright_browser
+):
+    """Linked: `0.2` into `−`, Tab past the toggle into `+` and `9` at once,
+    before the server mirrored the 0.2 there. `+` reads the 9 typed in it,
+    `−` follows, and 9 is what is staged. `+` showed the mirrored 0.2 while
+    9 was staged."""
+    with _slow_editor(tmp_path, playwright_browser, 1, "points · y") as (page, editor):
+        lower = editor.get_by_label("− Default tolerance", exact=True)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(lower).to_have_value("0.3")
+        _type_over(page, lower, "0.2", delay=0)
+        page.keyboard.press("Tab")
+        page.keyboard.press("Tab")
+        page.keyboard.type("9")
+        assert _shown_and_staged(page, upper, POINTS_Y) == ("9", "9.0")
+        assert float(lower.input_value()) == 9
+
+
+@pytest.mark.parametrize(
+    ("index", "name", "label", "before"),
+    [
+        (1, "points · y", "time", '"points":[{"time":'),
+        (0, "range · x", "window start", '"window":{"start":'),
+    ],
+)
+def test_a_table_cell_and_a_window_field_keep_what_is_typed(
+    tmp_path, playwright_browser, index, name, label, before
+):
+    """The same typing in a table's cell and in a window field: `0.25` over
+    0.3 at a person's speed is what the field reads and what is staged."""
+    with _slow_editor(tmp_path, playwright_browser, index, name) as (page, editor):
+        field = editor.get_by_label(label, exact=True)
+        expect(field).to_have_value("0.3")
+        _type_over(page, field, "0.25")
+        assert _shown_and_staged(page, field, before) == ("0.25", "0.25")
+
+
+def test_a_field_typed_in_and_left_takes_the_servers_value_again(
+    tmp_path, playwright_browser
+):
+    """A field keeps what was typed only while it is typed in: `0.25` into
+    the linked `−` and, the server having answered, `0.4` into `+` — `−`,
+    left, reads the 0.4 the server mirrors into it."""
+    with _slow_editor(tmp_path, playwright_browser, 1, "points · y") as (page, editor):
+        lower = editor.get_by_label("− Default tolerance", exact=True)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        _type_over(page, lower, "0.25")
+        _answered(page)
+        _type_over(page, upper, "0.4")
+        assert _shown_and_staged(page, upper, POINTS_Y) == ("0.4", "0.4")
+        assert float(lower.input_value()) == 0.4
 
 
 #: The open drawer's panel width, and the first plot's svg width.

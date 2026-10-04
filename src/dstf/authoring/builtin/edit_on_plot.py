@@ -472,6 +472,7 @@ def _table(
     hands the table nothing — the row still holds the pair it had — so a
     half pair holds the whole list back as a blank required cell does."""
     from ..forms import SidesControl, sides_control
+    from ..typed_number import TypedNumber
 
     container = ui.column().classes("w-full")
     mark = f"{path}:{field}"
@@ -558,7 +559,7 @@ def _table(
                             ).props("dense").mark(f"{mark}:{i}:{key}")
                         else:
                             cell = (
-                                ui.number(
+                                TypedNumber(
                                     label=key,
                                     value=row.get(key),
                                     on_change=lambda e, i=i, key=key: set_cell(
