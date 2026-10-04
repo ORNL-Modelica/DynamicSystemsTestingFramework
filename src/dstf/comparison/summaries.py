@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 
 from .geometry import Box, VLine
-from .sides import parse_sides, sides_text, signed
+from .sides import Sides, parse_sides, sides_text, signed
 from .types import ScoreSummary, VariableComparison
 
 
@@ -23,6 +23,13 @@ def _verdict(vc: VariableComparison) -> str:
 
 def _at(value: float, time: float) -> str:
     return f"{value:.6e} at t={time:g}"
+
+
+def _deviation(value: float, sides: Sides) -> str:
+    """A reported row's deviation beside ITS sides: the magnitude under
+    equal ones, as a number always printed; signed under uneven ones, so
+    the reader sees which side applies."""
+    return f"{abs(value):.3e}" if sides.equal else signed(value)
 
 
 def _finals(vc: VariableComparison) -> tuple[str, str]:
@@ -134,21 +141,32 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
     else:
         details.append(_finals(vc))
     # Equal sides: the magnitude, as a number always printed. Uneven ones:
-    # actual − target, signed, so the reader sees which side applies — of
-    # the declared point furthest outside its band, or of the largest |Δ|
-    # when none is (recorded by the scorer), or the final value's.
+    # actual − target, signed, so the reader sees which side applies.
     error = f"{vc.max_abs_error:.3e}"
     if not vc.tolerance_used.equal:
         if "scored_points" in diag:
             error = signed(diag.get("worst_signed_delta", vc.max_abs_error))
         else:
             error = signed(vc.actual_final - vc.reference_final)
+    criterion = (
+        f"Final value error {error} vs tolerance "
+        f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
+    )
+    # A pair in play among declared points (the leaf's, or the reported
+    # point's own): the scorer recorded that point — the one furthest
+    # outside its band, or of the largest |Δ| when none is — with the sides
+    # IT was judged on, which a row's own tolerance makes not the leaf's.
+    if "worst_sides" in diag:
+        own = parse_sides(diag["worst_sides"], "worst_sides")
+        error = _deviation(diag["worst_signed_delta"], own)
+        relative = " (relative)" if diag["worst_sides_relative"] else ""
+        criterion = (
+            f"Point at t={diag['worst_point_time']:g}: error {error} vs tolerance "
+            f"{sides_text(own)}{relative} → {_verdict(vc)}"
+        )
     return ScoreSummary(
         display=f"|err| {vc.max_abs_error:.3e}",
-        criterion=(
-            f"Final value error {error} vs tolerance "
-            f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
-        ),
+        criterion=criterion,
         score=float(vc.max_abs_error),
         score_label="|err|",
         details=tuple(details),
@@ -239,6 +257,17 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
         f"Max event Δt {delta} vs {tol} "
         f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
     )
+    # A pair in play among declared events (the leaf's, or the reported
+    # event's own): the window that Δt was held to is that event's, which
+    # its own tolerance makes not the leaf's (as `summarize_points`).
+    if "worst_sides" in diag:
+        own = parse_sides(diag["worst_sides"], "worst_sides")
+        criterion = (
+            f"Event at t={diag['worst_event_time']:g}: "
+            f"Δt {_deviation(diag['max_time_delta_signed'], own)} vs "
+            f"{sides_text(own)} "
+            f"({act_n} actual events / {ref_n} reference) → {_verdict(vc)}"
+        )
     # A declared event that was never found is what failed, and the Δt
     # above is not it: that is the matched events', inside the tolerance.
     unmatched = diag.get("unmatched_events", 0)

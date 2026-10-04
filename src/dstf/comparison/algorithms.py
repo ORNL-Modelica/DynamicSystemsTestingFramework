@@ -415,6 +415,30 @@ def _signed_delta_in_box(
     return delta
 
 
+def _reported_point(
+    tolerance: Sides, reported: tuple[float, Sides, bool, float] | None
+) -> dict:
+    """What `summarize_points` says of the REPORTED point — the one furthest
+    outside its own band, the largest |delta|'s when none is — as
+    ``(actual − target, the sides it was judged on, whether they are
+    relative, its time)``; ``None`` when no point was scored.
+
+    Recorded only where a pair is in play, the leaf's or that point's own:
+    its sides then say which band the number is held to and its signed delta
+    which side applies. A leaf of numbers carries what it always carried."""
+    if reported is None:
+        return {} if tolerance.equal else {"worst_signed_delta": 0.0}
+    signed_delta, sides, relative, time = reported
+    if tolerance.equal and sides.equal:
+        return {}
+    return {
+        "worst_signed_delta": signed_delta,
+        "worst_sides": as_written(sides),
+        "worst_sides_relative": relative,
+        "worst_point_time": time,
+    }
+
+
 def _compare_points(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -511,15 +535,16 @@ def _compare_points(
     failed = 0
     worst_delta = 0.0
     worst_t = 0.0
-    worst_signed = 0.0
     # With uneven sides the largest |delta| need not be the point that
     # breaks its band: +0.04 under an upper side of 0.05 passes while −0.02
-    # under a lower side of 0.01 fails. The signed delta the sentence
-    # prints is the point's that lies FURTHEST OUTSIDE its own band —
-    # `violation`, in the band's units, so a `rel` point's is on the scaled
-    # band; `worst_signed` (the largest |delta|) when every point is inside.
+    # under a lower side of 0.01 fails. The point the sentence reports is
+    # the one that lies FURTHEST OUTSIDE its own band — `violation`, in the
+    # band's units, so a `rel` point's is on the scaled band; the largest
+    # |delta|'s when every point is inside. Of equals, the first. Each is
+    # kept as `_reported_point` takes it.
     worst_outside = 0.0
-    outside_signed = 0.0
+    outside: tuple[float, Sides, bool, float] | None = None
+    largest: tuple[float, Sides, bool, float] | None = None
     # Review 2026-07-06 (finding 2): a checkpoint the simulation never
     # reached — or whose ref-relative target lies beyond the stored
     # baseline — FAILS instead of being skipped. Skipping let truncated
@@ -585,12 +610,16 @@ def _compare_points(
             target,
         )
         scored += 1
+        if largest is None or delta > worst_delta:
+            largest = (
+                _signed_delta_in_box(act_time, act_values, t_lo, t_hi, target, delta),
+                per_tol,
+                mode == "rel",
+                t,
+            )
         if delta > worst_delta:
             worst_delta = delta
             worst_t = t_at_min
-            worst_signed = _signed_delta_in_box(
-                act_time, act_values, t_lo, t_hi, target, delta
-            )
         # ``delta`` (the closest approach to the target itself) stays the
         # reported score; the verdict is the band's.
         violation, closest = _violation_in_box(
@@ -599,8 +628,11 @@ def _compare_points(
         point_passed = violation == 0.0
         if violation > worst_outside:
             worst_outside = violation
-            outside_signed = _signed_delta_in_box(
-                act_time, act_values, t_lo, t_hi, target, delta
+            outside = (
+                _signed_delta_in_box(act_time, act_values, t_lo, t_hi, target, delta),
+                per_tol,
+                mode == "rel",
+                t,
             )
         lo, hi = target - lower_limit, target + upper_limit
         geometry.append(
@@ -658,19 +690,7 @@ def _compare_points(
             "worst_delta": worst_delta,
             "worst_time": worst_t,
             "point_failures": point_failures,
-            # Which side the point that breaks its band furthest lies on
-            # (the largest |delta|'s when none does), for a sentence whose
-            # sides differ (`summarize_points`): recorded only there, so a
-            # leaf with a number carries what it always carried.
-            **(
-                {}
-                if tolerance.equal
-                else {
-                    "worst_signed_delta": (
-                        outside_signed if worst_outside > 0 else worst_signed
-                    )
-                }
-            ),
+            **_reported_point(tolerance, outside if outside is not None else largest),
         },
         geometry=tuple(geometry),
     )
@@ -1342,6 +1362,29 @@ def _signed_time_delta(time_tolerance: Sides, max_signed: float) -> dict:
     return {} if time_tolerance.equal else {"max_time_delta_signed": max_signed}
 
 
+def _reported_event(
+    time_tolerance: Sides, reported: tuple[float, Sides, float] | None
+) -> dict:
+    """What `summarize_event_timing` says of the REPORTED declared event —
+    the matched pair of the largest |Δt| — as ``(actual − declared, the
+    sides of its window, its declared time)``; ``None`` when no declared
+    event was found.
+
+    As `_reported_point`: recorded only where a pair is in play, the leaf's
+    or that event's own, so the sentence names the window the Δt was held
+    to. A leaf of numbers carries what it always carried."""
+    if reported is None:
+        return _signed_time_delta(time_tolerance, 0.0)
+    signed_delta, sides, time = reported
+    if time_tolerance.equal and sides.equal:
+        return {}
+    return {
+        "max_time_delta_signed": signed_delta,
+        "worst_sides": as_written(sides),
+        "worst_event_time": time,
+    }
+
+
 def _compare_event_timing(
     ref_time: np.ndarray,
     act_time: np.ndarray,
@@ -1452,8 +1495,10 @@ def _compare_event_timing(
     actual_count = len(act_events)
     counts_match = declared_count == actual_count
     max_delta = 0.0
-    max_signed = 0.0
     delta_at = 0.0
+    # The pair the sentence reports: the largest |Δt|'s, of equals the
+    # first claimed — kept as `_reported_event` takes it.
+    largest: tuple[float, Sides, float] | None = None
     # Optimal 1-D interval matching (review 2026-07-06, greedy-stealing
     # finding): each declared event defines a window [time-lower, time+upper].
     # Sorting windows by right endpoint and assigning each the SMALLEST
@@ -1485,9 +1530,10 @@ def _compare_event_timing(
         # lies outside its band: the signed Δt is the largest |Δt|'s.
         signed_d = act_events[best_idx] - target
         d = abs(signed_d)
+        if largest is None or d > max_delta:
+            largest = (signed_d, declared_tols[k], target)
         if d > max_delta:
             max_delta = d
-            max_signed = signed_d
             delta_at = target
 
     # A declared event that claimed nothing fails the leaf, and the score
@@ -1515,7 +1561,7 @@ def _compare_event_timing(
             "max_time_delta": max_delta,
             "time_tolerance": as_written(time_tolerance),
             "counts_match": counts_match,
-            **_signed_time_delta(time_tolerance, max_signed),
+            **_reported_event(time_tolerance, largest),
             "unmatched_events": unmatched,
             "declared_events": declared_count,
         },

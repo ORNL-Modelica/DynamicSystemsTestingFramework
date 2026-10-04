@@ -242,11 +242,11 @@ class TestAnUnevenToleranceSaysWhichSide:
         act[8] -= 0.3
         rows = [{"time": 5.0}, {"time": 8.0}]
         assert self._points(act, {"lower": 0.5, "upper": 0.25}, rows) == (
-            "Final value error −3.000e-01 vs tolerance −5.000e-01 / +2.500e-01 → PASS"
+            "Point at t=8: error −3.000e-01 vs tolerance −5.000e-01 / +2.500e-01 → PASS"
         )
         act[5] += 0.4  # now +0.5 at t=5, the worst
         assert self._points(act, {"lower": 0.5, "upper": 0.25}, rows) == (
-            "Final value error +5.000e-01 vs tolerance −5.000e-01 / +2.500e-01 → FAIL"
+            "Point at t=5: error +5.000e-01 vs tolerance −5.000e-01 / +2.500e-01 → FAIL"
         )
         assert self._points(act, 0.5, rows) == (
             "Final value error 5.000e-01 vs tolerance 5.000e-01 → PASS"
@@ -283,7 +283,7 @@ class TestAnUnevenToleranceSaysWhichSide:
         act[5] = 99.0
         rows = [{"time": 5.0, "time_tolerance": 1.0}]
         crit = self._points(act, {"lower": 0.5, "upper": 0.25}, rows)
-        assert crit.startswith("Final value error +0.000e+00 vs tolerance")
+        assert crit.startswith("Point at t=5: error +0.000e+00 vs tolerance")
 
     def _scalar(self, act_final, tolerance, mode, ref_final=4.0):
         from dstf.comparison.algorithms import _compare_scalar
@@ -373,7 +373,8 @@ class TestAnUnevenToleranceSaysWhichSide:
             # Outside its window a declared event claims nothing: it is not
             # found, and there is no Δt to print.
             assert summarize(declared).criterion == (
-                f"Max event Δt {delta} vs {band} (1 actual events / 1 reference) → PASS"
+                f"Event at t=5: Δt {delta} vs {band} "
+                "(1 actual events / 1 reference) → PASS"
                 if verdict == "PASS"
                 else f"1 of 1 declared events not found within tolerance {band} "
                 "(1 actual events) → FAIL"
@@ -407,7 +408,7 @@ class TestAnUnevenToleranceSaysWhichSide:
                 declared_events=[{"time": 2.0}, {"time": 5.0}],
             )
         )
-        assert declared.criterion.startswith("Max event Δt −1.250e-01 vs ")
+        assert declared.criterion.startswith("Event at t=5: Δt −1.250e-01 vs ")
         assert summarize(
             _compare_event_timing(ref, worst_early, time_tolerance=0.5)
         ).criterion.startswith("Max event Δt 1.250e-01 vs 5.000e-01 ")
@@ -439,7 +440,8 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
     def test_points_the_smaller_delta_is_the_failing_one(self):
         vc, crit = self._points({5: +0.04, 8: -0.02}, self.BAND)
         assert crit == (
-            "Final value error −2.000e-02 vs tolerance −1.000e-02 / +5.000e-02 → FAIL"
+            "Point at t=0.8: error −2.000e-02 vs tolerance "
+            "−1.000e-02 / +5.000e-02 → FAIL"
         )
         # The score and where it is stay the largest |Δ|'s, as a number's.
         assert vc.max_abs_error == pytest.approx(0.04)
@@ -452,20 +454,21 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
     def test_points_of_two_outside_the_further_one(self):
         # +0.07 is 0.02 above the band, −0.04 is 0.03 below it.
         _, crit = self._points({5: +0.07, 8: -0.04}, self.BAND)
-        assert crit.startswith("Final value error −4.000e-02 vs ")
+        assert crit.startswith("Point at t=0.8: error −4.000e-02 vs ")
         _, crit = self._points({5: -0.04, 8: +0.07}, self.BAND)
-        assert crit.startswith("Final value error −4.000e-02 vs ")
+        assert crit.startswith("Point at t=0.5: error −4.000e-02 vs ")
         # +0.09 is 0.04 above: now that one.
         _, crit = self._points({5: +0.09, 8: -0.04}, self.BAND)
-        assert crit.startswith("Final value error +9.000e-02 vs ")
+        assert crit.startswith("Point at t=0.5: error +9.000e-02 vs ")
 
     def test_points_all_inside_say_the_largest_delta(self):
         _, crit = self._points({5: +0.04, 8: -0.005}, self.BAND)
         assert crit == (
-            "Final value error +4.000e-02 vs tolerance −1.000e-02 / +5.000e-02 → PASS"
+            "Point at t=0.5: error +4.000e-02 vs tolerance "
+            "−1.000e-02 / +5.000e-02 → PASS"
         )
         _, crit = self._points({5: +0.004, 8: -0.008}, self.BAND)
-        assert crit.startswith("Final value error −8.000e-03 vs ")
+        assert crit.startswith("Point at t=0.8: error −8.000e-03 vs ")
 
     def test_points_relative_sides_are_judged_on_the_scaled_band(self):
         # rel: each side is that fraction of |target|. At target 10 the band
@@ -480,7 +483,8 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
             tolerance_mode="rel",
         )
         assert crit == (
-            "Final value error −5.000e-01 vs tolerance −1.000e-01 / +5.000e-01 → FAIL"
+            "Point at t=0.8: error −5.000e-01 vs tolerance "
+            "−1.000e-01 / +5.000e-01 (relative) → FAIL"
         )
         assert vc.max_abs_error == pytest.approx(2.0)
 
@@ -547,11 +551,11 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         declared = [{"time": 2.0}, {"time": 5.0}]
         vc, crit = self._events(-0.005, +0.04, self.BAND, declared)
         assert crit == (
-            "Max event Δt +4.000e-02 vs −1.000e-02 / +5.000e-02 "
+            "Event at t=5: Δt +4.000e-02 vs −1.000e-02 / +5.000e-02 "
             "(2 actual events / 2 reference) → PASS"
         )
         _, crit = self._events(-0.008, +0.004, self.BAND, declared)
-        assert crit.startswith("Max event Δt −8.000e-03 vs ")
+        assert crit.startswith("Event at t=2: Δt −8.000e-03 vs ")
 
 
 def test_an_event_timing_criterion_says_early_and_late():
@@ -734,3 +738,290 @@ class TestADeclaredEventNeverFound:
             "Max event Δt 2.000e-01 vs 1.000e-01 (3 actual events / 3 reference) → FAIL"
         )
         assert [k for k, _ in s.details] == ["events", "max Δt"]
+
+
+class TestARowsOwnToleranceIsTheBandTheSentenceNames:
+    """A declared point (or event) with its own tolerance is judged on it,
+    and the sentence printed the LEAF's: the reported number beside a band
+    it was never held to. Where a pair is in play — the leaf's, or the
+    reported row's own — the sentence names the row and ITS sides. Numbers
+    alone print what numbers always printed."""
+
+    T = np.linspace(0.0, 1.0, 11)
+    PAIR = {"lower": 0.01, "upper": 0.05}
+    POINT_KEYS = {
+        "scored_points",
+        "failed_points",
+        "worst_delta",
+        "worst_time",
+        "point_failures",
+    }
+
+    def _points(self, tolerance, rows, ref=None):
+        """``rows``: ``(index into T, actual − reference, the row's keys)``."""
+        from dstf.comparison.modes import resolve_mode
+
+        ref = self.T if ref is None else ref
+        act = ref.copy()
+        for i, d, _ in rows:
+            act[i] += d
+        points = [{"time": float(self.T[i]), **row} for i, _, row in rows]
+        mode = resolve_mode({"mode": "points", "points": points}, tolerance)
+        vc = mode.compare(self.T, ref, self.T, act)
+        vc.tolerance_used = mode.tolerance
+        return vc, summarize(vc).criterion
+
+    def test_a_number_leaf_and_a_row_with_its_own_pair(self):
+        # −0.02 breaks the row's own lower side of 0.01; +0.025 is inside
+        # the leaf's 0.03 — and was the number the sentence printed.
+        vc, crit = self._points(
+            0.03, [(5, -0.02, {"tolerance": self.PAIR}), (8, +0.025, {})]
+        )
+        assert not vc.passed
+        assert crit == (
+            "Point at t=0.5: error −2.000e-02 vs tolerance "
+            "−1.000e-02 / +5.000e-02 → FAIL"
+        )
+        assert vc.diagnostics["worst_sides"] == self.PAIR
+        assert vc.diagnostics["worst_sides_relative"] is False
+        assert vc.diagnostics["worst_point_time"] == 0.5
+        assert vc.diagnostics["worst_signed_delta"] == pytest.approx(-0.02)
+
+    def test_a_pair_leaf_and_a_row_with_its_own_number(self):
+        # The row's sides are equal: the magnitude, against its number.
+        vc, crit = self._points(
+            self.PAIR, [(5, +0.002, {"tolerance": 0.001}), (8, 0.0, {})]
+        )
+        assert not vc.passed
+        assert crit == "Point at t=0.5: error 2.000e-03 vs tolerance 1.000e-03 → FAIL"
+        assert vc.diagnostics["worst_sides"] == 0.001
+
+    def test_an_early_row_under_its_own_number_reads_unsigned(self):
+        _, crit = self._points(
+            self.PAIR, [(5, -0.002, {"tolerance": 0.001}), (8, 0.0, {})]
+        )
+        assert crit == "Point at t=0.5: error 2.000e-03 vs tolerance 1.000e-03 → FAIL"
+
+    @pytest.mark.parametrize("leaf", [0.03, {"lower": 0.03, "upper": 0.03}])
+    def test_rows_deferring_to_an_equal_leaf_read_as_they_did(self, leaf):
+        vc, crit = self._points(leaf, [(5, +0.04, {}), (8, -0.02, {})])
+        assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert set(vc.diagnostics) == self.POINT_KEYS
+
+    def test_numbers_alone_read_as_they_did(self):
+        """No pair anywhere: what a number always printed, key for key —
+        the leaf's number, though the failing row has its own."""
+        vc, crit = self._points(
+            0.03, [(5, +0.002, {"tolerance": 0.001}), (8, +0.025, {})]
+        )
+        assert not vc.passed
+        assert crit == "Final value error 2.500e-02 vs tolerance 3.000e-02 → FAIL"
+        assert set(vc.diagnostics) == self.POINT_KEYS
+
+    def test_a_pair_row_that_is_not_the_reported_one_changes_nothing(self):
+        # +0.04 is inside the row's pair; −0.05 breaks the leaf's number.
+        vc, crit = self._points(
+            0.03, [(5, +0.04, {"tolerance": self.PAIR}), (8, -0.05, {})]
+        )
+        assert crit == "Final value error 5.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert set(vc.diagnostics) == self.POINT_KEYS
+
+    def test_all_inside_the_largest_delta_is_the_pair_rows(self):
+        vc, crit = self._points(
+            0.03, [(5, +0.04, {"tolerance": self.PAIR}), (8, +0.02, {})]
+        )
+        assert vc.passed
+        assert crit == (
+            "Point at t=0.5: error +4.000e-02 vs tolerance "
+            "−1.000e-02 / +5.000e-02 → PASS"
+        )
+
+    def test_a_relative_row_says_so(self):
+        # At target 10 the row's band is [−1, +5]: −2 lies 1 below it.
+        ref = np.ones_like(self.T)
+        ref[5] = 10.0
+        row = {"tolerance": {"lower": 0.1, "upper": 0.5}, "tolerance_mode": "rel"}
+        vc, crit = self._points(0.03, [(5, -2.0, row), (8, +0.02, {})], ref=ref)
+        assert crit == (
+            "Point at t=0.5: error −2.000e+00 vs tolerance "
+            "−1.000e-01 / +5.000e-01 (relative) → FAIL"
+        )
+        assert vc.diagnostics["worst_sides_relative"] is True
+
+    def test_the_trace_end_row_is_named_by_its_time(self):
+        from dstf.comparison.algorithms import _compare_points
+
+        act = self.T.copy()
+        act[-1] += 0.02
+        vc = _compare_points(
+            self.T,
+            self.T,
+            self.T,
+            act,
+            [{"time": None}],
+            {"lower": 0.01, "upper": 0.05},
+        )
+        assert summarize(vc).criterion.startswith("Point at t=1: error +2.000e-02 ")
+
+    def test_a_row_with_a_time_box_is_named_by_its_declared_time(self):
+        """Not by where in its box the curve came closest (the box's first
+        sample here, t=0.4), which is the score's time."""
+        from dstf.comparison.algorithms import _compare_points
+        from dstf.comparison.sides import Sides
+
+        ref = np.ones_like(self.T)
+        act = ref.copy()
+        act[4:7] += 0.1
+        vc = _compare_points(
+            self.T,
+            ref,
+            self.T,
+            act,
+            [{"time": 0.5, "time_tolerance": 0.1}],
+            Sides(0.01, 0.05),
+        )
+        assert vc.max_abs_error_time == pytest.approx(0.4)
+        assert vc.diagnostics["worst_point_time"] == 0.5
+        assert summarize(vc).criterion == (
+            "Point at t=0.5: error +1.000e-01 vs tolerance "
+            "−1.000e-02 / +5.000e-02 → FAIL"
+        )
+
+    def test_no_scored_point_reads_as_it_did(self):
+        """A checkpoint the run never reached is not scored: there is no
+        point to name."""
+        from dstf.comparison.algorithms import _compare_points
+        from dstf.comparison.sides import Sides
+
+        vc = _compare_points(
+            self.T, self.T, self.T, self.T, [{"time": 5.0, "value": 1.0}], Sides(1, 2)
+        )
+        vc.tolerance_used = Sides(1, 2)
+        assert vc.diagnostics["scored_points"] == 0
+        assert "worst_sides" not in vc.diagnostics
+        assert summarize(vc).criterion == (
+            "Final value error +0.000e+00 vs tolerance −1.000e+00 / +2.000e+00 → FAIL"
+        )
+
+    # ---- declared events
+
+    EVENT_KEYS = {
+        "ref_event_count",
+        "act_event_count",
+        "max_time_delta",
+        "time_tolerance",
+        "counts_match",
+        "unmatched_events",
+        "declared_events",
+    }
+
+    def _events(self, actual, tolerance, rows):
+        act = np.array([0.0, *(t for at in actual for t in (at, at)), 10.0])
+        vc = _compare_event_timing(
+            np.array([]), act, time_tolerance=tolerance, declared_events=rows
+        )
+        return vc, summarize(vc).criterion
+
+    def test_a_number_leaf_and_an_event_with_its_own_pair(self):
+        # 0.3 early is inside the event's own window, far outside the leaf's.
+        own = {"lower": 0.5, "upper": 0.05}
+        vc, crit = self._events(
+            [2.0, 4.7, 8.0],
+            0.1,
+            [{"time": 2.0}, {"time": 5.0, "tolerance": own}, {"time": 8.0}],
+        )
+        assert vc.passed
+        assert crit == (
+            "Event at t=5: Δt −3.000e-01 vs −5.000e-01 / +5.000e-02 "
+            "(3 actual events / 3 reference) → PASS"
+        )
+        assert vc.diagnostics["worst_sides"] == own
+        assert vc.diagnostics["worst_event_time"] == 5.0
+        assert vc.diagnostics["max_time_delta_signed"] == pytest.approx(-0.3)
+
+    def test_a_pair_leaf_and_an_event_with_its_own_number(self):
+        vc, crit = self._events(
+            [2.0, 5.3, 8.0],
+            {"lower": 0.01, "upper": 0.05},
+            [{"time": 2.0}, {"time": 5.0, "tolerance": 0.5}, {"time": 8.0}],
+        )
+        assert vc.passed
+        assert crit == (
+            "Event at t=5: Δt 3.000e-01 vs 5.000e-01 "
+            "(3 actual events / 3 reference) → PASS"
+        )
+        assert vc.diagnostics["worst_sides"] == 0.5
+
+    @pytest.mark.parametrize("leaf", [0.1, {"lower": 0.1, "upper": 0.1}])
+    def test_events_deferring_to_an_equal_leaf_read_as_they_did(self, leaf):
+        vc, crit = self._events(
+            [2.0, 5.05, 8.0], leaf, [{"time": 2.0}, {"time": 5.0}, {"time": 8.0}]
+        )
+        assert crit == (
+            "Max event Δt 5.000e-02 vs 1.000e-01 (3 actual events / 3 reference) → PASS"
+        )
+        assert set(vc.diagnostics) == self.EVENT_KEYS
+
+    def test_event_numbers_alone_read_as_they_did(self):
+        vc, crit = self._events(
+            [2.0, 5.3, 8.0],
+            0.1,
+            [{"time": 2.0}, {"time": 5.0, "tolerance": 0.5}, {"time": 8.0}],
+        )
+        assert crit == (
+            "Max event Δt 3.000e-01 vs 1.000e-01 (3 actual events / 3 reference) → PASS"
+        )
+        assert set(vc.diagnostics) == self.EVENT_KEYS
+
+    def test_a_pair_event_that_is_not_the_reported_one_changes_nothing(self):
+        vc, crit = self._events(
+            [2.05, 5.0, 8.0],
+            0.1,
+            [{"time": 2.0}, {"time": 5.0, "tolerance": {"lower": 0.5, "upper": 0.05}}],
+        )
+        assert crit == (
+            "Max event Δt 5.000e-02 vs 1.000e-01 (3 actual events / 2 reference) → FAIL"
+        )
+        assert set(vc.diagnostics) == self.EVENT_KEYS
+
+    def test_an_exact_event_is_named_by_its_own_time(self):
+        """Every Δt is zero: the first declared event is the reported one,
+        and its time is the sentence's — not the 0 the score's time stays."""
+        vc, crit = self._events(
+            [2.0, 5.0], {"lower": 0.01, "upper": 0.05}, [{"time": 2.0}, {"time": 5.0}]
+        )
+        assert crit == (
+            "Event at t=2: Δt +0.000e+00 vs −1.000e-02 / +5.000e-02 "
+            "(2 actual events / 2 reference) → PASS"
+        )
+        assert vc.max_abs_error_time == 0.0
+
+    def test_no_declared_event_reads_as_it_did(self):
+        vc, crit = self._events([2.0], {"lower": 0.01, "upper": 0.05}, [])
+        assert "worst_sides" not in vc.diagnostics
+        assert crit == (
+            "Max event Δt +0.000e+00 vs −1.000e-02 / +5.000e-02 "
+            "(1 actual events / 0 reference) → FAIL"
+        )
+
+    def test_an_unmatched_event_is_still_what_the_sentence_says(self):
+        _, crit = self._events(
+            [2.0, 4.7],
+            0.1,
+            [
+                {"time": 2.0},
+                {"time": 5.0, "tolerance": {"lower": 0.5, "upper": 0.05}},
+                {"time": 8.0},
+            ],
+        )
+        assert crit.startswith("1 of 3 declared events not found within tolerance ")
+
+    def test_auto_detected_events_keep_the_leafs_sentence(self):
+        ref = np.array([0.0, 5.0, 5.0, 10.0])
+        act = np.array([0.0, 5.04, 5.04, 10.0])
+        vc = _compare_event_timing(ref, act, time_tolerance=self.PAIR)
+        assert "worst_sides" not in vc.diagnostics
+        assert summarize(vc).criterion == (
+            "Max event Δt +4.000e-02 vs −1.000e-02 / +5.000e-02 "
+            "(1 actual events / 1 reference) → PASS"
+        )
