@@ -38,7 +38,7 @@ pytestmark = pytest.mark.playwright
 
 from playwright.sync_api import expect  # noqa: E402
 
-from dstf.figures.plotly import RING_PATH  # noqa: E402
+from dstf.figures.plotly import GRIP, RING_PATH  # noqa: E402
 from test_author_suite_playwright import (  # noqa: E402
     EXPECT_TIMEOUT,
     READY_TIMEOUT,
@@ -85,12 +85,14 @@ def _served(
     x_error: Callable[[float], float] | None = None,
     project: Callable[[Path], tuple[Path, Path]] = _page_project,
     hooks: bool = False,
+    touch: bool = False,
 ):
     """`dstf author` over ``project`` (`_page_project` unless said), with
     `/test/FakeLib.A` open. On the way out: assertion 7 — no page error, no
     console error, and the spec file byte-for-byte as it was (nothing is
     saved by looking). ``x_error`` replaces x's error against its baseline
-    (`_set_x_error`); ``hooks`` serves `author_hooks.py`'s routes."""
+    (`_set_x_error`); ``hooks`` serves `author_hooks.py`'s routes; ``touch``
+    opens the page as a touch screen does — no hover, a coarse pointer."""
     cfg, work = project(tmp_path)
     if x_error is not None:
         _set_x_error(work, x_error)
@@ -101,7 +103,10 @@ def _served(
     context = None
     try:
         _wait_until_serving(url, proc, log)
-        context = playwright_browser.new_context(viewport=VIEWPORT)
+        context = playwright_browser.new_context(
+            viewport=VIEWPORT,
+            **({"has_touch": True, "is_mobile": True} if touch else {}),
+        )
         page = context.new_page()
         problems: list[str] = []
         page.on("pageerror", lambda exc: problems.append(f"pageerror: {exc}"))
@@ -6528,16 +6533,20 @@ def test_a_points_arrow_dragged_up_moves_that_side_and_the_box_follows(
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.05")
 
         mid: list = []
-        was = _drag_arrow(
-            page,
-            "/points/upper/0",
-            0,
-            -30,
-            during=lambda: mid.append(_shape(page, "/points/upper/0")["box"]),
-        )
+
+        def held() -> None:
+            mid.append(_shape(page, "/points/upper/0")["box"])
+            mid.append(_grips_on(page)["shown"])
+            _shot(page, tmp_path, "grips-mid-drag")
+
+        was = _drag_arrow(page, "/points/upper/0", 0, -30, during=held)
         to = was["yanchor"] + 30 / was["ppy"]
-        assert mid[0] is not None  # shown mid-drag
+        # Shown for the whole of the drag — its checkpoint's four, the arrow
+        # itself under the pointer — though the plot gets no `mousemove`
+        # while Plotly's drag cover has the pointer.
+        assert mid[0] is not None
         assert abs(mid[0]["y"] - (was["box"]["y"] - 30)) <= 1.5, (mid, was)
+        assert mid[1] == _group("points", 0, FOUR), mid
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
@@ -6759,3 +6768,378 @@ def test_an_arrow_dragged_across_its_target_snaps_back_and_says_why(
         assert back["yanchor"] == was["yanchor"]
         assert _pending(page) == "0 pending edits"
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.05")
+
+
+# -- the grips show on hover (D147) ----------------------------------------
+
+#: Plot ``card``'s grips as the page holds them: every path the hover module
+#: marked (`data-grip`), by the tail of its shape's name, and whether it is
+#: DISPLAYED — a path under `display: none` has no box. `drawn` counts the
+#: figure's own grip shapes, so "none is shown" is never said of a plot
+#: whose grips were not marked at all.
+GRIPS_ON = """
+([card, colour]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const shapes = gd.layout.shapes || [];
+  const marked = [...gd.querySelectorAll('.shapelayer path[data-grip]')].map(el => {
+    const b = el.getBoundingClientRect();
+    const name = shapes[+el.getAttribute('data-index')].name;
+    return [name.split('/').slice(-3).join('/'), b.width > 0 && b.height > 0];
+  });
+  return {
+    marked: marked.map(m => m[0]).sort(),
+    shown: marked.filter(m => m[1]).map(m => m[0]).sort(),
+    drawn: shapes.filter(s => s.fillcolor === colour && s.visible !== false).length,
+  };
+}
+"""
+
+
+def _grips_on(page, card: int = 0) -> dict:
+    return page.evaluate(GRIPS_ON, [card, GRIP])
+
+
+def _group(family: str, key: object, edges: tuple[str, ...]) -> list[str]:
+    return sorted(f"{family}/{edge}/{key}" for edge in edges)
+
+
+FOUR = ("upper", "lower", "before", "after")
+
+
+def _rest(page) -> None:
+    """The pointer where no plot is: on the page's header."""
+    page.mouse.move(640, 20)
+    page.wait_for_timeout(150)
+
+
+def test_the_grips_are_hidden_at_rest_and_shown_near_their_checkpoint(
+    tmp_path, playwright_browser
+):
+    """The owner's ruling: the arrows show only while the pointer is on or
+    near their checkpoint, so they do not clutter the plot. At rest none is
+    displayed; a checkpoint's own four show near it and its neighbour's do
+    not; they go when the pointer leaves."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _rest(page)
+        rest = _grips_on(page)
+        every = sorted(_group("points", 0, FOUR) + _group("points", 1, FOUR))
+        assert rest["marked"] == every and rest["drawn"] == 8, rest
+        assert rest["shown"] == [], rest
+        _shot(page, tmp_path, "grips-rest")
+
+        first = _shape(page, "/points/target/0")
+        assert first["box"] is not None  # the ring is always there
+        assert _shape(page, "/points/upper/0")["box"] is None
+        page.mouse.move(first["x"], first["y"], steps=6)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        _shot(page, tmp_path, "grips-hover")
+        # Each arrow stands OUTSIDE its edge, clear of the ring: 10 px from
+        # the edge to its apex.
+        upper, ring = _shape(page, "/points/upper/0"), _shape(page, "/points/target/0")
+        assert abs(upper["box"]["bottom"] - (upper["y"] - 10)) <= 1.5, upper
+        assert upper["box"]["bottom"] < ring["box"]["top"], (upper, ring)
+        after = _shape(page, "/points/after/0")
+        assert abs(after["box"]["left"] - (after["x"] + 10)) <= 1.5, after
+
+        second = _shape(page, "/points/target/1")
+        page.mouse.move(second["x"], second["y"], steps=12)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 1, FOUR)
+
+        # Away from both, still over the plot: none.
+        page.mouse.move(second["x"], first["y"], steps=6)
+        page.wait_for_timeout(150)
+        far = _grips_on(page)
+        assert far["shown"] == [] and far["marked"] == every, far
+        page.mouse.move(first["x"], first["y"], steps=6)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        _rest(page)  # off the plot altogether
+        assert _grips_on(page)["shown"] == []
+
+
+def test_an_events_and_a_peaks_arrows_show_anywhere_along_their_window(
+    tmp_path, playwright_browser
+):
+    """A window spans its panel and has no height of its own: its arrows
+    show while the pointer is near it at ANY height of that panel — and a
+    peak's, on the spectrum panel, not from the time panel above it."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "event-timing · x")
+        _rest(page)
+        rest = _grips_on(page)
+        assert rest["drawn"] == 4 and rest["shown"] == [], rest
+        late = _shape(page, "/events/late/0")
+        top = page.evaluate(
+            """() => { const gd = document.querySelectorAll('.js-plotly-plot')[0];
+                 const ya = gd._fullLayout.yaxis, r = gd.getBoundingClientRect();
+                 return [r.top + ya._offset, r.top + ya._offset + ya._length]; }"""
+        )
+        for y in (top[0] + 6, late["y"], top[1] - 6):
+            _rest(page)
+            page.mouse.move(late["x"] - 8, y, steps=5)
+            page.wait_for_timeout(150)
+            assert _grips_on(page)["shown"] == _group("events", 0, ("early", "late")), y
+        _shot(page, tmp_path, "grips-event")
+        other = _shape(page, "/events/early/1")
+        page.mouse.move(other["x"] + 5, other["y"], steps=12)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("events", 1, ("early", "late"))
+
+        _open_for_grips(page, 0, "dominant-frequency · x")
+        _rest(page)
+        rest = _grips_on(page)
+        assert rest["drawn"] == 4 and rest["shown"] == [], rest
+        upper = _shape(page, "/peaks/upper/0")
+        page.mouse.move(upper["x"] - 8, upper["y"], steps=5)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("peaks", 0, ("lower", "upper"))
+        _shot(page, tmp_path, "grips-peak")
+        # The same frequency's pixel column, up in the TIME panel: not near
+        # the peak.
+        time_panel = page.evaluate(
+            """() => { const gd = document.querySelectorAll('.js-plotly-plot')[0];
+                 const ya = gd._fullLayout.yaxis, r = gd.getBoundingClientRect();
+                 return r.top + ya._offset + ya._length / 2; }"""
+        )
+        page.mouse.move(upper["x"] - 8, time_panel, steps=8)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == []
+
+
+def _close_points_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by two checkpoints 0.05 apart
+    in time: the second's upper arrow stands inside the reach of the
+    first's box."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "points",
+                "variable": "x",
+                "points": [
+                    {
+                        "time": 0.4,
+                        "value": 0.5,
+                        "tolerance": 0.1,
+                        "time_tolerance": 0.05,
+                    },
+                    {"time": 0.45, "value": 0.5, "tolerance": 0.1},
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_a_press_where_a_hidden_grip_sits_zooms_and_moves_nothing(
+    tmp_path, playwright_browser
+):
+    """A grip that is not shown cannot be grabbed. Two checkpoints stand
+    close: with the first's arrows shown — and they stay while the pointer
+    is within reach of it — the pointer is brought over where the second's
+    hidden upper arrow sits. The press there is the plot's own: a box
+    zoom. Hidden by `visibility` or `opacity` the arrow took it, and a
+    drag nobody could see staged an edit."""
+    with _served(tmp_path, playwright_browser, project=_close_points_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        first = _shape(page, "/points/target/0")
+        page.mouse.move(first["x"] - 30, first["y"] + 30)
+        page.mouse.move(first["x"], first["y"], steps=5)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        hidden = _shape(page, "/points/upper/1")
+        assert hidden["box"] is None
+        # Where its arrow would be: 13.5 px above its anchor (the middle of
+        # a triangle from 10 to 17 px out).
+        x, y = hidden["x"], hidden["y"] - 13.5
+        page.mouse.move(x, y, steps=8)
+        page.wait_for_timeout(150)
+        still = _grips_on(page)
+        assert still["shown"] == _group("points", 0, FOUR), still  # sticky
+        hit = page.evaluate(
+            "([x, y]) => { const e = document.elementFromPoint(x, y);"
+            " return e.closest('g.shapelayer') ? 'shape' : e.getAttribute('class'); }",
+            [x, y],
+        )
+        assert hit != "shape", hit
+        before = page.evaluate(READ_PLOT)
+        page.mouse.down()
+        page.mouse.move(x + 60, y - 50, steps=10)
+        page.mouse.up()
+        page.wait_for_function(
+            "(was) => { const r = document.querySelectorAll('.js-plotly-plot')[0]"
+            "._fullLayout.xaxis.range; return Math.abs(r[1] - r[0]) <"
+            " 0.5 * Math.abs(was[1] - was[0]); }",
+            arg=before["xrange"],
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(600)  # a staged edit would have landed by now
+        assert _pending(page) == "0 pending edits"
+        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.1")
+        moved = _shape(page, "/points/upper/1")
+        assert (moved["xanchor"], moved["yanchor"]) == (
+            hidden["xanchor"],
+            hidden["yanchor"],
+        )
+
+
+def test_the_hover_holds_through_the_servers_redraw(tmp_path, playwright_browser):
+    """Every redraw replaces the plot's shape paths, and the marks with
+    them. After a drag's release the server redraws: the pointer is still
+    near the checkpoint, so its arrows are still shown, the neighbour's
+    still hidden — and once it has moved away, a redraw shows none."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        was = _drag_arrow(page, "/points/upper/0", 0, -30)
+        expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 0, "+ tolerance").input_value())
+        _settled_at(page, "/points/box/0", "y1", 0.3 + upper)
+        page.wait_for_timeout(200)
+        near = _grips_on(page)
+        every = sorted(_group("points", 0, FOUR) + _group("points", 1, FOUR))
+        assert near["marked"] == every, near  # the NEW paths are marked
+        assert near["shown"] == _group("points", 0, FOUR), near
+        assert was["box"] is not None
+
+        # Away from the plot, then a redraw from a field: none is shown.
+        _rest(page)
+        assert _grips_on(page)["shown"] == []
+        _retype(page, _table_cell(page, 0, "time"), "0.3")
+        _settled_at(page, "/points/target/0", "xanchor", 0.3)
+        page.wait_for_timeout(200)
+        away = _grips_on(page)
+        assert away["marked"] == every and away["drawn"] == 8, away
+        assert away["shown"] == [], away
+
+
+#: Copy plot 0's grip shapes into plot 1's figure, names and all, from the
+#: page: no test's tree can put one criterion's grips on two plots.
+COPY_GRIPS = """
+async (colour) => {
+  const {Plotly} = await import('nicegui-plotly');
+  const [a, b] = document.querySelectorAll('.js-plotly-plot');
+  const grips = (a.layout.shapes || []).filter(s => s.fillcolor === colour);
+  await Plotly.relayout(b, {shapes: [...(b.layout.shapes || []), ...grips]});
+  return grips.length;
+}
+"""
+
+REDRAW = """
+async (card) => {
+  const {Plotly} = await import('nicegui-plotly');
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const before = gd.querySelector('.shapelayer path[data-grip]');
+  await Plotly.relayout(gd, {'yaxis.range': gd._fullLayout.yaxis.range.slice()});
+  return before !== gd.querySelector('.shapelayer path[data-grip]');
+}
+"""
+
+
+def test_one_plots_hover_never_shows_anothers_grips(tmp_path, playwright_browser):
+    """Each plot card has its own instance of the hover module: its own
+    shown group, its own pointer. Plot 1 is given grips of the SAME names
+    as plot 0's, so anything the two instances shared would show: hovering
+    one plot's checkpoint shows that plot's four, and a redraw of the other
+    plot meanwhile shows none of its own."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "points · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        # Both plots in view at once, the open editor between them.
+        page.set_viewport_size({"width": 1280, "height": 2000})
+        page.evaluate("() => window.scrollTo(0, 0)")
+        expect(page.locator(".js-plotly-plot").nth(1)).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        bottom = page.locator(".js-plotly-plot").nth(1).bounding_box()
+        assert bottom["y"] + bottom["height"] < 2000, bottom
+        drawn = page.locator(".js-plotly-plot").count()
+        assert page.evaluate("() => window.DstfGrips.instances.size") == drawn >= 2
+        assert page.evaluate(COPY_GRIPS, GRIP) == 8
+        _rest(page)
+        assert _grips_on(page, 0)["shown"] == []
+        there = _grips_on(page, 1)
+        assert there["drawn"] == 8 and len(there["marked"]) == 8, there
+        assert there["shown"] == [], there
+
+        first = _shape(page, "/points/target/0", card=0)
+        page.mouse.move(first["x"], first["y"], steps=6)
+        page.wait_for_timeout(150)
+        assert _grips_on(page, 0)["shown"] == _group("points", 0, FOUR)
+        assert _grips_on(page, 1)["shown"] == []
+        # Plot 1 redraws while the pointer rests on plot 0's checkpoint: its
+        # new paths are marked from ITS instance, which shows nothing.
+        assert page.evaluate(REDRAW, 1) is True
+        assert _grips_on(page, 1)["shown"] == []
+        assert _grips_on(page, 0)["shown"] == _group("points", 0, FOUR)
+
+        copy = _shape(page, "/points/upper/1", card=1)
+        page.mouse.move(copy["x"], copy["y"], steps=12)
+        page.wait_for_timeout(150)
+        assert _grips_on(page, 1)["shown"] == _group("points", 1, FOUR)
+        assert _grips_on(page, 0)["shown"] == []
+        assert page.evaluate(REDRAW, 0) is True
+        assert _grips_on(page, 0)["shown"] == []
+
+
+CONNECTED = """() => [...window.DstfGrips.instances.values()]
+  .map(st => st.gd.isConnected && st.gd.classList.contains('js-plotly-plot'))"""
+
+
+def test_a_rebuilt_page_leaves_no_hover_instance_behind(tmp_path, playwright_browser):
+    """A criterion added from a plot's `+` rebuilds every card: each
+    dropped plot takes its hover instance — and that instance's document
+    and window listeners — with it, and each plot drawn again has its own."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        first = page.evaluate(CONNECTED)
+        assert first and all(first), first
+        assert len(first) == page.locator(".js-plotly-plot").count()
+        rows = page.locator(".dstf-crit").count()
+        page.locator(".dstf-plot").first.get_by_role(
+            "button", name="Add a criterion for x"
+        ).click()
+        apply_add = page.get_by_role("button", name="Add", exact=True)
+        expect(apply_add).to_be_visible(timeout=EXPECT_TIMEOUT)
+        apply_add.click()
+        expect(page.locator(".dstf-crit")).not_to_have_count(
+            rows, timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(800)
+        after = page.evaluate(CONNECTED)
+        assert after and all(after), after
+        assert len(after) == page.locator(".js-plotly-plot").count()
+        page.locator(".dstf-header-row").get_by_role(
+            "button", name=re.compile("Discard")
+        ).click()
+
+
+def test_a_touch_screen_shows_the_open_criterions_grips_always(
+    tmp_path, playwright_browser
+):
+    """No hover exists on a touch screen: nothing could ever reveal a grip
+    hidden at rest, so there they are always shown."""
+    with _served(
+        tmp_path, playwright_browser, project=_grips_project, touch=True
+    ) as page:
+        page.wait_for_timeout(700)
+        assert page.evaluate(
+            "() => matchMedia('(hover: none)').matches"
+            " || matchMedia('(pointer: coarse)').matches"
+        )
+        _open_for_grips(page, 0, "points · x")
+        page.wait_for_timeout(300)
+        rest = _grips_on(page)
+        every = sorted(_group("points", 0, FOUR) + _group("points", 1, FOUR))
+        assert rest["marked"] == every and rest["shown"] == every, rest

@@ -11659,3 +11659,78 @@ async def test_the_jump_icon_leaves_the_folds_alone(shell):
             page.show_criterion(f"{G1}/children/0")
         assert page.state.tree_folded[A] == [G1]
         assert f"{G1}/children/0" in _hidden(page)
+
+
+# -- the tolerance grips' hover module (D147) ---------------------------------
+
+
+async def test_the_test_page_loads_the_grips_module_and_serves_it(shell):
+    """`grips.js` is in the page's FIRST html — NiceGUI inserts head HTML
+    after the handshake through insertAdjacentHTML, which runs no script —
+    and the route it names serves the file beside `suite_grid.js`."""
+    from dstf.authoring.shell.plot_card import GRIPS_JS, GRIPS_URL
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.client.head_html.count(f'<script src="{GRIPS_URL}"></script>') == 1
+        served = await user.http_client.get(GRIPS_URL)
+        assert served.status_code == 200
+        assert served.text == GRIPS_JS.read_text(encoding="utf-8")
+        assert "window.DstfGrips" in served.text
+
+
+async def test_a_drawn_plot_installs_its_grips_and_a_dropped_card_takes_them_back(
+    shell,
+):
+    """One instance of the hover module per DRAWN plot, named by the plot
+    element's id; a card that is dropped takes its own back — its document
+    and window listeners with it — and one never drawn has none."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        sent = _js_sent(page)
+        card = page.cards[0]
+        assert card.plot is None
+        card.show()
+        plot_id = card.plot.id
+        assert [c for c in sent if "DstfGrips" in c] == [
+            f"DstfGrips.install({plot_id})"
+        ]
+        # Drawn once: a second ask installs nothing again.
+        card.show()
+        card.redraw()
+        assert sum("DstfGrips.install" in c for c in sent) == 1
+        del sent[:]
+        card.dispose()
+        assert [c for c in sent if "DstfGrips" in c] == [
+            f"DstfGrips.destroy({plot_id})"
+        ]
+
+
+async def test_a_card_never_drawn_has_no_grips_to_take_back(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        sent = _js_sent(page)
+        assert page.cards[0].plot is None
+        page.cards[0].dispose()
+        assert not [c for c in sent if "DstfGrips" in c]
+
+
+def test_the_stylesheet_hides_a_grip_at_rest_by_display_and_shows_it_on_touch():
+    """`display: none`, never `visibility` or `opacity`: Plotly writes
+    inline `opacity: 1; pointer-events: all` on every editable shape, so a
+    grip hidden either way is still grabbed. Where there is no hover (a
+    touch screen) the open criterion's grips are always shown."""
+    import re
+
+    from dstf.authoring.shell.style import STYLE
+
+    css = re.sub(r"\s+", " ", STYLE)
+    hidden = ".js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on])"
+    assert f"{hidden} {{ display: none; }}" in css
+    assert (
+        f"@media (hover: none), (pointer: coarse) {{ {hidden} {{ display: inline; }} }}"
+        in css
+    )
+    assert css.index(f"{hidden} {{ display: none; }}") < css.index(
+        "@media (hover: none)"
+    )

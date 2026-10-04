@@ -22,6 +22,7 @@ import json
 import logging
 from collections.abc import Mapping, Sequence
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -76,6 +77,11 @@ _SIGNED = (
 #: patch — it is here because the field IS the leaf's, not because a path
 #: was found that moves it.
 _EDITED = ("metric", "variable", "params", "window", "against", "advisory")
+
+#: The hover module of the tolerance grips (`grips.js`): its file, and where
+#: the shell serves it — beside the Suite table's scripts.
+GRIPS_JS = Path(__file__).parent / "grips.js"
+GRIPS_URL = "/_dstf/grips.js"
 
 #: "Not read yet" — `None` cannot mean it: a test with nothing scored has a
 #: `tree_view` of None, and a card that read it for itself cost one read per
@@ -749,6 +755,10 @@ class PlotCard:
             self._error = None
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
         self.hook.attach(self.plot)
+        # This plot's instance of the hover module: the open criterion's
+        # grips show while the pointer is near them. Sent to THIS page's
+        # client — `show()` also runs from the Shell's timer.
+        self.page.client.run_javascript(f"DstfGrips.install({self.plot.id})")
         self._drawn = self.signature(view)
         self._error_select(figure)
         # `drawable` is first known here: the swatches show with the plot.
@@ -926,3 +936,6 @@ class PlotCard:
         if self.variable_host is not None:
             self.variable_host.clear()
         self.hook.clear()
+        if self.plot is not None:
+            # Its hover instance listens on the document and the window.
+            self.page.client.run_javascript(f"DstfGrips.destroy({self.plot.id})")

@@ -395,7 +395,7 @@ class Shell:
 
     def mount(self) -> None:
         """The routes beside the index: the Suite table's two scripts, the
-        dashboard's files, resolved against the OPEN project's work dir per
+        Test page's grips module, the dashboard's files, resolved against the OPEN project's work dir per
         request so a reopen follows, and the Test page. Once per process; `index` calls it too, so a
         simulation that mounted only the root page gets them on its first
         build."""
@@ -411,6 +411,10 @@ class Shell:
             local_file=HERE / "suite_grid.js", url_path=f"{ASSETS}/suite_grid.js"
         )
         app.add_static_file(local_file=FILTERS_JS, url_path=f"{ASSETS}/filters.js")
+        # The Test page's: the tolerance grips' hover (`grips.js`).
+        from .plot_card import GRIPS_JS, GRIPS_URL
+
+        app.add_static_file(local_file=GRIPS_JS, url_path=GRIPS_URL)
 
         @app.get("/dashboard/{path:path}")
         def _dashboard(path: str) -> Any:

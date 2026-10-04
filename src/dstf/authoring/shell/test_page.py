@@ -39,7 +39,7 @@ from ..situation import Strip, new_variables, strip_for
 from ..tree_pointer import node_or_none
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
-from .plot_card import UNREAD, PlotCard, folded
+from .plot_card import GRIPS_URL, UNREAD, PlotCard, folded
 from .rail import Rail
 from .stats_card import StatsCard
 from .strip import StatusStrip
@@ -149,6 +149,10 @@ class TestPage:
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
+        # BEFORE the handshake, so it is in the page's first HTML: after it
+        # `add_head_html` inserts through insertAdjacentHTML, which never
+        # runs a <script> (the Suite page's rule).
+        ui.add_head_html(f'<script src="{GRIPS_URL}"></script>')
         state = await connected_tab_state(self.client)
         if state is None:
             return

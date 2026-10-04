@@ -238,6 +238,19 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-plot-slot .js-plotly-plot .modebar-container {
   right: calc(-1 * var(--toolbar-gutter)) !important;
 }
+/* A tolerance grip — the arrow outside each side of the open criterion's
+   tolerance — is hidden at rest: `grips.js` marks each grip's path with its
+   group (`data-grip`) and the one group the pointer is near
+   (`data-grip-on`). `display: none`, never `visibility` or `opacity`:
+   Plotly writes inline `opacity: 1; pointer-events: all` on every editable
+   shape, so a grip hidden either way was still grabbed where nothing
+   showed. Without a hover — a touch screen — they are always shown. */
+.js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) { display: none; }
+@media (hover: none), (pointer: coarse) {
+  .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) {
+    display: inline;
+  }
+}
 .dstf-crit {
   min-height: 36px; padding: 4px 8px; cursor: pointer;
   border-top: 1px solid var(--dstf-border-hairline);
