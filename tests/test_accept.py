@@ -105,3 +105,85 @@ def test_store_skips_still_come_through(tmp_path):
     tests = [make_test_model("FakeLib.A", variable_patterns=["x"])]
     stored, skipped = accept_run_results(store, tests, {}, config.work_dir)
     assert stored == 0 and skipped == [("FakeLib.A", "no simulation result")]
+
+
+# ---------------------------------------------------------------------------
+# A base tolerance that is no number, beside the store's own skips
+# ---------------------------------------------------------------------------
+
+PAIR = {"lower": 0.1, "upper": 0.2}
+
+
+def _reference_file(config):
+    (path,) = sorted(config.reference_root.rglob("ref_*.json"))
+    return path
+
+
+def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
+    tmp_path,
+):
+    """Nothing ran, so nothing was refused — as `compare_one` says SIM_FAIL
+    for it, not the refusal. The test is skipped ONCE, with the simulation's
+    reason, and no reference is written: not for a bad base in the spec, and
+    not over one the stored reference already holds."""
+    config, store = _env(tmp_path, {})
+    test = make_test_model("FakeLib.A", variable_patterns=["x"])
+    test.comparison_tolerance = PAIR
+    failed = TestResult(model_id="FakeLib.A", success=False, error_message="boom")
+
+    assert accept_run_results(
+        store, [test], {"FakeLib.A": failed}, config.work_dir
+    ) == (
+        0,
+        [("FakeLib.A", "simulation failed")],
+    )
+    assert accept_run_results(store, [test], {}, config.work_dir) == (
+        0,
+        [("FakeLib.A", "no simulation result")],
+    )
+    assert store.get_reference("FakeLib.A") is None
+
+    # The same over a stored reference whose own base is the bad one.
+    test.comparison_tolerance = None
+    assert accept_run_results(
+        store, [test], {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
+    ) == (1, [])
+    path = _reference_file(config)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["comparison"] = {"tolerance": PAIR}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    before = path.read_bytes()
+    store = ReferenceStore(config)
+    assert accept_run_results(
+        store, [test], {"FakeLib.A": failed}, config.work_dir
+    ) == (
+        0,
+        [("FakeLib.A", "simulation failed")],
+    )
+    assert path.read_bytes() == before
+
+
+def test_an_unfinished_test_with_a_bad_base_is_listed_once(tmp_path):
+    """Its run never finished: that is the reason it is skipped with, and
+    the only one — the comparison's refusal is not said beside it."""
+    config, store = _env(
+        tmp_path,
+        {
+            "test_0001": {
+                "model_id": "FakeLib.InFlight",
+                "ref_id": None,
+                "last_run_status": "pending",
+            }
+        },
+    )
+    test = make_test_model("FakeLib.InFlight", variable_patterns=["x"])
+    test.comparison_tolerance = PAIR
+    results = {"FakeLib.InFlight": _result("FakeLib.InFlight")}
+
+    stored, skipped = accept_run_results(store, [test], results, config.work_dir)
+
+    assert stored == 0
+    assert [model_id for model_id, _ in skipped] == ["FakeLib.InFlight"]
+    assert "re-run before accepting" in skipped[0][1]
+    assert "base tolerance" not in skipped[0][1]
+    assert store.get_reference("FakeLib.InFlight") is None

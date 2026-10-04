@@ -212,6 +212,16 @@ def test_a_number_in_the_spec_shadows_whatever_the_baseline_holds(
     assert _case(cases, model_id) == ("pass", None) and rc == 0
 
 
+def test_a_null_base_in_the_baseline_is_unset(project, tmp_path):
+    """``"comparison": {"tolerance": null}`` in a reference JSON holds no
+    base: the project's is in effect, and nothing is refused."""
+    project.edit_reference(RAMP, "null")
+    reference = json.loads(project.reference(RAMP).read_text(encoding="utf-8"))
+    assert reference["comparison"] == {"tolerance": None}
+    rc, cases = project.junit(tmp_path)
+    assert _case(cases, RAMP) == ("pass", None) and rc == 0
+
+
 @pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
 @pytest.mark.parametrize("raw", ["0", "-1", "0.5", "null"])
 def test_a_number_or_no_base_is_never_refused(project, tmp_path, raw, baseline):
@@ -431,6 +441,29 @@ def test_the_tools_accept_does_not_accept_a_refused_test(project, source):
         assert line.startswith(f"Accept: stored {stored} baseline(s)")
         assert f"; skipped {RAMP}: {said}" in line
         assert project.reference(RAMP).read_bytes() == before
+
+
+def test_the_tools_row_for_a_refused_simulate_only_test_says_the_refusal(project):
+    """The base is judged before the test is anything else: the row says
+    the comparison's sentence — what accept skips it with — not
+    "simulate-only", which would read as nothing being wrong."""
+    pytest.importorskip("nicegui")
+    from dstf.authoring.builtin.accept import Accept, _rows
+    from dstf.authoring.session import Selection, Session, SessionView
+
+    said, before = _refuse(project, "spec")
+    session = Session()
+    session.open(project.config.config_file, work_dir=project.config.work_dir)
+    session.project.test(RAMP).simulate_only = True
+    assert session.comparisons[RAMP].error_message == said
+
+    view = SessionView(session, Selection(tests=frozenset({RAMP})))
+    assert _rows(view) == [(RAMP, "FAIL", said)]
+    assert Accept().available(view) == said
+    line = Accept().act(view).run(session.project.store)
+    assert line.startswith("Accept: stored 0 baseline(s)")
+    assert f"; skipped {RAMP}: {said}" in line
+    assert project.reference(RAMP).read_bytes() == before
 
 
 def test_the_one_accept_path_refuses_only_what_the_comparison_refuses(project):

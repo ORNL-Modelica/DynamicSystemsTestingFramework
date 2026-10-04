@@ -3628,6 +3628,17 @@ class TestABaseToleranceIsANumber:
         comp = _sides_compare({"metric": "points"}, flat=flat, comparison_tolerance=bad)
         self._refused(comp, self.SPEC, bad)
 
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_null_base_in_the_reference_json_is_unset(self, flat):
+        """``"comparison": {"tolerance": null}`` is no base: the key being
+        there refuses nothing, and the project's tolerance is in effect."""
+        comp = _sides_compare(
+            {"metric": "points"}, flat=flat, ref_comparison={"tolerance": None}
+        )
+        assert comp.error_message is None and comp.variables
+        assert comp.tolerance_source == "project" and comp.base_tolerance == 1e-4
+        assert comp.variables[0].tolerance_used == Sides(1e-4, 1e-4)
+
     def test_the_sentence_cuts_a_long_value_at_60_characters(self):
         from dstf.comparison.comparator import base_tolerance_refused
 
@@ -3756,8 +3767,18 @@ class TestPointsValueSides:
         [
             ({}, "no comparable sample"),
             ({"time_tolerance": 0.2}, "no comparable sample in the time box"),
+            # A box open on one side only is a box.
+            (
+                {"time_tolerance": {"lower": 0, "upper": 0.2}},
+                "no comparable sample in the time box",
+            ),
+            (
+                {"time_tolerance": {"lower": 0.2, "upper": 0}},
+                "no comparable sample in the time box",
+            ),
+            ({"time_tolerance": {"lower": 0, "upper": 0}}, "no comparable sample"),
         ],
-        ids=["no time box", "time box"],
+        ids=["no time box", "time box", "later only", "earlier only", "zero pair"],
     )
     def test_a_box_with_no_comparable_sample_says_whether_it_is_a_box(
         self, row, reason

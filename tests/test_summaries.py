@@ -285,12 +285,12 @@ class TestAnUnevenToleranceSaysWhichSide:
         crit = self._points(act, {"lower": 0.5, "upper": 0.25}, rows)
         assert crit.startswith("Final value error +0.000e+00 vs tolerance")
 
-    def _scalar(self, act_final, tolerance, mode):
+    def _scalar(self, act_final, tolerance, mode, ref_final=4.0):
         from dstf.comparison.algorithms import _compare_scalar
         from dstf.comparison.sides import parse_sides
 
-        ref = np.full(3, 4.0)
-        act = np.array([4.0, 4.0, act_final])
+        ref = np.full(3, ref_final)
+        act = np.array([ref_final, ref_final, act_final])
         vc = _compare_scalar(
             self.T[:3],
             ref,
@@ -328,6 +328,49 @@ class TestAnUnevenToleranceSaysWhichSide:
             "Scalar 3.6 vs baseline 4: relative deviation 1.000e-01 vs "
             "tolerance 1.000e-01 → PASS"
         )
+
+    def test_scalar_relative_to_a_negative_baseline_keeps_the_sign_of_the_change(
+        self,
+    ):
+        """rel is a fraction of |baseline|: above a baseline of −4 is ``+``,
+        as the scorer judged it — divided by the baseline itself it flips."""
+        uneven_rel = {"lower": 0.05, "upper": 0.1}
+        for act, deviation, verdict in (
+            (-3.7, "+7.500e-02", "PASS"),  # 0.3 above: inside the 10 % above
+            (-3.5, "+1.250e-01", "FAIL"),
+            (-4.1, "−2.500e-02", "PASS"),  # 0.1 below: inside the 5 % below
+            (-4.3, "−7.500e-02", "FAIL"),
+        ):
+            assert self._scalar(act, uneven_rel, "rel", ref_final=-4.0) == (
+                f"Scalar {act:g} vs baseline -4: relative deviation {deviation} vs "
+                f"tolerance −5.000e-02 / +1.000e-01 → {verdict}"
+            )
+
+    def test_event_timing_with_a_one_sided_window(self):
+        """A pair with a zero side: late only, or early only. The zero edge
+        reads by its side."""
+        from dstf.comparison.sides import Sides
+
+        ref = np.array([0.0, 5.0, 5.0, 10.0])
+        late, early = 5.25, 4.875
+        late_only, early_only = Sides(0.0, 0.5), Sides(0.5, 0.0)
+        for at, sides, delta, band, verdict in (
+            (late, late_only, "+2.500e-01", "−0.000e+00 / +5.000e-01", "PASS"),
+            (early, late_only, "−1.250e-01", "−0.000e+00 / +5.000e-01", "FAIL"),
+            (early, early_only, "−1.250e-01", "−5.000e-01 / +0.000e+00", "PASS"),
+            (late, early_only, "+2.500e-01", "−5.000e-01 / +0.000e+00", "FAIL"),
+        ):
+            act = np.array([0.0, at, at, 10.0])
+            auto = _compare_event_timing(ref, act, time_tolerance=sides)
+            assert summarize(auto).criterion == (
+                f"Max event Δt {delta} vs {band} "
+                f"(1 actual events / 1 reference) → {verdict}"
+            )
+            declared = _compare_event_timing(
+                ref, act, time_tolerance=sides, declared_events=[{"time": 5.0}]
+            )
+            assert declared.passed is (verdict == "PASS")
+            assert f" vs {band} " in summarize(declared).criterion
 
     def test_event_timing_late_is_positive_early_negative(self):
         from dstf.comparison.sides import Sides
