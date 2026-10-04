@@ -363,6 +363,147 @@ class TestAnUnevenToleranceSaysWhichSide:
         ).criterion.startswith("Max event Δt 1.250e-01 vs 5.000e-01 ")
 
 
+class TestTheSignedNumberIsThePointThatBreaksTheBand:
+    """With uneven sides the largest |Δ| need not be the failing one: +0.04
+    under an upper side of 0.05 passes while −0.02 under a lower side of
+    0.01 fails. The sentence prints the point (or event pair) FURTHEST
+    OUTSIDE its band; with every one inside, the largest |Δ|."""
+
+    T = np.linspace(0.0, 1.0, 11)
+    BAND = {"lower": 0.01, "upper": 0.05}
+
+    def _points(self, deltas, tolerance, ref=None, **row):
+        """Checkpoints at ``T[i]`` for each ``{i: actual − reference}``."""
+        from dstf.comparison.modes import resolve_mode
+
+        ref = self.T if ref is None else ref
+        act = ref.copy()
+        for i, d in deltas.items():
+            act[i] += d
+        rows = [{"time": float(self.T[i]), **row} for i in deltas]
+        mode = resolve_mode({"mode": "points", "points": rows}, tolerance)
+        vc = mode.compare(self.T, ref, self.T, act)
+        vc.tolerance_used = mode.tolerance
+        return vc, summarize(vc).criterion
+
+    def test_points_the_smaller_delta_is_the_failing_one(self):
+        vc, crit = self._points({5: +0.04, 8: -0.02}, self.BAND)
+        assert crit == (
+            "Final value error −2.000e-02 vs tolerance −1.000e-02 / +5.000e-02 → FAIL"
+        )
+        # The score and where it is stay the largest |Δ|'s, as a number's.
+        assert vc.max_abs_error == pytest.approx(0.04)
+        assert vc.max_abs_error_time == pytest.approx(0.5)
+        assert vc.diagnostics["worst_delta"] == pytest.approx(0.04)
+        assert [f["time"] for f in vc.diagnostics["point_failures"]] == [
+            pytest.approx(0.8)
+        ]
+
+    def test_points_of_two_outside_the_further_one(self):
+        # +0.07 is 0.02 above the band, −0.04 is 0.03 below it.
+        _, crit = self._points({5: +0.07, 8: -0.04}, self.BAND)
+        assert crit.startswith("Final value error −4.000e-02 vs ")
+        _, crit = self._points({5: -0.04, 8: +0.07}, self.BAND)
+        assert crit.startswith("Final value error −4.000e-02 vs ")
+        # +0.09 is 0.04 above: now that one.
+        _, crit = self._points({5: +0.09, 8: -0.04}, self.BAND)
+        assert crit.startswith("Final value error +9.000e-02 vs ")
+
+    def test_points_all_inside_say_the_largest_delta(self):
+        _, crit = self._points({5: +0.04, 8: -0.005}, self.BAND)
+        assert crit == (
+            "Final value error +4.000e-02 vs tolerance −1.000e-02 / +5.000e-02 → PASS"
+        )
+        _, crit = self._points({5: +0.004, 8: -0.008}, self.BAND)
+        assert crit.startswith("Final value error −8.000e-03 vs ")
+
+    def test_points_relative_sides_are_judged_on_the_scaled_band(self):
+        # rel: each side is that fraction of |target|. At target 10 the band
+        # is [−1, +5] and +2 lies in it; at target 1 it is [−0.1, +0.5] and
+        # −0.5 lies 0.4 below. On the unscaled sides +2 would be the further.
+        ref = np.ones_like(self.T)
+        ref[5] = 10.0
+        vc, crit = self._points(
+            {5: +2.0, 8: -0.5},
+            {"lower": 0.1, "upper": 0.5},
+            ref=ref,
+            tolerance_mode="rel",
+        )
+        assert crit == (
+            "Final value error −5.000e-01 vs tolerance −1.000e-01 / +5.000e-01 → FAIL"
+        )
+        assert vc.max_abs_error == pytest.approx(2.0)
+
+    def test_points_equal_sides_say_what_a_number_said(self):
+        for tolerance in (0.03, {"lower": 0.03, "upper": 0.03}):
+            vc, crit = self._points({5: +0.04, 8: -0.02}, tolerance)
+            assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+            assert "worst_signed_delta" not in vc.diagnostics
+
+    REF = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 10.0])
+
+    def _events(self, first, second, tolerance, declared=None):
+        from dstf.comparison.sides import parse_sides
+
+        act = np.array([0.0, 2.0 + first, 2.0 + first, 5.0 + second, 5.0 + second, 10])
+        vc = _compare_event_timing(
+            self.REF,
+            act,
+            time_tolerance=parse_sides(tolerance, "time_tolerance"),
+            declared_events=declared,
+        )
+        return vc, summarize(vc).criterion
+
+    def test_events_the_smaller_delta_is_the_failing_one(self):
+        vc, crit = self._events(-0.03, +0.04, self.BAND)
+        assert crit == (
+            "Max event Δt −3.000e-02 vs −1.000e-02 / +5.000e-02 "
+            "(2 actual events / 2 reference) → FAIL"
+        )
+        assert vc.nrmse == pytest.approx(0.04)
+        assert vc.max_abs_error_time == 5.0
+        assert vc.diagnostics["max_time_delta"] == pytest.approx(0.04)
+        # ... whichever comes first.
+        _, crit = self._events(+0.04, -0.03, self.BAND)
+        assert crit.startswith("Max event Δt −3.000e-02 vs ")
+
+    def test_events_of_two_outside_the_further_one(self):
+        _, crit = self._events(+0.07, -0.04, self.BAND)
+        assert crit.startswith("Max event Δt −4.000e-02 vs ")
+        _, crit = self._events(+0.09, -0.04, self.BAND)
+        assert crit.startswith("Max event Δt +9.000e-02 vs ")
+
+    def test_events_all_inside_say_the_largest_delta(self):
+        _, crit = self._events(-0.005, +0.04, self.BAND)
+        assert crit == (
+            "Max event Δt +4.000e-02 vs −1.000e-02 / +5.000e-02 "
+            "(2 actual events / 2 reference) → PASS"
+        )
+        _, crit = self._events(-0.008, +0.004, self.BAND)
+        assert crit.startswith("Max event Δt −8.000e-03 vs ")
+
+    def test_events_equal_sides_say_what_a_number_said(self):
+        for tolerance in (0.035, {"lower": 0.035, "upper": 0.035}):
+            vc, crit = self._events(-0.03, +0.04, tolerance)
+            assert crit == (
+                "Max event Δt 4.000e-02 vs 3.500e-02 "
+                "(2 actual events / 2 reference) → FAIL"
+            )
+            assert "max_time_delta_signed" not in vc.diagnostics
+
+    def test_declared_events_pair_only_inside_a_window(self):
+        """A declared event claims an actual one INSIDE its window, so no
+        pair lies outside its band: the largest |Δ| of the pairs."""
+        declared = [{"time": 2.0}, {"time": 5.0}]
+        vc, crit = self._events(-0.005, +0.04, self.BAND, declared)
+        assert crit == (
+            "Max event Δt +4.000e-02 vs −1.000e-02 / +5.000e-02 "
+            "(2 actual events / 2 reference) → PASS"
+        )
+        _, crit = self._events(-0.008, +0.004, self.BAND, declared)
+        assert crit.startswith("Max event Δt −8.000e-03 vs ")
+
+
 def test_an_event_timing_criterion_says_early_and_late():
     from dstf.comparison.sides import Sides
 

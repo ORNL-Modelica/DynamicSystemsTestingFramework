@@ -512,6 +512,14 @@ def _compare_points(
     worst_delta = 0.0
     worst_t = 0.0
     worst_signed = 0.0
+    # With uneven sides the largest |delta| need not be the point that
+    # breaks its band: +0.04 under an upper side of 0.05 passes while −0.02
+    # under a lower side of 0.01 fails. The signed delta the sentence
+    # prints is the point's that lies FURTHEST OUTSIDE its own band —
+    # `violation`, in the band's units, so a `rel` point's is on the scaled
+    # band; `worst_signed` (the largest |delta|) when every point is inside.
+    worst_outside = 0.0
+    outside_signed = 0.0
     # Review 2026-07-06 (finding 2): a checkpoint the simulation never
     # reached — or whose ref-relative target lies beyond the stored
     # baseline — FAILS instead of being skipped. Skipping let truncated
@@ -589,6 +597,11 @@ def _compare_points(
             act_time, act_values, t_lo, t_hi, target, lower_limit, upper_limit
         )
         point_passed = violation == 0.0
+        if violation > worst_outside:
+            worst_outside = violation
+            outside_signed = _signed_delta_in_box(
+                act_time, act_values, t_lo, t_hi, target, delta
+            )
         lo, hi = target - lower_limit, target + upper_limit
         geometry.append(
             Marker(
@@ -645,10 +658,19 @@ def _compare_points(
             "worst_delta": worst_delta,
             "worst_time": worst_t,
             "point_failures": point_failures,
-            # Which side the worst point lies on, for a sentence whose
+            # Which side the point that breaks its band furthest lies on
+            # (the largest |delta|'s when none does), for a sentence whose
             # sides differ (`summarize_points`): recorded only there, so a
             # leaf with a number carries what it always carried.
-            **({} if tolerance.equal else {"worst_signed_delta": worst_signed}),
+            **(
+                {}
+                if tolerance.equal
+                else {
+                    "worst_signed_delta": (
+                        outside_signed if worst_outside > 0 else worst_signed
+                    )
+                }
+            ),
         },
         geometry=tuple(geometry),
     )
@@ -1312,7 +1334,8 @@ def _event_tolerances(events: list[dict] | None, time_tolerance: Sides) -> list[
 
 
 def _signed_time_delta(time_tolerance: Sides, max_signed: float) -> dict:
-    """The worst pair's ``actual − reference`` (late positive) under
+    """``actual − reference`` (late positive) of the pair that lies furthest
+    outside its window — of the largest |Δt| when none does — under
     ``max_time_delta_signed``, for a sentence whose sides differ
     (`summarize_event_timing`): recorded only there, so a leaf with a
     number carries what it always carried."""
@@ -1361,6 +1384,13 @@ def _compare_event_timing(
         max_delta = 0.0
         max_signed = 0.0
         delta_at = 0.0
+        # With uneven sides the largest |Δt| need not be the pair that
+        # breaks the window (0.04 late under an upper side of 0.05 passes,
+        # 0.03 early under a lower side of 0.01 fails): the signed Δt the
+        # sentence prints is the pair's FURTHEST OUTSIDE it, and
+        # `max_signed` (the largest |Δt|) when every pair is inside.
+        max_outside = 0.0
+        outside_signed = 0.0
         # ``d > 0`` is LATE: the actual event came after the reference's.
         in_window = []
         for i in range(n):
@@ -1370,6 +1400,15 @@ def _compare_event_timing(
                 max_delta = abs(d)
                 max_signed = d
                 delta_at = ref_events[i]
+            if not in_window[-1]:
+                outside = (
+                    d - time_tolerance.upper
+                    if d > time_tolerance.upper
+                    else -time_tolerance.lower - d
+                )
+                if outside > max_outside:
+                    max_outside = outside
+                    outside_signed = d
 
         counts_match = len(ref_events) == len(act_events)
         # A window inverted by a negative side holds nothing — with no pair
@@ -1396,7 +1435,9 @@ def _compare_event_timing(
                 "max_time_delta": max_delta,
                 "time_tolerance": as_written(time_tolerance),
                 "counts_match": counts_match,
-                **_signed_time_delta(time_tolerance, max_signed),
+                **_signed_time_delta(
+                    time_tolerance, outside_signed if max_outside > 0 else max_signed
+                ),
             },
             geometry=_event_geometry(
                 ref_events,
@@ -1442,6 +1483,8 @@ def _compare_event_timing(
             continue
         claimed[best_idx] = True
         matched_flags[k] = True
+        # A pair exists only INSIDE its window (the claim above), so none
+        # lies outside its band: the signed Δt is the largest |Δt|'s.
         signed_d = act_events[best_idx] - target
         d = abs(signed_d)
         if d > max_delta:

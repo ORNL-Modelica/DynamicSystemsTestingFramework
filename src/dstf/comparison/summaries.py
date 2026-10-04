@@ -133,8 +133,9 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
     else:
         details.append(_finals(vc))
     # Equal sides: the magnitude, as a number always printed. Uneven ones:
-    # actual − target, signed, so the reader sees which side applies — the
-    # worst declared point's (recorded by the scorer), or the final value's.
+    # actual − target, signed, so the reader sees which side applies — of
+    # the declared point furthest outside its band, or of the largest |Δ|
+    # when none is (recorded by the scorer), or the final value's.
     error = f"{vc.max_abs_error:.3e}"
     if not vc.tolerance_used.equal:
         if "scored_points" in diag:
@@ -209,7 +210,8 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     act_n = diag.get("act_event_count", "?")
     sides = parse_sides(diag.get("time_tolerance", 0.0), "time_tolerance")
     tol = sides_text(sides)
-    # Uneven sides: the worst pair's Δt signed (late positive), recorded by
+    # Uneven sides: Δt signed (late positive) — of the pair furthest
+    # outside its window, or of the largest |Δt| when none is — recorded by
     # the scorer.
     delta = f"{vc.nrmse:.3e}"
     if not sides.equal:
