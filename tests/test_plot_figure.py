@@ -872,3 +872,27 @@ def test_the_context_colour_is_the_themes_muted_text():
     from dstf.reporting.theme import DEFAULT_THEME
 
     assert CONTEXT_COLOR == DEFAULT_THEME["text-muted"]
+
+
+def test_grips_reach_every_view_of_a_multi_series_plot():
+    """A plot of several series draws the open leaf's grips too, and a
+    non-editable one none."""
+    from dataclasses import replace
+
+    from test_figures import _grip_ids, _points_grip_view
+
+    a = _points_grip_view("/metrics/children/0")
+    b = replace(_points_grip_view("/metrics/children/1"), name="y")
+    grips = _grip_ids(a) | _grip_ids(b)
+
+    def drawn(fig: dict) -> set[str]:
+        return {s["name"] for s in fig["layout"]["shapes"]} & grips
+
+    assert drawn(plot_figure([a, b], None, editable=True)) == grips
+    only = drawn(
+        plot_figure([a, b], None, editable=True, rings_for=("/metrics/children/1",))
+    )
+    assert only == _grip_ids(b)
+    plain = plot_figure([a, b])
+    assert drawn(plain) == set()
+    assert not any((tr.get("customdata") or [None])[0] in grips for tr in plain["data"])

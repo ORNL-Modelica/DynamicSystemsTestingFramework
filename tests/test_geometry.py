@@ -245,10 +245,12 @@ class TestPointsGeometry:
         ]
         vc = _compare_points(ref_t, ref_v, ref_t, act_v, points=pts)
         boxes = {p.id: p for p in vc.geometry if isinstance(p, Box)}
-        targets = {p.id: p for p in vc.geometry if isinstance(p, Marker)}
+        markers = [p for p in vc.geometry if isinstance(p, Marker)]
+        # A marker is a checkpoint's target or one side of its tolerance.
+        assert {m.kind for m in markers} == {"handle", "grip"}
+        targets = {m.id: m for m in markers if m.kind == "handle"}
         assert set(boxes) == {"points/box/0", "points/box/1", "points/box/2"}
         assert set(targets) == {"points/target/0", "points/target/1", "points/target/2"}
-        assert all(m.kind == "handle" for m in targets.values())
         assert targets["points/target/0"].passed is True
         assert (
             targets["points/target/1"].passed is False
@@ -279,6 +281,8 @@ class TestPointsGeometry:
         assert [p.id for p in vc.geometry] == [
             "points/target/final",
             "points/box/final",
+            "points/upper/final",
+            "points/lower/final",
         ]
         box = vc.geometry[1]
         assert isinstance(box, Box)
@@ -481,7 +485,13 @@ class TestEventTimingGeometry:
         act_t = np.array([0.0, 0.5, 1.0005, 1.0005, 1.5, 2.0])  # reproduced 0.5 ms late
         vc = _compare_event_timing(ref_t, act_t, time_tolerance=1e-3)
         ids = {p.id: p for p in vc.geometry}
-        assert set(ids) == {"events/ref/0", "events/window/0", "events/act/0"}
+        assert set(ids) == {
+            "events/ref/0",
+            "events/window/0",
+            "events/early/0",
+            "events/late/0",
+            "events/act/0",
+        }
         assert ids["events/ref/0"].kind == "ref" and ids["events/ref/0"].time == 1.0
         assert ids["events/act/0"].kind == "act" and ids[
             "events/act/0"
@@ -614,3 +624,207 @@ class TestDominantFrequencyGeometry:
         ids = [p.id for p in vc.geometry]
         assert "spectrum/ref" in ids and "spectrum/act" in ids
         assert not any(i.startswith("peaks/declared/") for i in ids)
+
+
+def _grips(vc) -> dict:
+    """A comparison's grips by id: `(type, position)` — a Marker's `(x, y)`,
+    a VLine's time."""
+    return {
+        p.id: (type(p), (p.x, p.y) if isinstance(p, Marker) else p.time)
+        for p in vc.geometry
+        if p.kind == "grip"
+    }
+
+
+class TestGrips:
+    """One grip per SIDE of a tolerance: the resolved position of that side,
+    `kind="grip"`, drawn only for the open criterion in the tool."""
+
+    T = np.linspace(0.0, 10.0, 101)
+
+    def test_a_point_has_a_grip_on_each_edge_of_its_box(self):
+        ref = np.sin(self.T)
+        pts = [
+            {"time": 2.0, "tolerance": 0.01},
+            {
+                "time": 8.0,
+                "value": 0.5,
+                "tolerance": {"lower": 0.02, "upper": 0.08},
+                "time_tolerance": {"lower": 0.1, "upper": 0.3},
+            },
+        ]
+        vc = _compare_points(self.T, ref, self.T, ref, points=pts)
+        grips = _grips(vc)
+        y2 = float(np.interp(2.0, self.T, ref))
+        # No `time_tolerance` on row 0: no before / after — two more rings
+        # would sit on the target's own.
+        assert set(grips) == {
+            "points/upper/0",
+            "points/lower/0",
+            "points/upper/1",
+            "points/lower/1",
+            "points/before/1",
+            "points/after/1",
+        }
+        assert all(kind is Marker for kind, _ in grips.values())
+        assert grips["points/upper/0"][1] == (2.0, pytest.approx(y2 + 0.01))
+        assert grips["points/lower/0"][1] == (2.0, pytest.approx(y2 - 0.01))
+        assert grips["points/upper/1"][1] == (8.0, pytest.approx(0.58))
+        assert grips["points/lower/1"][1] == (8.0, pytest.approx(0.48))
+        assert grips["points/before/1"][1] == (pytest.approx(7.9), 0.5)
+        assert grips["points/after/1"][1] == (pytest.approx(8.3), 0.5)
+        # Each grip sits ON its box's edge.
+        boxes = {p.id: p for p in vc.geometry if isinstance(p, Box)}
+        box = boxes["points/box/1"]
+        assert (box.y1, box.y0) == (
+            grips["points/upper/1"][1][1],
+            grips["points/lower/1"][1][1],
+        )
+        assert (box.t0, box.t1) == (
+            grips["points/before/1"][1][0],
+            grips["points/after/1"][1][0],
+        )
+
+    def test_a_rel_points_grips_are_at_the_scaled_edges(self):
+        pts = [{"time": 5.0, "value": -4.0, "tolerance": 0.1, "tolerance_mode": "rel"}]
+        grips = _grips(_compare_points(self.T, self.T, self.T, self.T, points=pts))
+        assert grips["points/upper/0"][1] == (5.0, pytest.approx(-3.6))
+        assert grips["points/lower/0"][1] == (5.0, pytest.approx(-4.4))
+
+    def test_a_null_time_tolerance_is_an_absent_one(self):
+        pts = [{"time": 5.0, "tolerance": 0.1, "time_tolerance": None}]
+        grips = _grips(_compare_points(self.T, self.T, self.T, self.T, points=pts))
+        assert set(grips) == {"points/upper/0", "points/lower/0"}
+
+    def test_a_zero_time_tolerance_still_has_its_grips(self):
+        """The row HOLDS the key: its two time grips are how it is widened
+        on the plot. They sit just outside the target's ring, on its time."""
+        pts = [{"time": 5.0, "tolerance": 0.1, "time_tolerance": 0}]
+        grips = _grips(_compare_points(self.T, self.T, self.T, self.T, points=pts))
+        assert grips["points/before/0"][1] == (5.0, 5.0)
+        assert grips["points/after/0"][1] == (5.0, 5.0)
+
+    def test_the_final_check_has_an_upper_and_a_lower_grip(self):
+        t = np.array([0.0, 1.0])
+        vc = _compare_points(
+            t, t, t, t, points=None, tolerance={"lower": 0.25, "upper": 0.5}
+        )
+        assert _grips(vc) == {
+            "points/upper/final": (Marker, (1.0, 1.5)),
+            "points/lower/final": (Marker, (1.0, 0.75)),
+        }
+        number = _grips(_compare_points(t, t, t, t, points=None, tolerance=0.25))
+        assert number["points/upper/final"][1] == (1.0, 1.25)
+        assert number["points/lower/final"][1] == (1.0, 0.75)
+
+    def test_a_constant_tubes_grips_sit_on_the_band_at_the_middle_sample(self):
+        ref = np.sin(self.T) + 2.0
+        act_t = np.linspace(0.0, 10.0, 41)
+        cfg = {"tube_width_mode": "band", "tube_abs": {"lower": 0.1, "upper": 0.4}}
+        vc = _compare_tube(self.T, ref, act_t, np.sin(act_t) + 2.0, cfg)
+        band = next(p for p in vc.geometry if isinstance(p, Band))
+        mid = len(band.time) // 2
+        assert _grips(vc) == {
+            "tube/upper/const": (Marker, (band.time[mid], band.upper[mid])),
+            "tube/lower/const": (Marker, (band.time[mid], band.lower[mid])),
+        }
+        at = float(np.interp(band.time[mid], self.T, ref))
+        assert band.upper[mid] == pytest.approx(at + 0.4)
+        assert band.lower[mid] == pytest.approx(at - 0.1)
+
+    def test_a_rel_constant_tube_has_them_too(self):
+        ref = np.sin(self.T) + 2.0
+        vc = _compare_tube(
+            self.T, ref, self.T, ref, {"tube_width_mode": "rel", "tube_rel": 0.1}
+        )
+        band = next(p for p in vc.geometry if isinstance(p, Band))
+        mid = len(band.time) // 2
+        assert _grips(vc)["tube/upper/const"][1] == (band.time[mid], band.upper[mid])
+        assert band.upper[mid] == pytest.approx(1.1 * ref[mid])
+
+    def test_a_tube_with_control_points_has_no_grip(self):
+        """Its widths are its control points' — each has its own two rings."""
+        t = np.array([0.0, 1.0, 2.0])
+        cfg = {
+            "tube_width_mode": "band",
+            "tube_points": [{"time": 1.0, "upper": 0.2, "lower": 0.2}],
+        }
+        vc = _compare_tube(t, t, t, t, cfg)
+        assert _grips(vc) == {}
+        assert {p.kind for p in vc.geometry if isinstance(p, Marker)} == {"handle"}
+
+    def test_an_events_window_has_an_early_and_a_late_grip(self):
+        ref_t = np.linspace(0.0, 2.0, 5)
+        act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+        vc = _compare_event_timing(
+            ref_t,
+            act_t,
+            time_tolerance=1e-3,
+            declared_events=[
+                {"time": 1.0},
+                {"time": 1.8, "tolerance": {"lower": 0.05, "upper": 0.2}},
+            ],
+        )
+        assert _grips(vc) == {
+            "events/early/0": (VLine, pytest.approx(0.999)),
+            "events/late/0": (VLine, pytest.approx(1.001)),
+            "events/early/1": (VLine, pytest.approx(1.75)),
+            "events/late/1": (VLine, pytest.approx(2.0)),
+        }
+        windows = {p.id: p for p in vc.geometry if isinstance(p, Box)}
+        assert windows["events/window/1"].t0 == _grips(vc)["events/early/1"][1]
+        assert windows["events/window/1"].t1 == _grips(vc)["events/late/1"][1]
+
+    def test_auto_detected_events_have_them_at_the_criterions_tolerance(self):
+        ref_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+        vc = _compare_event_timing(
+            ref_t, ref_t, time_tolerance={"lower": 0.1, "upper": 0.25}
+        )
+        assert _grips(vc) == {
+            "events/early/0": (VLine, pytest.approx(0.9)),
+            "events/late/0": (VLine, pytest.approx(1.25)),
+        }
+
+    def test_a_peaks_window_has_a_lower_and_an_upper_grip_on_the_spectrum(self):
+        t = np.linspace(0.0, 10.0, 1001)
+        sig = np.sin(2 * np.pi * 2.0 * t)
+        vc = _compare_dominant_frequency(
+            t,
+            sig,
+            t,
+            sig,
+            peaks=[
+                {"freq": 2.0, "tolerance": {"lower": 0.05, "upper": 0.2}},
+                {"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"},
+            ],
+        )
+        assert _grips(vc) == {
+            "peaks/lower/0": (VLine, pytest.approx(1.9)),
+            "peaks/upper/0": (VLine, pytest.approx(2.4)),
+            "peaks/lower/1": (VLine, pytest.approx(4.5)),
+            "peaks/upper/1": (VLine, pytest.approx(5.5)),
+        }
+        assert all(p.panel == "spectrum" for p in vc.geometry if p.kind == "grip")
+
+    def test_nrmse_range_and_scalar_emit_no_grip(self):
+        """nrmse is one ceiling; a range's and a scalar's sides are LINES,
+        `kind="handle"`: the report draws them too."""
+        from dstf.comparison.algorithms import _compare_trajectories
+
+        t = self.T
+        for vc in (
+            _compare_trajectories(t, t, t, t, 1e-4),
+            _compare_range(t, t, min_value=-1.0, max_value=20.0),
+            _compare_scalar(
+                t,
+                t,
+                t,
+                t,
+                reduction="max",
+                tolerance={"lower": 0.1, "upper": 0.2},
+                tolerance_mode="abs",
+                min_value=None,
+                max_value=None,
+            ),
+        ):
+            assert _grips(vc) == {}, vc.mode

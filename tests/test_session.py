@@ -1651,10 +1651,25 @@ class TestView:
             f"{c}/5/tube/lower/0",
         }
         assert not any("/points/box/" in name for name in rings)
-        # Real modes over several leaves: every ring is drawn after every other
-        # shape (the later shape takes a drag).
+        # Each side of a checkpoint's tolerance is a grip — an arrow, never
+        # a ring: neither row holds a time tolerance, so two per row.
+        from dstf.figures.plotly import GRIP
+
+        grips = {
+            s["name"] for s in fig["layout"]["shapes"] if s.get("fillcolor") == GRIP
+        }
+        assert grips == {
+            f"{c}/2/points/upper/0",
+            f"{c}/2/points/lower/0",
+            f"{c}/2/points/upper/1",
+            f"{c}/2/points/lower/1",
+        }
+        # Real modes over several leaves: every ring and every grip is drawn
+        # after every other shape (the later shape takes a drag).
         shapes = fig["layout"]["shapes"]
-        assert all(s.get("path") == RING_PATH for s in shapes[-len(rings) :])
+        dragged = len(rings) + len(grips)
+        assert all(s["xsizemode"] == "pixel" for s in shapes[-dragged:])
+        assert not any("xsizemode" in s for s in shapes[:-dragged])
 
     def test_editing_names_the_leaves_that_get_rings(self, session):
         import copy

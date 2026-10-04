@@ -522,6 +522,18 @@ def _compare_points(
                     y1=ref_final + tolerance.upper,
                     passed=passed,
                 ),
+                Marker(
+                    id="points/upper/final",
+                    kind="grip",
+                    x=t_final,
+                    y=ref_final + tolerance.upper,
+                ),
+                Marker(
+                    id="points/lower/final",
+                    kind="grip",
+                    x=t_final,
+                    y=ref_final - tolerance.lower,
+                ),
             ),
         )
 
@@ -657,6 +669,28 @@ def _compare_points(
                 passed=point_passed,
             )
         )
+        # One grip per side of the box, on its edge. The time grips only
+        # where the row HOLDS a time tolerance: a row without one has no
+        # width in time to drag.
+        geometry.append(Marker(id=f"points/upper/{i}", kind="grip", x=t, y=hi))
+        geometry.append(Marker(id=f"points/lower/{i}", kind="grip", x=t, y=lo))
+        if point.get("time_tolerance") is not None:
+            geometry.append(
+                Marker(
+                    id=f"points/before/{i}",
+                    kind="grip",
+                    x=t - x_tol.lower,
+                    y=target,
+                )
+            )
+            geometry.append(
+                Marker(
+                    id=f"points/after/{i}",
+                    kind="grip",
+                    x=t + x_tol.upper,
+                    y=target,
+                )
+            )
         if not point_passed:
             failed += 1
             if per_tol.equal:
@@ -877,10 +911,25 @@ def _tube_geometry(
     are on the grid by construction (``_tube_eval_grid``), so the lookup is
     exact. Ids follow the spec's array order: ``tube/upper/3`` addresses
     ``tube_points/3`` in a patch.
+
+    A tube of constant width (``tube_abs`` / ``tube_rel``, no control
+    points) has one grip per side instead, ``tube/upper/const`` and
+    ``tube/lower/const``, on the band's edges at the grid's middle sample.
     """
     out: list[Primitive] = [
         Band(id="tube/band", time=grid, lower=tube_lower, upper=tube_upper)
     ]
+    if not tube_points:
+        mid = len(grid) // 2
+        for side, edge in (("upper", tube_upper), ("lower", tube_lower)):
+            out.append(
+                Marker(
+                    id=f"tube/{side}/const",
+                    kind="grip",
+                    x=float(grid[mid]),
+                    y=float(edge[mid]),
+                )
+            )
     for i, pt in enumerate(tube_points or []):
         t = float(pt["time"])
         if t < grid[0] or t > grid[-1]:
@@ -1335,6 +1384,10 @@ def _event_geometry(
                 passed=None if ok is None else bool(ok),
             )
         )
+        out.append(
+            VLine(id=f"events/early/{i}", kind="grip", time=float(t - tol.lower))
+        )
+        out.append(VLine(id=f"events/late/{i}", kind="grip", time=float(t + tol.upper)))
     for j, t in enumerate(act_events):
         out.append(VLine(id=f"events/act/{j}", kind="act", time=float(t)))
     return tuple(out)
@@ -1772,6 +1825,10 @@ def _frequency_geometry(
                 passed=ok,
             )
         )
+        for side, edge in (("lower", lo), ("upper", hi)):
+            out.append(
+                VLine(id=f"peaks/{side}/{i}", kind="grip", panel="spectrum", time=edge)
+            )
         if pair.get("matched_hz") is not None:
             mh = float(pair["matched_hz"])
             out.append(

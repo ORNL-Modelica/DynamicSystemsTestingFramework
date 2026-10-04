@@ -11,7 +11,8 @@ carry the ids in ``customdata`` and the family in ``meta``); every shape
 carries it as ``name``. Those are the handles on-plot editing attaches to.
 
 The editable figure (``editable=True``, the tool's; never the report's) adds
-one pixel-sized ring shape (a ``path``) per ``kind="handle"`` marker, turns on
+one pixel-sized ring shape (a ``path``) per ``kind="handle"`` marker and one
+arrow per ``kind="grip"`` primitive — a side of a tolerance — turns on
 ``config.edits.shapePosition`` and turns OFF ``scrollZoom`` (:func:`_config`). That makes every shape draggable — plotly.js
 offers no per-shape switch that works (measured on plotly.js 3.1.1, the
 build NiceGUI 3.16 bundles; the bundle's "3.8.2" string is d3's) — and the
@@ -36,6 +37,8 @@ from ..comparison.geometry import (
     Series,
     VLine,
     Window,
+    grip_axis,
+    grip_outward,
 )
 from .families import HUES, family_label, group_families, ramp
 from .view import LeafView, VariableView, decimate_view
@@ -511,6 +514,66 @@ def _handle_rings(markers: list[Marker]) -> list[dict]:
     ]
 
 
+#: A grip's colour: an orange apart from the rings' green — the theme table's
+#: ``no-ref`` dark, as a literal (a figure's shapes follow no page theme;
+#: `test_the_grip_colour_is_a_token_of_the_theme_table` pins the two equal).
+GRIP = "#E65100"
+
+#: A grip, in pixels about its anchor (positive y is UP), by the axis it
+#: moves on and which way is outward: a triangle whose apex stands 10 px
+#: outside the edge it is anchored on and points at it. It clears a ring of
+#: radius 7 on that edge whatever the box's size — rings on the edges buried
+#: the target under a box of 16 px or less, and a sideways drag on the
+#: checkpoint then rewrote its tolerance — and, a ``path``, it never resizes.
+_GRIP_PATHS = {
+    ("y", 1): "M 0,10 L 6,17 L -6,17 Z",
+    ("y", -1): "M 0,-10 L 6,-17 L -6,-17 Z",
+    ("x", -1): "M -10,0 L -17,6 L -17,-6 Z",
+    ("x", 1): "M 10,0 L 17,6 L 17,-6 Z",
+}
+
+
+def _grip_shapes(grips: list[Primitive], ctx: _Ctx) -> list[dict]:
+    """One draggable arrow per grip, named with the grip's id and anchored
+    at the tolerance edge it stands for. A marker's is anchored in data on
+    both axes; a line's — the edge of a window that spans its panel — in
+    data on x and on the PAPER at the panel's mid-height.
+
+    The page shows a grip only while the pointer is near its checkpoint
+    (``authoring/shell/grips.js``); the figure holds them all, always — a
+    drag names a shape by its index."""
+    shapes = []
+    for grip in grips:
+        if isinstance(grip, Marker):
+            anchor = {
+                "xanchor": grip.x,
+                "yref": "y2" if grip.panel == "spectrum" else "y",
+                "yanchor": grip.y,
+            }
+        elif isinstance(grip, VLine):
+            y0, y1 = _paper_span(grip, ctx)
+            anchor = {"xanchor": grip.time, "yref": "paper", "yanchor": (y0 + y1) / 2}
+        else:
+            raise TypeError(
+                f"no grip shape for {type(grip).__name__} (id {grip.id!r}): "
+                "a grip is a Marker or a VLine"
+            )
+        shapes.append(
+            {
+                "type": "path",
+                "xref": _xref(grip),
+                "xsizemode": "pixel",
+                "ysizemode": "pixel",
+                **anchor,
+                "path": _GRIP_PATHS[grip_axis(grip), grip_outward(grip)],
+                "line": {"color": GRIP, "width": 1},
+                "fillcolor": GRIP,
+                "name": grip.id,
+            }
+        )
+    return shapes
+
+
 def _base_traces(view: VariableView) -> list[dict]:
     traces = []
 
@@ -787,10 +850,15 @@ def _leaf_traces(
     rings_for: Collection[str] | None = None,
     visibility: Visibility | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Every leaf of one view, drawn: ``(traces, shapes, rings)``.
+    """Every leaf of one view, drawn: ``(traces, shapes, rings)`` — the
+    rings holding the open leaves' grips too.
 
     The one loop both figure builders run — so a new primitive type, or a
-    change to what a handle ring is, lands in a single place.
+    change to what a handle ring is, lands in a single place. A
+    ``kind="grip"`` primitive is never a trace and never one of the
+    figure's own shapes: it is drawn with its leaf's rings or not at all,
+    so a figure that is not editable is what the same geometry without its
+    grips draws.
     """
     if isinstance(rings_for, str):
         raise TypeError(
@@ -803,9 +871,13 @@ def _leaf_traces(
     for leaf in view.leaves:
         window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
         markers: list[Marker] = []
+        grips: list[Primitive] = []
         leaf_data: list[dict] = []
         leaf_shapes: list[dict] = []
         for prim in leaf.geometry:
+            if prim.kind == "grip":
+                grips.append(prim)
+                continue
             if isinstance(prim, Marker):
                 markers.append(prim)
                 continue
@@ -820,7 +892,7 @@ def _leaf_traces(
             leaf_shapes.extend(new_shapes)
         leaf_data.extend(_marker_traces(markers, leaf))
         leaf_rings = (
-            _handle_rings(markers)
+            _handle_rings(markers) + _grip_shapes(grips, ctx)
             if editable and (rings_for is None or leaf.path in rings_for)
             else []
         )
@@ -865,10 +937,10 @@ def variable_figure(
 ) -> dict:
     """The one figure both tiers draw. ``max_samples`` decimates the view first.
 
-    ``editable`` adds a draggable ring per handle marker and
-    ``config.edits.shapePosition``; the report's figure never passes it.
-    ``rings_for``: the leaf paths whose handles get a draggable ring; ``None``
-    rings every leaf. The Test page names the open criterion, so two leaves'
+    ``editable`` adds a draggable ring per handle marker, an arrow per grip
+    and ``config.edits.shapePosition``; the report's figure never passes it.
+    ``rings_for``: the leaf paths whose handles get a draggable ring, and
+    whose grips their arrows; ``None`` rings every leaf. The Test page names the open criterion, so two leaves'
     rings never overlap; ``config`` does not depend on it. A path is matched
     whole, and a bare ``str`` is a ``TypeError`` — its membership test is by
     substring, which would ring leaves nobody named.

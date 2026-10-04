@@ -1117,3 +1117,303 @@ def test_a_scalars_allowed_lines_are_drawn_on_the_report():
     assert (upper["y0"], upper["y1"]) == (4.5, 4.5)
     assert (lower["y0"], lower["y1"]) == (3.75, 3.75)
     assert upper["type"] == lower["type"] == "line"
+
+
+# -- tolerance grips (D147) -----------------------------------------------------
+
+P0 = "/metrics/children/0"
+UP = "M 0,10 L 6,17 L -6,17 Z"
+DOWN = "M 0,-10 L 6,-17 L -6,-17 Z"
+LEFT = "M -10,0 L -17,6 L -17,-6 Z"
+RIGHT = "M 10,0 L 17,6 L 17,-6 Z"
+
+
+def _grip_view(vc, t, ref, act=None, path=P0):
+    vc.name = "x"
+    return build_view(
+        "x",
+        act_time=t,
+        act_values=ref if act is None else act,
+        ref_time=t,
+        ref_values=ref,
+        leaves=[_stamped(vc, path)],
+    )
+
+
+def _points_grip_view(path=P0):
+    from dstf.comparison.algorithms import _compare_points
+
+    t = np.linspace(0.0, 10.0, 101)
+    ref = np.sin(t)
+    points = [
+        {"time": 2.0, "tolerance": 0.25},
+        {
+            "time": 8.0,
+            "value": 0.5,
+            "tolerance": {"lower": 0.02, "upper": 0.08},
+            "time_tolerance": {"lower": 0.1, "upper": 0.3},
+        },
+    ]
+    return _grip_view(_compare_points(t, ref, t, ref, points=points), t, ref, path=path)
+
+
+def _final_grip_view():
+    from dstf.comparison.algorithms import _compare_points
+
+    t = np.linspace(0.0, 10.0, 101)
+    return _grip_view(_compare_points(t, t, t, t, points=None, tolerance=0.5), t, t)
+
+
+def _tube_grip_view():
+    t = np.linspace(0.0, 10.0, 101)
+    ref = np.sin(t) + 2.0
+    cfg = {"tube_width_mode": "band", "tube_abs": {"lower": 0.1, "upper": 0.4}}
+    return _grip_view(_compare_tube(t, ref, t, ref, cfg), t, ref)
+
+
+def _events_grip_view():
+    from dstf.comparison.algorithms import _compare_event_timing
+
+    t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+    events = [{"time": 1.0, "tolerance": {"lower": 0.05, "upper": 0.2}}]
+    return _grip_view(_compare_event_timing(t, t, declared_events=events), t, t)
+
+
+def _auto_events_grip_view():
+    from dstf.comparison.algorithms import _compare_event_timing
+
+    t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+    return _grip_view(_compare_event_timing(t, t, time_tolerance=0.1), t, t)
+
+
+def _peaks_grip_view():
+    t = np.linspace(0.0, 10.0, 1001)
+    sig = np.sin(2 * np.pi * 2.0 * t)
+    peaks = [{"freq": 2.0, "tolerance": {"lower": 0.05, "upper": 0.2}}]
+    return _grip_view(_compare_dominant_frequency(t, sig, t, sig, peaks=peaks), t, sig)
+
+
+#: Every way a mode emits grips, by what the figure is asked to draw.
+GRIP_VIEWS = {
+    "points": _points_grip_view,
+    "points-final": _final_grip_view,
+    "tube-constant": _tube_grip_view,
+    "event-timing-declared": _events_grip_view,
+    "event-timing-auto": _auto_events_grip_view,
+    "dominant-frequency": _peaks_grip_view,
+}
+
+
+def _grip_ids(view) -> set[str]:
+    return {p.id for leaf in view.leaves for p in leaf.geometry if p.kind == "grip"}
+
+
+def _without_grips(view):
+    return replace(
+        view,
+        leaves=tuple(
+            replace(leaf, geometry=tuple(p for p in leaf.geometry if p.kind != "grip"))
+            for leaf in view.leaves
+        ),
+    )
+
+
+def _named(fig: dict) -> set[str]:
+    """Every id a figure names: its shapes', its traces' and their points'."""
+    names = {s.get("name") for s in fig["layout"]["shapes"]}
+    for trace in fig["data"]:
+        names.add((trace.get("meta") or {}).get("id"))
+        names.update(trace.get("customdata") or [])
+    return names
+
+
+@pytest.mark.parametrize("mode", GRIP_VIEWS)
+def test_a_non_editable_figure_holds_no_grip(mode):
+    """The report's figure: a grip is no shape and no trace of it, and the
+    figure is the one the same geometry WITHOUT its grips draws — what it
+    drew before a tolerance had sides to drag."""
+    view = GRIP_VIEWS[mode]()
+    grips = _grip_ids(view)
+    assert len(grips) >= 2, mode  # this fixture really emits them
+    fig = variable_figure(view)
+    assert not grips & _named(fig)
+    assert fig == variable_figure(_without_grips(view))
+
+
+@pytest.mark.parametrize("mode", GRIP_VIEWS)
+def test_an_editable_figure_draws_every_grip_as_a_shape_and_no_trace(mode):
+    view = GRIP_VIEWS[mode]()
+    grips = _grip_ids(view)
+    fig = variable_figure(view, editable=True)
+    shapes = [s for s in fig["layout"]["shapes"] if s["name"] in grips]
+    assert {s["name"] for s in shapes} == grips and len(shapes) == len(grips)
+    assert fig["data"] == variable_figure(view)["data"]
+    assert fig["data"] == variable_figure(_without_grips(view))["data"]
+    # Each a pixel `path` in the grip colour: it never resizes, and it lies
+    # after every `rect` — the box it stands outside cannot take its drag.
+    from dstf.figures.plotly import GRIP
+
+    for s in shapes:
+        assert s["type"] == "path" and s["path"] in (UP, DOWN, LEFT, RIGHT)
+        assert s["xsizemode"] == s["ysizemode"] == "pixel"
+        assert s["fillcolor"] == GRIP and s["line"]["color"] == GRIP
+    order = [s["name"] for s in fig["layout"]["shapes"]]
+    last_rect = max(
+        (i for i, s in enumerate(fig["layout"]["shapes"]) if s["type"] == "rect"),
+        default=-1,
+    )
+    assert all(order.index(name) > last_rect for name in grips)
+
+
+def _shape(fig: dict, name: str) -> dict:
+    return next(s for s in fig["layout"]["shapes"] if s["name"] == name)
+
+
+def _placed(shape: dict) -> tuple:
+    return (
+        shape["path"],
+        shape["xref"],
+        shape["yref"],
+        pytest.approx(shape["xanchor"]),
+        pytest.approx(shape["yanchor"]),
+    )
+
+
+def test_a_points_grips_are_arrows_just_outside_each_edge_of_its_box():
+    """Anchored at the edge's data value and drawn 10 px outside it,
+    pointing at it: up above the upper edge, down below the lower, left of
+    the before edge, right of the after edge."""
+    fig = variable_figure(_points_grip_view(), editable=True)
+    assert _placed(_shape(fig, f"{P0}/points/upper/1")) == (UP, "x", "y", 8.0, 0.58)
+    assert _placed(_shape(fig, f"{P0}/points/lower/1")) == (DOWN, "x", "y", 8.0, 0.48)
+    assert _placed(_shape(fig, f"{P0}/points/before/1")) == (LEFT, "x", "y", 7.9, 0.5)
+    assert _placed(_shape(fig, f"{P0}/points/after/1")) == (RIGHT, "x", "y", 8.3, 0.5)
+    box = _shape(fig, f"{P0}/points/box/1")
+    assert (box["x0"], box["x1"]) == (pytest.approx(7.9), pytest.approx(8.3))
+    assert (box["y0"], box["y1"]) == (pytest.approx(0.48), pytest.approx(0.58))
+
+
+def test_the_final_checks_and_a_constant_tubes_grips_point_up_and_down():
+    fig = variable_figure(_final_grip_view(), editable=True)
+    assert _placed(_shape(fig, f"{P0}/points/upper/final")) == (UP, "x", "y", 10, 10.5)
+    assert _placed(_shape(fig, f"{P0}/points/lower/final")) == (DOWN, "x", "y", 10, 9.5)
+    view = _tube_grip_view()
+    band = next(p for p in view.leaves[0].geometry if isinstance(p, Band))
+    mid = len(band.time) // 2
+    fig = variable_figure(view, editable=True)
+    at = float(band.time[mid])
+    assert _placed(_shape(fig, f"{P0}/tube/upper/const")) == (
+        UP,
+        "x",
+        "y",
+        at,
+        float(band.upper[mid]),
+    )
+    assert _placed(_shape(fig, f"{P0}/tube/lower/const")) == (
+        DOWN,
+        "x",
+        "y",
+        at,
+        float(band.lower[mid]),
+    )
+
+
+def test_an_events_and_a_peaks_grips_stand_at_mid_height_of_their_panel():
+    """A window spans its panel: it has no y. Its two arrows are anchored
+    to the PAPER at the panel's mid-height, at the window's edges."""
+    fig = variable_figure(_events_grip_view(), editable=True)
+    assert _placed(_shape(fig, f"{P0}/events/early/0")) == (
+        LEFT,
+        "x",
+        "paper",
+        0.95,
+        0.5,
+    )
+    assert _placed(_shape(fig, f"{P0}/events/late/0")) == (
+        RIGHT,
+        "x",
+        "paper",
+        1.2,
+        0.5,
+    )
+    from dstf.figures.plotly import SPECTRUM_DOMAIN
+
+    fig = variable_figure(_peaks_grip_view(), editable=True)
+    mid = sum(SPECTRUM_DOMAIN) / 2
+    assert _placed(_shape(fig, f"{P0}/peaks/lower/0")) == (
+        LEFT,
+        "x2",
+        "paper",
+        1.9,
+        mid,
+    )
+    assert _placed(_shape(fig, f"{P0}/peaks/upper/0")) == (
+        RIGHT,
+        "x2",
+        "paper",
+        2.4,
+        mid,
+    )
+
+
+def test_grips_follow_rings_for_and_hide_with_their_leaf():
+    from dstf.figures.plotly import Visibility
+
+    t = np.linspace(0.0, 10.0, 101)
+    one = _points_grip_view(P0)
+    other = _points_grip_view("/metrics/children/1")
+    view = replace(one, leaves=(*one.leaves, *other.leaves))
+    grips = _grip_ids(view)
+    assert len(grips) == 12 and len(t) == 101
+
+    def drawn(**kw) -> set[str]:
+        fig = variable_figure(view, editable=True, **kw)
+        return {s["name"] for s in fig["layout"]["shapes"]} & grips
+
+    assert drawn() == grips  # None: every leaf
+    only = drawn(rings_for=(P0,))
+    assert only == {g for g in grips if g.startswith(P0 + "/")} and len(only) == 6
+    assert drawn(rings_for=()) == set()
+    # A hidden leaf's grips stay in the list — a drag names a shape by its
+    # INDEX — as `visible: false`, exactly as its rings do.
+    shown = variable_figure(view, editable=True, rings_for=(P0,))
+    hidden = variable_figure(
+        view,
+        editable=True,
+        rings_for=(P0,),
+        visibility=Visibility(hidden=frozenset({P0})),
+    )
+    assert [s["name"] for s in hidden["layout"]["shapes"]] == [
+        s["name"] for s in shown["layout"]["shapes"]
+    ]
+    for s in hidden["layout"]["shapes"]:
+        if s["name"] in grips or s.get("path") == RING_PATH:
+            assert s["visible"] is False, s["name"]
+    assert not any(
+        "visible" in s for s in shown["layout"]["shapes"] if s["name"] in grips
+    )
+
+
+def test_a_grip_of_an_unknown_shape_raises():
+    """A lookup, not a default: a grip the figure cannot place is an error
+    where it is built, not an arrow pointing the wrong way."""
+    view = _points_grip_view()
+    leaf = view.leaves[0]
+    for bad in (
+        Marker(id=f"{P0}/points/sideways/0", kind="grip", x=1.0, y=1.0),
+        HLine(id=f"{P0}/points/upper/0", kind="grip", value=1.0),
+    ):
+        broken = replace(view, leaves=(replace(leaf, geometry=(bad,)),))
+        with pytest.raises((KeyError, TypeError)):
+            variable_figure(broken, editable=True)
+        variable_figure(broken)  # the report never looks at a grip
+
+
+def test_the_grip_colour_is_a_token_of_the_theme_table():
+    """An orange apart from the rings' green; a literal in the figure layer
+    (a figure's shapes follow no page theme), pinned to the table."""
+    from dstf.figures.plotly import GRIP, HANDLE_RING
+    from dstf.reporting.theme import STATUS
+
+    assert GRIP == STATUS["no-ref"]["dark"] == "#E65100"
+    assert GRIP != HANDLE_RING
