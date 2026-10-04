@@ -105,6 +105,12 @@ def render_form(
     empty — at open, and after an own value is cleared — in place of the
     dataclass default as a placeholder, which is not what applies, and
     ``values()`` never writes it. A field holding a value shows no hint.
+
+    A number field handed what is no number — a pair on nrmse, ``"0.1"``,
+    ``true``, a list: the leaf's config error, which its criteria row says —
+    opens BLANK and without that hint: the hint means "nothing is set here,
+    so this applies", and something is set. The value stays the form's
+    until the field is edited.
     """
     in_effect = in_effect or {}
     form = Form()
@@ -225,7 +231,7 @@ def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
             set_value(None if e.value is None else cast(e.value))
 
         return TypedNumber(
-            label=label, value=current, on_change=on_number, **kwargs
+            label=label, value=_shown(current), on_change=on_number, **kwargs
         ).props("dense")
     if spec.type == "bool":
         # A checkbox has no placeholder: show the EFFECTIVE state (the
@@ -248,9 +254,9 @@ def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
 
 
 def _shown(value: object) -> Any:
-    """What a side's field shows for ``value``: a number, else blank — a
-    side the file holds as anything else is the leaf's config error, which
-    its criteria row says; the editor still opens."""
+    """What a number field shows for ``value``: a number, else blank — a
+    field or a side the file holds as anything else is the leaf's config
+    error, which its criteria row says; the editor still opens."""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return value
     return None
@@ -286,6 +292,12 @@ class SidesControl(ui.row):
         }
         self._on_change, self._hint, self._syncing = on_change, hint, False
         self._required = required
+        #: The spec holds something no side shows (``"0.1"``, ``true``, a
+        #: list, a pair of two non-numbers): both fields are blank, and the
+        #: hint is not said — it means nothing is set here. Until an edit.
+        self._unusable = value is not None and not any(
+            v is not None for v in self._sides.values()
+        )
         with self:
             self.lower = self._field("lower", f"{side_labels[0]} {label}")
             self.link = ui.button(on_click=self.toggle).props(
@@ -361,6 +373,7 @@ class SidesControl(ui.row):
     def _edited(self, side: str, value: Any) -> None:
         if self._syncing:  # the other field, set from here: not an edit
             return
+        self._unusable = False  # what the spec holds next is this control's
         value = None if value is None else float(value)
         self._sides[side] = value
         if self.linked:
@@ -397,11 +410,12 @@ class SidesControl(ui.row):
 
     def _say_hint(self) -> None:
         """The value in effect, under the first field while BOTH are empty:
-        with a side typed it named a value no longer applied."""
+        with a side typed it named a value no longer applied. Nor while the
+        spec holds a value the fields cannot show: that one is set."""
         if self._hint is None:
             return
         empty = self._sides["lower"] is None and self._sides["upper"] is None
-        hint = self._hint if empty else None
+        hint = self._hint if empty and not self._unusable else None
         if self.lower.props.get("hint") != hint:
             self.lower.props["hint"] = hint
             self.lower.update()

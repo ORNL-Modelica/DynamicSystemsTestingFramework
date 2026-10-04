@@ -3905,6 +3905,69 @@ async def test_every_criterion_of_a_tree_holding_pairs_opens_without_an_error(
     assert seen == 9
 
 
+@pytest.mark.parametrize(
+    "written", [_pair(0.1, 0.2), "0.1", True, [0.1, 0.2], {"lower": 0.1}]
+)
+async def test_a_criterion_holding_what_is_no_tolerance_opens_blank_and_unhinted(
+    tmp_path, written
+):
+    """The same for a leaf whose tolerance is its config error — a pair on
+    nrmse, which takes one number, and on nrmse and scalar a string, a
+    bool, a list, half a pair. The criteria row says the error; the editor
+    opens with its fields drawn, the one that cannot show the value blank,
+    and NO "in effect" hint: that hint means nothing is set here. Handed
+    the pair, nrmse's number field raised and the editor read `TypeError`."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x", "tolerance": written},
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": {"reduce": "max"},
+                "tolerance": written,
+            },
+            {"metric": "nrmse", "variable": "y"},
+        ],
+    }
+    shell = _spec_tree_shell(tmp_path, tree)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        hints = {}
+        for k in range(3):
+            path = f"/metrics/children/{k}"
+            with page.client:
+                page.open_criterion(path)
+            assert page.open is not None and page.open[1] == path, path
+            box = page._editor_on(page.open[0])
+            assert box is not None
+            assert _error_lines(box) == [], path
+            drawn = {m for e in _descendants(box) for m in e._markers}
+            assert "panel:edit-criteria" in drawn, path
+            numbers = {
+                e.props["label"]: e
+                for e in _descendants(box)
+                if isinstance(e, ui.number) and "olerance" in e.props["label"]
+            }
+            hints[k] = {
+                label: e.props.get("hint") for label, e in numbers.items() if e.visible
+            }
+            if k == 0:
+                assert numbers["Tolerance"].value is None
+            elif k == 1 and written != _pair(0.1, 0.2):  # a scalar takes a pair
+                shown = (numbers["− Tolerance"].value, numbers["+ Tolerance"].value)
+                assert shown == (
+                    (0.1, None) if isinstance(written, dict) else (None,) * 2
+                )
+        said = "in effect: 0.01 (the project's tolerance)"
+        assert hints == {
+            0: {"Tolerance": None},
+            1: {"− Tolerance": None, "+ Tolerance": None},
+            2: {"Tolerance": said},  # the hint is drawn where nothing is set
+        }
+        assert shell.session.spec.pending == []
+
+
 async def test_every_figure_a_card_sends_carries_a_new_editrevision(shell):
     """The snap-back's own condition, in Chromium: the figure carries
     `uirevision: "keep"`, Plotly's `editrevision` DEFAULTS to it, and a

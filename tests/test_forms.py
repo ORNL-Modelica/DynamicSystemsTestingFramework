@@ -510,6 +510,63 @@ async def test_a_value_that_is_no_tolerance_still_opens(written):
         assert seen == []
 
 
+@pytest.mark.parametrize(
+    "written", ["0.1", True, [0.1, 0.2], {"lower": 0.1}, {"lower": "a", "upper": "b"}]
+)
+async def test_a_value_that_is_no_tolerance_shows_no_value_in_effect(written):
+    """The hint means "nothing is set here, so this applies". A leaf
+    holding what is no tolerance has something set: no hint under blank
+    fields — until an edit leaves the tolerance unset."""
+    seen, made, root = _sides(written, hint=HINT)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        assert not g.lower.props.get("hint") and not g.upper.props.get("hint")
+        for side in (g.lower, g.upper):
+            side.set_value(0.2)
+        assert not g.lower.props.get("hint")
+        for side in (g.lower, g.upper):
+            side.set_value(None)
+        assert seen[-1] is None and g.lower.props.get("hint") == HINT
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["0.1", True, [0.1, 0.2], {"lower": 0.1, "upper": 0.3}, {"lower": 0.1}],
+)
+async def test_a_number_field_handed_what_is_no_number_opens_blank_and_unhinted(
+    written,
+):
+    """A pair on nrmse, a string, a bool, a list: the leaf's config error,
+    which its criteria row says. Its editor opens — handed the dict the
+    number field raised `TypeError` and no field was drawn — with the field
+    blank, the value still the leaf's, and no "in effect" hint: something
+    IS set. Typed over and cleared, nothing is, and the hint says so."""
+    seen = []
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Cfg, mode="x"),
+            {"tolerance": written},
+            on_change=lambda values: seen.append(dict(values)),
+            in_effect=IN_EFFECT,
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        form = forms["f"]
+        tol = form.controls["tolerance"]
+        assert tol.value is None
+        assert not tol.props.get("hint")
+        assert form.values() == {"tolerance": written} and seen == []
+        tol.set_value(0.2)
+        assert seen[-1] == {"tolerance": 0.2} and not tol.props.get("hint")
+        tol.set_value(None)
+        assert seen[-1] == {}
+        assert tol.props.get("hint") == "in effect: 0.01 (the test's tolerance)"
+
+
 @dataclasses.dataclass(frozen=True)
 class _Sided:
     tolerance: Sides = dataclasses.field(
