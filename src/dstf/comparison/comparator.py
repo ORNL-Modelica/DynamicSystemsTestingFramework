@@ -30,7 +30,7 @@ import numpy as np
 
 from ..backends import TestResult
 from ..backends.common.result_variables import tracked_results
-from ..backends.types import DatasetType
+from ..backends.types import DatasetType, VariableResult
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
 from ..storage.reference_store import ReferenceStore
@@ -582,31 +582,7 @@ def compare_test(
             )
             mode = resolve_mode(var_override, tolerance, default_points=default_points)
         except ValueError as exc:
-            # A tolerance that is neither a number nor a lower/upper pair
-            # fails the variable, as a leaf's does on the tree path (D107).
-            # An unrecognized mode string must fail the variable loudly —
-            # silently falling back to NRMSE changed the scoring algorithm
-            # on a typo (review 2026-07-06). ``mode=""`` rather than the
-            # "nrmse" field default: no mode resolved, so the report must
-            # not caption this "nrmse leaf not scored". The offending
-            # string isn't stamped either — it would feed a bogus name to
-            # the reporter's mode lookups; it rides in the error text.
-            comparisons.append(
-                VariableComparison(
-                    index=var_result.index,
-                    name=name,
-                    passed=False,
-                    nrmse=float("inf"),
-                    rmse=float("inf"),
-                    signal_range=0.0,
-                    max_abs_error=float("inf"),
-                    max_abs_error_time=0.0,
-                    reference_final=float("nan"),
-                    actual_final=float("nan"),
-                    mode="",
-                    diagnostics={"error": str(exc), "config_error": True},
-                )
-            )
+            comparisons.append(_config_error_comparison(var_result, exc))
             continue
 
         # A stats-path quantity is resolved by the tree evaluator from the
@@ -654,7 +630,11 @@ def compare_test(
             # because they can't score without a baseline.
             if mode.is_baseline_free():
                 empty = np.array([])
-                vc = mode.compare(empty, empty, var_result.time, var_result.values)
+                try:
+                    vc = mode.compare(empty, empty, var_result.time, var_result.values)
+                except ValueError as exc:
+                    comparisons.append(_config_error_comparison(var_result, exc))
+                    continue
                 vc.index = var_result.index
                 vc.name = name
                 vc.tolerance_used = tolerance
@@ -687,7 +667,11 @@ def compare_test(
             ref_time = np.array(ref_var["time"])
         ref_values = np.array(ref_var["values"])
 
-        vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
+        try:
+            vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
+        except ValueError as exc:
+            comparisons.append(_config_error_comparison(var_result, exc))
+            continue
         vc.index = var_result.index
         vc.name = name
         vc.tolerance_used = tolerance
@@ -714,6 +698,40 @@ def compare_test(
         metric_tree=tree,
         tolerance_source=tolerance_source,
         base_tolerance=base_tolerance,
+    )
+
+
+def _config_error_comparison(
+    var_result: VariableResult, exc: ValueError
+) -> VariableComparison:
+    """The flat path's sentinel for a variable whose override is a config
+    error: the variable fails, the others are scored — as a leaf's does on
+    the tree path (D107), where one bad spec entry must not abort the run.
+
+    A ``ValueError`` is that error wherever it is raised: building the mode
+    (a tolerance that is neither a number nor a lower/upper pair; an
+    unrecognized mode string, which must fail loudly — silently falling
+    back to NRMSE changed the scoring algorithm on a typo, review
+    2026-07-06) or scoring with it, for what a mode can only detect then (a
+    tube's unknown width mode, `abs` without control points).
+
+    ``mode=""`` rather than the "nrmse" field default: the report must not
+    caption this "nrmse leaf not scored". An offending mode string isn't
+    stamped either — it would feed a bogus name to the reporter's mode
+    lookups; it rides in the error text."""
+    return VariableComparison(
+        index=var_result.index,
+        name=var_result.name,
+        passed=False,
+        nrmse=float("inf"),
+        rmse=float("inf"),
+        signal_range=0.0,
+        max_abs_error=float("inf"),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode="",
+        diagnostics={"error": str(exc), "config_error": True},
     )
 
 

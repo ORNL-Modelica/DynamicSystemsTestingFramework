@@ -3293,6 +3293,104 @@ def test_a_number_handed_to_a_comparison_is_both_sides():
     )
 
 
+_COMPARE_TIME_ERRORS = [
+    (
+        {"metric": "tube", "tube_width_mode": "absolute"},
+        "tube_width_mode must be 'band', 'rel', or 'abs'; got 'absolute'",
+    ),
+    (
+        {"metric": "tube", "tube_width_mode": "abs"},
+        "tube_width_mode='abs' requires tube_points; "
+        "constant-tube shorthand supports only 'band' and 'rel'.",
+    ),
+    ({"metric": "tube"}, "tube_width_mode must be 'band', 'rel', or 'abs'; got None"),
+    (
+        {
+            "metric": "tube",
+            "tube_width_mode": "band",
+            "tube_points": [{"time": 0.0, "abs": 1.0}],
+        },
+        "tube_points entries need 'upper' and/or 'lower' widths; "
+        "got keys ['abs', 'time']",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("leaf", "said"), _COMPARE_TIME_ERRORS, ids=["absolute", "abs", "none", "points"]
+)
+class TestAModesCompareTimeErrorIsAConfigError:
+    """A config error a mode can only detect when it scores (a tube's
+    unknown width mode, `abs` without control points) is a ``ValueError``
+    from ``mode.compare``. On the tree path that was already the leaf's
+    config error; on the flat one it went out of ``compare_test`` and took
+    the run down."""
+
+    def test_flat_it_is_the_variables_and_the_rest_is_scored(self, leaf, said):
+        comp = _sides_compare(
+            leaf, flat=True, extra={"metric": "nrmse", "tolerance": 0.5}
+        )
+        x, y = comp.variables
+        assert not x.passed and x.name == "x" and x.index == 1
+        assert x.diagnostics == {"error": said, "config_error": True}
+        assert y.passed and not comp.passed
+
+    def test_flat_it_has_the_shape_of_a_mode_that_did_not_resolve(self, leaf, said):
+        """One sentinel for both: what `resolve_mode`'s ``ValueError``
+        always became (an unknown mode name, a malformed tolerance)."""
+
+        def shape(vc):
+            fields = dataclasses.asdict(vc)
+            fields["diagnostics"] = sorted(vc.diagnostics)
+            return repr(fields)  # NaN fields: compared as text
+
+        (late,) = _sides_compare(leaf, flat=True).variables
+        (early,) = _sides_compare({"metric": "no-such-mode"}, flat=True).variables
+        assert early.diagnostics["config_error"] is True
+        assert shape(late) == shape(early)
+        assert late.mode == ""
+
+    def test_tree_it_is_the_leafs_as_it_was(self, leaf, said):
+        comp = _sides_compare(
+            leaf, flat=False, extra={"metric": "nrmse", "tolerance": 0.5}
+        )
+        x, y = comp.variables
+        assert not x.passed and x.mode == "tube"
+        assert x.diagnostics["error"] == f"metric 'tube' misconfigured: {said}"
+        assert x.diagnostics["config_error"] is True
+        assert y.passed and not comp.passed
+
+
+def test_flat_a_baseline_free_modes_compare_time_error_is_a_config_error():
+    """The flat path's OTHER `mode.compare` call: a baseline-free mode on a
+    variable the baseline does not hold."""
+    time, _, act = _S_DATA["e"]
+    result = TestResult(
+        model_id="Test.Model",
+        success=True,
+        variables=[
+            VariableResult(index=i + 1, name=n, time=time, values=act)
+            for i, n in enumerate(["x", "y"])
+        ],
+    )
+    reference = {
+        "test_id": "0001",
+        "variables": [
+            {"index": 2, "name": "y", "time": time.tolist(), "values": act.tolist()}
+        ],
+    }
+    test = _make_test(
+        variable_overrides={"x": {"mode": "event-timing", "events": [{"time": "a"}]}}
+    )
+    test.variable_patterns = ["x", "y"]
+    x, y = compare_test(test, result, reference, default_tolerance=0.5).variables
+    assert x.diagnostics == {
+        "error": "could not convert string to float: 'a'",
+        "config_error": True,
+    }
+    assert not x.passed and x.mode == "" and y.passed
+
+
 class TestAMalformedToleranceIsAConfigError:
     @pytest.mark.parametrize("bad", _S_MALFORMED, ids=repr)
     def test_flat_it_is_the_variables_and_the_rest_is_scored(self, bad):
