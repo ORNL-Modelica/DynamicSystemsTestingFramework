@@ -1128,6 +1128,28 @@ async def test_add_row_after_a_row_holding_a_pair(session):
         assert not errors
 
 
+async def test_a_tolerance_cell_is_as_wide_as_its_label(session):
+    """An empty cell draws its label full size, and the cells' 120 px cut
+    "before time_tolerance": each side of a tolerance cell asks for its own
+    label's width (`forms.label_width`), the longer label the wider."""
+    from dstf.authoring.forms import label_width
+
+    _root_leaf_on_a(session, SIDED["points"][0])
+    async with host(session, EditOnPlot(), ON_A) as (user, _errors, _figure):
+        widths = {}
+        for key in ("tolerance", "time_tolerance"):
+            for side in ("lower", "upper"):
+                cell = _cell(user, f"/metrics:points:0:{key}:{side}")
+                widths[cell.props["label"]] = cell._style["min-width"]
+        assert widths == {label: f"{label_width(label)}px" for label in widths}
+        assert set(widths) >= {"before time_tolerance", "after time_tolerance"}
+        # 146 px is what Chromium draws the longest of them in.
+        assert label_width("before time_tolerance") >= 146
+        assert label_width("after time_tolerance") < label_width(
+            "before time_tolerance"
+        )
+
+
 async def test_a_tables_row_wraps_inside_itself(session):
     """A points row holds ten controls: it wraps inside the row rather
     than run past the editor — no inline `flex-wrap`, no `no-wrap`."""

@@ -4311,8 +4311,9 @@ def _tables_project(tmp_path: Path) -> tuple[Path, Path]:
 
 #: The open editor's table: the rows' box as it scrolls (`[scrollWidth,
 #: clientWidth, left, right of what it shows]`) and, per row, every control
-#: in document order — a field's label, box, input line and whether its
-#: label is cut; a button's label and box.
+#: in document order — a field's label, box, input line and its label's
+#: `[scrollWidth, clientWidth]` (cut where the first is the larger); a
+#: button's label and box.
 READ_TABLE = """() => {
   const t = document.querySelector('.dstf-editor .dstf-table-scroll');
   const r = t.getBoundingClientRect();
@@ -4327,6 +4328,7 @@ READ_TABLE = """() => {
         const label = c.querySelector('.q-field__label');
         return control
           ? {label: label.innerText, box: box(c),
+             cut: [label.scrollWidth, label.clientWidth],
              line: control.getBoundingClientRect().bottom,
              middle: (control.getBoundingClientRect().top
                       + control.getBoundingClientRect().bottom) / 2}
@@ -4416,6 +4418,8 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
                 names = [_control_name(c) for c in cells]
                 assert names == expected, where
                 for cell in cells:
+                    needs, has = cell.get("cut", (0, 0))
+                    assert needs <= has, (where, cell)  # no label is cut
                     assert left - 0.5 <= cell["box"][0], (where, cell)
                     assert cell["box"][2] <= right + 0.5, (where, cell)
                     assert cell["box"][3] <= row["box"][3] + 0.5, (where, cell)
@@ -4448,13 +4452,65 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
             editor.get_by_role("button", name="Done").click()
             expect(editor).to_have_count(0, timeout=EXPECT_TIMEOUT)
         # How much of the 336 px scroll box one row takes: a line of
-        # controls is 40 px, and a points row is one line at 1280, two
-        # beside the drawer or at 900, three at 900 beside the drawer
-        # (where every control on its own line took 296 px).
-        lines = {(1280, False): 1, (1280, True): 2, (900, False): 2, (900, True): 3}
-        n = lines[(width, drawer)]
-        assert heights["points · x"] == pytest.approx(40 * n + 8 * (n - 1), abs=2)
+        # controls is 40 px, the lines 8 px apart, and a points row is one
+        # line at 1280, two beside the drawer or at 900, and at 900 beside
+        # the drawer three and `Remove row` on a fourth of its own, 38 px
+        # (where every control on its own line took 296 px). A fourth, not
+        # three: the time tolerance's two cells are as wide as their labels
+        # (328 px with the toggle), and the button no longer fits beside
+        # them in that row's 415 px.
+        tall = {(1280, False): 40, (1280, True): 88, (900, False): 88, (900, True): 182}
+        assert heights["points · x"] == pytest.approx(tall[(width, drawer)], abs=2)
         assert heights["event-timing · x"] <= 40 * 2 + 8 + 2
+
+
+@pytest.mark.parametrize("width", [1280, 900])
+@pytest.mark.parametrize("drawer", [False, True])
+def test_an_empty_cells_label_is_read_whole(
+    tmp_path, playwright_browser, width, drawer
+):
+    """An EMPTY cell's label is drawn full size on its input line, where a
+    filled one's floats above it, smaller. At the cells' 120 px `before
+    time_tolerance` read "before time_tole…" and `after time_tolerance`
+    "after time_toler…": a tolerance's cell is as wide as its label needs
+    (143 and 132 px) — and the row still wraps inside itself, nothing wider
+    than what holds it, at 1280 and 900 px, the Variables drawer shut and
+    open."""
+    with _served(tmp_path, playwright_browser, project=_typing_project) as page:
+        page.set_viewport_size({"width": width, "height": 900})
+        if drawer:
+            _open_vars(page)
+        page.wait_for_timeout(700)
+        _open_crit(page, 1, "points · y")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.locator(".dstf-table-scroll").evaluate(
+            "e => e.scrollIntoView({block: 'center'})"
+        )
+        page.wait_for_timeout(400)
+        where = (width, drawer)
+        table = page.evaluate(READ_TABLE)
+        scroll_width, client_width, left, right = table["scroll"]
+        assert scroll_width == client_width, where
+        (row,) = table["rows"]
+        fields = {c["label"]: c for c in row["cells"] if "label" in c}
+        empty = [
+            "− tolerance",
+            "+ tolerance",
+            "before time_tolerance",
+            "after time_tolerance",
+        ]
+        assert set(empty) <= set(fields), where
+        for label, cell in fields.items():
+            needs, has = cell["cut"]
+            assert needs <= has, (where, label, cell["cut"])
+            assert left - 0.5 <= cell["box"][0], (where, label)
+            assert cell["box"][2] <= right + 0.5, (where, label)
+            assert cell["box"][3] <= row["box"][3] + 0.5, (where, label)
+        (page_scroll, page_client), (scroll, client), _right = page.evaluate(OVERFLOW)
+        assert page_scroll == page_client, where
+        assert scroll <= client, where
+        _shot(page, tmp_path, f"table-empty-{width}{'-drawer' if drawer else ''}")
 
 
 def test_a_rows_tolerance_is_typed_as_two_sides_with_real_keys(

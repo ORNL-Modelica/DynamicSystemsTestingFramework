@@ -44,6 +44,13 @@ BOTTOM = "bottom-slots"
 #: that 38-character hint, 252 px for 50: 4.9-5.0 px, rounded up for a
 #: wider fallback font), plus the bottom line's 12 px padding each side.
 HINT_PX_PER_CHAR, HINT_PADDING_PX = 5.4, 24
+#: An EMPTY field draws its label at full size on its input line — a filled
+#: one's floats above it, smaller — and cuts it with "…" where the field is
+#: narrower: at a table cell's 120 px "before time_tolerance" read "before
+#: time_tole…". px per character of Quasar's 14 px label font, measured in
+#: Chromium (146 px for those 21 characters: 6.95), rounded up for a wider
+#: fallback font.
+LABEL_PX_PER_CHAR = 7.2
 #: What the link toggle between a tolerance's two fields says, by state.
 LINK_TIPS = {
     True: "Linked: both sides change together",
@@ -183,6 +190,11 @@ def render_form(
             control.tooltip(spec.help)
         form.controls[spec.name] = control
     return form
+
+
+def label_width(label: str) -> int:
+    """The px a field needs for ``label`` uncut while the field is empty."""
+    return math.ceil(len(label) * LABEL_PX_PER_CHAR)
 
 
 def _set(form: Form, name: str, value: Any, on_change: OnChange) -> None:

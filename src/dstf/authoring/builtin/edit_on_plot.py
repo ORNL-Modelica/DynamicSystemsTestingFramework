@@ -475,7 +475,7 @@ def _table(
     cell is rebuilt as it stands — blank and marked — not from the pair
     its row still holds, so nothing is staged until the blank is filled
     (or its row is the one removed)."""
-    from ..forms import SidesControl, sides_control
+    from ..forms import SidesControl, label_width, sides_control
     from ..typed_number import TypedNumber
 
     container = ui.column().classes("w-full")
@@ -555,8 +555,13 @@ def _table(
                                 mark=f"{mark}:{i}:{key}",
                                 required=key in required,
                             )
-                            group.lower.props(_NO_BOTTOM)
-                            group.upper.props(_NO_BOTTOM)
+                            for side in (group.lower, group.upper):
+                                side.props(_NO_BOTTOM)
+                                # At least as wide as its label, which an
+                                # EMPTY cell draws full size: the cells'
+                                # 120 px cut "before time_tolerance".
+                                width = label_width(side.props["label"])
+                                side.style(f"min-width: {width}px")
                             pairs.append((row, key, group))
                         elif isinstance(kind, tuple):
                             value = row.get(key, kind[0])
