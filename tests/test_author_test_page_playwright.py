@@ -7567,12 +7567,14 @@ async (colour) => {
   const {Plotly} = await import('nicegui-plotly');
   const [a, b] = document.querySelectorAll('.js-plotly-plot');
   const grips = (a.layout.shapes || []).filter(s => s.fillcolor === colour);
-  const meta = JSON.parse(JSON.stringify(b.layout.meta));
+  // Into the figure plot 1 holds, where the module reads it; the relayout
+  // is of the shapes alone, a redraw of them and not a replot.
+  const said = b.layout.meta.dstf;
   for (const s of grips) {
-    meta.dstf.grips[s.name] = a.layout.meta.dstf.grips[s.name];
-    meta.dstf.draggable.push(s.name);
+    said.grips[s.name] = a.layout.meta.dstf.grips[s.name];
+    said.draggable.push(s.name);
   }
-  await Plotly.relayout(b, {shapes: [...(b.layout.shapes || []), ...grips], meta});
+  await Plotly.relayout(b, {shapes: [...(b.layout.shapes || []), ...grips]});
   return grips.length;
 }
 """
