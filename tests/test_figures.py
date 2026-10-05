@@ -1609,6 +1609,90 @@ def test_a_scalars_result_lines_are_not_draggable_and_its_sides_are():
     }
 
 
+# -- what a leaf is dragged by, for a caller that says it in words --------------
+
+
+def _scalar_view(**bounds):
+    """A scalar leaf: scored against its baseline (two tolerance lines), or
+    — with ``min_value`` / ``max_value`` — by its bounds."""
+    from dstf.comparison.algorithms import _compare_scalar
+    from dstf.comparison.sides import Sides
+
+    t = np.linspace(0.0, 10.0, 11)
+    flat = np.full_like(t, 4.0)
+    kwargs = {"min_value": None, "max_value": None, **bounds}
+    vc = _compare_scalar(
+        t,
+        flat,
+        t,
+        flat,
+        reduction="final",
+        tolerance=Sides(0.25, 0.5),
+        tolerance_mode="abs",
+        **kwargs,
+    )
+    vc.name = "x"
+    return build_view(
+        "x", act_time=t, act_values=flat, ref_time=t, ref_values=flat,
+        leaves=[_stamped(vc)],
+    )  # fmt: skip
+
+
+def _nrmse_view(window=None):
+    t = np.linspace(0.0, 10.0, 101)
+    vc = _compare_trajectories(t, np.sin(t), t, np.sin(t) + 0.01, 0.05)
+    vc.name = "x"
+    view = build_view(
+        "x", act_time=t, act_values=np.sin(t) + 0.01, ref_time=t,
+        ref_values=np.sin(t), leaves=[_stamped(vc)],
+    )  # fmt: skip
+    if window is None:
+        return view
+    leaf = view.leaves[0]
+    return replace(view, leaves=(replace(leaf, geometry=(*leaf.geometry, window)),))
+
+
+#: What a ringed leaf is dragged by, per view: rings and arrows, bound
+#: lines alone, or nothing.
+DRAGS = {
+    **{mode: (make, "rings") for mode, make in GRIP_VIEWS.items()},
+    "tube-points": (lambda: _tube_view(tube_points=TUBE_POINTS), "rings"),
+    "handles": (_handle_view, "rings"),  # rings AND a bound line
+    "range": (lambda: _range_view(P0), "lines"),
+    "scalar-baseline": (_scalar_view, "lines"),
+    "scalar-bounds": (lambda: _scalar_view(min_value=0.0, max_value=9.0), "lines"),
+    "nrmse": (_nrmse_view, ""),
+    "nrmse-windowed": (
+        lambda: _nrmse_view(Window(id="window", start=2.0, end=8.0)),
+        "",
+    ),
+}
+TUBE_POINTS = [
+    {"time": 0.2, "upper": 0.1, "lower": 0.1},
+    {"time": 0.8, "upper": 0.2, "lower": 0.1},
+]
+
+
+@pytest.mark.parametrize("mode", DRAGS)
+def test_what_a_leaf_is_dragged_by_is_what_the_figure_makes_draggable(mode):
+    """`drags_of` says in a word what the editable figure gives a ringed
+    leaf to be dragged by — for the editor's hint line. It is read off the
+    geometry, and is the figure's own map of that geometry: `rings` exactly
+    where a draggable shape is a ring or an arrow (pixel paths), `lines`
+    where every draggable shape is a line, nothing where there is none."""
+    from dstf.figures.plotly import drags_of
+
+    make, drags = DRAGS[mode]
+    view = make()
+    (leaf,) = view.leaves
+    assert drags_of(leaf.geometry) == drags
+    fig = variable_figure(view, editable=True)
+    names = set(_pointer(fig)["draggable"])
+    kinds = {s["type"] for s in fig["layout"]["shapes"] if s.get("name") in names}
+    assert kinds <= {"path", "line"}, kinds
+    assert ("rings" if "path" in kinds else "lines" if kinds else "") == drags
+
+
 # -- headroom for the open criterion's arrows -----------------------------------
 
 

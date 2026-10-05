@@ -26,8 +26,9 @@ every other one.
 from __future__ import annotations
 
 import html
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import Literal
 
 import numpy as np
 
@@ -933,6 +934,22 @@ POINTER = "dstf"
 
 def _no_pointer() -> dict:
     return {"grips": {}, "targets": {}, "draggable": []}
+
+
+def drags_of(geometry: Iterable[Primitive]) -> Literal["rings", "lines", ""]:
+    """What the editable figure gives a ringed leaf of ``geometry`` to be
+    dragged by, in a word — :func:`_leaf_traces`' own rule, for a caller
+    that has to SAY it (the editor's hint line): ``"rings"`` where it draws
+    a ring (a handle marker) or an arrow (a grip), with or without lines;
+    ``"lines"`` where the handle lines are all an editor moves; ``""``
+    where nothing is. Read off the geometry, so the words follow what a
+    metric draws and no list of metric names."""
+    lines = False
+    for prim in geometry:
+        if prim.kind == "grip" or (isinstance(prim, Marker) and prim.kind == "handle"):
+            return "rings"
+        lines = lines or (isinstance(prim, HLine) and prim.kind == "handle")
+    return "lines" if lines else ""
 
 
 def _leaf_traces(

@@ -1003,6 +1003,53 @@ HIT_AT = """
 """
 
 
+STAGED_AND_SAVE = " Edits are staged as you make them; Save writes them."
+
+
+def test_the_editors_hint_names_what_the_open_criterion_drags(
+    tmp_path, playwright_browser
+):
+    """A range's editor said "Drag a ring or a tolerance arrow on the plot
+    (hover a point to show its arrows)": it has two bound lines, and no
+    ring, arrow or point. It says to drag a line — which a real mouse then
+    does — and names no table, having none; a tube's says rings, and its
+    table."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "range · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        hint = editor.locator(".dstf-why").first
+        expect(hint).to_have_text(
+            "Drag a line on the plot, or edit the fields." + STAGED_AND_SAVE,
+            timeout=EXPECT_TIMEOUT,
+        )
+        expect(editor).not_to_contain_text("edit the table")
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "hint-range")
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.evaluate(RELAYOUT_Y, LINE_Y)
+        page.wait_for_timeout(400)
+        hit = page.evaluate(HIT_AT, [0.5, 2.0])
+        assert hit["name"] == MAX_LINE, hit
+        _drag(page, hit["cx"], hit["cy"], -15)
+        expect(
+            page.locator(".dstf-header-row").get_by_role(
+                "button", name="1 pending edit"
+            )
+        ).to_be_visible(timeout=EXPECT_TIMEOUT)
+
+        _open_crit(page, 0, "tube · x")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(editor.locator(".dstf-why").first).to_have_text(
+            "Drag a ring or a tolerance arrow on the plot (hover a point to show "
+            "its arrows), or edit the fields." + STAGED_AND_SAVE,
+            timeout=EXPECT_TIMEOUT,
+        )
+        expect(editor).to_contain_text("drag on the plot, or edit the table")
+
+
 def test_a_windowed_bound_drags_inside_and_outside_its_window(
     tmp_path, playwright_browser
 ):

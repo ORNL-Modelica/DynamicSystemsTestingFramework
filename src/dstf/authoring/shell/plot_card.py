@@ -30,8 +30,9 @@ from nicegui import ui
 from ...backends.types import VariableText
 from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
+from ...figures.assemble import leaves_by_variable
 from ...figures.families import family_label, group_families
-from ...figures.plotly import _LABELS, Visibility
+from ...figures.plotly import _LABELS, Visibility, drags_of
 from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
 from ..session import Selection
@@ -78,14 +79,17 @@ _SIGNED = (
 #: was found that moves it.
 _EDITED = ("metric", "variable", "params", "window", "against", "advisory")
 
-#: The open editor's hint line (`PlotCard._say_hint`): for a criterion with
-#: something to drag on its plot, for one with nothing (nrmse), and what
-#: follows either.
-EDITOR_HINT = (
-    "Drag a ring or a tolerance arrow on the plot (hover a point to show its "
-    "arrows), or edit the fields."
-)
-EDITOR_HINT_NO_HANDLES = "Drag a ring on the plot, or edit the fields."
+#: The open editor's hint line (`PlotCard._say_hint`), by what the plot
+#: draws for the open criterion to be dragged by (`figures.plotly.drags_of`)
+#: — rings or arrows, bound lines alone, nothing — and what follows each.
+EDITOR_HINTS = {
+    "rings": (
+        "Drag a ring or a tolerance arrow on the plot (hover a point to show "
+        "its arrows), or edit the fields."
+    ),
+    "lines": "Drag a line on the plot, or edit the fields.",
+    "": "Edit the fields.",
+}
 STAGED = " Edits are staged as you make them; Save writes them."
 
 #: The hover module of the tolerance grips (`grips.js`): its file, and where
@@ -659,7 +663,7 @@ class PlotCard:
                 # next keystroke staged it straight back (the Task 6 review).
                 self.editor.build()
                 self._said(None)  # the rebuild took the editor's own line
-                self._say_hint(view)
+                self._say_hint()
                 self._edited = edited
             else:
                 # The editor is not rebuilt while it is open, so a lock that
@@ -924,24 +928,38 @@ class PlotCard:
             )
             self.editor.build()
         view = self._view(view)
-        self._say_hint(view)
+        self._say_hint()
         self._edited = self._edited_now(view)
 
-    def _say_hint(self, view: dict | None) -> None:
+    def _drags(self) -> str:
+        """What the plot draws for the open criterion to be dragged by —
+        a key of `EDITOR_HINTS` — read off the geometry its leaf was scored
+        with, as the figure reads it: a range has lines and no ring, nrmse
+        nothing, and neither is known here by its name. Nothing where the
+        leaf was not scored, or where its metric has no editor for a drag
+        (one would be refused)."""
+        comp = self.page.shell.session.comparisons.get(self.page.model_id)
+        tree = comp.metric_tree if comp is not None else None
+        for pairs in leaves_by_variable(tree).values():
+            for path, vc in pairs:
+                if path == self.open_path:
+                    desc = registry.metric(vc.mode)
+                    if desc is None or desc.edit_handle is None:
+                        return ""
+                    return drags_of(vc.geometry)
+        return ""
+
+    def _say_hint(self) -> None:
         """The editor's hint line: what drags on the plot for the open
-        criterion's metric. The arrows show only while the pointer is near
-        their point, so the line is what tells a person they exist. A
-        metric with nothing to drag (nrmse) keeps the line it had; its Edit
-        on plot place says why. Said again after an edit: the mode is a
-        field of the editor."""
+        criterion. The arrows show only while the pointer is near their
+        point, so the line is what tells a person they exist; a criterion
+        with lines alone is told to drag a line, and one that draws nothing
+        to drag (nrmse) only to edit its fields — its Edit on plot place
+        says why. Said again after an edit: the mode is a field of the
+        editor."""
         if self.hint is None or self.hint.is_deleted:
             return
-        leaf = next(
-            (n for n in leaves_of(view) if str(n["path"]) == self.open_path), None
-        )
-        desc = registry.metric(str(leaf.get("metric"))) if leaf is not None else None
-        drags = desc is not None and desc.edit_handle is not None
-        self.hint.set_text((EDITOR_HINT if drags else EDITOR_HINT_NO_HANDLES) + STAGED)
+        self.hint.set_text(EDITOR_HINTS[self._drags()] + STAGED)
 
     def _said(self, text: str | None) -> None:
         """What the open editor's error line just said (`InlineHost`'s
@@ -993,7 +1011,7 @@ class PlotCard:
         # which stages the materialization AND the replace, is one edit
         # here rather than two.
         view = self._view()
-        self._say_hint(view)
+        self._say_hint()
         self._edited = self._edited_now(view)
 
     def dispose(self) -> None:

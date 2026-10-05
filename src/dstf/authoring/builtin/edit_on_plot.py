@@ -308,7 +308,6 @@ class EditOnPlot:
                 )
 
         ui_panel.figure.on("plotly_relayout", on_relayout)
-        ui.label("drag on the plot, or edit the table").classes("text-xs")
         tree = s.tree(model_id)
         if tree is None:
             return
@@ -324,7 +323,13 @@ class EditOnPlot:
                 continue
             raw = node_at(tree, path)
             name = raw.get("metric", DEFAULT_METRIC)
-            for field, columns in _list_fields(name):
+            tables = _list_fields(name)
+            if tables:
+                # Said where a table is drawn: a range or a scalar has lines
+                # on the plot and no table, and the editor's own hint line
+                # says what its plot drags.
+                ui.label("drag on the plot, or edit the table").classes("text-xs")
+            for field, columns in tables:
                 ui.label(_field_label(name, field)).classes("text-xs text-bold")
                 rows = copy.deepcopy(raw.get(field) or [])
                 _table(ui, path, field, columns, rows, span, ui_panel, model_id)

@@ -3520,45 +3520,89 @@ NRMSE_AND_RANGE = {
 STAGED_AND_SAVE = " Edits are staged as you make them; Save writes them."
 
 
+RINGS_HINT = (
+    "Drag a ring or a tolerance arrow on the plot (hover a point to "
+    "show its arrows), or edit the fields."
+)
+LINE_HINT = "Drag a line on the plot, or edit the fields."
+FIELDS_HINT = "Edit the fields."
+
+
 async def test_the_editors_hint_says_what_drags_on_the_plot(shell):
-    """The plot has an arrow per tolerance side, shown only while the
-    pointer is near its point, and nothing said so: the hint named the
-    rings alone. A criterion with nothing to drag (nrmse) keeps the line it
-    had, and its Edit on plot place says why."""
+    """The hint says what THIS criterion draws to be dragged. A range has
+    bound lines — no ring, no arrow, no point to hover — and was told to
+    drag "a ring or a tolerance arrow"; nrmse draws nothing and was told to
+    drag a ring. Its Edit on plot place says why it has none."""
     _stage_tree(shell, A, NRMSE_AND_RANGE)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         user.find(marker=f"criterion:0:{T1}").click()
         await _settled(lambda: page.open == (0, T1))
-        assert _one(user, f"editor-hint:0:{T1}").text == (
-            "Drag a ring or a tolerance arrow on the plot (hover a point to "
-            "show its arrows), or edit the fields." + STAGED_AND_SAVE
-        )
+        assert _one(user, f"editor-hint:0:{T1}").text == LINE_HINT + STAGED_AND_SAVE
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: page.open == (0, T0))
-        assert _one(user, f"editor-hint:0:{T0}").text == (
-            "Drag a ring on the plot, or edit the fields." + STAGED_AND_SAVE
-        )
+        assert _one(user, f"editor-hint:0:{T0}").text == FIELDS_HINT + STAGED_AND_SAVE
         assert _one(user, "why:edit-on-plot").text == "nrmse has no on-plot handles"
+
+
+#: `test_handles.TREE`'s leaves on D, and a scalar scored against its
+#: baseline: what each draws to be dragged, and whether it has a table.
+HINTS = [
+    (0, RINGS_HINT, True),  # tube: a ring per control point
+    (1, LINE_HINT, False),  # range: its two bound lines
+    (2, RINGS_HINT, True),  # points: a ring per checkpoint, an arrow per side
+    (3, LINE_HINT, False),  # scalar, by its bounds
+    (6, LINE_HINT, False),  # scalar, against its baseline: its two sides' lines
+]
+
+
+@pytest.mark.parametrize(("child", "hint", "table"), HINTS)
+async def test_the_hint_and_the_tables_line_follow_what_the_criterion_draws(
+    shell, child, hint, table
+):
+    """Read off what the plot draws for the open criterion, not off its
+    metric's name: rings or arrows, lines alone, or nothing. And "drag on
+    the plot, or edit the table" is said where a table is drawn."""
+    tree = copy.deepcopy(TREE)
+    tree["children"].append(
+        {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}}
+    )
+    _stage_tree(shell, D, tree)
+    path = f"/metrics/children/{child}"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.cards[0].show()
+        user.find(marker=f"criterion:0:{path}").click()
+        await _settled(lambda: page.open == (0, path))
+        assert _one(user, f"editor-hint:0:{path}").text == hint + STAGED_AND_SAVE
+        said = [
+            e.text
+            for e in _one(user, f"editor:0:{path}").descendants()
+            if isinstance(e, ui.label)
+        ]
+        assert ("drag on the plot, or edit the table" in said) is table
 
 
 async def test_the_editors_hint_follows_a_switch_of_mode(shell):
     """The hint is the open criterion's: switched from nrmse to a mode
-    with handles in the editor, it says the new mode's."""
+    with lines to drag in the editor, it says the new mode's."""
     _stage_tree(shell, A, NRMSE_AND_RANGE)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: page.open == (0, T0))
         hint = _one(user, f"editor-hint:0:{T0}")
-        assert hint.text.startswith("Drag a ring on the plot, or edit the fields.")
+        assert hint.text == FIELDS_HINT + STAGED_AND_SAVE
         (mode,) = [
             e
             for e in page.client.elements.values()
             if isinstance(e, ui.select) and e.props.get("label") == "mode"
         ]
         mode.set_value("range")
-        await _settled(lambda: hint.text.startswith("Drag a ring or a tolerance arrow"))
+        await _settled(lambda: hint.text == LINE_HINT + STAGED_AND_SAVE)
+        mode.set_value("points")
+        await _settled(lambda: hint.text == RINGS_HINT + STAGED_AND_SAVE)
 
 
 async def test_one_editor_at_a_time_page_wide(shell):

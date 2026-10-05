@@ -668,6 +668,19 @@ async def test_the_tables_line_says_the_plot_and_the_table(session):
         await user.should_not_see("drag a ring")
 
 
+async def test_the_tables_line_is_said_only_where_a_table_is_drawn(session):
+    """A range has bound lines and no table: "drag on the plot, or edit
+    the table" named a table that is not there. The editor's own hint line
+    says what its plot drags."""
+    _tree_on_d(session)
+    on_range = Selection(
+        tests=frozenset({D}), variable="x", leaf_path="/metrics/children/1"
+    )
+    async with host(session, EditOnPlot(), on_range) as (user, _errors, figure):
+        await user.should_not_see("edit the table")
+        assert [kind for kind, _ in figure.handlers] == ["plotly_relayout"]
+
+
 async def test_the_rows_scroll_and_add_row_does_not(session):
     """A long table would push the editor off the card, so the rows sit in a
     scrolling container — `Add row` sits after it, where a table of twenty
