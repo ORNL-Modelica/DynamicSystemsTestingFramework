@@ -3646,7 +3646,8 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         s = Session()
         s.open(_modelica_project(tmp_path), work_dir=tmp_path / "work")
         foo = "MyLib.Foo"
-        assert s.project.test(foo) is not None and s.spec.saved_entry(foo) is None
+        scanned = s.project.test(foo)
+        assert scanned is not None and s.spec.saved_entry(foo) is None
         tree = {
             "combinator": "and",
             "children": [{"metric": "nrmse", "variable": "unitTests.x[1]"}],
@@ -3657,6 +3658,22 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         s.stage([PatchOp(foo, "remove", "/metrics")])
         assert s.spec.pending == []
         assert s.spec.entry(foo) is None
+        # The test is the scan's again, not one merged with a bare entry
+        # (whose `source` reads "both").
+        assert s.project.test(foo) == scanned
+
+    def test_a_number_rewritten_as_true_is_an_edit(self, tmp_path):
+        """The file's `1` and a staged `true` are two JSON values, though
+        Python's ``==`` calls them equal: the edit stays pending."""
+        leaf = {"metric": "event-timing", "variable": "x", "count_must_match": 1}
+        s = _session_with_entry(
+            tmp_path, {"metrics": {"combinator": "and", "children": [leaf]}}
+        )
+        s.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "count_must_match": True})])
+        assert len(s.spec.pending) == 1
+        # ... and the same number written `1.0` is none.
+        s.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "count_must_match": 1.0})])
+        assert s.spec.pending == []
 
     def test_the_tree_written_out_is_an_edit_of_the_entry(self, session):
         """A flat entry's first per-leaf edit writes its tree out, and the
