@@ -4882,30 +4882,65 @@ def test_a_table_cell_and_a_window_field_keep_what_is_typed(
         assert _shown_and_staged(page, field, before) == ("0.25", "0.25")
 
 
-@pytest.mark.parametrize("twin", ["0.4", "0.3"])
 def test_a_field_typed_in_and_left_takes_the_servers_value_again(
-    tmp_path, playwright_browser, twin
+    tmp_path, playwright_browser
 ):
     """A field keeps what was typed only while it is typed in: `0.25` into
-    the linked `−` and, the server having answered, another number into `+`
-    — `−`, left, reads what the server mirrors into it. Also when that
-    number is the 0.3 the `−` field OPENED on: what the field shows is what
-    was typed in it, not the value it was drawn with, or the mirror is no
-    change to it and the field goes on reading 0.25 beside a staged 0.3."""
+    the linked `−` and, the server having answered, `0.4` into `+` — `−`,
+    left, reads the 0.4 the server mirrors into it."""
     with _slow_editor(tmp_path, playwright_browser, 1, "points · y") as (page, editor):
         lower = editor.get_by_label("− Default tolerance", exact=True)
         upper = editor.get_by_label("+ Default tolerance", exact=True)
-        expect(lower).to_have_value("0.3")
         _type_over(page, lower, "0.25")
         _answered(page)
-        assert lower.input_value() == "0.25"
-        _type_over(page, upper, twin)
+        _type_over(page, upper, "0.4")
+        assert _shown_and_staged(page, upper, POINTS_Y) == ("0.4", "0.4")
+        assert float(lower.input_value()) == 0.4
+
+
+def _digit_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_typing_project` with y's points leaf at a tolerance of 3: a
+    number one key types."""
+    cfg, work = _typing_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"]["children"][2]["tolerance"] = 3
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_a_field_left_reads_what_was_typed_then_its_twins_mirror(
+    tmp_path, playwright_browser
+):
+    """The linked `−` opens on 3 and `5` is typed into it. LEFT, it still
+    reads 5: what the field shows is what was typed in it, not the value it
+    was drawn with — Quasar puts a left number input back to the value it
+    was handed, and with what is typed not recorded as that, `−` read 3
+    again beside a staged 5 and a `+` reading 5. Then `3` typed over `+` —
+    ONE key, so the mirror into `−` is the single change 5 -> 3, the very
+    value the field opened on — and `−` reads 3."""
+    with _slow_editor(
+        tmp_path, playwright_browser, 1, "points · y", project=_digit_project
+    ) as (page, editor):
+        lower = editor.get_by_label("− Default tolerance", exact=True)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(lower).to_have_value("3")
+        _type_over(page, lower, "5")
         _answered(page)
-        assert upper.input_value() == twin
-        # Read from the Session: staged back to the saved 0.3, the entry is
+        page.locator(".dstf-subheader").click()  # the field is left
+        page.wait_for_timeout(500)
+        assert not lower.evaluate("e => document.activeElement === e")
+        assert (lower.input_value(), upper.input_value()) == ("5", "5")
+        assert _staged_tree(page)["children"][2]["tolerance"] == 5
+        _type_over(page, upper, "3")
+        _answered(page)
+        assert upper.input_value() == "3"
+        # Read from the Session: staged back to the saved 3, the entry is
         # the file's and the preview has no line to show.
-        assert _staged_tree(page)["children"][2]["tolerance"] == float(twin)
-        assert float(lower.input_value()) == float(twin)
+        assert _staged_tree(page)["children"][2]["tolerance"] == 3
+        assert float(lower.input_value()) == 3
 
 
 def _required_cells_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -4949,12 +4984,17 @@ def test_a_field_marked_required_keeps_what_is_typed_into_it(
     tmp_path, playwright_browser, name, label, read
 ):
     """A field cleared says "required" — the server's own mark — and the
-    first key typed into it takes the mark away: the server resends the
+    first number typed into it takes the mark away: the server resends the
     WHOLE field, its value with it, in answer to that key, under the keys
-    that follow. `0.25` typed at a person's speed is what the field reads
-    and what is staged. No hint is written here: the one thing that keeps
-    the field is the component ignoring a server value while it is typed
-    in, in a table's cell and in a form's field alike."""
+    that follow. `.25` typed at a person's speed is what the field reads
+    and 0.25 is what is staged. No hint is written here: the one thing
+    that keeps the field is the component ignoring a server value while it
+    is typed in, in a table's cell and in a form's field alike.
+
+    `.25`, not `0.25`: the value comes back with the resent field unless it
+    reads as the text the browser last sent, and a leading `0` typed into
+    an empty field does (`"0"`) — nothing lands under the keys. `.2` comes
+    back as `0.2`, over a field that already reads `.25`."""
     with _slow_editor(
         tmp_path, playwright_browser, 1, name, project=_required_cells_project
     ) as (page, editor):
@@ -4967,10 +5007,10 @@ def test_a_field_marked_required_keeps_what_is_typed_into_it(
         expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
         expect(marked).to_contain_text("required")
         _answered(page)
-        page.keyboard.type("0.25", delay=KEY_MS)
+        page.keyboard.type(".25", delay=KEY_MS)
         _answered(page)
         expect(marked).to_have_count(0)
-        assert field.input_value() == "0.25"
+        assert field.input_value() == ".25"
         assert read(_staged_tree(page)) == 0.25
 
 
