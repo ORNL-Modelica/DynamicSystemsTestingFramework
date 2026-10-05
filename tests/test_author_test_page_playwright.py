@@ -9643,3 +9643,79 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
         print("LET GO", case, written(), ranges[axis])
         assert written() == pytest.approx(end(ranges[axis]), abs=1e-9), ranges
         assert written() != (was["points"][0] if "points" in tail else was)[key]
+
+
+# -- an arrow dragged across its own axis moves nothing ---------------------------
+
+#: An arrow of `_grips_project`'s second checkpoint, the way it is dragged
+#: ACROSS the axis it moves on, the cell it sets and what that cell holds.
+ACROSS = {
+    "a value side, sideways": ("/points/upper/1", (40, 0), "+ tolerance", "0.08"),
+    "a value side, 2 px up": ("/points/upper/1", (40, -2), "+ tolerance", "0.08"),
+    "a time side, down": ("/points/before/1", (0, 40), "before time_tolerance", "0.05"),
+    "a time side, 2 px left": (
+        "/points/before/1",
+        (-2, 40),
+        "before time_tolerance",
+        "0.05",
+    ),
+}
+
+
+#: Keep what the hover module makes of each relayout on its way to the
+#: server, for the test to read.
+KEEP_RELEASES = """
+() => {
+  const grips = window.DstfGrips, released = grips.released.bind(grips);
+  window.__dstfReleases = [];
+  grips.released = (id, update) => {
+    const out = released(id, update);
+    window.__dstfReleases.push(out);
+    return out;
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("case", ACROSS)
+def test_an_arrow_dragged_across_its_own_axis_stages_nothing(
+    tmp_path, playwright_browser, case
+):
+    """An arrow moves on ONE axis. A value side's arrow dragged purely
+    sideways staged 0.08 as 0.0800095: Plotly moves the shape the 40 px,
+    and re-snaps the anchor it did not move. With under 3 px of travel
+    along the arrow's own axis a release is no move: it says no position
+    on that axis, nothing is staged, the cell reads what it read, and the
+    arrow is back where it stood."""
+    tail, (dx, dy), label, value = ACROSS[case]
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        expect(_table_cell(page, 1, label)).to_have_value(value)
+        page.evaluate(KEEP_RELEASES)
+        was = _drag_arrow(page, tail, dx, dy)
+        page.wait_for_timeout(800)  # a staged edit would have landed by now
+        print("ACROSS", case, _pending(page), _table_cell(page, 1, label).input_value())
+        # What the release said of the arrow: where it went ACROSS its
+        # axis, and nothing along it (a time side's re-snap is exact here,
+        # and would have staged nothing either way).
+        (sent,) = page.evaluate("() => window.__dstfReleases")
+        own, other = ("y", "x") if "upper" in tail else ("x", "y")
+        assert sent[f"shapes[{was['index']}].{own}anchor"] is None, sent
+        assert isinstance(sent[f"shapes[{was['index']}].{other}anchor"], float), sent
+        assert _pending(page) == "0 pending edits"
+        expect(_table_cell(page, 1, label)).to_have_value(value)
+        # Back where it stood, on both axes: the redraw that answers every
+        # release.
+        back = _settled_at(page, tail, "xanchor", was["xanchor"])
+        assert (back["xanchor"], back["yanchor"]) == (was["xanchor"], was["yanchor"])
+        assert page.locator(".dstf-editor .text-negative:visible").count() == 0
+        # And still an arrow that drags: 30 px along its own axis.
+        along = (0, -30) if "upper" in tail else (-30, 0)
+        _drag_arrow(page, tail, *along)
+        expect(_table_cell(page, 1, label)).not_to_have_value(
+            value, timeout=EXPECT_TIMEOUT
+        )
+        assert float(_table_cell(page, 1, label).input_value()) > float(value) + 0.01
+        sent = page.evaluate("() => window.__dstfReleases")[-1]
+        assert isinstance(sent[f"shapes[{was['index']}].{own}anchor"], float), sent

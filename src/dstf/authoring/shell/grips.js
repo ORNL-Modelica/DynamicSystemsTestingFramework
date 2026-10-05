@@ -42,6 +42,9 @@
   // How near a shown arrow, or the ring its group stands around, the plot's
   // own hover label gives way, px.
   const HUSH = 20;
+  // How far the pointer must travel along an arrow's own axis, press to
+  // release, for the release to move it, px.
+  const OWN_AXIS = 3;
 
   // What the server says of the figure `gd` holds, or null for a figure
   // that says nothing (then nothing is marked).
@@ -52,7 +55,7 @@
   const instances = new Map();
 
   function create(gd) {
-    const st = { gd, on: null, latched: false, xy: null, ranges: {} };
+    const st = { gd, on: null, latched: false, xy: null, ranges: {}, press: null, travel: null };
 
     // What the server says of the grip shape named `name`, or null; and
     // its group.
@@ -262,7 +265,9 @@
     const down = (e) => {
       if (!gd.contains(e.target)) return;
       st.latched = true;
-      // The ranges the drag is made in (`clamp`): the release's own
+      st.press = [e.clientX, e.clientY];
+      st.travel = null;
+      // The ranges the drag is made in (`released`): the release's own
       // relayout autoranges the axes over the dragged shape before anyone
       // hears of it.
       st.ranges = {};
@@ -275,6 +280,12 @@
     const up = (e) => {
       if (!st.latched) return;
       st.latched = false;
+      // How far the pointer went, per axis (`released`): heard here, in
+      // the capture phase, before Plotly ends its drag and relayouts.
+      st.travel = st.press && {
+        x: Math.abs(e.clientX - st.press[0]),
+        y: Math.abs(e.clientY - st.press[1]),
+      };
       const box = gd.getBoundingClientRect();
       const over =
         e.clientX >= box.left && e.clientX <= box.right &&
@@ -287,6 +298,10 @@
       here(null);
     };
 
+    // What a release sends of the shapes it moved: `update` is a relayout's
+    // (`shapes[N].xanchor`, `shapes[N].y0`, ...), read against the figure
+    // this plot holds; a copy is returned.
+    //
     // A shape let go OUTSIDE the plot area — on the page above it, off the
     // spectrum's left end — was released where the axis would be out
     // there, and that number was written (an arrow's side at 2.5 on an
@@ -294,20 +309,32 @@
     // Every position of a shape an editor moves — an arrow's anchor, a
     // ring's, a bound line's ends — is held to the range that was VISIBLE
     // through the drag, the press's (`down`): it lands on the plot's
-    // edge, where it was last drawn. `update` is a relayout's
-    // (`shapes[N].xanchor`, `shapes[N].y0`, ...), read against the figure
-    // this plot holds; a copy is returned. A position on the paper, and
-    // the pixel offsets of a shape sized in pixels, are no data to hold.
-    st.clamp = (update) => {
+    // edge, where it was last drawn. A position on the paper, and the
+    // pixel offsets of a shape sized in pixels, are no data to hold.
+    //
+    // And an arrow moves on ONE axis. Dragged across it — a value side's
+    // arrow, sideways — Plotly moves the shape and re-snaps the anchor it
+    // did not move: 0.08 came back 0.0800462, and was staged. With under
+    // OWN_AXIS px of travel along its own axis the release says no
+    // position on that axis (null): the editor reads no move, and the
+    // redraw that answers every release puts the arrow back.
+    st.released = (update) => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
       const free = new Set((info && info.draggable) || []);
+      const travel = st.travel;
+      st.travel = null;
       const out = { ...update };
       for (const [key, value] of Object.entries(update)) {
         const m = /^shapes\[(\d+)\]\.([xy])(anchor|0|1)$/.exec(key);
         if (!m || typeof value !== "number") continue;
         const s = shapes[+m[1]];
         if (!s || !free.has(s.name)) continue;
+        const grip = gripOf(s.name);
+        if (grip && grip.axis === m[2] && travel && travel[m[2]] < OWN_AXIS) {
+          out[key] = null;
+          continue;
+        }
         if (m[3] !== "anchor" && s[m[2] + "sizemode"] === "pixel") continue;
         const ref = m[2] === "x" ? s.xref || "x" : s.yref || "y";
         const range = /^[xy]\d*$/.test(ref) ? st.ranges[m[2] + "axis" + ref.slice(1)] : null;
@@ -383,11 +410,11 @@
       if (st) st.destroy();
       instances.delete(id);
     },
-    // A relayout of plot `id` on its way to the server (plot_card.py): a
-    // released shape's position held to the visible range (`clamp`).
+    // A relayout of plot `id` on its way to the server (plot_card.py):
+    // what that plot's instance says of a release.
     released(id, update) {
       const st = instances.get(id);
-      return st && update && typeof update === "object" ? st.clamp(update) : update;
+      return st && update && typeof update === "object" ? st.released(update) : update;
     },
   };
 })();
