@@ -246,6 +246,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    shape, so a grip hidden either way was still grabbed where nothing
    showed. Without a hover — a touch screen — they are always shown. */
 .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) { display: none; }
+/* The cursor over an arrow is the way it moves — up and down for a value
+   side, left and right for a time or a frequency side — by the axis
+   `grips.js` marks it with. Plotly's own for a draggable shape is `move`,
+   set over the path as the pointer comes, hence the `!important`. */
+.js-plotly-plot .shapelayer path[data-grip-axis="y"] { cursor: ns-resize !important; }
+.js-plotly-plot .shapelayer path[data-grip-axis="x"] { cursor: ew-resize !important; }
 /* While a group of grips is shown (`grips.js` marks the graph div), the
    plot's hover label is not: coming at a checkpoint from above or below,
    the unified label's box and its spike line covered the arrows and half

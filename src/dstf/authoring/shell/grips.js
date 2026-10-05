@@ -44,11 +44,30 @@
   function create(gd) {
     const st = { gd, on: null, latched: false, xy: null };
 
-    // The group of the grip shape named `name`, or null.
-    const groupOf = (name) => {
+    // What the server says of the grip shape named `name`, or null; and
+    // its group.
+    const gripOf = (name) => {
       const info = said(gd);
-      const grip = info && own(info.grips, name);
+      return info ? own(info.grips, name) : null;
+    };
+    const groupOf = (name) => {
+      const grip = gripOf(name);
       return grip ? grip.group : null;
+    };
+
+    // An arrow says what it sets — a tooltip, the SVG `title` child — in
+    // the server's words, and carries the axis it moves on for the
+    // stylesheet's cursor.
+    const SVG = "http://www.w3.org/2000/svg";
+    const tell = (el, grip) => {
+      el.setAttribute("data-grip-axis", grip.axis);
+      let title = el.querySelector("title");
+      if (!title) title = el.appendChild(document.createElementNS(SVG, "title"));
+      if (title.textContent !== grip.label) title.textContent = grip.label || "";
+    };
+    const untell = (el) => {
+      el.removeAttribute("data-grip-axis");
+      for (const title of el.querySelectorAll("title")) title.remove();
     };
 
     // Plotly replaces every shape path on a react or a newPlot: the marks go
@@ -63,13 +82,15 @@
         const name = (shapes[+el.getAttribute("data-index")] || {}).name;
         el.toggleAttribute("data-inert", !!free && !free.has(name));
         if (el.tagName !== "path") continue;
-        const g = groupOf(name);
-        if (g) {
-          el.setAttribute("data-grip", g);
-          el.toggleAttribute("data-grip-on", g === st.on);
+        const grip = gripOf(name);
+        if (grip) {
+          el.setAttribute("data-grip", grip.group);
+          el.toggleAttribute("data-grip-on", grip.group === st.on);
+          tell(el, grip);
         } else if (el.hasAttribute("data-grip")) {
           el.removeAttribute("data-grip");
           el.removeAttribute("data-grip-on");
+          untell(el);
         }
       }
     };
@@ -240,6 +261,7 @@
       for (const el of gd.querySelectorAll("[data-grip]")) {
         el.removeAttribute("data-grip");
         el.removeAttribute("data-grip-on");
+        untell(el);
       }
       for (const el of gd.querySelectorAll("[data-inert]")) {
         el.removeAttribute("data-inert");

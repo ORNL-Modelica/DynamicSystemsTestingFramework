@@ -1448,6 +1448,19 @@ def _pointer(fig: dict) -> dict:
     return fig["layout"]["meta"]["dstf"]
 
 
+#: What each arrow says of itself, by its edge: the words are Python's —
+#: the side names the editor's fields use, a tolerance's − / + read as
+#: lower / upper — and the page shows them as they come.
+GRIP_LABELS = {
+    "upper": "Drag to set the upper tolerance",
+    "lower": "Drag to set the lower tolerance",
+    "before": "Drag to set how much before",
+    "after": "Drag to set how much after",
+    "early": "Drag to set how much earlier",
+    "late": "Drag to set how much later",
+}
+
+
 def _range_view(path, window=None):
     t = np.linspace(0.0, 10.0, 101)
     vc = _compare_range(t, np.sin(t), min_value=-2.0, max_value=2.0)
@@ -1481,6 +1494,7 @@ def test_the_editable_figure_names_each_grip_its_group_and_its_axis(mode):
         assert said["axis"] == (
             "y" if family in ("points", "tube") and edge in ("upper", "lower") else "x"
         ), name
+        assert said["label"] == GRIP_LABELS[edge], name
 
 
 def test_the_editable_figure_names_the_ring_each_group_stands_around():
@@ -1517,8 +1531,16 @@ def test_a_third_party_grip_is_named_by_the_same_rule():
         replace(view, leaves=(replace(leaf, geometry=theirs),)), editable=True
     )
     assert _pointer(fig)["grips"] == {
-        f"{P0}/theirs/upper/a": {"group": f"{P0}/theirs/a", "axis": "y"},
-        f"{P0}/theirs/lower/a": {"group": f"{P0}/theirs/a", "axis": "y"},
+        f"{P0}/theirs/upper/a": {
+            "group": f"{P0}/theirs/a",
+            "axis": "y",
+            "label": "Drag to set the upper tolerance",
+        },
+        f"{P0}/theirs/lower/a": {
+            "group": f"{P0}/theirs/a",
+            "axis": "y",
+            "label": "Drag to set the lower tolerance",
+        },
     }
 
 

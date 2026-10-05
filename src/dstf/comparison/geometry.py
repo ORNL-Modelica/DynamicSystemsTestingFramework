@@ -117,6 +117,24 @@ def grip_group(prim: Primitive) -> str:
     return "/".join(parts[:-2] + parts[-1:])
 
 
+#: What a grip's arrow says of itself — its tooltip in the tool — by its
+#: edge, in the side names the editor's fields use (a tolerance's − / +
+#: read as lower / upper). A lookup, not a default, like `_GRIP_OUTWARD`.
+_GRIP_LABELS = {
+    "upper": "Drag to set the upper tolerance",
+    "lower": "Drag to set the lower tolerance",
+    "before": "Drag to set how much before",
+    "after": "Drag to set how much after",
+    "early": "Drag to set how much earlier",
+    "late": "Drag to set how much later",
+}
+
+
+def grip_label(grip: Primitive) -> str:
+    """The one line a grip's arrow says of what dragging it sets."""
+    return _GRIP_LABELS[grip_edge(grip)]
+
+
 def grip_outward(grip: Primitive) -> int:
     """``+1`` or ``-1``: which way along :func:`grip_axis` leads AWAY from
     the target — where the grip is drawn, just outside its edge."""

@@ -999,10 +999,13 @@ class TestPointsSides:
         assert box.value.reason == "the upper side would cross its target"
         with pytest.raises(HandleEditError, match="the lower side would cross"):
             _grip(POINTS_SIDES, "points/lower/2", 0.5, -3.0)
-        with pytest.raises(HandleEditError, match="the lower side would cross"):
+        # A time side says its own name, and what it would cross.
+        with pytest.raises(HandleEditError) as box:
             _grip(POINTS_SIDES, "points/before/1", 0.875, 0.5)
-        with pytest.raises(HandleEditError, match="the upper side would cross"):
+        assert box.value.reason == "the before side would cross its point's time"
+        with pytest.raises(HandleEditError) as box:
             _grip(POINTS_SIDES, "points/after/1", 0.5, 0.5)
+        assert box.value.reason == "the after side would cross its point's time"
         # ON the target is a zero side, not a crossing.
         assert (
             _grip(POINTS_SIDES, "points/upper/1", 0.75, 0.5)["points"][1]["tolerance"]
@@ -1229,9 +1232,10 @@ class TestEventSides:
     def test_refusals(self):
         with pytest.raises(HandleEditError) as box:
             _grip(DECLARED, "events/late/0", 0.25)
-        assert box.value.reason == "the upper side would cross its target"
-        with pytest.raises(HandleEditError, match="the lower side would cross"):
+        assert box.value.reason == "the late side would cross its event's time"
+        with pytest.raises(HandleEditError) as box:
             _grip(DECLARED, "events/early/1", 0.875)
+        assert box.value.reason == "the early side would cross its event's time"
         assert _grip(DECLARED, "events/late/0", 0.5)["time_tolerance"] == 0.0
         with pytest.raises(HandleEditError, match="scores against 'golden'"):
             _grip(

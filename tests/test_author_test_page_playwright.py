@@ -8227,3 +8227,78 @@ def test_a_refused_drags_reason_stands_under_the_plot_in_view(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
         expect(line).to_be_hidden(timeout=EXPECT_TIMEOUT)
+
+
+# -- what an arrow says, and the cursor over it ----------------------------------
+
+#: The shown grip whose name ends ``tail``: its tooltip (the SVG `title`
+#: child) and the cursor over its middle.
+ARROW_SAYS = """
+(tail) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const i = (gd.layout.shapes || []).findIndex(s => (s.name || '').endsWith(tail));
+  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  const b = el.getBoundingClientRect();
+  const under = document.elementFromPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2);
+  const titles = el.querySelectorAll('title');
+  return {
+    titles: titles.length, title: titles.length ? titles[0].textContent : null,
+    hit: under === el, cursor: getComputedStyle(under).cursor,
+    axis: el.getAttribute('data-grip-axis'),
+  };
+}
+"""
+
+
+def _arrow_says(page, tail: str, near: str) -> dict:
+    """Bring the pointer to the arrow ``tail`` of the group around ``near``
+    and read what it says there."""
+    _rest(page)
+    at = _shape(page, near)
+    page.mouse.move(at["x"], at["y"], steps=4)
+    arrow = _shape(page, tail)
+    assert arrow["box"] is not None, arrow
+    page.mouse.move(arrow["box"]["x"], arrow["box"]["y"], steps=4)
+    page.wait_for_timeout(150)
+    says = page.evaluate(ARROW_SAYS, tail)
+    assert says["hit"] and says["titles"] == 1, says
+    return says
+
+
+def test_an_arrow_says_what_it_sets_and_shows_which_way_it_moves(
+    tmp_path, playwright_browser
+):
+    """An arrow carries a tooltip naming the side it sets — the server's
+    words — and the cursor over it is the way it moves: up and down for a
+    value side, left and right for a time or a frequency side. (Plotly's
+    own cursor for a draggable shape is `move`, whichever way it goes.)"""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        ring = "/points/target/1"
+        for edge, cursor, label in (
+            ("upper", "ns-resize", "Drag to set the upper tolerance"),
+            ("lower", "ns-resize", "Drag to set the lower tolerance"),
+            ("before", "ew-resize", "Drag to set how much before"),
+            ("after", "ew-resize", "Drag to set how much after"),
+        ):
+            says = _arrow_says(page, f"/points/{edge}/1", ring)
+            assert (says["title"], says["cursor"]) == (label, cursor), (edge, says)
+        # A drag redraws every path: the new arrow says it still, once.
+        _drag_arrow(page, "/points/upper/1", 0, -15)
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.08", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(300)
+        says = _arrow_says(page, "/points/upper/1", ring)
+        assert says["title"] == "Drag to set the upper tolerance", says
+        assert says["cursor"] == "ns-resize", says
+
+        _open_for_grips(page, 0, "event-timing · x")
+        for edge, label in (
+            ("early", "Drag to set how much earlier"),
+            ("late", "Drag to set how much later"),
+        ):
+            tail = f"/events/{edge}/0"
+            says = _arrow_says(page, tail, tail)
+            assert (says["title"], says["cursor"]) == (label, "ew-resize"), says

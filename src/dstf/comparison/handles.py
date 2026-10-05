@@ -472,7 +472,14 @@ def _edit_scalar_side(edit: HandleEdit, side: str) -> dict:
 
 
 def _set_side(
-    edit: HandleEdit, holder: dict, key: str, side: str, value: float
+    edit: HandleEdit,
+    holder: dict,
+    key: str,
+    side: str,
+    value: float,
+    *,
+    named: str | None = None,
+    crosses: str = "target",
 ) -> None:
     """Write ``value`` as the ``side`` (``"lower"`` / ``"upper"``) of the
     tolerance ``holder[key]`` — the one rule for a dragged tolerance side.
@@ -480,14 +487,17 @@ def _set_side(
     The shape in the spec is the link state: where ``holder[key]`` is
     absent or a number the result is the NUMBER ``value`` (linked: both
     sides move); where it is a pair only ``side`` changes, and it stays a
-    pair. A negative side — one dragged across its target — is refused; a
-    zero one is not. A tolerance the scorer would refuse is refused in the
-    scorer's words, and one that is no finite number — a rel side over a
-    tiny baseline overflows — is refused before it is written."""
+    pair. A negative side — one dragged across its target — is refused, in
+    the side's own name as its editor's fields say it (``named``: a time
+    side is ``before`` or ``early``, not ``lower``) and naming what it
+    would cross (``crosses``); a zero one is not. A tolerance the scorer
+    would refuse is refused in the scorer's words, and one that is no
+    finite number — a rel side over a tiny baseline overflows — is refused
+    before it is written."""
     if not math.isfinite(value):
         raise _refuse(edit, "the tolerance would not be a finite number")
     if value < 0:
-        raise _refuse(edit, f"the {side} side would cross its target")
+        raise _refuse(edit, f"the {named or side} side would cross its {crosses}")
     current = holder.get(key)
     if current is None:
         holder[key] = _written(value)
@@ -632,7 +642,15 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
             return leaf
         t = _point_time(edit, leaf, point, i)
         value = t - edit.x if side == "lower" else edit.x - t
-        _set_side(edit, point, "time_tolerance", side, value)
+        _set_side(
+            edit,
+            point,
+            "time_tolerance",
+            side,
+            value,
+            named=role,
+            crosses="point's time",
+        )
         return leaf
     if point.get("value") is not None:
         target = _authored_number(edit, point["value"], f"points[{i}].value")
@@ -707,7 +725,7 @@ def edit_events_handle(edit: HandleEdit) -> dict:
     if edit.x is None:
         return leaf
     value = t - edit.x if side == "lower" else edit.x - t
-    _set_side(edit, holder, key, side, value)
+    _set_side(edit, holder, key, side, value, named=role, crosses="event's time")
     return leaf
 
 

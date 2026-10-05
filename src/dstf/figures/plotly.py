@@ -42,6 +42,7 @@ from ..comparison.geometry import (
     Window,
     grip_axis,
     grip_group,
+    grip_label,
     grip_outward,
 )
 from .families import HUES, family_label, group_families, ramp
@@ -914,8 +915,10 @@ def _secondary_axis(title: str) -> dict:
 #: nothing from a shape's name:
 #:
 #: * ``grips``: per grip shape, by name, the ``group`` it shows with
-#:   (:func:`~dstf.comparison.geometry.grip_group`) and the ``axis`` it
-#:   moves on;
+#:   (:func:`~dstf.comparison.geometry.grip_group`), the ``axis`` it moves
+#:   on (the page's cursor over it) and the ``label`` it carries as its
+#:   tooltip (:func:`~dstf.comparison.geometry.grip_label` — the words are
+#:   Python's);
 #: * ``targets``: per ring a group's grips stand around, by name, that
 #:   group — a checkpoint's ring is one of the places its arrows are near;
 #: * ``draggable``: the names an editor moves — the ringed leaves' rings,
@@ -995,6 +998,7 @@ def _leaf_traces(
                 pointer["grips"][grip.id] = {
                     "group": grip_group(grip),
                     "axis": grip_axis(grip),
+                    "label": grip_label(grip),
                 }
             groups = {said["group"] for said in pointer["grips"].values()}
             for m in markers:

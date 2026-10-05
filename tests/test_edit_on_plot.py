@@ -1637,8 +1637,9 @@ def test_a_grip_dragged_across_its_target_is_refused_by_name(session):
     )
     assert user_text(box.value) == "the upper side would cross its target"
     early = f"{C}/3/events/early/0"
-    with pytest.raises(HandleEditError, match="the lower side would cross"):
+    with pytest.raises(HandleEditError) as box:
         _drag(session, early, _released(grips[early], 0.6))  # the event is at 0.5
+    assert user_text(box.value) == "the early side would cross its event's time"
 
 
 def test_a_grip_of_a_criterion_that_is_not_open_is_refused(session):
