@@ -1159,6 +1159,52 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             "Point at t=5: not scored — checkpoint time outside actual trajectory → FAIL"
         )
 
+    @pytest.mark.parametrize(
+        ("extra", "failing", "said"),
+        [
+            # No checkpoint unscored: the line as it always read.
+            ([], (), "0 of 2 failed"),
+            ([], (5,), "1 of 2 failed"),
+            ([], (5, 8), "2 of 2 failed"),
+            # One or two outside the reference: counted among the declared,
+            # and said.
+            ([5.0], (), "1 of 3 failed, 1 not scored"),
+            ([5.0], (5, 8), "3 of 3 failed, 1 not scored"),
+            ([5.0, 6.0], (8,), "3 of 4 failed, 2 not scored"),
+        ],
+    )
+    def test_the_checkpoints_line_counts_failures_of_the_declared_rows(
+        self, extra, failing, said
+    ):
+        """`failed_points` counts an unscored checkpoint and `scored_points`
+        does not: with one outside the reference beside two scored rows that
+        fail, the detail read "3 of 2 failed". The failures are of the
+        DECLARED rows — scored and not — and how many were not scored is
+        said beside them."""
+        from dstf.comparison.modes import resolve_mode
+
+        act = self.T.copy()
+        for i in failing:
+            act[i] += 0.04
+        points = [{"time": 0.5}, {"time": 0.8}, *({"time": t} for t in extra)]
+        mode = resolve_mode({"mode": "points", "points": points}, 0.03)
+        vc = mode.compare(self.T, self.T, self.T, act)
+        vc.tolerance_used = mode.tolerance
+        assert vc.diagnostics["scored_points"] == 2
+        assert vc.diagnostics["failed_points"] == len(failing) + len(extra)
+        assert dict(summarize(vc).details)["checkpoints"] == said
+
+    def test_with_no_scored_point_the_checkpoints_line_counts_the_unscored(self):
+        from dstf.comparison.algorithms import _compare_points
+        from dstf.comparison.sides import Sides
+
+        vc = _compare_points(
+            self.T, self.T, self.T, self.T, [{"time": 5.0, "value": 1.0}], Sides(1, 2)
+        )
+        assert dict(summarize(vc).details)["checkpoints"] == (
+            "1 of 1 failed, 1 not scored"
+        )
+
     # ---- declared events
 
     EVENT_KEYS = {

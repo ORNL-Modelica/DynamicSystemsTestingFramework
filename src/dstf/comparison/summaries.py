@@ -124,12 +124,14 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
     diag = vc.diagnostics or {}
     details: list[tuple[str, str]] = []
     if "scored_points" in diag:
-        details.append(
-            (
-                "checkpoints",
-                f"{diag.get('failed_points', 0)} of {diag['scored_points']} failed",
-            )
-        )
+        # Of the DECLARED rows: `failed_points` counts a checkpoint that was
+        # never scored and `scored_points` does not — "3 of 2 failed".
+        n_unscored = diag.get("unscored_points", 0)
+        declared = diag["scored_points"] + n_unscored
+        said = f"{diag.get('failed_points', 0)} of {declared} failed"
+        if n_unscored:
+            said += f", {n_unscored} not scored"
+        details.append(("checkpoints", said))
         if diag.get("worst_delta", 0.0) > 0:
             details.append(
                 ("worst delta", _at(diag["worst_delta"], diag.get("worst_time", 0.0)))
