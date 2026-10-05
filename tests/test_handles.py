@@ -1023,6 +1023,22 @@ class TestPointsSides:
         zero["points"][2]["value"] = 0.0
         with pytest.raises(HandleEditError, match="the target is zero"):
             _grip(zero, "points/upper/2", 0.5, 0.5)
+        # The tube's rule, not "exactly zero": a fraction of 1e-20 wrote a
+        # tolerance of 5e18.
+        for tiny in (1e-20, -1e-20):
+            zero["points"][2]["value"] = tiny
+            with pytest.raises(HandleEditError) as box:
+                _grip(zero, "points/upper/2", 0.5, 0.5)
+            assert box.value.reason == "the target is zero"
+        # ... which the smallest magnitude it is not still divides by.
+        zero["points"][2]["value"] = 1e-10
+        new = _grip(zero, "points/upper/2", 0.5, 3e-10)
+        assert new["points"][2]["tolerance"] == {"lower": 0.125, "upper": 2.0}
+        # An `abs` row measures no fraction: any target.
+        zero["points"][2]["value"] = 1e-20
+        zero["points"][2]["tolerance_mode"] = "abs"
+        new = _grip(zero, "points/upper/2", 0.5, 0.5)
+        assert new["points"][2]["tolerance"] == {"lower": 0.125, "upper": 0.5}
         other = _with(POINTS_SIDES, against="golden")
         with pytest.raises(HandleEditError, match="scores against 'golden'"):
             _grip(other, "points/upper/0", 0.25, 0.75)
@@ -1328,6 +1344,22 @@ class TestPeakSides:
         zero["peaks"][0]["freq"] = 0.0
         with pytest.raises(HandleEditError, match="the declared frequency is zero"):
             _grip(zero, "peaks/upper/0", 0.5)
+
+    def test_a_lower_edge_dragged_to_zero_hertz_or_below_is_refused(self):
+        """Dragged left of 0 Hz, a `rel` lower side came out above 1 — and
+        on a row holding a number was written to BOTH sides (2.61). No
+        window reaches 0 Hz, in either mode, whatever the row holds."""
+        for i in range(4):
+            for x in (0.0, -1.0, -3.22):
+                with pytest.raises(HandleEditError) as box:
+                    _grip(PEAK_SIDES, f"peaks/lower/{i}", x)
+                assert box.value.reason == "the window would reach 0 Hz", (i, x)
+        # Just short of it is a wide window, and is written.
+        new = _grip(PEAK_SIDES, "peaks/lower/1", 0.5)
+        assert new["peaks"][1]["tolerance"] == {"lower": 0.875, "upper": 0.25}
+        # The upper edge is not the lower's rule: 0 Hz is its crossing.
+        with pytest.raises(HandleEditError, match="the upper side would cross"):
+            _grip(PEAK_SIDES, "peaks/upper/0", 0.0)
         with pytest.raises(HandleEditError, match="not a finite number"):
             _grip(PEAK_SIDES, "peaks/upper/0", float("inf"))
         with pytest.raises(HandleEditError, match="no entry 9"):

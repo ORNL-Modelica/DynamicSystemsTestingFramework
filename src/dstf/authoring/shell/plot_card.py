@@ -778,7 +778,15 @@ class PlotCard:
                 return
             self._error = None
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
-        self.hook.attach(self.plot)
+        # A relayout passes through this plot's instance of the hover
+        # module on its way here: a grip released outside the plot area is
+        # held to the visible range (`grips.js` `released`).
+        self.hook.attach(
+            self.plot,
+            relayout_js=(
+                f"window.DstfGrips ? DstfGrips.released({self.plot.id}, e) : e"
+            ),
+        )
         # This plot's instance of the hover module: the open criterion's
         # grips show while the pointer is near them. Sent to THIS page's
         # client — `show()` also runs from the Shell's timer.

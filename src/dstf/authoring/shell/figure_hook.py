@@ -90,10 +90,23 @@ class FigureHook:
         registers under ``owner``, so `clear(owner)` removes exactly those."""
         return _OwnedFigureHook(self, owner)
 
-    def attach(self, plot: ui.plotly) -> None:
+    def attach(self, plot: ui.plotly, relayout_js: str | None = None) -> None:
+        """Wire ``plot``'s events to this hook. ``relayout_js``: a
+        JavaScript expression over ``e``, the relayout's payload in the
+        page, whose value is sent in its place — what the page alone can
+        say of a release (the card holds a dragged grip to the VISIBLE
+        range, which no server knows). The hook still interprets
+        nothing."""
         self._plot = plot
         for event in ("plotly_click", "plotly_relayout", "plotly_selected"):
-            plot.on(event, lambda e, kind=event: self._dispatch(kind, e.args))
+
+            def heard(e: Any, kind: str = event) -> None:
+                self._dispatch(kind, e.args)
+
+            if event == "plotly_relayout" and relayout_js is not None:
+                plot.on(event, heard, js_handler=f"(e) => emit({relayout_js})")
+            else:
+                plot.on(event, heard)
 
     def _shape_name(self, index: int) -> str:
         # A known race: the index is resolved against the figure the SERVER

@@ -58,9 +58,11 @@ class _StandInPlot:
     def __init__(self, figure=None):
         self.figure = figure if figure is not None else {}
         self.registered = []
+        self.in_page = {}  # event -> the `js_handler` it was registered with
 
-    def on(self, event, handler):
+    def on(self, event, handler, **in_page):
         self.registered.append(event)
+        self.in_page[event] = in_page
 
 
 def _recording_hook(plot=None):
@@ -503,3 +505,22 @@ def test_a_shape_key_with_a_trailing_newline_or_a_non_ascii_digit_is_not_a_shape
         hook._dispatch("plotly_relayout", payload)
         assert [(p, d) for _, p, d in seen] == [("", payload)]
         assert moved == []
+
+
+def test_a_relayout_can_pass_through_the_page_on_its_way():
+    """`attach(plot, relayout_js=...)`: the relayout's payload is sent as
+    the page's expression over it gives it — the card holds a released grip
+    to the visible range there. Every other event, and a relayout with no
+    expression, is registered as it was."""
+    plot = _StandInPlot()
+    FigureHook().attach(plot, relayout_js="window.X ? X.released(7, e) : e")
+    assert plot.in_page == {
+        "plotly_click": {},
+        "plotly_relayout": {
+            "js_handler": "(e) => emit(window.X ? X.released(7, e) : e)"
+        },
+        "plotly_selected": {},
+    }
+    plain = _StandInPlot()
+    FigureHook().attach(plain)
+    assert len(plain.in_page) == 3 and all(kw == {} for kw in plain.in_page.values())

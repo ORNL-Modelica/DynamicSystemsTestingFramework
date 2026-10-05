@@ -42,7 +42,7 @@
   const instances = new Map();
 
   function create(gd) {
-    const st = { gd, on: null, latched: false, xy: null };
+    const st = { gd, on: null, latched: false, xy: null, ranges: {} };
 
     // What the server says of the grip shape named `name`, or null; and
     // its group.
@@ -205,7 +205,17 @@
     // `mousemove` (Plotly's drag cover takes the pointer): what is shown is
     // held from the press to the release.
     const down = (e) => {
-      if (gd.contains(e.target)) st.latched = true;
+      if (!gd.contains(e.target)) return;
+      st.latched = true;
+      // The ranges the drag is made in (`clamp`): the release's own
+      // relayout autoranges the axes over the dragged shape before anyone
+      // hears of it.
+      st.ranges = {};
+      for (const [key, axis] of Object.entries(gd._fullLayout || {})) {
+        if (/^[xy]axis\d*$/.test(key) && axis && axis.range) {
+          st.ranges[key] = axis.range.slice();
+        }
+      }
     };
     const up = (e) => {
       if (!st.latched) return;
@@ -222,6 +232,31 @@
       st.latched = false;
       st.xy = null;
       show(null);
+    };
+
+    // A grip let go OUTSIDE the plot area — on the page above it, off the
+    // spectrum's left end — was released where the axis would be out
+    // there, and that number was written (2.5 on an axis ending at 1.3).
+    // The released anchor is held to the range that was VISIBLE through
+    // the drag — the press's (`down`) — on the grip's own axis: the edge
+    // lands on the plot's edge, where the arrow was last drawn. `update`
+    // is a relayout's (`shapes[N].xanchor`, ...), read against the figure
+    // this plot holds; a copy is returned.
+    st.clamp = (update) => {
+      const shapes = (gd.layout && gd.layout.shapes) || [];
+      const out = { ...update };
+      for (const [key, value] of Object.entries(update)) {
+        const m = /^shapes\[(\d+)\]\.([xy])anchor$/.exec(key);
+        if (!m || typeof value !== "number") continue;
+        const s = shapes[+m[1]];
+        const grip = s && gripOf(s.name);
+        if (!grip || grip.axis !== m[2]) continue;
+        const ref = m[2] === "x" ? s.xref || "x" : s.yref || "y";
+        const range = ref === "paper" ? null : st.ranges[m[2] + "axis" + ref.slice(1)];
+        if (!range) continue;
+        out[key] = Math.min(Math.max(value, Math.min(...range)), Math.max(...range));
+      }
+      return out;
     };
 
     gd.addEventListener("mousemove", move);
@@ -289,6 +324,12 @@
       const st = instances.get(id);
       if (st) st.destroy();
       instances.delete(id);
+    },
+    // A relayout of plot `id` on its way to the server (plot_card.py): a
+    // released grip's position held to the visible range (`clamp`).
+    released(id, update) {
+      const st = instances.get(id);
+      return st && update && typeof update === "object" ? st.clamp(update) : update;
     },
   };
 })();

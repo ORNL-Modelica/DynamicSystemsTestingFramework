@@ -8302,3 +8302,101 @@ def test_an_arrow_says_what_it_sets_and_shows_which_way_it_moves(
             tail = f"/events/{edge}/0"
             says = _arrow_says(page, tail, tail)
             assert (says["title"], says["cursor"]) == (label, "ew-resize"), says
+
+
+# -- what a drag may write: the plot's edge, and no window to 0 Hz ---------------
+
+#: Plot 0's visible ranges, by axis id.
+RANGES = """
+() => {
+  const fl = document.querySelectorAll('.js-plotly-plot')[0]._fullLayout;
+  const out = {};
+  for (const k of ['xaxis', 'yaxis', 'xaxis2', 'yaxis2']) {
+    if (fl[k]) out[k] = fl[k].range.slice();
+  }
+  return out;
+}
+"""
+
+
+def _drag_arrow_to(page, tail: str, near: str, x=None, y=None) -> dict:
+    """Show the group around ``near``, press the arrow ``tail`` and let it
+    go at viewport ``x`` / ``y`` (the arrow's own where not given)."""
+    _rest(page)
+    at = _shape(page, near)
+    page.mouse.move(at["x"], at["y"], steps=4)
+    arrow = _shape(page, tail)
+    assert arrow["box"] is not None, arrow
+    page.mouse.move(arrow["box"]["x"], arrow["box"]["y"], steps=3)
+    page.mouse.down()
+    page.mouse.move(
+        arrow["box"]["x"] if x is None else x,
+        arrow["box"]["y"] if y is None else y,
+        steps=12,
+    )
+    page.mouse.up()
+    return arrow
+
+
+def test_an_arrow_let_go_outside_the_plot_lands_on_the_plots_edge(
+    tmp_path, playwright_browser
+):
+    """An arrow released outside the plot area — 200 px above it, on the
+    page — wrote the value the axis would have there (2.5 on an axis that
+    ends at 1.3). The released position is held to the visible range: the
+    edge lands on the plot's edge, where the arrow was last drawn."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area, ranges = page.evaluate(PLOT_AREA), page.evaluate(RANGES)
+        assert area["top"] - 200 > 0, area  # on the page, above the plot
+        _drag_arrow_to(page, "/points/upper/0", "/points/target/0", y=area["top"] - 200)
+        expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 0, "+ tolerance").input_value())
+        top = max(ranges["yaxis"])
+        # The row's value is 0.3: the edge is the axis's end.
+        assert upper == pytest.approx(top - 0.3, abs=1e-9), (upper, ranges)
+        _settled_at(page, "/points/upper/0", "yanchor", 0.3 + upper)
+
+        # A time side, let go 200 px left of the plot: the axis's start.
+        _plot_under_the_mouse(page)
+        area, ranges = page.evaluate(PLOT_AREA), page.evaluate(RANGES)
+        expect(_table_cell(page, 1, "before time_tolerance")).to_have_value("0.05")
+        _drag_arrow_to(
+            page, "/points/before/1", "/points/target/1", x=max(area["left"] - 200, 2)
+        )
+        expect(_table_cell(page, 1, "before time_tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        before = float(_table_cell(page, 1, "before time_tolerance").input_value())
+        assert before == pytest.approx(0.75 - min(ranges["xaxis"]), abs=1e-9), (
+            before,
+            ranges,
+        )
+        expect(_table_cell(page, 1, "after time_tolerance")).to_have_value("0.1")
+
+
+def test_a_peaks_lower_arrow_pulled_past_zero_hertz_is_refused(
+    tmp_path, playwright_browser
+):
+    """A peak's lower arrow pulled left off the spectrum: the release is
+    held to the axis's start — 0 Hz — and no window reaches 0 Hz. It wrote
+    a fraction of 2.61 to both sides of a row holding a number."""
+    with _served(tmp_path, playwright_browser, project=_tables_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "dominant-frequency · x")
+        area, ranges = page.evaluate(PLOT_AREA), page.evaluate(RANGES)
+        assert min(ranges["xaxis2"]) == 0, ranges
+        was = _shape(page, "/peaks/lower/0")
+        _drag_arrow_to(
+            page, "/peaks/lower/0", "/peaks/lower/0", x=max(area["left"] - 200, 2)
+        )
+        line = page.locator(".dstf-plot").first.locator(".dstf-plot-refusal")
+        expect(line).to_have_text("the window would reach 0 Hz", timeout=EXPECT_TIMEOUT)
+        assert _pending(page) == "0 pending edits"
+        expect(_table_cell(page, 0, "− tolerance")).to_have_value("0.1")
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
+        back = _settled_at(page, "/peaks/lower/0", "xanchor", was["xanchor"])
+        assert back["xanchor"] == was["xanchor"]

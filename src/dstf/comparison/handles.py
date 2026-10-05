@@ -265,6 +265,17 @@ def _clamped_time(
     return float(min(max(float(x), lo), hi))
 
 
+def _fraction(edit: HandleEdit, width: float, of: float, zero: str) -> float:
+    """``width`` as a fraction of ``|of|`` — a ``rel`` width back from a
+    dragged edge, the ONE rule for a tube's and a checkpoint's. Refused
+    (``zero`` says of what) where the magnitude is under ``types._EPS``,
+    not only at exactly 0: a checkpoint's target of 1e-20 divided, and the
+    drag wrote a tolerance of 5e18."""
+    if abs(of) < _EPS:
+        raise _refuse(edit, zero)
+    return width / abs(of)
+
+
 # -- tube --------------------------------------------------------------------
 
 
@@ -357,9 +368,8 @@ def _edit_constant_tube(edit: HandleEdit, leaf: dict, side: str) -> dict:
     ref_x = float(np.interp(float(edit.x), ref_time, ref_values))
     width = edit.y - ref_x if side == "upper" else ref_x - edit.y
     if mode == "rel":
-        if abs(ref_x) < _EPS:
-            raise _refuse(edit, f"the reference is zero at t={_num(edit.x)}")
-        width = width / abs(ref_x)
+        zero = f"the reference is zero at t={_num(edit.x)}"
+        width = _fraction(edit, width, ref_x, zero)
     _set_side(edit, leaf, "tube_abs" if mode == "band" else "tube_rel", side, width)
     return leaf
 
@@ -403,9 +413,7 @@ def _set_tube_width(
     if width < 0:
         raise _refuse(edit, f"{side} width {_num(width)} would be negative")
     if mode == "rel":
-        if abs(ref_t) < _EPS:
-            raise _refuse(edit, f"the reference is zero at t={_num(t)}")
-        width = width / abs(ref_t)
+        width = _fraction(edit, width, ref_t, f"the reference is zero at t={_num(t)}")
     point[side] = _written(width)
     return leaf
 
@@ -611,7 +619,8 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
     the scorer reads it), else the CRITERION's — so every row that defers
     to it moves with it. From ``y``: ``y − target`` for upper, ``target −
     y`` for lower, over ``|target|`` where the row's ``tolerance_mode`` is
-    ``rel`` (refused at a target of zero). The target is the row's
+    ``rel`` (refused at a target of zero — below ``types._EPS``, the
+    tube's rule: :func:`_fraction`). The target is the row's
     ``value``, else the reference at the row's time — refused on a leaf
     scored against another baseline, and with no reference.
 
@@ -663,10 +672,8 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
     value = edit.y - target if side == "upper" else target - edit.y
     if point.get("tolerance_mode", "abs") == "rel":
         # The scorer's arithmetic, inverted: each side is that fraction of
-        # |target|, which only a target of exactly 0 cannot give back.
-        if abs(target) == 0.0:
-            raise _refuse(edit, "the target is zero")
-        value = value / abs(target)
+        # |target| — by the tube's rule, refused under `_EPS`.
+        value = _fraction(edit, value, target, "the target is zero")
     holder = point if point.get("tolerance") is not None else leaf
     _set_side(edit, holder, "tolerance", side, value)
     return leaf
@@ -740,7 +747,10 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
     window — → that side of ``peaks[i]["tolerance"]``, by
     :func:`_set_side` (a row without one gets it on its first drag): in
     ``rel`` (the default) ``1 − x/freq`` and ``x/freq − 1``, refused at a
-    declared frequency of zero; in ``abs`` ``freq − x`` and ``x − freq``."""
+    declared frequency of zero; in ``abs`` ``freq − x`` and ``x − freq``.
+    A lower edge dragged to 0 Hz or below is refused: no window reaches
+    it, and on a row holding a number the side past 1 was written to both
+    (2.61)."""
     _check_position(edit)
     _, role, segment = _parse(edit, "peaks", 3)
     if role not in ("declared", "lower", "upper"):
@@ -752,6 +762,8 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
         if edit.x is None:
             return leaf
         freq = _authored_number(edit, peak.get("freq"), f"peaks[{i}].freq")
+        if role == "lower" and edit.x <= 0:
+            raise _refuse(edit, "the window would reach 0 Hz")
         value = freq - edit.x if role == "lower" else edit.x - freq
         if peak.get("tolerance_mode", "rel") == "rel":
             if freq == 0.0:
