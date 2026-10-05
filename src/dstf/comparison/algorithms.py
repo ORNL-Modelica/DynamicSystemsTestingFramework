@@ -741,7 +741,13 @@ def _compare_points(
             "worst_delta": worst_delta,
             "worst_time": worst_t,
             "point_failures": point_failures,
-            **({"unscored_point": unscored[0]} if unscored else {}),
+            # The first, and how many: `failed_points` counts them beside
+            # the scored rows that fail.
+            **(
+                {"unscored_point": unscored[0], "unscored_points": len(unscored)}
+                if unscored
+                else {}
+            ),
             **_reported_point(
                 tolerance, outside if outside is not None else largest, worst_delta
             ),

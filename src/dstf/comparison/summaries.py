@@ -167,12 +167,20 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
         )
     # A checkpoint that was never scored (outside the reference, or the run
     # never reached it) is the failure, whatever the scored rows did: the
-    # sentence named a row that passes beside FAIL.
+    # sentence named a row that passes beside FAIL. A scored row that fails
+    # as well is counted beside it: the one sentence hid that any did.
     if "unscored_point" in diag:
         unscored = diag["unscored_point"]
+        scored = diag["failed_points"] - diag["unscored_points"]
+        also = ""
+        if scored > 0:
+            also = (
+                f" (and {scored} scored point{'' if scored == 1 else 's'} "
+                f"fail{'s' if scored == 1 else ''})"
+            )
         criterion = (
-            f"Point at t={unscored['time']:g}: not scored — {unscored['reason']} "
-            f"→ {_verdict(vc)}"
+            f"Point at t={unscored['time']:g}: not scored — {unscored['reason']}"
+            f"{also} → {_verdict(vc)}"
         )
     return ScoreSummary(
         display=f"|err| {vc.max_abs_error:.3e}",

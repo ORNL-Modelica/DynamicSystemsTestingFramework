@@ -1009,18 +1009,89 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         act = self.T.copy()
         act[5] += 0.01
         act[8] += 0.04  # a scored row that fails as well
-        for points in (
-            [{"time": 0.5}, point],
-            [{"time": 0.5}, {"time": 0.8}, point],
+        for points, also in (
+            ([{"time": 0.5}, point], ""),
+            ([{"time": 0.5}, {"time": 0.8}, point], " (and 1 scored point fails)"),
         ):
             mode = resolve_mode({"mode": "points", "points": points}, 0.03)
             vc = mode.compare(self.T, self.T, self.T, act)
             vc.tolerance_used = mode.tolerance
             assert not vc.passed
-            assert (
-                summarize(vc).criterion == f"Point at t=5: not scored — {reason} → FAIL"
+            assert summarize(vc).criterion == (
+                f"Point at t=5: not scored — {reason}{also} → FAIL"
             )
             assert vc.diagnostics["unscored_point"] == {"time": 5.0, "reason": reason}
+
+    @pytest.mark.parametrize(
+        ("ref_time", "act_time", "reason"),
+        [
+            ("T", "empty", "no actual samples (empty trajectory)"),
+            ("empty", "T", "no reference data for ref-relative point"),
+        ],
+    )
+    def test_a_checkpoint_with_nothing_to_score_is_recorded_unscored(
+        self, ref_time, act_time, reason
+    ):
+        """An empty run, or a ref-relative checkpoint with no reference: the
+        row fails without a delta, so it is the `unscored_point` the
+        sentence reports — not a row among the scored ones."""
+        from dstf.comparison.algorithms import _compare_points
+        from dstf.comparison.sides import Sides
+
+        times = {"T": self.T, "empty": np.array([])}
+        vc = _compare_points(
+            times[ref_time],
+            times[ref_time],
+            times[act_time],
+            times[act_time],
+            [{"time": 0.5}],
+            Sides(0.03, 0.03),
+        )
+        vc.tolerance_used = Sides(0.03, 0.03)
+        assert not vc.passed
+        assert vc.diagnostics["unscored_point"] == {"time": 0.5, "reason": reason}
+        assert vc.diagnostics["unscored_points"] == 1
+        assert summarize(vc).criterion == (
+            f"Point at t=0.5: not scored — {reason} → FAIL"
+        )
+
+    @pytest.mark.parametrize(
+        ("failing", "also"),
+        [
+            ((), ""),
+            ((5,), " (and 1 scored point fails)"),
+            ((5, 8), " (and 2 scored points fail)"),
+        ],
+    )
+    def test_an_unscored_checkpoint_goes_ahead_of_a_named_failing_row(
+        self, failing, also
+    ):
+        """Rows holding their OWN tolerance are named by the sentence
+        ("Point at t=0.5: error …") — and still the checkpoint never scored
+        is the one reported, with how many scored rows fail beside it: the
+        sentence hid that one did. Two checkpoints are outside the
+        reference here, and neither counts as a scored failure."""
+        from dstf.comparison.modes import resolve_mode
+
+        act = self.T.copy()
+        for i in failing:
+            act[i] += 0.04
+        points = [
+            {"time": 0.5, "tolerance": 0.001},
+            {"time": 0.8, "tolerance": 0.001},
+            {"time": 5.0},
+            {"time": 6.0},
+        ]
+        mode = resolve_mode({"mode": "points", "points": points}, 0.03)
+        vc = mode.compare(self.T, self.T, self.T, act)
+        vc.tolerance_used = mode.tolerance
+        assert "worst_sides" in vc.diagnostics  # a scored row IS named
+        assert vc.diagnostics["failed_points"] == 2 + len(failing)
+        assert vc.diagnostics["unscored_points"] == 2
+        assert summarize(vc).criterion == (
+            "Point at t=5: not scored — checkpoint time outside reference range"
+            f"{also} → FAIL"
+        )
 
     def test_the_first_unscored_checkpoint_is_the_one_named(self):
         from dstf.comparison.modes import resolve_mode
