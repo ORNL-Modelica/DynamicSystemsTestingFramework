@@ -9093,6 +9093,48 @@ def test_between_two_close_checkpoints_the_shown_group_changes_once(
         assert _groups_along(page, right, left, step) == ["1", "0"]
 
 
+#: Two checkpoints 38 px apart at `TIME_SCALE`, the first with its 12 px of
+#: time either side and the second with none: the middle of the first's
+#: `after` arrow stands 12.5 px short of the second's ring.
+BESIDE_AN_ARROW = [
+    {
+        "time": 0.4,
+        "value": 0.5,
+        "tolerance": 0.1,
+        "time_tolerance": {"lower": 0.012, "upper": 0.012},
+    },
+    {"time": 0.438, "value": 0.5, "tolerance": 0.1},
+]
+
+
+def test_an_arrow_shows_where_it_is_drawn_coming_from_its_neighbour(
+    tmp_path, playwright_browser
+):
+    """Where an arrow is DRAWN is a place of its group, as its anchor and
+    its ring are. From the second checkpoint's ring, along the line of the
+    rings, the pointer comes to where the first's `after` arrow stands:
+    its middle, 13.5 px beyond its anchor and 12.5 px from the ring the
+    pointer left. The first's arrows show there, and that arrow takes the
+    press. By its anchors alone the first was not the nearer until the
+    pointer was past its arrow."""
+    project = partial(_points_on_x_project, points=BESIDE_AN_ARROW)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        _, home = _come_to(page, "/points/upper/1")
+        assert page.evaluate(SHOWN_GROUP, 0) == "1"
+        arrow = page.evaluate(ARROW_AT, [0, "/points/after/0"])
+        middle = _along(arrow, 13.5)
+        assert abs(home[0] - middle[0] - 12.5) <= 1 and home[1] == middle[1], (
+            home,
+            middle,
+        )
+        _walk(page, home, middle)
+        assert page.evaluate(SHOWN_GROUP, 0) == "0"
+        state = page.evaluate(ARROW_STATE, [0, arrow["index"], *middle])
+        assert state == {"on": True, "hit": True}, state
+
+
 #: A checkpoint whose ring stands on the far corner of the first one's
 #: `after` arrow at `TIME_SCALE`: that arrow's box runs 22 to 29 px right
 #: of the first ring and 6 px above and below it.
@@ -9292,6 +9334,8 @@ def test_every_arrow_of_two_close_windows_is_reached_from_its_own_edge(
         claimed = {tail: n for tail, n in reach.items() if tail not in unclaimed}
         assert claimed == dict.fromkeys(claimed, 7), reach
         assert len(claimed) == len(tails) - len(unclaimed), reach
+        # Its outer half, from its middle — the tip the group is near by.
+        assert all(reach[tail] >= 4 for tail in unclaimed), reach
 
         def cells() -> list[str]:
             return [
