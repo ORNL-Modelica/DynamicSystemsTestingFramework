@@ -1480,6 +1480,27 @@ def test_the_editable_figure_names_each_grip_its_group_and_its_axis(mode):
         ), name
 
 
+def test_the_editable_figure_names_the_ring_each_group_stands_around():
+    """A checkpoint's ring, a declared peak's: one of the places its arrows
+    are NEAR. A ring with no grips around it — a tube's control point, the
+    ring of a leaf that is not open — names no group."""
+    said = _pointer(variable_figure(_points_grip_view(), editable=True))
+    assert said["targets"] == {
+        f"{P0}/points/target/0": f"{P0}/points/0",
+        f"{P0}/points/target/1": f"{P0}/points/1",
+    }
+    assert _pointer(variable_figure(_peaks_grip_view(), editable=True))["targets"] == {
+        f"{P0}/peaks/declared/0": f"{P0}/peaks/0"
+    }
+    assert _pointer(variable_figure(_final_grip_view(), editable=True))["targets"] == {
+        f"{P0}/points/target/final": f"{P0}/points/final"
+    }
+    for view in (_events_grip_view(), _tube_grip_view(), _tube_view(), _handle_view()):
+        assert _pointer(variable_figure(view, editable=True))["targets"] == {}
+    closed = variable_figure(_points_grip_view(), editable=True, rings_for=())
+    assert _pointer(closed)["targets"] == {}
+
+
 def test_a_third_party_grip_is_named_by_the_same_rule():
     """No family is listed anywhere: a metric the tool has never heard of
     emits `<family>/<edge>/<key>` and its grips are grouped like any."""

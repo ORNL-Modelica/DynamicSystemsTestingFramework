@@ -28,6 +28,10 @@
 
   // How far outside a group's anchors the pointer still shows it, px.
   const MARGIN = 25;
+  // How much nearer another group must be before it takes over from the
+  // shown one, px: two arrows of neighbours can stand on one spot, and
+  // without it the one reached first flickered away under the pointer.
+  const HYSTERESIS = 6;
 
   // What the server says of the figure `gd` holds, or null for a figure
   // that says nothing (then nothing is marked).
@@ -79,16 +83,22 @@
     };
 
     // Each group's reveal region, in pixels of the graph div: the bounding
-    // box of its grips' anchors. A grip anchored to the PAPER in y (an event's
-    // or a peak's window spans its panel) has no y of its own: its region is
-    // the panel's whole height.
+    // box of its grips' anchors — and its ANCHOR POINTS, those and the ring
+    // they stand around. A grip anchored to the PAPER in y (an event's or a
+    // peak's window spans its panel) has no y of its own: its region is the
+    // panel's whole height, and what the pointer is near is the window's
+    // x-range at the pointer's own height.
     const regions = () => {
       const fl = gd._fullLayout;
       const out = new Map();
       if (!fl) return out;
+      const info = said(gd);
+      const rings = [];
       for (const s of (gd.layout && gd.layout.shapes) || []) {
+        if (s.visible === false) continue;
         const g = groupOf(s.name);
-        if (!g || s.visible === false) continue;
+        const ring = g ? null : info && own(info.targets, s.name);
+        if (!g && !ring) continue;
         const xa = fl["xaxis" + (s.xref || "x").slice(1)];
         if (!xa) continue;
         const paper = s.yref === "paper";
@@ -96,41 +106,64 @@
         if (!ya) continue;
         const x = xa._offset + xa.d2p(s.xanchor);
         const y = paper ? null : ya._offset + ya.d2p(s.yanchor);
+        if (ring) {
+          rings.push([ring, x, y]);
+          continue;
+        }
         const t = paper ? ya._offset : y;
         const b = paper ? ya._offset + ya._length : y;
-        const r = out.get(g) || { l: x, r: x, t, b };
+        const r = out.get(g) || { l: x, r: x, t, b, paper: false, points: [] };
         r.l = Math.min(r.l, x);
         r.r = Math.max(r.r, x);
         r.t = Math.min(r.t, t);
         r.b = Math.max(r.b, b);
+        r.paper = r.paper || paper;
+        if (!paper) r.points.push([x, y]);
         out.set(g, r);
+      }
+      for (const [g, x, y] of rings) {
+        const r = out.get(g);
+        if (r && y !== null) r.points.push([x, y]);
       }
       return out;
     };
 
-    // The group the pointer is near, or null. Sticky: the shown group stays
-    // until the pointer leaves its own region, so two overlapping groups do
-    // not flicker; otherwise the nearest centre wins.
+    // How far the pointer is from a group: from the nearest of its anchor
+    // points, or — a window — from the nearest point of its x-range.
+    const distance = (r, x, y) => {
+      if (r.paper) {
+        const dx = x < r.l ? r.l - x : x > r.r ? x - r.r : 0;
+        const dy = y < r.t ? r.t - y : y > r.b ? y - r.b : 0;
+        return Math.hypot(dx, dy);
+      }
+      return Math.min(...r.points.map(([px, py]) => Math.hypot(x - px, y - py)));
+    };
+
+    // The group the pointer is near, or null: of the groups whose region
+    // holds the pointer, the one whose nearest anchor is closest. The shown
+    // group stays unless another is at least HYSTERESIS px nearer — sticky
+    // for as long as the pointer was in its region, a group kept its arrows
+    // while the pointer stood on a NEIGHBOUR's ring, 15 px away, and where
+    // that neighbour's own arrow belongs was plain plot.
     const pick = (cx, cy) => {
       const box = gd.getBoundingClientRect();
       const x = cx - box.left;
       const y = cy - box.top;
-      const rs = regions();
       const inside = (r) =>
         x >= r.l - MARGIN && x <= r.r + MARGIN && y >= r.t - MARGIN && y <= r.b + MARGIN;
-      const current = st.on && rs.get(st.on);
-      if (current && inside(current)) return st.on;
       let best = null;
       let nearest = Infinity;
-      for (const [g, r] of rs) {
+      let shown = Infinity;
+      for (const [g, r] of regions()) {
         if (!inside(r)) continue;
-        const d = Math.hypot(x - (r.l + r.r) / 2, y - (r.t + r.b) / 2);
+        const d = distance(r, x, y);
+        if (g === st.on) shown = d;
         if (d < nearest) {
           nearest = d;
           best = g;
         }
       }
-      return best;
+      return shown - nearest < HYSTERESIS ? st.on : best;
     };
 
     const move = (e) => {

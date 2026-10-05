@@ -852,6 +852,8 @@ def _secondary_axis(title: str) -> dict:
 #: * ``grips``: per grip shape, by name, the ``group`` it shows with
 #:   (:func:`~dstf.comparison.geometry.grip_group`) and the ``axis`` it
 #:   moves on;
+#: * ``targets``: per ring a group's grips stand around, by name, that
+#:   group — a checkpoint's ring is one of the places its arrows are near;
 #: * ``draggable``: the names an editor moves — the ringed leaves' rings,
 #:   grips and ``kind="handle"`` lines. Every OTHER shape of the figure (a
 #:   box, a window, a result line, a leaf that is not open) the page makes
@@ -863,7 +865,7 @@ POINTER = "dstf"
 
 
 def _no_pointer() -> dict:
-    return {"grips": {}, "draggable": []}
+    return {"grips": {}, "targets": {}, "draggable": []}
 
 
 def _leaf_traces(
@@ -929,6 +931,10 @@ def _leaf_traces(
                     "group": grip_group(grip),
                     "axis": grip_axis(grip),
                 }
+            groups = {said["group"] for said in pointer["grips"].values()}
+            for m in markers:
+                if m.kind == "handle" and grip_group(m) in groups:
+                    pointer["targets"][m.id] = grip_group(m)
             pointer["draggable"] += [s["name"] for s in leaf_rings] + lines
         for trace in leaf_data:
             trace["meta"] = {**trace.get("meta", {}), "leaf": leaf.path}
@@ -1176,6 +1182,7 @@ def _subject_figure(
         shapes.extend(leaf_shapes)
         rings.extend(leaf_rings)
         pointer["grips"].update(leaf_pointer["grips"])
+        pointer["targets"].update(leaf_pointer["targets"])
         pointer["draggable"] += leaf_pointer["draggable"]
     config: dict = _config(editable)
     # One view stands in for the layout, carrying EVERY view's leaves, so

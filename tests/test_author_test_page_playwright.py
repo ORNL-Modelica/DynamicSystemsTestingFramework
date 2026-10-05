@@ -7389,9 +7389,9 @@ def test_an_events_and_a_peaks_arrows_show_anywhere_along_their_window(
 
 
 def _close_points_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project` with A scored on x by two checkpoints 0.05 apart
-    in time: the second's upper arrow stands inside the reach of the
-    first's box."""
+    """`_two_var_project` with A scored on x by two checkpoints 0.008 apart
+    in time — some 8 px — of one value and one tolerance: side by side,
+    their upper arrows overlapping."""
     cfg, work = _two_var_project(tmp_path)
     spec_path = cfg.parent / "test_spec.json"
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -7401,28 +7401,54 @@ def _close_points_project(tmp_path: Path) -> tuple[Path, Path]:
                 "metric": "points",
                 "variable": "x",
                 "points": [
-                    {
-                        "time": 0.4,
-                        "value": 0.5,
-                        "tolerance": 0.1,
-                        "time_tolerance": 0.05,
-                    },
-                    {"time": 0.45, "value": 0.5, "tolerance": 0.1},
+                    {"time": 0.4, "value": 0.5, "tolerance": 0.1},
+                    {"time": 0.408, "value": 0.5, "tolerance": 0.1},
                 ],
             }
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     return cfg, work
 
 
+#: The grips the hover module MARKS as the shown group's, by the tail of
+#: their names — the module's own word, whatever a stylesheet makes of it.
+MARKED_ON = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const shapes = gd.layout.shapes || [];
+  return [...gd.querySelectorAll('.shapelayer path[data-grip-on]')]
+    .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
+    .sort();
+}
+"""
+
+#: How the page holds the grip whose name ends ``tail``: the group it is
+#: marked with, whether that group is the shown one, and its computed
+#: style — whichever way a stylesheet hides it.
+GRIP_STATE = """
+(tail) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const i = (gd.layout.shapes || []).findIndex(s => (s.name || '').endsWith(tail));
+  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  const style = getComputedStyle(el);
+  return {
+    grip: el.getAttribute('data-grip'), on: el.hasAttribute('data-grip-on'),
+    display: style.display, visibility: style.visibility, opacity: style.opacity,
+  };
+}
+"""
+
+
 def test_a_press_where_a_hidden_grip_sits_zooms_and_moves_nothing(
     tmp_path, playwright_browser
 ):
     """A grip that is not shown cannot be grabbed. Two checkpoints stand
-    close: with the first's arrows shown — and they stay while the pointer
-    is within reach of it — the pointer is brought over where the second's
-    hidden upper arrow sits. The press there is the plot's own: a box
-    zoom. Hidden by `visibility` or `opacity` the arrow took it, and a
-    drag nobody could see staged an edit."""
+    some 8 px apart. With the first's arrows shown, the pointer is brought
+    to where the second's upper arrow sits — not shown: the first's group
+    holds while the second is not 6 px nearer — and pressed there. The
+    press is the plot's own: a box zoom, and nothing staged. Hidden by
+    `visibility` or `opacity` the arrow took the press, and a drag nobody
+    could see staged an edit: the pending count below is what says so, not
+    the way the arrow is hidden."""
     with _served(tmp_path, playwright_browser, project=_close_points_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
@@ -7430,36 +7456,47 @@ def test_a_press_where_a_hidden_grip_sits_zooms_and_moves_nothing(
         page.mouse.move(first["x"] - 30, first["y"] + 30)
         page.mouse.move(first["x"], first["y"], steps=5)
         page.wait_for_timeout(150)
-        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
-        hidden = _shape(page, "/points/upper/1")
-        assert hidden["box"] is None
-        # Where its arrow would be: 13.5 px above its anchor (the middle of
-        # a triangle from 10 to 17 px out).
-        x, y = hidden["x"], hidden["y"] - 13.5
-        page.mouse.move(x, y, steps=8)
+        # Every precondition reads the module's MARKS, never a box: a box
+        # is what a stylesheet that hides the wrong way leaves in place.
+        zero = _group("points", 0, ("upper", "lower"))
+        assert page.evaluate(MARKED_ON) == zero
+        mine, hidden = _shape(page, "/points/upper/0"), _shape(page, "/points/upper/1")
+        apart = hidden["x"] - mine["x"]
+        assert 5 <= apart <= 11, (mine, hidden)
+        # Where the second's arrow is: 13.5 px above its anchor (the middle
+        # of a triangle from 10 to 17 px out, 3 px to either side there),
+        # and 2 px off its axis, away from the first's.
+        x, y = hidden["x"] + 2, hidden["y"] - 13.5
+        assert x - mine["x"] > 3 + 2  # clear of the first's own arrow
+        # Straight up the first's axis, then across: never 6 px nearer the
+        # second's anchors than the first's.
+        page.mouse.move(first["x"], y, steps=8)
+        page.mouse.move(x, y, steps=6)
         page.wait_for_timeout(150)
-        still = _grips_on(page)
-        assert still["shown"] == _group("points", 0, FOUR), still  # sticky
-        hit = page.evaluate(
-            "([x, y]) => { const e = document.elementFromPoint(x, y);"
-            " return e.closest('g.shapelayer') ? 'shape' : e.getAttribute('class'); }",
-            [x, y],
-        )
-        assert hit != "shape", hit
+        assert page.evaluate(MARKED_ON) == zero
+        # The second's arrow is a grip of its own group, and not the shown
+        # one — however the stylesheet goes about not showing it.
+        state = page.evaluate(GRIP_STATE, "/points/upper/1")
+        assert state["grip"].endswith("/points/1") and not state["on"], state
+        assert (
+            state["display"] == "none"
+            or state["visibility"] == "hidden"
+            or state["opacity"] == "0"
+        ), state
+        assert _pending(page) == "0 pending edits"
         before = page.evaluate(READ_PLOT)
         page.mouse.down()
         page.mouse.move(x + 60, y - 50, steps=10)
         page.mouse.up()
-        page.wait_for_function(
-            "(was) => { const r = document.querySelectorAll('.js-plotly-plot')[0]"
-            "._fullLayout.xaxis.range; return Math.abs(r[1] - r[0]) <"
-            " 0.5 * Math.abs(was[1] - was[0]); }",
-            arg=before["xrange"],
-            timeout=EXPECT_TIMEOUT,
-        )
-        page.wait_for_timeout(600)  # a staged edit would have landed by now
+        page.wait_for_timeout(800)  # a staged edit would have landed by now
+        # The press staged nothing ...
         assert _pending(page) == "0 pending edits"
         expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.1")
+        # ... and was the plot's: a zoom.
+        after = page.evaluate(READ_PLOT)
+        assert abs(after["xrange"][1] - after["xrange"][0]) < 0.5 * abs(
+            before["xrange"][1] - before["xrange"][0]
+        ), (before, after)
         moved = _shape(page, "/points/upper/1")
         assert (moved["xanchor"], moved["yanchor"]) == (
             hidden["xanchor"],
@@ -7802,3 +7839,182 @@ def test_a_grip_a_redraw_adds_is_hidden_from_its_first_frame_and_shown_on_a_hove
         shown = _grips_on(page)
         assert shown["drawn"] == 12, shown
         assert shown["shown"] == _group("points", 2, FOUR), shown
+
+
+# -- close neighbours: the nearest anchor's group shows ------------------------
+
+
+def _neighbours_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by two checkpoints close in
+    time. The first's time tolerance is LOPSIDED (0.02 before, 0.2 after):
+    the middle of its arrows stands far right of its ring, and its reach
+    covers the second checkpoint whole."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "points",
+                "variable": "x",
+                "points": [
+                    {
+                        "time": 0.4,
+                        "value": 0.5,
+                        "tolerance": 0.1,
+                        "time_tolerance": {"lower": 0.02, "upper": 0.2},
+                    },
+                    {"time": 0.45, "value": 0.5, "tolerance": 0.1},
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def _plot_under_the_mouse(page, card: int = 0) -> None:
+    page.locator(".js-plotly-plot").nth(card).evaluate(
+        "e => e.scrollIntoView({block: 'center'})"
+    )
+    page.wait_for_timeout(300)
+
+
+@pytest.mark.parametrize("apart", [40, 25, 15])
+def test_of_two_close_checkpoints_the_one_under_the_pointer_shows_its_arrows(
+    tmp_path, playwright_browser, apart
+):
+    """Two checkpoints 40, 25 or 15 px apart. The shown group stayed the
+    first's for as long as the pointer was within ITS reach — on the second
+    ring the first's arrows still showed, and where the second's upper arrow
+    belongs was plain plot: a press there zoomed. Now the group whose
+    nearest anchor — its ring, or an arrow's — is closest to the pointer
+    shows: each ring its own, and the second's upper arrow drags."""
+    with _served(tmp_path, playwright_browser, project=_neighbours_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        first = _shape(page, "/points/target/0")
+        time = round(first["xanchor"] + apart / first["ppx"], 4)
+        _retype(page, _table_cell(page, 1, "time"), str(time))
+        _settled_at(page, "/points/target/1", "xanchor", time)
+        _plot_under_the_mouse(page)
+        _rest(page)
+        first = _shape(page, "/points/target/0")
+        second = _shape(page, "/points/target/1")
+        assert abs(second["x"] - first["x"] - apart) <= 1.5, (first, second)
+        assert abs(second["y"] - first["y"]) <= 0.5, (first, second)
+
+        page.mouse.move(first["x"] - 30, first["y"] + 40)
+        page.mouse.move(first["x"], first["y"], steps=6)
+        page.wait_for_timeout(100)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        page.mouse.move(second["x"], second["y"], steps=max(4, apart // 3))
+        page.wait_for_timeout(100)
+        its_own = _group("points", 1, ("upper", "lower"))
+        assert _grips_on(page)["shown"] == its_own
+        _shot(page, tmp_path, f"neighbours-{apart}")
+        # And back: the first ring is nearest to its own group again.
+        page.mouse.move(first["x"], first["y"], steps=max(4, apart // 3))
+        page.wait_for_timeout(100)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        page.mouse.move(second["x"], second["y"], steps=max(4, apart // 3))
+        page.wait_for_timeout(100)
+
+        # Its upper arrow is there to press: dragged up, row 1's tolerance.
+        arrow = _shape(page, "/points/upper/1")
+        assert arrow["box"] is not None, arrow
+        page.mouse.move(arrow["box"]["x"], arrow["box"]["y"], steps=4)
+        assert _grips_on(page)["shown"] == its_own
+        page.mouse.down()
+        page.mouse.move(arrow["box"]["x"], arrow["box"]["y"] - 20, steps=8)
+        page.mouse.up()
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.1", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
+        assert abs(upper - (0.1 + 20 / arrow["ppy"])) * arrow["ppy"] < 0.5, upper
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+
+
+def _peak_gap(page) -> float:
+    """Pixels between peak 0's window and peak 1's, edge to edge."""
+    return _shape(page, "/peaks/lower/1")["x"] - _shape(page, "/peaks/upper/0")["x"]
+
+
+def test_of_two_close_peak_windows_the_nearer_ones_arrows_show(
+    tmp_path, playwright_browser
+):
+    """Two peak windows whose edges are ~24 px apart: an arrow of each
+    stands in the gap. The pointer brought 5 px short of the second window
+    shows the SECOND's arrows — its edge is the nearer — where the first's
+    stayed. And inside the gap the shown group holds while the other is not
+    6 px nearer, so each window's own arrow there can be reached from its
+    own side and dragged."""
+    with _served(tmp_path, playwright_browser, project=_tables_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "dominant-frequency · x")
+        # Peak 1's frequency until the gap is 24 px: the axis runs to three
+        # times the highest window, so the scale follows the frequency.
+        for _ in range(6):
+            gap = _peak_gap(page)
+            if abs(gap - 24) <= 2:
+                break
+            edge = _shape(page, "/peaks/upper/0")
+            freq = round((edge["xanchor"] + 24 / edge["ppx"]) / 0.95, 4)
+            _retype(page, _table_cell(page, 1, "freq"), str(freq))
+            _settled_at(page, "/peaks/lower/1", "xanchor", 0.95 * freq)
+            _plot_under_the_mouse(page)
+        assert abs(gap - 24) <= 2, gap
+        _rest(page)
+        zero = _group("peaks", 0, ("lower", "upper"))
+        one = _group("peaks", 1, ("lower", "upper"))
+        left, right = _shape(page, "/peaks/upper/0"), _shape(page, "/peaks/lower/1")
+        y = left["y"]  # the arrows' row: mid-height of the spectrum panel
+        inside = _shape(page, "/peaks/lower/0")["x"] + 4
+
+        def from_the_first() -> None:
+            _rest(page)
+            page.mouse.move(inside, y - 30)
+            page.mouse.move(inside, y, steps=5)
+            page.wait_for_timeout(100)
+            assert _grips_on(page)["shown"] == zero
+
+        # 5 px short of the second window: the second's.
+        from_the_first()
+        page.mouse.move(right["x"] - 5, y, steps=10)
+        page.wait_for_timeout(100)
+        assert _grips_on(page)["shown"] == one
+        # On into the gap, to the second's own lower arrow: still the
+        # second's, though the first window's edge is a little nearer there.
+        arrow = _shape(page, "/peaks/lower/1")
+        assert arrow["box"] is not None, arrow
+        page.mouse.move(arrow["box"]["x"], y, steps=4)
+        page.wait_for_timeout(100)
+        assert _grips_on(page)["shown"] == one
+        # From the first window to ITS upper arrow, at nearly the same spot:
+        # the first's holds.
+        from_the_first()
+        mine = _shape(page, "/peaks/upper/0")
+        assert mine["box"] is not None, mine
+        page.mouse.move(mine["box"]["x"], y, steps=6)
+        page.wait_for_timeout(100)
+        assert _grips_on(page)["shown"] == zero
+        assert abs(mine["box"]["x"] - arrow["box"]["x"]) <= 6, (mine, arrow)
+        _shot(page, tmp_path, "neighbours-peaks")
+
+        # The second's upper arrow, reached from the first window across
+        # the second: pressed and dragged right, row 1's upper side.
+        page.mouse.move(right["x"] + 3, y, steps=6)
+        page.wait_for_timeout(100)
+        assert _grips_on(page)["shown"] == one
+        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.2")
+        far = _shape(page, "/peaks/upper/1")
+        assert far["box"] is not None, far
+        page.mouse.move(far["box"]["x"], y, steps=8)
+        assert _grips_on(page)["shown"] == one
+        page.mouse.down()
+        page.mouse.move(far["box"]["x"] + 15, y, steps=8)
+        page.mouse.up()
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.2", timeout=EXPECT_TIMEOUT
+        )
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
