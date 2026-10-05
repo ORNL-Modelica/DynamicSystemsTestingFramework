@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1497,6 +1499,53 @@ def test_the_editable_figure_names_each_grip_its_group_and_its_axis(mode):
         assert said["label"] == GRIP_LABELS[edge], name
 
 
+def _apex(shape: dict) -> tuple[float, float]:
+    """A grip shape's apex, in px about its anchor (positive y is UP): the
+    first point of its path."""
+    found = re.match(r"M\s*(-?[0-9.]+)\s*,\s*(-?[0-9.]+)", shape["path"])
+    assert found is not None, shape["path"]
+    return float(found.group(1)), float(found.group(2))
+
+
+@pytest.mark.parametrize("mode", GRIP_VIEWS)
+def test_the_editable_figure_says_which_way_each_arrow_is_drawn(mode):
+    """The page takes the pointer to be on an arrow where the arrow is —
+    10 to 17 px from its anchor, along its axis, the way `outward` says:
+    +1 towards larger values and later times. It is the way the shape's own
+    path goes, on the grip's own axis and on no other."""
+    fig = variable_figure(GRIP_VIEWS[mode](), editable=True)
+    grips = _pointer(fig)["grips"]
+    shapes = {s["name"]: s for s in fig["layout"]["shapes"]}
+    assert grips
+    for name, said in grips.items():
+        apex = dict(zip("xy", _apex(shapes[name])))
+        other = "y" if said["axis"] == "x" else "x"
+        assert said["outward"] in (1, -1), name
+        assert apex[said["axis"]] == 10 * said["outward"], (name, apex)
+        assert apex[other] == 0, (name, apex)
+
+
+def test_the_pages_tip_is_the_middle_of_the_drawn_arrow():
+    """`grips.js` holds one number of an arrow's shape: how far from its
+    anchor its middle is. It is the middle of every path this module
+    draws — the apex at 10 px and the base at 17."""
+    from dstf.figures import plotly
+    from dstf.figures.plotly import _GRIP_PATHS
+
+    # By its path: the shell's own modules need NiceGUI to be imported.
+    page = Path(plotly.__file__).parents[1] / "authoring" / "shell" / "grips.js"
+    found = re.search(
+        r"^  const TIP = ([0-9.]+);$", page.read_text(encoding="utf-8"), re.M
+    )
+    assert found is not None
+    for (axis, way), path in _GRIP_PATHS.items():
+        along = [
+            float(pair.split(",")["xy".index(axis)])
+            for pair in re.findall(r"-?[0-9.]+,-?[0-9.]+", path)
+        ]
+        assert (min(along) + max(along)) / 2 == way * float(found.group(1)), path
+
+
 def test_the_editable_figure_names_the_ring_each_group_stands_around():
     """A checkpoint's ring, a declared peak's: one of the places its arrows
     are NEAR. A ring with no grips around it — a tube's control point, the
@@ -1534,11 +1583,13 @@ def test_a_third_party_grip_is_named_by_the_same_rule():
         f"{P0}/theirs/upper/a": {
             "group": f"{P0}/theirs/a",
             "axis": "y",
+            "outward": 1,
             "label": "Drag to set the upper tolerance",
         },
         f"{P0}/theirs/lower/a": {
             "group": f"{P0}/theirs/a",
             "axis": "y",
+            "outward": -1,
             "label": "Drag to set the lower tolerance",
         },
     }

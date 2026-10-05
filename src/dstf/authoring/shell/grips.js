@@ -32,6 +32,13 @@
   // shown one, px: two arrows of neighbours can stand on one spot, and
   // without it the one reached first flickered away under the pointer.
   const HYSTERESIS = 6;
+  // The middle of an arrow as it is drawn, px from its anchor along its
+  // axis: a triangle from 10 to 17 px out (figures/plotly.py `_GRIP_PATHS`;
+  // `test_the_pages_tip_is_the_middle_of_the_drawn_arrow` holds the two
+  // together).
+  const TIP = 13.5;
+  // How far outside a shown arrow's box the pointer is still on it, px.
+  const ON_ARROW = 3;
 
   // What the server says of the figure `gd` holds, or null for a figure
   // that says nothing (then nothing is marked).
@@ -110,11 +117,13 @@
     };
 
     // Each group's reveal region, in pixels of the graph div: the bounding
-    // box of its grips' anchors — and its ANCHOR POINTS, those and the ring
-    // they stand around. A grip anchored to the PAPER in y (an event's or a
-    // peak's window spans its panel) has no y of its own: its region is the
-    // panel's whole height, and what the pointer is near is the window's
-    // x-range at the pointer's own height.
+    // box of its grips' anchors — and its POINTS, the places a person aims
+    // at: the ring its grips stand around, each grip's anchor and each
+    // arrow's drawn TIP, `TIP` px from that anchor the way the server says
+    // the arrow is drawn (`outward`, along its `axis`). A grip anchored to
+    // the PAPER in y (an event's or a peak's window spans its panel) has no
+    // y of its own: its region is the panel's whole height, and its anchor
+    // and its tip are at the pointer's own height (`columns`).
     const regions = () => {
       const fl = gd._fullLayout;
       const out = new Map();
@@ -123,7 +132,8 @@
       const rings = [];
       for (const s of (gd.layout && gd.layout.shapes) || []) {
         if (s.visible === false) continue;
-        const g = groupOf(s.name);
+        const grip = gripOf(s.name);
+        const g = grip ? grip.group : null;
         const ring = g ? null : info && own(info.targets, s.name);
         if (!g && !ring) continue;
         const xa = fl["xaxis" + (s.xref || "x").slice(1)];
@@ -139,13 +149,18 @@
         }
         const t = paper ? ya._offset : y;
         const b = paper ? ya._offset + ya._length : y;
-        const r = out.get(g) || { l: x, r: x, t, b, paper: false, points: [] };
+        const r = out.get(g) || { l: x, r: x, t, b, points: [], columns: [] };
         r.l = Math.min(r.l, x);
         r.r = Math.max(r.r, x);
         r.t = Math.min(r.t, t);
         r.b = Math.max(r.b, b);
-        r.paper = r.paper || paper;
-        if (!paper) r.points.push([x, y]);
+        // A shape's pixel path has y UP: outward on the value axis is up
+        // the screen.
+        const way = TIP * (Math.sign(grip.outward) || 0);
+        const dx = grip.axis === "x" ? way : 0;
+        const dy = grip.axis === "y" ? -way : 0;
+        if (paper) r.columns.push(x, x + dx);
+        else r.points.push([x, y], [x + dx, y + dy]);
         out.set(g, r);
       }
       for (const [g, x, y] of rings) {
@@ -155,24 +170,39 @@
       return out;
     };
 
-    // How far the pointer is from a group: from the nearest of its anchor
-    // points, or — a window — from the nearest point of its x-range.
+    // How far the pointer is from a group: from the nearest of its points.
     const distance = (r, x, y) => {
-      if (r.paper) {
-        const dx = x < r.l ? r.l - x : x > r.r ? x - r.r : 0;
-        const dy = y < r.t ? r.t - y : y > r.b ? y - r.b : 0;
-        return Math.hypot(dx, dy);
-      }
-      return Math.min(...r.points.map(([px, py]) => Math.hypot(x - px, y - py)));
+      const level = Math.min(Math.max(y, r.t), r.b);
+      return Math.min(
+        ...r.points.map(([px, py]) => Math.hypot(x - px, y - py)),
+        ...r.columns.map((px) => Math.hypot(x - px, y - level)),
+      );
     };
 
-    // The group the pointer is near, or null: of the groups whose region
-    // holds the pointer, the one whose nearest anchor is closest. The shown
-    // group stays unless another is at least HYSTERESIS px nearer — sticky
-    // for as long as the pointer was in its region, a group kept its arrows
-    // while the pointer stood on a NEIGHBOUR's ring, 15 px away, and where
-    // that neighbour's own arrow belongs was plain plot.
+    // How far the pointer (viewport px) is from the nearest SHOWN arrow's
+    // box — 0 on it, Infinity with none shown. The box is the path's own,
+    // as drawn: whichever way its arrow points.
+    const arrow = (cx, cy) => {
+      let nearest = Infinity;
+      for (const el of gd.querySelectorAll(".shapelayer path[data-grip-on]")) {
+        const b = el.getBoundingClientRect();
+        if (!b.width && !b.height) continue;
+        const dx = cx < b.left ? b.left - cx : cx > b.right ? cx - b.right : 0;
+        const dy = cy < b.top ? b.top - cy : cy > b.bottom ? cy - b.bottom : 0;
+        nearest = Math.min(nearest, Math.hypot(dx, dy));
+      }
+      return nearest;
+    };
+
+    // The group the pointer is near, or null. On a shown arrow, the group
+    // it is of stays: an arrow stands 10 to 17 px OUTSIDE its anchor, on a
+    // close neighbour's ring or inside its window, and shown by the nearest
+    // ANCHOR it went from under the pointer that walked onto it. Else, of
+    // the groups whose region holds the pointer, the one whose nearest
+    // point is closest — of equals, the first in the figure's order. The
+    // shown group stays unless another is at least HYSTERESIS px nearer.
     const pick = (cx, cy) => {
+      if (st.on !== null && arrow(cx, cy) <= ON_ARROW) return st.on;
       const box = gd.getBoundingClientRect();
       const x = cx - box.left;
       const y = cy - box.top;

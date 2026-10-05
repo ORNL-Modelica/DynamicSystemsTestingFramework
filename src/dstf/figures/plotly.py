@@ -938,9 +938,11 @@ def _secondary_axis(title: str) -> dict:
 #:
 #: * ``grips``: per grip shape, by name, the ``group`` it shows with
 #:   (:func:`~dstf.comparison.geometry.grip_group`), the ``axis`` it moves
-#:   on (the page's cursor over it) and the ``label`` it carries as its
-#:   tooltip (:func:`~dstf.comparison.geometry.grip_label` — the words are
-#:   Python's);
+#:   on (the page's cursor over it), ``outward`` — ``+1`` or ``-1``, the
+#:   way along that axis its arrow is DRAWN from its anchor, which is where
+#:   the page takes the pointer to be on it — and the ``label`` it carries
+#:   as its tooltip (:func:`~dstf.comparison.geometry.grip_label` — the
+#:   words are Python's);
 #: * ``targets``: per ring a group's grips stand around, by name, that
 #:   group — a checkpoint's ring is one of the places its arrows are near;
 #: * ``draggable``: the names an editor moves — the ringed leaves' rings,
@@ -1036,6 +1038,7 @@ def _leaf_traces(
                 pointer["grips"][grip.id] = {
                     "group": grip_group(grip),
                     "axis": grip_axis(grip),
+                    "outward": grip_outward(grip),
                     "label": grip_label(grip),
                 }
             groups = {said["group"] for said in pointer["grips"].values()}
