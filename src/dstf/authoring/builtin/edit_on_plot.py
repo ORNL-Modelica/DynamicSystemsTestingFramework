@@ -503,6 +503,11 @@ def _table(
     column's own side labels. With ONE side of a pair blank the control
     hands the table nothing — the row still holds the pair it had — so a
     half pair holds the whole list back as a blank required cell does.
+    The one thing a half cell does hand over is the pair it held when its
+    field took the focus, where values typed on the way to blank were
+    staged (`0.2` backspaced away is `0.`, `0`, then nothing): that list
+    is staged, so the row holds no pair nobody meant, unless ANOTHER cell
+    holds the list back — then those values were never staged either.
     ``Add row`` and ``Remove row`` too: they rebuild the rows, and a half
     cell is rebuilt as it stands — blank and marked — not from the pair
     its row still holds, so nothing is staged until the blank is filled
@@ -518,23 +523,24 @@ def _table(
     #: the control.
     pairs: list[tuple[dict, str, SidesControl]] = []
 
-    def blanks() -> bool:
+    def blanks(but: SidesControl | None = None) -> bool:
         """Mark each required cell blank or not; True when any is, or when
-        a tolerance cell is half a pair (it marks its own fields). The mark
+        a tolerance cell other than ``but`` is half a pair (it marks its
+        own fields). The mark
         is the cell's own validation (`missing`): written as an `error`
         prop it never showed — NiceGUI validates a field after its change
         handlers and resets an `error` it did not set itself."""
         for cell in cells.values():
             cell.validate(return_result=False)
         return any(row.get(key) is None for row in rows for key in required) or any(
-            group.half() for _row, _key, group in pairs
+            group.half() for _row, _key, group in pairs if group is not but
         )
 
     def missing(i: int, key: str) -> str | None:
         return f"{key} is required" if rows[i].get(key) is None else None
 
-    def submit() -> None:
-        if blanks():
+    def submit(but: SidesControl | None = None) -> None:
+        if blanks(but):
             return
         ui_panel.submit(
             kind="rows",
@@ -547,6 +553,14 @@ def _table(
     def set_cell(i: int, key: str, value: Any) -> None:
         rows[i][key] = value
         submit()
+
+    def set_sides(i: int, key: str, value: Any) -> None:
+        """A tolerance cell handed ``value`` over. Half as it does so, it
+        is putting back what it held when its field took the focus: its
+        own blank side does not hold THAT list back."""
+        rows[i][key] = value
+        own = next(g for row, k, g in pairs if row is rows[i] and k == key)
+        submit(but=own)
 
     def remove(i: int) -> None:
         rows.pop(i)
@@ -582,7 +596,7 @@ def _table(
                             group = sides_control(
                                 key,
                                 halves.get((id(row), key), row.get(key)),
-                                partial(set_cell, i, key),
+                                partial(set_sides, i, key),
                                 side_labels=labels[0] if labels else SIDE_LABELS,
                                 mark=f"{mark}:{i}:{key}",
                                 required=key in required,

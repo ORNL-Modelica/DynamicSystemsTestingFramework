@@ -27,6 +27,15 @@ async def _stage(model: str = "FakeLib.A") -> dict:
     return {"pending": len(session.spec.pending)}
 
 
+@app.get("/__tree")
+async def _tree(model: str = "FakeLib.A") -> dict:
+    """The tree ``model`` is scored by — staged edits included — and how
+    many ops are pending: what an edit left STAGED, read from the Session
+    rather than off the page."""
+    session = _shell().session
+    return {"tree": session.tree(model), "pending": len(session.spec.pending)}
+
+
 #: One entry per stage `/__slow`'s Session has finished.
 _STAGED: list[int] = []
 

@@ -4898,6 +4898,131 @@ def test_a_field_typed_in_and_left_takes_the_servers_value_again(
         assert float(lower.input_value()) == 0.4
 
 
+def _pair_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_typing_project` with y's points leaf holding the pair 0.1 / 0.2
+    and its one row a pair of its own, the same."""
+    cfg, work = _typing_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            leaf = entry["metrics"]["children"][2]
+            leaf["tolerance"] = {"lower": 0.1, "upper": 0.2}
+            leaf["points"][0]["tolerance"] = {"lower": 0.1, "upper": 0.2}
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def _staged_tree(page, model: str = A) -> dict:
+    """The tree the Session scores ``model`` by, staged edits included
+    (`author_hooks.py`'s `/__tree`)."""
+    base = page.url.split("test/")[0]
+    query = urllib.parse.urlencode({"model": model})
+    with urllib.request.urlopen(f"{base}__tree?{query}") as r:
+        return json.loads(r.read())["tree"]
+
+
+def _staged_becomes(page, read: Callable[[dict], object], want: object) -> None:
+    """Wait until ``read(the staged tree)`` is ``want``."""
+    deadline = time.monotonic() + EXPECT_TIMEOUT / 1000
+    seen = read(_staged_tree(page))
+    while seen != want and time.monotonic() < deadline:
+        page.wait_for_timeout(100)
+        seen = read(_staged_tree(page))
+    assert seen == want
+
+
+def _backspace_away(page, field, keys: int) -> None:
+    """Click into ``field``, go to its end and press Backspace ``keys``
+    times, each after the server has had the one before."""
+    field.click()
+    page.keyboard.press("End")
+    for _ in range(keys):
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(250)
+
+
+@pytest.mark.parametrize("where", ["form", "row"])
+def test_a_side_backspaced_to_empty_leaves_the_pair_it_held(
+    tmp_path, playwright_browser, where
+):
+    """The `+` side of a pair 0.1 / 0.2, backspaced away with real keys:
+    `0.`, `0`, nothing. The field is blank and says "required", and what is
+    staged is the pair the field held when it was entered. It was
+    `{"lower": 0.1, "upper": 0.0}`: the `0` on the way to empty, which
+    nobody typed. In the criterion's form and in a table row."""
+    with _served(
+        tmp_path, playwright_browser, project=_pair_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 1, "points · y")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        if where == "form":
+            upper = editor.get_by_label("+ Default tolerance", exact=True)
+        else:
+            row = editor.locator(".dstf-table-row").first
+            upper = row.get_by_label("+ tolerance", exact=True)
+
+        def held(tree: dict) -> object:
+            leaf = tree["children"][2]
+            return (leaf if where == "form" else leaf["points"][0])["tolerance"]
+
+        expect(upper).to_have_value("0.2")
+        upper.click()
+        page.keyboard.press("End")
+        page.keyboard.press("Backspace")
+        # The `0.` on the way IS staged: the pair with a zero.
+        _staged_becomes(page, held, {"lower": 0.1, "upper": 0.0})
+        for _ in range(2):
+            page.keyboard.press("Backspace")
+            page.wait_for_timeout(250)
+        marked = editor.locator(".q-field--error")
+        expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(marked).to_contain_text("required")
+        expect(upper).to_have_value("")
+        _staged_becomes(page, held, {"lower": 0.1, "upper": 0.2})
+        _shot(page, tmp_path, f"side-emptied-{where}")
+        # Filled again, the new pair is staged as it always was.
+        page.keyboard.type("0.5")
+        expect(marked).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        _staged_becomes(page, held, {"lower": 0.1, "upper": 0.5})
+        # Left and entered again, the field's start is the pair it holds
+        # NOW: emptied once more, that one stays — not the pair the editor
+        # opened on.
+        page.locator(".dstf-subheader").click()
+        _backspace_away(page, upper, 3)
+        expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(500)
+        assert held(_staged_tree(page)) == {"lower": 0.1, "upper": 0.5}
+
+
+def test_a_linked_side_backspaced_to_empty_unsets_the_tolerance(
+    tmp_path, playwright_browser
+):
+    """Linked, an emptied field is no half pair: both fields are empty, the
+    leaf holds no tolerance, and the hint says the one in effect — as it
+    always did."""
+    with _served(
+        tmp_path, playwright_browser, project=_typing_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 1, "points · y")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        lower = editor.get_by_label("− Default tolerance", exact=True)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(upper).to_have_value("0.3")
+        _backspace_away(page, upper, 3)
+        expect(upper).to_have_value("")
+        expect(lower).to_have_value("", timeout=EXPECT_TIMEOUT)
+        _staged_becomes(page, lambda tree: "tolerance" in tree["children"][2], False)
+        expect(editor.locator(".q-field--error")).to_have_count(0)
+        expect(editor).to_contain_text("in effect: 0.01 (the test's tolerance)")
+
+
 def test_the_wheel_over_a_focused_number_field_scrolls_the_page(
     tmp_path, playwright_browser
 ):

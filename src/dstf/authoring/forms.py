@@ -9,6 +9,7 @@ different surface.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 from collections.abc import Callable
@@ -310,6 +311,13 @@ class SidesControl(ui.row):
         }
         self._on_change, self._hint, self._syncing = on_change, hint, False
         self._required, self._label = required, label
+        #: What the spec holds: what `on_change` last got, at first what the
+        #: control was built on. And what it held when the field being
+        #: edited took the focus (`_entered`): what a side that ends up
+        #: blank puts back.
+        self._held: Any = copy.deepcopy(value)
+        self._at_focus: Any = copy.deepcopy(value)
+        self._editing: str | None = None
         #: The spec holds something no side shows (``"0.1"``, ``true``, a
         #: list, a pair of two non-numbers): both fields are blank, and the
         #: hint is not said — it means nothing is set here. Until an edit.
@@ -363,27 +371,41 @@ class SidesControl(ui.row):
         present = [v for v in self._sides.values() if v is not None]
         if not self.linked:
             if present:  # linked, both fields held the one number
-                self._on_change({"lower": present[0], "upper": present[0]})
-            return
-        if not present:
-            return
-        both = max(present)
-        for side in ("lower", "upper"):
-            self._sides[side] = both
-            self._show(side, both)
-        self._mark_blanks()
-        self._on_change(both)
+                self._hand({"lower": present[0], "upper": present[0]})
+        elif present:
+            both = max(present)
+            for side in ("lower", "upper"):
+                self._sides[side] = both
+                self._show(side, both)
+            self._mark_blanks()
+            self._hand(both)
+        # A new start: a side emptied next puts back what the toggle left,
+        # in the shape it left it.
+        self._entered(None)
 
     def _field(self, side: str, label: str) -> TypedNumber:
         # "required" through the field's own validation: NiceGUI validates
         # a field after its change handlers and resets an `error` prop it
         # did not set itself, so a mark written as a prop never showed.
-        return TypedNumber(
+        field = TypedNumber(
             label=label,
             value=self._sides[side],
             on_change=lambda e: self._edited(side, e.value),
             validation=lambda _value: "required" if self._missing(side) else None,
         ).props("dense")
+        field.on("focus", lambda _e: self._entered(side), [])
+        return field
+
+    def _entered(self, side: str | None) -> None:
+        """``side``'s field took the focus — or is the first edited since
+        another was, where no focus was heard (a value set from Python):
+        what the spec holds now is what that side, left blank, puts back."""
+        self._editing, self._at_focus = side, copy.deepcopy(self._held)
+
+    def _hand(self, value: Any) -> None:
+        """Hand ``value`` to ``on_change``: it is what the spec holds next."""
+        self._held = copy.deepcopy(value)
+        self._on_change(value)
 
     def _blank(self, side: str) -> bool:
         return (
@@ -400,6 +422,8 @@ class SidesControl(ui.row):
     def _edited(self, side: str, value: Any) -> None:
         if self._syncing:  # the other field, set from here: not an edit
             return
+        if side != self._editing:
+            self._entered(side)
         self._unusable = False  # what the spec holds next is this control's
         value = None if value is None else float(value)
         self._sides[side] = value
@@ -407,7 +431,7 @@ class SidesControl(ui.row):
             self._sides[_OTHER[side]] = value
             self._show(_OTHER[side], value)
             self._say_hint()
-            self._on_change(value)
+            self._hand(value)
             return
         lower, upper = self._sides["lower"], self._sides["upper"]
         if lower is None and upper is None:
@@ -416,9 +440,16 @@ class SidesControl(ui.row):
         self._mark_blanks()
         self._say_hint()
         if lower is None and upper is None:
-            self._on_change(None)
+            self._hand(None)
         elif lower is not None and upper is not None:
-            self._on_change({"lower": lower, "upper": upper})
+            self._hand({"lower": lower, "upper": upper})
+        elif self._held != self._at_focus:
+            # One side ended up blank, by way of values that were handed
+            # over (`0.2` backspaced away is `0.`, `0`, then nothing): the
+            # spec held a pair with a zero nobody typed beside a field
+            # reading "required". It goes back to what it held when the
+            # field took the focus — the whole pair, as it then was.
+            self._hand(copy.deepcopy(self._at_focus))
 
     def _show(self, side: str, value: float | None) -> None:
         """Set ``side``'s field without it counting as an edit: a value set
@@ -479,10 +510,13 @@ def sides_control(
 
     - linked, typing in either field sets both and hands over the number;
       clearing either clears both and hands over ``None``;
-    - unlinked, typing hands over the pair; while ONE side is blank nothing
+    - unlinked, typing hands over the pair; while ONE side is blank no pair
       is handed over and the blank field is marked "required"
       (:meth:`SidesControl.half` says so to a caller holding a stale
-      value); both blank is ``None``, and the control is linked again;
+      value) — a side that ends up blank after values typed on the way
+      were handed over hands back what the control held when its field
+      took the focus, so the spec holds no pair nobody meant; both blank
+      is ``None``, and the control is linked again;
     - the toggle: unlinking hands over the pair holding the number twice
       (unset stays unset, and unlinked); linking hands over the larger side
       — of those present — for both.

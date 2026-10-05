@@ -1040,6 +1040,68 @@ async def test_a_half_pair_holds_the_whole_list_until_it_is_filled(session):
         ]
 
 
+def _keys(user, marker: str, *texts: str) -> None:
+    """Keystrokes in the field marked ``marker``, each its own change
+    event carrying the field's whole text after it, as the browser sends
+    them."""
+    for text in texts:
+        user.find(marker=marker).trigger("update:modelValue", text)
+
+
+async def test_a_rows_side_backspaced_to_empty_puts_back_the_pair_it_held(session):
+    """`0.3` backspaced away in a row's `+` passes through `0.` and `0`,
+    which the table staged: the cell blank and "required", the row holding
+    an upper side of 0. Going blank stages the list with the pair the cell
+    held when its field took the focus — and the cell, half, then holds the
+    list back as any half cell does."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"][0]["tolerance"] = dict(PAIR)
+    _root_leaf_on_a(session, leaf)
+    row = "/metrics:points:0"
+    upper = f"{row}:tolerance:upper"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        user.find(marker=upper).trigger("focus")
+        _keys(user, upper, "0.", "0")
+        zero = {"lower": 0.1, "upper": 0.0}
+        await _settled(lambda: _a_rows(session, "points")[0]["tolerance"] == zero)
+        _keys(user, upper, "")
+        await _settled(lambda: _a_rows(session, "points")[0]["tolerance"] == PAIR)
+        assert _cell(user, upper).value is None
+        assert _cell(user, upper).error == "required" and not errors
+        # Half: an edit of another cell is held with it.
+        _cell(user, f"{row}:time").set_value(0.6)
+        await asyncio.sleep(0.25)
+        assert _a_rows(session, "points")[0] == {
+            "time": 0.5,
+            "value": 0.5,
+            "tolerance": PAIR,
+        }
+        _keys(user, upper, "0.4")
+        await _settled(lambda: _a_rows(session, "points")[0]["time"] == 0.6)
+        assert _a_rows(session, "points")[0]["tolerance"] == {
+            "lower": 0.1,
+            "upper": 0.4,
+        }
+        assert not errors
+
+
+async def test_a_side_emptied_beside_another_half_cell_stages_nothing(session):
+    """With another cell already half, the values typed on the way were
+    held, not staged: there is nothing to put back, and nothing is."""
+    leaf = _two_rows_one_pair()
+    leaf["points"][1]["tolerance"] = dict(PAIR)
+    _root_leaf_on_a(session, leaf)
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _cell(user, "/metrics:points:1:tolerance:lower").set_value(None)
+        upper = "/metrics:points:0:tolerance:upper"
+        user.find(marker=upper).trigger("focus")
+        _keys(user, upper, "0.", "0", "")
+        await asyncio.sleep(0.25)
+        assert session.spec.pending == pending and not errors
+        assert _cell(user, upper).error == "required"
+
+
 def _two_rows_one_pair() -> dict:
     """A points leaf of two rows, the first holding `PAIR`."""
     return {

@@ -418,6 +418,122 @@ async def test_a_pair_with_one_side_blank_hands_over_nothing_and_is_marked():
         assert g.lower.error is None and g.upper.error is None
 
 
+def _keys(user, marker: str, *texts: str) -> None:
+    """Keystrokes in the field marked ``marker``, each its own change
+    event carrying the field's whole text after it, as the browser sends
+    them (`0.2` backspaced away is `0.`, `0`, then nothing)."""
+    for text in texts:
+        user.find(marker=marker).trigger("update:modelValue", text)
+
+
+def _focus(user, marker: str) -> None:
+    user.find(marker=marker).trigger("focus")
+
+
+PAIR = {"lower": 0.1, "upper": 0.2}
+
+
+async def test_a_side_backspaced_to_empty_puts_back_the_pair_it_held_at_focus():
+    """`0.2` backspaced away passes through `0.` and `0`: a pair with an
+    upper side of 0 was handed over, and it stayed — the field blank and
+    "required", the spec holding a zero nobody typed. Going blank hands
+    back the pair the control held when the field took the focus."""
+    seen, made, root = _sides(dict(PAIR))
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        _focus(user, "t:upper")
+        _keys(user, "t:upper", "0.", "0", "")
+        assert seen == [{"lower": 0.1, "upper": 0.0}, PAIR]
+        assert g.half() and g.upper.value is None
+        assert g.upper.error == "required" and g.lower.error is None
+        # Filled again: the new pair, as it always was.
+        _keys(user, "t:upper", "5")
+        assert seen[-1] == {"lower": 0.1, "upper": 5.0}
+        assert not g.half() and g.upper.error is None
+
+
+async def test_a_side_deleted_in_one_key_hands_over_nothing():
+    """Select all and Delete: no value on the way, so the spec still holds
+    the pair — nothing to put back."""
+    seen, made, root = _sides(dict(PAIR))
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        _focus(user, "t:upper")
+        _keys(user, "t:upper", "")
+        assert seen == [] and made["g"].half()
+
+
+async def test_the_pair_put_back_is_the_one_held_when_the_field_took_focus():
+    """Each focus is a new start: a pair typed, the field left and entered
+    again, is the one a blank puts back — not the pair the control was
+    built on. And the WHOLE pair, the other side as it then was."""
+    seen, made, root = _sides(dict(PAIR))
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        _focus(user, "t:lower")
+        _keys(user, "t:lower", "0.15")
+        _focus(user, "t:upper")
+        _keys(user, "t:upper", "0.3")
+        assert seen[-1] == {"lower": 0.15, "upper": 0.3}
+        _focus(user, "t:upper")
+        _keys(user, "t:upper", "0.", "")
+        assert seen[-2:] == [
+            {"lower": 0.15, "upper": 0.0},
+            {"lower": 0.15, "upper": 0.3},
+        ]
+
+
+async def test_a_side_emptied_after_a_pair_typed_into_nothing_is_unset_again():
+    """What the control held when the field took the focus can be nothing:
+    unset and unlinked, `5` and `6` typed, the `6` backspaced away — the
+    spec holds no tolerance again, as when that field was entered."""
+    seen, made, root = _sides(None)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        user.find(marker="t:link").click()
+        _focus(user, "t:lower")
+        _keys(user, "t:lower", "5")
+        assert seen == [] and g.half()
+        _focus(user, "t:upper")
+        _keys(user, "t:upper", "6")
+        assert seen == [{"lower": 5.0, "upper": 6.0}]
+        _keys(user, "t:upper", "")
+        assert seen == [{"lower": 5.0, "upper": 6.0}, None]
+        assert g.half() and g.upper.error == "required" and not g.linked
+
+
+async def test_unlinking_is_a_new_start_for_the_pair_put_back():
+    """The toggle hands over the pair holding the number twice: a side
+    emptied after it puts THAT back, a pair — not the number the field
+    held when it took the focus, with the control unlinked."""
+    seen, made, root = _sides(0.2)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        _focus(user, "t:upper")
+        user.find(marker="t:link").click()
+        _keys(user, "t:upper", "0.", "")
+        twice = {"lower": 0.2, "upper": 0.2}
+        assert seen == [twice, {"lower": 0.2, "upper": 0.0}, twice]
+
+
+async def test_a_linked_field_backspaced_to_empty_is_unset():
+    """Linked, an empty field is no half pair: it unsets the tolerance, as
+    it always did — the `0` on the way is handed over, then nothing."""
+    seen, made, root = _sides(0.2, hint=HINT)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        g = made["g"]
+        _focus(user, "t:upper")
+        _keys(user, "t:upper", "0.", "0", "")
+        assert seen == [0.0, None]
+        assert (g.lower.value, g.upper.value) == (None, None)
+        assert g.linked and not g.half()
+        assert g.lower.error is None and g.upper.error is None
+        assert g.lower.props.get("hint") == HINT
+
+
 @pytest.mark.parametrize(
     ("lower", "upper", "larger"), [(0.5, 0.2, 0.5), (0.2, 0.5, 0.5), (0.3, 0.3, 0.3)]
 )
