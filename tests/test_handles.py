@@ -73,12 +73,12 @@ PEAKS = {
 BAND, RANGE, POINTS, SCALAR, REL, ABS = TREE["children"]
 
 
-def _edit(leaf, local, x=None, y=None, reference=REF):
+def _edit(leaf, local, x=None, y=None, reference=REF, span=None):
     """Call the leaf's metric's editor, and check it left the input alone."""
     before = copy.deepcopy(leaf)
     try:
         return metric(leaf["metric"]).edit_handle(
-            HandleEdit(leaf=leaf, local=local, x=x, y=y, reference=reference)
+            HandleEdit(leaf=leaf, local=local, x=x, y=y, reference=reference, span=span)
         )
     finally:
         assert leaf == before
@@ -475,6 +475,50 @@ class TestPoints:
         assert _edit(leaf, "points/target/1", 1.7, None)["points"][1]["time"] == 0.8
         leaf = _with(POINTS, window={"start": 0.1})
         assert _edit(leaf, "points/target/1", -3.0, None)["points"][1]["time"] == 0.1
+
+    def test_a_value_points_time_is_clamped_into_the_runs_span(self):
+        """A checkpoint with a value of its own is scored where its time
+        meets the ACTUAL trajectory: dropped past the run's end — the time
+        axis runs a little past the data — it read "not scored" and its
+        ring was not drawn. `span` is the run's first and last time as the
+        scorer receives it (windowed); each side lands on its end."""
+        run = (0.0, 1.0)
+
+        def landed(leaf, x, span):
+            return _edit(leaf, "points/target/1", x, None, span=span)["points"][1][
+                "time"
+            ]
+
+        assert landed(POINTS, 1.00077, run) == 1.0
+        assert landed(POINTS, 1.7, run) == 1.0
+        assert landed(POINTS, -0.0567, run) == 0.0
+        assert landed(POINTS, 0.6, run) == 0.6  # inside: as dragged
+        # A run that starts and ends elsewhere: its own ends, each side.
+        assert landed(POINTS, 5.0, (0.2, 0.9)) == 0.9
+        assert landed(POINTS, -5.0, (0.2, 0.9)) == 0.2
+        # With a window the span is the run's samples INSIDE it — the last
+        # one at or before 0.8 is 0.75, the first at or after 0.1 is 0.25.
+        ending = _with(POINTS, window={"end": 0.8})
+        assert landed(ending, 1.7, (0.0, 0.75)) == 0.75
+        starting = _with(POINTS, window={"start": 0.1})
+        assert landed(starting, -3.0, (0.25, 1.0)) == 0.25
+        # The window's own ends bind as they did: a span that reaches past
+        # them (no caller's, but no reason to write a time outside both).
+        assert landed(ending, 1.7, run) == 0.8
+        assert landed(starting, -3.0, run) == 0.1
+        # No span — a caller with no actual series: the window's ends only.
+        assert landed(POINTS, 1.7, None) == 1.7
+        assert landed(ending, 1.7, None) == 0.8
+
+    def test_the_runs_span_bounds_a_time_MOVE_and_nothing_else(self):
+        # A point authored outside the run, dragged vertically: no time
+        # move, so nothing to clamp — its time is the author's.
+        leaf = _with(POINTS, points=[{"time": 1.5, "value": 1.5, "tolerance": 0.1}])
+        new = _edit(leaf, "points/target/0", 1.5, 1.6, span=(0.0, 1.0))
+        assert new["points"][0] == {"time": 1.5, "value": 1.6, "tolerance": 0.1}
+        # And the value a ring is dragged to is not a time: unbounded.
+        new = _edit(POINTS, "points/target/1", 0.75, 7.0, span=(0.0, 1.0))
+        assert new["points"][1] == {"time": 0.75, "value": 7.0, "tolerance": 0.05}
 
     def test_a_vertical_drag_keeps_a_time_outside_the_reference_span(self):
         # The review's case: the ring sends x back at the point's own time.

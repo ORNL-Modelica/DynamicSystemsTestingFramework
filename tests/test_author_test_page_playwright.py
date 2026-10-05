@@ -9600,12 +9600,15 @@ def _ring_and_bound_project(tmp_path: Path) -> tuple[Path, Path]:
 
 
 #: What is dragged, to which side of the plot, and what it writes there:
-#: the staged leaf's key and the end of which axis.
+#: the staged leaf's key, and where it lands — the end of an axis, where
+#: the page holds a release, or, for a checkpoint's TIME, the end of the
+#: RUN (0..1): the time axis runs a little past the data on either side,
+#: and a checkpoint with a value of its own is scored against the run.
 LET_GO_OUTSIDE = {
-    "a ring, right": ("points · x", "/points/target/0", (1, 0), "time", "xaxis", max),
-    "a ring, left": ("points · x", "/points/target/0", (-1, 0), "time", "xaxis", min),
-    "a ring, above": ("points · x", "/points/target/0", (0, -1), "value", "yaxis", max),
-    "a line, above": ("range · x", "/range/max", (0, -1), "max_value", "yaxis", max),
+    "a ring, right": ("points · x", "/points/target/0", (1, 0), "time", 1.0),
+    "a ring, left": ("points · x", "/points/target/0", (-1, 0), "time", 0.0),
+    "a ring, above": ("points · x", "/points/target/0", (0, -1), "value", max),
+    "a line, above": ("range · x", "/range/max", (0, -1), "max_value", max),
 }
 
 
@@ -9619,8 +9622,14 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
     axis that ends at 1.99; a bound line released above, 1.75 on an axis
     ending at 1.41. Only an arrow was held to the plot. Every shape an
     editor moves is: what it writes is the end of the range that was
-    visible when it was pressed."""
-    name, tail, (dx, dy), key, axis, end = LET_GO_OUTSIDE[case]
+    visible when it was pressed.
+
+    And a checkpoint's TIME is held to the RUN besides: the time axis ends
+    a little past the data (1.0008 on a run 0..1), where a checkpoint with
+    a value of its own read "not scored — checkpoint time outside actual
+    trajectory" and its ring was no longer drawn. It lands on the run's
+    end, either side: still scored, its ring drawn there."""
+    name, tail, (dx, dy), key, landed = LET_GO_OUTSIDE[case]
     with _served(
         tmp_path, playwright_browser, project=_ring_and_bound_project, hooks=True
     ) as page:
@@ -9654,9 +9663,21 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
             leaf = _staged_tree(page)["children"][0 if "points" in tail else 1]
             return (leaf["points"][0] if "points" in tail else leaf)[key]
 
-        print("LET GO", case, written(), ranges[axis])
-        assert written() == pytest.approx(end(ranges[axis]), abs=1e-9), ranges
+        print("LET GO", case, written(), ranges)
         assert written() != (was["points"][0] if "points" in tail else was)[key]
+        if key != "time":
+            assert written() == pytest.approx(landed(ranges["yaxis"]), abs=1e-9), ranges
+            return
+        # The axis the release was held to runs past the run on that side.
+        assert min(ranges["xaxis"]) < 0.0 and max(ranges["xaxis"]) > 1.0, ranges
+        assert written() == landed, (written(), ranges)
+        ring = _settled_at(page, tail, "xanchor", landed)
+        assert ring["box"] is not None, ring
+        page.wait_for_timeout(300)
+        row = _crit(page, 0, name).inner_text()
+        print("LET GO ROW", case, row.replace("\n", " | "))
+        assert "not scored" not in row and "outside" not in row, row
+        assert f"Point at t={landed:g}: error" in row, row  # scored
 
 
 # -- an arrow dragged across its own axis moves nothing ---------------------------

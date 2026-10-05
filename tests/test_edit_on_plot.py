@@ -176,6 +176,46 @@ def test_a_baseline_following_checkpoint_dragged_vertically_stages_nothing(sessi
     )
 
 
+def test_a_ring_with_its_own_value_let_go_past_the_run_lands_on_its_end(session):
+    """The time axis runs a little past the data, and the page holds a
+    release to the axis: a checkpoint with a value of its own came back at
+    t = 1.00077 on a run 0..1, read "not scored — checkpoint time outside
+    actual trajectory" and lost its ring. The editor is told the run's
+    span — the actual series' first and last time — and the time lands on
+    its end, either side; the checkpoint is scored, and drawn there."""
+    _tree_on_d(session)
+    ring = "/metrics/children/2/points/target/1"
+    for released, landed in ((1.00077, 1.0), (-0.0567, 0.0)):
+        op = _only_op(_drag(session, ring, {"xanchor": released, "yanchor": None}))
+        assert op.value["points"][1] == {
+            "time": landed,
+            "value": 0.75,
+            "tolerance": 0.05,
+        }
+    session.stage([op])
+    (leaf,) = [
+        lv for lv in session.view(D, "x").leaves if lv.path == "/metrics/children/2"
+    ]
+    assert "not scored" not in leaf.summary.criterion, leaf.summary
+    (drawn,) = [p for p in leaf.geometry if p.id == ring]
+    assert (drawn.x, drawn.y) == (0.0, 0.75)
+
+
+def test_the_runs_span_a_ring_is_held_to_is_the_one_inside_the_leafs_window(session):
+    """The scorer slices the run to the leaf's window before a checkpoint
+    is scored: the span is the samples INSIDE it — of a run sampled every
+    0.25, the last at or before 0.8 is 0.75 — not the window's own end,
+    where no sample stands for a checkpoint to meet."""
+    tree = copy.deepcopy(TREE)
+    tree["children"][2]["window"] = {"start": 0.1, "end": 0.8}
+    tree["children"][2]["points"][1]["time"] = 0.5
+    session.stage([PatchOp(D, "add", "/metrics", tree)])
+    ring = "/metrics/children/2/points/target/1"
+    for released, landed in ((1.00077, 0.75), (-0.0567, 0.25)):
+        op = _only_op(_drag(session, ring, {"xanchor": released, "yanchor": None}))
+        assert op.value["points"][1]["time"] == landed
+
+
 def test_ids_that_name_no_movable_handle_snap_back(session):
     """A box, a window, a result line: drawn, not editable. Plotly lets
     every shape be dragged (`edits.shapePosition` has no per-shape switch),

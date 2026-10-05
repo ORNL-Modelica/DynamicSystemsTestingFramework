@@ -20,7 +20,7 @@ import math
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from ...comparison.geometry import HLine, Marker, VLine, grip_axis
+from ...comparison.geometry import HLine, Marker, VLine, Window, grip_axis
 from ...comparison.handles import HandleEdit, HandleEditError
 from ...comparison.mode_schema import SIDE_LABELS
 from ...comparison.registry import DEFAULT_METRIC, metric
@@ -33,6 +33,7 @@ from ..tree_pointer import node_at
 from ..unscorable import refuse_negative
 
 if TYPE_CHECKING:
+    from ...figures.view import LeafView, VariableView
     from ..session import SessionView
 
 # NO module-level `nicegui` import: `import dstf.authoring` runs
@@ -181,6 +182,24 @@ def _position(
     if y0 is None and y1 is None:
         return None
     return None, (y0 if y0 is not None else y1)
+
+
+def _run_span(view: VariableView, leaf: LeafView) -> tuple[float, float] | None:
+    """The ACTUAL series' first and last time as ``leaf``'s scorer received
+    it: the evaluator slices the run to the leaf's window (inclusive) first
+    and says so in the leaf's geometry (its ``Window``), so the span is the
+    samples inside that. None with no actual series, or none inside."""
+    time = view.act_time
+    if time is None:
+        return None
+    window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
+    if window is not None and window.start is not None:
+        time = time[time >= window.start]
+    if window is not None and window.end is not None:
+        time = time[time <= window.end]
+    if len(time) == 0:
+        return None
+    return float(time[0]), float(time[-1])
 
 
 def _is_number(value: object) -> bool:
@@ -373,6 +392,7 @@ class EditOnPlot:
         if not _draggable(primitive):
             return None
         assert isinstance(primitive, (Marker, HLine, VLine))  # `_draggable`
+        assert leaf is not None  # the primitive is its
         open_leaf = s.selection.leaf_path
         if open_leaf is not None and path != open_leaf:
             # Only the open leaf's rings and grips are drawn
@@ -404,11 +424,16 @@ class EditOnPlot:
         target = next(
             (
                 p.value
-                for p in (leaf.geometry if leaf else ())
+                for p in leaf.geometry
                 if isinstance(p, HLine) and p.id == f"{path}/scalar/reference"
             ),
             None,
         )
+        # What a time may be dragged to where the leaf is scored against
+        # the RUN and not the baseline (a checkpoint with a value of its
+        # own): the page holds a release to the axis, which runs past the
+        # data.
+        span = _run_span(view, leaf)
         try:
             position = _position(primitive, shape if isinstance(shape, dict) else {})
             if position is None:
@@ -426,6 +451,7 @@ class EditOnPlot:
                         else None
                     ),
                     target=target,
+                    span=span,
                 )
             )
         except HandleEditError as e:

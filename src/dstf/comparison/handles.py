@@ -57,6 +57,11 @@ class HandleEdit:
     #: geometry holds it: a scalar leaf's baseline scalar (its
     #: ``scalar/reference`` line). ``None`` where there is none.
     target: float | None = None
+    #: The ACTUAL series' first and last time as the scorer receives it —
+    #: sliced to the leaf's ``window`` — which bounds the time of a
+    #: checkpoint with a value of its own (:func:`edit_points_handle`).
+    #: ``None`` where the caller has no actual series: no such bound.
+    span: tuple[float, float] | None = None
 
 
 class HandleEditError(ValueError):
@@ -564,9 +569,13 @@ def edit_points_handle(edit: HandleEdit) -> dict:
     is not ``"primary"``. The time is clamped: for a checkpoint that follows
     the baseline, into the span where it is drawn (the tube rule: the first
     reference sample ``>= window.start`` to the last ``<= window.end``); for
-    one with an explicit ``value``, only into the window's own ends — the
-    forward code draws it wherever ``t ± time_tolerance`` meets the actual
-    trajectory, which the editor does not have. A checkpoint whose ``time``
+    one with an explicit ``value``, into the window's own ends AND into the
+    actual trajectory's span (``edit.span``) — the forward code scores and
+    draws it only where ``t ± time_tolerance`` meets that trajectory, so a
+    ring let go a little past the run's end (the time axis runs past the
+    data) read "not scored" and was no longer drawn. With no ``span`` — a
+    caller that has no actual series — the window's ends alone. A
+    checkpoint whose ``time``
     is absent or null — the trace-end sentinel — keeps it: ``x`` is ignored,
     a time is typed in the table. ``y`` sets ``value`` only when the point
     has a non-null one — ``point.get("value") is not None``, the forward
@@ -596,7 +605,10 @@ def edit_points_handle(edit: HandleEdit) -> dict:
         _refuse_other_baseline(edit, leaf, "its time")
         follows_baseline = point.get("value") is None
         reference = _reference(edit) if follows_baseline else None
-        point["time"] = _written(_clamped_time(edit, leaf, x, reference))
+        t = _clamped_time(edit, leaf, x, reference)
+        if not follows_baseline and edit.span is not None:
+            t = min(max(t, edit.span[0]), edit.span[1])
+        point["time"] = _written(t)
     if edit.y is not None and point.get("value") is not None:
         point["value"] = _written(edit.y)
     return leaf
