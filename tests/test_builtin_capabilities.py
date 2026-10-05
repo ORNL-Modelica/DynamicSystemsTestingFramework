@@ -704,6 +704,36 @@ def test_a_k_below_one_reads_as_a_sentence_naming_k(session, action, k, text):
     assert _k_of_n_refusal(session, action, k) == text
 
 
+@pytest.mark.parametrize("action", ["edit", "wrap"])
+@pytest.mark.parametrize("k", [2.7, 1.5, 0.4])
+def test_a_k_that_is_no_whole_number_is_refused_not_rounded(session, action, k):
+    """`2.7` typed as k was taken as 3, silently: the form read 2.7 and the
+    tree held another number (1.5 became 2, 0.4 became 0 and was refused
+    as a 0 nobody typed). It is refused as what was typed."""
+    text = f"k must be a whole number of at least 1; got {k}."
+    assert _k_of_n_refusal(session, action, k) == text
+
+
+def test_a_whole_k_typed_as_a_float_is_that_integer(session):
+    """A number field hands `2.0` for a typed 2: the tree holds the int."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    path = "/metrics/children/1"
+    patch = EditTree().act(
+        SessionView(session, _node(D, path)),
+        action="edit",
+        model_id=D,
+        path=path,
+        kind="k-of-n",
+        k=1.0,
+        weights="",
+        threshold=None,
+        direction="less",
+    )
+    session.stage(patch.ops)
+    k = session.tree(D)["children"][1]["k"]
+    assert k == 1 and isinstance(k, int)
+
+
 @pytest.mark.parametrize(
     "action, k, text",
     [
@@ -846,6 +876,29 @@ async def test_the_edit_form_is_prefilled_and_stages_an_edit(session):
             ("remove", f"{k_of_n}/k"),
         ]
         assert errors == {}
+
+
+async def test_the_edit_form_refuses_a_fraction_typed_as_k(session):
+    """`1.5` typed over k=2 and applied: the sentence shows, the row stays
+    open with what was typed and nothing is staged. It was rounded — the
+    tree held a 2 beside a field reading 1.5."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
+        user.find(marker="host-click").click()
+        await user.should_see(marker=f"apply-edit:{k_of_n}")
+        (k,) = _labelled(user, ui.number, K)
+        pending = list(session.spec.pending)
+        k.set_value(1.5)
+        user.find(marker=f"apply-edit:{k_of_n}").click()
+        await _settled(lambda: "edit-tree" in errors)
+        assert errors["edit-tree"].endswith(
+            "k must be a whole number of at least 1; got 1.5."
+        )
+        assert session.spec.pending == pending
+        assert session.tree(D)["children"][1]["k"] == 2
+        (still,) = _labelled(user, ui.number, K)
+        assert still is k and k.value == 1.5  # the row and what was typed
 
 
 async def test_the_cluster_add_form_starts_from_the_leafs_own_variable(

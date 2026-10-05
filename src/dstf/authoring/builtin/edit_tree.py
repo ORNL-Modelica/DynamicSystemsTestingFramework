@@ -75,9 +75,13 @@ def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
     always fails."""
     if kind == "k-of-n":
         # A cleared field stays None, for the parser to say "k is empty"
-        # rather than refuse a 0 nobody typed.
-        k = inputs["k"]
-        return {"k": int(round(float(k))) if _typed(k) else None}
+        # rather than refuse a 0 nobody typed. A fraction stays the number
+        # typed, for the parser to refuse by name ("k must be a whole
+        # number of at least 1; got 2.7."): rounded, 2.7 was staged as 3.
+        if not _typed(inputs["k"]):
+            return {"k": None}
+        k = float(inputs["k"])
+        return {"k": int(k) if k.is_integer() else k}
     if kind == "weighted":
         text = str(inputs["weights"] or "")
         try:
