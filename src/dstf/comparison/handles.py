@@ -773,9 +773,12 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
     :func:`_set_side` (a row without one gets it on its first drag): in
     ``rel`` (the default) ``1 − x/freq`` and ``x/freq − 1``, refused at a
     declared frequency of zero; in ``abs`` ``freq − x`` and ``x − freq``.
-    A lower edge dragged to 0 Hz or below is refused: no window reaches
-    it, and on a row holding a number the side past 1 was written to both
-    (2.61)."""
+    A write that would leave the window's LOWER edge at 0 Hz or below — a
+    lower side of 1 or more in ``rel``, of the frequency or more in
+    ``abs`` — is refused, whichever grip moved: no window reaches 0 Hz. A
+    lower edge dragged there is one; so is the UPPER edge of a row holding
+    a number, dragged past twice the frequency, since the number is both
+    sides (2.61 was written to both)."""
     _check_position(edit)
     _, role, segment = _parse(edit, "peaks", 3)
     if role not in ("declared", "lower", "upper"):
@@ -787,14 +790,17 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
         if edit.x is None:
             return leaf
         freq = _authored_number(edit, peak.get("freq"), f"peaks[{i}].freq")
-        if role == "lower" and edit.x <= 0:
-            raise _refuse(edit, "the window would reach 0 Hz")
         value = freq - edit.x if role == "lower" else edit.x - freq
-        if peak.get("tolerance_mode", "rel") == "rel":
+        rel = peak.get("tolerance_mode", "rel") == "rel"
+        if rel:
             if freq == 0.0:
                 raise _refuse(edit, "the declared frequency is zero")
             value = value / abs(freq)
         _set_side(edit, peak, "tolerance", role, value)
+        # `_set_side` wrote what it parsed: a number or a whole pair.
+        lower = parse_sides(peak["tolerance"], "tolerance").lower
+        if lower >= (1.0 if rel else freq):
+            raise _refuse(edit, "the window would reach 0 Hz")
         return leaf
     if edit.x is not None:
         if edit.x <= 0:

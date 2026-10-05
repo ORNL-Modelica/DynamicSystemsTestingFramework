@@ -1435,5 +1435,43 @@ class TestPeakSides:
         with pytest.raises(HandleEditError, match="cannot be moved"):
             _grip(PEAK_SIDES, "peaks/window/0", 2.5)
 
+    @pytest.mark.parametrize(
+        ("row", "refused", "widest"),
+        [
+            # rel, a number at 2 Hz: twice the frequency is a lower side of 1.
+            (0, (4.0, 5.0), (3.5, 0.75)),
+            # abs, a number at 8 Hz: the lower side reaches the frequency.
+            (2, (16.0, 20.0), (15.5, 7.5)),
+            # No tolerance yet: its first drag writes a number, rel.
+            (3, (32.0, 40.0), (28.0, 0.75)),
+        ],
+    )
+    def test_a_linked_upper_edge_dragged_wide_is_refused(self, row, refused, widest):
+        """A NUMBER is both sides: its upper grip dragged past twice the
+        peak's frequency wrote a fraction of 1 or more — and the window's
+        LOWER edge, which nobody dragged, reached 0 Hz or went below it.
+        Refused by what the write would leave, not by which grip moved."""
+        for x in refused:
+            with pytest.raises(HandleEditError) as box:
+                _grip(PEAK_SIDES, f"peaks/upper/{row}", x)
+            assert box.value.reason == "the window would reach 0 Hz", x
+        # Just short of it is a wide window, and is written — to both sides.
+        x, written = widest
+        assert _grip(PEAK_SIDES, f"peaks/upper/{row}", x)["peaks"][row][
+            "tolerance"
+        ] == pytest.approx(written)
+
+    def test_a_pairs_upper_edge_is_dragged_as_wide_as_one_likes(self):
+        """A pair's upper side is its own: the lower edge stays where it
+        was, short of 0 Hz, however far the upper one goes."""
+        new = _grip(PEAK_SIDES, "peaks/upper/1", 40.0)
+        assert new["peaks"][1]["tolerance"] == {"lower": 0.125, "upper": 9.0}
+        # ... and one whose lower edge ALREADY reaches 0 Hz takes no write.
+        wide = copy.deepcopy(PEAK_SIDES)
+        wide["peaks"][1]["tolerance"] = {"lower": 1.0, "upper": 0.25}
+        with pytest.raises(HandleEditError) as box:
+            _grip(wide, "peaks/upper/1", 6.0)
+        assert box.value.reason == "the window would reach 0 Hz"
+
     def test_the_declared_peak_still_moves(self):
         assert _edit(PEAK_SIDES, "peaks/declared/0", 3.0)["peaks"][0]["freq"] == 3.0
