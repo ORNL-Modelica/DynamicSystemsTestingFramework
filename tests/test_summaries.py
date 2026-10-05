@@ -811,9 +811,11 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
     """A declared point (or event) with its own tolerance is judged on it,
     and the sentence printed the LEAF's: the reported number beside a band
     it was never held to. Where the reported row's sides are not the leaf's
-    — a pair or a number of its own — or the leaf's are a pair, the
-    sentence names the row and ITS sides. Rows that all defer to a leaf's
-    one number print what they always printed."""
+    — a pair or a number of its own — or are relative, or its delta is not
+    the largest, or the leaf's are a pair, the sentence names the row and
+    ITS sides; a checkpoint never scored is named before any of them. Rows
+    that all defer to a leaf's one number, absolute, print what they
+    always printed."""
 
     T = np.linspace(0.0, 1.0, 11)
     PAIR = {"lower": 0.01, "upper": 0.05}
@@ -933,6 +935,103 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         )
         assert vc.diagnostics["worst_sides_relative"] is True
 
+    @pytest.mark.parametrize("own", [{}, {"tolerance": 0.03}])
+    def test_a_relative_row_is_named_though_its_sides_are_the_leafs(self, own):
+        """The row defers to the leaf's 0.03, or holds that number itself,
+        and is RELATIVE: at target 0.5 its band is 0.015, which +0.02
+        breaks. The leaf's sentence read "Final value error 2.000e-02 vs
+        tolerance 3.000e-02 → FAIL" — a number inside the band it names."""
+        vc, crit = self._points(0.03, [(5, +0.02, {**own, "tolerance_mode": "rel"})])
+        assert not vc.passed
+        assert crit == (
+            "Point at t=0.5: error 2.000e-02 vs tolerance 3.000e-02 (relative) → FAIL"
+        )
+        assert vc.diagnostics["worst_sides"] == 0.03
+        assert vc.diagnostics["worst_sides_relative"] is True
+
+    def test_a_relative_row_that_passes_is_named_too(self):
+        vc, crit = self._points(0.03, [(5, +0.01, {"tolerance_mode": "rel"})])
+        assert vc.passed
+        assert crit == (
+            "Point at t=0.5: error 1.000e-02 vs tolerance 3.000e-02 (relative) → PASS"
+        )
+
+    def test_the_failing_row_is_named_when_a_passing_one_has_the_larger_delta(self):
+        """+0.04 breaks the leaf's 0.03 it defers to; +0.08 is inside its
+        row's own 0.1 and is the largest |Δ|. The sentence read "Final value
+        error 8.000e-02 vs tolerance 3.000e-02 → FAIL": the passing row's
+        delta against a band it was never held to."""
+        vc, crit = self._points(0.03, [(5, +0.04, {}), (8, +0.08, {"tolerance": 0.1})])
+        assert not vc.passed
+        assert crit == "Point at t=0.5: error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert vc.diagnostics["worst_point_time"] == 0.5
+
+    def test_of_two_failing_rows_the_one_furthest_outside_its_own_band(self):
+        """Ranked on each row's OWN band: +0.05 lies 0.02 outside the
+        leaf's 0.03, +0.022 lies 0.021 outside its row's 0.001 — the
+        smaller delta, further out."""
+        vc, crit = self._points(
+            0.03, [(5, +0.05, {}), (8, +0.022, {"tolerance": 0.001})]
+        )
+        assert crit == "Point at t=0.8: error 2.200e-02 vs tolerance 1.000e-03 → FAIL"
+        # ... and 0.022 outside the leaf's is further: that row defers and
+        # its delta is the largest, which is what the leaf's sentence says.
+        vc, crit = self._points(
+            0.03, [(5, +0.052, {}), (8, +0.022, {"tolerance": 0.001})]
+        )
+        assert crit == "Final value error 5.200e-02 vs tolerance 3.000e-02 → FAIL"
+        assert set(vc.diagnostics) == self.POINT_KEYS
+
+    def test_a_relative_rows_distance_is_on_its_scaled_band(self):
+        """At target 0.5 a relative 0.03 is 0.015: +0.03 lies 0.015 outside
+        it, further than +0.04 lies outside the leaf's absolute 0.03."""
+        vc, crit = self._points(
+            0.03, [(5, +0.03, {"tolerance_mode": "rel"}), (8, +0.04, {})]
+        )
+        assert crit == (
+            "Point at t=0.5: error 3.000e-02 vs tolerance 3.000e-02 (relative) → FAIL"
+        )
+
+    @pytest.mark.parametrize(
+        ("point", "reason"),
+        [
+            ({"time": 5.0}, "checkpoint time outside reference range"),
+            ({"time": 5.0, "value": 1.0}, "checkpoint time outside actual trajectory"),
+        ],
+    )
+    def test_an_unscored_checkpoint_is_what_the_sentence_says(self, point, reason):
+        """A checkpoint outside the reference, or one the run never
+        reached, fails unscored — and the sentence named the row beside it,
+        which passes: "Final value error 1.000e-02 vs tolerance 3.000e-02 →
+        FAIL". It is reported before any scored row, a failing one too."""
+        from dstf.comparison.modes import resolve_mode
+
+        act = self.T.copy()
+        act[5] += 0.01
+        act[8] += 0.04  # a scored row that fails as well
+        for points in (
+            [{"time": 0.5}, point],
+            [{"time": 0.5}, {"time": 0.8}, point],
+        ):
+            mode = resolve_mode({"mode": "points", "points": points}, 0.03)
+            vc = mode.compare(self.T, self.T, self.T, act)
+            vc.tolerance_used = mode.tolerance
+            assert not vc.passed
+            assert (
+                summarize(vc).criterion == f"Point at t=5: not scored — {reason} → FAIL"
+            )
+            assert vc.diagnostics["unscored_point"] == {"time": 5.0, "reason": reason}
+
+    def test_the_first_unscored_checkpoint_is_the_one_named(self):
+        from dstf.comparison.modes import resolve_mode
+
+        points = [{"time": 7.0, "value": 1.0}, {"time": 5.0}]
+        mode = resolve_mode({"mode": "points", "points": points}, 0.03)
+        vc = mode.compare(self.T, self.T, self.T, self.T)
+        assert summarize(vc).criterion == (
+            "Point at t=7: not scored — checkpoint time outside actual trajectory → FAIL"
+        )
+
     def test_the_trace_end_row_is_named_by_its_time(self):
         from dstf.comparison.algorithms import _compare_points
 
@@ -972,9 +1071,10 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             "−1.000e-02 / +5.000e-02 → FAIL"
         )
 
-    def test_no_scored_point_reads_as_it_did(self):
-        """A checkpoint the run never reached is not scored: there is no
-        point to name."""
+    def test_with_no_scored_point_the_unscored_one_is_named(self):
+        """A checkpoint the run never reached is not scored, and it is the
+        failure: the sentence read "Final value error +0.000e+00 vs
+        tolerance −1.000e+00 / +2.000e+00 → FAIL", an error of nothing."""
         from dstf.comparison.algorithms import _compare_points
         from dstf.comparison.sides import Sides
 
@@ -985,7 +1085,7 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert vc.diagnostics["scored_points"] == 0
         assert "worst_sides" not in vc.diagnostics
         assert summarize(vc).criterion == (
-            "Final value error +0.000e+00 vs tolerance −1.000e+00 / +2.000e+00 → FAIL"
+            "Point at t=5: not scored — checkpoint time outside actual trajectory → FAIL"
         )
 
     # ---- declared events

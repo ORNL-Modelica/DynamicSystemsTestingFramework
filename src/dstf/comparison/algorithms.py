@@ -416,22 +416,29 @@ def _signed_delta_in_box(
 
 
 def _reported_point(
-    tolerance: Sides, reported: tuple[float, Sides, bool, float] | None
+    tolerance: Sides,
+    reported: tuple[float, Sides, bool, float] | None,
+    worst_delta: float,
 ) -> dict:
     """What `summarize_points` says of the REPORTED point — the one furthest
     outside its own band, the largest |delta|'s when none is — as
     ``(actual − target, the sides it was judged on, whether they are
     relative, its time)``; ``None`` when no point was scored.
 
-    Recorded where that point's sides are not the leaf's — a pair or a
-    number of its own: the band its delta was held to is then not the one
-    the leaf's sentence names — and where the leaf's are a pair, when its
-    signed delta says which side applies. A leaf of one number whose
-    reported point defers to it carries what it always carried."""
+    Recorded wherever the leaf's own sentence — ``worst_delta``, the largest
+    |delta| of any point, beside the leaf's sides — would not be that
+    point's: its sides are not the leaf's (a pair or a number of its own),
+    or they are RELATIVE (the band its delta was held to is those sides
+    times |target|, the leaf's number or not), or another point's delta is
+    the larger (a passing one, inside wider sides of its own); and where
+    the leaf's are a pair, when its signed delta says which side applies.
+    A leaf of one number whose reported point defers to it, absolute and
+    of the largest delta, carries what it always carried."""
     if reported is None:
         return {} if tolerance.equal else {"worst_signed_delta": 0.0}
     signed_delta, sides, relative, time = reported
-    if sides == tolerance and tolerance.equal:
+    its_own = sides != tolerance or relative or abs(signed_delta) != worst_delta
+    if tolerance.equal and not its_own:
         return {}
     return {
         "worst_signed_delta": signed_delta,
@@ -566,6 +573,10 @@ def _compare_points(
     # the report.
     geometry: list[Primitive] = []
     point_failures: list[dict] = []
+    # The `point_failures` of checkpoints that were never SCORED (each
+    # `continue` below). The first is the failure the sentence reports,
+    # before any scored point: no delta of another row explains it.
+    unscored: list[dict] = []
     row_tolerances = _point_tolerances(points, tolerance)
     for i, point in enumerate(points):
         t = point.get("time")
@@ -581,17 +592,19 @@ def _compare_points(
                 # from getting here, but if it happens it is a failure,
                 # not a skip.
                 failed += 1
-                point_failures.append(
+                unscored.append(
                     {"time": t, "reason": "no reference data for ref-relative point"}
                 )
+                point_failures.append(unscored[-1])
                 continue
             if t < float(ref_time[0]) or t > float(ref_time[-1]):
                 # np.interp would silently clamp to the nearest endpoint,
                 # scoring against a target the baseline never defined.
                 failed += 1
-                point_failures.append(
+                unscored.append(
                     {"time": t, "reason": "checkpoint time outside reference range"}
                 )
+                point_failures.append(unscored[-1])
                 continue
             target = float(np.interp(t, ref_time, ref_values))
         # Resolve tolerance + mode.
@@ -602,9 +615,10 @@ def _compare_points(
         upper_limit = per_tol.upper * abs(target) if mode == "rel" else per_tol.upper
         if len(act_time) == 0:
             failed += 1
-            point_failures.append(
+            unscored.append(
                 {"time": t, "reason": "no actual samples (empty trajectory)"}
             )
+            point_failures.append(unscored[-1])
             continue
         t_lo = max(t - x_tol.lower, float(act_time[0]))
         t_hi = min(t + x_tol.upper, float(act_time[-1]))
@@ -612,9 +626,10 @@ def _compare_points(
             # Time box entirely outside the actual trajectory — the
             # simulation never reached this checkpoint.
             failed += 1
-            point_failures.append(
+            unscored.append(
                 {"time": t, "reason": "checkpoint time outside actual trajectory"}
             )
+            point_failures.append(unscored[-1])
             continue
         delta, t_at_min = _min_delta_in_box(
             act_time,
@@ -726,7 +741,10 @@ def _compare_points(
             "worst_delta": worst_delta,
             "worst_time": worst_t,
             "point_failures": point_failures,
-            **_reported_point(tolerance, outside if outside is not None else largest),
+            **({"unscored_point": unscored[0]} if unscored else {}),
+            **_reported_point(
+                tolerance, outside if outside is not None else largest, worst_delta
+            ),
         },
         geometry=tuple(geometry),
     )

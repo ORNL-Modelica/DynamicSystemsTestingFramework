@@ -153,9 +153,10 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
         f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
     )
     # Among declared points, the reported one's sides are not the leaf's
-    # (its own pair or number), or the leaf's are a pair: the scorer
-    # recorded that point — the one furthest outside its band, or of the
-    # largest |Δ| when none is — with the sides IT was judged on.
+    # (its own pair or number), or are relative, or its delta is not the
+    # largest, or the leaf's are a pair: the scorer recorded that point —
+    # the one furthest outside its band, or of the largest |Δ| when none
+    # is — with the sides IT was judged on.
     if "worst_sides" in diag:
         own = parse_sides(diag["worst_sides"], "worst_sides")
         error = _deviation(diag["worst_signed_delta"], own)
@@ -163,6 +164,15 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
         criterion = (
             f"Point at t={diag['worst_point_time']:g}: error {error} vs tolerance "
             f"{sides_text(own)}{relative} → {_verdict(vc)}"
+        )
+    # A checkpoint that was never scored (outside the reference, or the run
+    # never reached it) is the failure, whatever the scored rows did: the
+    # sentence named a row that passes beside FAIL.
+    if "unscored_point" in diag:
+        unscored = diag["unscored_point"]
+        criterion = (
+            f"Point at t={unscored['time']:g}: not scored — {unscored['reason']} "
+            f"→ {_verdict(vc)}"
         )
     return ScoreSummary(
         display=f"|err| {vc.max_abs_error:.3e}",
