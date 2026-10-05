@@ -3326,23 +3326,31 @@ async def test_a_half_pair_whose_tolerance_moved_in_the_spec_shows_the_specs(ses
 
 
 async def test_a_half_pair_goes_with_the_mode_it_was_typed_in(session):
-    """A mode switched to has fields of its own — a scalar's tolerance is
-    another field, though it has the name: the half pair is not shown
-    there, and its record is dropped."""
-    _pair_leaf_on_a(session)
+    """A mode switched to has fields of its own — nrmse's tolerance is
+    another field, though it has the name, and holds as little as the one
+    the half pair was typed over: the record is dropped with the switch,
+    not left for the next field of that name. Back in the first mode the
+    fields are empty, and nothing is marked."""
+    leaf = {"metric": "points", "variable": "x"}
+    session.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
     kept: dict = {}
     async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
         await user.should_see("+ Default tolerance")
-        _sides_of(user)[2].set_value(None)
-        assert kept
+        user.find(marker="tolerance:link").click()  # unset, and unlinked
+        _sides_of(user)[0].set_value(0.1)
+        assert kept == {
+            "tolerance": {"base": None, "shown": {"lower": 0.1, "upper": None}}
+        }
         mode = next(
             c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
         )
-        mode.set_value("scalar")
-        await user.should_see("Tolerance mode")
+        mode.set_value("nrmse")
+        await user.should_see("Tolerance")
+        assert "tolerance" not in _leaf0(session)  # as little as before
         assert kept == {}
-        lower, link, upper = _sides_of(user)
-        assert (lower.error, upper.error) == (None, None)
+        mode.set_value("points")
+        await user.should_see("+ Default tolerance")
+        assert _form_sides(user) == (None, None, None, None, "link")
 
 
 async def test_a_pair_linked_again_while_half_is_no_record(session):
