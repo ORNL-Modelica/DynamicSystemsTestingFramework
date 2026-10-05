@@ -4882,20 +4882,144 @@ def test_a_table_cell_and_a_window_field_keep_what_is_typed(
         assert _shown_and_staged(page, field, before) == ("0.25", "0.25")
 
 
+@pytest.mark.parametrize("twin", ["0.4", "0.3"])
 def test_a_field_typed_in_and_left_takes_the_servers_value_again(
-    tmp_path, playwright_browser
+    tmp_path, playwright_browser, twin
 ):
     """A field keeps what was typed only while it is typed in: `0.25` into
-    the linked `−` and, the server having answered, `0.4` into `+` — `−`,
-    left, reads the 0.4 the server mirrors into it."""
+    the linked `−` and, the server having answered, another number into `+`
+    — `−`, left, reads what the server mirrors into it. Also when that
+    number is the 0.3 the `−` field OPENED on: what the field shows is what
+    was typed in it, not the value it was drawn with, or the mirror is no
+    change to it and the field goes on reading 0.25 beside a staged 0.3."""
     with _slow_editor(tmp_path, playwright_browser, 1, "points · y") as (page, editor):
         lower = editor.get_by_label("− Default tolerance", exact=True)
         upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(lower).to_have_value("0.3")
         _type_over(page, lower, "0.25")
         _answered(page)
-        _type_over(page, upper, "0.4")
-        assert _shown_and_staged(page, upper, POINTS_Y) == ("0.4", "0.4")
-        assert float(lower.input_value()) == 0.4
+        assert lower.input_value() == "0.25"
+        _type_over(page, upper, twin)
+        _answered(page)
+        assert upper.input_value() == twin
+        # Read from the Session: staged back to the saved 0.3, the entry is
+        # the file's and the preview has no line to show.
+        assert _staged_tree(page)["children"][2]["tolerance"] == float(twin)
+        assert float(lower.input_value()) == float(twin)
+
+
+def _required_cells_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_pair_project` — y's points leaf holds the pair 0.1 / 0.2 — with a
+    tube on y after it whose control points' ``time`` is a REQUIRED cell."""
+    cfg, work = _pair_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"]["children"].append(
+                {
+                    "metric": "tube",
+                    "variable": "y",
+                    "tube_width_mode": "band",
+                    "tube_points": [
+                        {"time": 0.3, "upper": 0.5, "lower": 0.5},
+                        {"time": 0.9, "upper": 0.5, "lower": 0.5},
+                    ],
+                }
+            )
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+@pytest.mark.parametrize(
+    ("name", "label", "read"),
+    [
+        # A table's required cell: `time` of a tube's first control point.
+        ("tube · y", "time", lambda t: t["children"][3]["tube_points"][0]["time"]),
+        # A form's field: the `+` side of an unlinked pair.
+        (
+            "points · y",
+            "+ Default tolerance",
+            lambda t: t["children"][2]["tolerance"]["upper"],
+        ),
+    ],
+    ids=["table-cell", "form-side"],
+)
+def test_a_field_marked_required_keeps_what_is_typed_into_it(
+    tmp_path, playwright_browser, name, label, read
+):
+    """A field cleared says "required" — the server's own mark — and the
+    first key typed into it takes the mark away: the server resends the
+    WHOLE field, its value with it, in answer to that key, under the keys
+    that follow. `0.25` typed at a person's speed is what the field reads
+    and what is staged. No hint is written here: the one thing that keeps
+    the field is the component ignoring a server value while it is typed
+    in, in a table's cell and in a form's field alike."""
+    with _slow_editor(
+        tmp_path, playwright_browser, 1, name, project=_required_cells_project
+    ) as (page, editor):
+        scope = editor.locator(".dstf-table-row").first if label == "time" else editor
+        field = scope.get_by_label(label, exact=True)
+        field.click()
+        page.keyboard.press("Control+A")
+        page.keyboard.press("Delete")
+        marked = editor.locator(".q-field--error")
+        expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(marked).to_contain_text("required")
+        _answered(page)
+        page.keyboard.type("0.25", delay=KEY_MS)
+        _answered(page)
+        expect(marked).to_have_count(0)
+        assert field.input_value() == "0.25"
+        assert read(_staged_tree(page)) == 0.25
+
+
+def test_a_number_field_draws_what_is_put_in_its_slots(tmp_path, playwright_browser):
+    """The tool's number field is its own component around Quasar's input,
+    and hands on whatever a caller puts IN it: a tooltip in its default
+    slot is read by the pointer resting on the field, an appended icon is
+    drawn. Nothing in the tool puts a child in one today — a field's help
+    is a tooltip BESIDE it, aimed at it (the test below) — so this is the
+    one place the passthrough is exercised (`author_hooks.py`'s page)."""
+    with _served(
+        tmp_path, playwright_browser, project=_typing_project, hooks=True
+    ) as page:
+        page.goto(page.url.split("test/")[0] + "__typed_number")
+        field = page.get_by_label("slotted", exact=True)
+        expect(field).to_have_value("1.5", timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".slotted-icon")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        box = field.bounding_box()
+        assert box is not None
+        page.mouse.move(box["x"] + 200, box["y"] + 200)
+        page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2, steps=5)
+        expect(page.locator(".q-tooltip")).to_have_text(
+            "drawn in the field's own slot", timeout=EXPECT_TIMEOUT
+        )
+
+
+def test_a_number_fields_help_is_read_by_hovering_it(tmp_path, playwright_browser):
+    """A field's help is its tooltip: the pointer resting on the range's
+    lower bound reads the sentence, from the page."""
+    with _served(tmp_path, playwright_browser, project=_typing_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "range · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        page.wait_for_timeout(300)
+        bound = editor.get_by_label("Lower bound (optional)", exact=True)
+        expect(bound).to_have_value("-1")
+        box = bound.bounding_box()
+        assert box is not None
+        page.mouse.move(box["x"] + box["width"] / 2 - 40, box["y"] - 60)
+        page.mouse.move(
+            box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=5
+        )
+        expect(page.locator(".q-tooltip")).to_have_text(
+            "Signal must never drop below this value. Leave blank to skip — "
+            "only the upper bound will apply.",
+            timeout=EXPECT_TIMEOUT,
+        )
 
 
 def _pair_project(tmp_path: Path) -> tuple[Path, Path]:

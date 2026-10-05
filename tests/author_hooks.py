@@ -6,7 +6,7 @@ Not a test module (no `test_` prefix)."""
 
 import gc
 
-from nicegui import app
+from nicegui import app, ui
 
 
 def _shell():
@@ -34,6 +34,19 @@ async def _tree(model: str = "FakeLib.A") -> dict:
     rather than off the page."""
     session = _shell().session
     return {"tree": session.tree(model), "pending": len(session.spec.pending)}
+
+
+@ui.page("/__typed_number")
+def _typed_number() -> None:
+    """The tool's number field with a child in each kind of slot it passes
+    through to Quasar's: a tooltip in the default one, an icon appended."""
+    from dstf.authoring.typed_number import TypedNumber
+
+    field = TypedNumber(label="slotted", value=1.5)
+    with field:
+        ui.tooltip("drawn in the field's own slot")
+    with field.add_slot("append"):
+        ui.icon("help").classes("slotted-icon")
 
 
 #: One entry per stage `/__slow`'s Session has finished.
