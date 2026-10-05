@@ -1545,17 +1545,61 @@ async def test_a_refused_cell_puts_back_what_it_held_when_it_was_entered(session
         assert _a_rows(session, "events") == [{"time": 0.5, "tolerance": 0.2}]
 
 
-async def test_a_refusal_with_nothing_staged_on_the_way_puts_nothing_back(session):
+async def test_a_refusal_with_nothing_staged_on_the_way_puts_nothing_back(
+    session, monkeypatch
+):
     """`-1` set at once over 0.1: nothing was staged on the way, so the
-    refusal stages nothing either."""
+    refusal stages nothing either — the list is handed to `act` once, and
+    not a second time with the cell put back to what it already holds."""
     _root_leaf_on_a(session, copy.deepcopy(SIDED["peaks"][0]))
     lower = "/metrics:peaks:0:tolerance:lower"
+    handed: list[list[dict]] = []
+    act = EditOnPlot.act
+
+    def counting(self, s, **inputs):
+        if inputs["kind"] == "rows":
+            handed.append(inputs["rows"])
+        return act(self, s, **inputs)
+
+    monkeypatch.setattr(EditOnPlot, "act", counting)
     async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
         pending = list(session.spec.pending)
         _keys(user, lower, "-1")
         await _settled(lambda: "edit-on-plot" in errors)
         assert session.spec.pending == pending
         assert _a_rows(session, "peaks")[0]["tolerance"] == 0.1
+        assert [rows[0]["tolerance"] for rows in handed] == [-1.0]
+
+
+@pytest.mark.parametrize(
+    ("button", "kept_value"),
+    [
+        # Row 0 goes: the row now first is the one that held 0.3.
+        ("/metrics:events:0:remove", 0.3),
+        # A row is added: row 0 is where it was, holding the 0.2 typed.
+        ("/metrics:events:add", 0.2),
+    ],
+)
+async def test_a_refused_cell_after_the_rows_moved_puts_back_its_own_rows_value(
+    session, button, kept_value
+):
+    """Add row and Remove row rebuild the rows, and a cell is known by its
+    place among them: the cell edited before the button is not the cell
+    edited after it, though it sits where that one sat. Refused, it puts
+    back what ITS row held — not what the first one held when entered."""
+    leaf = copy.deepcopy(SIDED["events"][0])
+    leaf["events"].append({"time": 0.75, "tolerance": 0.3})
+    _root_leaf_on_a(session, leaf)
+    lower = "/metrics:events:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _keys(user, lower, "0.2")  # entered at 0.1
+        await _settled(lambda: _a_rows(session, "events")[0]["tolerance"] == 0.2)
+        rows = len(_a_rows(session, "events"))
+        user.find(marker=button).click()
+        await _settled(lambda: len(_a_rows(session, "events")) != rows)
+        _keys(user, lower, "", "-1")
+        await _settled(lambda: "edit-on-plot" in errors)
+        assert _a_rows(session, "events")[0]["tolerance"] == kept_value
 
 
 def test_a_rows_edit_takes_a_pair_and_a_number_and_drops_a_blank(session):
