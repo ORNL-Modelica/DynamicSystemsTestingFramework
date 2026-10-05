@@ -1525,6 +1525,92 @@ def test_the_editable_figure_says_which_way_each_arrow_is_drawn(mode):
         assert apex[other] == 0, (name, apex)
 
 
+def _low_peak_figure(lower_edge: float) -> dict:
+    """The editable figure of one declared peak at 0.5 Hz whose window runs
+    from ``lower_edge`` to 0.95 Hz: the spectrum's x range is [0, 2.85]."""
+    t = np.linspace(0.0, 10.0, 1001)
+    sig = np.sin(2 * np.pi * 2.0 * t)
+    peaks = [
+        {
+            "freq": 0.5,
+            "tolerance": {"lower": 0.5 - lower_edge, "upper": 0.45},
+            "tolerance_mode": "abs",
+        }
+    ]
+    vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
+    fig = variable_figure(_grip_view(vc, t, sig), editable=True)
+    assert fig["layout"]["xaxis2"]["range"] == pytest.approx([0.0, 2.85])
+    return fig
+
+
+def _drawn(fig: dict, local: str) -> tuple[dict, dict]:
+    """The grip ``local``: its shape, and what the figure's map says."""
+    name = f"{P0}/{local}"
+    (shape,) = [s for s in fig["layout"]["shapes"] if s["name"] == name]
+    return shape, _pointer(fig)["grips"][name]
+
+
+@pytest.mark.parametrize("mode", GRIP_VIEWS)
+def test_an_arrow_with_room_is_drawn_outward(mode):
+    """Outside the edge it stands for: away from its target."""
+    from dstf.comparison.geometry import _GRIP_OUTWARD
+
+    fig = variable_figure(GRIP_VIEWS[mode](), editable=True)
+    for name, said in _pointer(fig)["grips"].items():
+        assert said["outward"] == _GRIP_OUTWARD[name.split("/")[-2]], name
+
+
+def test_an_arrow_that_would_leave_a_set_axis_range_is_drawn_inward():
+    """The spectrum's x range is SET, [0, 3 x the peak of interest], and
+    the plot area clips shapes: with a peak window's lower edge next to
+    0 Hz its arrow, 10 to 17 px outside that edge, was drawn left of the
+    panel and could not be pressed. Where an arrow's far end would pass
+    the end of a set range — on the narrowest axis the figure plans for —
+    it is drawn on the INSIDE of its edge: the other way from the same
+    anchor, and said so in the map, with its group, axis and words as they
+    were. An arrow with room, and the same window's other arrow, stay."""
+    from dstf.figures.plotly import _GRIP_PATHS, GRIP_FAR_END, NARROWEST_AXIS
+
+    room = GRIP_FAR_END / NARROWEST_AXIS * 2.85  # the arrow's length, in Hz
+    assert 0.05 < room < 0.2
+    near, far = _low_peak_figure(0.05), _low_peak_figure(0.2)
+    shape, said = _drawn(near, "peaks/lower/0")
+    assert shape["xanchor"] == pytest.approx(0.05)
+    assert shape["path"] == _GRIP_PATHS["x", 1] and said["outward"] == 1
+    assert {k: v for k, v in said.items() if k != "outward"} == {
+        "group": f"{P0}/peaks/0",
+        "axis": "x",
+        "label": "Drag to set the lower tolerance",
+    }
+    shape, said = _drawn(far, "peaks/lower/0")
+    assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
+    for fig in (near, far):
+        shape, said = _drawn(fig, "peaks/upper/0")
+        assert shape["path"] == _GRIP_PATHS["x", 1] and said["outward"] == 1
+    # Just short of the room an arrow needs, and just past it.
+    for edge, way in ((room * 0.99, 1), (room * 1.01, -1)):
+        shape, said = _drawn(_low_peak_figure(edge), "peaks/lower/0")
+        assert said["outward"] == way and shape["path"] == _GRIP_PATHS["x", way]
+
+
+def test_an_upper_arrow_at_the_end_of_a_set_range_is_drawn_inward():
+    """The same rule at the range's other end: a window whose upper edge
+    is the highest thing declared above Nyquist ends the axis itself."""
+    from dstf.figures.plotly import _GRIP_PATHS
+
+    t = np.linspace(0.0, 10.0, 101)  # Nyquist 5 Hz
+    sig = np.sin(2 * np.pi * 2.0 * t)
+    peaks = [{"freq": 6.0, "tolerance": 1.0, "tolerance_mode": "abs"}]
+    vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
+    fig = variable_figure(_grip_view(vc, t, sig), editable=True)
+    assert fig["layout"]["xaxis2"]["range"] == pytest.approx([0.0, 7.0])
+    shape, said = _drawn(fig, "peaks/upper/0")
+    assert shape["xanchor"] == pytest.approx(7.0)
+    assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
+    shape, said = _drawn(fig, "peaks/lower/0")
+    assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
+
+
 def test_the_pages_tip_is_the_middle_of_the_drawn_arrow():
     """`grips.js` holds one number of an arrow's shape: how far from its
     anchor its middle is. It is the middle of every path this module

@@ -9355,3 +9355,82 @@ def test_every_arrow_of_two_close_windows_is_reached_from_its_own_edge(
             assert float(_table_cell(page, row, label).input_value()) > float(value)
             page.wait_for_timeout(400)  # the redraw that follows the edit
         _shot(page, tmp_path, f"reach-{family}")
+
+
+# -- an arrow that would leave a set axis range is drawn inward -----------------
+
+
+def _low_peak_project(tmp_path: Path, lower: float) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by one declared peak at 0.5 Hz
+    whose window reaches down to ``1 - lower`` of it: next to 0 Hz on a
+    spectrum whose x axis is set to start there."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "dominant-frequency",
+                "variable": "x",
+                "peaks": [
+                    {
+                        "freq": 0.5,
+                        "tolerance": {"lower": lower, "upper": 0.9},
+                        "tolerance_mode": "rel",
+                    }
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+@pytest.mark.parametrize("lower", [0.9, 0.98])
+def test_a_peaks_lower_arrow_next_to_zero_hertz_is_drawn_inside_its_window(
+    tmp_path, playwright_browser, lower
+):
+    """A peak at 0.5 Hz whose window reaches down to 0.05 Hz, or to 0.01:
+    the spectrum's x axis starts at 0 and the plot area clips shapes, so
+    the lower arrow, 10 to 17 px LEFT of that edge, was drawn off the panel
+    — at 0.01 Hz all of it — and a press where it belonged landed on the
+    axis. It is drawn on the inside of its edge: whole, in the panel, all 7
+    of its px reached from the edge; dragged right, the lower side closes
+    by that much and the upper side stays."""
+    project = partial(_low_peak_project, lower=lower)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "dominant-frequency · x")
+        _plot_under_the_mouse(page)
+        tail = "/peaks/lower/0"
+        arrow, _ = _come_to(page, tail)
+        assert arrow["x"] - arrow["left"] == pytest.approx(
+            0.5 * (1 - lower) * arrow["ppx"], abs=0.5
+        )
+        box = _shape(page, tail)["box"]
+        assert box is not None, arrow
+        print("LOW PEAK", lower, "edge px", round(arrow["x"] - arrow["left"], 1), box)
+        # Whole, in the panel, on the window's side of its edge.
+        assert arrow["left"] <= box["left"] and box["right"] <= arrow["right"], box
+        assert box["left"] >= arrow["x"] + 9 and arrow["ux"] == 1, (arrow, box)
+        # The upper arrow has the room it needs: outside, as ever.
+        assert page.evaluate(ARROW_AT, [0, "/peaks/upper/0"])["ux"] == 1
+        assert _reaches(page, [tail, "/peaks/upper/0"]) == {
+            "peaks/lower/0": 7,
+            "peaks/upper/0": 7,
+        }
+        says = _arrow_says(page, tail, tail)
+        assert (says["title"], says["cursor"]) == (
+            "Drag to set the lower tolerance",
+            "ew-resize",
+        ), says
+        _shot(page, tmp_path, f"low-peak-{lower}")
+        expect(_table_cell(page, 0, "− tolerance")).to_have_value(str(lower))
+        _press_arrow(page, tail, 20)
+        expect(_table_cell(page, 0, "− tolerance")).not_to_have_value(
+            str(lower), timeout=EXPECT_TIMEOUT
+        )
+        now = float(_table_cell(page, 0, "− tolerance").input_value())
+        # 20 px right of where it stood, as a fraction of the peak's 0.5 Hz.
+        assert now == pytest.approx(
+            lower - 20 / arrow["ppx"] / 0.5, abs=1 / arrow["ppx"] / 0.5
+        )
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.9")

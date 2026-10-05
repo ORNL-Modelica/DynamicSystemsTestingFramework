@@ -152,6 +152,9 @@ class _Ctx:
     has_spectrum: bool
     #: Pre-decimation sample counts by primitive id (see ``decimate_view``).
     full_samples: dict[str, int]
+    #: The spectrum panel's x range where the layout SETS one
+    #: (:func:`_spectrum_range`), else None: what :func:`_grip_way` reads.
+    spectrum_range: tuple[float, float] | None = None
 
 
 def _full(ctx: _Ctx, prim_id: str, n_now: int) -> int:
@@ -526,8 +529,9 @@ def _handle_rings(markers: list[Marker]) -> list[dict]:
 GRIP = "#E65100"
 
 #: A grip, in pixels about its anchor (positive y is UP), by the axis it
-#: moves on and which way is outward: a triangle whose apex stands 10 px
-#: outside the edge it is anchored on and points at it. It clears a ring of
+#: moves on and the way it is drawn (:func:`_grip_way` — outward, but for
+#: an arrow that would leave a set range): a triangle whose apex stands
+#: 10 px off the edge it is anchored on and points at it. It clears a ring of
 #: radius 7 on that edge whatever the box's size — rings on the edges buried
 #: the target under a box of 16 px or less, and a sideways drag on the
 #: checkpoint then rewrote its tolerance — and, a ``path``, it never resizes.
@@ -539,11 +543,47 @@ _GRIP_PATHS = {
 }
 
 
+#: An arrow's far end, px from its anchor (:data:`_GRIP_PATHS`), and the
+#: narrowest axis the figure plans for, px: the figure layer does not know
+#: how wide the page draws a plot, and an arrow that would pass the end of
+#: a set range on an axis this narrow is drawn inward (:func:`_grip_way`).
+#: On a wider plot some arrows that had the room are drawn inward too; on
+#: a narrower one, one that had not is still clipped.
+GRIP_FAR_END = 17
+NARROWEST_AXIS = 500
+
+
+def _grip_way(grip: Marker | VLine, ctx: _Ctx) -> int:
+    """``+1`` or ``-1``: the way along its axis ``grip``'s arrow is DRAWN
+    from its anchor — outward, away from its target
+    (:func:`~dstf.comparison.geometry.grip_outward`), except where the axis
+    it moves on has a SET range and the arrow's far end would pass the end
+    of it: the plot area clips shapes, and with a peak window's lower edge
+    next to 0 Hz the arrow was drawn left of the panel, where a press
+    landed on the axis. There it is drawn on the inside of its edge,
+    mirrored about the same anchor.
+
+    The one axis whose range the layout sets is the spectrum's x
+    (:func:`_spectrum_range`); every other is autoranged, with room for
+    the arrows (:func:`_headroom`), and its arrows are always outward."""
+    way = grip_outward(grip)
+    if grip.panel != "spectrum" or grip_axis(grip) != "x":
+        return way
+    if ctx.spectrum_range is None:
+        return way
+    low, high = ctx.spectrum_range
+    at = grip.time if isinstance(grip, VLine) else grip.x
+    room = (at - low) if way < 0 else (high - at)
+    needed = GRIP_FAR_END / NARROWEST_AXIS * (high - low)
+    return -way if room < needed else way
+
+
 def _grip_shapes(grips: list[Primitive], ctx: _Ctx) -> list[dict]:
     """One draggable arrow per grip, named with the grip's id and anchored
     at the tolerance edge it stands for. A marker's is anchored in data on
     both axes; a line's — the edge of a window that spans its panel — in
-    data on x and on the PAPER at the panel's mid-height.
+    data on x and on the PAPER at the panel's mid-height. It is drawn the
+    way :func:`_grip_way` says.
 
     The page shows a grip only while the pointer is near its checkpoint
     (``authoring/shell/grips.js``); the figure holds them all, always — a
@@ -571,7 +611,7 @@ def _grip_shapes(grips: list[Primitive], ctx: _Ctx) -> list[dict]:
                 "xsizemode": "pixel",
                 "ysizemode": "pixel",
                 **anchor,
-                "path": _GRIP_PATHS[grip_axis(grip), grip_outward(grip)],
+                "path": _GRIP_PATHS[grip_axis(grip), _grip_way(grip, ctx)],
                 "line": {"color": GRIP, "width": 1},
                 "fillcolor": GRIP,
                 "name": grip.id,
@@ -845,6 +885,13 @@ def _spectrum_range(view: VariableView) -> list[float] | None:
     return [0.0, max(min(hi, nyquist), top) if nyquist > 0 else hi]
 
 
+def _set_spectrum_range(view: VariableView) -> tuple[float, float] | None:
+    """The spectrum's x range as :func:`_layout` sets it for ``view``, or
+    None where it sets none (no spectrum panel, or an autoranged one)."""
+    found = _spectrum_range(view) if view.has_spectrum else None
+    return None if found is None else (found[0], found[1])
+
+
 def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
     # Area shapes under lines: under `edits.shapePosition` every shape takes
     # a drag and plotly.js has no per-shape switch that works (`layer` only
@@ -939,8 +986,9 @@ def _secondary_axis(title: str) -> dict:
 #: * ``grips``: per grip shape, by name, the ``group`` it shows with
 #:   (:func:`~dstf.comparison.geometry.grip_group`), the ``axis`` it moves
 #:   on (the page's cursor over it), ``outward`` — ``+1`` or ``-1``, the
-#:   way along that axis its arrow is DRAWN from its anchor, which is where
-#:   the page takes the pointer to be on it — and the ``label`` it carries
+#:   way along that axis its arrow is DRAWN from its anchor
+#:   (:func:`_grip_way`), which is where the page takes the pointer to be
+#:   on it — and the ``label`` it carries
 #:   as its tooltip (:func:`~dstf.comparison.geometry.grip_label` — the
 #:   words are Python's);
 #: * ``targets``: per ring a group's grips stand around, by name, that
@@ -1038,7 +1086,7 @@ def _leaf_traces(
                 pointer["grips"][grip.id] = {
                     "group": grip_group(grip),
                     "axis": grip_axis(grip),
-                    "outward": grip_outward(grip),
+                    "outward": _grip_way(grip, ctx),
                     "label": grip_label(grip),
                 }
             groups = {said["group"] for said in pointer["grips"].values()}
@@ -1108,6 +1156,7 @@ def variable_figure(
         x_max=x_max,
         has_spectrum=view.has_spectrum,
         full_samples=view.full_samples,
+        spectrum_range=_set_spectrum_range(view),
     )
     data: list[dict] = _base_traces(view)
     leaf_data, shapes, rings, pointer = _leaf_traces(
@@ -1278,12 +1327,21 @@ def _subject_figure(
                     first=name == lead,
                 )
             )
+    # One view stands in for the layout, carrying EVERY view's leaves, so
+    # `_layout` sees the spectrum panel wherever it comes from.
+    if views:
+        all_leaves = tuple(leaf for v in views for leaf in v.leaves)
+        layout_view = replace(views[0], leaves=all_leaves)
+    else:
+        layout_view = VariableView(name="")
+    spectrum_range = _set_spectrum_range(layout_view)
     for view in views:
         ctx = _Ctx(
             x_min=x_min,
             x_max=x_max,
             has_spectrum=has_spectrum,
             full_samples=view.full_samples,
+            spectrum_range=spectrum_range,
         )
         leaf_data, leaf_shapes, leaf_rings, leaf_pointer = _leaf_traces(
             view, ctx, editable=editable, rings_for=rings_for, visibility=visibility
@@ -1295,13 +1353,6 @@ def _subject_figure(
         pointer["targets"].update(leaf_pointer["targets"])
         pointer["draggable"] += leaf_pointer["draggable"]
     config: dict = _config(editable)
-    # One view stands in for the layout, carrying EVERY view's leaves, so
-    # `_layout` sees the spectrum panel wherever it comes from.
-    if views:
-        all_leaves = tuple(leaf for v in views for leaf in v.leaves)
-        layout_view = replace(views[0], leaves=all_leaves)
-    else:
-        layout_view = VariableView(name="")
     layout = _layout(layout_view, shapes + rings, False)
     if editable:
         layout["meta"] = {POINTER: pointer}
