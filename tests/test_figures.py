@@ -1652,9 +1652,43 @@ def _nrmse_view(window=None):
     return replace(view, leaves=(replace(leaf, geometry=(*leaf.geometry, window)),))
 
 
+def _geometry_view(*geometry):
+    """A leaf whose geometry is exactly ``geometry``."""
+    t = np.linspace(0.0, 1.0, 11)
+    vc = _compare_range(t, t, min_value=None, max_value=None)
+    vc.name = "x"
+    vc.geometry = geometry
+    return build_view(
+        "x", act_time=t, act_values=t, ref_time=t, ref_values=t, leaves=[_stamped(vc)]
+    )
+
+
+def _drawn_only_view():
+    """What a leaf DRAWS and no editor moves: a detected marker and one of
+    the default kind, a result line, a box (a `handle` by kind, and no ring)
+    and a window."""
+    return _geometry_view(
+        Marker(id="peaks/detected/0", kind="detected", x=0.3, y=0.5),
+        Marker(id="custom/marker/0", x=0.7, y=0.7),
+        HLine(id="scalar/actual", value=0.4),
+        Box(id="points/box/0", kind="handle", t0=0.2, t1=0.3, y0=0.2, y1=0.3),
+        Window(id="window", start=0.1, end=0.95),
+    )
+
+
+def _line_then_ring_view():
+    """A bound line emitted BEFORE a ring: rings, whatever the order."""
+    return _geometry_view(
+        HLine(id="range/max", kind="handle", value=0.9),
+        Marker(id="tube/upper/0", kind="handle", x=0.5, y=0.6),
+    )
+
+
 #: What a ringed leaf is dragged by, per view: rings and arrows, bound
 #: lines alone, or nothing.
 DRAGS = {
+    "drawn-only": (_drawn_only_view, ""),
+    "line-then-ring": (_line_then_ring_view, "rings"),
     **{mode: (make, "rings") for mode, make in GRIP_VIEWS.items()},
     "tube-points": (lambda: _tube_view(tube_points=TUBE_POINTS), "rings"),
     "handles": (_handle_view, "rings"),  # rings AND a bound line
