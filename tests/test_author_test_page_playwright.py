@@ -9765,8 +9765,20 @@ async ([card, how]) => {
       named(); map.draggable.push('constructor', '__proto__');
     },
   })[how]();
-  layout.editrevision = (layout.editrevision || 0) + 1000;
-  await Plotly.react(gd, gd.data, layout);
+  // `Plotly.react` called from the page now and then never settles (twice
+  // in some twenty runs of this helper; the cause was not found — a redraw
+  // of this plot may be in flight): it is raced against a timer, and the
+  // figure fed again under a new revision.
+  let fed = 0, settled = false;
+  while (!settled && fed < 3) {
+    fed += 1;
+    layout.editrevision = (layout.editrevision || 0) + 1000;
+    settled = await Promise.race([
+      Plotly.react(gd, gd.data, layout).then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 3000)),
+    ]);
+  }
+  if (!settled) throw new Error('Plotly.react did not settle, fed ' + fed + ' times');
   const shapes = gd.layout.shapes || [];
   const name = el => (shapes[+el.getAttribute('data-index')] || {}).name;
   const els = [...gd.querySelectorAll('.shapelayer [data-index]')];
@@ -9777,6 +9789,7 @@ async ([card, how]) => {
     free: uniq(els.filter(el => !el.hasAttribute('data-inert')).map(name)),
     grips: uniq([...gd.querySelectorAll('.shapelayer path[data-grip]')].map(name)),
     titled: gd.querySelectorAll('.shapelayer path title').length,
+    fed,
   };
 }
 """
@@ -9799,6 +9812,7 @@ def test_the_pointer_map_is_read_with_a_default_for_every_key(
         _rest(page)
         page.wait_for_timeout(500)  # the server's own redraw is done
         sent = page.evaluate(FEED, [0, "as sent"])
+        sent.pop("fed")
         grips = sorted(
             f"/metrics/children/0/{tail}"
             for tail in _group("points", 0, FOUR) + _group("points", 1, FOUR)
@@ -9810,6 +9824,8 @@ def test_the_pointer_map_is_read_with_a_default_for_every_key(
 
         def fed(how: str) -> dict:
             got = page.evaluate(FEED, [0, how])
+            if got.pop("fed") > 1:
+                print("FED AGAIN", how)
             assert got["drawn"] >= sent["drawn"], (how, got)
             return got
 
