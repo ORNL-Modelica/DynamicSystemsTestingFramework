@@ -7326,8 +7326,12 @@ def test_the_grips_are_hidden_at_rest_and_shown_near_their_checkpoint(
         page.wait_for_timeout(150)
         assert _grips_on(page)["shown"] == _group("points", 1, FOUR)
 
-        # Away from both, still over the plot: none.
-        page.mouse.move(second["x"], first["y"], steps=6)
+        # Away from both, still over the plot — midway between them in
+        # time, well clear of either's reach: none.
+        between = (first["x"] + second["x"]) / 2
+        assert between - _shape(page, "/points/after/0")["x"] > 40
+        assert _shape(page, "/points/before/1")["x"] - between > 40
+        page.mouse.move(between, first["y"], steps=6)
         page.wait_for_timeout(150)
         far = _grips_on(page)
         assert far["shown"] == [] and far["marked"] == every, far
@@ -8078,3 +8082,103 @@ def test_the_hover_label_gives_way_to_a_shown_group(tmp_path, playwright_browser
         page.mouse.move(x, y, steps=10)
         page.wait_for_timeout(400)
         assert page.evaluate(HOVER_LAYER)["seen"] == 0
+
+
+# -- headroom: an outermost arrow has room to be dragged outward ----------------
+
+
+def _headroom_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by two checkpoints whose
+    tolerances reach PAST the data on every side: x runs 0..1.25 over time
+    0..1; the first's box goes down to -0.3 and back to t = -0.05, the
+    second's up to 1.5 and on to t = 1.05."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "points",
+                "variable": "x",
+                "points": [
+                    {
+                        "time": 0.05,
+                        "value": 0.0,
+                        "tolerance": 0.3,
+                        "time_tolerance": 0.1,
+                    },
+                    {
+                        "time": 0.95,
+                        "value": 1.2,
+                        "tolerance": 0.3,
+                        "time_tolerance": 0.1,
+                    },
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+#: Plot 0's plot AREA — what clips its shapes — in viewport pixels.
+PLOT_AREA = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout, r = gd.getBoundingClientRect();
+  const xa = fl.xaxis, ya = fl.yaxis;
+  return {left: r.left + xa._offset, right: r.left + xa._offset + xa._length,
+          top: r.top + ya._offset, bottom: r.top + ya._offset + ya._length};
+}
+"""
+
+
+def _shown_arrow(page, row: int, edge: str) -> dict:
+    """Checkpoint ``row``'s ``edge`` arrow's box, its group shown."""
+    ring = _shape(page, f"/points/target/{row}")
+    _rest(page)
+    page.mouse.move(ring["x"], ring["y"], steps=5)
+    page.wait_for_timeout(100)
+    arrow = _shape(page, f"/points/{edge}/{row}")
+    assert arrow["box"] is not None, arrow
+    return arrow
+
+
+def test_an_outermost_arrow_has_room_to_be_dragged_outward(
+    tmp_path, playwright_browser
+):
+    """The plot area clips shapes. Autoranged to the data, an arrow on the
+    outermost edge of a tolerance stood at the plot's own edge — or past
+    it — and dragged outward was not painted. The open criterion's grips
+    pad the axes: each outermost arrow stands 30 px or more inside the
+    plot area on the axis it moves along, and the top one, dragged 25 px
+    up, is still inside it mid-drag."""
+    with _served(tmp_path, playwright_browser, project=_headroom_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area = page.evaluate(PLOT_AREA)
+        room = {
+            "top": _shown_arrow(page, 1, "upper")["box"]["top"] - area["top"],
+            "bottom": area["bottom"] - _shown_arrow(page, 0, "lower")["box"]["bottom"],
+            "left": _shown_arrow(page, 0, "before")["box"]["left"] - area["left"],
+            "right": area["right"] - _shown_arrow(page, 1, "after")["box"]["right"],
+        }
+        print("HEADROOM", {k: round(v, 1) for k, v in room.items()}, area)
+        assert all(px >= 30 for px in room.values()), room
+
+        arrow = _shown_arrow(page, 1, "upper")
+        x, y = arrow["box"]["x"], arrow["box"]["y"]
+        page.mouse.move(x, y, steps=3)
+        page.mouse.down()
+        page.mouse.move(x, y - 25, steps=8)
+        held = _shape(page, "/points/upper/1")["box"]
+        _shot(page, tmp_path, "headroom-mid-drag")
+        page.mouse.up()
+        assert held is not None and abs(held["y"] - (y - 25)) <= 1.5, (held, y)
+        assert held["top"] >= area["top"] and held["bottom"] <= area["bottom"], (
+            held,
+            area,
+        )
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.3", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
+        assert abs(upper - (0.3 + 25 / arrow["ppy"])) * arrow["ppy"] < 0.5, upper

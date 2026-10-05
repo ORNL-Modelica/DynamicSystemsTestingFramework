@@ -3020,9 +3020,13 @@ class TestPlots:
         assert [s for s in every["layout"]["shapes"] if s.get("path") == RING_PATH]
         fig = session.plot_figure(A, 0, editing=())
         assert not [s for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH]
-        # `editing` moves the rings and NOTHING else: same traces, and the
-        # same config (react, never newPlot) — as on the single figure.
-        assert fig["config"] == every["config"] and fig["data"] == every["data"]
+        # `editing` moves the rings, with the invisible points that give
+        # their arrows headroom, and NOTHING a person sees: the same traces
+        # besides, and the same config (react, never newPlot) — as on the
+        # single figure.
+        drawn = [t for t in every["data"] if "headroom_for" not in t.get("meta", {})]
+        assert fig["config"] == every["config"] and fig["data"] == drawn
+        assert len(drawn) < len(every["data"])  # the ringed leaves had some
 
     def test_editing_survives_every_forward_to_the_figure(self, tmp_path):
         """`editing` is handed on through three hops that could silently drop

@@ -1266,8 +1266,11 @@ def test_an_editable_figure_draws_every_grip_as_a_shape_and_no_trace(mode):
     fig = variable_figure(view, editable=True)
     shapes = [s for s in fig["layout"]["shapes"] if s["name"] in grips]
     assert {s["name"] for s in shapes} == grips and len(shapes) == len(grips)
-    assert fig["data"] == variable_figure(view)["data"]
-    assert fig["data"] == variable_figure(_without_grips(view))["data"]
+    # No trace of a grip but its headroom, which draws nothing.
+    drawn = [tr for tr in fig["data"] if "headroom_for" not in tr.get("meta", {})]
+    assert drawn == variable_figure(view)["data"]
+    assert drawn == variable_figure(_without_grips(view))["data"]
+    assert not grips & _named({"data": drawn, "layout": {"shapes": []}})
     # Each a pixel `path` in the grip colour: it never resizes, and it lies
     # after every `rect` — the box it stands outside cannot take its drag.
     from dstf.figures.plotly import GRIP
@@ -1582,3 +1585,65 @@ def test_a_scalars_result_lines_are_not_draggable_and_its_sides_are():
         f"{P0}/scalar/upper",
         f"{P0}/scalar/lower",
     }
+
+
+# -- headroom for the open criterion's arrows -----------------------------------
+
+
+def _headroom(fig: dict) -> list[dict]:
+    return [tr for tr in fig["data"] if "headroom_for" in tr.get("meta", {})]
+
+
+def test_the_open_leafs_grips_get_invisible_points_that_pad_the_axes():
+    """The plot area clips shapes: an arrow on the outermost edge, dragged
+    outward, was not painted. For the leaf it rings, the editable figure
+    holds one invisible point per grip, AT the grip's anchor and large
+    enough that Plotly's autorange leaves room past it."""
+    from dstf.figures.plotly import HEADROOM_SIZE
+
+    fig = variable_figure(_points_grip_view(), editable=True)
+    (trace,) = _headroom(fig)
+    assert trace["mode"] == "markers" and trace["type"] == "scatter"
+    assert trace["marker"] == {"opacity": 0, "size": HEADROOM_SIZE}
+    assert trace["showlegend"] is False and trace["hoverinfo"] == "skip"
+    assert trace["meta"] == {"headroom_for": P0, "leaf": P0}
+    assert "xaxis" not in trace and "yaxis" not in trace  # the time panel's
+    at = sorted(
+        (s["xanchor"], s["yanchor"])
+        for s in fig["layout"]["shapes"]
+        if s["name"] in _pointer(fig)["grips"]
+    )
+    assert len(at) == 6
+    assert sorted(zip(trace["x"], trace["y"])) == at
+    # A point pads by its size: about 40 px past an anchor, so an arrow
+    # (17 px out) keeps room to be dragged outward.
+    assert 60 <= HEADROOM_SIZE <= 80
+
+
+def test_a_windows_grips_pad_the_time_axis_from_mid_value():
+    """An event's window spans its panel — its arrows have no y. Their
+    points stand at the middle of the series' values, where their size
+    moves no y range, and pad the time axis alone. A peak's are on the
+    spectrum, whose x range is set, not autoranged: none."""
+    view = _events_grip_view()
+    (trace,) = _headroom(variable_figure(view, editable=True))
+    assert trace["x"] == [pytest.approx(0.95), pytest.approx(1.2)]
+    assert trace["y"] == [1.0, 1.0]  # the series runs 0..2
+    assert _headroom(variable_figure(_peaks_grip_view(), editable=True)) == []
+    # With no values to stand between, none.
+    bare = replace(view, act_values=None, act_time=None, ref_values=None, ref_time=None)
+    assert _headroom(variable_figure(bare, editable=True)) == []
+
+
+def test_headroom_follows_the_rings_and_never_reaches_the_report():
+    from dstf.figures.plotly import Visibility
+
+    for make in GRIP_VIEWS.values():
+        assert _headroom(variable_figure(make())) == []
+        assert _headroom(variable_figure(make(), editable=True, rings_for=())) == []
+    view = _points_grip_view()
+    hidden = variable_figure(
+        view, editable=True, visibility=Visibility(hidden=frozenset({P0}))
+    )
+    (trace,) = _headroom(hidden)
+    assert trace["visible"] is False  # a hidden leaf pads nothing
