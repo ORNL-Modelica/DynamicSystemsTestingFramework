@@ -1,6 +1,7 @@
 // The Test page's tolerance grips (D147): the arrows just outside each side
 // of the open criterion's tolerance are hidden at rest and shown while the
-// pointer is near their checkpoint, event or peak, and through a drag.
+// pointer is near their checkpoint, event or peak, and through a drag. And
+// the plot's pointer: every shape no editor moves is made inert.
 //
 // The figure never changes with the hover: a drag names a shape by INDEX, and
 // a figure changed mid-drag loses it. Hiding is one static rule of the shell's
@@ -11,6 +12,14 @@
 // still grabbed. Where there is no hover (a touch screen) the same stylesheet
 // shows every marked grip, and nothing here is needed.
 //
+// WHICH shape is a grip, of which group, and which shapes may be dragged at
+// all is the SERVER's to say: it rides in the figure itself
+// (`layout.meta.dstf`, figures/plotly.py `POINTER`), so it is read off the
+// very figure whose paths are being marked — the two cannot be out of step —
+// and nothing here knows a metric's id pattern. A shape the server does not
+// name draggable gets `data-inert` (`pointer-events: none`, style.py): a
+// press on a box, a window or a result line is the plot's own.
+//
 // One instance per plot card (`DstfGrips.install(id)` / `.destroy(id)`, the
 // card's `ui.plotly` element id — plot_card.py): its own shown group, its own
 // pointer, its own latch.
@@ -20,35 +29,37 @@
   // How far outside a group's anchors the pointer still shows it, px.
   const MARGIN = 25;
 
-  // A grip's shape name is `<leaf>/<family>/<edge>/<key>` (geometry.py); its
-  // GROUP — the grips shown together — is the name without the edge. Per
-  // family, because a tube's control-point RINGS are `<leaf>/tube/upper/<i>`
-  // and are no grip.
-  const FAMILIES = [
-    /^(.*\/points)\/(?:upper|lower|before|after)\/(\d+|final)$/,
-    /^(.*\/tube)\/(?:upper|lower)\/(const)$/,
-    /^(.*\/events)\/(?:early|late)\/(\d+)$/,
-    /^(.*\/peaks)\/(?:lower|upper)\/(\d+)$/,
-  ];
-  const groupOf = (name) => {
-    for (const re of FAMILIES) {
-      const m = re.exec(name || "");
-      if (m) return m[1] + "/" + m[2];
-    }
-    return null;
-  };
+  // What the server says of the figure `gd` holds, or null for a figure
+  // that says nothing (then nothing is marked).
+  const said = (gd) => ((gd.layout && gd.layout.meta) || {}).dstf || null;
+  const own = (map, name) =>
+    map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
 
   const instances = new Map();
 
   function create(gd) {
     const st = { gd, on: null, latched: false, xy: null };
 
+    // The group of the grip shape named `name`, or null.
+    const groupOf = (name) => {
+      const info = said(gd);
+      const grip = info && own(info.grips, name);
+      return grip ? grip.group : null;
+    };
+
     // Plotly replaces every shape path on a react or a newPlot: the marks go
-    // with them, and are put back from the figure's own shape names.
+    // with them, and are put back from what the figure says of its shapes.
+    // A shape is three elements of one `data-index` — its group, its path
+    // and, for a line, the wide helper that takes its drag: all three inert.
     const mark = () => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
-      for (const el of gd.querySelectorAll(".shapelayer path[data-index]")) {
-        const g = groupOf((shapes[+el.getAttribute("data-index")] || {}).name);
+      const info = said(gd);
+      const free = info && new Set(info.draggable || []);
+      for (const el of gd.querySelectorAll(".shapelayer [data-index]")) {
+        const name = (shapes[+el.getAttribute("data-index")] || {}).name;
+        el.toggleAttribute("data-inert", !!free && !free.has(name));
+        if (el.tagName !== "path") continue;
+        const g = groupOf(name);
         if (g) {
           el.setAttribute("data-grip", g);
           el.toggleAttribute("data-grip-on", g === st.on);
@@ -190,6 +201,9 @@
       for (const el of gd.querySelectorAll("[data-grip]")) {
         el.removeAttribute("data-grip");
         el.removeAttribute("data-grip-on");
+      }
+      for (const el of gd.querySelectorAll("[data-inert]")) {
+        el.removeAttribute("data-inert");
       }
     };
     mark();

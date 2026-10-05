@@ -358,19 +358,23 @@ class EditOnPlot:
         primitive = next(
             (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
         )
-        # A window, a box, a result line is drawn, not editable; Plotly lets
-        # it be dragged all the same, and the figure hook's redraw snaps it
-        # back. Resolved before the open-leaf check: whichever criterion is
-        # open, such a drag is not an error the user made.
+        # A window, a box, a result line is drawn, not editable. The page
+        # takes the pointer off it (the figure's `POINTER`, `grips.js`), so
+        # no drag of one should arrive; one that does is answered with
+        # nothing, and the figure hook's redraw snaps it back. Resolved
+        # before the open-leaf check: whichever criterion is open, such a
+        # drag is not an error the user made.
         if not _draggable(primitive):
             return None
         assert isinstance(primitive, (Marker, HLine, VLine))  # `_draggable`
         open_leaf = s.selection.leaf_path
         if open_leaf is not None and path != open_leaf:
             # Only the open leaf's rings and grips are drawn
-            # (`Session.figure`'s `editing`), but every leaf's bound LINES
-            # are on the plot and Plotly lets them be dragged: one of those
-            # is not this editor's.
+            # (`Session.figure`'s `editing`), and every other leaf's bound
+            # LINES, on the plot too, are inert in the page — but Plotly
+            # itself would drag them, and a release can cross a redraw
+            # (`FigureHook._shape_name`): one that reaches here is not this
+            # editor's.
             raise HandleEditError(
                 f"{handle} is not a handle of {open_leaf}",
                 reason="Open that criterion to drag its lines.",

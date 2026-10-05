@@ -108,6 +108,15 @@ def grip_edge(grip: Primitive) -> str:
     return grip.id.split("/")[-2]
 
 
+def grip_group(prim: Primitive) -> str:
+    """The grips that show together — a checkpoint's four, a window's two:
+    the id without its edge, ``…/points/3`` of ``…/points/upper/3``. The
+    handle they stand around reads the same way (``…/points/target/3``), so
+    a ring names the group of its own grips."""
+    parts = prim.id.split("/")
+    return "/".join(parts[:-2] + parts[-1:])
+
+
 def grip_outward(grip: Primitive) -> int:
     """``+1`` or ``-1``: which way along :func:`grip_axis` leads AWAY from
     the target — where the grip is drawn, just outside its edge."""

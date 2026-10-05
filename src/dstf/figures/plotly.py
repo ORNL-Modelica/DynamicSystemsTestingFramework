@@ -17,7 +17,9 @@ arrow per ``kind="grip"`` primitive — a side of a tolerance — turns on
 offers no per-shape switch that works (measured on plotly.js 3.1.1, the
 build NiceGUI 3.16 bundles; the bundle's "3.8.2" string is d3's) — and the
 rings are what an editor attaches to, since Plotly drags shapes, not trace
-points.
+points. So the editable figure also SAYS which of its shapes an editor
+moves, in ``layout.meta`` (:data:`POINTER`): the page takes the pointer off
+every other one.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from ..comparison.geometry import (
     VLine,
     Window,
     grip_axis,
+    grip_group,
     grip_outward,
 )
 from .families import HUES, family_label, group_families, ramp
@@ -842,6 +845,27 @@ def _secondary_axis(title: str) -> dict:
     }
 
 
+#: The key of the editable figure's ``layout.meta`` that says which of its
+#: shapes take the pointer — read by the page's ``grips.js``, which derives
+#: nothing from a shape's name:
+#:
+#: * ``grips``: per grip shape, by name, the ``group`` it shows with
+#:   (:func:`~dstf.comparison.geometry.grip_group`) and the ``axis`` it
+#:   moves on;
+#: * ``draggable``: the names an editor moves — the ringed leaves' rings,
+#:   grips and ``kind="handle"`` lines. Every OTHER shape of the figure (a
+#:   box, a window, a result line, a leaf that is not open) the page makes
+#:   inert: under ``edits.shapePosition`` Plotly would drag it all the same.
+#:
+#: IN the figure, not beside it: whatever figure the browser holds, this is
+#: the map of that figure — the two cannot arrive out of step.
+POINTER = "dstf"
+
+
+def _no_pointer() -> dict:
+    return {"grips": {}, "draggable": []}
+
+
 def _leaf_traces(
     view: VariableView,
     ctx: _Ctx,
@@ -849,9 +873,10 @@ def _leaf_traces(
     editable: bool,
     rings_for: Collection[str] | None = None,
     visibility: Visibility | None = None,
-) -> tuple[list[dict], list[dict], list[dict]]:
-    """Every leaf of one view, drawn: ``(traces, shapes, rings)`` — the
-    rings holding the open leaves' grips too.
+) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """Every leaf of one view, drawn: ``(traces, shapes, rings, pointer)``
+    — the rings holding the open leaves' grips too, ``pointer`` what
+    :data:`POINTER` says of them.
 
     The one loop both figure builders run — so a new primitive type, or a
     change to what a handle ring is, lands in a single place. A
@@ -868,12 +893,14 @@ def _leaf_traces(
     data: list[dict] = []
     shapes: list[dict] = []
     rings: list[dict] = []
+    pointer = _no_pointer()
     for leaf in view.leaves:
         window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
         markers: list[Marker] = []
         grips: list[Primitive] = []
         leaf_data: list[dict] = []
         leaf_shapes: list[dict] = []
+        lines: list[str] = []  # the shapes of this leaf's handle lines
         for prim in leaf.geometry:
             if prim.kind == "grip":
                 grips.append(prim)
@@ -890,12 +917,19 @@ def _leaf_traces(
             traces, new_shapes = builder(prim, leaf, window, ctx)
             leaf_data.extend(traces)
             leaf_shapes.extend(new_shapes)
+            if isinstance(prim, HLine) and prim.kind == "handle":
+                lines.extend(s["name"] for s in new_shapes)
         leaf_data.extend(_marker_traces(markers, leaf))
-        leaf_rings = (
-            _handle_rings(markers) + _grip_shapes(grips, ctx)
-            if editable and (rings_for is None or leaf.path in rings_for)
-            else []
-        )
+        ringed = editable and (rings_for is None or leaf.path in rings_for)
+        leaf_rings = _handle_rings(markers) + _grip_shapes(grips, ctx) if ringed else []
+        if ringed:
+            for grip in grips:
+                assert isinstance(grip, (Marker, VLine))  # `_grip_shapes`
+                pointer["grips"][grip.id] = {
+                    "group": grip_group(grip),
+                    "axis": grip_axis(grip),
+                }
+            pointer["draggable"] += [s["name"] for s in leaf_rings] + lines
         for trace in leaf_data:
             trace["meta"] = {**trace.get("meta", {}), "leaf": leaf.path}
         if visibility is not None:
@@ -910,7 +944,7 @@ def _leaf_traces(
         data.extend(leaf_data)
         shapes.extend(leaf_shapes)
         rings.extend(leaf_rings)
-    return data, shapes, rings
+    return data, shapes, rings, pointer
 
 
 def _config(editable: bool) -> dict:
@@ -960,7 +994,7 @@ def variable_figure(
         full_samples=view.full_samples,
     )
     data: list[dict] = _base_traces(view)
-    leaf_data, shapes, rings = _leaf_traces(
+    leaf_data, shapes, rings, pointer = _leaf_traces(
         view, ctx, editable=editable, rings_for=rings_for, visibility=visibility
     )
     data.extend(leaf_data)
@@ -968,6 +1002,8 @@ def variable_figure(
         data.append(_error_trace(s, ctx, visibility))
     config: dict = _config(editable)
     layout = _layout(view, shapes + rings, bool(view.errors))
+    if editable:
+        layout["meta"] = {POINTER: pointer}
     if visibility is not None and view.errors:
         shown = ERROR_AXES.get(visibility.error or "")
         for axis in ("y3", "y4"):
@@ -1101,6 +1137,7 @@ def _subject_figure(
     data: list[dict] = []
     shapes: list[dict] = []
     rings: list[dict] = []
+    pointer = _no_pointer()
     has_spectrum = any(v.has_spectrum for v in views)
     # Families fold over what each series READS as: `unitTests.x[1..3]` is a
     # position in a component, not an array — three unrelated expressions
@@ -1132,12 +1169,14 @@ def _subject_figure(
             has_spectrum=has_spectrum,
             full_samples=view.full_samples,
         )
-        leaf_data, leaf_shapes, leaf_rings = _leaf_traces(
+        leaf_data, leaf_shapes, leaf_rings, leaf_pointer = _leaf_traces(
             view, ctx, editable=editable, rings_for=rings_for, visibility=visibility
         )
         data.extend(leaf_data)
         shapes.extend(leaf_shapes)
         rings.extend(leaf_rings)
+        pointer["grips"].update(leaf_pointer["grips"])
+        pointer["draggable"] += leaf_pointer["draggable"]
     config: dict = _config(editable)
     # One view stands in for the layout, carrying EVERY view's leaves, so
     # `_layout` sees the spectrum panel wherever it comes from.
@@ -1146,11 +1185,10 @@ def _subject_figure(
         layout_view = replace(views[0], leaves=all_leaves)
     else:
         layout_view = VariableView(name="")
-    return {
-        "data": data,
-        "layout": _layout(layout_view, shapes + rings, False),
-        "config": config,
-    }
+    layout = _layout(layout_view, shapes + rings, False)
+    if editable:
+        layout["meta"] = {POINTER: pointer}
+    return {"data": data, "layout": layout, "config": config}
 
 
 def _draws_actual(view: VariableView) -> bool:

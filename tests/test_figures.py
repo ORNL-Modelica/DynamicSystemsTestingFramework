@@ -1436,3 +1436,128 @@ def test_the_grip_colour_is_a_token_of_the_theme_table():
 
     assert GRIP == STATUS["no-ref"]["dark"] == "#E65100"
     assert GRIP != HANDLE_RING
+
+
+# -- which shapes take the pointer (the page's inert shapes) --------------------
+
+
+def _pointer(fig: dict) -> dict:
+    return fig["layout"]["meta"]["dstf"]
+
+
+def _range_view(path, window=None):
+    t = np.linspace(0.0, 10.0, 101)
+    vc = _compare_range(t, np.sin(t), min_value=-2.0, max_value=2.0)
+    vc.name = "x"
+    view = build_view(
+        "x", act_time=t, act_values=np.sin(t), leaves=[_stamped(vc, path)]
+    )
+    if window is None:
+        return view
+    leaf = view.leaves[0]
+    return replace(view, leaves=(replace(leaf, geometry=(*leaf.geometry, window)),))
+
+
+def test_the_report_figure_says_nothing_of_the_pointer():
+    """`layout.meta` is the editable figure's: the report's is the figure it
+    was (its goldens are byte-for-byte)."""
+    for make in GRIP_VIEWS.values():
+        assert "meta" not in variable_figure(make())["layout"]
+
+
+@pytest.mark.parametrize("mode", GRIP_VIEWS)
+def test_the_editable_figure_names_each_grip_its_group_and_its_axis(mode):
+    """The page hides a grip by the group the SERVER names for it — the id
+    without its edge — and never reads a metric's id pattern itself."""
+    fig = variable_figure(GRIP_VIEWS[mode](), editable=True)
+    grips = _pointer(fig)["grips"]
+    assert set(grips) == {f"{P0}/{local}" for local in GRIP_IDS[mode]}
+    for name, said in grips.items():
+        family, edge, key = name[len(P0) + 1 :].split("/")
+        assert said["group"] == f"{P0}/{family}/{key}", name
+        assert said["axis"] == (
+            "y" if family in ("points", "tube") and edge in ("upper", "lower") else "x"
+        ), name
+
+
+def test_a_third_party_grip_is_named_by_the_same_rule():
+    """No family is listed anywhere: a metric the tool has never heard of
+    emits `<family>/<edge>/<key>` and its grips are grouped like any."""
+    view = _points_grip_view()
+    leaf = view.leaves[0]
+    theirs = (
+        Marker(id=f"{P0}/theirs/upper/a", kind="grip", x=1.0, y=1.0),
+        Marker(id=f"{P0}/theirs/lower/a", kind="grip", x=1.0, y=0.0),
+    )
+    fig = variable_figure(
+        replace(view, leaves=(replace(leaf, geometry=theirs),)), editable=True
+    )
+    assert _pointer(fig)["grips"] == {
+        f"{P0}/theirs/upper/a": {"group": f"{P0}/theirs/a", "axis": "y"},
+        f"{P0}/theirs/lower/a": {"group": f"{P0}/theirs/a", "axis": "y"},
+    }
+
+
+def test_only_the_open_leafs_rings_grips_and_bound_lines_are_draggable():
+    """What an editor moves: a ring, a grip, a `handle` LINE — of the leaf
+    the figure rings. A box, a window, a result line and every shape of a
+    leaf that is not open are named by no one: the page makes them inert."""
+    P1 = "/metrics/children/1"
+    points = _points_grip_view(P0)
+    bounds = _range_view(P1, Window(id=f"{P1}/window", start=2.0, end=8.0))
+    view = replace(points, leaves=(*points.leaves, *bounds.leaves))
+    rings = {f"{P0}/points/target/0", f"{P0}/points/target/1"}
+    grips = {f"{P0}/{local}" for local in GRIP_IDS["points"]}
+    lines = {f"{P1}/range/{b}{o}" for b in ("min", "max") for o in ("", "/outside")}
+
+    def draggable(**kw) -> list[str]:
+        return _pointer(variable_figure(view, editable=True, **kw))["draggable"]
+
+    assert set(draggable(rings_for=(P0,))) == rings | grips
+    assert set(draggable(rings_for=(P1,))) == lines
+    assert draggable(rings_for=()) == []
+    every = draggable()  # None: every leaf
+    assert set(every) == rings | grips | lines and len(every) == len(set(every))
+    # Every name it says is a shape of the figure; the boxes and the window
+    # are shapes it does not say.
+    fig = variable_figure(view, editable=True)
+    names = {s["name"] for s in fig["layout"]["shapes"]}
+    assert set(every) <= names
+    assert {f"{P0}/points/box/0", f"{P0}/points/box/1", f"{P1}/window"} <= (
+        names - set(every)
+    )
+    # A leaf with no open criterion names no grip either.
+    assert (
+        _pointer(variable_figure(view, editable=True, rings_for=(P1,)))["grips"] == {}
+    )
+
+
+def test_a_scalars_result_lines_are_not_draggable_and_its_sides_are():
+    from dstf.comparison.algorithms import _compare_scalar
+    from dstf.comparison.sides import Sides
+
+    t = np.linspace(0.0, 10.0, 11)
+    flat = np.full_like(t, 4.0)
+    vc = _compare_scalar(
+        t,
+        flat,
+        t,
+        flat,
+        reduction="final",
+        tolerance=Sides(0.25, 0.5),
+        tolerance_mode="abs",
+        min_value=None,
+        max_value=None,
+    )
+    vc.name = "x"
+    view = build_view(
+        "x", act_time=t, act_values=flat, ref_time=t, ref_values=flat,
+        leaves=[_stamped(vc)],
+    )  # fmt: skip
+    fig = variable_figure(view, editable=True)
+    names = {s["name"] for s in fig["layout"]["shapes"]}
+    assert {f"{P0}/scalar/actual", f"{P0}/scalar/reference"} <= names
+    assert set(_pointer(fig)["draggable"]) == {
+        f"{P0}/scalar/upper",
+        f"{P0}/scalar/lower",
+    }

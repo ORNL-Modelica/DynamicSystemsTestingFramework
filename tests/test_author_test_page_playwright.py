@@ -845,9 +845,11 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         assert [round(v, 6) for v in after["xrange"]] == ZOOM_X, after
         assert after["stamp"] == "before-open", after
 
-        # 5b. Another leaf's bound line is on the same plot and Plotly lets
-        #     it be dragged: the open editor refuses it, says to open that
-        #     criterion, stages nothing, and the picture goes back.
+        # 5b. Another leaf's bound line is on the same plot. No editor
+        #     moves it while this criterion is open, so it takes no
+        #     pointer: the press is the plot's own, the line never leaves
+        #     its value, nothing is said and nothing is staged. (Plotly let
+        #     it be dragged; it moved under the mouse and snapped back.)
         # A closed range starts hidden (legend b): its swatch draws it.
         _swatch(page, 0, "range · x").click()
         page.wait_for_function(
@@ -860,39 +862,39 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         page.evaluate("() => window.scrollTo(0, 0)")
         page.evaluate(RELAYOUT_Y, LINE_Y)
         page.wait_for_timeout(300)
-        line = page.evaluate(FIND_LINE, MAX_LINE)
-        assert line is not None, page.evaluate(READ_PLOT)
-        _drag(page, line["cx"], line["cy"], 30)
-        expect(editor).to_contain_text(
-            "Open that criterion to drag its lines.", timeout=EXPECT_TIMEOUT
-        )
-        assert _pending(page) == "2 pending edits"
-        page.wait_for_function(SHAPE_IS, arg=[MAX_LINE, 2.0, 1e-9], timeout=2_000)
-        back = page.evaluate(READ_LINE, MAX_LINE)
-        assert back["drawn"] is not None and abs(back["drawn"] - 2.0) < 0.02, back
-        assert [round(v, 6) for v in back["xrange"]] == ZOOM_X, back
-        assert [round(v, 6) for v in back["yrange"]] == LINE_Y, back
 
-        # 5c. The same drag with NO editor open: nothing to refuse, nothing
-        #     staged, and the picture still goes back.
+        def press_on_the_line() -> None:
+            """Press the line and pull it 30 px down. Held mid-drag it has
+            not left its value — in the figure or as drawn."""
+            at = page.evaluate(EDGE_AT, [0, MAX_LINE, "line", 0.5])
+            page.mouse.move(at["x"], at["y"] - 20)
+            page.mouse.move(at["x"], at["y"], steps=4)
+            over = page.evaluate(EDGE_AT, [0, MAX_LINE, "line", 0.5])
+            assert not over["hit"] and "resize" not in over["cursor"], over
+            page.mouse.down()
+            page.mouse.move(at["x"], at["y"] + 30, steps=12)
+            held = page.evaluate(READ_LINE, MAX_LINE)
+            page.mouse.up()
+            assert held["y0"] == 2.0, held
+            assert held["drawn"] is not None and abs(held["drawn"] - 2.0) < 0.02, held
+            page.wait_for_timeout(500)  # a refusal or an edit would be here
+            assert _pending(page) == "2 pending edits"
+            # The press was the plot's (a zoom): the ranges go back.
+            page.evaluate(RELAYOUT_Y, LINE_Y)
+            page.wait_for_timeout(300)
+            idle = page.evaluate(READ_LINE, MAX_LINE)
+            assert idle["y0"] == 2.0, idle
+            assert [round(v, 6) for v in idle["xrange"]] == ZOOM_X, idle
+
+        press_on_the_line()
+        expect(editor).not_to_contain_text("Open that criterion")
+        assert editor.locator(".text-negative:visible").count() == 0
+
+        # 5c. The same press with NO editor open: no shape is anyone's.
         page.locator(".dstf-editor").get_by_role("button", name="Done").click()
         expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(300)
-        line = page.evaluate(FIND_LINE, MAX_LINE)
-        assert line is not None, page.evaluate(READ_PLOT)
-        # Held mid-drag: the line has actually MOVED off its spec value, so
-        # the snap-back below is a return and not a picture that never left
-        # (a drag Plotly refused outright would pass the same assertions).
-        page.mouse.move(line["cx"], line["cy"])
-        page.mouse.down()
-        page.mouse.move(line["cx"], line["cy"] + 30, steps=12)
-        moved = page.evaluate(READ_LINE, MAX_LINE)
-        page.mouse.up()
-        assert moved["drawn"] is not None and abs(moved["drawn"] - 2.0) > 0.05, moved
-        page.wait_for_function(SHAPE_IS, arg=[MAX_LINE, 2.0, 1e-9], timeout=2_000)
-        assert _pending(page) == "2 pending edits"
-        idle = page.evaluate(READ_LINE, MAX_LINE)
-        assert idle["drawn"] is not None and abs(idle["drawn"] - 2.0) < 0.02, idle
+        press_on_the_line()
 
         # 5d. Adding a criterion from a plot's `+` changes the tree's SHAPE,
         #     which rebuilds every card. The slots are NEW elements, so the
@@ -1000,7 +1002,7 @@ def test_a_windowed_bound_drags_inside_and_outside_its_window(
     """The window's rect was drawn over the bound and swallowed every drag
     on it; the `/outside` line was refused by name (measured in Chromium on
     plotly.js 3.1.1, 2026-09-26). Now both move the bound, and the window's
-    interior takes a drag that snaps back with no error."""
+    interior takes no pointer at all: a press there is the plot's own."""
     with _served(tmp_path, playwright_browser, project=_windowed_page_project) as page:
         page.wait_for_timeout(700)
         _open_crit(page, 0, "range · x")
@@ -1051,11 +1053,11 @@ def test_a_windowed_bound_drags_inside_and_outside_its_window(
         assert _pending(page) == "1 pending edit"  # the same leaf, collapsed
         assert [t for t in error.all_inner_texts() if t.strip()] == []
 
-        # 3. The window's interior, away from every line: nothing staged,
-        #    no error.
+        # 3. The window's interior, away from every line: the window is no
+        #    shape under the pointer, nothing is staged, no error.
         pending = _pending(page)
         hit = page.evaluate(HIT_AT, [0.45, 0.2])
-        assert hit["name"] == f"{RANGE_X}/window", hit
+        assert hit["name"] is None, hit
         _drag(page, hit["cx"], hit["cy"], 40)
         page.wait_for_timeout(800)
         assert _pending(page) == pending
@@ -6778,6 +6780,49 @@ def _mouse_drag_by(page, x: float, y: float, dx: float, dy: float) -> None:
     page.mouse.up()
 
 
+#: A point ON a named shape of plot ``card`` that is no ring and no arrow —
+#: ``edge``: the ``top`` or ``right`` edge of a rect, ``frac`` of the way
+#: along it, or a horizontal ``line`` at ``frac`` of the x axis — with what
+#: is under it (``hit``: a shape; the ``cursor`` there), the shape's
+#: coordinates as the figure holds them and its path's ``d`` as drawn.
+#: Computed from the axes, never found by a hit test: an inert shape has no
+#: hit to find.
+EDGE_AT = """
+([card, tail, edge, frac]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const shapes = gd.layout.shapes || [];
+  const i = shapes.findIndex(s => (s.name || '').endsWith(tail));
+  if (i < 0) return null;
+  const s = shapes[i];
+  const xa = fl['xaxis' + (s.xref || 'x').slice(1)];
+  const paper = s.yref === 'paper';
+  const ya = paper ? null : fl['yaxis' + (s.yref || 'y').slice(1)];
+  const X = v => rect.left + xa._offset + xa.d2p(v);
+  const Y = v => paper ? rect.top + fl._size.t + fl._size.h * (1 - v)
+                       : rect.top + ya._offset + ya.d2p(v);
+  let x, y;
+  if (edge === 'top') {
+    x = X(s.x0) + (X(s.x1) - X(s.x0)) * frac; y = Math.min(Y(s.y0), Y(s.y1));
+  } else if (edge === 'right') {
+    x = Math.max(X(s.x0), X(s.x1)); y = Y(s.y0) + (Y(s.y1) - Y(s.y0)) * frac;
+  } else {
+    x = rect.left + xa._offset + xa._length * frac; y = Y(s.y0);
+  }
+  const el = document.elementFromPoint(x, y);
+  const path = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  return {
+    x, y, name: s.name,
+    hit: !!(el && el.closest('g.shapelayer')),
+    cursor: el ? getComputedStyle(el).cursor : '',
+    coords: [s.x0, s.x1, s.y0, s.y1],
+    d: path ? path.getAttribute('d') : null,
+    ranges: [xa.range.slice(), ya ? ya.range.slice() : null],
+  };
+}
+"""
+
+
 def _table_cell(page, row: int, label: str):
     return (
         page.locator(".dstf-editor .dstf-table-row")
@@ -7454,14 +7499,20 @@ def test_the_hover_holds_through_the_servers_redraw(tmp_path, playwright_browser
         assert away["shown"] == [], away
 
 
-#: Copy plot 0's grip shapes into plot 1's figure, names and all, from the
-#: page: no test's tree can put one criterion's grips on two plots.
+#: Copy plot 0's grip shapes into plot 1's figure, names and all — and what
+#: the server said of each (`layout.meta.dstf`) — from the page: no test's
+#: tree can put one criterion's grips on two plots.
 COPY_GRIPS = """
 async (colour) => {
   const {Plotly} = await import('nicegui-plotly');
   const [a, b] = document.querySelectorAll('.js-plotly-plot');
   const grips = (a.layout.shapes || []).filter(s => s.fillcolor === colour);
-  await Plotly.relayout(b, {shapes: [...(b.layout.shapes || []), ...grips]});
+  const meta = JSON.parse(JSON.stringify(b.layout.meta));
+  for (const s of grips) {
+    meta.dstf.grips[s.name] = a.layout.meta.dstf.grips[s.name];
+    meta.dstf.draggable.push(s.name);
+  }
+  await Plotly.relayout(b, {shapes: [...(b.layout.shapes || []), ...grips], meta});
   return grips.length;
 }
 """
@@ -7619,3 +7670,135 @@ def test_a_window_blur_ends_a_drags_latch(tmp_path, playwright_browser):
         page.mouse.move(second["x"], second["y"], steps=10)
         page.wait_for_timeout(150)
         assert _grips_on(page)["shown"] == _group("points", 1, FOUR)
+
+
+# -- a shape no editor moves takes no pointer ----------------------------------
+
+
+def _press_an_inert_shape(
+    page, tail: str, edge: str, frac: float, dx: float, dy: float, card: int = 0
+) -> None:
+    """Bring the mouse onto the named shape, press and drag ``(dx, dy)``.
+    The shape is not what is under the pointer, the cursor there offers no
+    resize, and held mid-drag the shape has not moved — in the figure or as
+    drawn. Released, nothing is staged and nothing is said."""
+    pending = _pending(page)
+    at = page.evaluate(EDGE_AT, [card, tail, edge, frac])
+    assert at is not None, (tail, page.evaluate(READ_PLOT))
+    page.mouse.move(at["x"] - 25, at["y"] - 25)
+    page.mouse.move(at["x"], at["y"], steps=5)
+    page.wait_for_timeout(150)
+    over = page.evaluate(EDGE_AT, [card, tail, edge, frac])
+    assert not over["hit"], over
+    assert "resize" not in over["cursor"] and over["cursor"] != "move", over
+    page.mouse.down()
+    page.mouse.move(at["x"] + dx, at["y"] + dy, steps=10)
+    held = page.evaluate(EDGE_AT, [card, tail, edge, frac])
+    page.mouse.up()
+    assert held["coords"] == at["coords"], (held, at)
+    assert held["d"] == at["d"] and held["d"], (held, at)
+    page.wait_for_timeout(600)  # a staged edit or a refusal would be here
+    assert _pending(page) == pending
+    after = page.evaluate(EDGE_AT, [card, tail, edge, frac])
+    assert after["coords"] == at["coords"], (after, at)
+    assert page.locator(".dstf-editor .text-negative:visible").count() == 0
+
+
+def test_a_box_a_window_and_a_result_line_take_no_pointer(tmp_path, playwright_browser):
+    """Plotly makes every shape of an editable figure draggable: a
+    checkpoint's box showed `ne-resize` on its edge, moved under the mouse
+    and snapped back on release with nothing said. Only what an editor moves
+    takes the pointer — a press on a box's edge, an event's or a peak's
+    window, a scalar's reference line is the plot's own."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        # The top edge, a quarter along: clear of the ring and of the arrow.
+        _press_an_inert_shape(page, "/points/box/0", "top", 0.25, 0, -20)
+        _open_for_grips(page, 0, "event-timing · x")
+        _press_an_inert_shape(page, "/events/window/0", "right", 0.25, 20, 0)
+        _open_for_grips(page, 0, "dominant-frequency · x")
+        _press_an_inert_shape(page, "/peaks/window/0", "right", 0.25, 20, 0)
+        _open_for_grips(page, 1, "scalar · y")
+        # What the open criterion's editor DOES move still takes the
+        # pointer: the scalar's lower line, pulled down, stages its side.
+        line = page.evaluate(EDGE_AT, [1, "/scalar/lower", "line", 0.4])
+        assert line["hit"], line
+        _mouse_drag_by(page, line["x"], line["y"], 0, 20)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(400)  # the redraw that follows the edit
+        _press_an_inert_shape(page, "/scalar/reference", "line", 0.4, 0, 20, card=1)
+
+
+def test_a_constant_tubes_arrows_are_hidden_at_rest(tmp_path, playwright_browser):
+    """The two arrows of a tube of constant width are grips like any: none
+    is displayed at rest, both near the band's edge at mid-trace."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 1, "tube · y")
+        _rest(page)
+        both = _group("tube", "const", ("upper", "lower"))
+        rest = _grips_on(page, 1)
+        assert rest["marked"] == both and rest["drawn"] == 2, rest
+        assert rest["shown"] == [], rest
+        upper = _shape(page, "/tube/upper/const", card=1)
+        assert upper["box"] is None
+        page.mouse.move(upper["x"] - 30, upper["y"] + 30)
+        page.mouse.move(upper["x"], upper["y"] + 5, steps=5)
+        page.wait_for_timeout(150)
+        assert _grips_on(page, 1)["shown"] == both
+        _rest(page)
+        assert _grips_on(page, 1)["shown"] == []
+
+
+#: Resolve at the first frame in which plot 0 holds a path for the shape
+#: whose name ends ``tail``: its group mark and whether it is displayed.
+WATCH_FOR = """
+(tail) => {
+  window.__dstfSeen = new Promise((resolve) => {
+    const gd = document.querySelectorAll('.js-plotly-plot')[0];
+    const read = () => {
+      const shapes = gd.layout.shapes || [];
+      const i = shapes.findIndex(s => (s.name || '').endsWith(tail));
+      const el = i < 0 ? null
+        : gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+      if (!el) return requestAnimationFrame(read);
+      const box = shapes.findIndex(s => (s.name || '').endsWith('/points/box/2'));
+      const boxEl = gd.querySelector('.shapelayer path[data-index="' + box + '"]');
+      resolve({
+        grip: el.getAttribute('data-grip'),
+        display: getComputedStyle(el).display,
+        box: boxEl ? getComputedStyle(boxEl).pointerEvents : null,
+      });
+    };
+    read();
+  });
+}
+"""
+
+
+def test_a_grip_a_redraw_adds_is_hidden_from_its_first_frame_and_shown_on_a_hover(
+    tmp_path, playwright_browser
+):
+    """What the page knows of a figure's shapes arrives IN the figure. `Add
+    row` redraws the plot with a third checkpoint: in the first frame its
+    arrow exists it is already marked, hidden, its box inert — and the
+    pointer brought to it at once shows its group and no other."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _rest(page)
+        assert _grips_on(page)["drawn"] == 8
+        page.evaluate(WATCH_FOR, "/points/upper/2")
+        add = page.locator(".dstf-editor").get_by_role("button", name="Add row").first
+        add.evaluate("e => e.click()")  # no scroll: the plot stays put
+        seen = page.evaluate("() => window.__dstfSeen")
+        assert seen["grip"] is not None and seen["grip"].endswith("/points/2"), seen
+        assert seen["display"] == "none" and seen["box"] == "none", seen
+        ring = _shape(page, "/points/target/2")
+        page.mouse.move(ring["x"], ring["y"], steps=4)
+        shown = _grips_on(page)
+        assert shown["drawn"] == 12, shown
+        assert shown["shown"] == _group("points", 2, FOUR), shown

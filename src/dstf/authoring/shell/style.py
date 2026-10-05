@@ -246,6 +246,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    shape, so a grip hidden either way was still grabbed where nothing
    showed. Without a hover — a touch screen — they are always shown. */
 .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) { display: none; }
+/* A shape no editor moves — a box, a window, a result line, another
+   criterion's bound — takes no pointer: `grips.js` marks it `data-inert`
+   from what the figure says is draggable. Plotly makes EVERY shape of an
+   editable figure draggable (inline `pointer-events: all`, hence the
+   `!important`), so such a shape showed a resize cursor, moved under the
+   mouse and snapped back on release with nothing said. A press on it is now
+   the plot's own. A line is dragged by a helper group of its own, marked
+   too. */
+.js-plotly-plot .shapelayer [data-inert],
+.js-plotly-plot .shapelayer [data-inert] * { pointer-events: none !important; }
 @media (hover: none), (pointer: coarse) {
   .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) {
     display: inline;
