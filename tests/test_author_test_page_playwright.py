@@ -771,9 +771,16 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
 # -- the editor below its row, and the plot as its editing surface --------
 
 
-def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
+def test_a_criterion_opens_below_its_row_the_plot_stages_and_another_leafs_line_is_inert(
     tmp_path, playwright_browser
 ):
+    """The open criterion's editor, its plot as the editing surface — and
+    what is NOT one: another leaf's bound line on the same plot takes no
+    pointer (5b, 5c), so the server's refusal of such a drag ("Open that
+    criterion to drag its lines.") is not reachable from a browser. That
+    sentence is pinned where it is said: `test_edit_on_plot` (`act`, a line
+    and a grip of a leaf that is not open) and `test_test_page`
+    (`test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back`)."""
     with _served(tmp_path, playwright_browser) as page:
         page.wait_for_timeout(700)
         # 4. The zoom and the stamp are set BEFORE the editor opens and read
