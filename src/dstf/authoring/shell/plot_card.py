@@ -78,6 +78,16 @@ _SIGNED = (
 #: was found that moves it.
 _EDITED = ("metric", "variable", "params", "window", "against", "advisory")
 
+#: The open editor's hint line (`PlotCard._say_hint`): for a criterion with
+#: something to drag on its plot, for one with nothing (nrmse), and what
+#: follows either.
+EDITOR_HINT = (
+    "Drag a ring or a tolerance arrow on the plot (hover a point to show its "
+    "arrows), or edit the fields."
+)
+EDITOR_HINT_NO_HANDLES = "Drag a ring on the plot, or edit the fields."
+STAGED = " Edits are staged as you make them; Save writes them."
+
 #: The hover module of the tolerance grips (`grips.js`): its file, and where
 #: the shell serves it — beside the Suite table's scripts.
 GRIPS_JS = Path(__file__).parent / "grips.js"
@@ -335,6 +345,7 @@ class PlotCard:
         #: The open editor's own column in its row's slot: the slot also
         #: holds the row host's error labels, so closing takes only this.
         self.editor_box: ui.column | None = None
+        self.hint: ui.label | None = None  # the open editor's hint line
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
         #: Whether this card has been asked to draw. A plot that raised is
@@ -636,6 +647,7 @@ class PlotCard:
                 # The fields kept showing the value that edit undid, and the
                 # next keystroke staged it straight back (the Task 6 review).
                 self.editor.build()
+                self._say_hint(view)
                 self._edited = edited
             else:
                 # The editor is not rebuilt while it is open, so a lock that
@@ -865,10 +877,9 @@ class PlotCard:
             self.editor_box = ui.column().classes("dstf-editor w-full gap-2")
         with self.editor_box:
             with ui.row().classes("items-center no-wrap gap-3 w-full"):
-                ui.label(
-                    "Drag a ring on the plot, or edit the fields. Edits are "
-                    "staged as you make them; Save writes them."
-                ).classes("dstf-why")
+                self.hint = (
+                    ui.label("").classes("dstf-why").mark(f"editor-hint:{index}:{path}")
+                )
                 ui.space()
                 ui.button("Done", on_click=self.page.close_editor).props(
                     "flat dense no-caps"
@@ -888,7 +899,25 @@ class PlotCard:
                 apply=self.page.apply,
             )
             self.editor.build()
-        self._edited = self._edited_now(self._view(view))
+        view = self._view(view)
+        self._say_hint(view)
+        self._edited = self._edited_now(view)
+
+    def _say_hint(self, view: dict | None) -> None:
+        """The editor's hint line: what drags on the plot for the open
+        criterion's metric. The arrows show only while the pointer is near
+        their point, so the line is what tells a person they exist. A
+        metric with nothing to drag (nrmse) keeps the line it had; its Edit
+        on plot place says why. Said again after an edit: the mode is a
+        field of the editor."""
+        if self.hint is None or self.hint.is_deleted:
+            return
+        leaf = next(
+            (n for n in leaves_of(view) if str(n["path"]) == self.open_path), None
+        )
+        desc = registry.metric(str(leaf.get("metric"))) if leaf is not None else None
+        drags = desc is not None and desc.edit_handle is not None
+        self.hint.set_text((EDITOR_HINT if drags else EDITOR_HINT_NO_HANDLES) + STAGED)
 
     def close_editor(self) -> None:
         """The editor goes, and its subscriptions with it: a panel nobody
@@ -904,7 +933,7 @@ class PlotCard:
         row = self.rows.get(self.open_path or "")
         if row is not None:
             row.row.classes(remove="dstf-crit-open")
-        self.editor, self.editor_box = None, None
+        self.editor, self.editor_box, self.hint = None, None, None
         self.open_path, self._edited = None, None
 
     def _applied(self, name: str) -> None:
@@ -924,7 +953,9 @@ class PlotCard:
         # staged elsewhere — and a first edit of an unmaterialized tree,
         # which stages the materialization AND the replace, is one edit
         # here rather than two.
-        self._edited = self._edited_now(self._view())
+        view = self._view()
+        self._say_hint(view)
+        self._edited = self._edited_now(view)
 
     def dispose(self) -> None:
         """Give up this card's handlers before it is dropped: a rebuilt page

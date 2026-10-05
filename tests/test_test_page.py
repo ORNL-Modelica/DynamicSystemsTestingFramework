@@ -3510,6 +3510,57 @@ async def test_a_click_on_a_row_opens_its_editor_below_it(shell):
         assert "dstf-crit-open" in row.row.classes
 
 
+NRMSE_AND_RANGE = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+        {"metric": "range", "variable": "x", "min_value": -1},
+    ],
+}
+STAGED_AND_SAVE = " Edits are staged as you make them; Save writes them."
+
+
+async def test_the_editors_hint_says_what_drags_on_the_plot(shell):
+    """The plot has an arrow per tolerance side, shown only while the
+    pointer is near its point, and nothing said so: the hint named the
+    rings alone. A criterion with nothing to drag (nrmse) keeps the line it
+    had, and its Edit on plot place says why."""
+    _stage_tree(shell, A, NRMSE_AND_RANGE)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        assert _one(user, f"editor-hint:0:{T1}").text == (
+            "Drag a ring or a tolerance arrow on the plot (hover a point to "
+            "show its arrows), or edit the fields." + STAGED_AND_SAVE
+        )
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        assert _one(user, f"editor-hint:0:{T0}").text == (
+            "Drag a ring on the plot, or edit the fields." + STAGED_AND_SAVE
+        )
+        assert _one(user, "why:edit-on-plot").text == "nrmse has no on-plot handles"
+
+
+async def test_the_editors_hint_follows_a_switch_of_mode(shell):
+    """The hint is the open criterion's: switched from nrmse to a mode
+    with handles in the editor, it says the new mode's."""
+    _stage_tree(shell, A, NRMSE_AND_RANGE)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        hint = _one(user, f"editor-hint:0:{T0}")
+        assert hint.text.startswith("Drag a ring on the plot, or edit the fields.")
+        (mode,) = [
+            e
+            for e in page.client.elements.values()
+            if isinstance(e, ui.select) and e.props.get("label") == "mode"
+        ]
+        mode.set_value("range")
+        await _settled(lambda: hint.text.startswith("Drag a ring or a tolerance arrow"))
+
+
 async def test_one_editor_at_a_time_page_wide(shell):
     """One open criterion, whatever card its row is on — and only the plot
     whose rings it moved is re-sent."""

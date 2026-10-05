@@ -307,7 +307,7 @@ class EditOnPlot:
                 )
 
         ui_panel.figure.on("plotly_relayout", on_relayout)
-        ui.label("drag a ring on the plot, or edit the table").classes("text-xs")
+        ui.label("drag on the plot, or edit the table").classes("text-xs")
         tree = s.tree(model_id)
         if tree is None:
             return

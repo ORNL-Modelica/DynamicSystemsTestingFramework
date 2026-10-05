@@ -658,6 +658,15 @@ async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(session):
         ]
 
 
+async def test_the_tables_line_says_the_plot_and_the_table(session):
+    """Not "drag a ring": the plot has an arrow per tolerance side too,
+    which the editor's own hint line names."""
+    _tree_on_d(session)
+    async with host(session, EditOnPlot(), ON_D) as (user, _errors, _figure):
+        await user.should_see("drag on the plot, or edit the table")
+        await user.should_not_see("drag a ring")
+
+
 async def test_the_rows_scroll_and_add_row_does_not(session):
     """A long table would push the editor off the card, so the rows sit in a
     scrolling container — `Add row` sits after it, where a table of twenty
