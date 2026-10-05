@@ -6831,11 +6831,16 @@ def _table_cell(page, row: int, label: str):
     )
 
 
-def test_a_ring_pressed_off_its_centre_moves_its_point(tmp_path, playwright_browser):
-    """A checkpoint's ring pressed 5 px off its centre and dragged sideways
-    moves the checkpoint's time. As a pixel circle the ring had resize
-    zones outside its middle third: that press resized it and staged
-    nothing."""
+@pytest.mark.parametrize(
+    "off", [(5, 0), (-5, 0), (0, 5), (0, -5)], ids=["right", "left", "below", "above"]
+)
+def test_a_ring_pressed_off_its_centre_moves_its_point(
+    tmp_path, playwright_browser, off
+):
+    """A checkpoint's ring pressed 5 px off its centre — to either side,
+    above or below — and dragged sideways moves the checkpoint's time. As a
+    pixel circle the ring had resize zones outside its middle third: that
+    press resized it and staged nothing."""
     with _served(tmp_path, playwright_browser, project=_tables_project) as page:
         page.wait_for_timeout(700)
         _open_crit(page, 0, "points · x")
@@ -6846,7 +6851,21 @@ def test_a_ring_pressed_off_its_centre_moves_its_point(tmp_path, playwright_brow
         page.evaluate("() => window.scrollTo(0, 0)")
         page.wait_for_timeout(300)
         ring = _shape(page, "/points/target/0")
-        _mouse_drag_by(page, ring["x"] + 5, ring["y"], 40, 0)
+        # The press is on the ring itself — 7 px in radius — and on no
+        # arrow: those stand 10 px outside the box's edges.
+        x, y = ring["x"] + off[0], ring["y"] + off[1]
+        page.mouse.move(x - 30, y - 30)
+        page.mouse.move(x, y, steps=4)
+        hit = page.evaluate(
+            "([x, y]) => { const e = document.elementFromPoint(x, y);"
+            " const gd = document.querySelectorAll('.js-plotly-plot')[0];"
+            " return (gd.layout.shapes[+e.getAttribute('data-index')] || {}).name; }",
+            [x, y],
+        )
+        assert hit is not None and hit.endswith("/points/target/0"), hit
+        page.mouse.down()
+        page.mouse.move(x + 40, y, steps=10)
+        page.mouse.up()
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
@@ -7711,6 +7730,38 @@ def test_a_window_blur_ends_a_drags_latch(tmp_path, playwright_browser):
         page.mouse.move(second["x"], second["y"], steps=10)
         page.wait_for_timeout(150)
         assert _grips_on(page)["shown"] == _group("points", 1, FOUR)
+
+        # The release above ended the hold as well, so it says nothing of
+        # the blur. A press on the plot's bare margin holds what is shown —
+        # nothing — and starts no drag of Plotly's, so the plot goes on
+        # hearing the pointer: held, a checkpoint under it shows no arrow;
+        # after a blur and with the button STILL down, the next one does.
+        _rest(page)
+        corner = page.evaluate(
+            """() => {
+              const gd = document.querySelectorAll('.js-plotly-plot')[0];
+              const r = gd.getBoundingClientRect(), x = r.left + 4, y = r.top + 4;
+              const el = document.elementFromPoint(x, y);
+              return {x, y, bare: gd.contains(el)
+                && !el.closest('.draglayer, .legend, .modebar, .shapelayer')};
+            }"""
+        )
+        assert corner["bare"], corner
+        page.mouse.move(corner["x"], corner["y"])
+        page.mouse.down()
+        first = _shape(page, "/points/target/0")
+        page.mouse.move(first["x"], first["y"], steps=10)
+        page.wait_for_timeout(150)
+        assert (
+            page.evaluate("() => document.querySelectorAll('.dragcover').length") == 0
+        )
+        assert _grips_on(page)["shown"] == []  # held
+        page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+        second = _shape(page, "/points/target/1")
+        page.mouse.move(second["x"], second["y"], steps=10)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 1, FOUR)  # the hold is gone
+        page.mouse.up()
 
 
 # -- a shape no editor moves takes no pointer ----------------------------------
