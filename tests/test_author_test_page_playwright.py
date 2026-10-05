@@ -8182,3 +8182,48 @@ def test_an_outermost_arrow_has_room_to_be_dragged_outward(
         )
         upper = float(_table_cell(page, 1, "+ tolerance").input_value())
         assert abs(upper - (0.3 + 25 / arrow["ppy"])) * arrow["ppy"] < 0.5, upper
+
+
+# -- a refused drag's reason, under the plot ------------------------------------
+
+
+def test_a_refused_drags_reason_stands_under_the_plot_in_view(
+    tmp_path, playwright_browser
+):
+    """The reason for a refused drag was said in the editor alone — below
+    the fold while the plot the hand is on is in view. It is also one line
+    directly under the plot, in the editor's words; the next drag that goes
+    through takes it away."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        line = page.locator(".dstf-plot").first.locator(".dstf-plot-refusal")
+        expect(line).to_be_hidden()
+        was = _shape(page, "/points/upper/0")
+        # Well past its target, 0.05 below the edge.
+        _drag_arrow(page, "/points/upper/0", 0, 0.05 * was["ppy"] + 40)
+        expect(line).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(line).to_have_text("the upper side would cross its target")
+        said = page.locator(".dstf-editor").get_by_text(
+            "the upper side would cross its target"
+        )
+        expect(said).to_be_visible()
+        plot = page.locator(".js-plotly-plot").first.bounding_box()
+        at = line.bounding_box()
+        head = page.locator(".dstf-criteria-head").first.bounding_box()
+        # The plot is in view, and so is the line: right under the plot,
+        # above the criteria rows.
+        assert plot["y"] >= 0 and plot["y"] + plot["height"] <= VIEWPORT["height"], plot
+        assert at["y"] >= plot["y"] + plot["height"] - 1, (at, plot)
+        assert at["y"] + at["height"] <= min(head["y"] + 1, VIEWPORT["height"]), (
+            at,
+            head,
+        )
+        _shot(page, tmp_path, "refusal-under-plot")
+        assert _pending(page) == "0 pending edits"
+        # A drag that goes through: gone.
+        _drag_arrow(page, "/points/upper/0", 0, -20)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(line).to_be_hidden(timeout=EXPECT_TIMEOUT)

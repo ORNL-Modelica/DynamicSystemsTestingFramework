@@ -346,6 +346,9 @@ class PlotCard:
         #: holds the row host's error labels, so closing takes only this.
         self.editor_box: ui.column | None = None
         self.hint: ui.label | None = None  # the open editor's hint line
+        #: A refused drag's reason, directly under the plot (`_said`); None
+        #: on a card with no plot.
+        self.refusal: ui.label | None = None
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
         #: Whether this card has been asked to draw. A plot that raised is
@@ -462,6 +465,14 @@ class PlotCard:
             if not set(resolved.subject) <= set(resolved.missing):
                 self.slot = ui.element("div").classes("dstf-plot-slot w-full")
                 self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
+                # Between the plot and its criteria rows: the editor that
+                # says a refused drag's reason can be a screen below the
+                # plot the hand is on (measured at y = 1020 of a 900 px
+                # window, the plot at 350-670).
+                self.refusal = ui.label("").classes(
+                    "dstf-plot-refusal text-negative text-xs"
+                )
+                self.refusal.mark(f"plot-refusal:{index}").set_visibility(False)
             self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
             takers = parent_kinds(view)
@@ -647,6 +658,7 @@ class PlotCard:
                 # The fields kept showing the value that edit undid, and the
                 # next keystroke staged it straight back (the Task 6 review).
                 self.editor.build()
+                self._said(None)  # the rebuild took the editor's own line
                 self._say_hint(view)
                 self._edited = edited
             else:
@@ -900,6 +912,7 @@ class PlotCard:
                 # What the editor's panels show that the spec does not hold
                 # outlives them: a drag rebuilds the whole editor.
                 kept=partial(self.page.kept, path),
+                on_said=self._said,
             )
             self.editor.build()
         view = self._view(view)
@@ -922,13 +935,28 @@ class PlotCard:
         drags = desc is not None and desc.edit_handle is not None
         self.hint.set_text((EDITOR_HINT if drags else EDITOR_HINT_NO_HANDLES) + STAGED)
 
+    def _said(self, text: str | None) -> None:
+        """What the open editor's error line just said (`InlineHost`'s
+        ``on_said``): a refused DRAG's reason is shown under the plot too,
+        in the editor's own words; an act that went through — a drag, a
+        field — takes it away. A refused field edit is said where the
+        typing is, and leaves this line as it was."""
+        if self.refusal is None or self.refusal.is_deleted:
+            return
+        if text is None:
+            self.refusal.set_visibility(False)
+        elif self.hook.dispatching:
+            self.refusal.set_text(text)
+            self.refusal.set_visibility(True)
+
     def close_editor(self) -> None:
         """The editor goes, and its subscriptions with it: a panel nobody
         can see must not go on staging edits from drags. Only the editor's
         own column: the row's slot also holds its host's error labels, and
         a close that cleared the slot deleted them — a refused Wrap on that
         row then staged nothing and showed nothing (the review, in
-        Chromium)."""
+        Chromium). A refused drag's line under the plot goes with it."""
+        self._said(None)
         if self.editor is not None:
             self.editor.clear()
         if self.editor_box is not None and not self.editor_box.is_deleted:

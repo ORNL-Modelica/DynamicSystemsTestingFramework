@@ -414,7 +414,11 @@ class InlineHost:
     moving — and with ``kept``, when what a panel kept there was dropped.
     ``kept(name)`` is `Panel.kept` for capability ``name``'s panel in this
     host: the dict its owner keeps across this host's rebuilds. Without
-    one, each build of a panel gets a dict of its own."""
+    one, each build of a panel gets a dict of its own.
+    ``on_said`` hears what this host's error lines say, as they say it:
+    the text of a refused act, and ``None`` when an act went through (its
+    line hidden). Whoever shows that text somewhere else too — a plot, for
+    a drag — shows this one, not a second wording."""
 
     def __init__(
         self,
@@ -428,9 +432,11 @@ class InlineHost:
         row: RowTarget | None = None,
         apply: Callable[[Outcome | Sequence[Outcome]], None] | None = None,
         kept: Callable[[str], dict[Any, Any]] | None = None,
+        on_said: Callable[[str | None], None] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
+        self.on_said = on_said
         self.row = row
         self.kept = kept
         #: capability name -> the `Panel.kept` its panel was built with
@@ -573,6 +579,8 @@ class InlineHost:
             log_unless_users(e, cap.name)
             error.set_text(user_text(e))
             error.set_visibility(True)
+            if self.on_said is not None:
+                self.on_said(error.text)
             if self.row is not None:
                 # Said under its row: a tree row inside a folded group is
                 # shown (U5, R2).
@@ -586,6 +594,8 @@ class InlineHost:
                 fail(e)
                 return False
             error.set_visibility(False)
+            if self.on_said is not None:
+                self.on_said(None)
             if outcome is not None and self.on_applied is not None:
                 self.on_applied(cap.name)
             return True

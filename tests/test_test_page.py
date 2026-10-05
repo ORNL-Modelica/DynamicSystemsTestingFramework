@@ -3664,6 +3664,82 @@ async def test_a_drag_stages_one_replace_and_the_plot_follows(shell):
         )
 
 
+async def test_a_refused_drags_reason_is_said_under_the_plot_until_the_next_edit(
+    shell,
+):
+    """A refused drag's reason was said in the editor alone — a screen
+    below the plot the hand is on. It is also one line directly under the
+    plot, the editor's own text; the next drag that goes through takes it
+    away, and so does closing the criterion."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        # Hidden while it says nothing: the simulation finds no such line.
+        assert _none(user, "plot-refusal:0")
+        line = card.refusal
+        assert not line.visible and "plot-refusal:0" in line._markers
+        # Between the plot and the criteria rows.
+        order = list(card.card.descendants())
+        assert (
+            order.index(card.slot)
+            < order.index(line)
+            < order.index(_one(user, "criteria-header:0"))
+        )
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        n = _shape_index(card, f"{T0}/tube/upper/0")
+
+        def drag(y: float) -> None:
+            with page.client:
+                card.hook._dispatch(
+                    "plotly_relayout",
+                    {f"shapes[{n}].xanchor": 0.5, f"shapes[{n}].yanchor": y},
+                )
+
+        # The reference is 0.5 at t = 0.5: an upper edge at 0.2 is under it.
+        pending = list(shell.session.spec.pending)
+        drag(0.2)
+        assert shell.session.spec.pending == pending
+        error = card.editor.errors["edit-on-plot"]
+        assert error.visible and "would be negative" in error.text
+        assert line.visible and line.text == error.text
+        assert _one(user, "plot-refusal:0") is line
+        assert "text-negative" in line.classes
+        # A drag that goes through: the line goes.
+        drag(0.8)
+        assert shell.session.spec.pending != pending
+        assert not line.visible
+        # Refused again, then the criterion closed: gone with it.
+        drag(0.2)
+        assert line.visible and "would be negative" in line.text
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open is None)
+        assert not line.visible
+
+
+async def test_a_refused_field_edit_is_not_said_under_the_plot(shell):
+    """Only a DRAG's refusal goes under the plot: one typed into the editor
+    is said there, where the typing is."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        line = card.refusal
+        cell = _one(user, f"{T0}:tube_points:0:time")
+        with page.client:
+            cell.set_value(float("inf"))
+        error = card.editor.errors["edit-on-plot"]
+        await _settled(lambda: error.visible)
+        assert not line.visible
+
+
 # -- a half cell outlives the panel it was typed in ---------------------------
 
 
