@@ -8569,7 +8569,8 @@ def test_a_refused_drags_reason_stands_under_the_plot_in_view(
 # -- what an arrow says, and the cursor over it ----------------------------------
 
 #: The shown grip whose name ends ``tail``: its tooltip (the SVG `title`
-#: child) and the cursor over its middle.
+#: child), the cursor over its middle, and how Plotly asks for its own
+#: cursor there — the path's inline style, and its `cursor-*` classes.
 ARROW_SAYS = """
 (tail) => {
   const gd = document.querySelectorAll('.js-plotly-plot')[0];
@@ -8582,6 +8583,8 @@ ARROW_SAYS = """
     titles: titles.length, title: titles.length ? titles[0].textContent : null,
     hit: under === el, cursor: getComputedStyle(under).cursor,
     axis: el.getAttribute('data-grip-axis'),
+    inline: el.style.cursor,
+    classed: [...el.classList].filter(c => c.startsWith('cursor-')),
   };
 }
 """
@@ -8607,8 +8610,10 @@ def test_an_arrow_says_what_it_sets_and_shows_which_way_it_moves(
 ):
     """An arrow carries a tooltip naming the side it sets — the server's
     words — and the cursor over it is the way it moves: up and down for a
-    value side, left and right for a time or a frequency side. (Plotly's
-    own cursor for a draggable shape is `move`, whichever way it goes.)"""
+    value side, left and right for a time or a frequency side. Plotly's
+    own cursor for a draggable shape is `move`, whichever way it goes — set
+    by a CLASS on the path (`cursor-move`), never inline: the stylesheet's
+    rule outranks that class's without `!important`."""
     with _served(tmp_path, playwright_browser, project=_grips_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
@@ -8621,6 +8626,7 @@ def test_an_arrow_says_what_it_sets_and_shows_which_way_it_moves(
         ):
             says = _arrow_says(page, f"/points/{edge}/1", ring)
             assert (says["title"], says["cursor"]) == (label, cursor), (edge, says)
+            assert (says["inline"], says["classed"]) == ("", ["cursor-move"]), says
         # A drag redraws every path: the new arrow says it still, once.
         _drag_arrow(page, "/points/upper/1", 0, -15)
         expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(

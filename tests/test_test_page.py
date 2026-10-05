@@ -12325,3 +12325,27 @@ def test_the_stylesheet_hides_a_grip_at_rest_by_display_and_shows_it_on_touch():
     assert css.index(f"{hidden} {{ display: none; }}") < css.index(
         "@media (hover: none)"
     )
+
+
+def test_an_arrows_cursor_rule_carries_no_important_and_the_inert_rule_does():
+    """plotly.js sets a draggable shape's cursor by CLASS — `setCursor` adds
+    `cursor-move`, styled by `.js-plotly-plot .plotly .cursor-move`
+    (specificity 0,3,0) — never inline: the arrows' own rule, two classes,
+    an attribute and an element (0,3,1), outranks it as it stands. The INERT
+    rule's `!important` is needed: Plotly writes `pointer-events: all`
+    inline on every editable shape. (The cursor a person gets is read in
+    the browser: `test_an_arrow_says_what_it_sets_and_shows_which_way_it_
+    moves`.)"""
+    import re
+
+    from dstf.authoring.shell.style import STYLE
+
+    css = re.sub(r"\s+", " ", STYLE)
+    arrow = '.js-plotly-plot .shapelayer path[data-grip-axis="{}"]'
+    assert f"{arrow.format('y')} {{ cursor: ns-resize; }}" in css
+    assert f"{arrow.format('x')} {{ cursor: ew-resize; }}" in css
+    assert (
+        ".js-plotly-plot .shapelayer [data-inert],"
+        " .js-plotly-plot .shapelayer [data-inert] *"
+        " { pointer-events: none !important; }"
+    ) in css

@@ -249,9 +249,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* The cursor over an arrow is the way it moves — up and down for a value
    side, left and right for a time or a frequency side — by the axis
    `grips.js` marks it with. Plotly's own for a draggable shape is `move`,
-   set over the path as the pointer comes, hence the `!important`. */
-.js-plotly-plot .shapelayer path[data-grip-axis="y"] { cursor: ns-resize !important; }
-.js-plotly-plot .shapelayer path[data-grip-axis="x"] { cursor: ew-resize !important; }
+   set as the pointer comes by a CLASS on the path (`.js-plotly-plot .plotly
+   .cursor-move`, specificity 0,3,0), never inline: these rules — two
+   classes, an attribute and an element, 0,3,1 — outrank it as they
+   stand. */
+.js-plotly-plot .shapelayer path[data-grip-axis="y"] { cursor: ns-resize; }
+.js-plotly-plot .shapelayer path[data-grip-axis="x"] { cursor: ew-resize; }
 /* While the pointer is near a shown arrow or the ring its group stands
    around (`grips.js` marks the graph div), the plot's hover label is not
    shown: coming at a checkpoint from above or below, the unified label's
