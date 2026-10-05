@@ -252,13 +252,14 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    set over the path as the pointer comes, hence the `!important`. */
 .js-plotly-plot .shapelayer path[data-grip-axis="y"] { cursor: ns-resize !important; }
 .js-plotly-plot .shapelayer path[data-grip-axis="x"] { cursor: ew-resize !important; }
-/* While a group of grips is shown (`grips.js` marks the graph div), the
-   plot's hover label is not: coming at a checkpoint from above or below,
-   the unified label's box and its spike line covered the arrows and half
-   the ring. It is back as soon as no group is shown. By `visibility`:
-   the layer keeps its layout, which Plotly measures to size a label it
-   draws meanwhile. */
-.js-plotly-plot[data-grip-shown] .hoverlayer { visibility: hidden; }
+/* While the pointer is near a shown arrow or the ring its group stands
+   around (`grips.js` marks the graph div), the plot's hover label is not
+   shown: coming at a checkpoint from above or below, the unified label's
+   box and its spike line covered the arrows and half the ring. It is back
+   as soon as the pointer is away from them — shown group or not. By
+   `visibility`: the layer keeps its layout, which Plotly measures to size
+   a label it draws meanwhile. */
+.js-plotly-plot[data-grip-near] .hoverlayer { visibility: hidden; }
 /* A shape no editor moves — a box, a window, a result line, another
    criterion's bound — takes no pointer: `grips.js` marks it `data-inert`
    from what the figure says is draggable. Plotly makes EVERY shape of an

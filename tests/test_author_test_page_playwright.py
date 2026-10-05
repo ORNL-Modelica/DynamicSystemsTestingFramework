@@ -8325,8 +8325,8 @@ HOVER_LAYER = """
 
 def test_the_hover_label_gives_way_to_a_shown_group(tmp_path, playwright_browser):
     """Coming at a checkpoint from above, Plotly's unified hover label and
-    its spike line were drawn over the arrows and half the ring. While a
-    group is shown the plot's hover layer is not; away from every
+    its spike line were drawn over the arrows and half the ring. Next to a
+    shown arrow the plot's hover layer is not shown; away from every
     checkpoint the label is back."""
     with _served(tmp_path, playwright_browser, project=_grips_project) as page:
         page.wait_for_timeout(700)
@@ -9434,3 +9434,121 @@ def test_a_peaks_lower_arrow_next_to_zero_hertz_is_drawn_inside_its_window(
             lower - 20 / arrow["ppx"] / 0.5, abs=1 / arrow["ppx"] / 0.5
         )
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.9")
+
+
+# -- the hover label gives way only near what is shown ---------------------------
+
+
+def _densely(project: Callable[[Path], tuple[Path, Path]]):
+    """``project`` with its results sampled 101 times over the run instead
+    of 5: Plotly's hover label needs a sample within its reach, and here
+    one is within 5 px of the pointer wherever it is."""
+
+    def made(tmp_path: Path) -> tuple[Path, Path]:
+        cfg, work = project(tmp_path)
+        t = [i / 100 for i in range(101)]
+        for key in ("test_0001", "test_0002"):
+            path = work / key / "result.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["time"] = t
+            data["variables"] = {"x": [1.25 * v for v in t], "y": [2 * v for v in t]}
+            path.write_text(json.dumps(data), encoding="utf-8")
+        return cfg, work
+
+    return made
+
+
+def _label_at(page, x: float, y: float) -> dict:
+    """Bring the pointer to ``(x, y)`` over the plot and read its hover
+    layer once Plotly has had the time to draw a label."""
+    page.mouse.move(x - 3, y)
+    page.mouse.move(x, y, steps=3)
+    page.wait_for_timeout(400)
+    return page.evaluate(HOVER_LAYER)
+
+
+def test_the_hover_label_shows_inside_an_open_window_away_from_its_arrows(
+    tmp_path, playwright_browser
+):
+    """The plot's hover label was hidden while ANY group was shown — for an
+    event's window that is the panel's whole height over the window and
+    25 px either side: the curve could not be read at an event while its
+    criterion was open. The label gives way only within 20 px of a shown
+    arrow: in the window's middle, a quarter of the way down the panel,
+    the arrows are shown AND the label reads the curve; 5 px from an arrow
+    it is hidden; back, it is back."""
+    project = _densely(_close_windows_project)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "event-timing · x", {"xaxis": [-0.05, 1000.0]})
+        early = page.evaluate(ARROW_AT, [0, "/events/early/0"])
+        late = page.evaluate(ARROW_AT, [0, "/events/late/0"])
+        # Event 0's window, [0.25, 0.35]: 100 px, its arrows at mid-height.
+        assert late["x"] - early["x"] == pytest.approx(100, abs=2), (early, late)
+        quarter = early["top"] + (early["bottom"] - early["top"]) / 4
+        assert early["y"] - quarter > 25, early
+        # 20 px in from its early edge: 30 px and more from either arrow,
+        # and nearer its own edge than the other window's arrow.
+        inside = (early["x"] + 20, quarter)
+        _rest(page)
+        seen = _label_at(page, *inside)
+        zero = _group("events", 0, ("early", "late"))
+        assert _grips_on(page)["shown"] == zero
+        assert seen["seen"] > 0 and any("Actual" in t for t in seen["texts"]), seen
+        _shot(page, tmp_path, "hover-in-window")
+        # 5 px left of the early arrow's far end, on the arrows' row.
+        box = _shape(page, "/events/early/0")["box"]
+        assert box is not None
+        beside = (box["left"] - 5, early["y"])
+        seen = _label_at(page, *beside)
+        assert _grips_on(page)["shown"] == zero
+        assert seen["seen"] == 0, seen
+        # And back in the window: the label again.
+        seen = _label_at(page, *inside)
+        assert _grips_on(page)["shown"] == zero
+        assert seen["seen"] > 0 and any("Actual" in t for t in seen["texts"]), seen
+
+
+#: One checkpoint whose arrows stand well clear of its ring at `TIME_SCALE`:
+#: 40 px above and below it, 50 px before and after.
+WIDE_POINT = [
+    {
+        "time": 0.5,
+        "value": 0.5,
+        "tolerance": 0.2,
+        "time_tolerance": {"lower": 0.05, "upper": 0.05},
+    }
+]
+
+
+def test_the_hover_label_gives_way_near_a_ring_and_an_arrow_and_nowhere_else(
+    tmp_path, playwright_browser
+):
+    """A checkpoint's arrows show within 25 px of its box; the label is
+    hidden within 20 px of its RING and within 20 px of a shown ARROW —
+    it was drawn over them — and reads the curve between the two."""
+    project = _densely(partial(_points_on_x_project, points=WIDE_POINT))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        ring = _shape(page, "/points/target/0")
+        four = _group("points", 0, FOUR)
+        _rest(page)
+        page.mouse.move(ring["x"], ring["y"], steps=4)
+        after = _shape(page, "/points/after/0")["box"]
+        assert after is not None and after["left"] - ring["x"] > 55, (after, ring)
+        places = {
+            # 11 px from the ring's middle, off the ring: 45 px from any arrow.
+            "by the ring": ((ring["x"] + 8, ring["y"] + 8), False),
+            # 30 px from the ring and 30 from the `after` arrow.
+            "between": ((ring["x"] + 30, ring["y"] + 5), True),
+            # 5 px short of the `after` arrow: 55 px from the ring.
+            "by the arrow": ((after["left"] - 5, ring["y"] + 5), False),
+            "between again": ((ring["x"] + 30, ring["y"] + 5), True),
+        }
+        for name, (at, labelled) in places.items():
+            seen = _label_at(page, *at)
+            assert _grips_on(page)["shown"] == four, name
+            assert (seen["seen"] > 0) == labelled, (name, seen)
+            if labelled:
+                assert any("Actual" in t for t in seen["texts"]), (name, seen)

@@ -39,6 +39,9 @@
   const TIP = 13.5;
   // How far outside a shown arrow's box the pointer is still on it, px.
   const ON_ARROW = 3;
+  // How near a shown arrow, or the ring its group stands around, the plot's
+  // own hover label gives way, px.
+  const HUSH = 20;
 
   // What the server says of the figure `gd` holds, or null for a figure
   // that says nothing (then nothing is marked).
@@ -102,15 +105,9 @@
       }
     };
 
-    // While a group is shown the plot's own hover label is not
-    // (`data-grip-shown`, style.py): the unified label and its spike line
-    // were drawn over the arrows. An ATTRIBUTE of the graph div, not a
-    // class: a server update of the element's classes wipes one the page
-    // set, and keeps an attribute.
     const show = (g) => {
       if (g === st.on) return;
       st.on = g;
-      gd.toggleAttribute("data-grip-shown", g !== null);
       for (const el of gd.querySelectorAll(".shapelayer path[data-grip]")) {
         el.toggleAttribute("data-grip-on", el.getAttribute("data-grip") === g);
       }
@@ -149,7 +146,7 @@
         }
         const t = paper ? ya._offset : y;
         const b = paper ? ya._offset + ya._length : y;
-        const r = out.get(g) || { l: x, r: x, t, b, points: [], columns: [] };
+        const r = out.get(g) || { l: x, r: x, t, b, points: [], columns: [], rings: [] };
         r.l = Math.min(r.l, x);
         r.r = Math.max(r.r, x);
         r.t = Math.min(r.t, t);
@@ -165,7 +162,9 @@
       }
       for (const [g, x, y] of rings) {
         const r = out.get(g);
-        if (r && y !== null) r.points.push([x, y]);
+        if (!r || y === null) continue;
+        r.points.push([x, y]);
+        r.rings.push([x, y]);
       }
       return out;
     };
@@ -223,14 +222,40 @@
       return shown - nearest < HYSTERESIS ? st.on : best;
     };
 
-    const move = (e) => {
-      st.xy = [e.clientX, e.clientY];
-      if (!st.latched) show(pick(e.clientX, e.clientY));
+    // Within HUSH px of a shown arrow, or of the ring the shown group
+    // stands around, the plot's own hover label is not shown
+    // (`data-grip-near`, style.py): the unified label and its spike line
+    // were drawn over them. Only there: hidden for as long as a group was
+    // shown, the curve could not be read anywhere in an event's window —
+    // the panel's whole height — while its criterion was open. An
+    // ATTRIBUTE of the graph div, not a class: a server update of the
+    // element's classes wipes one the page set, and keeps an attribute.
+    const hush = (xy) => {
+      let near = false;
+      if (xy && st.on !== null) {
+        near = arrow(xy[0], xy[1]) <= HUSH;
+        const r = near ? null : regions().get(st.on);
+        if (r) {
+          const box = gd.getBoundingClientRect();
+          const x = xy[0] - box.left;
+          const y = xy[1] - box.top;
+          near = r.rings.some(([px, py]) => Math.hypot(x - px, y - py) <= HUSH);
+        }
+      }
+      gd.toggleAttribute("data-grip-near", near);
     };
-    const leave = () => {
-      st.xy = null;
-      if (!st.latched) show(null);
+
+    // Where the pointer is now — viewport px, or null off this plot: the
+    // group it is near shows. Held, nothing changes.
+    const here = (xy) => {
+      st.xy = xy;
+      if (st.latched) return;
+      show(xy ? pick(xy[0], xy[1]) : null);
+      hush(xy);
     };
+
+    const move = (e) => here([e.clientX, e.clientY]);
+    const leave = () => here(null);
     // Once a drag starts the graph div gets one `mouseleave` and no
     // `mousemove` (Plotly's drag cover takes the pointer): what is shown is
     // held from the press to the release.
@@ -254,14 +279,12 @@
       const over =
         e.clientX >= box.left && e.clientX <= box.right &&
         e.clientY >= box.top && e.clientY <= box.bottom;
-      st.xy = over ? [e.clientX, e.clientY] : null;
-      show(over ? pick(e.clientX, e.clientY) : null);
+      here(over ? [e.clientX, e.clientY] : null);
     };
     // A release outside the window never arrives.
     const blur = () => {
       st.latched = false;
-      st.xy = null;
-      show(null);
+      here(null);
     };
 
     // A grip let go OUTSIDE the plot area — on the page above it, off the
@@ -308,7 +331,7 @@
           ) {
             mark();
             // The redraw after a release: shown if the pointer is still near.
-            if (!st.latched) show(st.xy ? pick(st.xy[0], st.xy[1]) : null);
+            here(st.xy);
             return;
           }
         }
@@ -331,7 +354,7 @@
       for (const el of gd.querySelectorAll("[data-inert]")) {
         el.removeAttribute("data-inert");
       }
-      gd.removeAttribute("data-grip-shown");
+      gd.removeAttribute("data-grip-near");
     };
     mark();
     return st;
