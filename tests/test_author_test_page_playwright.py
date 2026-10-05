@@ -469,14 +469,19 @@ def test_the_pending_drawer_closes_by_its_button_and_by_escape(
         )
 
 
-def _keydown_listeners(page) -> int:
-    """The keydown listeners on `document`, read over CDP."""
+def _listeners(page, kind: str, on: str = "document") -> int:
+    """The ``kind`` listeners on `document` (or `window`), read over CDP."""
     cdp = page.context.new_cdp_session(page)
-    doc = cdp.send("Runtime.evaluate", {"expression": "document"})
+    doc = cdp.send("Runtime.evaluate", {"expression": on})
     got = cdp.send(
         "DOMDebugger.getEventListeners", {"objectId": doc["result"]["objectId"]}
     )
-    return sum(1 for listener in got["listeners"] if listener["type"] == "keydown")
+    return sum(1 for listener in got["listeners"] if listener["type"] == kind)
+
+
+def _keydown_listeners(page) -> int:
+    """The keydown listeners on `document`, read over CDP."""
+    return _listeners(page, "keydown")
 
 
 def test_the_pending_drawers_escape_is_one_listener_per_page_load(
@@ -7106,6 +7111,17 @@ def test_a_rebuilt_page_leaves_no_hover_instance_behind(tmp_path, playwright_bro
         first = page.evaluate(CONNECTED)
         assert first and all(first), first
         assert len(first) == page.locator(".js-plotly-plot").count()
+
+        def held() -> list[int]:
+            """Each instance holds one of each: the page's others aside."""
+            n = len(page.evaluate(CONNECTED))
+            return [
+                _listeners(page, "mousedown") - n,
+                _listeners(page, "mouseup") - n,
+                _listeners(page, "blur", on="window") - n,
+            ]
+
+        others = held()
         rows = page.locator(".dstf-crit").count()
         page.locator(".dstf-plot").first.get_by_role(
             "button", name="Add a criterion for x"
@@ -7120,6 +7136,9 @@ def test_a_rebuilt_page_leaves_no_hover_instance_behind(tmp_path, playwright_bro
         after = page.evaluate(CONNECTED)
         assert after and all(after), after
         assert len(after) == page.locator(".js-plotly-plot").count()
+        # The dropped plots' listeners went with them: the document and the
+        # window hold one of each per instance, and what they held besides.
+        assert held() == others
         page.locator(".dstf-header-row").get_by_role(
             "button", name=re.compile("Discard")
         ).click()
@@ -7143,3 +7162,33 @@ def test_a_touch_screen_shows_the_open_criterions_grips_always(
         rest = _grips_on(page)
         every = sorted(_group("points", 0, FOUR) + _group("points", 1, FOUR))
         assert rest["marked"] == every and rest["shown"] == every, rest
+
+
+def test_a_window_blur_ends_a_drags_latch(tmp_path, playwright_browser):
+    """What is shown is held from a press to its release — and a release
+    outside the browser window never arrives. The window's blur ends the
+    hold: nothing stays shown, and the next hover is read again."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        ring = _shape(page, "/points/target/0")
+        page.mouse.move(ring["x"] - 30, ring["y"] + 30)
+        page.mouse.move(ring["x"], ring["y"], steps=5)
+        arrow = _shape(page, "/points/upper/0")
+        assert arrow["box"] is not None
+        page.mouse.move(arrow["box"]["x"], arrow["box"]["y"], steps=3)
+        page.mouse.down()
+        page.mouse.move(arrow["box"]["x"], arrow["box"]["y"] - 20, steps=6)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)  # held
+        page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+        assert _grips_on(page)["shown"] == []
+        page.mouse.up()
+        expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
+            "0.05", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(300)
+        # Not stuck held: the pointer's next move shows what it is near.
+        second = _shape(page, "/points/target/1")
+        page.mouse.move(second["x"], second["y"], steps=10)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 1, FOUR)

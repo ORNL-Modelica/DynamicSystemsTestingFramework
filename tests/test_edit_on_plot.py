@@ -1494,3 +1494,24 @@ def test_a_box_and_a_window_still_drag_nothing(session):
         shape = {"x0": 0.1, "x1": 0.9, "y0": 0.1, "y1": 0.9}
         assert _drag(session, handle, shape) is None, handle
     assert _drag(session, f"{C}/3/events/ref/0", {"x0": 0.6, "x1": 0.6}) is None
+
+
+def test_a_grips_position_is_its_own_axis_and_where_it_stands_on_the_other():
+    """What `HandleEdit` carries for a grip: the released anchor on the
+    axis it moves on; on the other, the grip's own resolved position — a
+    line has none — and never the payload's, which is not where the
+    pointer went."""
+    from dstf.authoring.builtin.edit_on_plot import _position
+    from dstf.comparison.geometry import Marker, VLine
+
+    released = {"xanchor": 0.4, "yanchor": 99.0, "path": "M 0,0 Z"}
+    before = Marker(id="/metrics/points/before/0", kind="grip", x=0.5, y=0.25)
+    assert _position(before, released) == (0.4, 0.25)
+    upper = Marker(id="/metrics/points/upper/0", kind="grip", x=0.5, y=0.25)
+    assert _position(upper, released) == (0.5, 99.0)
+    late = VLine(id="/metrics/events/late/0", kind="grip", time=0.5)
+    assert _position(late, released) == (0.4, None)
+    # A peak's `upper` is a line too: its axis is x, whatever its edge's name.
+    peak = VLine(id="/metrics/peaks/upper/0", kind="grip", panel="spectrum", time=2.0)
+    assert _position(peak, released) == (0.4, None)
+    assert _position(peak, {"yanchor": 0.1}) is None
