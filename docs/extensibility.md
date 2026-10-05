@@ -725,6 +725,21 @@ in survives. `submit` returns whether it went through: `False` when `act` or the
 apply raised. Import the UI framework inside `panel`, not at module level, so the
 module stays importable without the `[author]` extra — the built-ins do.
 
+**What a panel shows that the spec does not hold.** A panel is rebuilt by edits
+it did not make — a drag on the plot rebuilds the whole criterion editor, another
+panel's submit rebuilds this one — and is never told. Built from the view alone,
+whatever its controls held beside the spec is gone: a required cell cleared to be
+retyped comes back filled. `panel.kept` is a dict of the panel's own that
+outlives it: write there as a control becomes such a thing, read it back when the
+panel is built. The host hands the same dict to every build of that capability's
+panel for the same node of the same test, re-keys it when a tree edit moves the
+node, and drops it — rebuilding the panel on an empty one — with the node and
+when an edit that is not this tab's lands on the test (a Discard, a Save, another
+tab's). Record beside each entry what the spec held under it, and ignore an entry
+whose spec value has since moved. The criterion editor under a plot keeps one
+(Edit on plot's table records its blank and half-typed cells there); a dialog or
+a row hands a fresh dict to every build.
+
 **A form row.** `panel.row(title, build)` opens a form below the row the panel
 is drawn in — how Edit tree's add, wrap and edit forms open under a tree node's
 row or a criteria row (D133), and its add form under a plot's criteria header. `build(close)` draws the form's content; `close`

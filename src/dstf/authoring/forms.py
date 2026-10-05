@@ -296,20 +296,26 @@ class SidesControl(ui.row):
         hint: str | None,
         mark: str | None,
         required: bool,
+        shown: dict[str, float | None] | None,
+        on_edit: Callable[[], None] | None,
     ) -> None:
         # Not `wrap=False`: that is an inline style, and whether the group
         # wraps is the stylesheet's to say (it does where it has no room).
         super().__init__()
         self.classes("dstf-sides")
-        pair = isinstance(value, dict)
+        #: What the fields show: the spec's value, or the half pair a
+        #: caller kept beside it (``shown``).
+        showing = value if shown is None else shown
+        pair = isinstance(showing, dict)
         #: The shape the spec holds IS the link state: a number (or nothing)
         #: is linked, a pair is not — equal sides or not.
         self.linked = not pair
         self._sides: dict[str, float | None] = {
-            side: _shown(value.get(side) if pair else value)
+            side: _shown(showing.get(side) if pair else showing)
             for side in ("lower", "upper")
         }
         self._on_change, self._hint, self._syncing = on_change, hint, False
+        self._on_edit = on_edit
         self._required, self._label = required, label
         #: What the spec holds: what `on_change` last got, at first what the
         #: control was built on. And what it held when the field being
@@ -358,14 +364,20 @@ class SidesControl(ui.row):
         return self._blank("lower") or self._blank("upper")
 
     def shown(self) -> dict[str, float | None]:
-        """What the two fields show, as the pair this control is rebuilt
-        from: a half pair too, which ``on_change`` never carried."""
+        """What the two fields show, as the pair a rebuilt control is told
+        to show (``shown``): a half pair too, which ``on_change`` never
+        carried."""
         return dict(self._sides)
 
     def toggle(self) -> None:
         """Unlink: the number becomes the pair holding it twice (nothing
         stays nothing). Link: both sides take the LARGER one, so a re-link
         never narrows what the criterion allows."""
+        self._toggle()
+        if self._on_edit is not None:
+            self._on_edit()
+
+    def _toggle(self) -> None:
         self.linked = not self.linked
         self._paint()
         present = [v for v in self._sides.values() if v is not None]
@@ -422,6 +434,11 @@ class SidesControl(ui.row):
     def _edited(self, side: str, value: Any) -> None:
         if self._syncing:  # the other field, set from here: not an edit
             return
+        self._take(side, value)
+        if self._on_edit is not None:
+            self._on_edit()
+
+    def _take(self, side: str, value: Any) -> None:
         if side != self._editing:
             self._entered(side)
         self._unusable = False  # what the spec holds next is this control's
@@ -495,6 +512,8 @@ def sides_control(
     hint: str | None = None,
     mark: str | None = None,
     required: bool = False,
+    shown: dict[str, float | None] | None = None,
+    on_edit: Callable[[], None] | None = None,
 ) -> SidesControl:
     """Two number fields and a link toggle for a tolerance that is a number
     or a ``{"lower", "upper"}`` pair — the leaf form's control and a table
@@ -525,6 +544,14 @@ def sides_control(
     while the whole tolerance is unset too; ``None`` is still handed over,
     and holding it back is the caller's. The fields reserve no bottom line
     of their own: a form's row does (`render_form`), a table's does not.
+
+    ``shown`` and ``on_edit`` are for a caller that rebuilds the control
+    and has to keep a HALF pair across that, which ``on_change`` never
+    carried: ``on_edit`` is called after every edit of a field and every
+    toggle, once ``on_change`` has had what it gets — the caller reads
+    :meth:`SidesControl.half` and :meth:`SidesControl.shown` then — and
+    ``shown``, that pair, is what the rebuilt fields show (one blank and
+    marked) while ``value`` is still what the spec holds.
     """
     return SidesControl(
         label,
@@ -534,4 +561,6 @@ def sides_control(
         hint=hint,
         mark=mark,
         required=required,
+        shown=shown,
+        on_edit=on_edit,
     )

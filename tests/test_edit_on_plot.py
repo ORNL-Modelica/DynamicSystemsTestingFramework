@@ -1175,6 +1175,130 @@ async def test_removing_the_row_whose_pair_is_half_stages_the_list_without_it(
         await _settled(lambda: _a_rows(session, "points")[0]["time"] == 0.8)
 
 
+# -- what a cell shows that the spec does not hold outlives its panel ----------
+
+
+def _same_pair_twice() -> dict:
+    leaf = _two_rows_one_pair()
+    leaf["points"][1]["tolerance"] = dict(PAIR)
+    return leaf
+
+
+async def test_a_half_cell_is_blank_in_the_panel_built_after_its_own(session):
+    """The table writes a half cell where it outlives the panel
+    (`Panel.kept`), by field, row and column — and the panel built next,
+    whatever rebuilt it, reads it back: blank, "required", unlinked, and
+    holding the list back. Row 0 holds the SAME pair and is untouched: the
+    record names its row. Filled, the cell is no record any more."""
+    _root_leaf_on_a(session, _same_pair_twice())
+    cell = "/metrics:points:1:tolerance"
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        _cell(user, f"{cell}:lower").set_value(None)
+        assert kept == {
+            ("points", 1, "tolerance"): {
+                "base": PAIR,
+                "shown": {"lower": None, "upper": 0.3},
+            }
+        }
+    pending = list(session.spec.pending)
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        lower, upper = _cell(user, f"{cell}:lower"), _cell(user, f"{cell}:upper")
+        assert (lower.value, lower.error) == (None, "required")
+        assert (upper.value, upper.error) == (0.3, None)
+        assert _cell(user, f"{cell}:link").props["icon"] == "link_off"
+        other = _cell(user, "/metrics:points:0:tolerance:lower")
+        assert (other.value, other.error) == (0.1, None)
+        _cell(user, "/metrics:points:0:time").set_value(0.3)  # held with it
+        await asyncio.sleep(0.25)
+        assert session.spec.pending == pending and not errors
+        lower.set_value(0.2)
+        await _settled(
+            lambda: (
+                _a_rows(session, "points")[1].get("tolerance")
+                == {"lower": 0.2, "upper": 0.3}
+            )
+        )
+        assert _a_rows(session, "points")[0]["time"] == 0.3
+        assert kept == {} and not errors
+
+
+async def test_a_blank_required_cell_is_blank_in_the_panel_built_after_its_own(
+    session,
+):
+    """The same record for a required cell cleared to be retyped."""
+    _tree_on_d(session)
+    marker = "/metrics/children/0:tube_points:0:time"
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_D, kept=kept) as (user, errors, _figure):
+        _cell(user, marker).set_value(None)
+        assert kept == {("tube_points", 0, "time"): {"base": 0.5, "shown": None}}
+    async with host(session, EditOnPlot(), ON_D, kept=kept) as (user, errors, _figure):
+        cell = _cell(user, marker)
+        assert (cell.value, cell.error) == (None, "time is required")
+        assert _cell(user, "/metrics/children/0:tube_points:1:time").error is None
+        cell.set_value(0.6)
+        await _settled(
+            lambda: session.tree(D)["children"][0]["tube_points"][0]["time"] == 0.6
+        )
+        assert kept == {} and not errors
+
+
+async def test_a_half_cell_whose_row_changed_in_the_spec_shows_the_specs(session):
+    """The record holds what the spec's row held under the cell. Where the
+    spec has since moved there — that side dragged on the plot — the cell
+    shows the spec's value, whole, and the record is gone: half of a pair
+    the row no longer holds is nothing a person typed against it."""
+    _root_leaf_on_a(session, _two_rows_one_pair())
+    cell = "/metrics:points:0:tolerance"
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        _cell(user, f"{cell}:lower").set_value(None)
+        assert kept
+    dragged = {"lower": 0.1, "upper": 0.5}
+    session.stage([PatchOp(A, "replace", "/metrics/points/0/tolerance", dragged)])
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        lower, upper = _cell(user, f"{cell}:lower"), _cell(user, f"{cell}:upper")
+        assert (lower.value, lower.error) == (0.1, None)
+        assert (upper.value, upper.error) == (0.5, None)
+        assert kept == {}
+
+
+async def test_a_half_cell_whose_row_is_gone_from_the_spec_is_forgotten(session):
+    _root_leaf_on_a(session, _same_pair_twice())
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        _cell(user, "/metrics:points:1:tolerance:lower").set_value(None)
+        assert kept
+    one = [{"time": 0.25, "value": 0.5, "tolerance": dict(PAIR)}]
+    session.stage([PatchOp(A, "replace", "/metrics/points", one)])
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        lower = _cell(user, "/metrics:points:0:tolerance:lower")
+        assert (lower.value, lower.error) == (0.1, None)
+        assert kept == {}
+
+
+async def test_a_half_cell_is_recorded_by_its_rows_place_in_the_spec(session):
+    """Not by where the row is drawn. A row removed while a cell holds the
+    list back is still in the spec: the cell's row keeps its index there.
+    A row removed and STAGED is gone from the spec too: the index moves."""
+    _root_leaf_on_a(session, _same_pair_twice())
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        _cell(user, "/metrics:points:1:tolerance:lower").set_value(None)
+        user.find(marker="/metrics:points:0:remove").click()
+        await asyncio.sleep(0.25)
+        assert len(_a_rows(session, "points")) == 2  # held back
+        assert list(kept) == [("points", 1, "tolerance")]
+    async with host(session, EditOnPlot(), ON_A, kept={}) as (user, errors, _figure):
+        user.find(marker="/metrics:points:0:remove").click()
+        await _settled(lambda: len(_a_rows(session, "points")) == 1)
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        assert kept == {}  # row 1 is gone from the spec
+        _cell(user, "/metrics:points:0:tolerance:lower").set_value(None)
+        assert list(kept) == [("points", 0, "tolerance")]
+
+
 async def test_add_row_after_a_row_holding_a_pair(session):
     leaf = copy.deepcopy(SIDED["points"][0])
     leaf["points"][0]["tolerance"] = dict(PAIR)

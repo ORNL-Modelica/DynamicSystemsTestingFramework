@@ -511,7 +511,21 @@ def _table(
     ``Add row`` and ``Remove row`` too: they rebuild the rows, and a half
     cell is rebuilt as it stands — blank and marked — not from the pair
     its row still holds, so nothing is staged until the blank is filled
-    (or its row is the one removed)."""
+    (or its row is the one removed).
+
+    This PANEL is rebuilt too, by edits it did not make and is not told
+    of: a drag on the plot rebuilds the whole editor, an edit in the
+    criterion's form this panel. Built from the spec alone, a blank cell
+    came back holding its old value, unmarked, and held nothing back. So
+    every cell that shows what the spec does not hold — a required cell
+    blank, a tolerance half typed — is written, as it becomes one, where
+    it outlives the panel (`remember`, into ``Panel.kept``), and read back
+    here: by field, the row's index in the SPEC's list and column, with the
+    value the spec's row held under it. A cell whose row has since changed
+    in the spec — that side dragged on the plot — shows the spec's again.
+    What is not kept is anything else a held-back list holds: another
+    cell's value typed meanwhile, a row added or removed. Rebuilt, the
+    table shows the spec's rows, the blank cell still blank."""
     from ..forms import SidesControl, label_width, sides_control
     from ..typed_number import TypedNumber
 
@@ -522,14 +536,54 @@ def _table(
     #: The tolerance cells, as rendered: the row each is on, its column and
     #: the control.
     pairs: list[tuple[dict, str, SidesControl]] = []
+    #: The list as the spec holds it — what this table was built on, then
+    #: what it last staged — and, per row shown, that row's index in it:
+    #: None for a row added while a cell held the list back.
+    spec: list[dict] = copy.deepcopy(rows)
+    origin: list[int | None] = list(range(len(rows)))
+    #: ``(field, index in the spec's list, column)`` -> ``{"base": what the
+    #: spec's row holds there, "shown": None for a blank cell, else the
+    #: half pair its fields show}``: `Panel.kept`, the one record of what
+    #: this table's cells show that the spec does not hold.
+    kept = ui_panel.kept
+    #: The half pairs read back from it, by ``(id(row), column)``.
+    restored: dict[tuple[int, str], dict] = {}
+    for name, at, key in [k for k in kept if k[0] == field]:
+        cell = kept[name, at, key]
+        if at >= len(rows) or rows[at].get(key) != cell["base"]:
+            del kept[name, at, key]  # the spec's row moved under it
+        elif isinstance(cell["shown"], dict):
+            restored[id(rows[at]), key] = cell["shown"]
+        else:
+            rows[at][key] = None
+
+    def remember() -> None:
+        """Rewrite this table's part of ``kept`` from its cells as they
+        stand: called after every edit of one, whatever it staged."""
+        for k in [k for k in kept if k[0] == field]:
+            del kept[k]
+        at_of = {id(row): at for row, at in zip(rows, origin) if at is not None}
+        for row in rows:
+            at = at_of.get(id(row))
+            if at is None:
+                continue  # a row the spec does not hold yet
+            for key in required:
+                if row.get(key) is None:
+                    base = copy.deepcopy(spec[at].get(key))
+                    kept[field, at, key] = {"base": base, "shown": None}
+        for row, key, group in pairs:
+            at = at_of.get(id(row))
+            if at is not None and group.half():
+                base = copy.deepcopy(spec[at].get(key))
+                kept[field, at, key] = {"base": base, "shown": group.shown()}
 
     def blanks(but: SidesControl | None = None) -> bool:
         """Mark each required cell blank or not; True when any is, or when
         a tolerance cell other than ``but`` is half a pair (it marks its
-        own fields). The mark
-        is the cell's own validation (`missing`): written as an `error`
-        prop it never showed — NiceGUI validates a field after its change
-        handlers and resets an `error` it did not set itself."""
+        own fields). The mark is the cell's own validation (`missing`):
+        written as an `error` prop it never showed — NiceGUI validates a
+        field after its change handlers and resets an `error` it did not
+        set itself."""
         for cell in cells.values():
             cell.validate(return_result=False)
         return any(row.get(key) is None for row in rows for key in required) or any(
@@ -540,15 +594,22 @@ def _table(
         return f"{key} is required" if rows[i].get(key) is None else None
 
     def submit(but: SidesControl | None = None) -> None:
-        if blanks(but):
-            return
-        ui_panel.submit(
+        held_back = blanks(but)
+        if not held_back and ui_panel.submit(
             kind="rows",
             model_id=model_id,
             path=path,
             field=field,
             rows=copy.deepcopy(rows),
-        )
+        ):
+            # The spec holds this list now, a blank optional cell left out
+            # as `act` leaves it out.
+            spec[:] = [
+                {k: copy.deepcopy(v) for k, v in row.items() if v is not None}
+                for row in rows
+            ]
+            origin[:] = range(len(rows))
+        remember()
 
     def set_cell(i: int, key: str, value: Any) -> None:
         rows[i][key] = value
@@ -564,23 +625,27 @@ def _table(
 
     def remove(i: int) -> None:
         rows.pop(i)
+        origin.pop(i)
         render()
         submit()
 
     def add() -> None:
         rows.append(_new_row(columns, rows, span()))
+        origin.append(None)
         render()
         submit()
 
-    def render() -> None:
+    def render(halves: dict[tuple[int, str], dict] | None = None) -> None:
         # A half pair lives in its control alone: rebuilt from its row, the
         # blank side came back holding the pair's old value, no cell was
         # half any more, and the list was staged with that value in it.
-        halves = {
-            (id(row), key): group.shown()
-            for row, key, group in pairs
-            if group.half() and any(row is kept for kept in rows)
-        }
+        # ``halves``: those of the panel before this one, read from `kept`.
+        if halves is None:
+            halves = {
+                (id(row), key): group.shown()
+                for row, key, group in pairs
+                if group.half() and any(row is still for still in rows)
+            }
         container.clear()
         cells.clear()
         pairs.clear()
@@ -595,11 +660,13 @@ def _table(
                         if kind in _SIDES:
                             group = sides_control(
                                 key,
-                                halves.get((id(row), key), row.get(key)),
+                                row.get(key),
                                 partial(set_sides, i, key),
                                 side_labels=labels[0] if labels else SIDE_LABELS,
                                 mark=f"{mark}:{i}:{key}",
                                 required=key in required,
+                                shown=halves.get((id(row), key)),
+                                on_edit=remember,
                             )
                             for side in (group.lower, group.upper):
                                 side.props(_NO_BOTTOM)
@@ -648,4 +715,6 @@ def _table(
                 f"{mark}:add"
             )
 
-    render()
+    render(restored)
+    if any(k[0] == field for k in kept):
+        blanks()  # a blank cell read back says so from the start

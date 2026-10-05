@@ -80,8 +80,11 @@ class ShellPanel:
         lead: ui.element | None = None,
         target: RowTarget | None = None,
         fail: Callable[[BaseException], None] | None = None,
+        kept: dict[Any, Any] | None = None,
     ) -> None:
         self._submit, self.figure = submit, figure
+        #: `Panel.kept`: the host's, where it keeps one; else this build's.
+        self.kept: dict[Any, Any] = {} if kept is None else kept
         #: Says a refusal the way a failed `submit` does (a drop refused
         #: before it reaches the act); None where nothing is said.
         self._fail = fail
@@ -408,7 +411,10 @@ class InlineHost:
     nothing, and the rebuild it would trigger discards a half-typed row
     for nothing. `follow()` is how a host that is never rebuilt keeps up
     with `available`: a job's lock comes and goes without the tree's shape
-    moving."""
+    moving — and with ``kept``, when what a panel kept there was dropped.
+    ``kept(name)`` is `Panel.kept` for capability ``name``'s panel in this
+    host: the dict its owner keeps across this host's rebuilds. Without
+    one, each build of a panel gets a dict of its own."""
 
     def __init__(
         self,
@@ -421,10 +427,14 @@ class InlineHost:
         on_applied: Callable[[str], None] | None = None,
         row: RowTarget | None = None,
         apply: Callable[[Outcome | Sequence[Outcome]], None] | None = None,
+        kept: Callable[[str], dict[Any, Any]] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
         self.row = row
+        self.kept = kept
+        #: capability name -> the `Panel.kept` its panel was built with
+        self.handed: dict[str, dict[Any, Any]] = {}
         #: As `ActionBar.apply`: the page's, where the host is on one.
         self.apply = apply
         if row is not None:
@@ -478,7 +488,7 @@ class InlineHost:
             if self.row.grip is not None and not self.row.grip.is_deleted:
                 self.row.grip.classes(add="dstf-grip-off")
         self.column.clear()
-        self.errors, self.cells, self.answers = {}, {}, {}
+        self.errors, self.cells, self.answers, self.handed = {}, {}, {}, {}
 
     def build(self, skip: str | None = None) -> None:
         """Rebuild every capability's place — but ``skip``'s, left untouched
@@ -519,12 +529,21 @@ class InlineHost:
         drawn — a tree opened during a rerun kept "rerun is running on …"
         after the job ended, and one opened before the job kept controls
         that a lock refuses. A full build resets the error labels, which is
-        why hiding a stale one is not this method's job."""
+        why hiding a stale one is not this method's job.
+
+        Also when what a panel KEPT (`Panel.kept`) has been dropped under
+        it — a Discard, a Save, another tab's edit: its controls still show
+        what the dropped dict held (a cell left blank), and nothing would
+        bring it back at the next rebuild."""
         view = self.shell.view_for(self.selection_of())
         answers = {
             cap.name: avail for cap, avail in self.shell.placed(self.placement, view)
         }
-        if answers != self.answers:
+        kept = self.kept
+        dropped = kept is not None and any(
+            held and kept(name) is not held for name, held in self.handed.items()
+        )
+        if answers != self.answers or dropped:
             self.build()
 
     def _build_one(
@@ -574,6 +593,7 @@ class InlineHost:
         figure: FigureHookProtocol = _NoFigure()
         if self.figure is not None:
             figure = self.figure.owned(self._owner(cap.name))
+        self.handed[cap.name] = {} if self.kept is None else self.kept(cap.name)
         with ui.column().classes("w-full gap-2").mark(f"panel:{cap.name}"):
             try:
                 cap.panel(
@@ -588,6 +608,7 @@ class InlineHost:
                         lead=None if self.row is None else self.row.lead,
                         target=self.row,
                         fail=fail,
+                        kept=self.handed[cap.name],
                     ),
                 )
             except Exception as e:  # shown in the slot, never breaks the page

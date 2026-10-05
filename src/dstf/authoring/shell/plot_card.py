@@ -897,6 +897,9 @@ class PlotCard:
                 marker=f"editor:{index}:{path}",
                 on_applied=self._applied,
                 apply=self.page.apply,
+                # What the editor's panels show that the spec does not hold
+                # outlives them: a drag rebuilds the whole editor.
+                kept=partial(self.page.kept, path),
             )
             self.editor.build()
         view = self._view(view)

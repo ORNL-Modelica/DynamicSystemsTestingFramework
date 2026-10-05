@@ -649,9 +649,27 @@ class TestPage:
         """An edit of the tree went through (`Panel.edited`, U5 R1):
         ``paths`` says where each node it kept went, and the tree card's
         folded groups follow it — before the sync that rebuilds the rows,
-        which drops a folded path naming no group (Y6)."""
+        which drops a folded path naming no group (Y6). What the panels
+        kept (`kept`) follows its node the same way, and goes with a node
+        the edit did not keep."""
         if self.tree is not None:
             self.tree.rekey(paths)
+        kept = self.state.kept.get(self.model_id)
+        if kept:
+            self.state.kept[self.model_id] = {
+                (paths[node], name): held
+                for (node, name), held in kept.items()
+                if node in paths
+            }
+
+    def kept(self, node: str, name: str) -> dict[Any, Any]:
+        """`Panel.kept` for capability ``name``'s panel at ``node`` of this
+        test: the same dict at every build, until it is dropped — the
+        tab's record (`TabState.kept`), which `heard_spec` empties when an
+        edit that is not this tab's lands on the test."""
+        return self.state.kept.setdefault(self.model_id, {}).setdefault(
+            (node, name), {}
+        )
 
     def unfold_to(self, target: RowTarget) -> None:
         """R2: something shown under ``target``'s row — a form, a refused

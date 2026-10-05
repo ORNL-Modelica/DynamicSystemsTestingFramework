@@ -185,9 +185,24 @@ class FigureHook(Protocol):
 class Panel(Protocol):
     """A container the capability owns entirely (the shell's
     ``ShellPanel``). ``figure`` is the plot the panel is drawn beside, as a
-    capability subscribes to it — what Edit on plot reads its drags from."""
+    capability subscribes to it — what Edit on plot reads its drags from.
+
+    ``kept`` is a dict of the panel's own that OUTLIVES the panel: what its
+    controls show that the spec does not hold — a required cell cleared to
+    be retyped, a tolerance with one side typed — and that a rebuild from
+    the spec alone would lose. A panel is rebuilt by edits it did not make
+    (a drag on the plot, another panel's submit), and is never told: it
+    writes there as its controls change and reads it back when it is
+    built. The host hands the same dict to every build of this capability's
+    panel for the same node of the same test, re-keys it when a tree edit
+    moves the node, and drops it — the panel is then rebuilt on an empty
+    one — with the node, and when an edit that is not this tab's lands on
+    the test: a Discard, a Save, another tab's. The criterion editor under
+    a plot keeps one; a host with nowhere to keep it (a dialog, a row)
+    hands a fresh dict to every build."""
 
     figure: FigureHook
+    kept: dict[Any, Any]
 
     def submit(self, **inputs: Any) -> bool:
         """Hand the capability's inputs to the shell, which calls ``act`` and

@@ -38,7 +38,9 @@ class HostPanel:
     it on — ``moved`` what it was told in ``moves``, and ``edited`` the
     path maps it was told in ``edits``. ``on_click`` keeps the row click a
     panel registered (U5) in ``click``; `host` then draws a button marked
-    ``host-click`` that calls it, standing for the row."""
+    ``host-click`` that calls it, standing for the row. ``kept`` is the
+    test's dict when it hands one — to a second host too, as a shell hands
+    the same one to a rebuilt panel — else this panel's own."""
 
     def __init__(
         self,
@@ -46,8 +48,10 @@ class HostPanel:
         figure: RecordingFigure,
         reveals: list[str] | None = None,
         edits: list[dict[str, str]] | None = None,
+        kept: dict | None = None,
     ) -> None:
         self.figure = figure
+        self.kept: dict = {} if kept is None else kept
         self._submit = submit
         self.reveals = reveals if reveals is not None else []
         self.edits = edits if edits is not None else []
@@ -110,11 +114,12 @@ async def host(
     selection: Selection,
     reveals: list[str] | None = None,
     edits: list[dict[str, str]] | None = None,
+    kept: dict | None = None,
 ) -> AsyncIterator[tuple[User, dict[str, str], RecordingFigure]]:
     """Yield ``(user, errors, figure)`` with the panel built at ``/`` — or,
     when ``available`` is not True, a label marked ``reason`` in its place.
     The panel's ``reveal`` appends to ``reveals`` when one is given, and
-    its ``edited`` to ``edits``."""
+    its ``edited`` to ``edits``; ``kept`` is its `Panel.kept`."""
     errors: dict[str, str] = {}
     figure = RecordingFigure()
     view = SessionView(session, selection)
@@ -135,7 +140,7 @@ async def host(
                 "reason"
             )
             return
-        panel = HostPanel(submit, figure, reveals, edits)
+        panel = HostPanel(submit, figure, reveals, edits, kept)
         cap.panel(view, panel)
         if panel.click is not None:
             # The row the panel would be drawn in: its click.

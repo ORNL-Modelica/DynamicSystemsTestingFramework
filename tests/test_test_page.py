@@ -3664,6 +3664,227 @@ async def test_a_drag_stages_one_replace_and_the_plot_follows(shell):
         )
 
 
+# -- a half cell outlives the panel it was typed in ---------------------------
+
+
+def _half_tree() -> dict:
+    """D's x scored by a points leaf of two rows, each holding the SAME
+    pair, and a range beside it."""
+    return {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "points",
+                "variable": "x",
+                "tolerance": 0.3,
+                "points": [
+                    {"time": 0.25, "value": 0.3, "tolerance": _pair(0.1, 0.3)},
+                    {"time": 0.75, "value": 0.9, "tolerance": _pair(0.1, 0.3)},
+                ],
+            },
+            {"metric": "range", "variable": "x", "min_value": -1},
+        ],
+    }
+
+
+#: Row 1's tolerance cell in the open editor's table, and its row.
+HALF_ROW = f"{T0}:points:1"
+HALF = f"{HALF_ROW}:tolerance"
+
+
+async def _editor_with_a_half_cell(shell, user) -> TestPage:
+    """D's points criterion open, row 1's lower tolerance cleared: blank,
+    "required", nothing pending."""
+    page = await _test_page(shell, user, D)
+    with page.client:
+        page.cards[0].show()
+    user.find(marker=f"criterion:0:{T0}").click()
+    await _settled(lambda: page.open == (0, T0))
+    with page.client:
+        _one(user, f"{HALF}:lower").set_value(None)
+    assert _one(user, f"{HALF}:lower").error == "required"
+    assert shell.session.spec.pending == []
+    return page
+
+
+def _is_half(user) -> bool:
+    """Row 1's cell as a half pair shows: its lower side blank and marked,
+    its upper side as it was — and row 0's, the same pair, whole."""
+    lower, upper = _one(user, f"{HALF}:lower"), _one(user, f"{HALF}:upper")
+    other = _one(user, f"{T0}:points:0:tolerance:lower")
+    return (
+        (lower.value, lower.error, upper.value, upper.error)
+        == (None, "required", 0.3, None)
+        and (other.value, other.error) == (0.1, None)
+        and _one(user, f"{HALF}:link").props["icon"] == "link_off"
+    )
+
+
+async def _fills_and_stages(shell, user) -> None:
+    """The half cell still holds the list back — a time typed beside it is
+    not staged — and the key that fills it stages the lot."""
+    before = copy.deepcopy(shell.session.tree(D)["children"][0]["points"])
+    with user.client:
+        _one(user, f"{HALF_ROW}:time").set_value(0.8)
+    await asyncio.sleep(0.25)
+    assert shell.session.tree(D)["children"][0]["points"] == before
+    with user.client:
+        _one(user, f"{HALF}:lower").set_value(0.2)
+    await _settled(
+        lambda: (
+            shell.session.tree(D)["children"][0]["points"][1]
+            == {"time": 0.8, "value": 0.9, "tolerance": _pair(0.2, 0.3)}
+        )
+    )
+    assert _one(user, f"{HALF}:lower").error is None
+
+
+async def test_a_half_cell_stays_blank_through_a_drag_on_the_plot(tmp_path):
+    """A drag rebuilds the WHOLE editor, so the table follows the ring.
+    Built from the spec alone, the blank side of a half pair came back as
+    its old value, "required" gone, and the next cell edit staged the list
+    with that pair in it. The drag's own edit is staged — the leaf moved —
+    and the half cell is still blank, marked, and holding the list back."""
+    shell = _spec_tree_shell(tmp_path, _half_tree())
+    async with user_simulation(root=shell.index) as user:
+        page = await _editor_with_a_half_cell(shell, user)
+        card = page.cards[0]
+        was = _one(user, f"{HALF}:lower")
+        n = _shape_index(card, f"{T0}/points/target/0")
+        with page.client:
+            card.hook._dispatch(
+                "plotly_relayout",
+                {f"shapes[{n}].xanchor": 0.4, f"shapes[{n}].yanchor": 0.3},
+            )
+        staged = _pending(shell, T0)["points"]
+        assert staged[0]["time"] == pytest.approx(0.4)  # the drag's own edit
+        assert staged[1] == {"time": 0.75, "value": 0.9, "tolerance": _pair(0.1, 0.3)}
+        # The table followed the ring — rebuilt — and the cell stayed half.
+        await _settled(
+            lambda: _one(user, f"{T0}:points:0:time").value == pytest.approx(0.4)
+        )
+        assert _one(user, f"{HALF}:lower") is not was
+        assert _is_half(user)
+        await _fills_and_stages(shell, user)
+
+
+async def test_a_half_cell_stays_blank_through_an_edit_in_the_criterions_form(
+    tmp_path,
+):
+    """A field of the criterion's form typed in rebuilds every OTHER panel
+    of the editor — the table's. The same cell, the same way."""
+    shell = _spec_tree_shell(tmp_path, _half_tree())
+    async with user_simulation(root=shell.index) as user:
+        page = await _editor_with_a_half_cell(shell, user)
+        was = _one(user, f"{HALF}:lower")
+        with page.client:
+            _one(user, "tolerance:lower").set_value(0.07)  # Default tolerance
+        await _settled(lambda: (_pending(shell, T0) or {}).get("tolerance") == 0.07)
+        assert _pending(shell, T0)["points"][1]["tolerance"] == _pair(0.1, 0.3)
+        await _settled(lambda: _one(user, f"{HALF}:lower") is not was)
+        assert _is_half(user)
+        await _fills_and_stages(shell, user)
+
+
+async def test_a_blank_required_cell_stays_blank_through_a_drag(shell):
+    """The same record holds a required cell cleared to be retyped: a tube
+    point's time, blank while the other point's ring is dragged."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        cell = f"{T0}:tube_points:0:time"
+        with page.client:
+            _one(user, cell).set_value(None)
+        assert _one(user, cell).error == "time is required"
+        n = _shape_index(card, f"{T0}/tube/upper/1")
+        with page.client:
+            card.hook._dispatch(
+                "plotly_relayout",
+                {f"shapes[{n}].xanchor": 0.9, f"shapes[{n}].yanchor": 1.2},
+            )
+        await _settled(
+            lambda: _one(user, f"{T0}:tube_points:1:upper").value == pytest.approx(0.3)
+        )
+        time = _one(user, cell)
+        assert (time.value, time.error) == (None, "time is required")
+        assert _one(user, f"{T0}:tube_points:1:time").error is None
+        assert _pending(shell, T0)["tube_points"][0]["time"] == 0.5
+        with page.client:
+            time.set_value(0.6)
+        await _settled(lambda: _pending(shell, T0)["tube_points"][0]["time"] == 0.6)
+        assert _pending(shell, T0)["tube_points"][1]["upper"] == pytest.approx(0.3)
+
+
+@pytest.mark.parametrize("lands", ["discard", "save"])
+async def test_a_discard_or_a_save_takes_a_half_cell_with_it(tmp_path, lands):
+    """What a cell held beside the spec was typed against an entry that a
+    Discard or a Save replaces: the record is dropped and the table shows
+    the spec's rows — after a Discard, whose leaf moved, and after a Save,
+    whose leaf did not (nothing else would rebuild the editor then, and
+    the blank would outlive its record until the next drag filled it)."""
+    shell = _spec_tree_shell(tmp_path, _half_tree())
+    async with user_simulation(root=shell.index) as user:
+        page = await _editor_with_a_half_cell(shell, user)
+        with page.client:
+            _one(user, "tolerance:lower").set_value(0.07)
+        await _settled(lambda: (_pending(shell, T0) or {}).get("tolerance") == 0.07)
+        assert _is_half(user)
+        assert page.state.kept[D][T0, "edit-on-plot"]
+        getattr(shell.session, lands)()
+        await _settled(lambda: shell.session.spec.pending == [])
+        await _settled(lambda: _one(user, f"{HALF}:lower").value == 0.1)
+        assert _one(user, f"{HALF}:lower").error is None
+        assert not page.state.kept.get(D, {}).get((T0, "edit-on-plot"))
+        assert page.open == (0, T0)
+
+
+async def test_what_a_panel_kept_follows_its_node_and_goes_with_it(shell):
+    """`Panel.kept` is keyed by the node's path: a tree edit that moves the
+    node moves it (`TestPage.edited`), and one that drops the node drops
+    it. The same dict comes back for the same node until then."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        first = page.kept(T0, "edit-on-plot")
+        first["a"] = 1
+        page.kept(T1, "edit-on-plot")["b"] = 2
+        assert page.kept(T0, "edit-on-plot") is first
+        assert page.kept(T0, "edit-criteria") is not first  # a panel's own
+        page.edited({"/metrics": "/metrics", T1: T0})  # T0 removed
+        assert page.state.kept[D] == {(T0, "edit-on-plot"): {"b": 2}}
+
+
+def test_an_edit_that_is_not_the_tabs_drops_what_its_panels_kept():
+    """As the folds (`heard_spec`, `caught_up`): the tab's own revision
+    keeps the record, any other one drops the tests it names — all of them
+    when it names none — and a tab that missed a revision keeps nothing."""
+    from dstf.authoring.shell.tabstate import TabState, caught_up, heard_spec
+
+    def state() -> TabState:
+        kept = {m: {(T0, "edit-on-plot"): {"k": 1}} for m in (A, D)}
+        return TabState(kept=kept, own_revisions={3}, seen_revision=2)
+
+    own = state()
+    heard_spec(own, {"event": "spec", "revision": 3, "models": {A}})
+    assert set(own.kept) == {A, D}
+    other = state()
+    heard_spec(other, {"event": "spec", "revision": 4, "models": {A}})
+    assert set(other.kept) == {D}
+    closed = state()
+    heard_spec(closed, {"event": "spec", "revision": 4, "models": set()})
+    assert closed.kept == {}
+    missed = state()
+    caught_up(missed, 4)
+    assert missed.kept == {}
+    seen = state()
+    caught_up(seen, 3)
+    assert set(seen.kept) == {A, D}
+
+
 async def test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back(
     shell, caplog
 ):

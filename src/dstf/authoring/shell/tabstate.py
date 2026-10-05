@@ -42,6 +42,11 @@ class TabState:
     #: The tree card's folded groups (U5, Q8 / Y6): model id -> the folded
     #: groups' node paths. The tab's, so a switch of test keeps them.
     tree_folded: dict[str, list[str]] = field(default_factory=dict)
+    #: What a panel shows that the spec does not hold (`Panel.kept`): model
+    #: id -> (node path, capability name) -> that panel's own dict. The
+    #: tab's, as the folds are, and taken away as they are (`heard_spec`):
+    #: with the test's entry when an edit that is not this tab's lands on it.
+    kept: dict[str, dict[tuple[str, str], dict[Any, Any]]] = field(default_factory=dict)
     #: The `spec` revisions this tab's own acts produced (`TestPage._own`),
     #: kept until a later revision is heard. Any other `spec` event for a
     #: test unfolds its groups (the owner's ruling, U5 H2; `heard_spec`).
@@ -62,6 +67,8 @@ def heard_spec(state: TabState, event: dict[str, Any]) -> None:
     group of each test it names, of every test when it names none (a
     close): their folds followed only the tab's edits (`TestPage.edited`)
     — a Discard, a Save that reloads, another tab's edit, a spec reload.
+    What its panels kept beside the spec (`TabState.kept`) goes the same
+    way: it was typed against an entry that event replaced.
     Heard only by a page of that test, a Discard from another test's
     header left its folds on the groups the Discard put back. Every page
     of the tab hears this event and reads the same record, so the event's
@@ -78,18 +85,21 @@ def heard_spec(state: TabState, event: dict[str, Any]) -> None:
     models = event.get("models")
     if not models:
         state.tree_folded.clear()
+        state.kept.clear()
     for model in models or ():
         state.tree_folded.pop(model, None)
+        state.kept.pop(model, None)
 
 
 def caught_up(state: TabState, revision: int) -> None:
     """A page of the tab opens with the Session at ``revision`` (K2): a tab
     with no live page heard nothing, so a revision after the last it saw
     that none of its acts produced may have changed any test — every fold
-    goes, as `heard_spec` would have taken them."""
+    goes, and what the panels kept, as `heard_spec` would have taken them."""
     missed = set(range(state.seen_revision + 1, revision + 1))
     if missed - state.own_revisions:
         state.tree_folded.clear()
+        state.kept.clear()
     state.seen_revision = max(state.seen_revision, revision)
 
 
