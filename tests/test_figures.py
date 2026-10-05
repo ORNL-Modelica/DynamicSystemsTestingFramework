@@ -1611,6 +1611,47 @@ def test_an_upper_arrow_at_the_end_of_a_set_range_is_drawn_inward():
     assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
 
 
+def test_a_set_spectrum_range_mirrors_no_arrow_of_the_time_panel():
+    """The set range is the spectrum's x, read for the grips that move on
+    it and for no other: a checkpoint at t = 0.2 — a number that would be
+    next to the start of [0, 7.2] Hz — keeps its four arrows outward on a
+    plot that has a spectrum under it."""
+    from dstf.comparison.algorithms import _compare_points
+    from dstf.comparison.geometry import _GRIP_OUTWARD
+    from dstf.comparison.sides import Sides
+
+    t = np.linspace(0.0, 10.0, 1001)
+    sig = np.sin(2 * np.pi * 2.0 * t)
+    points = [{"time": 0.2, "value": 0.5, "time_tolerance": 0.1}]
+    vc = _compare_points(t, sig, t, sig, points, Sides(0.1, 0.1))
+    checkpoint = _grip_view(vc, t, sig, path="/metrics/children/1")
+    peaks = _peaks_grip_view()
+    fig = variable_figure(
+        replace(peaks, leaves=(*peaks.leaves, *checkpoint.leaves)), editable=True
+    )
+    low, high = fig["layout"]["xaxis2"]["range"]
+    assert low == 0 and 0.2 < 17 / 500 * high
+    grips = {
+        name: said
+        for name, said in _pointer(fig)["grips"].items()
+        if "/points/" in name
+    }
+    assert len(grips) == 4
+    for name, said in grips.items():
+        assert said["outward"] == _GRIP_OUTWARD[name.split("/")[-2]], name
+    # Nor one ON the spectrum that moves along its value axis, which is
+    # autoranged: a third party's `lower` at 0.01 Hz points down.
+    (leaf,) = peaks.leaves
+    theirs = Marker(
+        id=f"{P0}/theirs/lower/a", kind="grip", panel="spectrum", x=0.01, y=1.0
+    )
+    fig = variable_figure(
+        replace(peaks, leaves=(replace(leaf, geometry=(*leaf.geometry, theirs)),)),
+        editable=True,
+    )
+    assert _pointer(fig)["grips"][theirs.id]["outward"] == -1
+
+
 def test_the_pages_tip_is_the_middle_of_the_drawn_arrow():
     """`grips.js` holds one number of an arrow's shape: how far from its
     anchor its middle is. It is the middle of every path this module
