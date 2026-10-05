@@ -86,13 +86,16 @@ def _served(
     project: Callable[[Path], tuple[Path, Path]] = _page_project,
     hooks: bool = False,
     touch: bool = False,
+    problems: list[str] | None = None,
 ):
     """`dstf author` over ``project`` (`_page_project` unless said), with
     `/test/FakeLib.A` open. On the way out: assertion 7 — no page error, no
     console error, and the spec file byte-for-byte as it was (nothing is
     saved by looking). ``x_error`` replaces x's error against its baseline
     (`_set_x_error`); ``hooks`` serves `author_hooks.py`'s routes; ``touch``
-    opens the page as a touch screen does — no hover, a coarse pointer."""
+    opens the page as a touch screen does — no hover, a coarse pointer;
+    ``problems`` is the list the page's errors are kept in, for a test that
+    provokes one to read it and empty it."""
     cfg, work = project(tmp_path)
     if x_error is not None:
         _set_x_error(work, x_error)
@@ -108,7 +111,7 @@ def _served(
             **({"has_touch": True, "is_mobile": True} if touch else {}),
         )
         page = context.new_page()
-        problems: list[str] = []
+        problems = [] if problems is None else problems
         page.on("pageerror", lambda exc: problems.append(f"pageerror: {exc}"))
         page.on(
             "console",
@@ -7795,7 +7798,12 @@ async (colour) => {
   const grips = (a.layout.shapes || []).filter(s => s.fillcolor === colour);
   // Into the figure plot 1 holds, where the module reads it; the relayout
   // is of the shapes alone, a redraw of them and not a replot.
-  const said = b.layout.meta.dstf;
+  // Plot 1 has no open criterion: its map may name no grip at all, and an
+  // empty dict of a figure's `meta` need not survive Plotly.
+  const meta = b.layout.meta = b.layout.meta || {};
+  const said = meta.dstf = meta.dstf || {};
+  said.grips = said.grips || {};
+  said.draggable = Array.isArray(said.draggable) ? said.draggable : [];
   for (const s of grips) {
     said.grips[s.name] = a.layout.meta.dstf.grips[s.name];
     said.draggable.push(s.name);
@@ -9719,3 +9727,184 @@ def test_an_arrow_dragged_across_its_own_axis_stages_nothing(
         assert float(_table_cell(page, 1, label).input_value()) > float(value) + 0.01
         sent = page.evaluate("() => window.__dstfReleases")[-1]
         assert isinstance(sent[f"shapes[{was['index']}].{own}anchor"], float), sent
+
+
+# -- the figure's pointer map, read with a default for every key -----------------
+
+#: Feed plot ``card`` its own figure through `Plotly.react` with the pointer
+#: map changed ``how``, and read what the hover module made of it: the
+#: shapes it left to Plotly (``free``), those it made inert, and the grips
+#: it marked — by name. Each feed starts from the figure the server sent.
+FEED = """
+async ([card, how]) => {
+  const {Plotly} = await import('nicegui-plotly');
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  window.__dstfPristine = window.__dstfPristine || JSON.stringify(gd.layout);
+  const layout = JSON.parse(window.__dstfPristine);
+  const map = layout.meta.dstf;
+  const box = layout.shapes.find(s => s.type === 'rect');
+  const named = () => layout.shapes.push(
+    {...box, name: 'constructor'}, {...box, name: '__proto__'});
+  ({
+    'as sent': () => {},
+    'no meta': () => { delete layout.meta; },
+    'a meta of another': () => { layout.meta = {theirs: 1}; },
+    'a map that is no dict': () => { layout.meta.dstf = 'x'; },
+    'an empty map': () => { layout.meta.dstf = {}; },
+    'draggable null': () => { map.draggable = null; },
+    'draggable a number': () => { map.draggable = 5; },
+    'draggable a dict': () => { map.draggable = {a: 1}; },
+    'no grips': () => { delete map.grips; },
+    'grips null': () => { map.grips = null; },
+    'no targets': () => { delete map.targets; },
+    'a grip that is no dict': () => {
+      for (const name of Object.keys(map.grips)) map.grips[name] = 7;
+    },
+    'object names': named,
+    'object names, draggable': () => {
+      named(); map.draggable.push('constructor', '__proto__');
+    },
+  })[how]();
+  layout.editrevision = (layout.editrevision || 0) + 1000;
+  await Plotly.react(gd, gd.data, layout);
+  const shapes = gd.layout.shapes || [];
+  const name = el => (shapes[+el.getAttribute('data-index')] || {}).name;
+  const els = [...gd.querySelectorAll('.shapelayer [data-index]')];
+  const uniq = list => [...new Set(list)].sort();
+  return {
+    drawn: els.length,
+    inert: uniq(els.filter(el => el.hasAttribute('data-inert')).map(name)),
+    free: uniq(els.filter(el => !el.hasAttribute('data-inert')).map(name)),
+    grips: uniq([...gd.querySelectorAll('.shapelayer path[data-grip]')].map(name)),
+    titled: gd.querySelectorAll('.shapelayer path title').length,
+  };
+}
+"""
+
+
+def test_the_pointer_map_is_read_with_a_default_for_every_key(
+    tmp_path, playwright_browser
+):
+    """What the page knows of a figure's shapes is the map the figure
+    carries, and a map is read key by key, each with a default: a missing
+    `grips` names no grip, a `draggable` that is no list names nothing to
+    drag — it was iterated as it came, and a number there threw in the
+    redraw's observer, after which nothing was marked at all. A figure with
+    NO map — no `meta`, another's `meta`, a `dstf` that is no dict — is
+    left as Plotly draws it: no shape inert. A shape NAMED like a property
+    of every object (`constructor`, `__proto__`) is a shape like any."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _rest(page)
+        page.wait_for_timeout(500)  # the server's own redraw is done
+        sent = page.evaluate(FEED, [0, "as sent"])
+        grips = sorted(
+            f"/metrics/children/0/{tail}"
+            for tail in _group("points", 0, FOUR) + _group("points", 1, FOUR)
+        )
+        rings = [f"/metrics/children/0/points/target/{i}" for i in (0, 1)]
+        every = sorted(sent["free"] + sent["inert"])
+        assert sent["grips"] == grips and sent["free"] == sorted(grips + rings), sent
+        assert sent["inert"] and sent["titled"] == 8, sent
+
+        def fed(how: str) -> dict:
+            got = page.evaluate(FEED, [0, how])
+            assert got["drawn"] >= sent["drawn"], (how, got)
+            return got
+
+        # No map: nothing is marked, and no shape is inert.
+        for how in ("no meta", "a meta of another", "a map that is no dict"):
+            got = fed(how)
+            assert (got["inert"], got["grips"], got["titled"]) == ([], [], 0), (
+                how,
+                got,
+            )
+            assert got["free"] == every, (how, got)
+        # A map that names nothing to drag: every shape is inert.
+        got = fed("an empty map")
+        assert (got["free"], got["grips"], got["inert"]) == ([], [], every), got
+        for how in ("draggable null", "draggable a number", "draggable a dict"):
+            got = fed(how)
+            assert (got["free"], got["inert"]) == ([], every), (how, got)
+            assert got["grips"] == grips, (how, got)  # still its grips
+        # No grip named: none is marked; what may be dragged still is.
+        for how in ("no grips", "grips null", "a grip that is no dict"):
+            got = fed(how)
+            assert (got["grips"], got["titled"]) == ([], 0), (how, got)
+            assert got["free"] == sent["free"], (how, got)
+        got = fed("no targets")
+        assert (got["grips"], got["free"]) == (grips, sent["free"]), got
+        # A shape named like a property of every object.
+        odd = ["__proto__", "constructor"]
+        got = fed("object names")
+        assert got["grips"] == grips and got["free"] == sent["free"], got
+        assert got["inert"] == sorted(sent["inert"] + odd), got
+        got = fed("object names, draggable")
+        assert got["grips"] == grips, got
+        assert got["free"] == sorted(sent["free"] + odd), got
+        # And the figure as it was sent is marked as it was. (Plotly keeps
+        # the empty groups of the two shapes that went: they name no shape.)
+        got = fed("as sent")
+        assert (got["grips"], got["free"]) == (sent["grips"], sent["free"]), got
+        assert [name for name in got["inert"] if name] == sent["inert"], got
+
+
+#: Make the hover module's mark pass of plot 0 throw for as long as it is
+#: on — the pass reads the plot's shape elements by `data-index` — and
+#: redraw the plot's shapes ``times`` times meanwhile.
+BREAK_THE_MARKS = """
+async (times) => {
+  const {Plotly} = await import('nicegui-plotly');
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const real = gd.querySelectorAll;
+  gd.querySelectorAll = function (selector) {
+    if (selector.includes('[data-index]')) throw new Error('a broken mark pass');
+    return real.call(this, selector);
+  };
+  try {
+    for (let i = 0; i < times; i++) {
+      await Plotly.relayout(gd, {'yaxis.range': gd._fullLayout.yaxis.range.slice()});
+    }
+  } finally {
+    gd.querySelectorAll = real;
+  }
+  return {
+    inert: gd.querySelectorAll('.shapelayer [data-inert]').length,
+    grips: gd.querySelectorAll('.shapelayer [data-grip]').length,
+    near: gd.hasAttribute('data-grip-near'),
+  };
+}
+"""
+
+
+def test_a_mark_pass_that_throws_is_said_once_and_leaves_the_shapes_to_plotly(
+    tmp_path, playwright_browser
+):
+    """The marks are put back by an observer of every redraw. A pass that
+    throws must not throw THERE — an error in an observer is the page's,
+    on every redraw: it is said once on the console, every shape is left
+    as Plotly draws it (none inert, none hidden), and the next redraw that
+    can be marked is."""
+    problems: list[str] = []
+    with _served(
+        tmp_path, playwright_browser, project=_grips_project, problems=problems
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        ring = _shape(page, "/points/target/0")
+        page.mouse.move(ring["x"], ring["y"], steps=4)  # a pointer to follow
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        assert problems == []
+        left = page.evaluate(BREAK_THE_MARKS, 3)
+        assert left == {"inert": 0, "grips": 0, "near": False}, left
+        said = [text for text in problems if "DstfGrips" in text]
+        assert len(said) == 1 and said[0].startswith("console:"), problems
+        assert "a broken mark pass" in said[0], said
+        assert problems == said, problems  # no page error, nothing else
+        problems.clear()
+        # Marked again by the next redraw, the pointer still on the ring.
+        assert page.evaluate(REDRAW, 0) is True
+        again = _grips_on(page)
+        assert len(again["marked"]) == 8, again
+        assert again["shown"] == _group("points", 0, FOUR), again

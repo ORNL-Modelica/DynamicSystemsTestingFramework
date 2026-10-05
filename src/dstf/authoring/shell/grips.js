@@ -46,26 +46,44 @@
   // release, for the release to move it, px.
   const OWN_AXIS = 3;
 
-  // What the server says of the figure `gd` holds, or null for a figure
-  // that says nothing (then nothing is marked).
-  const said = (gd) => ((gd.layout && gd.layout.meta) || {}).dstf || null;
   const own = (map, name) =>
     map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
+  const dict = (v) => (v !== null && typeof v === "object" && !Array.isArray(v) ? v : null);
+
+  // What the server says of the figure `gd` holds — its pointer map — or
+  // null for a figure that says nothing: no `meta`, another's, a `dstf`
+  // that is no dict. Then nothing is marked and every shape is left as
+  // Plotly draws it. A map is read key by key, each with a default: a
+  // figure's `meta` crosses Plotly, where an empty dict need not survive,
+  // and a `draggable` iterated as it came threw in the redraw's observer
+  // when it was no list — after which nothing was marked at all.
+  const said = (gd) => {
+    const meta = dict(gd.layout && gd.layout.meta);
+    const info = meta && dict(own(meta, "dstf"));
+    if (!info) return null;
+    return {
+      grips: dict(info.grips) || {},
+      targets: dict(info.targets) || {},
+      draggable: new Set(Array.isArray(info.draggable) ? info.draggable : []),
+    };
+  };
+  // What a map says of the grip shape named `name` — a dict naming its
+  // group — or null; and of the ring named `name`, its group or null.
+  const gripOf = (info, name) => {
+    const grip = info ? dict(own(info.grips, name)) : null;
+    return grip && typeof grip.group === "string" ? grip : null;
+  };
+  const ringOf = (info, name) => {
+    const group = info ? own(info.targets, name) : null;
+    return typeof group === "string" ? group : null;
+  };
 
   const instances = new Map();
 
   function create(gd) {
-    const st = { gd, on: null, latched: false, xy: null, ranges: {}, press: null, travel: null };
-
-    // What the server says of the grip shape named `name`, or null; and
-    // its group.
-    const gripOf = (name) => {
-      const info = said(gd);
-      return info ? own(info.grips, name) : null;
-    };
-    const groupOf = (name) => {
-      const grip = gripOf(name);
-      return grip ? grip.group : null;
+    const st = {
+      gd, on: null, latched: false, xy: null, ranges: {}, press: null, travel: null,
+      failed: false,
     };
 
     // An arrow says what it sets — a tooltip, the SVG `title` child — in
@@ -90,12 +108,11 @@
     const mark = () => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
-      const free = info && new Set(info.draggable || []);
       for (const el of gd.querySelectorAll(".shapelayer [data-index]")) {
         const name = (shapes[+el.getAttribute("data-index")] || {}).name;
-        el.toggleAttribute("data-inert", !!free && !free.has(name));
+        el.toggleAttribute("data-inert", !!info && !info.draggable.has(name));
         if (el.tagName !== "path") continue;
-        const grip = gripOf(name);
+        const grip = gripOf(info, name);
         if (grip) {
           el.setAttribute("data-grip", grip.group);
           el.toggleAttribute("data-grip-on", grip.group === st.on);
@@ -105,6 +122,45 @@
           el.removeAttribute("data-grip-on");
           untell(el);
         }
+      }
+    };
+
+    // The marks, taken off: every shape as Plotly draws it.
+    const unmark = () => {
+      for (const el of gd.querySelectorAll("[data-grip]")) {
+        el.removeAttribute("data-grip");
+        el.removeAttribute("data-grip-on");
+        untell(el);
+      }
+      for (const el of gd.querySelectorAll("[data-inert]")) {
+        el.removeAttribute("data-inert");
+      }
+      gd.removeAttribute("data-grip-near");
+    };
+
+    // A pass over the plot that throws must not throw where it runs — in
+    // the observer of every redraw, in the page's own mouse events — and
+    // again on every redraw and every move after: it is said ONCE on the
+    // console, and every shape is left as Plotly draws it, none inert and
+    // none hidden, until a pass goes through.
+    const guarded = (pass) => (...args) => {
+      try {
+        return pass(...args);
+      } catch (err) {
+        st.on = null;
+        try {
+          unmark();
+        } catch (_) {
+          // What could not be read cannot be unmarked either.
+        }
+        if (!st.failed) {
+          st.failed = true;
+          console.error(
+            `DstfGrips: plot ${gd.id}: its shapes could not be marked and are ` +
+              `left as Plotly draws them — ${err}`,
+          );
+        }
+        return undefined;
       }
     };
 
@@ -132,9 +188,9 @@
       const rings = [];
       for (const s of (gd.layout && gd.layout.shapes) || []) {
         if (s.visible === false) continue;
-        const grip = gripOf(s.name);
+        const grip = gripOf(info, s.name);
         const g = grip ? grip.group : null;
-        const ring = g ? null : info && own(info.targets, s.name);
+        const ring = g ? null : ringOf(info, s.name);
         if (!g && !ring) continue;
         const xa = fl["xaxis" + (s.xref || "x").slice(1)];
         if (!xa) continue;
@@ -257,12 +313,12 @@
       hush(xy);
     };
 
-    const move = (e) => here([e.clientX, e.clientY]);
-    const leave = () => here(null);
+    const move = guarded((e) => here([e.clientX, e.clientY]));
+    const leave = guarded(() => here(null));
     // Once a drag starts the graph div gets one `mouseleave` and no
     // `mousemove` (Plotly's drag cover takes the pointer): what is shown is
     // held from the press to the release.
-    const down = (e) => {
+    const down = guarded((e) => {
       if (!gd.contains(e.target)) return;
       st.latched = true;
       st.press = [e.clientX, e.clientY];
@@ -276,8 +332,8 @@
           st.ranges[key] = axis.range.slice();
         }
       }
-    };
-    const up = (e) => {
+    });
+    const up = guarded((e) => {
       if (!st.latched) return;
       st.latched = false;
       // How far the pointer went, per axis (`released`): heard here, in
@@ -291,12 +347,12 @@
         e.clientX >= box.left && e.clientX <= box.right &&
         e.clientY >= box.top && e.clientY <= box.bottom;
       here(over ? [e.clientX, e.clientY] : null);
-    };
+    });
     // A release outside the window never arrives.
-    const blur = () => {
+    const blur = guarded(() => {
       st.latched = false;
       here(null);
-    };
+    });
 
     // What a release sends of the shapes it moved: `update` is a relayout's
     // (`shapes[N].xanchor`, `shapes[N].y0`, ...), read against the figure
@@ -318,19 +374,19 @@
     // OWN_AXIS px of travel along its own axis the release says no
     // position on that axis (null): the editor reads no move, and the
     // redraw that answers every release puts the arrow back.
-    st.released = (update) => {
+    const released = (update) => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
-      const free = new Set((info && info.draggable) || []);
       const travel = st.travel;
       st.travel = null;
       const out = { ...update };
+      if (!info) return out;
       for (const [key, value] of Object.entries(update)) {
         const m = /^shapes\[(\d+)\]\.([xy])(anchor|0|1)$/.exec(key);
         if (!m || typeof value !== "number") continue;
         const s = shapes[+m[1]];
-        if (!s || !free.has(s.name)) continue;
-        const grip = gripOf(s.name);
+        if (!s || !info.draggable.has(s.name)) continue;
+        const grip = gripOf(info, s.name);
         if (grip && grip.axis === m[2] && travel && travel[m[2]] < OWN_AXIS) {
           out[key] = null;
           continue;
@@ -343,12 +399,21 @@
       }
       return out;
     };
+    // A release that cannot be read goes on as it came.
+    st.released = (update) => guarded(released)(update) || update;
 
     gd.addEventListener("mousemove", move);
     gd.addEventListener("mouseleave", leave);
     document.addEventListener("mousedown", down, true);
     document.addEventListener("mouseup", up, true);
     window.addEventListener("blur", blur);
+
+    // The marks, and what the pointer is near: after a redraw — and the
+    // one after a release, shown if the pointer is still near.
+    const remark = guarded(() => {
+      mark();
+      here(st.xy);
+    });
 
     // Before paint, so no frame shows an unmarked grip. A `plotly_afterplot`
     // listener would be purged by the next newPlot.
@@ -361,9 +426,7 @@
               node.classList.contains("shapelayer") ||
               node.querySelector(".shapelayer"))
           ) {
-            mark();
-            // The redraw after a release: shown if the pointer is still near.
-            here(st.xy);
+            remark();
             return;
           }
         }
@@ -378,17 +441,9 @@
       document.removeEventListener("mouseup", up, true);
       window.removeEventListener("blur", blur);
       observer.disconnect();
-      for (const el of gd.querySelectorAll("[data-grip]")) {
-        el.removeAttribute("data-grip");
-        el.removeAttribute("data-grip-on");
-        untell(el);
-      }
-      for (const el of gd.querySelectorAll("[data-inert]")) {
-        el.removeAttribute("data-inert");
-      }
-      gd.removeAttribute("data-grip-near");
+      unmark();
     };
-    mark();
+    guarded(mark)();
     return st;
   }
 
