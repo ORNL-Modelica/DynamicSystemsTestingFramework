@@ -256,6 +256,93 @@ async def test_a_windowed_criterion_is_seeded_from_its_window(session):
         assert 0.4 < leaf["min_value"] < 0.5, leaf
 
 
+WINDOWED = {
+    "metric": "range",
+    "variable": "x",
+    "min_value": -1.0,
+    "max_value": 2.0,
+    "window": {"start": 0.3, "end": 0.9},
+}
+ROOT_LEAF = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics")
+ENDS_BEFORE = "The window must end after it starts"
+
+
+def _keys(user, field, *texts: str) -> None:
+    """Keystrokes in ``field``, each its own change event carrying the
+    field's whole text after it, as the browser sends them: `-0.5` typed
+    over a number is nothing (`-` is no number yet), `-0`, `-0.`, `-0.5`."""
+    from nicegui.testing.user_interaction import UserInteraction
+
+    for text in texts:
+        UserInteraction(user, {field}, None).trigger("update:modelValue", text)
+
+
+def _number(user, label: str):
+    (field,) = [c for c in user.find(ui.number).elements if c.props["label"] == label]
+    return field
+
+
+async def test_a_refused_window_end_leaves_the_window_it_had(session):
+    """`-0.5` typed over a window end of 0.9: the `-` on the way is no
+    number, which UNSET the end — accepted and staged — and every key after
+    it was refused, changing nothing. The error line showed beside a field
+    reading -0.5 while the leaf's window had no end at all. Refused, the
+    leaf goes back to what the field held when it was entered."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(WINDOWED))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        end = _number(user, "window end")
+        _keys(user, end, "")
+        assert "end" not in session.tree(A)["window"]  # the `-`, accepted
+        _keys(user, end, "-0", "-0.", "-0.5")
+        assert session.tree(A)["window"] == {"start": 0.3, "end": 0.9}
+        assert ENDS_BEFORE in errors["edit-criteria"]
+        assert end.value == -0.5  # what was typed stays in the field
+        # One staged state, as if the field had not been touched.
+        assert session.tree(A) == WINDOWED
+        # A value the leaf takes is staged as ever, and the sentence goes.
+        _keys(user, end, "0.7")
+        assert session.tree(A)["window"] == {"start": 0.3, "end": 0.7}
+        assert "edit-criteria" not in errors
+
+
+async def test_a_refusal_puts_back_what_the_field_held_when_it_was_entered(session):
+    """Not what the editor opened on: 0.8 typed and taken, the field left
+    and entered again, then `1e-3` — `1`, `1e` (no number: unset), `1e-`,
+    `1e-3`, which ends before the window starts. The end is 0.8 again."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(WINDOWED))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        end = _number(user, "window end")
+        _keys(user, end, "0.8")
+        assert session.tree(A)["window"]["end"] == 0.8
+        user.find(marker="edit-criteria:fields").trigger("focusin")
+        _keys(user, end, "1", "", "", "1e-3")
+        assert ENDS_BEFORE in errors["edit-criteria"]
+        assert session.tree(A)["window"] == {"start": 0.3, "end": 0.8}
+
+
+async def test_a_refusal_in_one_field_keeps_another_fields_edit(session):
+    """What goes back is the field's own start: a bound typed before it —
+    with no focus heard between, as a value set from Python — stays."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(WINDOWED))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        _number(user, "Upper bound (optional)").set_value(5.0)
+        end = _number(user, "window end")
+        _keys(user, end, "", "-0.5")
+        assert ENDS_BEFORE in errors["edit-criteria"]
+        assert session.tree(A) == {**WINDOWED, "max_value": 5.0}
+
+
+async def test_a_refusal_with_nothing_staged_on_the_way_stages_nothing(session):
+    """`9` over a window start of 0.3 is refused at once (the window ends
+    at 0.9): nothing was staged on the way, so nothing is put back."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(WINDOWED))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        pending = list(session.spec.pending)
+        _keys(user, _number(user, "window start"), "9")
+        assert ENDS_BEFORE in errors["edit-criteria"]
+        assert session.spec.pending == pending
+
+
 def _session_with_soft_check(tmp_path, *ops):
     """A fresh Session per simulation (a page cannot outlive its client):
     A has a soft_check `om_cross`, plus whatever ops are staged."""

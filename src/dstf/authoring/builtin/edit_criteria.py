@@ -11,6 +11,7 @@ preview drawer shows the entry's diff either way).
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.mode_schema import Schema, derive_schema
@@ -141,8 +142,45 @@ class EditCriteria:
         # criterion ("scalar leaf not scored — …"). Drawing it on the form
         # itself (§4.7 "inline on its form") is sub-project 4's.
 
-        def emit() -> None:
-            ui_panel.submit(model_id=model_id, path=path, **state)
+        # What the leaf holds — the state its last accepted submit was made
+        # from — and what that was when the field being edited was ENTERED
+        # (`enter`): where a refused edit puts the leaf back.
+        taken: dict[str, Any] = {
+            "leaf": copy.deepcopy(state),
+            "entered": copy.deepcopy(state),
+            "field": None,
+        }
+
+        def enter(field: str | None) -> None:
+            """A field took the focus (``None``: the row heard it, whichever
+            it is) — or ``field`` is the first edited since another was,
+            where no focus was heard (a value set from Python)."""
+            taken["field"], taken["entered"] = field, copy.deepcopy(taken["leaf"])
+
+        def submit(values: dict) -> bool:
+            if not ui_panel.submit(model_id=model_id, path=path, **values):
+                return False
+            taken["leaf"] = copy.deepcopy(values)
+            return True
+
+        def emit(field: str) -> None:
+            """Stage the leaf as the fields now say, ``field`` being the
+            one just edited. A value typed passes through others on the
+            way — `-0.5` over a window end is `-` first, no number, which
+            UNSETS the end — and each that the leaf takes is staged; so a
+            refused one left the last of those staged, beside a field and
+            an error line saying something else. Refused, the leaf goes
+            back to what it held when the field was entered: one staged
+            state, as if it had not been touched. The field keeps what was
+            typed, and the refusal its sentence."""
+            if field != taken["field"]:
+                enter(field)
+            if submit(state) or taken["leaf"] == taken["entered"]:
+                return
+            submit(taken["entered"])
+            # The put-back went through, which hid the refusal: said again,
+            # by the submit that earned it.
+            submit(state)
 
         def build_form() -> None:
             form_slot.clear()
@@ -176,8 +214,13 @@ class EditCriteria:
                 # left out, the path goes back in, or the replace staged a
                 # scalar that reads no statistic — which the Session takes.
                 values = {**values, "quantity": state["params"]["quantity"]}
+            changed = sorted(
+                key
+                for key in {*values, *state["params"]}
+                if values.get(key) != state["params"].get(key)
+            )
             state["params"] = values
-            emit()
+            emit("params:" + ",".join(changed))
 
         def set_metric(name: str) -> None:
             state["metric"] = name
@@ -190,18 +233,18 @@ class EditCriteria:
                 k: v for k, v in seeded.items() if k not in ("metric", "variable")
             }
             build_form()
-            emit()
+            emit("metric")
 
         def set_window(key: str, value: float | None) -> None:
             if value is None:
                 state["window"].pop(key, None)
             else:
                 state["window"][key] = value
-            emit()
+            emit(f"window:{key}")
 
         def set_against(name: str) -> None:
             state["against"] = name
-            emit()
+            emit("against")
 
         project = s.project
         names = list(project.baseline_names(model_id)) if project is not None else []
@@ -218,7 +261,10 @@ class EditCriteria:
         # are, and drawn below them it read as a footnote to the form it
         # controls. `dstf-form` hands the mode's own fields straight to this
         # row rather than stacking them in a column of its own.
-        with ui.row().classes("dstf-fields items-end gap-3 wrap w-full"):
+        fields = ui.row().classes("dstf-fields items-end gap-3 wrap w-full")
+        # Whichever field it is: what the leaf holds now is its start.
+        fields.on("focusin", lambda _e: enter(None), []).mark("edit-criteria:fields")
+        with fields:
             if not statistic:
                 ui.select(
                     [d.name for d in metrics()],

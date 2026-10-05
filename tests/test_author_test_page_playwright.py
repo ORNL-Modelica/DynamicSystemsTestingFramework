@@ -5023,6 +5023,53 @@ def test_a_linked_side_backspaced_to_empty_unsets_the_tolerance(
         expect(editor).to_contain_text("in effect: 0.01 (the test's tolerance)")
 
 
+def test_a_refused_window_end_leaves_the_window_it_had(tmp_path, playwright_browser):
+    """`-0.5` typed over a window end of 0.9 with real keys: the field
+    reads -0.5, the editor says the window must end after it starts, and
+    the window staged is the one the field held when it was entered. It
+    had NO end: the `-` on the way is no number, which unset the end and
+    was staged, and the keys after it were refused. Left and entered
+    again, a refusal goes back to what the field held THEN."""
+    with _served(
+        tmp_path, playwright_browser, project=_typing_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "range · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+        end = editor.get_by_label("window end", exact=True)
+        expect(end).to_have_value("0.9")
+
+        def window(tree: dict) -> object:
+            return tree["children"][1].get("window")
+
+        end.click()
+        page.keyboard.press("Control+A")
+        page.keyboard.type("-")
+        _staged_becomes(page, window, {"start": 0.3})  # the `-`, taken
+        page.keyboard.type("0.5", delay=KEY_MS)
+        refusal = editor.locator(".text-negative").filter(
+            has_text="The window must end after it starts"
+        )
+        expect(refusal).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _staged_becomes(page, window, {"start": 0.3, "end": 0.9})
+        page.wait_for_timeout(600)
+        expect(end).to_have_value("-0.5")
+        expect(refusal).to_be_visible()
+        assert window(_staged_tree(page)) == {"start": 0.3, "end": 0.9}
+        _shot(page, tmp_path, "window-refused")
+        # A value the leaf takes, the field left and entered again, and a
+        # refused one: back to the value taken, not the one it opened on.
+        _retype(page, end, "0.8")
+        _staged_becomes(page, window, {"start": 0.3, "end": 0.8})
+        expect(refusal).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        page.locator(".dstf-subheader").click()
+        _type_over(page, end, "-0.5")
+        expect(refusal).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _staged_becomes(page, window, {"start": 0.3, "end": 0.8})
+
+
 def test_the_wheel_over_a_focused_number_field_scrolls_the_page(
     tmp_path, playwright_browser
 ):
