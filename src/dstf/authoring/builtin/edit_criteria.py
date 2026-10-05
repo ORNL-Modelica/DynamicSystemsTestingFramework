@@ -124,7 +124,7 @@ class EditCriteria:
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
         from nicegui import ui
 
-        from ..forms import BOTTOM, render_form
+        from ..forms import BOTTOM, SidesControl, render_form
         from ..typed_number import TypedNumber
 
         sel = s.selection
@@ -201,6 +201,27 @@ class EditCriteria:
             # by the submit that earned it.
             submit(state)
 
+        # A tolerance with one side typed is in no leaf: its control hands
+        # nothing over, so the fields show what the spec does not hold. This
+        # panel is rebuilt by edits it did not make — a drag on the plot,
+        # a cell of the table beside it — and, built from the leaf alone,
+        # the blank side came back as its old value, unmarked. So a half
+        # pair is written where it outlives the panel (`Panel.kept`), as
+        # the tables write theirs: field -> ``{"base": what the leaf holds
+        # there, "shown": the half pair}``, read back when the form is
+        # built. One whose leaf has since moved under it — that tolerance
+        # dragged on the plot — is dropped, and the fields show the spec's.
+        kept = ui_panel.kept
+
+        def remember(name: str, group: SidesControl) -> None:
+            """After every edit of the two-sided field ``name``, once the
+            leaf has had what the control handed over."""
+            if group.half():
+                base = copy.deepcopy(taken["leaf"]["params"].get(name))
+                kept[name] = {"base": base, "shown": group.shown()}
+            else:
+                kept.pop(name, None)
+
         def build_form() -> None:
             form_slot.clear()
             desc = metric(state["metric"])
@@ -213,11 +234,17 @@ class EditCriteria:
                     schema = Schema(
                         schema.mode, [f for f in schema.fields if f.name != "quantity"]
                     )
+                for name in [
+                    n for n in kept if kept[n]["base"] != state["params"].get(n)
+                ]:
+                    del kept[name]  # the leaf moved under it
                 render_form(
                     schema,
                     state["params"],
                     on_change=set_params,
                     classes="dstf-field",
+                    shown={name: cell["shown"] for name, cell in kept.items()},
+                    on_edit=remember,
                     # The mode the leaf was scored in: a switched mode's
                     # fields were never applied, so nothing is in effect.
                     in_effect=(
@@ -251,6 +278,9 @@ class EditCriteria:
             state["params"] = {
                 k: v for k, v in seeded.items() if k not in ("metric", "variable")
             }
+            # Another mode's fields are other fields, whatever their names:
+            # a half pair typed in the old one is not shown in them.
+            kept.clear()
             build_form()
             emit("metric")
 

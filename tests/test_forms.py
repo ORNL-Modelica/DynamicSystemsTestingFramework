@@ -744,6 +744,40 @@ async def test_a_sides_field_renders_as_the_group_and_a_float_as_one_field():
         assert form.controls["ceiling"].props.get("hint") == HINT
 
 
+async def test_a_form_shows_a_half_pair_it_is_handed_and_reports_every_edit():
+    """`shown` and `on_edit`, for a caller that rebuilds the form: the
+    field's two fields show the half pair while the form's value is still
+    the pair the leaf holds, and every edit of a two-sided field — a key,
+    the toggle — is reported with its name and its control."""
+    edits = []
+    forms = {}
+    pair = {"lower": 0.1, "upper": 0.3}
+
+    def root():
+        forms["f"] = render_form(
+            derive_schema(_Sided, mode="x"),
+            {"tolerance": dict(pair), "ceiling": 0.5},
+            on_change=lambda values: None,
+            shown={"tolerance": {"lower": 0.1, "upper": None}},
+            on_edit=lambda name, g: edits.append((name, g.half(), g.shown())),
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        form = forms["f"]
+        g = form.controls["tolerance"]
+        assert (g.lower.value, g.upper.value) == (0.1, None)
+        assert g.upper.error == "required" and not g.linked and g.half()
+        assert form.values() == {"tolerance": pair, "ceiling": 0.5}
+        assert edits == []  # showing it is no edit
+        form.controls["ceiling"].set_value(0.6)
+        assert edits == []  # nor is a field with one side
+        g.upper.set_value(0.4)
+        assert edits == [("tolerance", False, {"lower": 0.1, "upper": 0.4})]
+        user.find(marker="tolerance:link").click()
+        assert edits[-1] == ("tolerance", False, {"lower": 0.4, "upper": 0.4})
+
+
 async def test_an_unset_sides_field_shows_the_hint_and_writes_nothing():
     seen = []
     forms = {}

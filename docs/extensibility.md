@@ -740,7 +740,7 @@ whose spec value has since moved. The record is the browser tab's, not the
 page's: it outlives a switch of test and a visit to the Suite page, and is there
 when the criterion is opened again in that tab. Only the criterion editor under
 a plot keeps one (Edit on plot's table records its blank and half-typed cells
-there). Every other host hands a fresh dict to every build — a dialog, a row,
+there, Edit criteria's form a tolerance with one side typed). Every other host hands a fresh dict to every build — a dialog, a row,
 and the two other criterion editors too: the one under a row of the criteria
 tree and the one under a row of the Statistics card — so a panel placed at
 several of these must work with a dict that is empty each time.

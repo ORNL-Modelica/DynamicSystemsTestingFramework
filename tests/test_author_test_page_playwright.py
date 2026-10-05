@@ -7044,6 +7044,70 @@ def test_a_half_cell_stays_blank_while_a_ring_is_dragged(tmp_path, playwright_br
         assert _staged_tree(page)["children"][0]["points"][0]["time"] == rows[0]["time"]
 
 
+def test_a_half_pair_on_the_form_stays_blank_while_a_ring_is_dragged(
+    tmp_path, playwright_browser
+):
+    """The `+` of the criterion's own Default tolerance cleared — blank,
+    "required", nothing pending — and the checkpoint's ring dragged with the
+    mouse. The drag rebuilds the whole editor, the form too, and the blank
+    came back as its old value with "required" gone. The drag's edit is
+    staged, the field is still blank and marked, the pair the leaf holds is
+    the one it held, and the key that fills the blank stages the new pair."""
+    with _served(
+        tmp_path, playwright_browser, project=_pair_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 1, "points · y")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(upper).to_have_value("0.2", timeout=EXPECT_TIMEOUT)
+        upper.evaluate("e => e.scrollIntoView({block: 'center'})")
+        _retype(page, upper, "")
+        marked = editor.locator(".q-field--error")
+        expect(marked).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(marked).to_contain_text("required")
+        page.wait_for_timeout(400)
+        assert _pending(page) == "0 pending edits"
+
+        page.locator(".dstf-plot").nth(1).scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        ring = _shape(page, "/points/target/0", card=1)
+        _mouse_drag_by(page, ring["x"], ring["y"], 40, 0)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        # The table followed the ring: the editor was rebuilt.
+        expect(_table_cell(page, 0, "time")).not_to_have_value(
+            "0.3", timeout=EXPECT_TIMEOUT
+        )
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(upper).to_have_value("")
+        expect(editor.get_by_label("− Default tolerance", exact=True)).to_have_value(
+            "0.1"
+        )
+        expect(marked).to_have_count(1)
+        expect(marked).to_contain_text("required")
+        leaf = _staged_tree(page)["children"][2]
+        assert leaf["points"][0]["time"] != 0.3  # the drag's own edit
+        assert leaf["tolerance"] == {"lower": 0.1, "upper": 0.2}
+        upper.evaluate("e => e.scrollIntoView({block: 'center'})")
+        _shot(page, tmp_path, "half-form-after-drag")
+        # The blank filled: the new pair is staged, beside the drag.
+        upper.click()
+        page.keyboard.type("0.4")
+        expect(marked).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        _staged_becomes(
+            page,
+            lambda tree: tree["children"][2]["tolerance"],
+            {"lower": 0.1, "upper": 0.4},
+        )
+        assert (
+            _staged_tree(page)["children"][2]["points"][0]["time"]
+            == (leaf["points"][0]["time"])
+        )
+
+
 def _grips_project(tmp_path: Path) -> tuple[Path, Path]:
     """`_tables_project` — on x: declared points, events and peaks, each
     with a row holding a number and one holding a pair — and on y a tube of

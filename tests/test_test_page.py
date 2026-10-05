@@ -3862,6 +3862,136 @@ async def test_a_half_cell_stays_blank_through_an_edit_in_the_criterions_form(
         await _fills_and_stages(shell, user)
 
 
+def _half_form_tree() -> dict:
+    """D's x scored by a points leaf whose OWN tolerance is a pair, with
+    two rows that follow it, and a range beside it."""
+    return {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "points",
+                "variable": "x",
+                "tolerance": _pair(0.1, 0.3),
+                "points": [
+                    {"time": 0.25, "value": 0.3},
+                    {"time": 0.75, "value": 0.9},
+                ],
+            },
+            {"metric": "range", "variable": "x", "min_value": -1},
+        ],
+    }
+
+
+async def _editor_with_a_half_form(shell, user) -> TestPage:
+    """D's points criterion open, the `+` of its Default tolerance cleared:
+    blank, "required", nothing pending."""
+    page = await _test_page(shell, user, D)
+    with page.client:
+        page.cards[0].show()
+    user.find(marker=f"criterion:0:{T0}").click()
+    await _settled(lambda: page.open == (0, T0))
+    with page.client:
+        _one(user, "tolerance:upper").set_value(None)
+    assert _one(user, "tolerance:upper").error == "required"
+    assert shell.session.spec.pending == []
+    return page
+
+
+def _form_is_half(user) -> bool:
+    """The form's tolerance as a half pair shows: `−` as it was, `+` blank
+    and marked, unlinked."""
+    lower, upper = _one(user, "tolerance:lower"), _one(user, "tolerance:upper")
+    return (lower.value, lower.error, upper.value, upper.error) == (
+        0.1,
+        None,
+        None,
+        "required",
+    ) and _one(user, "tolerance:link").props["icon"] == "link_off"
+
+
+async def _fills_the_form(shell, user) -> None:
+    """The key that fills the blank stages the pair, and the record goes."""
+    with user.client:
+        _one(user, "tolerance:upper").set_value(0.4)
+    await _settled(
+        lambda: (_pending(shell, T0) or {}).get("tolerance") == _pair(0.1, 0.4)
+    )
+    assert _one(user, "tolerance:upper").error is None
+
+
+async def test_a_half_pair_on_the_form_stays_blank_through_a_drag_on_the_plot(
+    tmp_path,
+):
+    """A drag rebuilds the WHOLE editor — the criterion's form too. Its
+    fields never read `Panel.kept`: the blank `+` of a half-typed Default
+    tolerance came back as its old value, unmarked. The drag's own edit is
+    staged, and the form is still half."""
+    shell = _spec_tree_shell(tmp_path, _half_form_tree())
+    async with user_simulation(root=shell.index) as user:
+        page = await _editor_with_a_half_form(shell, user)
+        card = page.cards[0]
+        was = _one(user, "tolerance:upper")
+        n = _shape_index(card, f"{T0}/points/target/0")
+        with page.client:
+            card.hook._dispatch(
+                "plotly_relayout",
+                {f"shapes[{n}].xanchor": 0.4, f"shapes[{n}].yanchor": 0.3},
+            )
+        staged = _pending(shell, T0)
+        assert staged["points"][0]["time"] == pytest.approx(0.4)  # the drag's own
+        assert staged["tolerance"] == _pair(0.1, 0.3)
+        await _settled(lambda: _one(user, "tolerance:upper") is not was)
+        assert _form_is_half(user)
+        assert page.state.kept[D][T0, "edit-criteria"]
+        await _fills_the_form(shell, user)
+        assert not page.state.kept[D][T0, "edit-criteria"]
+
+
+async def test_a_half_pair_on_the_form_stays_blank_through_an_edit_in_the_table(
+    tmp_path,
+):
+    """A cell of the table typed in rebuilds every OTHER panel of the
+    editor — the criterion's form. The same fields, the same way."""
+    shell = _spec_tree_shell(tmp_path, _half_form_tree())
+    async with user_simulation(root=shell.index) as user:
+        page = await _editor_with_a_half_form(shell, user)
+        was = _one(user, "tolerance:upper")
+        with page.client:
+            _one(user, f"{T0}:points:1:time").set_value(0.8)
+        await _settled(
+            lambda: (
+                (_pending(shell, T0) or {}).get("points", [{}, {}])[1].get("time")
+                == 0.8
+            )
+        )
+        assert _pending(shell, T0)["tolerance"] == _pair(0.1, 0.3)
+        await _settled(lambda: _one(user, "tolerance:upper") is not was)
+        assert _form_is_half(user)
+        await _fills_the_form(shell, user)
+
+
+@pytest.mark.parametrize("lands", ["discard", "save"])
+async def test_a_discard_or_a_save_takes_a_half_pair_on_the_form_with_it(
+    tmp_path, lands
+):
+    """The form's record has the tables' lifetime: a Discard or a Save
+    drops it, and the fields show the spec's pair."""
+    shell = _spec_tree_shell(tmp_path, _half_form_tree())
+    async with user_simulation(root=shell.index) as user:
+        page = await _editor_with_a_half_form(shell, user)
+        with page.client:
+            _one(user, f"{T0}:points:1:time").set_value(0.8)
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        await _settled(lambda: _form_is_half(user))
+        assert page.state.kept[D][T0, "edit-criteria"]
+        getattr(shell.session, lands)()
+        await _settled(lambda: shell.session.spec.pending == [])
+        await _settled(lambda: _one(user, "tolerance:upper").value == 0.3)
+        assert _one(user, "tolerance:upper").error is None
+        assert not page.state.kept.get(D, {}).get((T0, "edit-criteria"))
+        assert page.open == (0, T0)
+
+
 async def test_a_blank_required_cell_stays_blank_through_a_drag(shell):
     """The same record holds a required cell cleared to be retyped: a tube
     point's time, blank while the other point's ring is dragged."""

@@ -12,7 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
@@ -104,6 +104,8 @@ def render_form(
     *,
     classes: str = "",
     in_effect: dict | None = None,
+    shown: Mapping[str, dict[str, float | None]] | None = None,
+    on_edit: Callable[[str, SidesControl], None] | None = None,
 ) -> Form:
     """Build one control per field into the current NiceGUI container.
 
@@ -125,6 +127,13 @@ def render_form(
     opens BLANK and without that hint: the hint means "nothing is set here,
     so this applies", and something is set. The value stays the form's
     until the field is edited.
+
+    ``shown`` and ``on_edit`` are for a caller that rebuilds the form and
+    has to keep a HALF pair across that (:func:`sides_control`'s, per
+    field): ``on_edit(name, control)`` is called after every edit of the
+    two-sided field ``name`` — the caller reads the control's ``half()``
+    and ``shown()`` — and ``shown[name]`` is the half pair that field's
+    two fields show, while ``values[name]`` is still what the leaf holds.
     """
     in_effect = in_effect or {}
     form = Form()
@@ -159,6 +168,8 @@ def render_form(
                 side_labels=spec.side_labels or SIDE_LABELS,
                 hint=hint,
                 mark=spec.name,
+                shown=(shown or {}).get(spec.name),
+                on_edit=_sides_edited(form, spec.name, on_edit),
             )
             for side in (group.lower, group.upper):
                 side.props(BOTTOM)
@@ -191,6 +202,23 @@ def render_form(
             control.tooltip(spec.help)
         form.controls[spec.name] = control
     return form
+
+
+def _sides_edited(
+    form: Form, name: str, on_edit: Callable[[str, SidesControl], None] | None
+) -> Callable[[], None] | None:
+    """``on_edit`` as the two-sided field ``name``'s control calls it: with
+    the field's name and the control itself, read when it is called — the
+    control is not built yet where this is asked for."""
+    if on_edit is None:
+        return None
+
+    def edited() -> None:
+        control = form.controls[name]
+        assert isinstance(control, SidesControl)  # `render_form` built it
+        on_edit(name, control)
+
+    return edited
 
 
 def label_width(label: str) -> int:

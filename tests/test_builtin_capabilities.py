@@ -3263,6 +3263,102 @@ async def test_the_editor_opens_on_a_pair_and_stages_each_transition(session):
         assert link.props["icon"] == "link" and lower.error is None
 
 
+# -- a half pair on the criterion's form outlives the panel it was typed in ----
+
+FORM_PAIR = {"lower": 0.1, "upper": 0.3}
+FORM_HALF = {"lower": 0.1, "upper": None}
+
+
+def _pair_leaf_on_a(session) -> None:
+    leaf = {"metric": "points", "variable": "x", "tolerance": dict(FORM_PAIR)}
+    session.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
+
+
+def _form_sides(user) -> tuple:
+    """The form's tolerance as it shows: each side's value and mark, and
+    the toggle's icon."""
+    lower, link, upper = _sides_of(user)
+    return (lower.value, lower.error, upper.value, upper.error, link.props["icon"])
+
+
+async def test_a_half_pair_on_the_form_is_blank_in_the_panel_built_after_its_own(
+    session,
+):
+    """The form writes a half pair where it outlives the panel
+    (`Panel.kept`), as the tables do: by field, with what the leaf holds
+    under it. The panel built next — after a drag on the plot, after a
+    table's cell — reads it back: `+` blank and "required", `−` as typed,
+    unlinked. Built from the spec alone the blank came back as its old
+    value, unmarked. Filled, it is no record any more."""
+    _pair_leaf_on_a(session)
+    kept: dict = {}
+    async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
+        await user.should_see("+ Default tolerance")
+        _sides_of(user)[2].set_value(None)
+        assert kept == {"tolerance": {"base": FORM_PAIR, "shown": FORM_HALF}}
+        assert _leaf0(session)["tolerance"] == FORM_PAIR
+    pending = list(session.spec.pending)
+    async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
+        await user.should_see("+ Default tolerance")
+        assert _form_sides(user) == (0.1, None, None, "required", "link_off")
+        assert session.spec.pending == pending  # reading it back stages nothing
+        _sides_of(user)[2].set_value(0.4)
+        assert _leaf0(session)["tolerance"] == {"lower": 0.1, "upper": 0.4}
+        assert kept == {} and not errors
+
+
+async def test_a_half_pair_whose_tolerance_moved_in_the_spec_shows_the_specs(session):
+    """The record holds what the leaf held under the field. Where that has
+    since moved — its side dragged on the plot — the fields show the
+    spec's pair, whole, and the record is gone."""
+    _pair_leaf_on_a(session)
+    kept: dict = {}
+    async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
+        await user.should_see("+ Default tolerance")
+        _sides_of(user)[2].set_value(None)
+        assert kept
+    dragged = {"lower": 0.1, "upper": 0.5}
+    session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", dragged)])
+    async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
+        await user.should_see("+ Default tolerance")
+        assert _form_sides(user) == (0.1, None, 0.5, None, "link_off")
+        assert kept == {}
+
+
+async def test_a_half_pair_goes_with_the_mode_it_was_typed_in(session):
+    """A mode switched to has fields of its own — a scalar's tolerance is
+    another field, though it has the name: the half pair is not shown
+    there, and its record is dropped."""
+    _pair_leaf_on_a(session)
+    kept: dict = {}
+    async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
+        await user.should_see("+ Default tolerance")
+        _sides_of(user)[2].set_value(None)
+        assert kept
+        mode = next(
+            c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
+        )
+        mode.set_value("scalar")
+        await user.should_see("Tolerance mode")
+        assert kept == {}
+        lower, link, upper = _sides_of(user)
+        assert (lower.error, upper.error) == (None, None)
+
+
+async def test_a_pair_linked_again_while_half_is_no_record(session):
+    """The toggle is an edit too: linked, both fields take the side that
+    is there, the leaf holds that number and nothing is half."""
+    _pair_leaf_on_a(session)
+    kept: dict = {}
+    async with host(session, EditCriteria(), LEAF0, kept=kept) as (user, errors, _):
+        await user.should_see("+ Default tolerance")
+        _sides_of(user)[2].set_value(None)
+        assert kept
+        user.find(marker="tolerance:link").click()
+        assert kept == {}
+        assert _leaf0(session)["tolerance"] == 0.1
+
+
 async def test_an_unset_two_sided_tolerance_says_what_is_in_effect_and_writes_nothing(
     session,
 ):
