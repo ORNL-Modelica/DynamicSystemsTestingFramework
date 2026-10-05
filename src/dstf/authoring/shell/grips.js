@@ -287,25 +287,30 @@
       here(null);
     };
 
-    // A grip let go OUTSIDE the plot area — on the page above it, off the
+    // A shape let go OUTSIDE the plot area — on the page above it, off the
     // spectrum's left end — was released where the axis would be out
-    // there, and that number was written (2.5 on an axis ending at 1.3).
-    // The released anchor is held to the range that was VISIBLE through
-    // the drag — the press's (`down`) — on the grip's own axis: the edge
-    // lands on the plot's edge, where the arrow was last drawn. `update`
-    // is a relayout's (`shapes[N].xanchor`, ...), read against the figure
-    // this plot holds; a copy is returned.
+    // there, and that number was written (an arrow's side at 2.5 on an
+    // axis ending at 1.3; a ring's time at 1.289 on a run ending at 1.0).
+    // Every position of a shape an editor moves — an arrow's anchor, a
+    // ring's, a bound line's ends — is held to the range that was VISIBLE
+    // through the drag, the press's (`down`): it lands on the plot's
+    // edge, where it was last drawn. `update` is a relayout's
+    // (`shapes[N].xanchor`, `shapes[N].y0`, ...), read against the figure
+    // this plot holds; a copy is returned. A position on the paper, and
+    // the pixel offsets of a shape sized in pixels, are no data to hold.
     st.clamp = (update) => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
+      const info = said(gd);
+      const free = new Set((info && info.draggable) || []);
       const out = { ...update };
       for (const [key, value] of Object.entries(update)) {
-        const m = /^shapes\[(\d+)\]\.([xy])anchor$/.exec(key);
+        const m = /^shapes\[(\d+)\]\.([xy])(anchor|0|1)$/.exec(key);
         if (!m || typeof value !== "number") continue;
         const s = shapes[+m[1]];
-        const grip = s && gripOf(s.name);
-        if (!grip || grip.axis !== m[2]) continue;
+        if (!s || !free.has(s.name)) continue;
+        if (m[3] !== "anchor" && s[m[2] + "sizemode"] === "pixel") continue;
         const ref = m[2] === "x" ? s.xref || "x" : s.yref || "y";
-        const range = ref === "paper" ? null : st.ranges[m[2] + "axis" + ref.slice(1)];
+        const range = /^[xy]\d*$/.test(ref) ? st.ranges[m[2] + "axis" + ref.slice(1)] : null;
         if (!range) continue;
         out[key] = Math.min(Math.max(value, Math.min(...range)), Math.max(...range));
       }
@@ -379,7 +384,7 @@
       instances.delete(id);
     },
     // A relayout of plot `id` on its way to the server (plot_card.py): a
-    // released grip's position held to the visible range (`clamp`).
+    // released shape's position held to the visible range (`clamp`).
     released(id, update) {
       const st = instances.get(id);
       return st && update && typeof update === "object" ? st.clamp(update) : update;

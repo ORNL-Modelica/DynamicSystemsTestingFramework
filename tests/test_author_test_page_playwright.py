@@ -9552,3 +9552,94 @@ def test_the_hover_label_gives_way_near_a_ring_and_an_arrow_and_nowhere_else(
             assert (seen["seen"] > 0) == labelled, (name, seen)
             if labelled:
                 assert any("Actual" in t for t in seen["texts"]), (name, seen)
+
+
+# -- a ring or a bound line let go outside the plot lands on its edge ------------
+
+
+def _ring_and_bound_project(tmp_path: Path) -> tuple[Path, Path]:
+    """A scored on x by one checkpoint with a value of its own — its ring
+    moves in time AND in value — and by a range whose bounds are lines."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "points",
+                        "variable": "x",
+                        "points": [{"time": 0.5, "value": 0.5, "tolerance": 0.1}],
+                    },
+                    {
+                        "metric": "range",
+                        "variable": "x",
+                        "min_value": -0.2,
+                        "max_value": 1.0,
+                    },
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+#: What is dragged, to which side of the plot, and what it writes there:
+#: the staged leaf's key and the end of which axis.
+LET_GO_OUTSIDE = {
+    "a ring, right": ("points · x", "/points/target/0", (1, 0), "time", "xaxis", max),
+    "a ring, left": ("points · x", "/points/target/0", (-1, 0), "time", "xaxis", min),
+    "a ring, above": ("points · x", "/points/target/0", (0, -1), "value", "yaxis", max),
+    "a line, above": ("range · x", "/range/max", (0, -1), "max_value", "yaxis", max),
+}
+
+
+@pytest.mark.parametrize("case", LET_GO_OUTSIDE)
+def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
+    tmp_path, playwright_browser, case
+):
+    """A ring released right of the plot wrote the time the axis would
+    have out there — 1.289 on a run that ends at 1.0, a checkpoint then
+    not drawn at all — left of it -0.0746, above it a value of 2.43 on an
+    axis that ends at 1.99; a bound line released above, 1.75 on an axis
+    ending at 1.41. Only an arrow was held to the plot. Every shape an
+    editor moves is: what it writes is the end of the range that was
+    visible when it was pressed."""
+    name, tail, (dx, dy), key, axis, end = LET_GO_OUTSIDE[case]
+    with _served(
+        tmp_path, playwright_browser, project=_ring_and_bound_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, name)
+        area, ranges = page.evaluate(PLOT_AREA), page.evaluate(RANGES)
+        if tail.startswith("/range"):
+            at = page.evaluate(EDGE_AT, [0, tail, "line", 0.4])
+            assert at["hit"], at
+        else:
+            at = _shape(page, tail)
+        was = _staged_tree(page)["children"][0 if "points" in tail else 1]
+        # Well past the plot's edge on that side: 150 px above it, on the
+        # page; at the window's own edge to the left and to the right.
+        to = (
+            at["x"] if dx == 0 else (VIEWPORT["width"] - 5 if dx > 0 else 2),
+            at["y"] if dy == 0 else area["top"] - 150,
+        )
+        assert area["top"] - 150 > 0, area
+        assert area["left"] > 80 and area["right"] < VIEWPORT["width"] - 80, area
+        page.mouse.move(at["x"] - 20, at["y"] - 20)
+        page.mouse.move(at["x"], at["y"], steps=4)
+        page.mouse.down()
+        page.mouse.move(*to, steps=25)
+        page.mouse.up()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+
+        def written() -> float:
+            leaf = _staged_tree(page)["children"][0 if "points" in tail else 1]
+            return (leaf["points"][0] if "points" in tail else leaf)[key]
+
+        print("LET GO", case, written(), ranges[axis])
+        assert written() == pytest.approx(end(ranges[axis]), abs=1e-9), ranges
+        assert written() != (was["points"][0] if "points" in tail else was)[key]
