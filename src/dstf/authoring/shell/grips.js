@@ -3,6 +3,19 @@
 // pointer is near their checkpoint, event or peak, and through a drag. And
 // the plot's pointer: every shape no editor moves is made inert.
 //
+// WHICH arrows show is decided by CLUSTERS. Each group — one checkpoint,
+// event or peak: its ring and its arrows — has a hover area, a rectangle
+// around its ring and its arrows' anchors. Groups whose areas overlap show
+// TOGETHER: they are one cluster, and with the pointer anywhere in a
+// cluster's areas every arrow of every member is shown; outside every
+// area, none. No two clusters' areas overlap, so the pointer is in at most
+// one and there is nothing to choose between: no nearest group, nothing
+// kept from where the pointer was. (ONE group was shown at a time before,
+// chosen by the nearest anchor, then by the arrows' drawn tips too, then
+// with an advantage for the shown one: at some spacings a facing arrow
+// still could not be reached, the display flickered between two groups,
+// and a press where a hidden arrow belonged moved the neighbour's ring.)
+//
 // The figure never changes with the hover: a drag names a shape by INDEX, and
 // a figure changed mid-drag loses it. Hiding is one static rule of the shell's
 // stylesheet (style.py) over the paths this module marks —
@@ -21,24 +34,15 @@
 // press on a box, a window or a result line is the plot's own.
 //
 // One instance per plot card (`DstfGrips.install(id)` / `.destroy(id)`, the
-// card's `ui.plotly` element id — plot_card.py): its own shown group, its own
+// card's `ui.plotly` element id — plot_card.py): its own clusters, its own
 // pointer, its own latch.
 (() => {
   if (window.DstfGrips) return;
 
-  // How far outside a group's anchors the pointer still shows it, px.
+  // How far a group's hover area reaches outside its ring and its arrows'
+  // anchors, px: an arrow is drawn 10 to 17 px outside its anchor
+  // (figures/plotly.py `_GRIP_PATHS`), whole inside the area.
   const MARGIN = 25;
-  // How much nearer another group must be before it takes over from the
-  // shown one, px: two arrows of neighbours can stand on one spot, and
-  // without it the one reached first flickered away under the pointer.
-  const HYSTERESIS = 6;
-  // The middle of an arrow as it is drawn, px from its anchor along its
-  // axis: a triangle from 10 to 17 px out (figures/plotly.py `_GRIP_PATHS`;
-  // `test_the_pages_tip_is_the_middle_of_the_drawn_arrow` holds the two
-  // together).
-  const TIP = 13.5;
-  // How far outside a shown arrow's box the pointer is still on it, px.
-  const ON_ARROW = 3;
   // How near a shown arrow, or the ring its group stands around, the plot's
   // own hover label gives way, px.
   const HUSH = 20;
@@ -83,8 +87,8 @@
 
   function create(gd) {
     const st = {
-      gd, on: null, latched: false, xy: null, ranges: {}, press: null, travel: null,
-      failed: false,
+      gd, clusters: [], on: null, latched: false, xy: null, ranges: {}, press: null,
+      travel: null, failed: false,
     };
 
     // An arrow says what it sets — a tooltip, the SVG `title` child — in
@@ -102,6 +106,9 @@
       for (const title of el.querySelectorAll("title")) title.remove();
     };
 
+    // Whether the grip path `el` is of the shown cluster.
+    const shown = (el) => !!st.on && st.on.groups.has(el.getAttribute("data-grip"));
+
     // Plotly replaces every shape path on a react or a newPlot: the marks go
     // with them, and are put back from what the figure says of its shapes.
     // A shape is three elements of one `data-index` — its group, its path
@@ -116,7 +123,7 @@
         const grip = gripOf(info, name);
         if (grip) {
           el.setAttribute("data-grip", grip.group);
-          el.toggleAttribute("data-grip-on", grip.group === st.on);
+          el.toggleAttribute("data-grip-on", shown(el));
           tell(el, grip);
         } else if (el.hasAttribute("data-grip")) {
           el.removeAttribute("data-grip");
@@ -149,6 +156,7 @@
         return pass(...args);
       } catch (err) {
         st.on = null;
+        st.clusters = [];
         try {
           unmark();
         } catch (_) {
@@ -165,23 +173,21 @@
       }
     };
 
-    const show = (g) => {
-      if (g === st.on) return;
-      st.on = g;
+    const show = (cluster) => {
+      if (cluster === st.on) return;
+      st.on = cluster;
       for (const el of gd.querySelectorAll(".shapelayer path[data-grip]")) {
-        el.toggleAttribute("data-grip-on", el.getAttribute("data-grip") === g);
+        el.toggleAttribute("data-grip-on", shown(el));
       }
     };
 
-    // Each group's reveal region, in pixels of the graph div: the bounding
-    // box of its grips' anchors — and its POINTS, the places a person aims
-    // at: the ring its grips stand around, each grip's anchor and each
-    // arrow's drawn TIP, `TIP` px from that anchor the way the server says
-    // the arrow is drawn (`outward`, along its `axis`). A grip anchored to
-    // the PAPER in y (an event's or a peak's window spans its panel) has no
-    // y of its own: its region is the panel's whole height, and its anchor
-    // and its tip are at the pointer's own height (`columns`).
-    const regions = () => {
+    // Each group's hover area, in pixels of the graph div: the bounding box
+    // of the ring it stands around and of its grips' anchors, grown by
+    // MARGIN on every side — with the rings, for the hover label (`hush`).
+    // A grip anchored to the PAPER in y (an event's or a peak's window
+    // spans its panel) has no y of its own: it reaches over the panel's
+    // whole height. A ring whose group has no grip has no area.
+    const areas = () => {
       const fl = gd._fullLayout;
       const out = new Map();
       if (!fl) return out;
@@ -190,9 +196,8 @@
       for (const s of (gd.layout && gd.layout.shapes) || []) {
         if (s.visible === false) continue;
         const grip = gripOf(info, s.name);
-        const g = grip ? grip.group : null;
-        const ring = g ? null : ringOf(info, s.name);
-        if (!g && !ring) continue;
+        const g = grip ? grip.group : ringOf(info, s.name);
+        if (g === null) continue;
         const xa = fl["xaxis" + (s.xref || "x").slice(1)];
         if (!xa) continue;
         const paper = s.yref === "paper";
@@ -200,42 +205,78 @@
         if (!ya) continue;
         const x = xa._offset + xa.d2p(s.xanchor);
         const y = paper ? null : ya._offset + ya.d2p(s.yanchor);
-        if (ring) {
-          rings.push([ring, x, y]);
+        if (!grip) {
+          if (y !== null) rings.push([g, x, y]);
           continue;
         }
         const t = paper ? ya._offset : y;
         const b = paper ? ya._offset + ya._length : y;
-        const r = out.get(g) || { l: x, r: x, t, b, points: [], columns: [], rings: [] };
-        r.l = Math.min(r.l, x);
-        r.r = Math.max(r.r, x);
-        r.t = Math.min(r.t, t);
-        r.b = Math.max(r.b, b);
-        // A shape's pixel path has y UP: outward on the value axis is up
-        // the screen.
-        const way = TIP * (Math.sign(grip.outward) || 0);
-        const dx = grip.axis === "x" ? way : 0;
-        const dy = grip.axis === "y" ? -way : 0;
-        if (paper) r.columns.push(x, x + dx);
-        else r.points.push([x, y], [x + dx, y + dy]);
-        out.set(g, r);
+        const a = out.get(g) || { l: x, r: x, t, b, rings: [] };
+        a.l = Math.min(a.l, x);
+        a.r = Math.max(a.r, x);
+        a.t = Math.min(a.t, t);
+        a.b = Math.max(a.b, b);
+        out.set(g, a);
       }
       for (const [g, x, y] of rings) {
-        const r = out.get(g);
-        if (!r || y === null) continue;
-        r.points.push([x, y]);
-        r.rings.push([x, y]);
+        const a = out.get(g);
+        if (!a) continue;
+        a.l = Math.min(a.l, x);
+        a.r = Math.max(a.r, x);
+        a.t = Math.min(a.t, y);
+        a.b = Math.max(a.b, y);
+        a.rings.push([x, y]);
+      }
+      // To the hundredth of a pixel, the precision Plotly places a shape
+      // at (its `l2p`): two areas that touch on the screen touch here too,
+      // whatever an axis' offset adds in the last bit of a sum.
+      const px = (v) => Math.round(v * 100) / 100;
+      for (const a of out.values()) {
+        a.l = px(a.l - MARGIN);
+        a.r = px(a.r + MARGIN);
+        a.t = px(a.t - MARGIN);
+        a.b = px(a.b + MARGIN);
       }
       return out;
     };
 
-    // How far the pointer is from a group: from the nearest of its points.
-    const distance = (r, x, y) => {
-      const level = Math.min(Math.max(y, r.t), r.b);
-      return Math.min(
-        ...r.points.map(([px, py]) => Math.hypot(x - px, y - py)),
-        ...r.columns.map((px) => Math.hypot(x - px, y - level)),
-      );
+    // The clusters: groups whose areas overlap — touching counts — are of
+    // one, and so on through every group between (three in a row, each
+    // overlapping the next, are one). A cluster's own area is the UNION of
+    // its members' rectangles, never their bounding box: an L of two shows
+    // nothing from its empty corner. In PIXELS of the figure as it is
+    // drawn, so they are found again wherever the shapes are drawn again
+    // (`remark`) — a zoom parts a cluster, a dragged anchor joins two —
+    // and never on a move of the pointer.
+    const clustered = () => {
+      const meet = (p, q) => p.l <= q.r && q.l <= p.r && p.t <= q.b && q.t <= p.b;
+      let clusters = [];
+      for (const [g, area] of areas()) {
+        const joined = { groups: new Set([g]), areas: [area], rings: [...area.rings] };
+        const apart = [];
+        // Every cluster the new area overlaps becomes one with it.
+        for (const c of clusters) {
+          if (!c.areas.some((other) => meet(other, area))) {
+            apart.push(c);
+            continue;
+          }
+          for (const member of c.groups) joined.groups.add(member);
+          joined.areas.push(...c.areas);
+          joined.rings.push(...c.rings);
+        }
+        clusters = [...apart, joined];
+      }
+      return clusters;
+    };
+
+    // The cluster whose area holds the pointer (viewport px), or null: at
+    // most one does.
+    const under = (cx, cy) => {
+      const box = gd.getBoundingClientRect();
+      const x = cx - box.left;
+      const y = cy - box.top;
+      const holds = (a) => x >= a.l && x <= a.r && y >= a.t && y <= a.b;
+      return st.clusters.find((c) => c.areas.some(holds)) || null;
     };
 
     // How far the pointer (viewport px) is from the nearest SHOWN arrow's
@@ -253,64 +294,34 @@
       return nearest;
     };
 
-    // The group the pointer is near, or null. On a shown arrow, the group
-    // it is of stays: an arrow stands 10 to 17 px OUTSIDE its anchor, on a
-    // close neighbour's ring or inside its window, and shown by the nearest
-    // ANCHOR it went from under the pointer that walked onto it. Else, of
-    // the groups whose region holds the pointer, the one whose nearest
-    // point is closest — of equals, the first in the figure's order. The
-    // shown group stays unless another is at least HYSTERESIS px nearer.
-    const pick = (cx, cy) => {
-      if (st.on !== null && arrow(cx, cy) <= ON_ARROW) return st.on;
-      const box = gd.getBoundingClientRect();
-      const x = cx - box.left;
-      const y = cy - box.top;
-      const inside = (r) =>
-        x >= r.l - MARGIN && x <= r.r + MARGIN && y >= r.t - MARGIN && y <= r.b + MARGIN;
-      let best = null;
-      let nearest = Infinity;
-      let shown = Infinity;
-      for (const [g, r] of regions()) {
-        if (!inside(r)) continue;
-        const d = distance(r, x, y);
-        if (g === st.on) shown = d;
-        if (d < nearest) {
-          nearest = d;
-          best = g;
-        }
-      }
-      return shown - nearest < HYSTERESIS ? st.on : best;
-    };
-
-    // Within HUSH px of a shown arrow, or of the ring the shown group
-    // stands around, the plot's own hover label is not shown
-    // (`data-grip-near`, style.py): the unified label and its spike line
-    // were drawn over them. Only there: hidden for as long as a group was
-    // shown, the curve could not be read anywhere in an event's window —
-    // the panel's whole height — while its criterion was open. An
-    // ATTRIBUTE of the graph div, not a class: a server update of the
-    // element's classes wipes one the page set, and keeps an attribute.
+    // Within HUSH px of a shown arrow, or of a ring a shown group stands
+    // around, the plot's own hover label is not shown (`data-grip-near`,
+    // style.py): the unified label and its spike line were drawn over
+    // them. Only there: hidden for as long as arrows were shown, the curve
+    // could not be read anywhere in an event's window — the panel's whole
+    // height — while its criterion was open. An ATTRIBUTE of the graph
+    // div, not a class: a server update of the element's classes wipes one
+    // the page set, and keeps an attribute.
     const hush = (xy) => {
       let near = false;
-      if (xy && st.on !== null) {
+      if (xy && st.on) {
         near = arrow(xy[0], xy[1]) <= HUSH;
-        const r = near ? null : regions().get(st.on);
-        if (r) {
+        if (!near) {
           const box = gd.getBoundingClientRect();
           const x = xy[0] - box.left;
           const y = xy[1] - box.top;
-          near = r.rings.some(([px, py]) => Math.hypot(x - px, y - py) <= HUSH);
+          near = st.on.rings.some(([px, py]) => Math.hypot(x - px, y - py) <= HUSH);
         }
       }
       gd.toggleAttribute("data-grip-near", near);
     };
 
     // Where the pointer is now — viewport px, or null off this plot: the
-    // group it is near shows. Held, nothing changes.
+    // cluster it is in shows. Held, nothing changes.
     const here = (xy) => {
       st.xy = xy;
       if (st.latched) return;
-      show(xy ? pick(xy[0], xy[1]) : null);
+      show(xy ? under(xy[0], xy[1]) : null);
       hush(xy);
     };
 
@@ -413,10 +424,15 @@
     document.addEventListener("mouseup", up, true);
     window.addEventListener("blur", blur);
 
-    // The marks, and what the pointer is near: after a redraw — and the
-    // one after a release, shown if the pointer is still near.
+    // The marks, the clusters, and which of them the pointer is in: after
+    // every redraw — the one after a release too, shown if the pointer is
+    // still there. Whatever moves a shape's pixels draws it again: a zoom,
+    // a pan, a reset, a resize of the window, a trace hidden from the
+    // legend, the server's own update are each a relayout or a replot, and
+    // Plotly draws every shape anew in each (`shapes.draw`).
     const remark = guarded(() => {
       mark();
+      st.clusters = clustered();
       here(st.xy);
     });
 
@@ -448,7 +464,7 @@
       observer.disconnect();
       unmark();
     };
-    guarded(mark)();
+    remark();
     return st;
   }
 

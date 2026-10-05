@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1509,10 +1508,10 @@ def _apex(shape: dict) -> tuple[float, float]:
 
 @pytest.mark.parametrize("mode", GRIP_VIEWS)
 def test_the_editable_figure_says_which_way_each_arrow_is_drawn(mode):
-    """The page takes the pointer to be on an arrow where the arrow is —
-    10 to 17 px from its anchor, along its axis, the way `outward` says:
-    +1 towards larger values and later times. It is the way the shape's own
-    path goes, on the grip's own axis and on no other."""
+    """An arrow is drawn 10 to 17 px from its anchor, along its axis, and
+    the map says which way — `outward`: +1 towards larger values and later
+    times. It is the way the shape's own path goes, on the grip's own axis
+    and on no other."""
     fig = variable_figure(GRIP_VIEWS[mode](), editable=True)
     grips = _pointer(fig)["grips"]
     shapes = {s["name"]: s for s in fig["layout"]["shapes"]}
@@ -1652,31 +1651,10 @@ def test_a_set_spectrum_range_mirrors_no_arrow_of_the_time_panel():
     assert _pointer(fig)["grips"][theirs.id]["outward"] == -1
 
 
-def test_the_pages_tip_is_the_middle_of_the_drawn_arrow():
-    """`grips.js` holds one number of an arrow's shape: how far from its
-    anchor its middle is. It is the middle of every path this module
-    draws — the apex at 10 px and the base at 17."""
-    from dstf.figures import plotly
-    from dstf.figures.plotly import _GRIP_PATHS
-
-    # By its path: the shell's own modules need NiceGUI to be imported.
-    page = Path(plotly.__file__).parents[1] / "authoring" / "shell" / "grips.js"
-    found = re.search(
-        r"^  const TIP = ([0-9.]+);$", page.read_text(encoding="utf-8"), re.M
-    )
-    assert found is not None
-    for (axis, way), path in _GRIP_PATHS.items():
-        along = [
-            float(pair.split(",")["xy".index(axis)])
-            for pair in re.findall(r"-?[0-9.]+,-?[0-9.]+", path)
-        ]
-        assert (min(along) + max(along)) / 2 == way * float(found.group(1)), path
-
-
 def test_the_editable_figure_names_the_ring_each_group_stands_around():
-    """A checkpoint's ring, a declared peak's: one of the places its arrows
-    are NEAR. A ring with no grips around it — a tube's control point, the
-    ring of a leaf that is not open — names no group."""
+    """A checkpoint's ring, a declared peak's: part of its group's hover
+    area on the page. A ring with no grips around it — a tube's control
+    point, the ring of a leaf that is not open — names no group."""
     said = _pointer(variable_figure(_points_grip_view(), editable=True))
     assert said["targets"] == {
         f"{P0}/points/target/0": f"{P0}/points/0",

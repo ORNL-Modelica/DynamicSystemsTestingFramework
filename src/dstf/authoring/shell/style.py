@@ -240,8 +240,8 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 /* A tolerance grip — the arrow outside each side of the open criterion's
    tolerance — is hidden at rest: `grips.js` marks each grip's path with its
-   group (`data-grip`) and the one group the pointer is near
-   (`data-grip-on`). `display: none`, never `visibility` or `opacity`:
+   group (`data-grip`) and, of the cluster of groups the pointer is in,
+   every one (`data-grip-on`). `display: none`, never `visibility` or `opacity`:
    Plotly writes inline `opacity: 1; pointer-events: all` on every editable
    shape, so a grip hidden either way was still grabbed where nothing
    showed. Without a hover — a touch screen — they are always shown. */
@@ -259,7 +259,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    around (`grips.js` marks the graph div), the plot's hover label is not
    shown: coming at a checkpoint from above or below, the unified label's
    box and its spike line covered the arrows and half the ring. It is back
-   as soon as the pointer is away from them — shown group or not. By
+   as soon as the pointer is away from them — arrows shown or not. By
    `visibility`: the layer keeps its layout, which Plotly measures to size
    a label it draws meanwhile. */
 .js-plotly-plot[data-grip-near] .hoverlayer { visibility: hidden; }

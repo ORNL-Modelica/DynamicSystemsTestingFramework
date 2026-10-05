@@ -585,8 +585,9 @@ def _grip_shapes(grips: list[Primitive], ctx: _Ctx) -> list[dict]:
     data on x and on the PAPER at the panel's mid-height. It is drawn the
     way :func:`_grip_way` says.
 
-    The page shows a grip only while the pointer is near its checkpoint
-    (``authoring/shell/grips.js``); the figure holds them all, always — a
+    The page shows a grip only while the pointer is near its checkpoint,
+    or one that stands close to it (``authoring/shell/grips.js``); the
+    figure holds them all, always — a
     drag names a shape by its index."""
     shapes = []
     for grip in grips:
@@ -983,16 +984,19 @@ def _secondary_axis(title: str) -> dict:
 #: shapes take the pointer — read by the page's ``grips.js``, which derives
 #: nothing from a shape's name:
 #:
-#: * ``grips``: per grip shape, by name, the ``group`` it shows with
-#:   (:func:`~dstf.comparison.geometry.grip_group`), the ``axis`` it moves
-#:   on (the page's cursor over it), ``outward`` — ``+1`` or ``-1``, the
-#:   way along that axis its arrow is DRAWN from its anchor
-#:   (:func:`_grip_way`), which is where the page takes the pointer to be
-#:   on it — and the ``label`` it carries
-#:   as its tooltip (:func:`~dstf.comparison.geometry.grip_label` — the
-#:   words are Python's);
+#: * ``grips``: per grip shape, by name, the ``group`` it is of
+#:   (:func:`~dstf.comparison.geometry.grip_group` — a checkpoint, an event,
+#:   a peak: the page shows a group's arrows together, and with them those
+#:   of every group whose hover area overlaps its own), the ``axis`` it
+#:   moves on (the page's cursor over it), the ``label`` it carries as its
+#:   tooltip (:func:`~dstf.comparison.geometry.grip_label` — the words are
+#:   Python's), and ``outward`` — ``+1`` or ``-1``, the way along that axis
+#:   its arrow is DRAWN from its anchor (:func:`_grip_way`): the figure's
+#:   own word for a mirrored arrow, which the page does not read (the
+#:   arrow's path is drawn from the same call);
 #: * ``targets``: per ring a group's grips stand around, by name, that
-#:   group — a checkpoint's ring is one of the places its arrows are near;
+#:   group — the ring is part of its group's hover area, and the plot's
+#:   hover label gives way next to it;
 #: * ``draggable``: the names an editor moves — the ringed leaves' rings,
 #:   grips and ``kind="handle"`` lines. Every OTHER shape of the figure (a
 #:   box, a window, a result line, a leaf that is not open) the page makes

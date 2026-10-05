@@ -7636,126 +7636,6 @@ def test_an_events_and_a_peaks_arrows_show_anywhere_along_their_window(
         assert _grips_on(page)["shown"] == []
 
 
-def _close_points_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project` with A scored on x by two checkpoints 0.008 apart
-    in time — some 8 px — of one value and one tolerance: side by side,
-    their upper arrows overlapping."""
-    cfg, work = _two_var_project(tmp_path)
-    spec_path = cfg.parent / "test_spec.json"
-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    for entry in spec["tests"]:
-        if entry["model"] == A:
-            entry["metrics"] = {
-                "metric": "points",
-                "variable": "x",
-                "points": [
-                    {"time": 0.4, "value": 0.5, "tolerance": 0.1},
-                    {"time": 0.408, "value": 0.5, "tolerance": 0.1},
-                ],
-            }
-    spec_path.write_text(json.dumps(spec), encoding="utf-8")
-    return cfg, work
-
-
-#: The grips the hover module MARKS as the shown group's, by the tail of
-#: their names — the module's own word, whatever a stylesheet makes of it.
-MARKED_ON = """
-() => {
-  const gd = document.querySelectorAll('.js-plotly-plot')[0];
-  const shapes = gd.layout.shapes || [];
-  return [...gd.querySelectorAll('.shapelayer path[data-grip-on]')]
-    .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
-    .sort();
-}
-"""
-
-#: How the page holds the grip whose name ends ``tail``: the group it is
-#: marked with, whether that group is the shown one, and its computed
-#: style — whichever way a stylesheet hides it.
-GRIP_STATE = """
-(tail) => {
-  const gd = document.querySelectorAll('.js-plotly-plot')[0];
-  const i = (gd.layout.shapes || []).findIndex(s => (s.name || '').endsWith(tail));
-  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
-  const style = getComputedStyle(el);
-  return {
-    grip: el.getAttribute('data-grip'), on: el.hasAttribute('data-grip-on'),
-    display: style.display, visibility: style.visibility, opacity: style.opacity,
-  };
-}
-"""
-
-
-def test_a_press_where_a_hidden_grip_sits_zooms_and_moves_nothing(
-    tmp_path, playwright_browser
-):
-    """A grip that is not shown cannot be grabbed. Two checkpoints stand
-    some 8 px apart, their upper arrows overlapping. With the first's
-    arrows shown, the pointer is brought to where the second's upper arrow
-    sits — not shown: the pointer is within the box of the first's own
-    arrow, and the group of a shown arrow under the pointer stays — and
-    pressed there, beside the first's arrow and not on it. The
-    press is the plot's own: a box zoom, and nothing staged. Hidden by
-    `visibility` or `opacity` the arrow took the press, and a drag nobody
-    could see staged an edit: the pending count below is what says so, not
-    the way the arrow is hidden."""
-    with _served(tmp_path, playwright_browser, project=_close_points_project) as page:
-        page.wait_for_timeout(700)
-        _open_for_grips(page, 0, "points · x")
-        first = _shape(page, "/points/target/0")
-        page.mouse.move(first["x"] - 30, first["y"] + 30)
-        page.mouse.move(first["x"], first["y"], steps=5)
-        page.wait_for_timeout(150)
-        # Every precondition reads the module's MARKS, never a box: a box
-        # is what a stylesheet that hides the wrong way leaves in place.
-        zero = _group("points", 0, ("upper", "lower"))
-        assert page.evaluate(MARKED_ON) == zero
-        mine, hidden = _shape(page, "/points/upper/0"), _shape(page, "/points/upper/1")
-        apart = hidden["x"] - mine["x"]
-        assert 6.5 <= apart <= 11, (mine, hidden)
-        # Where the second's arrow is: 13.5 px above its anchor (the middle
-        # of a triangle from 10 to 17 px out, 3 px to either side there),
-        # and 2 px off its axis, towards the first's.
-        x, y = hidden["x"] - 2, hidden["y"] - 13.5
-        # Beside the first's own arrow — 3 px to either side of its axis
-        # there, and a pixel of line — and within 3 px of that arrow's box,
-        # 6 px to either side.
-        assert 3 + 1 < x - mine["x"] <= 6 + 3, (mine, hidden)
-        # Straight up the first's axis onto its arrow, then across.
-        page.mouse.move(first["x"], y, steps=8)
-        page.mouse.move(x, y, steps=6)
-        page.wait_for_timeout(150)
-        assert page.evaluate(MARKED_ON) == zero
-        # The second's arrow is a grip of its own group, and not the shown
-        # one — however the stylesheet goes about not showing it.
-        state = page.evaluate(GRIP_STATE, "/points/upper/1")
-        assert state["grip"].endswith("/points/1") and not state["on"], state
-        assert (
-            state["display"] == "none"
-            or state["visibility"] == "hidden"
-            or state["opacity"] == "0"
-        ), state
-        assert _pending(page) == "0 pending edits"
-        before = page.evaluate(READ_PLOT)
-        page.mouse.down()
-        page.mouse.move(x + 60, y - 50, steps=10)
-        page.mouse.up()
-        page.wait_for_timeout(800)  # a staged edit would have landed by now
-        # The press staged nothing ...
-        assert _pending(page) == "0 pending edits"
-        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.1")
-        # ... and was the plot's: a zoom.
-        after = page.evaluate(READ_PLOT)
-        assert abs(after["xrange"][1] - after["xrange"][0]) < 0.5 * abs(
-            before["xrange"][1] - before["xrange"][0]
-        ), (before, after)
-        moved = _shape(page, "/points/upper/1")
-        assert (moved["xanchor"], moved["yanchor"]) == (
-            hidden["xanchor"],
-            hidden["yanchor"],
-        )
-
-
 def test_the_hover_holds_through_the_servers_redraw(tmp_path, playwright_browser):
     """Every redraw replaces the plot's shape paths, and the marks with
     them. After a drag's release the server redraws: the pointer is still
@@ -7826,7 +7706,7 @@ async (card) => {
 
 def test_one_plots_hover_never_shows_anothers_grips(tmp_path, playwright_browser):
     """Each plot card has its own instance of the hover module: its own
-    shown group, its own pointer. Plot 1 is given grips of the SAME names
+    shown cluster, its own pointer. Plot 1 is given grips of the SAME names
     as plot 0's, so anything the two instances shared would show: hovering
     one plot's checkpoint shows that plot's four, and a redraw of the other
     plot meanwhile shows none of its own."""
@@ -8132,181 +8012,11 @@ def test_a_grip_a_redraw_adds_is_hidden_from_its_first_frame_and_shown_on_a_hove
         assert shown["shown"] == _group("points", 2, FOUR), shown
 
 
-# -- close neighbours: the nearest anchor's group shows ------------------------
-
-
-def _neighbours_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project` with A scored on x by two checkpoints close in
-    time. The first's time tolerance is LOPSIDED (0.02 before, 0.2 after):
-    the middle of its arrows stands far right of its ring, and its reach
-    covers the second checkpoint whole."""
-    cfg, work = _two_var_project(tmp_path)
-    spec_path = cfg.parent / "test_spec.json"
-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    for entry in spec["tests"]:
-        if entry["model"] == A:
-            entry["metrics"] = {
-                "metric": "points",
-                "variable": "x",
-                "points": [
-                    {
-                        "time": 0.4,
-                        "value": 0.5,
-                        "tolerance": 0.1,
-                        "time_tolerance": {"lower": 0.02, "upper": 0.2},
-                    },
-                    {"time": 0.45, "value": 0.5, "tolerance": 0.1},
-                ],
-            }
-    spec_path.write_text(json.dumps(spec), encoding="utf-8")
-    return cfg, work
-
-
 def _plot_under_the_mouse(page, card: int = 0) -> None:
     page.locator(".js-plotly-plot").nth(card).evaluate(
         "e => e.scrollIntoView({block: 'center'})"
     )
     page.wait_for_timeout(300)
-
-
-@pytest.mark.parametrize("apart", [40, 25, 15])
-def test_of_two_close_checkpoints_the_one_under_the_pointer_shows_its_arrows(
-    tmp_path, playwright_browser, apart
-):
-    """Two checkpoints 40, 25 or 15 px apart. The shown group stayed the
-    first's for as long as the pointer was within ITS reach — on the second
-    ring the first's arrows still showed, and where the second's upper arrow
-    belongs was plain plot: a press there zoomed. Now the group whose
-    nearest anchor — its ring, or an arrow's — is closest to the pointer
-    shows: each ring its own, and the second's upper arrow drags."""
-    with _served(tmp_path, playwright_browser, project=_neighbours_project) as page:
-        page.wait_for_timeout(700)
-        _open_for_grips(page, 0, "points · x")
-        first = _shape(page, "/points/target/0")
-        time = round(first["xanchor"] + apart / first["ppx"], 4)
-        _retype(page, _table_cell(page, 1, "time"), str(time))
-        _settled_at(page, "/points/target/1", "xanchor", time)
-        _plot_under_the_mouse(page)
-        _rest(page)
-        first = _shape(page, "/points/target/0")
-        second = _shape(page, "/points/target/1")
-        assert abs(second["x"] - first["x"] - apart) <= 1.5, (first, second)
-        assert abs(second["y"] - first["y"]) <= 0.5, (first, second)
-
-        page.mouse.move(first["x"] - 30, first["y"] + 40)
-        page.mouse.move(first["x"], first["y"], steps=6)
-        page.wait_for_timeout(100)
-        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
-        page.mouse.move(second["x"], second["y"], steps=max(4, apart // 3))
-        page.wait_for_timeout(100)
-        its_own = _group("points", 1, ("upper", "lower"))
-        assert _grips_on(page)["shown"] == its_own
-        _shot(page, tmp_path, f"neighbours-{apart}")
-        # And back: the first ring is nearest to its own group again.
-        page.mouse.move(first["x"], first["y"], steps=max(4, apart // 3))
-        page.wait_for_timeout(100)
-        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
-        page.mouse.move(second["x"], second["y"], steps=max(4, apart // 3))
-        page.wait_for_timeout(100)
-
-        # Its upper arrow is there to press: dragged up, row 1's tolerance.
-        arrow = _shape(page, "/points/upper/1")
-        assert arrow["box"] is not None, arrow
-        page.mouse.move(arrow["box"]["x"], arrow["box"]["y"], steps=4)
-        assert _grips_on(page)["shown"] == its_own
-        page.mouse.down()
-        page.mouse.move(arrow["box"]["x"], arrow["box"]["y"] - 20, steps=8)
-        page.mouse.up()
-        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
-            "0.1", timeout=EXPECT_TIMEOUT
-        )
-        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
-        assert abs(upper - (0.1 + 20 / arrow["ppy"])) * arrow["ppy"] < 0.5, upper
-        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
-        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
-
-
-def _peak_gap(page) -> float:
-    """Pixels between peak 0's window and peak 1's, edge to edge."""
-    return _shape(page, "/peaks/lower/1")["x"] - _shape(page, "/peaks/upper/0")["x"]
-
-
-def test_of_two_close_peak_windows_each_ones_arrow_in_the_gap_is_its_own(
-    tmp_path, playwright_browser
-):
-    """Two peak windows whose edges are ~24 px apart: an arrow of each
-    stands in the gap, at nearly the same spot. Each is reached from its
-    own window: the first's holds from the first window out onto it and
-    to its far end — while the pointer is on a shown arrow its group stays
-    — and at the second window's edge the second's take over, and hold
-    back out onto ITS arrow in the gap."""
-    with _served(tmp_path, playwright_browser, project=_tables_project) as page:
-        page.wait_for_timeout(700)
-        _open_for_grips(page, 0, "dominant-frequency · x")
-        # Peak 1's frequency until the gap is 24 px: the axis runs to three
-        # times the highest window, so the scale follows the frequency.
-        for _ in range(6):
-            gap = _peak_gap(page)
-            if abs(gap - 24) <= 2:
-                break
-            edge = _shape(page, "/peaks/upper/0")
-            freq = round((edge["xanchor"] + 24 / edge["ppx"]) / 0.95, 4)
-            _retype(page, _table_cell(page, 1, "freq"), str(freq))
-            _settled_at(page, "/peaks/lower/1", "xanchor", 0.95 * freq)
-            _plot_under_the_mouse(page)
-        assert abs(gap - 24) <= 2, gap
-        _rest(page)
-        zero = _group("peaks", 0, ("lower", "upper"))
-        one = _group("peaks", 1, ("lower", "upper"))
-        left, right = _shape(page, "/peaks/upper/0"), _shape(page, "/peaks/lower/1")
-        y = left["y"]  # the arrows' row: mid-height of the spectrum panel
-        inside = _shape(page, "/peaks/lower/0")["x"] + 4
-
-        # From the first window to ITS upper arrow, in the gap: the first's.
-        _rest(page)
-        page.mouse.move(inside, y - 30)
-        page.mouse.move(inside, y, steps=5)
-        page.wait_for_timeout(100)
-        assert _grips_on(page)["shown"] == zero
-        _walk(page, (inside, y), (left["x"] + 13.5, y))
-        assert _grips_on(page)["shown"] == zero
-        mine = _shape(page, "/peaks/upper/0")
-        assert mine["box"] is not None, mine
-        # 2 px past its far end is still on that arrow: the first's, a few
-        # pixels short of the second window.
-        past = mine["box"]["right"] + 2
-        assert 2 <= right["x"] - past <= 8, (mine, right)
-        _walk(page, (left["x"] + 13.5, y), (past, y))
-        assert _grips_on(page)["shown"] == zero
-        # At the second window's edge: the second's.
-        _walk(page, (past, y), (right["x"] + 3, y))
-        assert _grips_on(page)["shown"] == one
-        # And back out onto ITS lower arrow in the gap, at nearly the same
-        # spot as the first's: the second's holds.
-        arrow = _shape(page, "/peaks/lower/1")
-        assert arrow["box"] is not None, arrow
-        _walk(page, (right["x"] + 3, y), (arrow["box"]["x"], y))
-        assert _grips_on(page)["shown"] == one
-        assert abs(mine["box"]["x"] - arrow["box"]["x"]) <= 6, (mine, arrow)
-        _shot(page, tmp_path, "neighbours-peaks")
-
-        # The second's upper arrow, reached across the second window:
-        # pressed and dragged right, row 1's upper side.
-        page.mouse.move(right["x"] + 3, y, steps=6)
-        page.wait_for_timeout(100)
-        assert _grips_on(page)["shown"] == one
-        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.2")
-        far = _shape(page, "/peaks/upper/1")
-        assert far["box"] is not None, far
-        page.mouse.move(far["box"]["x"], y, steps=8)
-        assert _grips_on(page)["shown"] == one
-        page.mouse.down()
-        page.mouse.move(far["box"]["x"] + 15, y, steps=8)
-        page.mouse.up()
-        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
-            "0.2", timeout=EXPECT_TIMEOUT
-        )
-        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
 
 
 # -- the hover label keeps off the arrows ---------------------------------------
@@ -8809,13 +8519,19 @@ def test_a_deferring_rows_arrow_leaves_the_other_modes_rows_alone(
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("")
 
 
-# -- an arrow that faces a neighbour stays under the pointer --------------------
+# -- clusters: groups whose hover areas overlap show together --------------------
 #
-# An arrow is drawn 10 to 17 px OUTSIDE its anchor: where two checkpoints or
-# two windows stand close, that is on the neighbour. The reach of an arrow is
-# measured as a person finds it — the real mouse, a pixel at a time, from the
-# arrow's own ring (a window's: its own edge) out along it — and counted in
-# the 7 px of its length.
+# The owner's ruling: only the arrows near the pointer show, and points that
+# overlap or stand very close show TOGETHER. A group — a checkpoint, an
+# event, a peak: its ring and its arrows — has a hover area: the box of its
+# ring and its arrows' anchors, 25 px larger on every side (a window's: its
+# edges, over the whole height of its panel). Groups whose areas overlap are
+# one cluster; with the pointer in any of a cluster's areas every arrow of
+# every member is displayed, and outside every area none. There is no
+# nearest group and nothing is kept from where the pointer was.
+#
+# Measured as a person finds it: the real mouse, a pixel at a time, every
+# position read off the live figure.
 
 #: Set axes of plot ``card`` to a scale: ``{axis: [start, px per unit]}``.
 #: The range is the axis's own length at that scale, so what is declared in
@@ -8848,7 +8564,7 @@ ARROW_AT = """
   const ya = fl['yaxis' + (paper ? xa.anchor : s.yref || 'y').slice(1)];
   const apex = /M\\s*(-?[0-9.]+)\\s*,\\s*(-?[0-9.]+)/.exec(s.path);
   return {
-    index: i, name: s.name, paper,
+    index: i, name: s.name, paper, xanchor: s.xanchor, yanchor: s.yanchor,
     x: rect.left + xa._offset + xa.d2p(s.xanchor),
     y: rect.top + (paper ? fl._size.t + fl._size.h * (1 - s.yanchor)
                          : ya._offset + ya.d2p(s.yanchor)),
@@ -8873,15 +8589,154 @@ ARROW_STATE = """
 }
 """
 
-#: The last segment of the group plot ``card`` shows — a checkpoint's, an
-#: event's or a peak's row — or null.
-SHOWN_GROUP = """
+#: The arrows of plot ``card`` a person SEES, by the tail of their names: a
+#: path under `display: none` has no box.
+DISPLAYED = """
 (card) => {
-  const el = document.querySelectorAll('.js-plotly-plot')[card]
-    .querySelector('.shapelayer path[data-grip-on]');
-  return el ? el.getAttribute('data-grip').split('/').pop() : null;
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const shapes = gd.layout.shapes || [];
+  return [...gd.querySelectorAll('.shapelayer path[data-grip]')]
+    .filter(el => {
+      const b = el.getBoundingClientRect();
+      return b.width > 0 && b.height > 0;
+    })
+    .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
+    .sort();
 }
 """
+
+#: Shape ``index`` of plot ``card`` — an arrow — and viewport ``(x, y)``:
+#: whether the arrow is displayed, and WHICH shape a press there is on
+#: (`document.elementFromPoint`): its index in the figure, the tail of its
+#: name, whether it is an arrow.
+UNDER_POINTER = """
+([card, index, x, y]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const shapes = gd.layout.shapes || [];
+  const el = gd.querySelector('.shapelayer path[data-index="' + index + '"]');
+  const b = el ? el.getBoundingClientRect() : null;
+  const hit = document.elementFromPoint(x, y);
+  const shape = hit && hit.closest('.shapelayer') && hit.hasAttribute('data-index');
+  const at = shape ? +hit.getAttribute('data-index') : null;
+  return {
+    displayed: !!b && b.width > 0 && b.height > 0,
+    index: at,
+    hit: at === null ? null : shapes[at].name.split('/').slice(-3).join('/'),
+    arrow: at !== null && hit.hasAttribute('data-grip'),
+  };
+}
+"""
+
+#: Plot ``card``'s groups as its figure names them (`layout.meta.dstf`), each
+#: with what the figure draws of it, in viewport pixels: the x of its ring
+#: and of its arrows' anchors, their y — for an anchor on the PAPER, its
+#: panel's top and bottom — its arrows by the tail of their names, and its
+#: ring. Keyed by the group's last two segments (`points/0`).
+GROUPS_AT = """
+(card) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const said = gd.layout.meta.dstf;
+  const out = {};
+  for (const s of gd.layout.shapes || []) {
+    // An empty dict of a figure's `meta` need not survive Plotly.
+    const grip = (said.grips || {})[s.name];
+    const group = grip ? grip.group : (said.targets || {})[s.name];
+    if (!group) continue;
+    const xa = fl['xaxis' + (s.xref || 'x').slice(1)];
+    const paper = s.yref === 'paper';
+    const ya = fl['yaxis' + (paper ? xa.anchor : s.yref || 'y').slice(1)];
+    const key = group.split('/').slice(-2).join('/');
+    const g = out[key] = out[key] || {xs: [], ys: [], arrows: [], rings: []};
+    const x = rect.left + xa._offset + xa.d2p(s.xanchor);
+    g.xs.push(x);
+    if (paper) {
+      g.ys.push(rect.top + ya._offset, rect.top + ya._offset + ya._length);
+    } else {
+      g.ys.push(rect.top + ya._offset + ya.d2p(s.yanchor));
+    }
+    if (grip) g.arrows.push(s.name.split('/').slice(-3).join('/'));
+    else g.rings.push([x, g.ys[g.ys.length - 1]]);
+  }
+  const box = {left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom};
+  return {groups: out, box};
+}
+"""
+
+#: How far a group's hover area reaches outside its ring and its arrows'
+#: anchors, px — the ruling's number, said here and not read from the page.
+REACH = 25
+
+
+def _areas(page, card: int = 0) -> dict[str, dict]:
+    """Each group's hover area as the RULING says it, worked out here from
+    the live figure and never read from the page's module: the box of its
+    ring and its arrows' anchors, `REACH` px larger on every side. To the
+    hundredth of a pixel, the precision Plotly draws at."""
+    groups = page.evaluate(GROUPS_AT, card)["groups"]
+    return {
+        key: {
+            "l": round(min(g["xs"]) - REACH, 2),
+            "r": round(max(g["xs"]) + REACH, 2),
+            "t": round(min(g["ys"]) - REACH, 2),
+            "b": round(max(g["ys"]) + REACH, 2),
+            "arrows": sorted(g["arrows"]),
+            "rings": g["rings"],
+        }
+        for key, g in groups.items()
+    }
+
+
+def _overlap(p: dict, q: dict) -> bool:
+    """Whether two areas overlap — touching counts."""
+    return (
+        p["l"] <= q["r"] and q["l"] <= p["r"] and p["t"] <= q["b"] and q["t"] <= p["b"]
+    )
+
+
+def _clusters(areas: dict[str, dict]) -> list[list[str]]:
+    """The clusters of ``areas``: groups whose areas overlap, through every
+    group between — each sorted, and the list of them."""
+    left = sorted(areas)
+    clusters: list[list[str]] = []
+    while left:
+        cluster, grown = [left.pop(0)], True
+        while grown:
+            grown = False
+            for key in list(left):
+                if any(_overlap(areas[key], areas[member]) for member in cluster):
+                    cluster.append(key)
+                    left.remove(key)
+                    grown = True
+        clusters.append(sorted(cluster))
+    return sorted(clusters)
+
+
+def _arrows_of(areas: dict[str, dict], groups: list[str]) -> list[str]:
+    return sorted(arrow for key in groups for arrow in areas[key]["arrows"])
+
+
+def _ruled_at(areas: dict[str, dict], x: float, y: float) -> list[str] | None:
+    """The arrows the ruling shows with the pointer at ``(x, y)``: every
+    arrow of the cluster one of whose areas holds it, none outside every
+    area. None within 1.5 px of an area's edge: there the pointer's own
+    rounding decides, and nothing is claimed."""
+
+    def holds(a: dict, grow: float) -> bool:
+        return (
+            a["l"] - grow <= x <= a["r"] + grow and a["t"] - grow <= y <= a["b"] + grow
+        )
+
+    for cluster in _clusters(areas):
+        if any(holds(areas[key], -1.5) for key in cluster):
+            return _arrows_of(areas, cluster)
+    if any(holds(a, 1.5) for a in areas.values()):
+        return None
+    return []
+
+
+def _displayed(page, card: int = 0) -> list[str]:
+    return page.evaluate(DISPLAYED, card)
 
 
 def _line(a, b, step: float = 1.0) -> list[tuple[float, float]]:
@@ -8898,6 +8753,20 @@ def _walk(page, a, b, step: float = 1.0) -> None:
     """The real mouse from ``a`` to ``b``, ``step`` px at a time."""
     for x, y in _line(a, b, step):
         page.mouse.move(x, y)
+
+
+def _seen_along(page, a, b, card: int = 0) -> list[list[str]]:
+    """What the real mouse meets from ``a`` to ``b``, a pixel at a time:
+    each set of displayed arrows, once per stretch it shows for."""
+    seen: list[list[str]] = []
+    _rest(page)
+    page.mouse.move(*a)
+    for at in [a, *_line(a, b)]:
+        page.mouse.move(*at)
+        shown = _displayed(page, card)
+        if seen[-1:] != [shown]:
+            seen.append(shown)
+    return seen
 
 
 def _come_to(page, tail: str, card: int = 0) -> tuple[dict, tuple[float, float]]:
@@ -8959,21 +8828,7 @@ def _press_arrow(page, tail: str, by: float, card: int = 0) -> dict:
     return arrow
 
 
-def _groups_along(page, a, b, step: float, card: int = 0) -> list[str]:
-    """The groups shown one after another as the real mouse walks from
-    ``a`` to ``b`` — each named once per stretch it shows for."""
-    seen: list[str] = []
-    _rest(page)
-    page.mouse.move(*a)
-    for x, y in [a, *_line(a, b, step)]:
-        page.mouse.move(x, y)
-        group = page.evaluate(SHOWN_GROUP, card)
-        if group is not None and seen[-1:] != [group]:
-            seen.append(group)
-    return seen
-
-
-#: The scale the reach tests set: a checkpoint's 0.012 of time is 12 px.
+#: The scale the cluster tests set: 0.001 of time is 1 px, 0.005 of a value.
 TIME_SCALE = {"xaxis": [-0.05, 1000.0], "yaxis": [-0.1, 200.0]}
 
 
@@ -8996,24 +8851,25 @@ def _points_on_x_project(tmp_path: Path, points: list[dict]) -> tuple[Path, Path
     return cfg, work
 
 
-def _row_of_points_project(tmp_path: Path, apart: tuple[int, ...]) -> tuple[Path, Path]:
-    """A scored on x by checkpoints in a row — the first at t = 0.4, each
-    next ``apart`` thousandths later — of one value, each with a time
-    tolerance of 0.012 either side: at 1000 px per unit of time, ``apart``
-    px between rings and arrows 12 px either side."""
-    times = [0.4]
-    for gap in apart:
-        times.append(round(times[-1] + gap / 1000, 6))
+def _checkpoints_project(
+    tmp_path: Path, places: tuple[tuple[int, float], ...]
+) -> tuple[Path, Path]:
+    """A scored on x by one checkpoint per ``(time in thousandths, value)``
+    of ``places``, each holding a PAIR for its tolerance (0.1 either side)
+    and for its time tolerance (0.012 either side) — a dragged side moves
+    one cell. At `TIME_SCALE` a thousandth of time is a pixel: each ring
+    has its arrows' anchors 12 px before and after it, 20 px above and
+    below, so its hover area is 74 px wide and 90 px tall about it."""
     return _points_on_x_project(
         tmp_path,
         [
             {
-                "time": t,
-                "value": 0.5,
-                "tolerance": 0.1,
+                "time": round(at / 1000, 6),
+                "value": value,
+                "tolerance": {"lower": 0.1, "upper": 0.1},
                 "time_tolerance": {"lower": 0.012, "upper": 0.012},
             }
-            for t in times
+            for at, value in places
         ],
     )
 
@@ -9024,237 +8880,594 @@ def _open_scaled(page, name: str, axes: dict) -> None:
     _plot_under_the_mouse(page)
 
 
-def _times(page, rows: int) -> list[list[str]]:
-    """Each row's time tolerance, as its cells read."""
-    return [
-        [
-            _table_cell(page, row, f"{side} time_tolerance").input_value()
-            for side in ("before", "after")
-        ]
+#: The cells a checkpoint's arrows set, by the arrow's edge.
+POINT_CELLS = {
+    "upper": "+ tolerance",
+    "lower": "− tolerance",
+    "before": "before time_tolerance",
+    "after": "after time_tolerance",
+}
+
+
+def _cells(page, rows: int, labels) -> dict[tuple[int, str], str]:
+    """What each of the ``labels`` cells of the editor's first ``rows`` rows
+    reads."""
+    return {
+        (row, label): _table_cell(page, row, label).input_value()
         for row in range(rows)
-    ]
+        for label in labels
+    }
 
 
-@pytest.mark.parametrize("apart", [40, 25, 15, 8])
-def test_every_arrow_of_two_close_checkpoints_is_reached_from_its_own_ring(
-    tmp_path, playwright_browser, apart
-):
-    """Two checkpoints 40, 25, 15 or 8 px apart, each with a time tolerance
-    of 12 px either side: the first's `after` arrow is drawn on the second,
-    the second's `before` on the first. The shown group was the one whose
-    nearest ANCHOR was closest, so walking from a ring onto its own arrow
-    brought the pointer nearer the neighbour's anchors and the arrow went
-    from under it — 4 or 5 of its 7 px at 40 px, 0 at 25, 1 at 15, 0 at 8.
-    The arrows' drawn TIPS are points of their group, and the group whose
-    shown arrow the pointer is over stays: all 7 px of every arrow, and a
-    press on a facing one drags it — its own row's side, across the
-    neighbour's ring."""
-    project = partial(_row_of_points_project, apart=(apart,))
-    with _served(tmp_path, playwright_browser, project=project) as page:
-        page.wait_for_timeout(700)
-        _open_scaled(page, "points · x", TIME_SCALE)
-        first, second = (_shape(page, f"/points/target/{i}") for i in (0, 1))
-        assert abs(second["x"] - first["x"] - apart) <= 1, (first, second)
-        assert abs(first["ppx"] - 1000) <= 20, first
-        tails = [f"/points/{edge}/{i}" for i in (0, 1) for edge in FOUR]
-        reach = _reaches(page, tails)
-        print("REACH", apart, reach)
-        assert reach == {tail.strip("/"): 7 for tail in tails}, reach
-
-        # The first's `after`, pressed where it stands on the second and
-        # dragged 40 px on across the second's ring: the first's own side.
-        was = _times(page, 2)
-        arrow = _press_arrow(page, "/points/after/0", 40)
-        expect(_table_cell(page, 0, "after time_tolerance")).not_to_have_value(
-            was[0][1], timeout=EXPECT_TIMEOUT
-        )
-        now = _times(page, 2)
-        after = float(now[0][1])
-        assert abs(after - (0.012 + 40 / arrow["ppx"])) * arrow["ppx"] < 1, (after, was)
-        assert (now[0][0], now[1]) == (was[0][0], was[1]), (was, now)
-        _settled_at(page, "/points/after/0", "xanchor", first["xanchor"] + after)
-        page.wait_for_timeout(300)
-        # And the second's `before`, on the first.
-        arrow = _press_arrow(page, "/points/before/1", 20)
-        expect(_table_cell(page, 1, "before time_tolerance")).not_to_have_value(
-            was[1][0], timeout=EXPECT_TIMEOUT
-        )
-        then = _times(page, 2)
-        before = float(then[1][0])
-        assert abs(before - (0.012 + 20 / arrow["ppx"])) * arrow["ppx"] < 1, before
-        assert (then[0], then[1][1]) == (now[0], now[1][1]), (now, then)
-        _shot(page, tmp_path, f"reach-points-{apart}")
+def _discard(page) -> None:
+    """Drop the staged edit: the figure is the one the test opened."""
+    page.locator(".dstf-header-row").get_by_role(
+        "button", name=re.compile("Discard")
+    ).click()
+    expect(page.locator(".dstf-header-row")).to_contain_text(
+        "0 pending edits", timeout=EXPECT_TIMEOUT
+    )
 
 
-@pytest.mark.parametrize("apart", [40, 25, 15, 8])
-@pytest.mark.parametrize("step", [1, 5])
-def test_between_two_close_checkpoints_the_shown_group_changes_once(
-    tmp_path, playwright_browser, apart, step
-):
-    """No flicker: along the line of the two rings, from left of the first
-    to right of the second and back, the shown group changes ONCE each way
-    — a pixel at a time and five at a time. The shown group keeps a 6 px
-    advantage: without it the two took turns as each one's anchors, rings
-    and tips came nearest."""
-    project = partial(_row_of_points_project, apart=(apart,))
-    with _served(tmp_path, playwright_browser, project=project) as page:
-        page.wait_for_timeout(700)
-        _open_scaled(page, "points · x", TIME_SCALE)
-        first, second = (_shape(page, f"/points/target/{i}") for i in (0, 1))
-        left = (first["x"] - 70, first["y"])
-        right = (second["x"] + 70, second["y"])
-        assert _groups_along(page, left, right, step) == ["0", "1"]
-        assert _groups_along(page, right, left, step) == ["1", "0"]
+def _plot_box(page, card: int = 0) -> dict:
+    """Plot ``card``'s own box — the element that hears the pointer."""
+    return page.evaluate(GROUPS_AT, card)["box"]
 
 
-#: Two checkpoints 38 px apart at `TIME_SCALE`, the first with its 12 px of
-#: time either side and the second with none: the middle of the first's
-#: `after` arrow stands 12.5 px short of the second's ring.
-BESIDE_AN_ARROW = [
-    {
-        "time": 0.4,
-        "value": 0.5,
-        "tolerance": 0.1,
-        "time_tolerance": {"lower": 0.012, "upper": 0.012},
-    },
-    {"time": 0.438, "value": 0.5, "tolerance": 0.1},
-]
+def _over(box: dict, *points) -> bool:
+    """Whether every one of ``points`` is over the plot whose box is ``box``."""
+    return all(
+        box["left"] + 1 < x < box["right"] - 1
+        and box["top"] + 1 < y < box["bottom"] - 1
+        for x, y in points
+    )
 
 
-def test_an_arrow_shows_where_it_is_drawn_coming_from_its_neighbour(
+def test_far_apart_checkpoints_show_their_own_arrows_and_between_them_none(
     tmp_path, playwright_browser
 ):
-    """Where an arrow is DRAWN is a place of its group, as its anchor and
-    its ring are. From the second checkpoint's ring, along the line of the
-    rings, the pointer comes to where the first's `after` arrow stands:
-    its middle, 13.5 px beyond its anchor and 12.5 px from the ring the
-    pointer left. The first's arrows show there, and that arrow takes the
-    press. By its anchors alone the first was not the nearer until the
-    pointer was past its arrow."""
-    project = partial(_points_on_x_project, points=BESIDE_AN_ARROW)
+    """Two checkpoints 200 px apart: their areas are disjoint, so they are
+    two clusters. On one, exactly its four arrows; between them, none —
+    every arrow `display: none` — and along the line of the rings each
+    one's four come and go once."""
+    project = partial(_checkpoints_project, places=((400, 0.5), (600, 0.5)))
     with _served(tmp_path, playwright_browser, project=project) as page:
         page.wait_for_timeout(700)
         _open_scaled(page, "points · x", TIME_SCALE)
-        _, home = _come_to(page, "/points/upper/1")
-        assert page.evaluate(SHOWN_GROUP, 0) == "1"
-        arrow = page.evaluate(ARROW_AT, [0, "/points/after/0"])
-        middle = _along(arrow, 13.5)
-        assert abs(home[0] - middle[0] - 12.5) <= 1 and home[1] == middle[1], (
-            home,
-            middle,
+        areas = _areas(page)
+        assert _clusters(areas) == [["points/0"], ["points/1"]], areas
+        assert areas["points/1"]["l"] - areas["points/0"]["r"] == pytest.approx(
+            126, abs=0.02
+        ), areas
+        zero, one = _group("points", 0, FOUR), _group("points", 1, FOUR)
+        first, second = (areas[f"points/{i}"]["rings"][0] for i in (0, 1))
+        _rest(page)
+        page.mouse.move(*first)
+        assert _displayed(page) == zero
+        page.mouse.move(*second)
+        assert _displayed(page) == one
+        between = ((first[0] + second[0]) / 2, first[1])
+        page.mouse.move(*between)
+        assert _displayed(page) == []
+        hidden = page.evaluate(
+            """() => [...document.querySelectorAll('.js-plotly-plot')[0]
+                 .querySelectorAll('.shapelayer path[data-grip]')]
+                 .map(el => getComputedStyle(el).display)"""
         )
-        _walk(page, home, middle)
-        assert page.evaluate(SHOWN_GROUP, 0) == "0"
-        state = page.evaluate(ARROW_STATE, [0, arrow["index"], *middle])
-        assert state == {"on": True, "hit": True}, state
+        assert hidden == ["none"] * 8, hidden
+        left, right = (first[0] - 80, first[1]), (second[0] + 80, second[1])
+        assert _over(_plot_box(page), left, right)
+        assert _seen_along(page, left, right) == [[], zero, [], one, []]
+        assert _seen_along(page, right, left) == [[], one, [], zero, []]
+        _shot(page, tmp_path, "clusters-far-apart")
 
 
-#: A checkpoint whose ring stands on the far corner of the first one's
-#: `after` arrow at `TIME_SCALE`: that arrow's box runs 22 to 29 px right
-#: of the first ring and 6 px above and below it.
-ON_THE_CORNER = [
-    {
-        "time": 0.4,
-        "value": 0.5,
-        "tolerance": 0.1,
-        "time_tolerance": {"lower": 0.012, "upper": 0.012},
-    },
-    {"time": 0.429, "value": 0.47, "tolerance": 0.1},
-]
+#: The checkpoints of each clustered case: ``(time in thousandths, value)``,
+#: in the order they are declared — the order their arrows are drawn in.
+CLUSTERED = {
+    "40 px apart": ((400, 0.5), (440, 0.5)),
+    "30 px apart": ((400, 0.5), (430, 0.5)),
+    "25 px apart": ((400, 0.5), (425, 0.5)),
+    "18 px apart": ((400, 0.5), (418, 0.5)),
+    "15 px apart": ((400, 0.5), (415, 0.5)),
+    "8 px apart": ((400, 0.5), (408, 0.5)),
+    "three in a row": ((400, 0.5), (415, 0.5), (430, 0.5)),
+    # Each overlaps the next and the outer two do NOT overlap each other:
+    # one cluster only through the middle one — declared LAST, so that it
+    # joins two clusters already found.
+    "a chain of three": ((400, 0.5), (520, 0.5), (460, 0.5)),
+    # 60 px apart in time and 70 px in value: the two areas overlap in a
+    # corner, and the box around both has two corners in neither.
+    "an L": ((400, 0.3), (460, 0.65)),
+    # On ONE spot: every arrow of the first is drawn under the second's.
+    "one spot": ((500, 0.5), (500, 0.5)),
+}
+
+#: The arrows of a case that are NOT whole under the pointer: how many of
+#: their 7 centreline px are their own, and whose arrow — a member's, drawn
+#: later — a press on the rest, and at their middle, takes. Every other
+#: arrow of every case: all 7, and its own middle.
+COVERED = {
+    "one spot": {f"points/{edge}/0": (0, f"points/{edge}/1") for edge in FOUR},
+}
 
 
-def test_the_group_of_a_shown_arrow_under_the_pointer_stays(
-    tmp_path, playwright_browser
+@pytest.mark.parametrize("case", CLUSTERED)
+def test_close_checkpoints_show_together_wherever_the_pointer_is_in_their_areas(
+    tmp_path, playwright_browser, case
 ):
-    """While the pointer is on a shown arrow — its box, and 3 px around it
-    — that arrow's group stays, whatever else is nearer. A neighbour's ring
-    stands on the far corner of the first checkpoint's `after` arrow, 7 px
-    from that arrow's middle: by distance alone the neighbour took over
-    there, and the arrow went from under the pointer at its own corner.
-    Off the arrow, the nearer group shows as it does anywhere."""
-    project = partial(_points_on_x_project, points=ON_THE_CORNER)
+    """Checkpoints whose hover areas overlap are ONE cluster — the pair
+    40, 30, 25, 18, 15 and 8 px apart, three in a row, three of which the
+    outer two meet only through the middle one, two that overlap in a
+    corner, two on one spot. With the pointer anywhere in the areas ALL
+    their arrows are displayed, and outside them none: over a grid of the
+    box around them, the displayed arrows are what the ruling says at
+    every point. Along the line of the rings and down each ring's own
+    column, both ways, a pixel at a time, what is displayed changes
+    exactly twice — coming in, going out — and never inside.
+
+    (Shown one group at a time, by whichever was nearest: 18 or 30 px
+    apart, and three in a row 15 px apart, a facing arrow could not be
+    reached, the display flickered `0,1,0,1`, and a press where a hidden
+    arrow belonged moved the neighbour's ring.)"""
+    places = CLUSTERED[case]
+    project = partial(_checkpoints_project, places=places)
     with _served(tmp_path, playwright_browser, project=project) as page:
         page.wait_for_timeout(700)
         _open_scaled(page, "points · x", TIME_SCALE)
-        arrow, home = _come_to(page, "/points/after/0")
-        other = _shape(page, "/points/target/1")
-        corner = (arrow["x"] + 17, arrow["y"] + 6)
-        assert abs(other["x"] - corner[0]) <= 1 and abs(other["y"] - corner[1]) <= 1, (
-            arrow,
-            other,
+        areas = _areas(page)
+        every = _arrows_of(areas, sorted(areas))
+        assert len(areas) == len(places) and len(every) == 4 * len(places), areas
+        # Each ring where it was declared, to the pixel: its area is 74 px
+        # by 90 about it.
+        rings = [areas[f"points/{i}"]["rings"][0] for i in range(len(places))]
+        for i, (at, value) in enumerate(places):
+            assert rings[i][0] - rings[0][0] == pytest.approx(
+                at - places[0][0], abs=0.02
+            ), (case, rings)
+            assert rings[0][1] - rings[i][1] == pytest.approx(
+                200 * (value - places[0][1]), abs=0.02
+            ), (case, rings)
+            a = areas[f"points/{i}"]
+            assert (a["r"] - a["l"], a["b"] - a["t"]) == pytest.approx(
+                (74, 90), abs=0.02
+            ), (case, a)
+        assert _clusters(areas) == [sorted(areas)], (case, areas)
+        if case == "a chain of three":
+            assert not _overlap(areas["points/0"], areas["points/1"]), areas
+        left = min(a["l"] for a in areas.values())
+        right = max(a["r"] for a in areas.values())
+        top = min(a["t"] for a in areas.values())
+        bottom = max(a["b"] for a in areas.values())
+        box = _plot_box(page)
+        assert _over(box, (left - 12, top - 12), (right + 12, bottom + 12))
+
+        # Everywhere: a grid over the box around the areas and 9 px beyond.
+        _rest(page)
+        inside = outside = 0
+        for x in range(int(left) - 9, int(right) + 10, 7):
+            for y in range(int(top) - 9, int(bottom) + 10, 7):
+                ruled = _ruled_at(areas, x, y)
+                if ruled is None:
+                    continue
+                page.mouse.move(x, y)
+                assert _displayed(page) == ruled, (case, x - left, y - top)
+                inside += ruled == every
+                outside += ruled == []
+        print("GRID", case, inside, outside)
+        assert inside > 100 and outside > 20, (case, inside, outside)
+        if case == "an L":
+            # The two corners of the box that are in neither area — 15 px
+            # inside the box, well clear of both.
+            for corner in ((left + 15, top + 15), (right - 15, bottom - 15)):
+                assert left < corner[0] < right and top < corner[1] < bottom
+                assert _ruled_at(areas, *corner) == [], (areas, corner)
+                page.mouse.move(*corner)
+                assert _displayed(page) == [], corner
+            page.mouse.move(*rings[0])
+            assert _displayed(page) == every
+            _shot(page, tmp_path, "clusters-an-L")
+
+        # Along the line of the rings, and down each ring's own column:
+        # in, and out.
+        first, last = min(rings), max(rings)
+        span = math.hypot(last[0] - first[0], last[1] - first[1])
+        ux, uy = (
+            ((last[0] - first[0]) / span, (last[1] - first[1]) / span)
+            if span
+            else (1.0, 0.0)
         )
-        middle = _along(arrow, 13.5)
-        _walk(page, home, middle)
-        assert page.evaluate(SHOWN_GROUP, 0) == "0"
-        # To the corner, a pixel at a time: on the neighbour's ring, and
-        # still the first's.
-        for x, y in _line(middle, (other["x"], other["y"])):
-            page.mouse.move(x, y)
-            assert page.evaluate(SHOWN_GROUP, 0) == "0", (
-                x - arrow["x"],
-                y - arrow["y"],
+        walks = [
+            (
+                (first[0] - 80 * ux, first[1] - 80 * uy),
+                (last[0] + 80 * ux, last[1] + 80 * uy),
             )
-        assert math.hypot(other["x"] - middle[0], other["y"] - middle[1]) > 6
-        box = _shape(page, "/points/after/0")["box"]
-        assert box["left"] <= other["x"] <= box["right"] + 1, (box, other)
-        # Straight down off the arrow, 8 px: the neighbour's.
-        _walk(page, (other["x"], other["y"]), (other["x"], other["y"] + 8))
-        assert page.evaluate(SHOWN_GROUP, 0) == "1"
+        ] + [((x, top - 12), (x, bottom + 12)) for x, _ in rings]
+        changes = {}
+        for a, b in walks:
+            assert _ruled_at(areas, *a) == [] and _ruled_at(areas, *b) == [], (a, b)
+            assert _over(box, a, b), (a, b)
+            for start, end in ((a, b), (b, a)):
+                seen = _seen_along(page, start, end)
+                changes[(start, end)] = len(seen) - 1
+                assert seen == [[], every, []], (case, start, end, seen)
+        print("CHANGES", case, sorted(set(changes.values())), len(changes))
+        _shot(page, tmp_path, f"clusters-{case.replace(' ', '-')}")
 
 
-def test_the_middle_of_three_checkpoints_in_a_row_is_reached_whole(
-    tmp_path, playwright_browser
+@pytest.mark.parametrize("case", CLUSTERED)
+def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
+    tmp_path, playwright_browser, case
 ):
-    """Three checkpoints 15 px apart, each with its 12 px of time either
-    side: the middle one's `before` and `after` stand on its neighbours'
-    rings, and 1 or 2 of their 7 px could be reached. All four of the
-    middle one's arrows are reached whole from its ring, and so is every
-    arrow that faces no neighbour.
-
-    NOT claimed here, and printed: the outer two's facing arrows
-    (`after/0`, `before/2`). The far neighbour's own anchor stands exactly
-    6 px beyond theirs — on the last pixel before the arrow's box, where
-    the far group is exactly the 6 px nearer that takes over — and they are
-    not reached; nor does the middle group show along the line of the
-    rings a pixel at a time."""
-    project = partial(_row_of_points_project, apart=(15, 15))
+    """REACH: every arrow of every member of a cluster has all 7 px of its
+    centreline displayed and under the pointer, coming onto it from its
+    own ring — except where another member's arrow is drawn on top of it,
+    and there it is the LATER-drawn one a press takes (`COVERED`: two
+    checkpoints on one spot). And a press on an arrow's middle drags THAT
+    arrow: the one cell of its own row and no other — the first's `after`
+    where it stands on the second, the `before` of the middle of three,
+    which, hidden, had let the press through to the neighbour's ring."""
+    places = CLUSTERED[case]
+    project = partial(_checkpoints_project, places=places)
     with _served(tmp_path, playwright_browser, project=project) as page:
         page.wait_for_timeout(700)
         _open_scaled(page, "points · x", TIME_SCALE)
-        rings = [_shape(page, f"/points/target/{i}") for i in (0, 1, 2)]
-        assert abs(rings[1]["x"] - rings[0]["x"] - 15) <= 1, rings
-        assert abs(rings[2]["x"] - rings[1]["x"] - 15) <= 1, rings
-        tails = [f"/points/{edge}/{i}" for i in (0, 1, 2) for edge in FOUR]
-        reach = _reaches(page, tails)
-        print("REACH", "3 x 15", reach)
-        unclaimed = {"points/after/0", "points/before/2"}
-        claimed = {tail: n for tail, n in reach.items() if tail not in unclaimed}
-        assert claimed == dict.fromkeys(claimed, 7) and len(claimed) == 10, reach
-        left = (rings[0]["x"] - 70, rings[0]["y"])
-        right = (rings[2]["x"] + 70, rings[2]["y"])
-        for step in (1, 5):
-            ahead = _groups_along(page, left, right, step)
-            back = _groups_along(page, right, left, step)
-            print("ALONG", step, ahead, back)
-        # A drag of the middle one's `after`, pressed on the third's ring:
-        # the middle row's own side.
-        was = _times(page, 3)
-        _press_arrow(page, "/points/after/1", 30)
-        expect(_table_cell(page, 1, "after time_tolerance")).not_to_have_value(
-            was[1][1], timeout=EXPECT_TIMEOUT
+        areas = _areas(page)
+        every = _arrows_of(areas, sorted(areas))
+        tails = [f"points/{edge}/{i}" for i in range(len(places)) for edge in FOUR]
+        assert sorted(tails) == every
+        covered = COVERED.get(case, {})
+
+        reach = {}
+        for tail in tails:
+            arrow, home = _come_to(page, f"/{tail}")
+            _walk(page, home, _along(arrow, 10.5))
+            own, under = 0, set()
+            for k in range(7):
+                at = _along(arrow, 10.5 + k)
+                page.mouse.move(*at)
+                assert _displayed(page) == every, (case, tail, k)
+                state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *at])
+                assert state["displayed"], (case, tail, k, state)
+                if state["index"] == arrow["index"]:
+                    own += 1
+                    continue
+                # Not its own: a member's arrow, drawn later, on top.
+                assert state["arrow"] and state["index"] > arrow["index"], (
+                    case,
+                    tail,
+                    k,
+                    state,
+                )
+                under.add(state["hit"])
+            reach[tail] = (own, sorted(under))
+        print("REACH", case, reach)
+        assert reach == {
+            tail: (
+                (covered[tail][0], [covered[tail][1]]) if tail in covered else (7, [])
+            )
+            for tail in tails
+        }, (case, reach)
+
+        labels = list(POINT_CELLS.values())
+        for tail in tails:
+            # The arrow a press at this one's middle takes: itself, or the
+            # one drawn on top of it.
+            taken = covered[tail][1] if tail in covered else tail
+            _, edge, row = taken.split("/")
+            was = _cells(page, len(places), labels)
+            arrow, home = _come_to(page, f"/{tail}")
+            middle = _along(arrow, 13.5)
+            _walk(page, home, middle)
+            state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *middle])
+            assert state["hit"] == taken, (case, tail, state)
+            page.mouse.down()
+            _walk(page, middle, _along(arrow, 13.5 + 12))
+            page.mouse.up()
+            cell = (int(row), POINT_CELLS[edge])
+            expect(_table_cell(page, *cell)).not_to_have_value(
+                was[cell], timeout=EXPECT_TIMEOUT
+            )
+            page.wait_for_timeout(300)
+            now = _cells(page, len(places), labels)
+            moved = [key for key in was if was[key] != now[key]]
+            assert moved == [cell], (case, tail, moved)
+            # 12 px further out, at 1 px per thousandth or 200 per unit.
+            by = float(now[cell]) - float(was[cell])
+            scale = 1000 if edge in ("before", "after") else 200
+            assert abs(by * scale - 12) < 1, (case, tail, by)
+            _discard(page)
+            _settled_at(
+                page,
+                f"/{taken}",
+                "xanchor" if edge in ("before", "after") else "yanchor",
+                arrow["xanchor" if edge in ("before", "after") else "yanchor"],
+            )
+            page.wait_for_timeout(200)
+
+
+@pytest.mark.parametrize("gap", [50, 51])
+def test_two_areas_that_just_touch_are_one_cluster_and_a_pixel_apart_two(
+    tmp_path, playwright_browser, gap
+):
+    """The boundary. Two checkpoints whose arrows' anchors stand 50 px
+    apart at the nearest: each area reaches 25 px, the two just touch, and
+    touching counts — one cluster, all eight arrows from either ring. At
+    51 px a pixel lies between the areas: two clusters, each ring its own
+    four, and never all eight."""
+    places = ((400, 0.5), (400 + 24 + gap, 0.5))
+    project = partial(_checkpoints_project, places=places)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        after = page.evaluate(ARROW_AT, [0, "/points/after/0"])
+        before = page.evaluate(ARROW_AT, [0, "/points/before/1"])
+        assert before["x"] - after["x"] == pytest.approx(gap, abs=1e-6), (after, before)
+        areas = _areas(page)
+        assert areas["points/1"]["l"] - areas["points/0"]["r"] == gap - 50, areas
+        zero, one = _group("points", 0, FOUR), _group("points", 1, FOUR)
+        every = sorted(zero + one)
+        rings = [areas[f"points/{i}"]["rings"][0] for i in (0, 1)]
+        left, right = (rings[0][0] - 80, rings[0][1]), (rings[1][0] + 80, rings[1][1])
+        assert _over(_plot_box(page), left, right)
+        shown = []
+        for ring in rings:
+            _rest(page)
+            page.mouse.move(*ring)
+            shown.append(_displayed(page))
+        ahead, back = _seen_along(page, left, right), _seen_along(page, right, left)
+        print("BOUNDARY", gap, ahead, back)
+        if gap == 50:
+            assert _clusters(areas) == [["points/0", "points/1"]], areas
+            assert shown == [every, every], shown
+            assert ahead == [[], every, []] and back == [[], every, []]
+        else:
+            assert _clusters(areas) == [["points/0"], ["points/1"]], areas
+            assert shown == [zero, one], shown
+            # The pixel between the areas is under no whole pixel of the
+            # pointer's: nothing may show there, and all eight never do.
+            assert [s for s in ahead if s] == [zero, one], ahead
+            assert [s for s in back if s] == [one, zero], back
+
+
+#: Plot 0's visible ranges once they are no longer ``was``.
+RANGES_MOVED = """
+(was) => {
+  const fl = document.querySelectorAll('.js-plotly-plot')[0]._fullLayout;
+  return JSON.stringify([fl.xaxis.range, fl.yaxis.range]) !== was;
+}
+"""
+
+
+def _ranges_text(page) -> str:
+    return page.evaluate(
+        """() => { const fl = document.querySelectorAll('.js-plotly-plot')[0]
+             ._fullLayout; return JSON.stringify([fl.xaxis.range, fl.yaxis.range]); }"""
+    )
+
+
+def test_a_box_zoom_parts_a_cluster_and_a_double_click_joins_it_again(
+    tmp_path, playwright_browser
+):
+    """The clusters are of the figure AS IT IS DRAWN, in pixels: found
+    again on every redraw. Two checkpoints 40 px apart are one cluster; a
+    box zoom — the real mouse, a box drawn on the plot — spreads them some
+    200 px apart, and each ring then shows its own four arrows; a double
+    click puts the scale back, and they show together again."""
+    project = partial(_checkpoints_project, places=((400, 0.5), (440, 0.5)))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        zero, one = _group("points", 0, FOUR), _group("points", 1, FOUR)
+        every = sorted(zero + one)
+
+        def shown_on_each_ring() -> list[list[str]]:
+            areas = _areas(page)
+            out = []
+            for i in (0, 1):
+                _rest(page)
+                page.mouse.move(*areas[f"points/{i}"]["rings"][0])
+                out.append(_displayed(page))
+            return out
+
+        areas = _areas(page)
+        assert _clusters(areas) == [["points/0", "points/1"]], areas
+        assert shown_on_each_ring() == [every, every]
+
+        # A box from above and left of the pair to below and right of it:
+        # pressed on the bare plot, outside both areas.
+        ring = areas["points/0"]["rings"][0]
+        corner = (ring[0] - 80, ring[1] - 60)
+        assert _ruled_at(areas, *corner) == []
+        was = _ranges_text(page)
+        _rest(page)
+        page.mouse.move(*corner)
+        page.mouse.down()
+        page.mouse.move(corner[0] + 200, corner[1] + 120, steps=12)
+        page.mouse.up()
+        page.wait_for_function(RANGES_MOVED, arg=was, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)
+        assert _pending(page) == "0 pending edits"
+        zoomed = _areas(page)
+        apart = zoomed["points/1"]["rings"][0][0] - zoomed["points/0"]["rings"][0][0]
+        print("ZOOMED", apart, zoomed["points/1"]["l"] - zoomed["points/0"]["r"])
+        assert apart > 150, zoomed
+        assert _clusters(zoomed) == [["points/0"], ["points/1"]], zoomed
+        assert shown_on_each_ring() == [zero, one]
+        _shot(page, tmp_path, "clusters-zoomed")
+
+        # A double click on the bare plot: the scale the plot started with.
+        area = page.evaluate(PLOT_AREA)
+        bare = (area["left"] + 30, area["top"] + 15)
+        assert _ruled_at(zoomed, *bare) == []
+        was = _ranges_text(page)
+        _rest(page)
+        page.mouse.dblclick(*bare)
+        page.wait_for_function(RANGES_MOVED, arg=was, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(400)
+        reset = _areas(page)
+        apart = reset["points/1"]["rings"][0][0] - reset["points/0"]["rings"][0][0]
+        assert apart < 50, reset
+        assert _clusters(reset) == [["points/0", "points/1"]], reset
+        assert shown_on_each_ring() == [every, every]
+
+
+def test_a_narrower_window_joins_two_clusters(tmp_path, playwright_browser):
+    """A resize of the window redraws the plot at another scale: two
+    checkpoints 80 px apart — two clusters — stand some 50 px apart in a
+    window 900 px wide, and show together."""
+    project = partial(_checkpoints_project, places=((400, 0.5), (480, 0.5)))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        zero, one = _group("points", 0, FOUR), _group("points", 1, FOUR)
+        areas = _areas(page)
+        assert _clusters(areas) == [["points/0"], ["points/1"]], areas
+        _rest(page)
+        page.mouse.move(*areas["points/0"]["rings"][0])
+        assert _displayed(page) == zero
+        _rest(page)
+        wide = _shape(page, "/points/target/0")["ppx"]
+        page.set_viewport_size({"width": 900, "height": VIEWPORT["height"]})
+        page.wait_for_function(
+            """(wide) => {
+              const xa = document.querySelectorAll('.js-plotly-plot')[0]._fullLayout.xaxis;
+              return xa._length / Math.abs(xa.range[1] - xa.range[0]) < 0.8 * wide;
+            }""",
+            arg=wide,
+            timeout=EXPECT_TIMEOUT,
         )
-        now = _times(page, 3)
-        assert (now[0], now[1][0], now[2]) == (was[0], was[1][0], was[2]), (was, now)
+        _plot_under_the_mouse(page)
+        narrow = _areas(page)
+        print("NARROW", narrow["points/1"]["l"] - narrow["points/0"]["r"])
+        assert _clusters(narrow) == [["points/0", "points/1"]], narrow
+        for i in (0, 1):
+            _rest(page)
+            page.mouse.move(*narrow[f"points/{i}"]["rings"][0])
+            assert _displayed(page) == sorted(zero + one), i
+
+
+def test_a_dragged_anchor_joins_two_clusters_and_dragged_back_parts_them(
+    tmp_path, playwright_browser
+):
+    """A drag moves an anchor, and the areas with it: on the redraw that
+    answers the release the clusters are found again. Two checkpoints
+    80 px apart — 56 px between their nearest anchors, two clusters. The
+    first's `after` dragged 12 px towards the second leaves 44: one
+    cluster, all eight arrows from either ring. Dragged back, two again."""
+    project = partial(_checkpoints_project, places=((400, 0.5), (480, 0.5)))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        zero, one = _group("points", 0, FOUR), _group("points", 1, FOUR)
+        every = sorted(zero + one)
+
+        def shown_on_each_ring() -> list[list[str]]:
+            areas = _areas(page)
+            out = []
+            for i in (0, 1):
+                _rest(page)
+                page.mouse.move(*areas[f"points/{i}"]["rings"][0])
+                out.append(_displayed(page))
+            return out
+
+        areas = _areas(page)
+        assert areas["points/1"]["l"] - areas["points/0"]["r"] == pytest.approx(
+            6, abs=0.02
+        ), areas
+        assert _clusters(areas) == [["points/0"], ["points/1"]], areas
+        assert shown_on_each_ring() == [zero, one]
+
+        _press_arrow(page, "/points/after/0", 12)
+        expect(_table_cell(page, 0, "after time_tolerance")).not_to_have_value(
+            "0.012", timeout=EXPECT_TIMEOUT
+        )
+        after = float(_table_cell(page, 0, "after time_tolerance").input_value())
+        _settled_at(page, "/points/after/0", "xanchor", 0.4 + after)
+        page.wait_for_timeout(300)
+        joined = _areas(page)
+        assert joined["points/1"]["l"] - joined["points/0"]["r"] == pytest.approx(
+            -6, abs=1
+        ), joined
+        assert _clusters(joined) == [["points/0", "points/1"]], joined
+        # The pointer has not moved since the release: it is where the
+        # arrow now stands, and the redraw alone showed all eight.
+        assert _displayed(page) == every
+        assert shown_on_each_ring() == [every, every]
+        _shot(page, tmp_path, "clusters-joined-by-a-drag")
+
+        # Back: 12 px towards its own ring.
+        _press_arrow(page, "/points/after/0", -12)
+        expect(_table_cell(page, 0, "after time_tolerance")).not_to_have_value(
+            str(after), timeout=EXPECT_TIMEOUT
+        )
+        back = float(_table_cell(page, 0, "after time_tolerance").input_value())
+        _settled_at(page, "/points/after/0", "xanchor", 0.4 + back)
+        page.wait_for_timeout(300)
+        parted = _areas(page)
+        assert parted["points/1"]["l"] - parted["points/0"]["r"] > 0, parted
+        assert _clusters(parted) == [["points/0"], ["points/1"]], parted
+        assert _displayed(page) == zero  # the pointer is still by that arrow
+        assert shown_on_each_ring() == [zero, one]
+
+
+def test_a_drag_across_another_cluster_keeps_its_own_shown_and_moves_its_own_row(
+    tmp_path, playwright_browser
+):
+    """What is shown is held from a press to its release. The first
+    checkpoint's `after` arrow, dragged 250 px right — out of its own
+    area, across the second checkpoint's and past it: over the second's
+    ring the first's four arrows are still the ones displayed and none of
+    the second's, and the release sets the FIRST row's side."""
+    project = partial(_checkpoints_project, places=((400, 0.5), (600, 0.5)))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        areas = _areas(page)
+        assert _clusters(areas) == [["points/0"], ["points/1"]], areas
+        zero = _group("points", 0, FOUR)
+        labels = list(POINT_CELLS.values())
+        was = _cells(page, 2, labels)
+        arrow, home = _come_to(page, "/points/after/0")
+        middle = _along(arrow, 13.5)
+        _walk(page, home, middle)
+        assert _displayed(page) == zero
+        page.mouse.down()
+        other = areas["points/1"]["rings"][0]
+        marks = (60, round(other[0] - middle[0]), 250)
+        held = []
+        for i, at in enumerate(_line(middle, (middle[0] + 250, middle[1])), 1):
+            page.mouse.move(*at)
+            if i in marks:
+                held.append((_ruled_at(areas, *at), _displayed(page)))
+        # Between the two areas, on the second's ring, and past it.
+        assert [ruled for ruled, _ in held] == [
+            [],
+            _group("points", 1, FOUR),
+            [],
+        ], held
+        assert [shown for _, shown in held] == [zero, zero, zero], held
+        _shot(page, tmp_path, "clusters-held-mid-drag")
+        page.mouse.up()
+        cell = (0, "after time_tolerance")
+        expect(_table_cell(page, *cell)).not_to_have_value(
+            was[cell], timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(300)
+        now = _cells(page, 2, labels)
+        assert [key for key in was if was[key] != now[key]] == [cell], (was, now)
+        assert abs((float(now[cell]) - 0.012) * 1000 - 250) < 1, now
 
 
 # -- windows that overlap, and windows a few pixels apart -----------------------
 
 
 def _close_windows_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project` with A scored on x by two declared events whose
-    windows OVERLAP — [0.25, 0.35] and [0.31, 0.41] — and by two declared
-    peaks whose windows, [0.9, 1.1] Hz and from 1.12167 Hz, stand 6.5 px
-    apart at 300 px per Hz. Every row holds a pair: a side moves alone."""
+    """`_two_var_project` with A scored on x by three declared events — two
+    whose windows OVERLAP, [0.25, 0.35] and [0.31, 0.41], and one far from
+    both, [0.75, 0.85] — and by two declared peaks whose windows, [0.9,
+    1.1] Hz and from 1.12167 Hz, stand 6.5 px apart at 300 px per Hz.
+    Every row holds a pair: a side moves alone."""
     cfg, work = _two_var_project(tmp_path)
 
     def pair(lower: float, upper: float) -> dict:
@@ -9269,6 +9482,7 @@ def _close_windows_project(tmp_path: Path) -> tuple[Path, Path]:
                 "events": [
                     {"time": 0.30, "tolerance": pair(0.05, 0.05)},
                     {"time": 0.36, "tolerance": pair(0.05, 0.05)},
+                    {"time": 0.80, "tolerance": pair(0.05, 0.05)},
                 ],
             },
             {
@@ -9294,81 +9508,123 @@ def _close_windows_project(tmp_path: Path) -> tuple[Path, Path]:
     return cfg, work
 
 
-#: What the two window criteria are opened as, scaled to, and read by: the
-#: arrows facing each other, the cell each one's drag moves — and the
-#: arrows the test does not claim are reached whole.
+#: What the two window criteria are opened as and scaled to, their edges
+#: and the cell each edge's arrow sets, and the clusters their groups make.
 WINDOWS = {
     "events": (
         "event-timing · x",
         {"xaxis": [-0.05, 1000.0]},
-        ("early", "late"),
-        [
-            ("/events/late/0", 0, "late tolerance"),
-            ("/events/early/1", 1, "early tolerance"),
-        ],
-        set(),
+        {"early": "early tolerance", "late": "late tolerance"},
+        [["events/0", "events/1"], ["events/2"]],
     ),
     "peaks": (
         "dominant-frequency · x",
         {"xaxis2": [0.0, 300.0]},
-        ("lower", "upper"),
-        [("/peaks/upper/0", 0, "+ tolerance"), ("/peaks/lower/1", 1, "− tolerance")],
-        {"peaks/lower/1"},
+        {"lower": "− tolerance", "upper": "+ tolerance"},
+        [["peaks/0", "peaks/1"]],
     ),
 }
 
 
 @pytest.mark.parametrize("family", WINDOWS)
-def test_every_arrow_of_two_close_windows_is_reached_from_its_own_edge(
+def test_windows_that_overlap_or_stand_close_show_together_and_an_isolated_one_alone(
     tmp_path, playwright_browser, family
 ):
-    """Two event windows that overlap — [0.25, 0.35] and [0.31, 0.41] — and
-    two peak windows 6.5 px apart: an arrow of each stands INSIDE the other
-    window, where the other group was the nearer and `late/0` and `early/1`
-    (a peak's `upper/0` and `lower/1`) could not be reached at all. Coming
-    down a window's own edge and out along its arrow, a pixel at a time:
-    all 7 px of each, and a press on a facing one drags it — its own row's
-    side and no other cell.
-
-    NOT claimed here, and printed: the second peak's `lower`. The first
-    window's edge stands 6.5 px beyond its own — on the last pixel before
-    the arrow's box, where the first group is the 6 px nearer that takes
-    over — and 4 of its 7 px are reached: its outer half, where a press
-    drags it all the same."""
-    name, axes, edges, facing, unclaimed = WINDOWS[family]
+    """A window's hover area is its two edges and 25 px either side, over
+    the whole height of its panel. Two event windows that OVERLAP —
+    [0.25, 0.35] and [0.31, 0.41] — and two peak windows 6.5 px apart are
+    each one cluster: all four arrows show anywhere in either window, at
+    any height, and along the arrows' row and down each edge what is
+    displayed changes twice. The third event's window stands alone: its
+    two arrows, and only there. Every arrow is whole under the pointer —
+    `late/0` and `early/1` stand INSIDE the other's window — and a press
+    on its middle moves its own row's side and no other cell."""
+    name, axes, cells, clusters = WINDOWS[family]
     with _served(tmp_path, playwright_browser, project=_close_windows_project) as page:
         page.wait_for_timeout(700)
         _open_scaled(page, name, axes)
-        tails = [f"/{family}/{edge}/{i}" for i in (0, 1) for edge in edges]
-        inner = page.evaluate(ARROW_AT, [0, facing[1][0]])
-        outer = page.evaluate(ARROW_AT, [0, facing[0][0]])
-        print("WINDOWS", family, "edges apart", round(inner["x"] - outer["x"], 2))
-        reach = _reaches(page, tails)
-        print("REACH", family, reach)
-        claimed = {tail: n for tail, n in reach.items() if tail not in unclaimed}
-        assert claimed == dict.fromkeys(claimed, 7), reach
-        assert len(claimed) == len(tails) - len(unclaimed), reach
-        # Its outer half, from its middle — the tip the group is near by.
-        assert all(reach[tail] >= 4 for tail in unclaimed), reach
-
-        def cells() -> list[str]:
-            return [
-                _table_cell(page, row, label).input_value()
-                for row in (0, 1)
-                for label in sorted({cell for _, _, cell in facing})
-            ]
-
-        for tail, row, label in facing:
-            was, value = cells(), _table_cell(page, row, label).input_value()
-            _press_arrow(page, tail, 20)
-            expect(_table_cell(page, row, label)).not_to_have_value(
-                value, timeout=EXPECT_TIMEOUT
+        areas = _areas(page)
+        assert _clusters(areas) == clusters, areas
+        if family == "peaks":
+            gap = (
+                page.evaluate(ARROW_AT, [0, "/peaks/lower/1"])["x"]
+                - page.evaluate(ARROW_AT, [0, "/peaks/upper/0"])["x"]
             )
-            now = cells()
-            assert sum(a != b for a, b in zip(was, now)) == 1, (tail, was, now)
-            assert float(_table_cell(page, row, label).input_value()) > float(value)
-            page.wait_for_timeout(400)  # the redraw that follows the edit
-        _shot(page, tmp_path, f"reach-{family}")
+            assert gap == pytest.approx(6.5, abs=0.2), gap
+        for cluster in clusters:
+            every = _arrows_of(areas, cluster)
+            assert len(every) == 2 * len(cluster), every
+            left = min(areas[key]["l"] for key in cluster)
+            right = max(areas[key]["r"] for key in cluster)
+            top = min(areas[key]["t"] for key in cluster)
+            bottom = max(areas[key]["b"] for key in cluster)
+            box = _plot_box(page)
+            assert _over(box, (left - 40, top - 12), (right + 40, bottom + 12)), (
+                box,
+                cluster,
+            )
+            # Everywhere: a grid over the areas and 9 px beyond.
+            _rest(page)
+            inside = outside = 0
+            for x in range(int(left) - 9, int(right) + 10, 9):
+                for y in range(int(top) - 9, int(bottom) + 10, 9):
+                    ruled = _ruled_at(areas, x, y)
+                    if ruled is None:
+                        continue
+                    page.mouse.move(x, y)
+                    assert _displayed(page) == ruled, (cluster, x - left, y - top)
+                    inside += ruled == every
+                    outside += ruled == []
+            print("GRID", family, cluster, inside, outside)
+            assert inside > 100 and outside > 20, (cluster, inside, outside)
+            # Along the arrows' row, and down each edge's own column: in,
+            # and out.
+            row = page.evaluate(ARROW_AT, [0, f"/{every[0]}"])["y"]
+            walks = [((left - 40, row), (right + 40, row))]
+            for tail in every:
+                x = page.evaluate(ARROW_AT, [0, f"/{tail}"])["x"]
+                walks.append(((x, top - 12), (x, bottom + 12)))
+            for a, b in walks:
+                assert _ruled_at(areas, *a) == [] and _ruled_at(areas, *b) == []
+                for start, end in ((a, b), (b, a)):
+                    seen = _seen_along(page, start, end)
+                    assert seen == [[], every, []], (cluster, start, end, seen)
+
+            reach = {}
+            for tail in every:
+                arrow, home = _come_to(page, f"/{tail}")
+                _walk(page, home, _along(arrow, 10.5))
+                own = 0
+                for k in range(7):
+                    at = _along(arrow, 10.5 + k)
+                    page.mouse.move(*at)
+                    assert _displayed(page) == every, (tail, k)
+                    state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *at])
+                    own += state["displayed"] and state["index"] == arrow["index"]
+                reach[tail] = own
+            print("REACH", family, reach)
+            assert reach == dict.fromkeys(every, 7), reach
+
+            rows = 3 if family == "events" else 2
+            for tail in every:
+                _, edge, row_ = tail.split("/")
+                was = _cells(page, rows, cells.values())
+                arrow = _press_arrow(page, f"/{tail}", 12)
+                cell = (int(row_), cells[edge])
+                expect(_table_cell(page, *cell)).not_to_have_value(
+                    was[cell], timeout=EXPECT_TIMEOUT
+                )
+                page.wait_for_timeout(300)
+                now = _cells(page, rows, cells.values())
+                assert [key for key in was if was[key] != now[key]] == [cell], (
+                    tail,
+                    was,
+                    now,
+                )
+                _discard(page)
+                _settled_at(page, f"/{tail}", "xanchor", arrow["xanchor"])
+                page.wait_for_timeout(200)
+        _shot(page, tmp_path, f"clusters-{family}")
 
 
 # -- an arrow that would leave a set axis range is drawn inward -----------------
@@ -9506,7 +9762,11 @@ def test_the_hover_label_shows_inside_an_open_window_away_from_its_arrows(
         inside = (early["x"] + 20, quarter)
         _rest(page)
         seen = _label_at(page, *inside)
-        zero = _group("events", 0, ("early", "late"))
+        # The two overlapping windows are one cluster: both events' arrows.
+        zero = sorted(
+            _group("events", 0, ("early", "late"))
+            + _group("events", 1, ("early", "late"))
+        )
         assert _grips_on(page)["shown"] == zero
         assert seen["seen"] > 0 and any("Actual" in t for t in seen["texts"]), seen
         _shot(page, tmp_path, "hover-in-window")
@@ -10074,53 +10334,7 @@ def test_a_mark_pass_that_throws_is_said_once_and_leaves_the_shapes_to_plotly(
         assert again["shown"] == _group("points", 0, FOUR), again
 
 
-# -- of two groups exactly as near, and a press that is not this plot's ----------
-
-#: Two checkpoints on ONE spot — every place of the first's is a place of
-#: the second's, to the last bit — the second with a time tolerance besides,
-#: so there are places only it has.
-TWINS = [
-    {"time": 0.5, "value": 0.5, "tolerance": 0.1},
-    {
-        "time": 0.5,
-        "value": 0.5,
-        "tolerance": 0.1,
-        "time_tolerance": {"lower": 0.05, "upper": 0.05},
-    },
-]
-
-
-def test_of_two_groups_exactly_as_near_the_first_shows_and_the_shown_one_stays(
-    tmp_path, playwright_browser
-):
-    """A tie is no reason to change what is shown. With NO group shown, of
-    two exactly as near the first in the figure's order shows — the first
-    checkpoint's row; with one shown, it stays. (Taking the last of equals
-    gave the second's arrows on the first's ring, whichever way the pointer
-    came.)"""
-    project = partial(_points_on_x_project, points=TWINS)
-    with _served(tmp_path, playwright_browser, project=project) as page:
-        page.wait_for_timeout(700)
-        _open_scaled(page, "points · x", TIME_SCALE)
-        first, second = (_shape(page, f"/points/target/{i}") for i in (0, 1))
-        assert (first["x"], first["y"]) == (second["x"], second["y"])
-        assert first["index"] < second["index"]
-        ring = (first["x"], first["y"])
-        # Down the rings' own column, from where nothing is shown: every
-        # place on the way is one of both.
-        _rest(page)
-        above = (ring[0], ring[1] - 70)
-        page.mouse.move(*above)
-        assert page.evaluate(SHOWN_GROUP, 0) is None
-        _walk(page, above, ring)
-        assert page.evaluate(SHOWN_GROUP, 0) == "0"
-        # Out to a place of the second's alone — its `after` side — and
-        # back onto the ring both stand around: the second's stays.
-        after = page.evaluate(ARROW_AT, [0, "/points/after/1"])
-        _walk(page, ring, (after["x"], after["y"]))
-        assert page.evaluate(SHOWN_GROUP, 0) == "1"
-        _walk(page, (after["x"], after["y"]), ring)
-        assert page.evaluate(SHOWN_GROUP, 0) == "1"
+# -- a press that is not this plot's ---------------------------------------------
 
 
 def test_a_press_elsewhere_on_the_page_holds_nothing_on_this_plot(
