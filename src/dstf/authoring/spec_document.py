@@ -50,6 +50,21 @@ def content_hash(path: Path) -> str | None:
         return None
 
 
+def json_equal(a: Any, b: Any) -> bool:
+    """Whether ``a`` and ``b`` are one JSON value: objects by their members
+    in any order, arrays in order, numbers by value (``1`` is ``1.0``), and
+    ``true`` is no number — Python's ``==`` calls ``True`` and ``1`` equal."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(json_equal(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(json_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+        return False
+    return bool(a == b)
+
+
 @dataclass
 class SpecDocument:
     path: Path
@@ -105,6 +120,19 @@ class SpecDocument:
 
         entry = spec_entry(self.loaded, model_id)
         return copy.deepcopy(entry) if entry is not None else None
+
+    def as_saved(self, model_id: str) -> bool:
+        """Whether the model's entry with the pending ops applied is the
+        one the file holds (:func:`json_equal`): ops that put it back are no
+        edit of it. A model the file has no entry for is as saved while its
+        entry would hold its model and nothing else — an entry that says
+        nothing (a tree added to an annotation-only test, then removed)."""
+        from ..discovery.spec_update import spec_entry
+
+        bare = {"model": model_id}
+        return json_equal(
+            self.entry(model_id) or bare, spec_entry(self.loaded, model_id) or bare
+        )
 
     def preview_base(self, model_id: str) -> dict | None:
         """What the pending drawer diffs the model's entry against: the

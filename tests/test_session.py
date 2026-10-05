@@ -3576,6 +3576,118 @@ class TestStageCollapses:
             )
 
 
+class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
+    """An edit that leaves a test's entry exactly as saved is not a pending
+    edit: a value typed and cleared again, a refused value put back. Its ops
+    counted — "1 pending edit", Save enabled — and Save rewrote the file
+    for nothing. Decided where the ops are folded (`Session.stage`), so the
+    count, the strip, the Tests drawer's mark, Save and the preview all
+    read the one list."""
+
+    AUTHORED = {
+        "combinator": "and",
+        "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.3}],
+    }
+    LEAF = "/metrics/children/0"
+
+    def test_a_change_and_its_inverse_leave_nothing_pending(self, tmp_path):
+        s = _session_with_entry(tmp_path, {"metrics": self.AUTHORED})
+        saved = s.spec.saved_entry(A)
+        before = s.spec.path.read_bytes()
+        assert classify(s.comparisons[A]) == PASS  # nrmse 0.153 under 0.3
+        tight = {**self.AUTHORED["children"][0], "tolerance": 0.1}
+        s.stage([PatchOp(A, "replace", self.LEAF, tight)])
+        assert len(s.spec.pending) == 1 and classify(s.comparisons[A]) == FAIL
+        events: list[dict] = []
+        s.on("spec", events.append)
+        s.stage([PatchOp(A, "replace", self.LEAF, self.AUTHORED["children"][0])])
+        assert s.spec.pending == []
+        assert s.spec.entry(A) == saved
+        assert classify(s.comparisons[A]) == PASS  # rescored, as saved
+        assert [e["models"] for e in events] == [{A}]  # the pages hear it
+        assert s.export()["patches"] == []
+        s.save()
+        assert s.spec.path.read_bytes() == before
+
+    def test_an_add_and_its_remove_leave_nothing_pending(self, session):
+        """Two ops the fold keeps as two (a remove after an add): together
+        they put the entry back."""
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        assert classify(session.comparisons[A]) == PASS
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert session.spec.pending == []
+        assert classify(session.comparisons[A]) == FAIL
+
+    def test_a_batch_that_changes_nothing_stages_nothing(self, session):
+        session.stage(
+            [
+                PatchOp(A, "add", "/comparison", {"tolerance": 1.0}),
+                PatchOp(A, "remove", "/comparison"),
+            ]
+        )
+        assert session.spec.pending == []
+
+    def test_of_two_edited_tests_only_the_one_put_back_goes(self, session):
+        tighten_d = PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        session.stage([tighten_d])
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert session.spec.pending == [tighten_d]
+        assert classify(session.comparisons[A]) == FAIL  # as saved
+        assert classify(session.comparisons[D]) == FAIL  # still the edited one
+
+    def test_a_test_with_no_entry_in_the_file_gets_none_from_a_tree_added_and_removed(
+        self, tmp_path, monkeypatch
+    ):
+        """An annotation-only test: the file holds no entry for it, and a
+        tree staged then removed would leave it one holding its model and
+        nothing else — which says nothing the scan does not."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        s = Session()
+        s.open(_modelica_project(tmp_path), work_dir=tmp_path / "work")
+        foo = "MyLib.Foo"
+        assert s.project.test(foo) is not None and s.spec.saved_entry(foo) is None
+        tree = {
+            "combinator": "and",
+            "children": [{"metric": "nrmse", "variable": "unitTests.x[1]"}],
+        }
+        s.stage([PatchOp(foo, "add", "/metrics", tree)])
+        assert s.spec.entry(foo) == {"model": foo, "metrics": tree}
+        assert len(s.spec.pending) == 1
+        s.stage([PatchOp(foo, "remove", "/metrics")])
+        assert s.spec.pending == []
+        assert s.spec.entry(foo) is None
+
+    def test_the_tree_written_out_is_an_edit_of_the_entry(self, session):
+        """A flat entry's first per-leaf edit writes its tree out, and the
+        edit put back leaves that tree: the entry is not the saved one, so
+        it stays pending — what `rescore` alone stages."""
+        leaf = session.tree(A)["children"][0]
+        session.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": 0.5})])
+        session.stage([PatchOp(A, "replace", self.LEAF, leaf)])
+        assert [op.path for op in session.spec.pending] == ["/metrics", self.LEAF]
+        assert "metrics" in session.spec.entry(A)
+
+    @pytest.mark.parametrize(
+        ("a", "b", "same"),
+        [
+            ({"x": 1, "y": [1, 2]}, {"y": [1, 2], "x": 1}, True),  # members, any order
+            ({"x": 1}, {"x": 1.0}, True),  # one number
+            ({"x": 1}, {"x": True}, False),  # `true` is no number
+            ({"x": 0}, {"x": False}, False),
+            ({"x": [1, 2]}, {"x": [2, 1]}, False),  # a list is ordered
+            ({"x": 1}, {"x": 1, "y": None}, False),
+            ({"x": None}, {"x": None}, True),
+            ({"x": "1"}, {"x": 1}, False),
+        ],
+    )
+    def test_equal_is_as_json_reads_it(self, a, b, same):
+        from dstf.authoring.spec_document import json_equal
+
+        assert json_equal(a, b) is same
+        assert json_equal(b, a) is same
+
+
 class TestTheMaterializationIsMarked:
     """The drawer's preview diffs against the tree as scoring sees it: the
     op `stage` prepends to write a flat entry's tree out says so."""

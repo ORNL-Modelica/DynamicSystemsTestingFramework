@@ -1197,6 +1197,23 @@ class Session:
             validate_entry_metric_tree(
                 effective, model_id, project.config, project.store
             )  # PatchError
+        # An edit that leaves an entry exactly as saved is no pending edit
+        # of it — a value typed and cleared again, a refused one put back:
+        # its ops counted ("1 pending edit", Save enabled), and Save rewrote
+        # the file for nothing. Decided HERE, on the folded list, the one
+        # thing the count, the strip, the Tests drawer's mark, Save and the
+        # preview read: every op of such a model goes. After the checks
+        # above, so a stage that is refused is refused as it was; the model
+        # is still rescored below, back to its saved verdict.
+        put_back = {m for m in models if candidate.as_saved(m)}
+        if put_back:
+            candidate = SpecDocument(
+                self.spec.path,
+                self.spec.loaded,
+                self.spec.content_hash,
+                [op for op in candidate.pending if op.model_id not in put_back],
+            )
+            effective = candidate.effective()
         tests = self._merge(
             project.config, project.scanned, effective
         )  # ConfigError on a bad tree

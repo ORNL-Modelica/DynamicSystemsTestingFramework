@@ -4437,6 +4437,42 @@ async def test_a_discard_elsewhere_leaves_the_open_editor_showing_it(scored_shel
         assert _pending(shell, T0).get("max_value") is None
 
 
+async def test_a_value_typed_and_cleared_again_is_no_pending_edit(scored_shell):
+    """An upper bound typed into a range that had none, then cleared: the
+    entry is exactly the saved one. It counted — "1 pending edit", the
+    strip's "1 unsaved edit", Save enabled, the Tests drawer's mark — and
+    Save rewrote the file. Every one of them reads the pending list."""
+    shell = scored_shell
+    before = shell.session.spec.path.read_bytes()
+    async with user_simulation(root=shell.index) as user:
+        page = await _tests_drawer(shell, user, D)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        (upper,) = _numbers(page, "Upper bound (optional)")
+        with page.client:
+            upper.set_value(5.0)
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
+        assert _one(user, "strip-text").text == "1 unsaved edit · verdict stays PASS"
+        assert _one(user, "save").enabled
+        assert page.rail.tests.list.rows[D].pending == 1
+        with page.client:
+            upper.set_value(None)
+        await _settled(lambda: _one(user, "pending").text == "0 pending edits")
+        assert shell.session.spec.pending == []
+        assert _one(user, "strip-text").text == "Passes against its baseline."
+        assert page.strip.situation.value != "edits"
+        assert not _one(user, "save").enabled
+        assert _one(user, "save:why").text == "no pending edits"
+        assert page.rail.tests.list.rows[D].pending == 0
+        assert not page.rail.tests.list.rows[D].edits.visible
+        # The preview has nothing to show, and the editor is still open on
+        # the same field.
+        user.find(marker="pending").click()
+        await user.should_see("nothing staged", retries=20)
+        assert _numbers(page, "Upper bound (optional)") == [upper]
+    assert shell.session.spec.path.read_bytes() == before
+
+
 async def test_a_window_staged_elsewhere_reaches_the_open_editor(scored_shell):
     """The window is one of the leaf's edited fields, so an edit that moves
     only it must rebuild the editor: the fields went on showing no window
@@ -7116,9 +7152,9 @@ class TestLayoutControls:
 
     async def test_reset_layout_follows_the_effective_entry(self, shell):
         """B has no ``plots`` key: a context series stages the key's add,
-        Reset stages its removal after it — two ops, since a remove after an
-        add is kept as two — and the button goes again, because the
-        EFFECTIVE entry has no key, whatever the pending list still holds."""
+        and Reset its removal — which puts the entry back as saved, so
+        nothing is pending — and the button goes again, because the
+        EFFECTIVE entry has no key."""
         from dstf.authoring.layout import add_context
 
         async with user_simulation(root=shell.index) as user:
@@ -7131,12 +7167,7 @@ class TestLayoutControls:
             ]
             await _settled(lambda: not _none(user, "tree:reset-layout"))
             user.find(marker="tree:reset-layout").click()
-            assert [
-                (op.model_id, op.op, op.path) for op in shell.session.spec.pending
-            ] == [
-                (B, "add", "/plots"),
-                (B, "remove", "/plots"),
-            ]
+            assert shell.session.spec.pending == []
             await _settled(lambda: _none(user, "tree:reset-layout"))
             await _settled(lambda: page.cards[0].resolved.context == ())
 
@@ -7360,14 +7391,15 @@ class TestVariablesDrawer:
         self, drawer_shell
     ):
         """x's entry held z alone: with z off it records nothing, and the
-        key goes with it (`layout_op`: no extras is a remove)."""
+        key goes with it (`layout_op`: no extras is a remove) — the entry
+        as saved again, so nothing is pending."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             user.find(marker=var_marker("var-check", ROW_Z)).click()
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             user.find(marker=var_marker("var-check", ROW_Z)).click()
-            assert [op.op for op in shell.session.spec.pending] == ["add", "remove"]
+            assert shell.session.spec.pending == []
             assert "plots" not in shell.session.spec.entry(A)
             await _settled(lambda: _checked(user, ROW_Z) == "false")
             assert _one(user, var_marker("var-check", ROW_Z)).enabled
@@ -7429,11 +7461,12 @@ class TestVariablesDrawer:
             check = user.find(marker=var_marker("var-check", ROW_A0))
             with page.client:
                 page.remove_watch(2, "z")
-            (op,) = [op for op in shell.session.spec.pending if op.op == "remove"]
+            # The removal put the entry back as saved: nothing is pending.
+            assert shell.session.spec.pending == []
             with caplog.at_level(logging.ERROR):
                 check.click()  # the row drawn for plot 3, before any rebuild
             assert _raised(caplog) == []
-            assert shell.session.spec.pending[-1] == op
+            assert shell.session.spec.pending == []
 
     async def test_a_stale_check_acts_on_what_the_selected_plot_holds_now(
         self, drawer_shell

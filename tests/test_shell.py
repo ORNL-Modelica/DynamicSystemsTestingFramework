@@ -624,10 +624,11 @@ async def test_a_rescored_flat_test_shows_its_note_and_no_empty_diff(shell):
             user.find(marker="drawer-diff")
 
 
-async def test_edits_that_cancel_out_say_the_entry_stays_as_saved(tmp_path):
-    """A context series added, then Reset layout: two edits, no diff and
-    nothing written out — the section says the entry stays as saved, and
-    draws no empty diff box. (`_two_var_project`'s A tracks x and y.)"""
+async def test_edits_that_cancel_out_leave_nothing_to_preview(tmp_path):
+    """A context series added, then Reset layout: the entry is the saved
+    one again, so nothing is pending and the drawer has no section for the
+    test — it showed "2 edits" over a line saying they change nothing.
+    (`_two_var_project`'s A tracks x and y.)"""
     from dstf.authoring.layout import add_context, layout_op, reset_op
     from test_session import _two_var_project
 
@@ -638,32 +639,16 @@ async def test_edits_that_cancel_out_say_the_entry_stays_as_saved(tmp_path):
     session = shell.session
     extras = add_context(session.layout(A), session.plots(A)[0], ["y"])
     session.stage([layout_op(A, session.spec.entry(A), extras)])
+    assert len(session.spec.pending) == 1
     session.stage([reset_op(A)])
-    assert len([op for op in session.spec.pending if op.model_id == A]) == 2
+    assert session.spec.pending == []
     async with user_simulation(root=shell.index) as user:
         await _open(user)
+        assert _one(user, "pending").text == "0 pending edits"
         _open_drawer(user)
-        await user.should_see(marker="drawer-nochange", retries=20)
-        assert _one(user, "drawer-nochange").text == (
-            "These edits leave the entry as saved."
-        )
-        assert _one(user, "drawer-count").text == "2 edits"
+        await user.should_see("nothing staged", retries=20)
         with pytest.raises(AssertionError):
-            user.find(marker="drawer-diff")
-        with pytest.raises(AssertionError):
-            user.find(marker="drawer-note")
-
-
-async def test_a_rescored_tree_has_its_note_and_no_unchanged_line(shell):
-    """The tree written out is a change the note names: the section does
-    not also say the entry stays as saved."""
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.rescore(A)
-        _open_drawer(user)
-        await user.should_see(marker="drawer-note", retries=20)
-        with pytest.raises(AssertionError):
-            user.find(marker="drawer-nochange")
+            user.find(marker=f"drawer-test:{A}")
 
 
 async def test_the_drawers_save_and_discard_wait_like_the_headers(shell):

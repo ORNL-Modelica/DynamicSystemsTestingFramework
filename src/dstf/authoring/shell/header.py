@@ -695,13 +695,9 @@ class PendingDrawer:
         lines = entry_lines(spec.preview_base(model_id), spec.entry(model_id))
         if not lines:
             # No diff to box: the edits leave the entry as `preview_base` has
-            # it. Either they are the tree written out and nothing else (a
-            # `rescore`) — the note says so — or they cancel out (a series
-            # added, then Reset layout), and a line says that.
-            if not trees:
-                ui.label("These edits leave the entry as saved.").classes(
-                    "text-xs text-secondary"
-                ).mark("drawer-nochange")
+            # it — the tree written out and nothing else (a `rescore`), which
+            # the note says. Edits that cancel out are not here at all: an
+            # entry put back as saved has no pending op (`Session.stage`).
             return
         texts = session.variable_texts(model_id)
         with (
