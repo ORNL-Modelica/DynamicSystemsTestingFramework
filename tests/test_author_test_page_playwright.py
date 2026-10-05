@@ -9924,3 +9924,162 @@ def test_a_mark_pass_that_throws_is_said_once_and_leaves_the_shapes_to_plotly(
         again = _grips_on(page)
         assert len(again["marked"]) == 8, again
         assert again["shown"] == _group("points", 0, FOUR), again
+
+
+# -- of two groups exactly as near, and a press that is not this plot's ----------
+
+#: Two checkpoints on ONE spot — every place of the first's is a place of
+#: the second's, to the last bit — the second with a time tolerance besides,
+#: so there are places only it has.
+TWINS = [
+    {"time": 0.5, "value": 0.5, "tolerance": 0.1},
+    {
+        "time": 0.5,
+        "value": 0.5,
+        "tolerance": 0.1,
+        "time_tolerance": {"lower": 0.05, "upper": 0.05},
+    },
+]
+
+
+def test_of_two_groups_exactly_as_near_the_first_shows_and_the_shown_one_stays(
+    tmp_path, playwright_browser
+):
+    """A tie is no reason to change what is shown. With NO group shown, of
+    two exactly as near the first in the figure's order shows — the first
+    checkpoint's row; with one shown, it stays. (Taking the last of equals
+    gave the second's arrows on the first's ring, whichever way the pointer
+    came.)"""
+    project = partial(_points_on_x_project, points=TWINS)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        first, second = (_shape(page, f"/points/target/{i}") for i in (0, 1))
+        assert (first["x"], first["y"]) == (second["x"], second["y"])
+        assert first["index"] < second["index"]
+        ring = (first["x"], first["y"])
+        # Down the rings' own column, from where nothing is shown: every
+        # place on the way is one of both.
+        _rest(page)
+        above = (ring[0], ring[1] - 70)
+        page.mouse.move(*above)
+        assert page.evaluate(SHOWN_GROUP, 0) is None
+        _walk(page, above, ring)
+        assert page.evaluate(SHOWN_GROUP, 0) == "0"
+        # Out to a place of the second's alone — its `after` side — and
+        # back onto the ring both stand around: the second's stays.
+        after = page.evaluate(ARROW_AT, [0, "/points/after/1"])
+        _walk(page, ring, (after["x"], after["y"]))
+        assert page.evaluate(SHOWN_GROUP, 0) == "1"
+        _walk(page, (after["x"], after["y"]), ring)
+        assert page.evaluate(SHOWN_GROUP, 0) == "1"
+
+
+def test_a_press_elsewhere_on_the_page_holds_nothing_on_this_plot(
+    tmp_path, playwright_browser
+):
+    """What is shown is held from a press to its release — a press INSIDE
+    this plot, which may be the start of a drag of its own. A button
+    pressed elsewhere on the page and brought over the plot while it is
+    still down holds nothing here: the checkpoint under it shows its
+    arrows, as for any pointer."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _rest(page)
+        ring = _shape(page, "/points/target/0")
+        # The card's own header, above its plot: on the page, in no plot,
+        # on nothing that takes a click.
+        off = page.evaluate(
+            """() => {
+              const gd = document.querySelectorAll('.js-plotly-plot')[0];
+              const r = gd.getBoundingClientRect();
+              for (let dy = 6; dy < 60; dy += 4) {
+                for (const fx of [0.5, 0.35, 0.65, 0.2, 0.8]) {
+                  const x = r.left + r.width * fx, y = r.top - dy;
+                  const el = document.elementFromPoint(x, y);
+                  if (el && !el.closest('.js-plotly-plot, button, a, input, .q-btn')) {
+                    return {x, y};
+                  }
+                }
+              }
+              return null;
+            }"""
+        )
+        assert off is not None
+        page.mouse.move(off["x"], off["y"])
+        page.mouse.down()
+        page.mouse.move(ring["x"], ring["y"], steps=12)
+        page.wait_for_timeout(150)
+        shown = _grips_on(page)["shown"]
+        page.mouse.up()
+        assert shown == _group("points", 0, FOUR), shown
+        # A press inside the plot still holds: `test_a_window_blur_ends_a_
+        # drags_latch` presses its bare margin and sees nothing change.
+
+
+# -- a plot of an array family: the open member's rings and arrows drag ----------
+
+
+def _family_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_drawer_project` — `pipe.T[1]`, `[2]`, `[3]` in A's result, ramps of
+    slope 5, 6 and 7 — with A scored by a checkpoint on each of the first
+    two: ONE plot of the array, two criteria on it."""
+    cfg, work = _drawer_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "points",
+                        "variable": f"pipe.T[{i}]",
+                        "points": [{"time": 0.5, "value": 2.0 + i, "tolerance": 0.4}],
+                    }
+                    for i in (1, 2)
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_on_a_family_plot_the_open_members_arrow_drags_and_its_box_does_not(
+    tmp_path, playwright_browser
+):
+    """A plot of an array family is one figure of several members, and the
+    page reads ONE map of it: with the second member's checkpoint open, its
+    arrow shows by its ring and drags — the row's tolerance — and its box
+    takes no pointer. (A map that dropped a member's draggable names made
+    every shape of the plot inert.)"""
+    with _served(tmp_path, playwright_browser, project=_family_project) as page:
+        page.wait_for_timeout(700)
+        assert page.locator(".dstf-plot").first.locator(".dstf-crit").count() == 2
+        _open_for_grips(page, 0, "points · pipe.T[2]")
+        said = page.evaluate(
+            "() => document.querySelectorAll('.js-plotly-plot')[0].layout.meta.dstf"
+        )
+        leaf = "/metrics/children/1"
+        assert sorted(said["draggable"]) == sorted(
+            f"{leaf}/points/{part}/0" for part in ("target", "upper", "lower")
+        ), said
+        _rest(page)
+        assert _grips_on(page)["shown"] == []
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.4")
+        was = _drag_arrow(page, f"{leaf}/points/upper/0", 0, -20)
+        expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
+            "0.4", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 0, "+ tolerance").input_value())
+        assert abs(upper - (0.4 + 20 / was["ppy"])) * was["ppy"] < 0.5, (upper, was)
+        expect(page.locator(".dstf-header-row")).to_contain_text("1 pending edit")
+        page.wait_for_timeout(400)  # the redraw that follows the edit
+        page.locator(".dstf-header-row").get_by_role(
+            "button", name=re.compile("Discard")
+        ).click()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "0 pending edits", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(400)
+        _press_an_inert_shape(page, f"{leaf}/points/box/0", "top", 0.25, 0, -20)

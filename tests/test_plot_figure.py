@@ -896,3 +896,44 @@ def test_grips_reach_every_view_of_a_multi_series_plot():
     plain = plot_figure([a, b])
     assert drawn(plain) == set()
     assert not any((tr.get("customdata") or [None])[0] in grips for tr in plain["data"])
+
+
+def test_a_family_plots_map_is_every_members_map_in_one():
+    """A plot of an array family is built member by member, and the map the
+    page reads — which shapes are grips, around which ring, and which may
+    be dragged at all — is the members' maps in ONE: with the second
+    member's criterion open its rings and arrows are named draggable, its
+    boxes and the first member's shapes are not, and a map that kept only
+    one member's said nothing of the other's."""
+    from dataclasses import replace
+
+    from test_figures import _points_grip_view
+
+    first = replace(_points_grip_view("/metrics/children/0"), name="pipe.T[1]")
+    second = replace(_points_grip_view("/metrics/children/1"), name="pipe.T[2]")
+    P1 = "/metrics/children/1"
+
+    def said(**kw) -> dict:
+        fig = plot_figure([first, second], editable=True, **kw)
+        return fig["layout"]["meta"]["dstf"], {
+            s["name"] for s in fig["layout"]["shapes"] if s.get("name")
+        }
+
+    one = {
+        name: variable_figure(view, editable=True)["layout"]["meta"]["dstf"]
+        for name, view in (("first", first), ("second", second))
+    }
+    both, names = said()
+    for key in ("grips", "targets"):
+        assert both[key] == {**one["first"][key], **one["second"][key]}, key
+        assert len(both[key]) == 2 * len(one["first"][key]) > 0, key
+    assert both["draggable"] == one["first"]["draggable"] + one["second"]["draggable"]
+    assert set(both["draggable"]) <= names
+    # The second member's criterion open: its own, and nothing of the first.
+    open_, names = said(rings_for=(P1,))
+    assert open_ == one["second"]
+    assert set(open_["draggable"]) == {
+        n for n in names if n.startswith(P1 + "/") and "/box/" not in n
+    }
+    assert {f"{P1}/points/box/0", f"{P1}/points/box/1"} <= names
+    assert said(rings_for=())[0] == {"grips": {}, "targets": {}, "draggable": []}

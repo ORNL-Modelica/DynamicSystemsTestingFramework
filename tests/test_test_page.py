@@ -3764,6 +3764,42 @@ async def test_a_refused_drags_reason_is_said_under_the_plot_until_the_next_edit
         assert not line.visible
 
 
+async def test_a_refused_drags_reason_goes_when_the_editor_is_rebuilt_from_elsewhere(
+    shell,
+):
+    """The line under the plot is the editor's own error line said again.
+    An edit staged ELSEWHERE — another node's controls, a Discard — moves
+    the leaf under the open editor and rebuilds it, which takes the
+    editor's line: the line under the plot goes with it, or it stood there
+    saying a refusal of a drag the criterion no longer shows."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        line = card.refusal
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        n = _shape_index(card, f"{T0}/tube/upper/0")
+        with page.client:
+            card.hook._dispatch(
+                "plotly_relayout",
+                {f"shapes[{n}].xanchor": 0.5, f"shapes[{n}].yanchor": 0.2},
+            )
+        assert line.visible and "would be negative" in line.text
+        cell = _one(user, f"{T0}:tube_points:0:time")
+        moved = copy.deepcopy(TREE["children"][0])
+        moved["tube_points"][0]["time"] = 0.45
+        assert cell.value != 0.45
+        shell.session.stage([PatchOp(D, "replace", T0, moved)])
+        # The editor was rebuilt from the leaf as it now is ...
+        await _settled(lambda: _one(user, f"{T0}:tube_points:0:time").value == 0.45)
+        assert not card.editor.errors["edit-on-plot"].visible
+        # ... and nothing is said under the plot.
+        assert not line.visible
+
+
 async def test_a_refused_field_edit_is_not_said_under_the_plot(shell):
     """Only a DRAG's refusal goes under the plot: one typed into the editor
     is said there, where the typing is."""
