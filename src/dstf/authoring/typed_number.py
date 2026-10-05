@@ -22,7 +22,10 @@ from nicegui import ui
 class TypedNumber(ui.number, component="typed_number.js"):
     """``ui.number`` whose field shows what was typed until it is left: a
     value from the server is taken only while the field is not being typed
-    in (``typed_number.js``). Every number field of the tool is one.
+    in (``typed_number.js``). Every number field of the tool is one. The
+    mouse wheel over a focused one scrolls the page and steps nothing: the
+    field is left first (a browser steps a focused number input by 1 per
+    notch).
 
     There is no way to set a FOCUSED field from the server, because nothing
     does: Discard and a drag on the plot rebuild the editor, and a linked

@@ -4898,6 +4898,40 @@ def test_a_field_typed_in_and_left_takes_the_servers_value_again(
         assert float(lower.input_value()) == 0.4
 
 
+def test_the_wheel_over_a_focused_number_field_scrolls_the_page(
+    tmp_path, playwright_browser
+):
+    """A focused `type=number` input steps by 1 per wheel notch: a person
+    scrolling the page with the pointer over the field they had just typed
+    in turned 0.3 into 3.3 — staged — and the page stood still. The wheel
+    changes nothing in the field and scrolls the page; the arrow keys still
+    step."""
+    with _served(tmp_path, playwright_browser, project=_typing_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "nrmse · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        expect(tolerance).to_have_value("0.3")
+        tolerance.click()  # focused, the pointer over it
+        assert tolerance.evaluate("e => document.activeElement === e")
+        before = page.evaluate("window.scrollY")
+        for _ in range(3):
+            page.mouse.wheel(0, 100)
+            page.wait_for_timeout(150)
+        page.wait_for_timeout(700)
+        assert tolerance.input_value() == "0.3"
+        assert _pending(page) == "0 pending edits"
+        assert page.evaluate("window.scrollY") > before
+        # The keyboard's step is the field's own, and stays.
+        tolerance.click()
+        page.keyboard.press("ArrowUp")
+        expect(tolerance).to_have_value("1.3", timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+
+
 #: The open drawer's panel width, and the first plot's svg width.
 WIDTHS = """() => {
   const panel = [...document.querySelectorAll('.dstf-drawer-panel')]

@@ -4,7 +4,7 @@
 // NiceGUI's own, elements/input.js.)
 export default {
   template: `
-    <q-input ref="qRef" v-bind="$attrs" :model-value="shown" @update:model-value="typed" @blur="typing = false">
+    <q-input ref="qRef" v-bind="$attrs" :model-value="shown" @update:model-value="typed" @blur="typing = false" @wheel="wheel">
       <template v-for="(_, slot) in $slots" v-slot:[slot]="slotProps">
         <slot :name="slot" v-bind="slotProps || {}" />
       </template>
@@ -26,6 +26,14 @@ export default {
       this.typing = true;
       this.shown = value;
       this.$emit("update:modelValue", value);
+    },
+    // A focused `type=number` input steps by 1 per wheel notch and keeps the
+    // page from scrolling: scrolling on with the pointer still over the
+    // field just typed in turned 0.3 into 3.3, staged. Left before the
+    // browser acts on the wheel, the input steps nothing and the page
+    // scrolls. (The arrow keys' step is untouched.)
+    wheel(event) {
+      if (event.target === document.activeElement) event.target.blur();
     },
   },
 };
