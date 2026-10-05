@@ -1735,29 +1735,65 @@ def _headroom(fig: dict) -> list[dict]:
 
 
 def test_the_open_leafs_grips_get_invisible_points_that_pad_the_axes():
-    """The plot area clips shapes: an arrow on the outermost edge, dragged
-    outward, was not painted. For the leaf it rings, the editable figure
-    holds one invisible point per grip, AT the grip's anchor and large
-    enough that Plotly's autorange leaves room past it."""
+    """The plot area clips shapes: an arrow on the outermost edge of a
+    tolerance stood at the plot's own edge, or past it. For the leaf it
+    rings, the editable figure holds one invisible point per grip, large
+    enough that Plotly's autorange leaves room for the arrow past it."""
     from dstf.figures.plotly import HEADROOM_SIZE
 
-    fig = variable_figure(_points_grip_view(), editable=True)
+    view = _points_grip_view()
+    fig = variable_figure(view, editable=True)
     (trace,) = _headroom(fig)
     assert trace["mode"] == "markers" and trace["type"] == "scatter"
     assert trace["marker"] == {"opacity": 0, "size": HEADROOM_SIZE}
     assert trace["showlegend"] is False and trace["hoverinfo"] == "skip"
     assert trace["meta"] == {"headroom_for": P0, "leaf": P0}
     assert "xaxis" not in trace and "yaxis" not in trace  # the time panel's
-    at = sorted(
-        (s["xanchor"], s["yanchor"])
+    assert len(trace["x"]) == len(_pointer(fig)["grips"]) == 6
+
+
+def test_a_headroom_point_pads_the_one_axis_its_grip_moves_along():
+    """A point pads BOTH axes by its size. So each stands at its grip's own
+    coordinate on the axis the grip moves along, and at the MIDDLE of the
+    other — of the time span, of the series' values — where its size
+    reaches neither end: a value's arrow pads the value axis and a time's
+    the time axis. Standing at its anchor, an arrow of a checkpoint near
+    the start or the end of the run pushed the time axis out too."""
+    view = _points_grip_view()  # time 0..10, sin(t): values -1..1
+    fig = variable_figure(view, editable=True)
+    (trace,) = _headroom(fig)
+    anchors = {
+        s["name"]: (s["xanchor"], s["yanchor"])
         for s in fig["layout"]["shapes"]
         if s["name"] in _pointer(fig)["grips"]
-    )
-    assert len(at) == 6
-    assert sorted(zip(trace["x"], trace["y"])) == at
-    # A point pads by its size: about 40 px past an anchor, so an arrow
-    # (17 px out) keeps room to be dragged outward.
-    assert 60 <= HEADROOM_SIZE <= 80
+    }
+    mid_t = 5.0
+    mid_v = (
+        float(np.sin(view.ref_time).min()) + float(np.sin(view.ref_time).max())
+    ) / 2
+    want = []
+    for name, (x, y) in anchors.items():
+        moves_on = _pointer(fig)["grips"][name]["axis"]
+        want.append((mid_t, y) if moves_on == "y" else (x, pytest.approx(mid_v)))
+    assert sorted(zip(trace["x"], trace["y"])) == sorted(want)
+    # Four value sides at mid-time, two time sides at mid-value.
+    assert [x for x in trace["x"]].count(mid_t) == 4
+
+
+def test_the_headroom_is_the_arrow_and_a_small_margin():
+    """An arrow's far edge stands 17 px past its anchor. plotly.js pads an
+    autoranged axis ``size / 1.6`` px past a marker plus 5 % of the axis:
+    at this size 9.7 px of plot beyond the arrow on the 234 px value axis
+    of a card, 4.4 px on the 129 px time panel of a split one (the Test
+    page's browser tests hold the pixels). At 72 the pad took half of the
+    234 px axis, and opening a criterion on a split plot flattened its
+    trace: 92.7 to 35.4 px per unit."""
+    from dstf.figures.plotly import HEADROOM_SIZE
+
+    assert HEADROOM_SIZE == 24
+    for axis_px, low, high in ((234, 8, 12), (128.7, 4, 6)):
+        beyond = HEADROOM_SIZE / 1.6 + 0.05 * axis_px - 17
+        assert low <= beyond <= high, (axis_px, beyond)
 
 
 def test_a_windows_grips_pad_the_time_axis_from_mid_value():

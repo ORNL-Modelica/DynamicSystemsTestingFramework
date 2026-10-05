@@ -7285,9 +7285,12 @@ def test_a_points_arrow_dragged_up_moves_that_side_and_the_box_follows(
         expect(_table_cell(page, 0, "value")).to_have_value("0.3")
 
         # Row 1 holds a pair: its upper arrow moves the upper side alone.
+        # 15 px: this arrow is the outermost one, with the room an arrow
+        # needs past it and no more — released past the plot's edge, the
+        # side is held to it (the tests of what a drag may write).
         expect(_table_cell(page, 1, "+ tolerance")).to_have_value("0.08")
-        was = _drag_arrow(page, "/points/upper/1", 0, -30)
-        to = was["yanchor"] + 30 / was["ppy"]
+        was = _drag_arrow(page, "/points/upper/1", 0, -15)
+        to = was["yanchor"] + 15 / was["ppy"]
         expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
             "0.08", timeout=EXPECT_TIMEOUT
         )
@@ -8391,14 +8394,17 @@ def _headroom_project(tmp_path: Path) -> tuple[Path, Path]:
     return cfg, work
 
 
-#: Plot 0's plot AREA — what clips its shapes — in viewport pixels.
+#: Plot 0's plot AREA — what clips its shapes — in viewport pixels, and its
+#: value axis's scale: pixels per unit.
 PLOT_AREA = """
 () => {
   const gd = document.querySelectorAll('.js-plotly-plot')[0];
   const fl = gd._fullLayout, r = gd.getBoundingClientRect();
   const xa = fl.xaxis, ya = fl.yaxis;
   return {left: r.left + xa._offset, right: r.left + xa._offset + xa._length,
-          top: r.top + ya._offset, bottom: r.top + ya._offset + ya._length};
+          top: r.top + ya._offset, bottom: r.top + ya._offset + ya._length,
+          height: ya._length,
+          ypx: ya._length / Math.abs(ya.range[1] - ya.range[0])};
 }
 """
 
@@ -8414,46 +8420,95 @@ def _shown_arrow(page, row: int, edge: str) -> dict:
     return arrow
 
 
-def test_an_outermost_arrow_has_room_to_be_dragged_outward(
+def _room(page, top: int, bottom: int, left: int, right: int) -> dict:
+    """The plot left beyond the outermost arrow on each side, in px — the
+    ``upper`` arrow of checkpoint ``top``, the ``lower`` of ``bottom``, the
+    ``before`` of ``left`` and the ``after`` of ``right`` — at rest."""
+    area = page.evaluate(PLOT_AREA)
+    return {
+        "top": _shown_arrow(page, top, "upper")["box"]["top"] - area["top"],
+        "bottom": area["bottom"] - _shown_arrow(page, bottom, "lower")["box"]["bottom"],
+        "left": _shown_arrow(page, left, "before")["box"]["left"] - area["left"],
+        "right": area["right"] - _shown_arrow(page, right, "after")["box"]["right"],
+    }
+
+
+def test_an_outermost_arrow_is_whole_at_rest_and_the_plot_keeps_its_scale(
     tmp_path, playwright_browser
 ):
     """The plot area clips shapes. Autoranged to the data, an arrow on the
-    outermost edge of a tolerance stood at the plot's own edge — or past
-    it — and dragged outward was not painted. The open criterion's grips
-    pad the axes: each outermost arrow stands 30 px or more inside the
-    plot area on the axis it moves along, and the top one, dragged 25 px
-    up, is still inside it mid-drag."""
+    outermost edge of a tolerance stood at the plot's own edge, or past it.
+    The open criterion's grips pad the axis each moves along by the arrow
+    and a small margin — 8 to 12 px of plot beyond it on the value axis —
+    and no more: padded 40 px past each arrow, half of the value axis was
+    padding. Here every tolerance reaches past the data, the worst there
+    is, and opening the criterion costs the value axis under a quarter of
+    its scale. An arrow dragged outward past that margin is clipped while
+    it is held; what it is released on is staged, and it is whole again."""
     with _served(tmp_path, playwright_browser, project=_headroom_project) as page:
         page.wait_for_timeout(700)
+        page.locator(".js-plotly-plot").first.evaluate(
+            "e => e.scrollIntoView({block: 'center'})"
+        )
+        page.wait_for_timeout(300)
+        closed = page.evaluate(PLOT_AREA)
         _open_for_grips(page, 0, "points · x")
         area = page.evaluate(PLOT_AREA)
-        room = {
-            "top": _shown_arrow(page, 1, "upper")["box"]["top"] - area["top"],
-            "bottom": area["bottom"] - _shown_arrow(page, 0, "lower")["box"]["bottom"],
-            "left": _shown_arrow(page, 0, "before")["box"]["left"] - area["left"],
-            "right": area["right"] - _shown_arrow(page, 1, "after")["box"]["right"],
-        }
-        print("HEADROOM", {k: round(v, 1) for k, v in room.items()}, area)
-        assert all(px >= 30 for px in room.values()), room
+        room = _room(page, 1, 0, 0, 1)
+        print("HEADROOM", {k: round(v, 1) for k, v in room.items()}, area, closed)
+        assert 8 <= room["top"] <= 12 and 8 <= room["bottom"] <= 12, room
+        # The time axis is some four times as long, and 5 % of it is
+        # Plotly's own pad: more room, of an axis that has it.
+        assert 8 <= room["left"] <= 60 and 8 <= room["right"] <= 60, room
+        assert area["ypx"] >= 0.75 * closed["ypx"], (area, closed)
+        _shot(page, tmp_path, "headroom-at-rest")
 
         arrow = _shown_arrow(page, 1, "upper")
         x, y = arrow["box"]["x"], arrow["box"]["y"]
         page.mouse.move(x, y, steps=3)
         page.mouse.down()
         page.mouse.move(x, y - 25, steps=8)
-        held = _shape(page, "/points/upper/1")["box"]
         _shot(page, tmp_path, "headroom-mid-drag")
         page.mouse.up()
-        assert held is not None and abs(held["y"] - (y - 25)) <= 1.5, (held, y)
-        assert held["top"] >= area["top"] and held["bottom"] <= area["bottom"], (
-            held,
-            area,
-        )
         expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
             "0.3", timeout=EXPECT_TIMEOUT
         )
         upper = float(_table_cell(page, 1, "+ tolerance").input_value())
         assert abs(upper - (0.3 + 25 / arrow["ppy"])) * arrow["ppy"] < 0.5, upper
+        # Redrawn around the new edge: whole, with its margin.
+        page.wait_for_timeout(500)
+        after = page.evaluate(PLOT_AREA)
+        top = _shown_arrow(page, 1, "upper")["box"]["top"] - after["top"]
+        assert 8 <= top <= 12, top
+
+
+def test_opening_a_criterion_on_a_split_plot_keeps_its_trace_as_tall(
+    tmp_path, playwright_browser
+):
+    """A plot with a spectrum under it has a time panel 129 px tall. The
+    padding for the open criterion's arrows — 51 px past each outermost
+    edge — took the trace there from 92.7 to 35.4 px per unit: it went
+    flat, and a tolerance of 0.05 was a box 2 px tall. With the pad the
+    arrow needs and no more, tolerances that lie within the data change
+    nothing: the scale is the one the plot had, and every outermost arrow
+    is whole inside the panel."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        page.locator(".js-plotly-plot").first.evaluate(
+            "e => e.scrollIntoView({block: 'center'})"
+        )
+        page.wait_for_timeout(300)
+        closed = page.evaluate(PLOT_AREA)
+        assert closed["height"] < 140, closed  # the split panel
+        _shot(page, tmp_path, "split-closed")
+        _open_for_grips(page, 0, "points · x")
+        area = page.evaluate(PLOT_AREA)
+        room = _room(page, 1, 0, 0, 1)
+        print("SPLIT", {k: round(v, 1) for k, v in room.items()}, area, closed)
+        assert abs(area["ypx"] - closed["ypx"]) <= 0.05 * closed["ypx"], (area, closed)
+        assert all(px >= 4 for px in room.values()), room
+        _rest(page)
+        _shot(page, tmp_path, "split-open")
 
 
 # -- a refused drag's reason, under the plot ------------------------------------

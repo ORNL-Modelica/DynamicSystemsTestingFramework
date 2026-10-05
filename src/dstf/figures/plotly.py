@@ -13,7 +13,7 @@ carries it as ``name``. Those are the handles on-plot editing attaches to.
 The editable figure (``editable=True``, the tool's; never the report's) adds
 one pixel-sized ring shape (a ``path``) per ``kind="handle"`` marker and one
 arrow per ``kind="grip"`` primitive — a side of a tolerance — with an
-invisible point that pads the axes past it (:func:`_headroom`), turns on
+invisible point that pads the axis it moves along (:func:`_headroom`), turns on
 ``config.edits.shapePosition`` and turns OFF ``scrollZoom`` (:func:`_config`). That makes every shape draggable — plotly.js
 offers no per-shape switch that works (measured on plotly.js 3.1.1, the
 build NiceGUI 3.16 bundles; the bundle's "3.8.2" string is d3's) — and the
@@ -582,10 +582,14 @@ def _grip_shapes(grips: list[Primitive], ctx: _Ctx) -> list[dict]:
 
 #: A headroom point's diameter (:func:`_headroom`). plotly.js pads an
 #: autoranged axis ``size / 1.6`` px past a marker, plus its usual 5 % of
-#: the axis: 45 px and more past a grip's anchor, where its arrow reaches
-#: 17 — measured in Chromium on plotly.js 3.1.1 (the Test page's browser
-#: tests hold the number).
-HEADROOM_SIZE = 72
+#: the axis; an arrow's far edge stands 17 px past its anchor. At 24 that
+#: leaves 9.7 px of plot beyond the arrow at rest on the 234 px value axis
+#: of a card and 4.4 px on the 129 px time panel of a split one — the arrow
+#: whole, with a small margin, and no more: at 72 the pad was half of the
+#: 234 px axis, and on a split plot opening a criterion took the trace from
+#: 92.7 to 35.4 px per unit (Chromium, plotly.js 3.1.1; the Test page's
+#: browser tests hold the pixels).
+HEADROOM_SIZE = 24
 
 
 def _mid_value(view: VariableView) -> float | None:
@@ -604,24 +608,41 @@ def _mid_value(view: VariableView) -> float | None:
     return (low + high) / 2
 
 
-def _headroom(grips: list[Primitive], leaf: LeafView, view: VariableView) -> list[dict]:
-    """Invisible points at the open leaf's grips, so that an autoranged
+def _headroom(
+    grips: list[Primitive], leaf: LeafView, view: VariableView, ctx: _Ctx
+) -> list[dict]:
+    """Invisible points for the open leaf's grips, so that an autoranged
     axis leaves room past the outermost of them: the plot area clips
-    shapes, and an arrow on its edge, dragged outward, was not painted.
-    The :func:`_hline` anchor idiom, with a size (:data:`HEADROOM_SIZE`).
+    shapes, and an arrow on its edge was not painted. The :func:`_hline`
+    anchor idiom, with a size (:data:`HEADROOM_SIZE`).
 
-    A marker's stands at its own anchor. A line's — the edge of a window
-    that spans its panel — has no y: on the time panel it stands at the
-    middle of the series' values, where its size moves no y range, and
-    pads the time axis alone; on the spectrum panel, whose x range is set
-    (:func:`_spectrum_range`) and not autoranged, it has none."""
+    A point pads BOTH axes by its size, and a grip moves along ONE: so on
+    the time panel each stands at its grip's own coordinate on that axis
+    and at the MIDDLE of the other, where its size reaches neither end — a
+    value's arrow (``upper`` / ``lower``) at mid-time, padding the value
+    axis alone; a time's (a checkpoint's ``before`` / ``after``, the edge
+    of a window that spans its panel) at the middle of the series' values,
+    padding the time axis alone, and nowhere when there are no values.
+    Standing at its anchor, the arrow of a checkpoint near either end of
+    the run pushed the time axis out as well.
+
+    On the spectrum panel a marker's stands at its own anchor and a line's
+    has none: that x range is set (:func:`_spectrum_range`), not
+    autoranged."""
     by_panel: dict[str, tuple[Primitive, list[float], list[float]]] = {}
-    mid = _mid_value(view)
+    mid_time = (ctx.x_min + ctx.x_max) / 2
+    mid_value = _mid_value(view)
     for grip in grips:
-        if isinstance(grip, Marker):
+        assert isinstance(grip, (Marker, VLine))  # `_grip_shapes`
+        if grip.panel != "time":
+            if not isinstance(grip, Marker):
+                continue
             x, y = grip.x, grip.y
-        elif isinstance(grip, VLine) and grip.panel == "time" and mid is not None:
-            x, y = grip.time, mid
+        elif grip_axis(grip) == "y":
+            assert isinstance(grip, Marker)  # a line moves on x
+            x, y = mid_time, grip.y
+        elif mid_value is not None:
+            x, y = (grip.time if isinstance(grip, VLine) else grip.x), mid_value
         else:
             continue
         _, xs, ys = by_panel.setdefault(grip.panel, (grip, [], []))
@@ -1009,7 +1030,7 @@ def _leaf_traces(
         ringed = editable and (rings_for is None or leaf.path in rings_for)
         leaf_rings = _handle_rings(markers) + _grip_shapes(grips, ctx) if ringed else []
         if ringed:
-            leaf_data.extend(_headroom(grips, leaf, view))
+            leaf_data.extend(_headroom(grips, leaf, view, ctx))
             for grip in grips:
                 assert isinstance(grip, (Marker, VLine))  # `_grip_shapes`
                 pointer["grips"][grip.id] = {
