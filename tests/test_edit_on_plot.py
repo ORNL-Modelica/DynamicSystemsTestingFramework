@@ -1404,6 +1404,160 @@ def test_a_row_whose_tolerance_is_no_number_or_pair_is_refused_by_name(
     assert session.spec.pending == pending
 
 
+@pytest.mark.parametrize(
+    ("field", "key", "bad", "sentence"),
+    [
+        ("points", "tolerance", -0.5, "tolerance must not be negative; got −0.5"),
+        (
+            "points",
+            "tolerance",
+            {"lower": -0.5, "upper": 0.1},
+            "tolerance (lower side) must not be negative; got −0.5",
+        ),
+        (
+            "points",
+            "tolerance",
+            {"lower": 0.1, "upper": -2},
+            "tolerance (upper side) must not be negative; got −2",
+        ),
+        (
+            "points",
+            "time_tolerance",
+            -0.25,
+            "time_tolerance must not be negative; got −0.25",
+        ),
+        (
+            "points",
+            "time_tolerance",
+            {"lower": -0.25, "upper": 0.0},
+            "time_tolerance (before side) must not be negative; got −0.25",
+        ),
+        (
+            "points",
+            "time_tolerance",
+            {"lower": 0.0, "upper": -0.25},
+            "time_tolerance (after side) must not be negative; got −0.25",
+        ),
+        ("events", "tolerance", -1e-3, "tolerance must not be negative; got −0.001"),
+        (
+            "events",
+            "tolerance",
+            {"lower": 0.1, "upper": -0.1},
+            "tolerance (late side) must not be negative; got −0.1",
+        ),
+        ("peaks", "tolerance", -0.05, "tolerance must not be negative; got −0.05"),
+    ],
+)
+def test_a_negative_tolerance_in_a_row_is_refused_by_row_and_column(
+    session, field, key, bad, sentence
+):
+    """A row's tolerance below zero — a number or either side of a pair, a
+    value's or a time's — can never be met: the table staged it. Refused by
+    `act`, naming the row, the column (its side as the cell's fields name
+    it) and the value."""
+    leaf, rest = SIDED[field]
+    _root_leaf_on_a(session, leaf)
+    pending = list(session.spec.pending)
+    with pytest.raises(ValueError) as box:
+        _rows(
+            session,
+            [dict(leaf[field][0]), {**rest, key: bad}],
+            model_id=A,
+            path="/metrics",
+            field=field,
+        )
+    assert str(box.value) == f"row 1: {sentence}"
+    assert session.spec.pending == pending
+    # A zero is a tolerance, as a number and as either side.
+    zero = [{**rest, key: 0}, {**rest, key: {"lower": 0.0, "upper": 0.0}}]
+    op = _only_op(_rows(session, zero, model_id=A, path="/metrics", field=field))
+    assert [row[key] for row in op.value[field]] == [0, {"lower": 0.0, "upper": 0.0}]
+
+
+def test_a_tube_rows_negative_width_is_not_a_tolerance(session):
+    """`tube_points` in `abs` mode holds literal bounds: a negative
+    ``lower`` is one (`test_handles.TREE`'s last leaf), never refused."""
+    _tree_on_d(session)
+    rows = [{"time": 0.0, "upper": 1.5, "lower": -0.75}]
+    path = "/metrics/children/5"
+    op = _only_op(
+        EditOnPlot().act(
+            SessionView(session, _on(session, D, path + "/tube/upper/0")),
+            kind="rows",
+            model_id=D,
+            path=path,
+            field="tube_points",
+            rows=rows,
+        )
+    )
+    assert op.value["tube_points"] == rows
+
+
+async def test_a_negative_typed_in_a_rows_tolerance_puts_back_what_the_cell_held(
+    session,
+):
+    """`-0.5` typed over a row's tolerance of 0.1 passes through nothing
+    (the `-`: the row then follows the criterion's, which the table
+    stages) and `-0`. Refused, the CELL goes back to what it held when it
+    was entered — a tolerance of 0 nobody typed was left in the spec beside
+    a field reading −0.5 — the field keeps what was typed, and the
+    sentence says why. An edit of another cell made meanwhile stays."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"].append({"time": 0.75, "value": 0.5})
+    _root_leaf_on_a(session, leaf)
+    lower = "/metrics:points:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _cell(user, "/metrics:points:1:time").set_value(0.8)
+        await _settled(lambda: _a_rows(session, "points")[1]["time"] == 0.8)
+        user.find(marker=lower).trigger("focus")
+        _keys(user, lower, "")
+        await _settled(lambda: "tolerance" not in _a_rows(session, "points")[0])
+        _keys(user, lower, "-0")
+        await _settled(lambda: _a_rows(session, "points")[0].get("tolerance") == 0)
+        _keys(user, lower, "-0.", "-0.5")
+        await _settled(lambda: _a_rows(session, "points")[0].get("tolerance") == 0.1)
+        assert errors["edit-on-plot"] == (
+            "ValueError: row 0: tolerance must not be negative; got −0.5"
+        )
+        assert _cell(user, lower).value == -0.5
+        assert _a_rows(session, "points") == [
+            {"time": 0.5, "value": 0.5, "tolerance": 0.1},
+            {"time": 0.8, "value": 0.5},
+        ]
+        # A value the row takes is staged as ever, and the sentence goes.
+        _keys(user, lower, "0.2")
+        await _settled(lambda: _a_rows(session, "points")[0].get("tolerance") == 0.2)
+        assert "edit-on-plot" not in errors
+
+
+async def test_a_refused_cell_puts_back_what_it_held_when_it_was_entered(session):
+    """Not what the table opened on: 0.2 typed and taken, the cell left
+    and entered again, then `-1` (`-`: unset, then refused). It is 0.2."""
+    _root_leaf_on_a(session, copy.deepcopy(SIDED["events"][0]))
+    lower = "/metrics:events:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _keys(user, lower, "0.2")
+        await _settled(lambda: _a_rows(session, "events")[0].get("tolerance") == 0.2)
+        user.find(marker="/metrics:events").trigger("focusin")
+        _keys(user, lower, "", "-1")
+        await _settled(lambda: "edit-on-plot" in errors)
+        assert "row 0: tolerance must not be negative; got −1" in errors["edit-on-plot"]
+        assert _a_rows(session, "events") == [{"time": 0.5, "tolerance": 0.2}]
+
+
+async def test_a_refusal_with_nothing_staged_on_the_way_puts_nothing_back(session):
+    """`-1` set at once over 0.1: nothing was staged on the way, so the
+    refusal stages nothing either."""
+    _root_leaf_on_a(session, copy.deepcopy(SIDED["peaks"][0]))
+    lower = "/metrics:peaks:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _keys(user, lower, "-1")
+        await _settled(lambda: "edit-on-plot" in errors)
+        assert session.spec.pending == pending
+        assert _a_rows(session, "peaks")[0]["tolerance"] == 0.1
+
+
 def test_a_rows_edit_takes_a_pair_and_a_number_and_drops_a_blank(session):
     _root_leaf_on_a(session, SIDED["points"][0])
     rows = [

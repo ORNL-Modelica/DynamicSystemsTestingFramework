@@ -343,6 +343,219 @@ async def test_a_refusal_with_nothing_staged_on_the_way_stages_nothing(session):
         assert session.spec.pending == pending
 
 
+# -- values that can never score are refused, as a refused window is ----------
+
+MAX = {"quantity": {"reduce": "max"}}
+
+
+def _criteria_act(session, metric: str, params: dict):
+    return EditCriteria().act(
+        SessionView(session, LEAF0),
+        model_id=A,
+        path="/metrics/children/0",
+        metric=metric,
+        variable="x",
+        params=params,
+        against="primary",
+        window={},
+    )
+
+
+@pytest.mark.parametrize(
+    ("metric", "params", "sentence"),
+    [
+        ("nrmse", {"tolerance": -0.5}, "tolerance must not be negative; got −0.5"),
+        ("points", {"tolerance": -1}, "tolerance must not be negative; got −1"),
+        (
+            "points",
+            {"tolerance": {"lower": -0.25, "upper": 0.1}},
+            "tolerance (lower side) must not be negative; got −0.25",
+        ),
+        (
+            "points",
+            {"tolerance": {"lower": 0.1, "upper": -2e-3}},
+            "tolerance (upper side) must not be negative; got −0.002",
+        ),
+        (
+            "scalar",
+            {**MAX, "tolerance": {"lower": 0.0, "upper": -1.0}},
+            "tolerance (upper side) must not be negative; got −1",
+        ),
+        (
+            "event-timing",
+            {"time_tolerance": -0.5},
+            "time_tolerance must not be negative; got −0.5",
+        ),
+        (
+            "event-timing",
+            {"time_tolerance": {"lower": -0.5, "upper": 0.1}},
+            "time_tolerance (early side) must not be negative; got −0.5",
+        ),
+        (
+            "event-timing",
+            {"time_tolerance": {"lower": 0.1, "upper": -0.5}},
+            "time_tolerance (late side) must not be negative; got −0.5",
+        ),
+        (
+            "range",
+            {"min_value": 9, "max_value": 2},
+            "min_value 9 exceeds max_value 2",
+        ),
+        (
+            "range",
+            {"min_value": -1.0, "max_value": -2.5},
+            "min_value −1 exceeds max_value −2.5",
+        ),
+        (
+            "scalar",
+            {**MAX, "min_value": 9, "max_value": 2},
+            "min_value 9 exceeds max_value 2",
+        ),
+        (
+            "scalar",
+            {**MAX, "min_value": 2, "max_value": 2.0},
+            "min_value 2 equals max_value 2; a scalar leaf needs min_value < max_value",
+        ),
+    ],
+)
+def test_edit_criteria_refuses_a_value_that_can_never_score(
+    session, metric, params, sentence
+):
+    """A negative tolerance — a number or either side of a pair, a value's
+    or a time's — and bounds out of order were staged as typed, and the
+    criterion could only ever fail (a scalar with equal bounds: never
+    score). Refused by `act`, in a sentence naming the field and the
+    value, before anything is staged."""
+    with pytest.raises(ValueError) as box:
+        _criteria_act(session, metric, params)
+    assert str(box.value) == sentence
+
+
+@pytest.mark.parametrize(
+    ("metric", "params"),
+    [
+        ("nrmse", {}),
+        ("nrmse", {"tolerance": 0.0}),
+        ("points", {"tolerance": {"lower": 0.0, "upper": 0.1}}),
+        ("event-timing", {"time_tolerance": 0}),
+        ("range", {"min_value": -9}),
+        ("range", {"min_value": 2, "max_value": 2}),  # equal bounds score
+        ("scalar", {**MAX, "min_value": 1, "max_value": 2}),
+        # No number: the leaf's config error, said by its row — not this rule's.
+        ("nrmse", {"tolerance": "-0.5"}),
+    ],
+)
+def test_edit_criteria_takes_a_zero_and_a_range_with_equal_bounds(
+    session, metric, params
+):
+    (op,) = _criteria_act(session, metric, params).ops
+    assert (op.op, op.path) == ("replace", "/metrics/children/0")
+    assert {k: op.value[k] for k in params} == params
+
+
+@pytest.mark.parametrize("name", ["range", "scalar"])
+def test_equal_bounds_are_refused_where_the_scorer_refuses_them(name):
+    """`STRICT_BOUNDS` is the scorer's rule, said before the stage: a
+    metric is in it exactly when building its mode with equal bounds
+    raises."""
+    from dstf.authoring.unscorable import STRICT_BOUNDS
+    from dstf.comparison.modes import resolve_mode
+
+    extra = MAX if name == "scalar" else {}
+    override = {"mode": name, "min_value": 1.0, "max_value": 1.0, **extra}
+    try:
+        resolve_mode(override, 0.01)
+        refused = False
+    except ValueError:
+        refused = True
+    assert (name in STRICT_BOUNDS) is refused
+
+
+def test_a_hand_written_negative_tolerance_is_staged_and_scored_as_it_was(session):
+    """The editor's rule is not the Session's, the parser's or the
+    scorer's: a patch holding a negative tolerance is staged, and its leaf
+    fails — a nrmse under −0.5 never is."""
+    from dstf.comparison.sides import Sides
+    from dstf.reporting.status import FAIL, classify
+
+    leaf = {"metric": "nrmse", "variable": "x", "tolerance": -0.5}
+    session.stage([PatchOp(D, "add", "/metrics", leaf)])
+    assert session.tree(D) == leaf
+    comp = session.comparisons[D]
+    assert classify(comp) == FAIL and comp.error_message is None
+    assert comp.variables[0].tolerance_used == Sides(-0.5, -0.5)
+
+
+NRMSE_ROOT = {"metric": "nrmse", "variable": "x", "tolerance": 0.3}
+
+
+async def test_a_negative_tolerance_typed_puts_the_leaf_back(session):
+    """`-0.5` typed over a tolerance of 0.3 passes through nothing (the
+    `-`: unset, which the leaf takes) and `-0`; refused, the leaf goes back
+    to what the field held when it was entered, as a refused window does.
+    The field keeps what was typed, and the sentence says why."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(NRMSE_ROOT))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        tol = _number(user, "Tolerance")
+        _keys(user, tol, "")
+        assert "tolerance" not in session.tree(A)  # the `-`, accepted
+        _keys(user, tol, "-0", "-0.", "-0.5")
+        assert errors["edit-criteria"] == (
+            "ValueError: tolerance must not be negative; got −0.5"
+        )
+        assert session.tree(A) == NRMSE_ROOT
+        assert tol.value == -0.5
+        _keys(user, tol, "0.2")
+        assert session.tree(A)["tolerance"] == 0.2
+        assert "edit-criteria" not in errors
+
+
+async def test_arrow_down_twice_from_an_empty_tolerance_stages_nothing(session):
+    """A number field steps by 1: from empty, ArrowDown is 0 and then −1,
+    which was staged as the tolerance. The 0 on the way is taken; the −1 is
+    refused and the leaf is as it was entered — no tolerance of its own."""
+    leaf = {"metric": "nrmse", "variable": "x"}
+    session.stage([PatchOp(A, "add", "/metrics", dict(leaf))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        tol = _number(user, "Tolerance")
+        _keys(user, tol, "0")
+        assert session.tree(A)["tolerance"] == 0.0
+        _keys(user, tol, "-1")
+        assert "tolerance must not be negative; got −1" in errors["edit-criteria"]
+        assert session.tree(A) == leaf
+
+
+async def test_a_negative_side_of_a_pair_typed_puts_the_pair_back(session):
+    pair = {"lower": 0.1, "upper": 0.3}
+    leaf = {"metric": "points", "variable": "x", "tolerance": pair}
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(leaf))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        lower = _number(user, "− Default tolerance")
+        _keys(user, lower, "0", "-0.2")
+        assert errors["edit-criteria"] == (
+            "ValueError: tolerance (lower side) must not be negative; got −0.2"
+        )
+        assert session.tree(A) == leaf
+        assert lower.value == -0.2
+
+
+async def test_bounds_typed_out_of_order_put_the_leaf_back(session):
+    """`25` typed over a lower bound of −1 under an upper bound of 2: `2`
+    on the way equals the upper bound, which a range takes; `25` is
+    refused, and the bound is −1 again."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(WINDOWED))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        lower = _number(user, "Lower bound (optional)")
+        _keys(user, lower, "2")
+        assert session.tree(A)["min_value"] == 2.0
+        _keys(user, lower, "25")
+        assert errors["edit-criteria"] == (
+            "ValueError: min_value 25 exceeds max_value 2"
+        )
+        assert session.tree(A) == WINDOWED
+        assert lower.value == 25
+
+
 def _session_with_soft_check(tmp_path, *ops):
     """A fresh Session per simulation (a page cannot outlive its client):
     A has a soft_check `om_cross`, plus whatever ops are staged."""

@@ -30,6 +30,7 @@ from ..capabilities import Panel, Patch, Placement
 from ..session import no_tree_error
 from ..spec_document import PatchOp
 from ..tree_pointer import node_at
+from ..unscorable import refuse_negative
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -444,7 +445,13 @@ class EditOnPlot:
         if columns is None:
             raise ValueError(f"{name} has no table {field!r}")
         required = [column[0] for column in columns if column[1] in _REQUIRED]
-        sided = {column[0] for column in columns if column[1] in _SIDES}
+        #: A tolerance column -> what its two sides are called, where the
+        #: column says (a time tolerance's `before` / `after`).
+        sided = {
+            column[0]: (column[2] if len(column) > 2 else None)
+            for column in columns
+            if column[1] in _SIDES
+        }
         cleaned: list[dict] = []
         for i, row in enumerate(rows):
             for key in required:
@@ -460,6 +467,9 @@ class EditOnPlot:
                     # a missing side, a third key, a side that is no finite
                     # number — is the refusal.
                     parse_sides(value, f"row {i}: {key}")
+                    # ... and the editor's own: a tolerance below zero can
+                    # never be met (`..unscorable`).
+                    refuse_negative(key, value, sided[key], where=f"row {i}: ")
             cleaned.append({k: v for k, v in row.items() if v is not None})
         # The reader's own refusal (`algorithms._interpolate_tube_widths`),
         # raised here by name rather than as the rescore's config error.
@@ -529,12 +539,22 @@ def _table(
     in the spec — that side dragged on the plot — shows the spec's again.
     What is not kept is anything else a held-back list holds: another
     cell's value typed meanwhile, a row added or removed. Rebuilt, the
-    table shows the spec's rows, the blank cell still blank."""
+    table shows the spec's rows, the blank cell still blank.
+
+    A value ``act`` REFUSES is typed by way of others it takes — `-0.5`
+    over a tolerance is nothing, `-0`, `-0.`, then `-0.5` — and each of
+    those was staged: refused, the list stayed as the last of them left
+    it, a tolerance of 0 beside a field reading −0.5. So the cell goes
+    back to what it held when it was entered (`enter`), as a refused field
+    of the criterion's form does: the list is staged with that one cell
+    put back, and the refusal said again. The field keeps what was typed,
+    and while it does the list is refused whole, like a blank required
+    cell holds it back."""
     from ..forms import SidesControl, label_width, sides_control
     from ..typed_number import TypedNumber
 
-    container = ui.column().classes("w-full")
     mark = f"{path}:{field}"
+    container = ui.column().classes("w-full").mark(mark)
     required = [column[0] for column in columns if column[1] in _REQUIRED]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
     #: The tolerance cells, as rendered: the row each is on, its column and
@@ -597,25 +617,61 @@ def _table(
     def missing(i: int, key: str) -> str | None:
         return f"{key} is required" if rows[i].get(key) is None else None
 
-    def submit(but: SidesControl | None = None) -> None:
-        held_back = blanks(but)
-        if not held_back and ui_panel.submit(
+    #: The cell being edited — ``(row shown, column)``, None before any is
+    #: and after the table heard a focus or changed its rows — and what its
+    #: row held there when it was entered: what a refused edit puts back.
+    taken: dict[str, Any] = {"cell": None, "entered": None}
+
+    def enter(i: int, key: str) -> None:
+        """``(i, key)`` is the first cell edited since another was, or
+        since a focus was heard: what its row holds now is its start."""
+        if taken["cell"] != (i, key):
+            taken["cell"] = (i, key)
+            taken["entered"] = copy.deepcopy(rows[i].get(key))
+
+    def left() -> None:
+        """A focus in the table, or its rows moved: whichever cell is
+        edited next starts from what its row holds then."""
+        taken["cell"] = None
+
+    def held(listed: list[dict]) -> list[dict]:
+        """``listed`` as the spec would hold it: a blank optional cell left
+        out, as `act` leaves it out."""
+        return [
+            {k: copy.deepcopy(v) for k, v in row.items() if v is not None}
+            for row in listed
+        ]
+
+    def stage(listed: list[dict]) -> bool:
+        """Submit ``listed`` — the rows shown, or those with one cell put
+        back; True when it went through, and the spec holds it."""
+        if not ui_panel.submit(
             kind="rows",
             model_id=model_id,
             path=path,
             field=field,
-            rows=copy.deepcopy(rows),
+            rows=copy.deepcopy(listed),
         ):
-            # The spec holds this list now, a blank optional cell left out
-            # as `act` leaves it out.
-            spec[:] = [
-                {k: copy.deepcopy(v) for k, v in row.items() if v is not None}
-                for row in rows
-            ]
-            origin[:] = range(len(rows))
+            return False
+        spec[:] = held(listed)
+        origin[:] = range(len(rows))
+        return True
+
+    def submit(but: SidesControl | None = None) -> None:
+        held_back = blanks(but)
+        if not held_back and not stage(rows) and taken["cell"] is not None:
+            # Refused. The cell goes back to what it held when it was
+            # entered — where values typed on the way to this one were
+            # staged — and the refusal, which that stage hid, is said again.
+            i, key = taken["cell"]
+            back = copy.deepcopy(rows)
+            back[i][key] = copy.deepcopy(taken["entered"])
+            if held(back) != spec and stage(back):
+                stage(rows)
         remember()
 
     def set_cell(i: int, key: str, value: Any) -> None:
+        enter(i, key)
         rows[i][key] = value
         submit()
 
@@ -623,17 +679,20 @@ def _table(
         """A tolerance cell handed ``value`` over. Half as it does so, it
         is putting back what it held when its field took the focus: its
         own blank side does not hold THAT list back."""
+        enter(i, key)
         rows[i][key] = value
         own = next(g for row, k, g in pairs if row is rows[i] and k == key)
         submit(but=own)
 
     def remove(i: int) -> None:
+        left()
         rows.pop(i)
         origin.pop(i)
         render()
         submit()
 
     def add() -> None:
+        left()
         rows.append(_new_row(columns, rows, span()))
         origin.append(None)
         render()
@@ -719,6 +778,8 @@ def _table(
                 f"{mark}:add"
             )
 
+    # Whichever cell it is: what its row holds now is its start.
+    container.on("focusin", lambda _e: left(), [])
     render(restored)
     if any(k[0] == field for k in kept):
         blanks()  # a blank cell read back says so from the start

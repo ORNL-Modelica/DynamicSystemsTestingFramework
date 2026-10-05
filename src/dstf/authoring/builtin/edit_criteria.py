@@ -12,6 +12,7 @@ preview drawer shows the entry's diff either way).
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.mode_schema import Schema, derive_schema
@@ -26,6 +27,7 @@ from ...comparison.tree_spec import (
 )
 from ..capabilities import Panel, Patch, Placement
 from ..tree_pointer import node_or_none
+from ..unscorable import TOLERANCES, refuse_bounds, refuse_negative
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -67,6 +69,23 @@ def _authored_leaf(tree: dict | None, path: str) -> dict | None:
         for i in range(1, len(parts))
     )
     return leaf
+
+
+def refuse_unscorable(name: str, params: dict) -> None:
+    """Raise ``ValueError`` for a criterion of metric ``name`` whose
+    ``params`` can never score (`..unscorable`): a negative tolerance, its
+    sides named as the mode's own fields name them, or bounds out of
+    order."""
+    desc = metric(name)
+    sides: dict[str, Any] = {}
+    if desc is not None and dataclasses.is_dataclass(desc.config_cls):
+        sides = {
+            f.name: f.metadata.get("side_labels")
+            for f in dataclasses.fields(desc.config_cls)
+        }
+    for key in TOLERANCES:
+        refuse_negative(key, params.get(key), sides.get(key))
+    refuse_bounds(name, params)
 
 
 class EditCriteria:
@@ -293,10 +312,15 @@ class EditCriteria:
         build_form()
 
     def act(self, s: SessionView, **inputs: Any) -> Patch:
+        params = dict(inputs["params"])
+        # A value that can never score is refused here, before the stage —
+        # as the stage refuses a window that ends before it starts, and the
+        # panel puts the leaf back the same way (`emit`).
+        refuse_unscorable(inputs["metric"], params)
         leaf = LeafSpec(
             metric=inputs["metric"],
             variable=inputs["variable"],
-            params=dict(inputs["params"]),
+            params=params,
             against=inputs["against"],
             window_start=inputs["window"].get("start"),
             window_end=inputs["window"].get("end"),

@@ -4840,17 +4840,28 @@ def test_a_number_backspaced_away_leaves_the_field_empty_and_unset(
         assert fields["Tolerance"][3] == "in effect: 0.01 (the test's tolerance)"
 
 
-@pytest.mark.parametrize(("typed", "staged_as"), [("-0.5", "-0.5"), ("1e-3", "0.001")])
+#: Where the preview shows the range's lower bound.
+RANGE_MIN = '"variable":"x","min_value":'
+
+
+@pytest.mark.parametrize(
+    ("name", "label", "before", "typed", "staged_as"),
+    [
+        # A bound may be negative; a tolerance may not (it is refused).
+        ("range · x", "Lower bound (optional)", RANGE_MIN, "-0.5", "-0.5"),
+        ("nrmse · x", "Tolerance", NRMSE_X, "1e-3", "0.001"),
+    ],
+)
 def test_a_sign_and_an_exponent_are_staged_as_typed(
-    tmp_path, playwright_browser, typed, staged_as
+    tmp_path, playwright_browser, name, label, before, typed, staged_as
 ):
     """`-0.5` keeps its minus and `1e-3` its exponent: the field reads what
     was typed and that number is staged. Both pass through text that is no
     number yet (`-`, `1e`, `1e-`), which the server's answer rewrote."""
-    with _slow_editor(tmp_path, playwright_browser, 0, "nrmse · x") as (page, editor):
-        tolerance = editor.get_by_label("Tolerance", exact=True)
-        _type_over(page, tolerance, typed)
-        assert _shown_and_staged(page, tolerance, NRMSE_X) == (typed, staged_as)
+    with _slow_editor(tmp_path, playwright_browser, 0, name) as (page, editor):
+        field = editor.get_by_label(label, exact=True)
+        _type_over(page, field, typed)
+        assert _shown_and_staged(page, field, before) == (typed, staged_as)
 
 
 def test_a_linked_twin_typed_in_before_the_mirror_lands_keeps_what_was_typed(
@@ -4905,6 +4916,96 @@ def test_a_field_typed_in_and_left_takes_the_servers_value_again(
         _type_over(page, upper, "0.4")
         assert _shown_and_staged(page, upper, POINTS_Y) == ("0.4", "0.4")
         assert float(lower.input_value()) == 0.4
+
+
+# -- a value that can never score is refused where it is typed -------------------
+
+
+def _refusal(editor, text: str):
+    return editor.locator(".text-negative:visible").filter(has_text=text)
+
+
+def test_arrow_down_in_an_empty_tolerance_is_refused_and_stages_nothing(
+    tmp_path, playwright_browser
+):
+    """A number field steps with the arrow keys, and from an empty nrmse
+    tolerance ArrowDown reaches a negative one within two presses: it was
+    staged, and the criterion could only fail. Refused where it is typed —
+    the field keeps the number, the sentence names it — and the leaf is as
+    it was: nothing is pending."""
+    with _served(tmp_path, playwright_browser, project=_tolerance_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "nrmse · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        expect(tolerance).to_have_value("")
+        tolerance.click()
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("ArrowDown")
+        shown = tolerance.input_value()
+        assert shown.startswith("-") and float(shown) < 0, shown
+        said = f"tolerance must not be negative; got −{shown[1:]}"
+        expect(_refusal(editor, "must not be negative")).to_have_text(
+            said, timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        assert tolerance.input_value() == shown  # what was typed stays
+        assert _pending(page) == "0 pending edits"
+        _shot(page, tmp_path, "negative-tolerance-refused")
+        # A tolerance the leaf takes is staged, and the sentence goes.
+        page.keyboard.press("Control+A")
+        page.keyboard.type("0.2", delay=KEY_MS)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_refusal(editor, "must not be negative")).to_have_count(0)
+
+
+def test_bounds_out_of_order_and_a_negative_in_a_rows_tolerance_are_refused(
+    tmp_path, playwright_browser
+):
+    """A lower bound typed above the upper one is refused where it is
+    typed, and the bound is as it was. And `-0.5` typed into a checkpoint's
+    empty tolerance passes through `-0`, which the table stages; refused,
+    the cell is put back to nothing — the row follows the criterion's
+    again. Neither leaves anything pending."""
+    with _served(tmp_path, playwright_browser, project=_typing_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "range · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        lower = editor.get_by_label("Lower bound (optional)", exact=True)
+        expect(lower).to_have_value("-1")
+        _type_over(page, lower, "25")  # `2` on the way equals the upper bound
+        expect(_refusal(editor, "exceeds")).to_have_text(
+            "min_value 25 exceeds max_value 2", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(700)
+        assert lower.input_value() == "25"
+        assert _pending(page) == "0 pending edits"
+
+        _open_crit(page, 1, "points · y")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        row = editor.locator(".dstf-table-scroll > div").first
+        row.evaluate("e => e.scrollIntoView({block: 'center'})")
+        cell = row.get_by_label("− tolerance", exact=True)
+        expect(cell).to_have_value("")
+        cell.click()
+        page.keyboard.type("-0.5", delay=KEY_MS)
+        expect(_refusal(editor, "row 0")).to_have_text(
+            "row 0: tolerance must not be negative; got −0.5", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(700)
+        assert cell.input_value() == "-0.5"
+        assert _pending(page) == "0 pending edits"
+        # Fixed, the row's own tolerance is staged, and the sentence goes.
+        page.keyboard.press("Control+A")
+        page.keyboard.type("0.2", delay=KEY_MS)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_refusal(editor, "row 0")).to_have_count(0)
 
 
 def _digit_project(tmp_path: Path) -> tuple[Path, Path]:
