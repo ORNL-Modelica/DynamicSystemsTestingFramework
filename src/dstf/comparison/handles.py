@@ -617,7 +617,13 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
     ``upper`` / ``lower`` → the value tolerance the row is held to: its own
     ``tolerance`` where the row has one (a ``null`` is an absent key, as
     the scorer reads it), else the CRITERION's — so every row that defers
-    to it moves with it. From ``y``: ``y − target`` for upper, ``target −
+    to it moves with it. That holds while every deferring row reads it in
+    the dragged row's ``tolerance_mode`` (:func:`_deferring_modes`). Where
+    they differ — a ``rel`` row and an ``abs`` row both defer — the number
+    dragged means a fraction to one and signal units to the other (0.634
+    of a target became ±0.634), so the dragged ROW takes a tolerance of
+    its own, seeded from the criterion's, and the criterion's stays what
+    the other rows read. From ``y``: ``y − target`` for upper, ``target −
     y`` for lower, over ``|target|`` where the row's ``tolerance_mode`` is
     ``rel`` (refused at a target of zero — below ``types._EPS``, the
     tube's rule: :func:`_fraction`). The target is the row's
@@ -674,9 +680,28 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
         # The scorer's arithmetic, inverted: each side is that fraction of
         # |target| — by the tube's rule, refused under `_EPS`.
         value = _fraction(edit, value, target, "the target is zero")
-    holder = point if point.get("tolerance") is not None else leaf
+    holder = point
+    if point.get("tolerance") is None:
+        if _deferring_modes(leaf) == {point.get("tolerance_mode", "abs")}:
+            holder = leaf
+        elif leaf.get("tolerance") is not None:
+            # It stops deferring: from the tolerance it was held to, so a
+            # pair keeps its other side where the box's other edge stands.
+            point["tolerance"] = copy.deepcopy(leaf["tolerance"])
     _set_side(edit, holder, "tolerance", side, value)
     return leaf
+
+
+def _deferring_modes(leaf: dict) -> set[str]:
+    """The ``tolerance_mode`` of every row of ``leaf`` that holds no
+    ``tolerance`` of its own (a ``null`` is an absent key): the modes the
+    CRITERION's tolerance is read in — each deferring row reads the one
+    number or pair in its own."""
+    return {
+        row.get("tolerance_mode", "abs")
+        for row in leaf.get("points") or []
+        if isinstance(row, dict) and row.get("tolerance") is None
+    }
 
 
 def _point_time(edit: HandleEdit, leaf: dict, point: dict, i: int) -> float:

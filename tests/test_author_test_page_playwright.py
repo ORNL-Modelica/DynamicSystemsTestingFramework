@@ -8400,3 +8400,67 @@ def test_a_peaks_lower_arrow_pulled_past_zero_hertz_is_refused(
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
         back = _settled_at(page, "/peaks/lower/0", "xanchor", was["xanchor"])
         assert back["xanchor"] == was["xanchor"]
+
+
+# -- a deferring row among rows of another mode ----------------------------------
+
+
+def _mixed_modes_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by two checkpoints that both
+    DEFER to the criterion's tolerance of 0.1 — the first reads it as 0.1
+    signal units, the second, `rel`, as a tenth of its target."""
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "points",
+                "variable": "x",
+                "tolerance": 0.1,
+                "points": [
+                    {"time": 0.25, "value": 0.3},
+                    {"time": 0.75, "value": 0.9, "tolerance_mode": "rel"},
+                ],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_a_deferring_rows_arrow_leaves_the_other_modes_rows_alone(
+    tmp_path, playwright_browser
+):
+    """Two rows defer to the criterion's tolerance, one `abs`, one `rel`.
+    The `rel` row's upper arrow dragged up wrote its fraction to the
+    criterion, and the `abs` row's box jumped to that many signal units.
+    The dragged row takes a tolerance of its own: the criterion's stays
+    0.1 and the other row's box stands where it stood."""
+    with _served(
+        tmp_path, playwright_browser, project=_mixed_modes_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        other = _shape(page, "/points/box/0")
+        assert (other["y0"], other["y1"]) == (
+            pytest.approx(0.2),
+            pytest.approx(0.4),
+        ), other
+        expect(_table_cell(page, 1, "+ tolerance")).to_have_value("")
+        was = _drag_arrow(page, "/points/upper/1", 0, -20)
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "", timeout=EXPECT_TIMEOUT
+        )
+        # The edge was at 0.9 + 0.1 * 0.9; 20 px up, as a fraction of 0.9.
+        fraction = float(_table_cell(page, 1, "+ tolerance").input_value())
+        assert fraction == pytest.approx(
+            0.1 + 20 / was["ppy"] / 0.9, abs=0.6 / was["ppy"]
+        )
+        tree = _staged_tree(page)
+        assert tree["tolerance"] == 0.1, tree
+        assert tree["points"][1]["tolerance"] == fraction, tree
+        assert "tolerance" not in tree["points"][0], tree
+        # The `abs` row still reads the criterion's 0.1: its box is its box.
+        _settled_at(page, "/points/upper/1", "yanchor", 0.9 * (1 + fraction))
+        still = _shape(page, "/points/box/0")
+        assert (still["y0"], still["y1"]) == (other["y0"], other["y1"]), still
+        expect(_table_cell(page, 0, "+ tolerance")).to_have_value("")

@@ -929,6 +929,21 @@ POINTS_SIDES = {
 }
 
 
+#: Rows that DEFER to the criterion's tolerance in two modes — 0 `abs` (the
+#: default; it follows the baseline, ref(0.25) = 0.25), 1 `rel` about 2.0 —
+#: and one that holds its own.
+MIXED = {
+    "metric": "points",
+    "variable": "x",
+    "tolerance": 0.25,
+    "points": [
+        {"time": 0.25},
+        {"time": 0.5, "value": 2.0, "tolerance_mode": "rel"},
+        {"time": 0.75, "value": 0.5, "tolerance": 0.125, "tolerance_mode": "rel"},
+    ],
+}
+
+
 class TestPointsSides:
     """`points/upper|lower/i` → that side of the value tolerance row `i` is
     held to; `points/before|after/i` → that side of its `time_tolerance`."""
@@ -967,6 +982,59 @@ class TestPointsSides:
         paired = _with(POINTS_SIDES, tolerance={"lower": 0.125, "upper": 0.25})
         new = _grip(paired, "points/upper/0", 0.25, 0.75)
         assert new["tolerance"] == {"lower": 0.125, "upper": 0.5}
+
+    def test_a_deferring_row_among_rows_of_another_mode_takes_its_own(self):
+        """The criterion's tolerance is read by each deferring row in the
+        row's OWN mode. Where they differ, the fraction dragged on a `rel`
+        row, written to the criterion, became that many signal units for
+        the `abs` rows (0.634 of a target, then ±0.634). The dragged row
+        takes a tolerance of its own — it stops deferring — and the
+        criterion's stays what the other rows read."""
+        new = _grip(MIXED, "points/upper/1", 0.5, 3.0)  # target 2: half of it
+        assert new["points"][1] == {**MIXED["points"][1], "tolerance": 0.5}
+        expected = copy.deepcopy(MIXED)
+        expected["points"][1]["tolerance"] = 0.5
+        assert new == expected  # the criterion's 0.25 and every other row
+        # An `abs` row among them, the same: its own, in signal units.
+        new = _grip(MIXED, "points/lower/0", 0.25, 0.125)
+        assert new["points"][0] == {"time": 0.25, "tolerance": 0.125}
+        assert new["tolerance"] == 0.25 and new["points"][1:] == MIXED["points"][1:]
+
+    def test_the_row_that_stops_deferring_keeps_the_criterions_other_side(self):
+        """It was held to the criterion's tolerance: where that is a pair,
+        its own is that pair with the dragged side moved — the other edge
+        of its box does not jump; where it is a number, or absent, the
+        number dragged (linked, as a number is everywhere)."""
+        paired = _with(MIXED, tolerance={"lower": 0.125, "upper": 0.25})
+        new = _grip(paired, "points/upper/1", 0.5, 3.0)
+        assert new["points"][1]["tolerance"] == {"lower": 0.125, "upper": 0.5}
+        assert new["tolerance"] == {"lower": 0.125, "upper": 0.25}
+        bare = {k: v for k, v in MIXED.items() if k != "tolerance"}
+        new = _grip(bare, "points/upper/1", 0.5, 3.0)
+        assert new["points"][1]["tolerance"] == 0.5 and "tolerance" not in new
+        # A `null` is an absent key: that row defers too, and takes its own.
+        nulled = copy.deepcopy(MIXED)
+        nulled["points"][1]["tolerance"] = None
+        new = _grip(nulled, "points/upper/1", 0.5, 3.0)
+        assert new["points"][1]["tolerance"] == 0.5 and new["tolerance"] == 0.25
+
+    def test_deferring_rows_of_one_mode_still_write_the_criterions(self):
+        """Only the rows that DEFER are asked: a row of another mode that
+        holds its own tolerance reads nothing of the criterion's."""
+        shared = copy.deepcopy(MIXED)
+        shared["points"][1]["tolerance"] = 0.5  # the rel row: its own now
+        new = _grip(shared, "points/upper/0", 0.25, 0.75)
+        assert new["tolerance"] == 0.5 and "tolerance" not in new["points"][0]
+        assert new["points"] == shared["points"]
+        # And all of them `rel`: the criterion's fraction, for every one.
+        rel = copy.deepcopy(MIXED)
+        rel["points"][0] = {"time": 0.25, "value": 4.0, "tolerance_mode": "rel"}
+        new = _grip(rel, "points/upper/1", 0.5, 3.0)
+        assert new["tolerance"] == 0.5 and new["points"] == rel["points"]
+        # A refusal is the same refusal either way.
+        with pytest.raises(HandleEditError, match="the upper side would cross"):
+            _grip(MIXED, "points/upper/1", 0.5, 1.0)
+        assert _grip(MIXED, "points/upper/1", 0.5, None) == MIXED
 
     def test_the_time_grips_write_the_rows_time_tolerance(self):
         new = _grip(POINTS_SIDES, "points/before/1", 0.5, 0.5)
