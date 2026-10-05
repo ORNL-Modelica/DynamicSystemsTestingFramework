@@ -784,8 +784,8 @@ class PlotCard:
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
         # A relayout passes through this plot's instance of the hover
         # module on its way here: a ring, an arrow or a bound line released
-        # outside the plot area is held to the visible range, and an arrow
-        # dragged across its own axis says no position on it (`grips.js`
+        # outside the plot area is held to the visible range, and says no
+        # position on an axis the pointer barely moved along (`grips.js`
         # `released`).
         self.hook.attach(
             self.plot,

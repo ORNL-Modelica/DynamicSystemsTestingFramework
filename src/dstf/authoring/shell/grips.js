@@ -42,9 +42,10 @@
   // How near a shown arrow, or the ring its group stands around, the plot's
   // own hover label gives way, px.
   const HUSH = 20;
-  // How far the pointer must travel along an arrow's own axis, press to
-  // release, for the release to move it, px.
-  const OWN_AXIS = 3;
+  // How far the pointer must travel along an axis, press to release, for
+  // the release to move a shape on it, px — Plotly's own threshold (its
+  // `MINDRAG`): under it Plotly moves nothing on that axis.
+  const MOVED = 8;
 
   const own = (map, name) =>
     map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
@@ -368,12 +369,17 @@
     // edge, where it was last drawn. A position on the paper, and the
     // pixel offsets of a shape sized in pixels, are no data to hold.
     //
-    // And an arrow moves on ONE axis. Dragged across it — a value side's
-    // arrow, sideways — Plotly moves the shape and re-snaps the anchor it
-    // did not move: 0.08 came back 0.0800462, and was staged. With under
-    // OWN_AXIS px of travel along its own axis the release says no
-    // position on that axis (null): the editor reads no move, and the
-    // redraw that answers every release puts the arrow back.
+    // And an axis the pointer barely moved along is not moved. Under
+    // MOVED px of travel along an axis Plotly zeroes that travel, moves
+    // the shape on the other axis alone and re-snaps the position it did
+    // not move: a value side's arrow dragged sideways came back 0.0800462
+    // for 0.08, a ring dragged sideways wrote its value 0.5 as
+    // 0.500009668842, a bound line 1.0 as 1.0000266 — each staged. For
+    // EVERY shape an editor moves, a release says no position (null) on
+    // an axis the pointer went under MOVED px along, press to release:
+    // the editor reads no move there — under MOVED px on both, no move at
+    // all — and the redraw that answers every release puts the shape
+    // back.
     const released = (update) => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
@@ -386,8 +392,7 @@
         if (!m || typeof value !== "number") continue;
         const s = shapes[+m[1]];
         if (!s || !info.draggable.has(s.name)) continue;
-        const grip = gripOf(info, s.name);
-        if (grip && grip.axis === m[2] && travel && travel[m[2]] < OWN_AXIS) {
+        if (travel && travel[m[2]] < MOVED) {
           out[key] = null;
           continue;
         }

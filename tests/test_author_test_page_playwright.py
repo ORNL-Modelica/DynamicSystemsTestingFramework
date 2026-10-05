@@ -9680,17 +9680,17 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
         assert f"Point at t={landed:g}: error" in row, row  # scored
 
 
-# -- an arrow dragged across its own axis moves nothing ---------------------------
+# -- an axis the pointer barely moved along is not moved --------------------------
 
-#: An arrow of `_grips_project`'s second checkpoint, the way it is dragged
-#: ACROSS the axis it moves on, the cell it sets and what that cell holds.
-ACROSS = {
-    "a value side, sideways": ("/points/upper/1", (40, 0), "+ tolerance", "0.08"),
-    "a value side, 2 px up": ("/points/upper/1", (40, -2), "+ tolerance", "0.08"),
-    "a time side, down": ("/points/before/1", (0, 40), "before time_tolerance", "0.05"),
-    "a time side, 2 px left": (
+#: An arrow of `_grips_project`'s second checkpoint, the unit vectors ACROSS
+#: the axis it moves on and ALONG it (outward), the cell it sets and what
+#: that cell holds.
+BARELY = {
+    "a value side": ("/points/upper/1", (1, 0), (0, -1), "+ tolerance", "0.08"),
+    "a time side": (
         "/points/before/1",
-        (-2, 40),
+        (0, 1),
+        (-1, 0),
         "before time_tolerance",
         "0.05",
     ),
@@ -9712,48 +9712,169 @@ KEEP_RELEASES = """
 """
 
 
-@pytest.mark.parametrize("case", ACROSS)
-def test_an_arrow_dragged_across_its_own_axis_stages_nothing(
+def _releases(page) -> list[dict]:
+    """What each release since the last read said, by the tail of its
+    keys (`xanchor`, `y0`, ...)."""
+    sent = page.evaluate(
+        "() => { const r = window.__dstfReleases; window.__dstfReleases = [];"
+        " return r; }"
+    )
+    return [{key.split(".")[-1]: value for key, value in one.items()} for one in sent]
+
+
+@pytest.mark.parametrize("case", BARELY)
+def test_an_arrow_barely_moved_along_its_own_axis_stages_nothing(
     tmp_path, playwright_browser, case
 ):
-    """An arrow moves on ONE axis. A value side's arrow dragged purely
-    sideways staged 0.08 as 0.0800095: Plotly moves the shape the 40 px,
-    and re-snaps the anchor it did not move. With under 3 px of travel
-    along the arrow's own axis a release is no move: it says no position
-    on that axis, nothing is staged, the cell reads what it read, and the
-    arrow is back where it stood."""
-    tail, (dx, dy), label, value = ACROSS[case]
+    """An arrow moves on ONE axis, and Plotly moves a shape along an axis
+    only once the pointer has gone 8 px along it: under that it zeroes the
+    travel and re-snaps the anchor it did not move. A value side's arrow
+    dragged 40 px sideways staged 0.08 as 0.0800095; with 3 to 7 px of
+    drift along its own axis, as 0.0800461883795. An axis the pointer went
+    under 8 px along, press to release, is sent as unchanged: nothing is
+    staged, the cell reads what it read, and the arrow is back where it
+    stood. At 8 px it is a move of 8 px."""
+    tail, across, along, label, value = BARELY[case]
+    own, other = ("y", "x") if along[0] == 0 else ("x", "y")
     with _served(tmp_path, playwright_browser, project=_grips_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
         expect(_table_cell(page, 1, label)).to_have_value(value)
         page.evaluate(KEEP_RELEASES)
-        was = _drag_arrow(page, tail, dx, dy)
-        page.wait_for_timeout(800)  # a staged edit would have landed by now
-        print("ACROSS", case, _pending(page), _table_cell(page, 1, label).input_value())
-        # What the release said of the arrow: where it went ACROSS its
-        # axis, and nothing along it (a time side's re-snap is exact here,
-        # and would have staged nothing either way).
-        (sent,) = page.evaluate("() => window.__dstfReleases")
-        own, other = ("y", "x") if "upper" in tail else ("x", "y")
-        assert sent[f"shapes[{was['index']}].{own}anchor"] is None, sent
-        assert isinstance(sent[f"shapes[{was['index']}].{other}anchor"], float), sent
-        assert _pending(page) == "0 pending edits"
-        expect(_table_cell(page, 1, label)).to_have_value(value)
-        # Back where it stood, on both axes: the redraw that answers every
-        # release.
-        back = _settled_at(page, tail, "xanchor", was["xanchor"])
-        assert (back["xanchor"], back["yanchor"]) == (was["xanchor"], was["yanchor"])
-        assert page.locator(".dstf-editor .text-negative:visible").count() == 0
-        # And still an arrow that drags: 30 px along its own axis.
-        along = (0, -30) if "upper" in tail else (-30, 0)
-        _drag_arrow(page, tail, *along)
+        for px in (0, 3, 5, 7):
+            dx = 40 * across[0] + px * along[0]
+            dy = 40 * across[1] + px * along[1]
+            was = _drag_arrow(page, tail, dx, dy)
+            page.wait_for_timeout(800)  # a staged edit would have landed by now
+            # What the release said of the arrow: where it went ACROSS its
+            # axis, and nothing along it.
+            (sent,) = _releases(page)
+            print("BARELY", case, px, sent, _table_cell(page, 1, label).input_value())
+            assert sent[f"{own}anchor"] is None, (px, sent)
+            assert isinstance(sent[f"{other}anchor"], float), (px, sent)
+            assert _pending(page) == "0 pending edits", px
+            expect(_table_cell(page, 1, label)).to_have_value(value)
+            # Back where it stood, on both axes: the redraw that answers
+            # every release.
+            back = _settled_at(page, tail, "xanchor", was["xanchor"])
+            assert (back["xanchor"], back["yanchor"]) == (
+                was["xanchor"],
+                was["yanchor"],
+            ), px
+            assert page.locator(".dstf-editor .text-negative:visible").count() == 0
+        # 8 px along it: a move of 8 px.
+        was = _drag_arrow(
+            page, tail, 40 * across[0] + 8 * along[0], 40 * across[1] + 8 * along[1]
+        )
         expect(_table_cell(page, 1, label)).not_to_have_value(
             value, timeout=EXPECT_TIMEOUT
         )
-        assert float(_table_cell(page, 1, label).input_value()) > float(value) + 0.01
-        sent = page.evaluate("() => window.__dstfReleases")[-1]
-        assert isinstance(sent[f"shapes[{was['index']}].{own}anchor"], float), sent
+        (sent,) = _releases(page)
+        assert isinstance(sent[f"{own}anchor"], float), sent
+        moved = float(_table_cell(page, 1, label).input_value()) - float(value)
+        scale = was["ppy"] if own == "y" else was["ppx"]
+        print("BARELY", case, 8, sent, moved * scale)
+        assert abs(moved * scale - 8) < 0.5, (moved, scale)
+
+
+def test_a_ring_barely_moved_along_an_axis_keeps_what_it_held_on_it(
+    tmp_path, playwright_browser
+):
+    """A ring moves on both axes — and one dragged purely sideways wrote
+    its VALUE as 0.500009668842 for 0.5: Plotly re-snaps the anchor of the
+    axis it did not move. The rule is one, for every shape an editor
+    moves: under 8 px of travel along an axis, that axis is sent as
+    unchanged. 40 px sideways with up to 7 px of vertical drift moves the
+    time and leaves the value as it was written; 40 px vertical, the value
+    and not the time; under 8 px on both, nothing; 8 px on the second
+    axis, both."""
+    with _served(
+        tmp_path, playwright_browser, project=_ring_and_bound_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        page.evaluate(KEEP_RELEASES)
+        tail = "/points/target/0"
+
+        def point() -> dict:
+            return _staged_tree(page)["children"][0]["points"][0]
+
+        def drag(dx: float, dy: float) -> tuple[dict, dict, dict]:
+            """The ring dragged by ``(dx, dy)``: as it stood, the point
+            before, and what the release said."""
+            before, at = point(), _shape(page, tail)
+            _mouse_drag_by(page, at["x"], at["y"], dx, dy)
+            page.wait_for_timeout(800)  # the edit, and the redraw after it
+            sent = [one for one in _releases(page) if "xanchor" in one]
+            assert len(sent) <= 1, sent
+            return at, before, (sent[0] if sent else {})
+
+        assert json.dumps(point()) == json.dumps(
+            {"time": 0.5, "value": 0.5, "tolerance": 0.1}
+        )
+        for drift in (0, 3, 5, 7):
+            at, before, sent = drag(40, drift)
+            now = point()
+            print("RING sideways", drift, sent, now)
+            assert sent["yanchor"] is None and isinstance(sent["xanchor"], float)
+            assert abs((now["time"] - before["time"]) * at["ppx"] - 40) < 1, now
+            assert json.dumps(now["value"]) == "0.5", (drift, now)
+        for drift, way in ((0, -1), (3, 1), (5, -1), (7, 1)):
+            at, before, sent = drag(drift, 40 * way)
+            now = point()
+            print("RING vertical", drift, sent, now)
+            assert sent["xanchor"] is None and isinstance(sent["yanchor"], float)
+            assert abs((before["value"] - now["value"]) * at["ppy"] - 40 * way) < 1
+            assert json.dumps(now["time"]) == json.dumps(before["time"]), (drift, now)
+        # Under 8 px on BOTH axes: nothing is staged, and the ring is where
+        # it stood. (Plotly does not move a shape under 8 px, and sends
+        # nothing; a release that did come would say no position.)
+        at, before, sent = drag(7, 7)
+        assert all(value is None for value in sent.values()), sent
+        assert json.dumps(point()) == json.dumps(before)
+        back = _shape(page, tail)
+        assert (back["xanchor"], back["yanchor"]) == (at["xanchor"], at["yanchor"])
+        # 8 px on the second axis: both move, each by what it was dragged.
+        at, before, sent = drag(40, -8)
+        now = point()
+        assert abs((now["time"] - before["time"]) * at["ppx"] - 40) < 1, now
+        assert abs((now["value"] - before["value"]) * at["ppy"] - 8) < 1, now
+
+
+def test_a_bound_line_dragged_sideways_stages_nothing(tmp_path, playwright_browser):
+    """A bound is a horizontal line: it moves in value alone. Dragged 40 px
+    sideways, with up to 7 px of vertical drift, nothing is staged and the
+    line is back where it stood; with 8 px, the bound moves 8 px."""
+    with _served(
+        tmp_path, playwright_browser, project=_ring_and_bound_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "range · x")
+        page.evaluate(KEEP_RELEASES)
+
+        def bound() -> float:
+            return _staged_tree(page)["children"][1]["max_value"]
+
+        for drift in (0, 3, 5, 7):
+            at = page.evaluate(EDGE_AT, [0, "/range/max", "line", 0.4])
+            assert at["hit"], at
+            _mouse_drag_by(page, at["x"], at["y"], 40, -drift)
+            page.wait_for_timeout(800)  # a staged edit would have landed by now
+            sent = _releases(page)
+            print("LINE sideways", drift, sent, bound())
+            for one in sent:
+                assert one.get("y0") is None and one.get("y1") is None, (drift, one)
+            assert _pending(page) == "0 pending edits", drift
+            assert json.dumps(bound()) == "1.0", drift
+            back = page.evaluate(EDGE_AT, [0, "/range/max", "line", 0.4])
+            assert back["coords"] == at["coords"], (drift, back, at)
+        at = page.evaluate(EDGE_AT, [0, "/range/max", "line", 0.4])
+        ppy = page.evaluate(PLOT_AREA)["ypx"]
+        _mouse_drag_by(page, at["x"], at["y"], 40, -8)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        assert abs((bound() - 1.0) * ppy - 8) < 0.5, (bound(), ppy)
 
 
 # -- the figure's pointer map, read with a default for every key -----------------
