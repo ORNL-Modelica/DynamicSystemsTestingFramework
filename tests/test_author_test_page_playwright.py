@@ -8018,3 +8018,63 @@ def test_of_two_close_peak_windows_the_nearer_ones_arrows_show(
             "0.2", timeout=EXPECT_TIMEOUT
         )
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value("0.1")
+
+
+# -- the hover label keeps off the arrows ---------------------------------------
+
+#: Plot 0's hover layer: how many of its elements a person SEES — laid out
+#: with a size, and neither they nor an ancestor hidden — and the lines of
+#: the label it holds. Read off the DOM, never a screenshot.
+HOVER_LAYER = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const layer = gd.querySelector('.hoverlayer');
+  const seen = [...layer.querySelectorAll('*')].filter(e => {
+    const b = e.getBoundingClientRect(), style = getComputedStyle(e);
+    return b.width > 0 && b.height > 0
+      && style.visibility !== 'hidden' && style.display !== 'none';
+  });
+  return {
+    seen: seen.length,
+    texts: [...layer.querySelectorAll('text')].map(e => e.textContent),
+  };
+}
+"""
+
+
+def test_the_hover_label_gives_way_to_a_shown_group(tmp_path, playwright_browser):
+    """Coming at a checkpoint from above, Plotly's unified hover label and
+    its spike line were drawn over the arrows and half the ring. While a
+    group is shown the plot's hover layer is not; away from every
+    checkpoint the label is back."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        ring = _shape(page, "/points/target/0")
+        page.mouse.move(ring["x"], ring["y"], steps=4)
+        arrow = _shape(page, "/points/upper/0")
+        assert arrow["box"] is not None, arrow
+        _rest(page)
+        # From above, to just over the arrow: on the plot, on no shape.
+        x, y = arrow["x"], arrow["box"]["top"] - 5
+        page.mouse.move(x - 60, y - 60)
+        page.mouse.move(x, y, steps=8)
+        page.wait_for_timeout(400)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        over = page.evaluate(HOVER_LAYER)
+        assert over["seen"] == 0, over
+        _shot(page, tmp_path, "hover-from-above")
+        # Well over 200 px along, at the trace's next sample (t = 0.5; a
+        # hover needs one within reach): near no checkpoint, and the
+        # label is back.
+        along = 0.25 * arrow["ppx"]
+        assert along > 200, arrow
+        page.mouse.move(x + along, y, steps=10)
+        page.wait_for_timeout(400)
+        assert _grips_on(page)["shown"] == []
+        away = page.evaluate(HOVER_LAYER)
+        assert away["seen"] > 0 and any("Actual" in t for t in away["texts"]), away
+        # And gone again on the way back.
+        page.mouse.move(x, y, steps=10)
+        page.wait_for_timeout(400)
+        assert page.evaluate(HOVER_LAYER)["seen"] == 0

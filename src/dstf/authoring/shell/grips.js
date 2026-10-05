@@ -74,9 +74,15 @@
       }
     };
 
+    // While a group is shown the plot's own hover label is not
+    // (`data-grip-shown`, style.py): the unified label and its spike line
+    // were drawn over the arrows. An ATTRIBUTE of the graph div, not a
+    // class: a server update of the element's classes wipes one the page
+    // set, and keeps an attribute.
     const show = (g) => {
       if (g === st.on) return;
       st.on = g;
+      gd.toggleAttribute("data-grip-shown", g !== null);
       for (const el of gd.querySelectorAll(".shapelayer path[data-grip]")) {
         el.toggleAttribute("data-grip-on", el.getAttribute("data-grip") === g);
       }
@@ -238,6 +244,7 @@
       for (const el of gd.querySelectorAll("[data-inert]")) {
         el.removeAttribute("data-inert");
       }
+      gd.removeAttribute("data-grip-shown");
     };
     mark();
     return st;
