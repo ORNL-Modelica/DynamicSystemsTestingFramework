@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 
 import pytest
 
@@ -1297,6 +1298,125 @@ async def test_a_half_cell_is_recorded_by_its_rows_place_in_the_spec(session):
         assert kept == {}  # row 1 is gone from the spec
         _cell(user, "/metrics:points:0:tolerance:lower").set_value(None)
         assert list(kept) == [("points", 0, "tolerance")]
+
+
+OTHER = {"lower": 0.2, "upper": 0.4}
+
+
+def _three_rows(pairs: list[dict]) -> dict:
+    """A points leaf of three rows, each holding its pair of ``pairs``."""
+    return {
+        "metric": "points",
+        "variable": "x",
+        "points": [
+            {"time": t, "value": 0.5, "tolerance": dict(pair)}
+            for t, pair in zip((0.25, 0.5, 0.75), pairs)
+        ],
+    }
+
+
+def _blank_sides(user, rows: int) -> list[tuple]:
+    """Per row shown, its tolerance's `−` field: (value, error)."""
+    return [
+        (cell.value, cell.error)
+        for cell in (
+            _cell(user, f"/metrics:points:{i}:tolerance:lower") for i in range(rows)
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "pairs",
+    [
+        # The same pair in every row: only the row's INDEX tells them apart.
+        [PAIR, PAIR, PAIR],
+        # A pair of its own in each: the record's base is its own row's.
+        [PAIR, OTHER, {"lower": 0.3, "upper": 0.5}],
+    ],
+    ids=["one pair", "three pairs"],
+)
+async def test_a_half_cell_after_a_staged_remove_is_on_the_row_it_was_typed_in(
+    session, pairs
+):
+    """Remove row 0, staged: the rows left are rows 0 and 1 of the spec's
+    list now, and the list the table holds as the spec's is that one. A
+    side cleared in the new row 0 is recorded THERE, under what that row
+    holds — so the editor rebuilt by a drag of another row's ring shows the
+    blank on row 0. Recorded by the index the row had before the remove, it
+    came back on row 1; under the removed row's pair, not at all."""
+    _root_leaf_on_a(session, _three_rows(pairs))
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        user.find(marker="/metrics:points:0:remove").click()
+        await _settled(lambda: len(_a_rows(session, "points")) == 2)
+        _cell(user, "/metrics:points:0:tolerance:lower").set_value(None)
+        assert kept == {
+            ("points", 0, "tolerance"): {
+                "base": pairs[1],
+                "shown": {"lower": None, "upper": pairs[1]["upper"]},
+            }
+        }
+        assert not errors
+    # Another row's ring, dragged: its time moves, and the editor is rebuilt.
+    session.stage([PatchOp(A, "replace", "/metrics/points/1/time", 0.8)])
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        assert _blank_sides(user, 2) == [
+            (None, "required"),
+            (pairs[2]["lower"], None),
+        ]
+        assert (
+            _cell(user, "/metrics:points:0:tolerance:upper").value
+            == (pairs[1]["upper"])
+        )
+        assert _cell(user, "/metrics:points:1:time").value == 0.8
+
+
+async def test_a_half_cell_in_a_row_just_added_is_on_that_row_after_a_rebuild(
+    session,
+):
+    """The twin: Add row, staged — the new row is the spec's last one, a
+    copy of the row before it — then its `−` cleared. The record names the
+    ADDED row's place in the spec, so the rebuilt editor shows the blank
+    there and nowhere else."""
+    _root_leaf_on_a(session, _three_rows([PAIR, PAIR, PAIR]))
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        user.find(marker="/metrics:points:add").click()
+        await _settled(lambda: len(_a_rows(session, "points")) == 4)
+        _cell(user, "/metrics:points:3:tolerance:lower").set_value(None)
+        assert kept == {
+            ("points", 3, "tolerance"): {
+                "base": PAIR,
+                "shown": {"lower": None, "upper": 0.3},
+            }
+        }
+        assert not errors
+    session.stage([PatchOp(A, "replace", "/metrics/points/1/time", 0.6)])
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        assert _blank_sides(user, 4) == [(0.1, None)] * 3 + [(None, "required")]
+
+
+async def test_a_half_cell_in_a_row_the_spec_does_not_hold_yet_is_not_recorded(
+    session, caplog
+):
+    """A row added while another cell holds the list back is in no spec
+    list: it has no index there, and a side cleared in it is recorded
+    nowhere — the one record stays the held-back cell's. Given the index
+    it would have, the record read a row the spec's list does not hold:
+    an IndexError in the cell's handler, which NiceGUI logs and swallows."""
+    _root_leaf_on_a(session, _three_rows([PAIR, PAIR, PAIR]))
+    kept: dict = {}
+    async with host(session, EditOnPlot(), ON_A, kept=kept) as (user, errors, _figure):
+        _cell(user, "/metrics:points:1:tolerance:lower").set_value(None)
+        user.find(marker="/metrics:points:add").click()
+        await asyncio.sleep(0.25)
+        assert len(_a_rows(session, "points")) == 3  # held back
+        with caplog.at_level(logging.ERROR):
+            _cell(user, "/metrics:points:3:tolerance:upper").set_value(None)
+            await asyncio.sleep(0.1)
+        assert [r.getMessage() for r in caplog.records if r.exc_info] == []
+        assert list(kept) == [("points", 1, "tolerance")]
+        assert not errors
 
 
 async def test_add_row_after_a_row_holding_a_pair(session):
