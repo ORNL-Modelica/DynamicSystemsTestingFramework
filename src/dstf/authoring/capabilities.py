@@ -197,9 +197,11 @@ class Panel(Protocol):
     panel for the same node of the same test, re-keys it when a tree edit
     moves the node, and drops it — the panel is then rebuilt on an empty
     one — with the node, and when an edit that is not this tab's lands on
-    the test: a Discard, a Save, another tab's. The criterion editor under
-    a plot keeps one; a host with nowhere to keep it (a dialog, a row)
-    hands a fresh dict to every build."""
+    the test: a Discard, a Save, another tab's. The record is the browser
+    tab's: it outlives the page. The criterion editor under a plot keeps
+    one; every other host — a dialog, a row, the criterion editors under a
+    tree row and under a Statistics row — hands a fresh dict to every
+    build (`tests/test_capability_conformance.py` holds both)."""
 
     figure: FigureHook
     kept: dict[Any, Any]

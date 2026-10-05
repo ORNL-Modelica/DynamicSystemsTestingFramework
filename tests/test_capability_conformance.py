@@ -652,6 +652,74 @@ async def test_a_criterion_capability_is_the_whole_editor_with_no_heading(shell)
         assert _none(user, "action:criterion")
 
 
+class _Keeping(_Dummy):
+    """A capability whose panel shows something the spec does not hold: its
+    `type` button writes it into `panel.kept`, as a control does when it is
+    typed in. Every build of its panel records the dict it was handed, and
+    what that dict held then."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.handed: list[dict] = []
+        self.read: list[dict] = []
+
+    def panel(self, s, panel):
+        self.handed.append(panel.kept)
+        self.read.append(dict(panel.kept))
+        ui.button(f"type {self.name}", on_click=lambda: panel.kept.update(typed="0.5"))
+        super().panel(s, panel)
+
+
+async def test_a_criterion_capability_reads_back_what_it_kept_when_rebuilt(shell):
+    """`Panel.kept` under a plot: the criterion editor rebuilds a panel
+    after an edit it did not make — here another panel's submit — and
+    never tells it. What the panel wrote is what its next build reads: the
+    same dict, for the same node of the same test."""
+    path = "/metrics/children/1"
+    wider = {**copy.deepcopy(TREE["children"][1]), "max_value": 3.0}
+    keeper = _Keeping("keeper", {Placement.CRITERION})
+    other = _Dummy(
+        "other",
+        {Placement.CRITERION},
+        outcome=Patch(ops=[PatchOp(D, "replace", path, wider)]),
+    )
+    only(keeper, other)
+    shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        page.open_criterion(path, 0)
+        await user.should_see("type keeper", retries=20)
+        assert keeper.read == [{}]
+        user.find("type keeper").click()
+        user.find("submit other").click()  # the host rebuilds every OTHER panel
+        await _settled(lambda: len(keeper.read) == 2)
+        assert keeper.read[1] == {"typed": "0.5"}
+        assert keeper.handed[1] is keeper.handed[0]
+        # Another criterion of the same test is another record.
+        page.open_criterion("/metrics/children/3", 0)
+        await _settled(lambda: len(keeper.read) == 3)
+        assert keeper.read[2] == {}
+        assert keeper.handed[2] is not keeper.handed[0]
+
+
+async def test_a_dialogs_panel_is_handed_a_fresh_kept_at_every_build(shell):
+    """A host with nowhere to keep it — a dialog — hands each build of the
+    panel a dict of its own: what one open wrote, the next does not read."""
+    cap = _Keeping("dialog", {Placement.SUITE})
+    only(cap)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        user.find(marker="action:dialog").click()
+        await user.should_see("type dialog", retries=20)
+        user.find("type dialog").click()
+        assert cap.handed[0] == {"typed": "0.5"}
+        user.find(marker="close:dialog").click()
+        user.find(marker="action:dialog").click()
+        await _settled(lambda: len(cap.read) == 2)
+        assert cap.read == [{}, {}]
+        assert cap.handed[1] is not cap.handed[0]
+
+
 async def test_a_tree_criterion_capability_is_the_editor_under_a_tree_row(shell):
     """Placement.TREE_CRITERION (U5): a capability the shell never heard of
     is the editor a tree row's click opens under it — and not the plot's."""

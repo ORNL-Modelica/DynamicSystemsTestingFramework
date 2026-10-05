@@ -736,9 +736,14 @@ panel for the same node of the same test, re-keys it when a tree edit moves the
 node, and drops it — rebuilding the panel on an empty one — with the node and
 when an edit that is not this tab's lands on the test (a Discard, a Save, another
 tab's). Record beside each entry what the spec held under it, and ignore an entry
-whose spec value has since moved. The criterion editor under a plot keeps one
-(Edit on plot's table records its blank and half-typed cells there); a dialog or
-a row hands a fresh dict to every build.
+whose spec value has since moved. The record is the browser tab's, not the
+page's: it outlives a switch of test and a visit to the Suite page, and is there
+when the criterion is opened again in that tab. Only the criterion editor under
+a plot keeps one (Edit on plot's table records its blank and half-typed cells
+there). Every other host hands a fresh dict to every build — a dialog, a row,
+and the two other criterion editors too: the one under a row of the criteria
+tree and the one under a row of the Statistics card — so a panel placed at
+several of these must work with a dict that is empty each time.
 
 **A form row.** `panel.row(title, build)` opens a form below the row the panel
 is drawn in — how Edit tree's add, wrap and edit forms open under a tree node's
