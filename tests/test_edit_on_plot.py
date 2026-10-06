@@ -1775,6 +1775,144 @@ async def test_a_refused_cell_after_the_rows_moved_puts_back_its_own_rows_value(
         assert _a_rows(session, "events")[0]["tolerance"] == kept_value
 
 
+#: A row of each table, the tolerance cell a negative is typed into, and
+#: what that row's sentence calls it.
+REENTERED = {
+    "points tolerance": ("points", "tolerance", "tolerance"),
+    "points time tolerance": ("points", "time_tolerance", "time_tolerance"),
+    "an events row": ("events", "tolerance", "tolerance"),
+}
+
+
+@pytest.mark.parametrize("case", REENTERED)
+async def test_a_refused_cell_entered_again_puts_back_what_the_spec_holds(
+    session, case
+):
+    """A refused cell still SHOWS what was typed, and the spec holds what
+    it held: entered again and typed over with another negative — nothing,
+    `-0`, `-0.`, `-0.7` — the cell took what it showed (−0.5) for its start,
+    so the put-back was refused too and the `-0` staged on the way stayed, a
+    tolerance of −0.0 nobody typed, under a sentence about −0.5. Its start is
+    what the staged list holds for it when it takes the focus."""
+    field, key, named = REENTERED[case]
+    leaf = copy.deepcopy(SIDED[field][0])
+    leaf[field][0][key] = 0.05
+    _root_leaf_on_a(session, leaf)
+    held = copy.deepcopy(leaf[field])
+    lower = f"/metrics:{field}:0:{key}:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        user.find(marker=f"/metrics:{field}").trigger("focusin")
+        _keys(user, lower, "", "-0", "-0.", "-0.5")
+        await _settled(lambda: "got −0.5" in errors.get("edit-on-plot", ""))
+        await _settled(lambda: _a_rows(session, field) == held)
+        assert session.spec.pending == pending
+        # Left, and entered again: the field still reads −0.5.
+        user.find(marker=f"/metrics:{field}").trigger("focusin")
+        assert _cell(user, lower).value == -0.5
+        _keys(user, lower, "", "-0", "-0.", "-0.7")
+        await _settled(lambda: "got −0.7" in errors.get("edit-on-plot", ""))
+        await _settled(lambda: _a_rows(session, field) == held)
+        assert errors["edit-on-plot"] == (
+            f"ValueError: row 0: {named} must not be negative; got −0.7"
+        )
+        assert session.spec.pending == pending
+        assert _cell(user, lower).value == -0.7
+
+
+async def test_a_refused_cell_in_a_row_the_spec_does_not_hold_puts_back_its_own(
+    session,
+):
+    """A row added while the list is refused is in no staged list: its cell
+    has no staged value to go back to, and starts from what the row was
+    added with. Row 0 shows a refused −0.5; `Add row` copies it; the new
+    row's cell, typed over, puts nothing back — the list was refused whole
+    the whole way — and the spec holds its one row."""
+    leaf = copy.deepcopy(SIDED["events"][0])
+    _root_leaf_on_a(session, leaf)
+    first = "/metrics:events:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _keys(user, first, "-0.5")
+        await _settled(lambda: "row 0" in errors.get("edit-on-plot", ""))
+        user.find(marker="/metrics:events:add").click()
+        await asyncio.sleep(0.25)
+        _keys(user, "/metrics:events:1:tolerance:lower", "", "-0", "-3")
+        await asyncio.sleep(0.25)
+        assert _a_rows(session, "events") == leaf["events"]
+        assert session.spec.pending == pending
+        assert errors["edit-on-plot"] == (
+            "ValueError: row 0: tolerance must not be negative; got −0.5"
+        )
+
+
+async def test_the_sentence_names_the_first_refusal_of_the_rows_as_shown(session):
+    """Two cells show a refused negative, and row 0's is fixed: the list is
+    still refused — by row 1 — and that is the sentence. The put-back of
+    row 0, refused too, had the last word: "row 0: tolerance must not be
+    negative; got −0.5", of a cell reading 0.2."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"].append({"time": 0.75, "value": 0.5, "tolerance": 0.1})
+    _root_leaf_on_a(session, leaf)
+    held = copy.deepcopy(leaf["points"])
+    cell = "/metrics:points:{}:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _keys(user, cell.format(0), "-0.5")
+        await _settled(lambda: "row 0" in errors.get("edit-on-plot", ""))
+        user.find(marker="/metrics:points").trigger("focusin")
+        _keys(user, cell.format(1), "-0.3")
+        await asyncio.sleep(0.25)
+        assert (
+            "row 0: tolerance must not be negative; got −0.5" in errors["edit-on-plot"]
+        )
+        user.find(marker="/metrics:points").trigger("focusin")
+        _keys(user, cell.format(0), "", "0", "0.", "0.2")
+        await _settled(lambda: "row 1" in errors.get("edit-on-plot", ""))
+        await asyncio.sleep(0.25)
+        assert errors["edit-on-plot"] == (
+            "ValueError: row 1: tolerance must not be negative; got −0.3"
+        )
+        assert _a_rows(session, "points") == held
+        assert session.spec.pending == pending
+        # Row 1 fixed too, the list as shown is staged and the sentence goes.
+        user.find(marker="/metrics:points").trigger("focusin")
+        _keys(user, cell.format(1), "0.4")
+        await _settled(
+            lambda: [r["tolerance"] for r in _a_rows(session, "points")] == [0.2, 0.4]
+        )
+        assert "edit-on-plot" not in errors
+
+
+async def test_two_negatives_the_file_holds_are_named_as_the_rows_show_them(session):
+    """A spec written by hand holds two negative tolerances in one table
+    (read and scored as ever, `..unscorable`). Row 0 fixed, the list is
+    refused by row 1 and says so; row 1 fixed, it is staged."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"][0]["tolerance"] = -0.5
+    leaf["points"].append({"time": 0.75, "value": 0.5, "tolerance": -0.3})
+    _root_leaf_on_a(session, leaf)
+    cell = "/metrics:points:{}:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        user.find(marker="/metrics:points").trigger("focusin")
+        _keys(user, cell.format(0), "", "0", "0.", "0.2")
+        await _settled(lambda: "edit-on-plot" in errors)
+        await asyncio.sleep(0.25)
+        assert errors["edit-on-plot"] == (
+            "ValueError: row 1: tolerance must not be negative; got −0.3"
+        )
+        assert session.spec.pending == pending
+        user.find(marker="/metrics:points").trigger("focusin")
+        _keys(user, cell.format(1), "", "0", "0.", "0.4")
+        await _settled(
+            lambda: (
+                [r.get("tolerance") for r in _a_rows(session, "points")] == [0.2, 0.4]
+            )
+        )
+        assert "edit-on-plot" not in errors
+
+
 def test_a_rows_edit_takes_a_pair_and_a_number_and_drops_a_blank(session):
     _root_leaf_on_a(session, SIDED["points"][0])
     rows = [

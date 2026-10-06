@@ -5058,6 +5058,82 @@ def test_bounds_out_of_order_and_a_negative_in_a_rows_tolerance_are_refused(
         expect(_refusal(editor, "row 0")).to_have_count(0)
 
 
+@pytest.mark.parametrize(
+    ("name", "child", "field", "label", "key", "held", "leave"),
+    [
+        ("points · x", 0, "points", "− tolerance", "tolerance", 0.05, "click"),
+        (
+            "points · x",
+            0,
+            "points",
+            "before time_tolerance",
+            "time_tolerance",
+            0.1,
+            "tab",
+        ),
+        (
+            "event-timing · x",
+            1,
+            "events",
+            "early tolerance",
+            "tolerance",
+            0.05,
+            "click",
+        ),
+    ],
+    ids=["points tolerance", "points time tolerance", "an events row"],
+)
+def test_a_refused_cell_entered_again_stages_no_value_nobody_typed(
+    tmp_path, playwright_browser, name, child, field, label, key, held, leave
+):
+    """`-0.5` typed over a row's tolerance is refused and the field keeps
+    it. The cell left — a click on another field, or Tab — entered again and
+    typed over with `-0.7`: that passes through `-0`, which the table
+    stages, and the refusal put the cell back to the −0.5 it SHOWED, which
+    was refused in its turn. `"tolerance": -0.0` stayed staged, 1 pending,
+    under a sentence about −0.5. The spec holds what it held, nothing is
+    pending and the sentence names what the field reads."""
+    with _served(
+        tmp_path, playwright_browser, project=_tables_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, name)
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        row = editor.locator(".dstf-table-row").first
+        row.evaluate("e => e.scrollIntoView({block: 'center'})")
+        cell = row.get_by_label(label, exact=True)
+        expect(cell).to_have_value(str(held))
+
+        def staged() -> object:
+            return _staged_tree(page)["children"][child][field][0].get(key)
+
+        _type_over(page, cell, "-0.5")
+        expect(_refusal(editor, "row 0")).to_have_text(
+            f"row 0: {key} must not be negative; got −0.5", timeout=EXPECT_TIMEOUT
+        )
+        _answered(page)
+        assert (cell.input_value(), _pending(page)) == ("-0.5", "0 pending edits")
+        assert repr(staged()) == repr(held)
+        if leave == "click":
+            editor.get_by_label("window start", exact=True).click()
+            assert not cell.evaluate("e => document.activeElement === e")
+            cell.click()
+        else:
+            page.keyboard.press("Tab")
+            assert not cell.evaluate("e => document.activeElement === e")
+            page.keyboard.press("Shift+Tab")
+        assert cell.evaluate("e => document.activeElement === e")
+        page.keyboard.press("Control+A")
+        page.keyboard.type("-0.7", delay=KEY_MS)
+        expect(_refusal(editor, "row 0")).to_have_text(
+            f"row 0: {key} must not be negative; got −0.7", timeout=EXPECT_TIMEOUT
+        )
+        _answered(page)
+        assert repr(staged()) == repr(held)  # not −0.0
+        assert (cell.input_value(), _pending(page)) == ("-0.7", "0 pending edits")
+
+
 def _digit_project(tmp_path: Path) -> tuple[Path, Path]:
     """`_typing_project` with y's points leaf at a tolerance of 3: a
     number one key types."""

@@ -580,7 +580,13 @@ def _table(
     of the criterion's form does: the list is staged with that one cell
     put back, and the refusal said again. The field keeps what was typed,
     and while it does the list is refused whole, like a blank required
-    cell holds it back."""
+    cell holds it back. "What it held" is what the STAGED list holds for
+    it, never what the cell shows: a refused cell shows a value the spec
+    never took, and entered again with that for its start, its put-back
+    was refused in turn and the `-0` stayed. And whichever way a put-back
+    goes, the list as shown is handed over once more after it, so the
+    sentence left standing is the first refusal of the rows AS SHOWN — not
+    the put-back's, of a value no cell shows any more."""
     from ..forms import SidesControl, label_width, sides_control
     from ..typed_number import TypedNumber
 
@@ -649,20 +655,28 @@ def _table(
         return f"{key} is required" if rows[i].get(key) is None else None
 
     #: The cell being edited — ``(row shown, column)``, None before any is
-    #: and after the table heard a focus or changed its rows — and what its
-    #: row held there when it was entered: what a refused edit puts back.
+    #: and after the table heard a focus or changed its rows — and what the
+    #: staged list held there when it was entered: what a refused edit puts
+    #: back.
     taken: dict[str, Any] = {"cell": None, "entered": None}
 
     def enter(i: int, key: str) -> None:
         """``(i, key)`` is the first cell edited since another was, or
-        since a focus was heard: what its row holds now is its start."""
+        since a focus was heard: what the STAGED list holds for it now is
+        its start (`spec`, by the row's `origin`) — as the criterion's form
+        starts a field from the leaf its last accepted submit left
+        (`edit_criteria`'s ``taken["leaf"]``). A row the spec does not hold
+        yet (added while the list was held back) has no staged value: it
+        starts from what it was added with."""
         if taken["cell"] != (i, key):
             taken["cell"] = (i, key)
-            taken["entered"] = copy.deepcopy(rows[i].get(key))
+            at = origin[i]
+            start = rows[i] if at is None else spec[at]
+            taken["entered"] = copy.deepcopy(start.get(key))
 
     def left() -> None:
         """A focus in the table, or its rows moved: whichever cell is
-        edited next starts from what its row holds then."""
+        edited next starts from what the staged list holds for it then."""
         taken["cell"] = None
 
     def held(listed: list[dict]) -> list[dict]:
@@ -691,13 +705,17 @@ def _table(
     def submit(but: SidesControl | None = None) -> None:
         held_back = blanks(but)
         if not held_back and not stage(rows) and taken["cell"] is not None:
-            # Refused. The cell goes back to what it held when it was
-            # entered — where values typed on the way to this one were
-            # staged — and the refusal, which that stage hid, is said again.
+            # Refused. The cell goes back to what the spec held for it
+            # when it was entered — where values typed on the way to this
+            # one were staged — and the refusal is said again: a put-back
+            # that went through hid it, and one refused in its turn (another
+            # cell shows a refused value too) said its own, of a value this
+            # cell no longer shows.
             i, key = taken["cell"]
             back = copy.deepcopy(rows)
             back[i][key] = copy.deepcopy(taken["entered"])
-            if held(back) != spec and stage(back):
+            if held(back) != spec:
+                stage(back)
                 stage(rows)
         remember()
 
