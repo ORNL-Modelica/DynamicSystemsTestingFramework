@@ -510,6 +510,18 @@ class TestPoints:
         assert landed(POINTS, 1.7, None) == 1.7
         assert landed(ending, 1.7, None) == 0.8
 
+    def test_a_following_points_time_is_bound_by_the_baseline_and_not_the_run(self):
+        # The run's span bounds a checkpoint scored against the RUN — one
+        # with a value of its own. One that follows the baseline is held
+        # to the baseline's span, as it was, whatever the run's: 0.9 stays
+        # on a run that ends at 0.75, and 1.5 lands on the baseline's end.
+        # (On such a short run the point at 0.9 is "not scored — outside
+        # actual trajectory": a following point there is not this bound's.)
+        new = _edit(POINTS, "points/target/0", 0.9, None, span=(0.0, 0.75))
+        assert new["points"][0] == {"time": 0.9, "tolerance": 0.05}
+        new = _edit(POINTS, "points/target/0", 1.5, None, span=(0.0, 2.0))
+        assert new["points"][0] == {"time": 1.0, "tolerance": 0.05}
+
     def test_the_runs_span_bounds_a_time_MOVE_and_nothing_else(self):
         # A point authored outside the run, dragged vertically: no time
         # move, so nothing to clamp — its time is the author's.

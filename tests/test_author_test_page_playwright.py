@@ -9347,6 +9347,184 @@ def test_a_narrower_window_joins_two_clusters(tmp_path, playwright_browser):
             assert _displayed(page) == sorted(zero + one), i
 
 
+#: The hundredth of a pixel — 0.01 to 0.99 — by which the anchors of
+#: `test_two_areas_that_just_touch...`'s 50 px case must be shifted for the
+#: facing edges of their two areas to differ in the last bit as plain sums
+#: of plot 0's axis offset, a position and 25: null if none does.
+A_SPLITTING_FRACTION = """
+() => {
+  const o = document.querySelectorAll('.js-plotly-plot')[0]._fullLayout.xaxis._offset;
+  for (let k = 1; k < 100; k++) {
+    const a = Math.round((462 + k / 100) * 100) / 100;
+    const b = Math.round((512 + k / 100) * 100) / 100;
+    if ((o + b) - 25 > (o + a) + 25) return k / 100;
+  }
+  return null;
+}
+"""
+
+#: The two facing anchors of plot 0 — the first checkpoint's `after`, the
+#: second's `before` — as pixels of the plot, and whether the plain sums
+#: for their areas' facing edges disagree.
+FACING_EDGES = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const xa = gd._fullLayout.xaxis, shapes = gd.layout.shapes || [];
+  const at = tail => xa._offset + xa.d2p(shapes.find(s => s.name.endsWith(tail)).xanchor);
+  const a = at('/points/after/0'), b = at('/points/before/1');
+  return {apart: b - a, split: b - 25 > a + 25, edges: [a + 25, b - 25]};
+}
+"""
+
+
+def test_areas_that_touch_at_a_fraction_of_a_pixel_are_one_cluster(
+    tmp_path, playwright_browser
+):
+    """Plotly places a shape to the hundredth of a pixel, and an area's
+    edge is a sum — the axis' offset, such a position, and 25. In doubles
+    the two sides of "50 px apart" then differ in the last bit about one
+    time in ten (60 + 402.16 + 25 is 487.16, and 60 + 452.16 - 25 is
+    487.1600000000001): two areas that touch on the screen did not touch
+    in the sum. The areas are held to the hundredth of a pixel, where they
+    do: one cluster, all eight arrows from either ring."""
+    places = ((400, 0.5), (400 + 24 + 50, 0.5))
+    project = partial(_checkpoints_project, places=places)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        shift = page.evaluate(A_SPLITTING_FRACTION)
+        assert shift is not None
+        start, scale = TIME_SCALE["xaxis"]
+        _scale(page, {**TIME_SCALE, "xaxis": [start - shift / 1000, scale]})
+        _plot_under_the_mouse(page)
+        facing = page.evaluate(FACING_EDGES)
+        print("FRACTION", shift, facing)
+        # The premise, on the live figure: 50 px apart to the hundredth,
+        # and the plain sums one bit apart.
+        assert abs(facing["apart"] - 50) < 1e-9 and facing["split"], facing
+        areas = _areas(page)
+        assert _clusters(areas) == [["points/0", "points/1"]], areas
+        every = _arrows_of(areas, sorted(areas))
+        for i in (0, 1):
+            _rest(page)
+            page.mouse.move(*areas[f"points/{i}"]["rings"][0])
+            assert _displayed(page) == every, i
+
+
+#: Feed plot 0 its own figure with the shape whose name ends ``tail`` moved
+#: ``dx`` along x — from the page, by `Plotly.react`: no drag, and nothing
+#: sent to the server. (No built-in metric draws a ring away from its
+#: arrows; a third party's may.) Raced against a timer and fed again, as
+#: `FEED` is.
+MOVE_A_SHAPE = """
+async ([tail, dx]) => {
+  const {Plotly} = await import('nicegui-plotly');
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const layout = JSON.parse(JSON.stringify(gd.layout));
+  layout.shapes.find(s => (s.name || '').endsWith(tail)).xanchor += dx;
+  let fed = 0, settled = false;
+  while (!settled && fed < 3) {
+    fed += 1;
+    layout.editrevision = (layout.editrevision || 0) + 1000;
+    settled = await Promise.race([
+      Plotly.react(gd, gd.data, layout).then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 3000)),
+    ]);
+  }
+  if (!settled) throw new Error('Plotly.react did not settle, fed ' + fed + ' times');
+  return fed;
+}
+"""
+
+
+def test_a_ring_away_from_its_arrows_is_part_of_its_groups_area(
+    tmp_path, playwright_browser
+):
+    """A group's hover area is the box of its ring AND its arrows'
+    anchors. A checkpoint's ring stands between its own arrows, so the
+    figure is fed from the page with the ring 80 px left of them: the
+    arrows show on that ring, and on the way from it to them — 43 px left
+    of where the anchors' own box, grown by 25, would end."""
+    project = partial(_checkpoints_project, places=((500, 0.5),))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        _rest(page)
+        four = _group("points", 0, FOUR)
+        before = _areas(page)["points/0"]
+        page.evaluate(MOVE_A_SHAPE, ["/points/target/0", -0.08])
+        page.wait_for_timeout(300)
+        area = _areas(page)["points/0"]
+        (ring,) = area["rings"]
+        # The ring was 12 px right of its `before` anchor, the area's left
+        # end: it now is 68 px left of it.
+        assert area["l"] == pytest.approx(before["l"] - 68, abs=0.02), (before, area)
+        assert area["r"] == pytest.approx(before["r"], abs=0.02), (before, area)
+        assert before["l"] - ring[0] == pytest.approx(43, abs=0.02), (before, ring)
+        _rest(page)
+        assert _displayed(page) == []
+        page.mouse.move(*ring)
+        assert _displayed(page) == four
+        page.mouse.move(ring[0] + 30, ring[1])  # still left of the anchors' box
+        assert _displayed(page) == four
+        page.mouse.move(ring[0] - 30, ring[1])  # past the ring's own 25 px
+        assert _displayed(page) == []
+
+
+def test_a_pan_from_inside_a_cluster_keeps_its_arrows_shown_as_it_redraws(
+    tmp_path, playwright_browser
+):
+    """What is shown is held from a press to its release — through every
+    redraw between. A pan (the toolbar's own mode) draws each shape anew
+    on every move of the drag: pressed on the bare plot inside a cluster's
+    area, its eight arrows are still the ones displayed mid-pan, on the
+    paths that redraw made, and after the release, 60 px along."""
+    project = partial(_checkpoints_project, places=((400, 0.5), (440, 0.5)))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        pan = page.locator(".js-plotly-plot").first.locator(
+            '.modebar-btn[data-title="Pan"]'
+        )
+        expect(pan).to_have_count(1)
+        pan.click(force=True)
+        page.wait_for_function(
+            "() => document.querySelectorAll('.js-plotly-plot')[0]"
+            "._fullLayout.dragmode === 'pan'",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(300)
+        areas = _areas(page)
+        every = _arrows_of(areas, sorted(areas))
+        ring = areas["points/0"]["rings"][0]
+        # Inside the first one's area, off its ring, its box's edge and
+        # its arrows: bare plot.
+        at = (ring[0] - 30, ring[1] - 35)
+        assert _ruled_at(areas, *at) == every
+        _rest(page)
+        page.mouse.move(*at)
+        assert _displayed(page) == every
+        page.evaluate(
+            "() => { window.__dstfPath = document.querySelectorAll('.js-plotly-plot')[0]"
+            ".querySelector('.shapelayer path[data-grip]'); }"
+        )
+        page.mouse.down()
+        page.mouse.move(at[0] + 60, at[1] + 15, steps=12)
+        redrawn = page.evaluate(
+            "() => document.querySelectorAll('.js-plotly-plot')[0]"
+            ".querySelector('.shapelayer path[data-grip]') !== window.__dstfPath"
+        )
+        held = _displayed(page)
+        page.mouse.up()
+        assert redrawn is True  # the paths mid-pan are new ones
+        assert held == every, held
+        page.wait_for_timeout(400)
+        moved = _areas(page)["points/0"]["rings"][0]
+        assert moved[0] - ring[0] == pytest.approx(60, abs=1), (ring, moved)
+        assert _displayed(page) == every
+        assert _pending(page) == "0 pending edits"
+
+
 def test_a_dragged_anchor_joins_two_clusters_and_dragged_back_parts_them(
     tmp_path, playwright_browser
 ):
@@ -10035,6 +10213,20 @@ def test_an_arrow_barely_moved_along_its_own_axis_stages_nothing(
         scale = was["ppy"] if own == "y" else was["ppx"]
         print("BARELY", case, 8, sent, moved * scale)
         assert abs(moved * scale - 8) < 0.5, (moved, scale)
+        # And the rule is of EVERY axis of every shape, an arrow's other
+        # one too: dragged 12 px along its own axis and 3 px across it,
+        # the release says no position across.
+        moved_to = _table_cell(page, 1, label).input_value()
+        page.wait_for_timeout(400)  # the redraw that follows the edit
+        _drag_arrow(
+            page, tail, 3 * across[0] + 12 * along[0], 3 * across[1] + 12 * along[1]
+        )
+        expect(_table_cell(page, 1, label)).not_to_have_value(
+            moved_to, timeout=EXPECT_TIMEOUT
+        )
+        (sent,) = _releases(page)
+        assert sent[f"{other}anchor"] is None, sent
+        assert isinstance(sent[f"{own}anchor"], float), sent
 
 
 def test_a_ring_barely_moved_along_an_axis_keeps_what_it_held_on_it(
@@ -10322,6 +10514,16 @@ def test_a_mark_pass_that_throws_is_said_once_and_leaves_the_shapes_to_plotly(
         assert problems == []
         left = page.evaluate(BREAK_THE_MARKS, 3)
         assert left == {"inert": 0, "grips": 0, "near": False}, left
+        # Nor is anything kept of what the pass before had found: the
+        # pointer moved on the ring — no arrow is marked there to be shown,
+        # and the hover label does not give way to none.
+        page.mouse.move(ring["x"] + 1, ring["y"])
+        after = page.evaluate(
+            """() => { const gd = document.querySelectorAll('.js-plotly-plot')[0];
+                 return [gd.hasAttribute('data-grip-near'),
+                         gd.querySelectorAll('[data-grip-on]').length]; }"""
+        )
+        assert after == [False, 0], after
         said = [text for text in problems if "DstfGrips" in text]
         assert len(said) == 1 and said[0].startswith("console:"), problems
         assert "a broken mark pass" in said[0], said
