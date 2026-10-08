@@ -318,6 +318,25 @@ def test_a_file_that_got_smaller_is_another_run(tmp_path):
     _assert_trace(trace, new)
 
 
+def test_a_smaller_file_before_any_row_was_served_is_another_run(tmp_path):
+    """With no row served there is no last row to check: the size alone
+    says the header matrices on record belong to another file — here
+    another model's, rewritten in place before the first row was read."""
+    path = tmp_path / "res.mat"
+    _result(path, n=40, points=0, declared=1)
+    reader = LiveMatReader(path)
+    first = reader.poll(NAMES)
+    assert (first.state, first.run, first.rows) == (RUNNING, 0, 0)
+    size, inode = path.stat().st_size, path.stat().st_ino
+    t = np.linspace(0.0, 1.0, 6)
+    new = write_result_mat(path, time=t, trajectories={"x": 5.0 * t})
+    assert path.stat().st_size < size and path.stat().st_ino == inode
+    snap = reader.poll(NAMES)
+    assert (snap.state, snap.run, snap.rows) == (RUNNING, 1, 6)
+    assert list(snap.series) == ["x"]
+    assert _same(snap.series["x"].values, new.expected["x"])
+
+
 def test_another_inode_is_another_run_even_when_it_continues_the_old_one(tmp_path):
     """A replacement that is larger and whose first rows ARE the old file's
     — nothing but its identity says it is a different file."""
