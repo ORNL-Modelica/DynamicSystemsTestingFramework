@@ -407,6 +407,16 @@ def _criteria_act(session, metric: str, params: dict):
             "tube_rel must not be negative; got −0.02",
         ),
         (
+            "tube",
+            {"tube_width_mode": "band", "tube_abs": {"lower": -0.1, "upper": -0.5}},
+            "tube_abs sides must not sum below zero; got lower −0.1, upper −0.5",
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "rel", "tube_rel": {"lower": 0.02, "upper": -0.05}},
+            "tube_rel sides must not sum below zero; got lower 0.02, upper −0.05",
+        ),
+        (
             "range",
             {"min_value": 9, "max_value": 2},
             "min_value 9 exceeds max_value 2",
@@ -432,10 +442,11 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
     session, metric, params, sentence
 ):
     """A negative tolerance — a number or either side of a pair, a value's
-    or a time's — and bounds out of order were staged as typed, and the
-    criterion could only ever fail (a scalar with equal bounds: never
-    score). Refused by `act`, in a sentence naming the field and the
-    value, before anything is staged."""
+    or a time's — a tube's width whose two sides leave nothing between
+    them, and bounds out of order were staged as typed, and the criterion
+    could only ever fail (a scalar with equal bounds: never score). Refused
+    by `act`, in a sentence naming the field and the value, before anything
+    is staged."""
     with pytest.raises(ValueError) as box:
         _criteria_act(session, metric, params)
     assert str(box.value) == sentence
@@ -450,7 +461,8 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
         ("event-timing", {"time_tolerance": 0}),
         ("tube", {"tube_width_mode": "band", "tube_abs": 0.0}),
         # A pair with a negative side is a band shifted off the reference,
-        # and can pass: only a negative NUMBER — both sides — never scores.
+        # and can pass: what never scores is a width whose sides sum below
+        # zero — a negative NUMBER, or a pair that does.
         (
             "tube",
             {"tube_width_mode": "band", "tube_abs": {"lower": -0.1, "upper": 0.3}},
@@ -459,6 +471,17 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
             "tube",
             {"tube_width_mode": "rel", "tube_rel": {"lower": 0.2, "upper": -0.05}},
         ),
+        # Sides that sum to exactly zero are a band of no width, shifted:
+        # a zero is a tolerance.
+        (
+            "tube",
+            {"tube_width_mode": "band", "tube_abs": {"lower": -0.1, "upper": 0.1}},
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "rel", "tube_rel": {"lower": 0.05, "upper": -0.05}},
+        ),
+        ("tube", {"tube_width_mode": "band", "tube_abs": {"lower": 0, "upper": 0}}),
         ("range", {"min_value": -9}),
         ("range", {"min_value": 2, "max_value": 2}),  # equal bounds score
         ("scalar", {**MAX, "min_value": 1, "max_value": 2}),
@@ -494,11 +517,14 @@ def test_equal_bounds_are_refused_where_the_scorer_refuses_them(name):
 
 @pytest.mark.parametrize("key", ["tube_abs", "tube_rel"])
 def test_a_negative_tube_width_never_scores_and_a_shifted_band_can(key):
-    """Why a number is refused and a pair is not: a negative NUMBER is
-    both sides, a tube whose upper bound is under its lower one — nothing
-    is inside it, whatever the run (it was staged, and read "0.0% inside
-    tube"). A pair with ONE negative side is a band that does not hold its
-    reference, and a run that lies in it passes."""
+    """Why a width is refused where its sides sum below zero and nowhere
+    else: a negative NUMBER is both sides, a tube whose upper bound is
+    under its lower one — nothing is inside it, whatever the run (it was
+    staged, and read "0.0% inside tube") — and so is a PAIR whose sides sum
+    below zero, both negative or one. A pair with one negative side and a
+    sum above zero is a band that does not hold its reference, and a run
+    that lies in it passes; one whose sides sum to zero is a band of no
+    width, which a run on it passes."""
     import numpy as np
 
     from dstf.comparison.modes import resolve_mode
@@ -511,11 +537,24 @@ def test_a_negative_tube_width_never_scores_and_a_shifted_band_can(key):
         override = {"mode": "tube", "tube_width_mode": mode, key: width}
         return resolve_mode(override, 0.01).compare(t, ref, t, act)
 
-    for act in (ref, ref + 0.1, ref - 0.1):
-        assert not scored(-0.2, act).passed
+    def off(by):
+        """The reference moved by ``by``, in the width's own unit."""
+        return ref + by * (1.0 if key == "tube_abs" else ref)
+
+    nothing_inside = (
+        -0.2,
+        {"lower": -0.1, "upper": -0.5},
+        {"lower": 0.2, "upper": -0.3},
+    )
+    for width in nothing_inside:
+        for by in (0.0, 0.1, -0.1, 0.3, -0.3):
+            result = scored(width, off(by))
+            assert not result.passed and result.tube_points_inside == 0, (width, by)
     shifted = {"lower": -0.05, "upper": 0.2}
-    assert scored(shifted, ref + 0.1).passed
+    assert scored(shifted, off(0.1)).passed
     assert not scored(shifted, ref).passed  # the reference itself is outside
+    line = {"lower": -0.1, "upper": 0.1}  # no width, 0.1 above the reference
+    assert scored(line, off(0.1)).passed
 
 
 def test_a_hand_written_negative_tolerance_is_staged_and_scored_as_it_was(session):
@@ -578,6 +617,39 @@ async def test_a_negative_tube_width_typed_puts_the_leaf_back(session):
         assert width.value == -0.3
         _keys(user, width, "0.2")
         assert session.tree(A)["tube_abs"] == 0.2
+        assert "edit-criteria" not in errors
+
+
+async def test_a_tube_pair_typed_to_leave_nothing_inside_puts_the_leaf_back(session):
+    """An unlinked width of 0.1 below and 0.3 above, its upper side typed
+    over. `-0.05` is taken: the sides still sum above zero — a band shifted
+    under its reference. `-0.5` is refused, by the SUM (the upper bound
+    would be under the lower one, and the criterion read "0.0% inside
+    tube"): the leaf holds the pair the field had when it was entered, the
+    field keeps what was typed and the sentence says both sides. `-0.1`,
+    sides summing to exactly zero, is taken."""
+    pair = {"lower": 0.1, "upper": 0.3}
+    leaf = {
+        "metric": "tube",
+        "variable": "x",
+        "tube_width_mode": "band",
+        "tube_abs": pair,
+    }
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(leaf))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        upper = _number(user, "+ Tube abs")
+        _keys(user, upper, "0", "-0.05")
+        assert session.tree(A)["tube_abs"] == {"lower": 0.1, "upper": -0.05}
+        assert "edit-criteria" not in errors
+        _keys(user, upper, "-0.5")
+        assert errors["edit-criteria"] == (
+            "ValueError: tube_abs sides must not sum below zero; "
+            "got lower 0.1, upper −0.5"
+        )
+        assert session.tree(A) == leaf
+        assert upper.value == -0.5
+        _keys(user, upper, "-0.1")
+        assert session.tree(A)["tube_abs"] == {"lower": 0.1, "upper": -0.1}
         assert "edit-criteria" not in errors
 
 

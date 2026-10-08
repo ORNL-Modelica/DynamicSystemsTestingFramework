@@ -1,7 +1,8 @@
 """What an editor refuses to stage because it can never score: a negative
 tolerance — a number, or either side of a pair; a value's or a time's; the
-criterion's or a table row's — a tube's constant width as a negative
-number, and bounds out of order.
+criterion's or a table row's — a tube's constant width whose sides sum
+below zero (a negative number, or a pair that leaves nothing between its
+bounds), and bounds out of order.
 
 The EDITOR's rule, raised from a capability's ``act`` before anything is
 staged, the way a window that ends before it starts is refused. It is not
@@ -64,14 +65,25 @@ def refuse_negative(
 
 def refuse_negative_width(key: str, value: object) -> None:
     """Raise ``ValueError`` when the tube width ``value`` held under ``key``
-    is a negative NUMBER: ``tube_abs must not be negative; got −0.3``. A
-    number is both sides, and with both below zero the tube's upper bound
-    is under its lower one: nothing is ever inside it (it was staged, and
-    read "0.0% inside tube"). A PAIR is not this rule's: with one side
-    negative it is a band shifted off its reference, which a run can lie
-    in."""
+    puts the tube's upper bound under its lower one, so that nothing is
+    ever inside it (it was staged, and read "0.0% inside tube"): a negative
+    NUMBER — both sides — ``tube_abs must not be negative; got −0.3``, and
+    a PAIR of numbers whose sides sum below zero, ``tube_abs sides must not
+    sum below zero; got lower −0.1, upper −0.5``. The sum, not either
+    side: a pair with one side negative and a sum above zero is a band
+    shifted off its reference, which a run can lie in, and one whose sides
+    sum to exactly zero is a band of no width — a zero is a tolerance."""
     if _is_number(value):
         refuse_negative(key, value)
+        return
+    if not isinstance(value, dict):
+        return
+    lower, upper = value.get("lower"), value.get("upper")
+    if _is_number(lower) and _is_number(upper) and lower + upper < 0:
+        raise ValueError(
+            f"{key} sides must not sum below zero; "
+            f"got lower {_num(lower)}, upper {_num(upper)}"
+        )
 
 
 def refuse_bounds(metric: str, params: Mapping[str, object]) -> None:

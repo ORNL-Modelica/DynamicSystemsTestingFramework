@@ -80,8 +80,8 @@ def _authored_leaf(tree: dict | None, path: str) -> dict | None:
 def refuse_unscorable(name: str, params: dict) -> None:
     """Raise ``ValueError`` for a criterion of metric ``name`` whose
     ``params`` can never score (`..unscorable`): a negative tolerance, its
-    sides named as the mode's own fields name them, a tube's width as a
-    negative number, or bounds out of order."""
+    sides named as the mode's own fields name them, a tube's width whose
+    sides sum below zero, or bounds out of order."""
     desc = metric(name)
     sides: dict[str, Any] = {}
     if desc is not None and dataclasses.is_dataclass(desc.config_cls):
