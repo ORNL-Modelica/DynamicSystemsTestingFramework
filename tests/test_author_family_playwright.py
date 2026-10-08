@@ -83,7 +83,7 @@ def test_the_add_form_takes_a_slice_and_add_draws_one_folded_row(
     """R1: a family's element picked, Indices shows every element (`1:20`);
     a slice typed and Enter pressed, ONE folded row stands under the
     family's new plot with the count of its four verdicts, its editor open
-    — and the preview holds four literal leaves, as one pending edit."""
+    — and the preview holds four literal leaves and says what was added."""
     project = partial(family_project, n=20, tracked=(), fail=(6,))
     with _served(tmp_path, playwright_browser, project=project) as page:
         expect(page.locator(".dstf-plot")).to_have_count(1)
@@ -102,10 +102,24 @@ def test_the_add_form_takes_a_slice_and_add_draws_one_folded_row(
         expect(indices).to_have_value("1:20")
         form = page.locator(".dstf-form-row")
         expect(form).to_contain_text("Elements of pipe.T[1:20]")
+        # what Add would add, said three times over: beside the field, on
+        # the button, and in the row's title — which no longer says "for x"
+        expect(form).to_contain_text("20 elements")
+        expect(form.get_by_role("button", name="Add 20 criteria")).to_be_visible()
+        expect(form).to_contain_text("Add a criterion for pipe.T[1:20]")
+        expect(form).not_to_contain_text("Add a criterion for x")
         _shot(page, tmp_path, "add-form-indices")
+        # start:step:end — the other way round it is ONE element, and says so
+        indices.fill("1:20:5")
+        expect(form.get_by_role("button", name="Add 1 criterion")).to_be_visible()
+        expect(form).to_contain_text("Add a criterion for pipe.T[1]")
         indices.fill("1:5:20")
+        expect(form).to_contain_text("4 elements")
+        expect(form.get_by_role("button", name="Add 4 criteria")).to_be_visible()
+        expect(form).to_contain_text("Add a criterion for pipe.T[1:5:16]")
         indices.press("Enter")  # Enter in Indices is Add
-        expect(_pending(page)).to_have_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        # the flat test's own tree written out, and the ONE op of the add
+        expect(_pending(page)).to_have_text("2 pending edits", timeout=EXPECT_TIMEOUT)
         expect(page.locator(".dstf-plot")).to_have_count(2, timeout=EXPECT_TIMEOUT)
         fold = _fold(page)
         expect(fold).to_have_count(1)
@@ -122,12 +136,17 @@ def test_the_add_form_takes_a_slice_and_add_draws_one_folded_row(
         )
         _pending(page).click()
         drawer = page.locator(".dstf-pending-drawer")
-        expect(drawer).to_contain_text("1 pending edit")
+        expect(drawer).to_contain_text("2 pending edits")
+        # what the gesture did, in words, and that Save writes the tree too
+        expect(drawer).to_contain_text("added 4 criteria: pipe.T[1:5:16]")
+        expect(drawer).to_contain_text(
+            "Save also writes this test's 1 criterion out as a tree"
+        )
         text = drawer.inner_text()
         for i in (1, 6, 11, 16):
             assert f'"variable": "pipe.T[{i}]"' in text, text
         # four literal leaves and nothing else of the family: no slice, no glob
-        assert text.count("pipe.T[") == 4, text
+        assert text.count('"variable": "pipe.T[') == 4, text
 
 
 def test_a_folded_field_changes_every_member_and_the_count_follows(
@@ -159,14 +178,15 @@ def test_a_folded_field_changes_every_member_and_the_count_follows(
         tolerance.fill("0.5")
         expect(fold).to_contain_text("6 pass", timeout=EXPECT_TIMEOUT)
         expect(fold.locator(".dstf-pill")).to_have_text(re.compile("pass", re.I))
-        expect(_pending(page)).to_have_text("1 pending edit")
+        # this test is flat: its tree written out, and the one edit
+        expect(_pending(page)).to_have_text("2 pending edits")
         assert tolerance.evaluate("e => document.activeElement === e")
         _card(page).scroll_into_view_if_needed()
         _shot(page, tmp_path, "fold-open")
         # typed over, on the same field: every member fails at 1e-4
         tolerance.fill("0.0001")
         expect(fold).to_contain_text("0 pass · 6 fail", timeout=EXPECT_TIMEOUT)
-        expect(_pending(page)).to_have_text("1 pending edit")
+        expect(_pending(page)).to_have_text("2 pending edits")
         assert tolerance.evaluate("e => document.activeElement === e")
         # unfolded, each member's own row says what the fold's count said
         fold.get_by_role("button", name="Unfold nrmse · pipe.T[1:6]").click()
@@ -215,9 +235,17 @@ def test_a_member_typed_out_of_its_fold_is_its_own_row_and_keeps_the_focus(
         assert tolerance.input_value() == "0.9"
         _card(page).scroll_into_view_if_needed()
         _shot(page, tmp_path, "fold-one-differs")
-        # where it stands: after the two members above it, before the rest
+        # where it stands: SHOWN after the fold's block, a sibling of the
+        # fold's row and flush with it — while the document holds the rows
+        # where they were (nothing moved under the typing hand)
         names = _card(page).locator(".dstf-crit:not(.dstf-fold) .dstf-crit-name")
         assert names.all_inner_texts() == [f"nrmse · pipe.T[{i}]" for i in range(1, 7)]
+        last = _members(page).last.bounding_box()
+        mine, head = own.bounding_box(), fold.bounding_box()
+        assert last is not None and mine is not None and head is not None
+        assert mine["y"] >= last["y"] + last["height"] - 1, (last, mine)
+        assert abs(mine["x"] - head["x"]) < 1, (head, mine)
+        assert _members(page).first.bounding_box()["x"] > head["x"] + 8
         for _ in range(3):
             page.keyboard.press("Backspace")
         expect(fold).to_contain_text("nrmse · pipe.T[1:6]", timeout=EXPECT_TIMEOUT)
@@ -259,11 +287,19 @@ def test_indices_in_the_folded_editor_add_and_remove_by_the_keyboard(
         indices.press("Enter")
         expect(editor).to_contain_text("Indices is empty. To remove the criterion")
         expect(_pending(page)).to_have_text("0 pending edits")
+        # the count beside the field follows the typing; Esc puts back
+        indices.fill("1:6")
+        expect(editor).to_contain_text("→ 6 elements (adds 2)")
+        indices.press("Escape")
+        expect(indices).to_have_value("1:4")
+        expect(editor).to_contain_text("→ 4 elements (no change)")
+        expect(_card(page).locator(".dstf-editor")).to_have_count(1)  # still open
         indices.fill("2:4, 8")
+        expect(editor).to_contain_text("→ 4 elements (removes 1, adds 1)")
         indices.press("Enter")
         expect(fold).to_contain_text("nrmse · pipe.T[2:4,8]", timeout=EXPECT_TIMEOUT)
         expect(fold).to_contain_text("4 pass")
-        expect(_pending(page)).to_have_text("1 pending edit")
+        expect(_pending(page)).to_have_text("2 pending edits")
         # redrawn (leaves came and went), and open again on what it holds
         editor = _card(page).locator(".dstf-editor")
         expect(editor).to_contain_text(HINT.format(n=4), timeout=EXPECT_TIMEOUT)
@@ -272,13 +308,19 @@ def test_indices_in_the_folded_editor_add_and_remove_by_the_keyboard(
         # editor is the one open
         editor.get_by_label("Indices").fill("8")
         editor.get_by_label("Indices").press("Enter")
+        # three of four would go: asked once, and nothing has happened yet
+        expect(editor).to_contain_text(
+            "Removes 3 of 4 criteria — Apply again to confirm", timeout=EXPECT_TIMEOUT
+        )
+        expect(_fold(page)).to_have_count(1)
+        editor.get_by_label("Indices").press("Enter")
         expect(_fold(page)).to_have_count(0, timeout=EXPECT_TIMEOUT)
         expect(_own(page)).to_have_count(1)
         expect(_own(page)).to_contain_text("nrmse · pipe.T[8]")
         expect(
             _card(page).locator(".dstf-editor").get_by_label("Indices")
         ).to_have_count(0)
-        expect(_pending(page)).to_have_text("1 pending edit")
+        expect(_pending(page)).to_have_text("2 pending edits")
 
 
 def test_the_chevron_answers_the_keyboard(tmp_path, playwright_browser):
@@ -306,3 +348,111 @@ def test_the_chevron_answers_the_keyboard(tmp_path, playwright_browser):
         expect(_members(page).first).to_be_hidden()
         # no editor opened: the chevron's key is not the row's click
         expect(_card(page).locator(".dstf-editor")).to_have_count(0)
+
+
+def _t3_apart() -> dict:
+    """`and[x, nrmse pipe.T[1..6]]`, saved, pipe.T[3] at its own tolerance."""
+    return {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *(
+                {
+                    "metric": "nrmse",
+                    "variable": f"pipe.T[{i}]",
+                    **({"tolerance": 0.5} if i == 3 else {}),
+                }
+                for i in range(1, 7)
+            ),
+        ],
+    }
+
+
+def test_done_releases_the_fold_and_its_indices_never_double_a_criterion(
+    tmp_path, playwright_browser
+):
+    """The executing review's H1, with a real keyboard: the fold of five
+    typed to pipe.T[3]'s own value and closed with Done is the fold of six
+    — at once, with no other event to repaint it — and its Indices as they
+    are leave ONE criterion on pipe.T[3]."""
+    project = partial(family_project, n=6, tree=_t3_apart())
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        fold = _fold(page)
+        expect(fold).to_contain_text("nrmse · pipe.T[1,2,4:6]", timeout=EXPECT_TIMEOUT)
+        expect(_own(page)).to_have_count(1)
+        _open_fold(page)
+        editor = _card(page).locator(".dstf-editor")
+        tolerance = editor.get_by_label("Tolerance")
+        tolerance.click()
+        page.keyboard.type("0.5", delay=80)
+        expect(_pending(page)).to_have_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        # held while its editor is open: still the fold of five
+        expect(fold).to_contain_text("nrmse · pipe.T[1,2,4:6]")
+        page.wait_for_timeout(800)  # every event of the edit heard
+        editor.get_by_role("button", name="Done").click()
+        expect(fold).to_contain_text("nrmse · pipe.T[1:6]", timeout=EXPECT_TIMEOUT)
+        expect(fold).to_contain_text("6 pass")
+        expect(_own(page)).to_have_count(0)
+        _open_fold(page)
+        editor = _card(page).locator(".dstf-editor")
+        expect(editor).to_contain_text(HINT.format(n=6))
+        indices = editor.get_by_label("Indices")
+        expect(indices).to_have_value("1:6")
+        expect(editor).to_contain_text("→ 6 elements (no change)")
+        indices.press("Enter")
+        page.wait_for_timeout(800)
+        expect(_pending(page)).to_have_text("1 pending edit")
+        fold.locator("button.dstf-chev").click()
+        expect(_members(page)).to_have_count(6)
+        names = _card(page).locator(".dstf-crit:not(.dstf-fold) .dstf-crit-name")
+        assert names.all_inner_texts() == [f"nrmse · pipe.T[{i}]" for i in range(1, 7)]
+
+
+def test_a_differing_row_follows_the_block_and_a_rows_plus_is_its_own_elements(
+    tmp_path, playwright_browser
+):
+    """Unfolded, the fold's five members are one block under it and
+    pipe.T[3], with its own criterion, comes after them — flush with the
+    fold's row, not between two members. A member's `+` starts Indices at
+    that member's index; Indices over pipe.T[3] is refused, naming it."""
+    project = partial(family_project, n=6, tree=_t3_apart())
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        fold = _fold(page)
+        expect(fold).to_contain_text("nrmse · pipe.T[1,2,4:6]", timeout=EXPECT_TIMEOUT)
+        fold.locator("button.dstf-chev").click()
+        expect(_members(page).first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        boxes = [_members(page).nth(i).bounding_box() for i in range(5)]
+        own, head = _own(page).bounding_box(), fold.bounding_box()
+        assert (
+            all(b is not None for b in boxes) and own is not None and head is not None
+        )
+        ys = [b["y"] for b in boxes]
+        assert ys == sorted(ys) and head["y"] < ys[0]
+        # one block: each member right under the one before, no row between
+        for above, below in zip(boxes, boxes[1:], strict=False):
+            assert abs(below["y"] - (above["y"] + above["height"])) < 2, boxes
+        assert own["y"] >= boxes[-1]["y"] + boxes[-1]["height"] - 1, (boxes[-1], own)
+        assert abs(own["x"] - head["x"]) < 1 and boxes[0]["x"] > head["x"] + 8
+        _card(page).scroll_into_view_if_needed()
+        _shot(page, tmp_path, "fold-block")
+        # a member's `+`: its own element
+        member = _members(page).filter(has_text="nrmse · pipe.T[4]")
+        member.get_by_role("button", name="Add a criterion after this one").click()
+        form = page.locator(".dstf-form-row")
+        expect(form.get_by_label("Indices")).to_have_value("4", timeout=EXPECT_TIMEOUT)
+        expect(form.get_by_role("button", name="Add 1 criterion")).to_be_visible()
+        form.get_by_role("button", name="Cancel").click()
+        # the fold's Indices over the element with its own criterion
+        _open_fold(page)
+        editor = _card(page).locator(".dstf-editor")
+        indices = editor.get_by_label("Indices")
+        indices.fill("1:6")
+        refusal = (
+            "pipe.T[3] already has its own nrmse criterion under this group — "
+            "edit or remove that one, or leave 3 out"
+        )
+        expect(editor).to_contain_text(refusal)  # said as it is typed
+        indices.press("Enter")
+        page.wait_for_timeout(600)
+        expect(_pending(page)).to_have_text("0 pending edits")
+        expect(_own(page)).to_have_count(1)
