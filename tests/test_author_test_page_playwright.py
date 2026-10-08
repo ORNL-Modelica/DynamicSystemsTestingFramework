@@ -8052,23 +8052,29 @@ def test_a_constant_tubes_arrows_are_hidden_at_rest(tmp_path, playwright_browser
 
 
 #: Resolve at the first frame in which plot 0 holds a path for the shape
-#: whose name ends ``tail``: its group mark and whether it is displayed.
+#: whose name ends ``tail`` that it did not hold when the watch began — a
+#: shape a redraw adds, or one it draws anew: its group mark, whether it
+#: is displayed and the clip of its group; and of the box whose name ends
+#: ``box``, the pointer and the clip of its group.
 WATCH_FOR = """
-(tail) => {
+([tail, box]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const path = (end) => {
+    const i = (gd.layout.shapes || []).findIndex(s => (s.name || '').endsWith(end));
+    return i < 0 ? null : gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  };
+  const was = path(tail);
   window.__dstfSeen = new Promise((resolve) => {
-    const gd = document.querySelectorAll('.js-plotly-plot')[0];
     const read = () => {
-      const shapes = gd.layout.shapes || [];
-      const i = shapes.findIndex(s => (s.name || '').endsWith(tail));
-      const el = i < 0 ? null
-        : gd.querySelector('.shapelayer path[data-index="' + i + '"]');
-      if (!el) return requestAnimationFrame(read);
-      const box = shapes.findIndex(s => (s.name || '').endsWith('/points/box/2'));
-      const boxEl = gd.querySelector('.shapelayer path[data-index="' + box + '"]');
+      const el = path(tail);
+      if (!el || el === was) return requestAnimationFrame(read);
+      const boxEl = path(box);
       resolve({
         grip: el.getAttribute('data-grip'),
         display: getComputedStyle(el).display,
+        clip: el.parentNode.getAttribute('clip-path'),
         box: boxEl ? getComputedStyle(boxEl).pointerEvents : null,
+        boxClip: boxEl ? boxEl.parentNode.getAttribute('clip-path') : null,
       });
     };
     read();
@@ -8089,7 +8095,7 @@ def test_a_grip_a_redraw_adds_is_hidden_from_its_first_frame_and_shown_on_a_hove
         _open_for_grips(page, 0, "points · x")
         _rest(page)
         assert _grips_on(page)["drawn"] == 8
-        page.evaluate(WATCH_FOR, "/points/upper/2")
+        page.evaluate(WATCH_FOR, ["/points/upper/2", "/points/box/2"])
         add = page.locator(".dstf-editor").get_by_role("button", name="Add row").first
         add.evaluate("e => e.click()")  # no scroll: the plot stays put
         seen = page.evaluate("() => window.__dstfSeen")
@@ -8325,6 +8331,214 @@ def test_opening_a_criterion_on_a_split_plot_keeps_its_trace_as_tall(
         assert all(px >= 4 for px in room.values()), room
         _rest(page)
         _shot(page, tmp_path, "split-open")
+
+
+# -- an arrow is not clipped to the plot area ------------------------------------
+
+#: The shape of plot ``card`` whose name ends ``tail``, as it is PAINTED:
+#: its path's box, and what of that box is left by every clip above it —
+#: the `clip-path` of an ancestor (Plotly's is a rect: the plot area) and
+#: the svg's own edge — or None where nothing is; the `clip-path` of its
+#: group; and whether its middle is under itself (a hit test honours a
+#: clip). Read off the DOM.
+PAINTED = """
+([card, tail]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const i = (gd.layout.shapes || []).findIndex(s => (s.name || '').endsWith(tail));
+  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  const left = {left: b.left, top: b.top, right: b.right, bottom: b.bottom};
+  const cut = (r) => {
+    left.left = Math.max(left.left, r.left); left.top = Math.max(left.top, r.top);
+    left.right = Math.min(left.right, r.right);
+    left.bottom = Math.min(left.bottom, r.bottom);
+  };
+  for (let n = el; n && n !== gd; n = n.parentNode) {
+    const m = /#([^)"']+)/.exec(n.getAttribute('clip-path') || '');
+    if (m) {
+      const r = document.getElementById(m[1]).querySelector('rect');
+      const x = +r.getAttribute('x') || 0, y = +r.getAttribute('y') || 0;
+      const ctm = n.getScreenCTM();
+      const p = new DOMPoint(x, y).matrixTransform(ctm);
+      const q = new DOMPoint(x + +r.getAttribute('width'), y + +r.getAttribute('height'))
+        .matrixTransform(ctm);
+      cut({left: p.x, top: p.y, right: q.x, bottom: q.y});
+    }
+    if (n.tagName === 'svg') cut(n.getBoundingClientRect());
+  }
+  const under = document.elementFromPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2);
+  return {
+    box: b.width > 0 && b.height > 0
+      ? {left: b.left, top: b.top, right: b.right, bottom: b.bottom,
+         x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2}
+      : null,
+    painted: left.right > left.left && left.bottom > left.top ? left : null,
+    clip: el.parentNode.getAttribute('clip-path'),
+    hit: under === el,
+    under: under ? under.tagName + '.' + (under.getAttribute('class') || '') : null,
+  };
+}
+"""
+
+
+def _painted(page, tail: str, near: str | None = None) -> dict:
+    """The shape ``tail`` as painted; with ``near``, the pointer is first
+    brought to that ring, so its group shows."""
+    if near is not None:
+        _rest(page)
+        ring = _shape(page, near)
+        page.mouse.move(ring["x"], ring["y"], steps=5)
+        page.wait_for_timeout(150)
+    return page.evaluate(PAINTED, [0, tail])
+
+
+def _whole(arrow: dict) -> bool:
+    """Every pixel of the arrow's box is painted."""
+    box, painted = arrow["box"], arrow["painted"]
+    return (
+        box is not None
+        and painted is not None
+        and all(painted[side] == box[side] for side in painted)
+    )
+
+
+def _zoom_upper_edge_to_the_top(page) -> dict:
+    """A real-mouse box zoom of plot 0 that makes checkpoint 1's upper edge
+    the top of the value axis, with its ring and its time in view. Returns
+    the plot area after it."""
+    area = page.evaluate(PLOT_AREA)
+    edge = _shape(page, "/points/upper/1")
+    top = (edge["y"] - area["top"]) / area["height"]
+    _box_zoom(page, (0.4, 0.99), (top, top + 0.9 * edge["ppy"] / area["height"]))
+    area = page.evaluate(PLOT_AREA)
+    assert abs(_shape(page, "/points/upper/1")["y"] - area["top"]) <= 5, area
+    return area
+
+
+def test_an_arrow_whose_edge_is_the_plots_top_is_drawn_in_the_margin_and_dragged(
+    tmp_path, playwright_browser
+):
+    """An arrow stands 10 to 17 px OUTSIDE its tolerance edge, and Plotly
+    clips every shape to the plot area: zoomed so the edge is the top of
+    the plot, the arrow was all in the margin — not painted, and a press
+    where it belonged landed on the page under it. A grip's group loses
+    the clip: the arrow is drawn whole above the plot, it is what is under
+    the pointer there, and dragged 15 px down it stages that row's upper
+    side. A box keeps its clip."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area = _zoom_upper_edge_to_the_top(page)
+        arrow = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert _whole(arrow) and arrow["box"]["bottom"] <= area["top"], (arrow, area)
+        assert arrow["clip"] is None, arrow
+        box = _painted(page, "/points/box/1")
+        assert (box["clip"] or "").startswith("url(#clip"), box
+        ring = _painted(page, "/points/target/1")
+        assert (ring["clip"] or "").startswith("url(#clip"), ring
+        x, y = arrow["box"]["x"], arrow["box"]["y"]
+        page.mouse.move(x, y, steps=3)
+        page.wait_for_timeout(150)
+        over = _painted(page, "/points/upper/1")
+        assert over["hit"], over
+        _shot(page, tmp_path, "arrow-in-the-top-margin")
+        ppy = _shape(page, "/points/upper/1")["ppy"]
+        page.mouse.down()
+        page.mouse.move(x, y + 15, steps=8)
+        page.mouse.up()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.3", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
+        assert abs(upper - (0.3 - 15 / ppy)) * ppy < 0.5, (upper, ppy)
+        assert _table_cell(page, 0, "+ tolerance").input_value() == "0.3"
+
+
+def test_a_time_arrow_whose_edge_is_the_plots_left_is_drawn_over_the_tick_labels(
+    tmp_path, playwright_browser
+):
+    """The same on the time axis: zoomed so a checkpoint's `before` edge
+    is the left of the plot, its arrow stands in the left margin, over the
+    value axis's tick labels — where a press took hold of that axis. It is
+    drawn whole there, it is what is under the pointer, and dragged 15 px
+    right it stages that row's `before` side."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area = page.evaluate(PLOT_AREA)
+        edge = _shape(page, "/points/before/0")
+        left = (edge["x"] - area["left"]) / (area["right"] - area["left"])
+        _box_zoom(page, (left, left + 0.6), (0.1, 0.98))
+        area = page.evaluate(PLOT_AREA)
+        assert abs(_shape(page, "/points/before/0")["x"] - area["left"]) <= 5, area
+        arrow = _painted(page, "/points/before/0", near="/points/target/0")
+        assert _whole(arrow) and arrow["box"]["right"] <= area["left"], (arrow, area)
+        x, y = arrow["box"]["x"], arrow["box"]["y"]
+        page.mouse.move(x, y, steps=3)
+        page.wait_for_timeout(150)
+        over = _painted(page, "/points/before/0")
+        assert over["hit"], over
+        _shot(page, tmp_path, "arrow-over-the-tick-labels")
+        ppx = _shape(page, "/points/before/0")["ppx"]
+        page.mouse.down()
+        page.mouse.move(x + 15, y, steps=8)
+        page.mouse.up()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        cell = _table_cell(page, 0, "before time_tolerance")
+        expect(cell).not_to_have_value("0.1", timeout=EXPECT_TIMEOUT)
+        before = float(cell.input_value())
+        assert abs(before - (0.1 - 15 / ppx)) * ppx < 0.5, (before, ppx)
+        assert _table_cell(page, 1, "before time_tolerance").input_value() == "0.1"
+
+
+def test_an_arrow_dragged_into_the_margin_stays_painted_and_is_redrawn_unclipped(
+    tmp_path, playwright_browser
+):
+    """An outermost arrow of an autoranged plot stands at the plot's edge.
+    Dragged 20 px outward it is painted whole at every step, above the
+    plot — Plotly clips a held shape to no autoranged axis, and its group
+    has lost the clip. The release redraws every shape as a new node,
+    clipped: in the first frame the new arrow exists its group has lost
+    the clip again, and a box has kept its own."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area = page.evaluate(PLOT_AREA)
+        arrow = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert _whole(arrow) and arrow["box"]["top"] - area["top"] <= 2, (arrow, area)
+        x, y = arrow["box"]["x"], arrow["box"]["y"]
+        page.mouse.move(x, y, steps=3)
+        page.mouse.down()
+        for px in range(2, 21, 2):
+            page.mouse.move(x, y - px)
+            page.wait_for_timeout(30)
+            held = page.evaluate(PAINTED, [0, "/points/upper/1"])
+            assert _whole(held), (px, held)
+            # It is the held arrow, following the pointer (Plotly moves
+            # nothing under 8 px).
+            if px >= 10:
+                assert abs(held["box"]["y"] - (y - px)) <= 1, (px, held)
+        assert held["box"]["bottom"] < area["top"], (held, area)
+        _shot(page, tmp_path, "arrow-held-in-the-margin")
+        page.evaluate(WATCH_FOR, ["/points/upper/1", "/points/box/1"])
+        page.mouse.up()
+        seen = page.evaluate("() => window.__dstfSeen")
+        assert seen["grip"] is not None and seen["grip"].endswith("/points/1"), seen
+        assert seen["clip"] is None, seen
+        assert (seen["boxClip"] or "").startswith("url(#clip"), seen
+        # And after the server's own redraw that answers the release.
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        again = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert _whole(again) and again["clip"] is None, again
 
 
 # -- a refused drag's reason, under the plot ------------------------------------

@@ -113,14 +113,34 @@
     // with them, and are put back from what the figure says of its shapes.
     // A shape is three elements of one `data-index` — its group, its path
     // and, for a line, the wide helper that takes its drag: all three inert.
+    //
+    // And a grip is not clipped to the plot area. Plotly clips every shape
+    // to it — as drawn, `clip-path` on the shape's GROUP, none on its path
+    // — and an arrow stands 10 to 17 px OUTSIDE its edge: with that edge at the
+    // plot's edge, where any zoom can put it, the arrow was all in the
+    // margin, unpainted, and a press where it belonged landed on the axis
+    // under it. Its group loses the clip on every pass — a redraw draws
+    // new groups, clipped: the arrow is drawn whole in the margin, over
+    // the tick labels, and takes the press — the shape layer lies above
+    // the axes' drag layer. Only the svg's own edge cuts it. Every other
+    // shape keeps its clip — a ring too: centred on its point, its inner
+    // half is drawn and pressed while the point is on the plot.
+    //
+    // HELD, a shape's clip is Plotly's: from the press to the release it
+    // clips the held PATH itself to every axis whose range is SET, and to
+    // no autoranged one. So an arrow dragged outward from the edge of an
+    // autoranged plot stays drawn in the margin; one pressed in the margin
+    // of a zoomed plot is not drawn while it is held there, until the
+    // drag brings it onto the plot.
     const mark = () => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
       for (const el of gd.querySelectorAll(".shapelayer [data-index]")) {
         const name = (shapes[+el.getAttribute("data-index")] || {}).name;
         el.toggleAttribute("data-inert", !!info && !info.draggable.has(name));
-        if (el.tagName !== "path") continue;
         const grip = gripOf(info, name);
+        if (grip && el.tagName === "g") el.removeAttribute("clip-path");
+        if (el.tagName !== "path") continue;
         if (grip) {
           el.setAttribute("data-grip", grip.group);
           el.toggleAttribute("data-grip-on", shown(el));
@@ -133,7 +153,8 @@
       }
     };
 
-    // The marks, taken off: every shape as Plotly draws it.
+    // The marks, taken off: every shape as Plotly draws it — but for a
+    // grip's clip, which comes back with the groups of the next redraw.
     const unmark = () => {
       for (const el of gd.querySelectorAll("[data-grip]")) {
         el.removeAttribute("data-grip");
