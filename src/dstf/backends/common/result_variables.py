@@ -28,7 +28,7 @@ from ..types import (
     is_glob_pattern,
     resolve_variable_patterns,
 )
-from .mat_reader import list_result_mat_variables
+from .mat_reader import list_result_mat_variables, mat_shortfall
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +216,37 @@ def extract_variables(
             diag_idx += 1
 
     return results, diagnostics
+
+
+def unfinished_result(
+    test: TestModel,
+    mat_path: Path,
+    variables: list[VariableResult],
+    diagnostics: list[VariableResult],
+    stats: dict | None,
+) -> TestResult | None:
+    """The FAILED result an unfinished result file reads as — ``None`` for
+    a finished one, which the caller goes on to return as a success.
+
+    A file its writer did not finish (a killed or crashed run, a cut copy:
+    :func:`mat_shortfall`) is read like any other, so the rows it holds can
+    be SHOWN. Being a failure is what keeps them from being scored or
+    offered as a baseline: the reader takes its row count from the file's
+    size, so without this a partial trajectory would read as a result. A
+    file with no time point shows nothing.
+    """
+    shortfall = mat_shortfall(mat_path)
+    if shortfall is None:
+        return None
+    held = any(len(v.time) for v in variables)
+    return TestResult(
+        model_id=test.model_id,
+        success=False,
+        variables=variables if held else [],
+        diagnostics=diagnostics if held else [],
+        error_message=shortfall,
+        statistics=stats,
+    )
 
 
 def fold_diagnostics_into_statistics(

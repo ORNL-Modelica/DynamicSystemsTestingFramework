@@ -19,6 +19,7 @@ from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
+    unfinished_result,
 )
 from ..types import (
     Capability,
@@ -556,6 +557,10 @@ class DymolaBackend(Backend):
             self.dymola_config.diagnostic_variables,
         )
         stats = fold_diagnostics_into_statistics(stats, diagnostics)
+
+        unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)
+        if unfinished is not None:
+            return unfinished
 
         return TestResult(
             model_id=test.model_id,

@@ -36,6 +36,7 @@ from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
+    unfinished_result,
 )
 from ..types import (
     Capability,
@@ -327,6 +328,10 @@ class OpenModelicaBackend(Backend):
 
         variables, diagnostics = extract_variables(mat_data, test, diag_names)
         stats = fold_diagnostics_into_statistics(stats, diagnostics)
+
+        unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)
+        if unfinished is not None:
+            return unfinished
 
         return TestResult(
             model_id=test.model_id,
