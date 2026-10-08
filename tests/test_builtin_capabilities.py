@@ -2549,6 +2549,7 @@ def test_queue_is_the_next_action_where_there_is_no_result_to_read():
 
 def test_the_builtins_register_in_order():
     assert [c.label for c in caps.registered_capabilities()] == [
+        "Edit family",
         "Edit criteria",
         "Edit tree",
         "Accept",
@@ -2647,6 +2648,7 @@ def test_the_builtins_declare_their_placements():
         C_,
         Placement.STATISTIC_CRITERION,
         Placement.TREE_CRITERION,
+        Placement.FAMILY_CRITERION,
     }
     at_test = {c.name for c in caps.registered_capabilities() if T in c.placements}
     assert at_test == {"accept", "enqueue"}

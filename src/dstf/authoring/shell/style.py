@@ -429,6 +429,19 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   border: 2px solid; cursor: pointer; box-sizing: border-box;
 }
 .dstf-swatch-locked { cursor: default; opacity: .6; }
+/* A family's folded criteria row (D152): its chevron sits in the swatch's
+   place — a 20 px target in the swatch's 12 px, so every row's name starts
+   in one column — turned right while the row is folded. A member's row is
+   a criterion's row, indented under its fold with a rule down its left;
+   folded away it is `hidden`, an attribute the row's `display: flex` would
+   otherwise beat. */
+.dstf-fold-chev.dstf-chev { width: 20px; height: 20px; margin: 0 -4px; flex: none; }
+.dstf-fold[data-folded="1"] .dstf-chev .q-icon { transform: rotate(-90deg); }
+.dstf-crit[data-member] {
+  margin-left: 14px; width: calc(100% - 14px);
+  border-left: 2px solid var(--dstf-border);
+}
+.dstf-criteria > [hidden] { display: none !important; }
 /* The editor belongs to the row above it: indented under it, with the
    accent rule down its left saying how far it reaches. A node's form row
    belongs to its row the same way (the 2026-09-21 board, 1A). */

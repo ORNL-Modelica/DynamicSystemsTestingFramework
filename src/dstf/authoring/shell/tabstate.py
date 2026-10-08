@@ -46,6 +46,12 @@ class TabState:
     #: The tree card's folded groups (U5, Q8 / Y6): model id -> the folded
     #: groups' node paths. The tab's, so a switch of test keeps them.
     tree_folded: dict[str, list[str]] = field(default_factory=dict)
+    #: The plots' unfolded family rows (D152): model id -> the paths of
+    #: their members. A folded row starts closed, so this records the open
+    #: ones; kept by member, so a fold whose first member left it is still
+    #: the one that was opened. The tab's, and taken away as the tree's
+    #: folds are (`heard_spec`).
+    family_unfolded: dict[str, list[str]] = field(default_factory=dict)
     #: What a panel shows that the spec does not hold (`Panel.kept`): model
     #: id -> (node path, capability name) -> that panel's own dict. The
     #: tab's, as the folds are, and taken away as they are (`heard_spec`):
@@ -89,9 +95,11 @@ def heard_spec(state: TabState, event: dict[str, Any]) -> None:
     models = event.get("models")
     if not models:
         state.tree_folded.clear()
+        state.family_unfolded.clear()
         state.kept.clear()
     for model in models or ():
         state.tree_folded.pop(model, None)
+        state.family_unfolded.pop(model, None)
         state.kept.pop(model, None)
 
 
@@ -103,6 +111,7 @@ def caught_up(state: TabState, revision: int) -> None:
     missed = set(range(state.seen_revision + 1, revision + 1))
     if missed - state.own_revisions:
         state.tree_folded.clear()
+        state.family_unfolded.clear()
         state.kept.clear()
     state.seen_revision = max(state.seen_revision, revision)
 

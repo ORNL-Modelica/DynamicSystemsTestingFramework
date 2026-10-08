@@ -141,6 +141,9 @@ class Selection:
     keep two. Not the Session's — that was the old shell's one-tab shape.
     ``node_path``: the tree node whose controls are being drawn (NODE) — a
     leaf or a combinator; ``leaf_path`` only ever names a criterion;
+    ``leaf_paths`` every member of a folded criteria row (FAMILY_CRITERION,
+    D152), in tree order, ``leaf_path`` the first of them — empty wherever
+    one criterion is selected;
     ``quantity`` the statistic a Statistics row shows (STATISTIC), by the
     path a leaf would read it through (``translation.nonlinear_count``).
 
@@ -159,6 +162,7 @@ class Selection:
     tests: frozenset[str] = frozenset()
     variable: str | None = None
     leaf_path: str | None = None
+    leaf_paths: tuple[str, ...] = ()
     node_path: str | None = None
     quantity: str | None = None
     texts: Mapping[str, VariableText] = MappingProxyType({})
@@ -1138,7 +1142,8 @@ class Session:
 
     def stage(self, ops: Sequence[PatchOp]) -> None:
         """Stage ``ops`` and rescore their models. Materializes the implicit
-        tree where a per-leaf op needs one; validates each touched entry
+        tree where a per-leaf op needs one — or an op that edits the tree
+        whole (`PatchOp.edits_tree`); validates each touched entry
         (paths, the parsed tree, the D66 roles). On any error the Session
         is unchanged. A queued test takes every edit, and runs with the spec
         as it stands when it starts; a running one takes its criteria's —
@@ -1156,7 +1161,15 @@ class Session:
         for model_id in _in_order(op.model_id for op in ops):
             raw = [op.raw() for op in ops if op.model_id == model_id]
             entry = self.spec.entry(model_id) or {"model": model_id}
-            if needs_materialization(entry, raw):
+            # A gesture on a folded row gives the tree WHOLE (D152): on a
+            # flat entry it is an edit of the implicit tree all the same,
+            # and that tree is written out first, as for a per-leaf op — or
+            # the preview showed every line of the tree as added, with no
+            # note that Save writes it.
+            edits_whole = not has_metrics(entry) and any(
+                op.edits_tree for op in ops if op.model_id == model_id
+            )
+            if needs_materialization(entry, raw) or edits_whole:
                 # The same tree rescore stages — from what the flat path
                 # scored — never one from the entry's list: on both tiers
                 # leaf i is /metrics/children/i of the report's tree.
@@ -1200,7 +1213,9 @@ class Session:
         # belong together. A replace at an append path (``/-``) names no
         # member and is left for `effective` to refuse, never folded in. A
         # fold onto the op that materialized the tree is no longer that
-        # tree: the folded op is not marked (`PatchOp.materializes`).
+        # tree: the folded op is not marked (`PatchOp.materializes`). What
+        # the replaced op said it did (`PatchOp.notes`) is kept with what
+        # the new one says: under one key the new sentence, else both.
         pending = list(self.spec.pending)
         if len(staged) == 1 and pending:
             new, last = staged[0], pending[-1]
@@ -1209,11 +1224,14 @@ class Session:
                 if new.op == "replace" and last.op in ("add", "replace"):
                     pending.pop()
                     staged = [PatchOp(new.model_id, last.op, new.path, new.value)]
-                elif (new.op, last.op) == ("remove", "replace") or (
-                    (new.op, last.op) == ("add", "add")
-                    and not new.path.rsplit("/", 1)[-1].isdigit()
-                ):
+                elif (new.op, last.op) == ("remove", "replace"):
                     pending.pop()
+                elif (new.op, last.op) == ("add", "add") and not new.path.rsplit(
+                    "/", 1
+                )[-1].isdigit():
+                    pending.pop()
+                    said = {**dict(last.notes), **dict(new.notes)}
+                    staged = [replace(new, notes=tuple(said.items()))]
         candidate = SpecDocument(
             self.spec.path,
             self.spec.loaded,

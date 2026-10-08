@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D150 the simulation queue). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D150 the simulation queue, D152 a criterion over an array family). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -39,6 +39,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
 │   │                             #      picker_rows.py (the add form's variable picker as data: sections, filter, cap),
+│   │                             #      family_rows.py (a family's folded criteria row and its Indices as data, D152),
 │   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
 │   │                             #      queue_rows.py (the simulation queue as data: a row per item, the header's indicator),
 │   │                             #      situation.py (a test's situation and the strip's sentence), spec_preview.py (an entry's
@@ -51,11 +52,12 @@ DynamicSystemsTestingFramework/
 │   │                             #      queue_panel.py (the Suite page's queue panel and the header's queue indicator),
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      picker.py (the add form's variable picker over picker_rows),
+│   │                             #      family_fold.py (a plot card's folded criteria rows over family_rows),
 │   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
 │   │                             #      grips.js (a plot's tolerance arrows: which show, which shapes take the pointer, what a release sends),
 │   │                             #      the header, tab_theme.py (the tab's theme and its live switch),
 │   │                             #      actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
-│   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + enqueue + edit on plot)
+│   │                             #      forms.py, builtin/ (edit criteria + edit family + edit tree + accept + enqueue + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + palette.py (what a figure takes from a theme, by name) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py (the classifier + every status word and class) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
@@ -148,7 +150,12 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # in (or, on a criterion, to wrap both in `and`). The add form picks from
 # EVERY variable of the result file and the run's diagnostics (a searchable picker; the Metric
 # list follows the choice); a criterion's variable is tracked by that, and the strip asks for a
-# new run where the last run did not record it. An editor's field says the tolerance in effect
+# new run where the last run did not record it. An element of an array picked there takes
+# Indices (`1:5:20`, `1:3,7`; a count beside it and on Add): one criterion per chosen element.
+# Under a family's plot identical criteria fold into ONE row (`tube · pipe.T[1:20]`, `18 pass ·
+# 2 fail`) whose editor changes them all and whose Indices add or remove elements; its chevron
+# unfolds it to its members, and an element with its own criterion follows them (D152).
+# An editor's field says the tolerance in effect
 # (the test's / baseline's / project's) under it. Focus shows one plot alone,
 # a select switches plots. Variable labels are cut in the middle (head…[3]).
 # A plot's legend holds its signals, above the plot; a swatch on each criteria row shows or hides

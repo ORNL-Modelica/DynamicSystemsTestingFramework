@@ -166,15 +166,87 @@ def group_families(
 
 
 def slice_text(indices: Sequence[int]) -> str:
-    """Modelica slice syntax for an arithmetic run (``1:5:16``, ``1:4``), a
-    comma list otherwise."""
+    """Modelica slice syntax, the end INCLUDED: an arithmetic run reads
+    ``1:4`` or ``1:5:16``; anything else is a comma list in which each
+    unbroken run of three or more reads as a range (``1:6,8:20`` — a family
+    with a gap) and every other index singly (``1,2,4``, ``1,3,5:8``).
+    :func:`parse_slice` reads it back."""
     idx = sorted(indices)
     if len(idx) == 1:
         return str(idx[0])
     step = idx[1] - idx[0]
     if step > 0 and all(b - a == step for a, b in zip(idx, idx[1:])):
         return f"{idx[0]}:{idx[-1]}" if step == 1 else f"{idx[0]}:{step}:{idx[-1]}"
-    return ",".join(str(i) for i in idx)
+    parts: list[str] = []
+    i = 0
+    while i < len(idx):
+        j = i
+        while j + 1 < len(idx) and idx[j + 1] - idx[j] == 1:
+            j += 1
+        if j - i >= 2:
+            parts.append(f"{idx[i]}:{idx[j]}")
+            i = j + 1
+        else:
+            parts.append(str(idx[i]))
+            i += 1
+    return ",".join(parts)
+
+
+#: The most indices one Indices text may name: a typed ``1:999999999`` is
+#: refused before it is a list.
+MAX_INDICES = 100_000
+
+#: ASCII digits and nothing else Unicode calls one (``１``, ``٣``): `\d`
+#: takes those, and an index typed with them is a slip of the keyboard.
+_INT = re.compile(r"[+-]?[0-9]+")
+
+
+def parse_slice(text: str) -> list[int]:
+    """The indices ``text`` names, ascending — what an Indices field holds
+    (:func:`slice_text`'s syntax, read back): an index (``3``), a range
+    with its end INCLUDED (``1:5``), a stepped one (``1:5:20`` is 1, 6, 11,
+    16 — start:step:end, as Modelica writes it), and a comma list of those
+    in any order (``1:3,7,10:2:20``); spaces anywhere. The indices are the
+    result file's — any whole number from 0 — and which of them an array
+    HAS is its caller's to check: a zero-based array (``y[0]``) has a 0,
+    and a floor of 1 here refused the very text its field was filled with.
+
+    ``ValueError`` with the sentence to show for anything else: nothing
+    written, a part that is no index or range, a negative index, a step
+    below 1, a range that ends before it starts, an index written twice."""
+    parts = [part.strip() for part in text.split(",")]
+    if not any(parts):
+        raise ValueError(
+            "Indices is empty: write an index (3), a range (1:5), a stepped "
+            "range (1:5:20) or a list of those (1:3,7)."
+        )
+    runs: list[range] = []
+    for part in parts:
+        numbers = [n.strip() for n in part.split(":")]
+        if not 1 <= len(numbers) <= 3 or not all(_INT.fullmatch(n) for n in numbers):
+            raise ValueError(
+                f"{part!r} is not an index or a range: write 3, 1:5 or 1:5:20."
+            )
+        values = [int(n) for n in numbers]
+        first, last = values[0], values[-1]
+        step = values[1] if len(values) == 3 else 1
+        if first < 0 or last < 0:
+            raise ValueError(f"{part}: an index is not negative.")
+        if step < 1:
+            raise ValueError(f"{part}: the step is at least 1.")
+        if last < first:
+            raise ValueError(f"{part} ends before it starts.")
+        runs.append(range(first, last + 1, step))
+    count = sum(len(run) for run in runs)
+    if count > MAX_INDICES:
+        raise ValueError(f"{text.strip()} names {count:,} indices: too many.")
+    seen: set[int] = set()
+    for run in runs:
+        for index in run:
+            if index in seen:
+                raise ValueError(f"{index} is written twice.")
+            seen.add(index)
+    return sorted(seen)
 
 
 def family_label(

@@ -7,6 +7,11 @@ and the TREE_CRITERION one, any criterion's editor under its tree row (U5). Each
 consecutive replaces of one leaf into one pending op, so the pending count
 and the exported envelope carry one edit, never a keystroke log (the
 preview drawer shows the entry's diff either way).
+
+At FAMILY_CRITERION (D152) the same fields are a folded row's: the
+criterion every member shares, read off the first, and each change replaces
+EVERY member's leaf — its own variable kept — as one whole-tree op
+(`family_rows.as_one`), which the Session collapses the same way.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from ...comparison.tree_spec import (
     spec_to_view,
 )
 from ..capabilities import Panel, Patch, Placement
+from ..family_rows import NOT_A_FOLD, as_one, edit_notes
+from ..session import no_tree_error
 from ..tree_pointer import node_or_none
 from ..unscorable import (
     MIN_WIDTH,
@@ -102,7 +109,7 @@ def refuse_unscorable(name: str, params: dict) -> None:
 
 class EditCriteria:
     """One leaf's metric, its mode's parameters, its window and the baseline
-    it scores against."""
+    it scores against — or, for a folded row, every member's at once."""
 
     name = "edit-criteria"
     label = "Edit criteria"
@@ -111,6 +118,7 @@ class EditCriteria:
             Placement.CRITERION,
             Placement.STATISTIC_CRITERION,
             Placement.TREE_CRITERION,
+            Placement.FAMILY_CRITERION,
         }
     )
 
@@ -147,6 +155,12 @@ class EditCriteria:
         if leaf is None:
             ui.label("this leaf is not in the scored tree")
             return
+        #: A folded row's members as they are read now: the act refuses
+        #: the edit if a path no longer holds that member (`act`).
+        members = tuple(
+            str((node_or_none(tree, member) or {}).get("variable", ""))
+            for member in sel.leaf_paths
+        )
         # What the leaf was scored with: only a view says — none before a
         # compare (no baseline), and then the fields show no hint.
         scored = _leaf_node(s.tree_view(model_id), path) or {}
@@ -186,7 +200,15 @@ class EditCriteria:
             taken["field"], taken["entered"] = field, copy.deepcopy(taken["leaf"])
 
         def submit(values: dict) -> bool:
-            if not ui_panel.submit(model_id=model_id, path=path, **values):
+            # A folded row's members (D152): the act replaces each of them,
+            # each named as this panel read it.
+            if not ui_panel.submit(
+                model_id=model_id,
+                path=path,
+                paths=sel.leaf_paths,
+                variables=members,
+                **values,
+            ):
                 return False
             taken["leaf"] = copy.deepcopy(values)
             return True
@@ -364,10 +386,33 @@ class EditCriteria:
             window_start=inputs["window"].get("start"),
             window_end=inputs["window"].get("end"),
         )
-        return Patch(
-            ops=[
-                PatchOp(
-                    inputs["model_id"], "replace", inputs["path"], spec_to_raw(leaf)
-                )
-            ]
-        )
+        model_id = inputs["model_id"]
+        paths = tuple(inputs.get("paths") or ())
+        if not paths:
+            return Patch(
+                ops=[PatchOp(model_id, "replace", inputs["path"], spec_to_raw(leaf))]
+            )
+        # A folded row (D152): the same criterion on every member, each on
+        # its own variable — ONE op, refused or staged whole.
+        tree, why = s.tree_or_reason(model_id)
+        if tree is None:
+            assert why is not None  # `tree` is None
+            raise no_tree_error(model_id, why)
+        # Each path has to hold the member it was read as: an edit staged
+        # elsewhere moves the tree under an open row's paths, and "every
+        # member" then overwrote whatever criterion stood there instead —
+        # another variable's (the executing review's M4).
+        variables = tuple(inputs.get("variables") or ())
+        if len(variables) != len(paths):
+            raise ValueError(NOT_A_FOLD)
+        ops, was = [], None
+        for member, expected in zip(paths, variables, strict=True):
+            node = node_or_none(tree, member)
+            if node is None or "metric" not in node or node["variable"] != expected:
+                raise ValueError(NOT_A_FOLD)
+            was = node if was is None else was
+            raw = spec_to_raw(dataclasses.replace(leaf, variable=expected))
+            ops.append(PatchOp(model_id, "replace", member, raw))
+        assert was is not None  # `paths` is not empty
+        notes = edit_notes(was, ops[0].value, variables)
+        return Patch(ops=[as_one(model_id, tree, ops, notes)])

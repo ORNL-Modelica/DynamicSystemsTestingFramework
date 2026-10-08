@@ -709,6 +709,17 @@ class PendingDrawer:
                     spec.saved_entry(model_id) is None,
                 )
             ).classes("text-xs text-secondary").mark("drawer-note")
+        # What each gesture on a folded criteria row did, in words (D152,
+        # `PatchOp.notes`): its op is the whole tree, and twenty changed
+        # lines of the diff below do not say "one tolerance, twenty times".
+        said = [
+            text
+            for op in spec.pending
+            if op.model_id == model_id
+            for _, text in op.notes
+        ]
+        for text in dict.fromkeys(said):
+            ui.label(text).classes("text-xs dstf-mono").mark("drawer-gesture")
         # Never an empty box: edits that cancel out are not here at all, and
         # neither is a tree written out and not edited (a `rescore`, a value
         # typed and cleared on a flat test) — an entry put back as saved has
