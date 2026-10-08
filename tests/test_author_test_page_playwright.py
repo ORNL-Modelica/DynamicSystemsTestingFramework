@@ -7292,6 +7292,21 @@ def _drag_arrow(
     return shown
 
 
+def _moved_off(page, tail: str, key: str, value: float, card: int = 0) -> None:
+    """Wait for the server's redraw that answers a release: the shape's
+    ``key`` is no longer ``value``. With the table's cell changed too, the
+    whole answer has arrived — what a fixed wait stood in for."""
+    page.wait_for_function(
+        """([card, tail, key, value]) => {
+          const gd = document.querySelectorAll('.js-plotly-plot')[card];
+          const s = (gd.layout.shapes || []).find(x => (x.name || '').endsWith(tail));
+          return !!s && Math.abs(s[key] - value) > 1e-9 * Math.max(1, Math.abs(value));
+        }""",
+        arg=[card, tail, key, value],
+        timeout=EXPECT_TIMEOUT,
+    )
+
+
 def _settled_at(page, tail: str, key: str, value: float, card: int = 0) -> dict:
     """The shape once the server's redraw put its ``key`` at ``value``."""
     page.wait_for_function(
@@ -8680,6 +8695,38 @@ DISPLAYED = """
 }
 """
 
+#: Record IN THE PAGE what plot ``card`` displays after every real
+#: `mousemove` from now on — `DISPLAYED`'s own rule, read where the event
+#: is heard — beside where the event was. On `document`, as it bubbles: the
+#: hover module hears the move on the plot first. A walk of the real mouse
+#: is then read back ONCE (`WATCHED`), not once per pixel: a round trip to
+#: the page per step was a fifth of every walk's time, and a real mouse
+#: move cannot be had under a frame (16.7 ms) each.
+WATCH = """
+(card) => {
+  const watch = window.__dstfWatch = window.__dstfWatch || {log: []};
+  watch.gd = document.querySelectorAll('.js-plotly-plot')[card];
+  watch.log.length = 0;
+  if (watch.heard) return;
+  watch.heard = (e) => {
+    const gd = window.__dstfWatch.gd, shapes = gd.layout.shapes || [];
+    window.__dstfWatch.log.push([e.isTrusted, e.clientX, e.clientY,
+      [...gd.querySelectorAll('.shapelayer path[data-grip]')]
+        .filter(el => {
+          const b = el.getBoundingClientRect();
+          return b.width > 0 && b.height > 0;
+        })
+        .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
+        .sort()]);
+  };
+  document.addEventListener('mousemove', watch.heard);
+}
+"""
+
+#: What `WATCH` recorded since it was last read, oldest first: per real
+#: mouse move, whether the browser made it, where, and the arrows shown.
+WATCHED = "() => window.__dstfWatch.log.splice(0)"
+
 #: Shape ``index`` of plot ``card`` — an arrow — and viewport ``(x, y)``:
 #: whether the arrow is displayed, and WHICH shape a press there is on
 #: (`document.elementFromPoint`): its index in the figure, the tail of its
@@ -8830,18 +8877,40 @@ def _walk(page, a, b, step: float = 1.0) -> None:
         page.mouse.move(x, y)
 
 
+def _shown_at(page, points, card: int = 0) -> list[list[str]]:
+    """The arrows displayed with the real mouse at each of ``points``, in
+    turn: every move is a real one, heard in the page, where what is
+    displayed is read as it is heard (`WATCH`) — and all of it read back
+    once. One record per move, each where the mouse was sent (a mouse
+    event's position is in whole pixels), each the browser's own."""
+    points = list(points)
+    page.evaluate(WATCH, card)
+    for at in points:
+        page.mouse.move(*at)
+    heard = page.evaluate(WATCHED)
+    assert len(heard) == len(points), (len(heard), len(points))
+    for (trusted, x, y, _shown), at in zip(heard, points):
+        assert trusted and abs(x - at[0]) < 1 and abs(y - at[1]) < 1, ((x, y), at)
+    return [shown for _trusted, _x, _y, shown in heard]
+
+
 def _seen_along(page, a, b, card: int = 0) -> list[list[str]]:
     """What the real mouse meets from ``a`` to ``b``, a pixel at a time:
     each set of displayed arrows, once per stretch it shows for."""
     seen: list[list[str]] = []
     _rest(page)
     page.mouse.move(*a)
-    for at in [a, *_line(a, b)]:
-        page.mouse.move(*at)
-        shown = _displayed(page, card)
+    for shown in _shown_at(page, [a, *_line(a, b)], card):
         if seen[-1:] != [shown]:
             seen.append(shown)
     return seen
+
+
+#: The step of the way TO a ring or a window's edge (`_come_to`), px: the
+#: pointer comes through its group's area, and where it has been is part
+#: of what is tested — but not at every pixel of the way in. From the ring
+#: onto the arrow is a pixel at a time (`_walk`'s own step).
+APPROACH = 5
 
 
 def _come_to(page, tail: str, card: int = 0) -> tuple[dict, tuple[float, float]]:
@@ -8861,7 +8930,7 @@ def _come_to(page, tail: str, card: int = 0) -> tuple[dict, tuple[float, float]]
         start = (ring["x"], max(ring["y"] - 70, arrow["top"] + 2))
     _rest(page)
     page.mouse.move(*start)
-    _walk(page, start, home)
+    _walk(page, start, home, APPROACH)
     return arrow, home
 
 
@@ -9119,16 +9188,18 @@ def test_close_checkpoints_show_together_wherever_the_pointer_is_in_their_areas(
 
         # Everywhere: a grid over the box around the areas and 9 px beyond.
         _rest(page)
+        grid = [
+            (x, y)
+            for x in range(int(left) - 9, int(right) + 10, 7)
+            for y in range(int(top) - 9, int(bottom) + 10, 7)
+            if _ruled_at(areas, x, y) is not None
+        ]
         inside = outside = 0
-        for x in range(int(left) - 9, int(right) + 10, 7):
-            for y in range(int(top) - 9, int(bottom) + 10, 7):
-                ruled = _ruled_at(areas, x, y)
-                if ruled is None:
-                    continue
-                page.mouse.move(x, y)
-                assert _displayed(page) == ruled, (case, x - left, y - top)
-                inside += ruled == every
-                outside += ruled == []
+        for (x, y), shown in zip(grid, _shown_at(page, grid)):
+            ruled = _ruled_at(areas, x, y)
+            assert shown == ruled, (case, x - left, y - top)
+            inside += ruled == every
+            outside += ruled == []
         print("GRID", case, inside, outside)
         assert inside > 100 and outside > 20, (case, inside, outside)
         if case == "an L":
@@ -9240,10 +9311,11 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
             _walk(page, middle, _along(arrow, 13.5 + 12))
             page.mouse.up()
             cell = (int(row), POINT_CELLS[edge])
+            anchor = "xanchor" if edge in ("before", "after") else "yanchor"
             expect(_table_cell(page, *cell)).not_to_have_value(
                 was[cell], timeout=EXPECT_TIMEOUT
             )
-            page.wait_for_timeout(300)
+            _moved_off(page, f"/{taken}", anchor, arrow[anchor])
             now = _cells(page, len(places), labels)
             moved = [key for key in was if was[key] != now[key]]
             assert moved == [cell], (case, tail, moved)
@@ -9252,13 +9324,10 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
             scale = 1000 if edge in ("before", "after") else 200
             assert abs(by * scale - 12) < 1, (case, tail, by)
             _discard(page)
-            _settled_at(
-                page,
-                f"/{taken}",
-                "xanchor" if edge in ("before", "after") else "yanchor",
-                arrow["xanchor" if edge in ("before", "after") else "yanchor"],
+            _settled_at(page, f"/{taken}", anchor, arrow[anchor])
+            expect(_table_cell(page, *cell)).to_have_value(
+                was[cell], timeout=EXPECT_TIMEOUT
             )
-            page.wait_for_timeout(200)
 
 
 @pytest.mark.parametrize("gap", [50, 51])
@@ -9818,16 +9887,18 @@ def test_windows_that_overlap_or_stand_close_show_together_and_an_isolated_one_a
             )
             # Everywhere: a grid over the areas and 9 px beyond.
             _rest(page)
+            grid = [
+                (x, y)
+                for x in range(int(left) - 9, int(right) + 10, 9)
+                for y in range(int(top) - 9, int(bottom) + 10, 9)
+                if _ruled_at(areas, x, y) is not None
+            ]
             inside = outside = 0
-            for x in range(int(left) - 9, int(right) + 10, 9):
-                for y in range(int(top) - 9, int(bottom) + 10, 9):
-                    ruled = _ruled_at(areas, x, y)
-                    if ruled is None:
-                        continue
-                    page.mouse.move(x, y)
-                    assert _displayed(page) == ruled, (cluster, x - left, y - top)
-                    inside += ruled == every
-                    outside += ruled == []
+            for (x, y), shown in zip(grid, _shown_at(page, grid)):
+                ruled = _ruled_at(areas, x, y)
+                assert shown == ruled, (cluster, x - left, y - top)
+                inside += ruled == every
+                outside += ruled == []
             print("GRID", family, cluster, inside, outside)
             assert inside > 100 and outside > 20, (cluster, inside, outside)
             # Along the arrows' row, and down each edge's own column: in,
@@ -9867,7 +9938,7 @@ def test_windows_that_overlap_or_stand_close_show_together_and_an_isolated_one_a
                 expect(_table_cell(page, *cell)).not_to_have_value(
                     was[cell], timeout=EXPECT_TIMEOUT
                 )
-                page.wait_for_timeout(300)
+                _moved_off(page, f"/{tail}", "xanchor", arrow["xanchor"])
                 now = _cells(page, rows, cells.values())
                 assert [key for key in was if was[key] != now[key]] == [cell], (
                     tail,
@@ -9876,7 +9947,9 @@ def test_windows_that_overlap_or_stand_close_show_together_and_an_isolated_one_a
                 )
                 _discard(page)
                 _settled_at(page, f"/{tail}", "xanchor", arrow["xanchor"])
-                page.wait_for_timeout(200)
+                expect(_table_cell(page, *cell)).to_have_value(
+                    was[cell], timeout=EXPECT_TIMEOUT
+                )
         _shot(page, tmp_path, f"clusters-{family}")
 
 
