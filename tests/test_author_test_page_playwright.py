@@ -10859,29 +10859,35 @@ FLAT = {"tolerance": {"lower": 0.01, "upper": 0.01}}
 LONG_BEFORE = {"time_tolerance": {"lower": 0.042, "upper": 0.012}}
 
 #: The checkpoints of the `mixed` scene, at `TIME_SCALE`:
-#: 0-2, three 46 px apart — each `after` on the next one's `before`;
+#: 0-2, three 46 px apart, declared LAST FIRST — each `after` on the next
+#: one's `before`, and the order they are staggered in is the order along
+#: the axis, not the order they are drawn in;
 #: 3-5, THREE arrows on one spot — the first's `after`, the second's
 #: `before` and the third's, whose before side is 42 px long;
 #: 6-8, the same three with a value tolerance of 2 px: groups too FLAT to
 #: hold an arrow three steps up;
 #: 9-10, a pair 51 px apart on a slope, 20 px apart in value — the control:
 #: nothing collides;
-#: 11-12, two at one time, 66 px apart in value: the lower one's `upper`
+#: 11-12, a pair 51 px apart that LEANS, the second 5 px higher: the
+#: first's `after` and the second's `before` share 8 px of their height;
+#: 13-14, two at one time, 66 px apart in value: the lower one's `upper`
 #: arrow and the upper one's `lower` face each other on one spot.
 MIXED = (
-    (100, 0.5),
-    (146, 0.5),
-    (192, 0.5),
-    (300, 0.5),
-    (351, 0.5),
-    (381, 0.5, LONG_BEFORE),
-    (500, 0.5, FLAT),
-    (551, 0.5, FLAT),
-    (581, 0.5, {**FLAT, **LONG_BEFORE}),
-    (700, 0.5),
-    (751, 0.6),
-    (900, 0.3),
-    (900, 0.63),
+    (152, 0.5),
+    (106, 0.5),
+    (60, 0.5),
+    (230, 0.5),
+    (281, 0.5),
+    (311, 0.5, LONG_BEFORE),
+    (420, 0.5, FLAT),
+    (471, 0.5, FLAT),
+    (501, 0.5, {**FLAT, **LONG_BEFORE}),
+    (600, 0.5),
+    (651, 0.6),
+    (730, 0.5),
+    (781, 0.525),
+    (880, 0.3),
+    (880, 0.63),
 )
 
 
@@ -10951,10 +10957,12 @@ STAGGERED = {
         "points · x",
         TIME_SCALE,
         {
-            "points/after/0": -1,
+            # Left to right, whatever the order they are drawn in: up,
+            # down, up, down.
+            "points/after/2": -1,
             "points/before/1": 1,
             "points/after/1": -1,
-            "points/before/2": 1,
+            "points/before/0": 1,
             # Three on one spot: up, down, and three steps up.
             "points/after/3": -1,
             "points/before/4": 1,
@@ -10965,9 +10973,14 @@ STAGGERED = {
             "points/after/6": -1,
             "points/before/7": 1,
             "points/before/8": -1,
+            # The pair that leans parts the way it leans: the first,
+            # the lower of the two, down — where the first of a level
+            # pair goes up.
+            "points/after/11": 1,
+            "points/before/12": -1,
             # Two FACING value arrows: left, and right.
-            "points/lower/12": -1,
-            "points/upper/11": 1,
+            "points/lower/14": -1,
+            "points/upper/13": 1,
         },
         [("points/after/6", "points/before/8")],
     ),
