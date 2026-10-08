@@ -3629,6 +3629,52 @@ async def test_the_editors_hint_follows_a_switch_of_mode(shell):
         await _settled(lambda: hint.text == BOTH_HINT + STAGED_AND_SAVE)
 
 
+async def test_the_editors_hint_is_the_leafs_again_after_a_discard_and_after_a_save(
+    shell,
+):
+    """An edit staged elsewhere moves the leaf under the open editor, and
+    the editor is rebuilt on it: Discard undoes a switch from nrmse to
+    range, and the hint — "Drag a line" while the range was staged — is
+    nrmse's again, over nrmse's fields. Save moves nothing under the
+    editor: the range it writes is the range the editor shows, and the
+    hint stands."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        hint = _one(user, f"editor-hint:0:{T0}")
+        assert hint.text == FIELDS_HINT + STAGED_AND_SAVE
+
+        def to_range() -> None:
+            (mode,) = [
+                e
+                for e in page.client.elements.values()
+                if isinstance(e, ui.select) and e.props.get("label") == "mode"
+            ]
+            mode.set_value("range")
+
+        to_range()
+        await _settled(lambda: hint.text == LINE_HINT + STAGED_AND_SAVE)
+        await _settled(lambda: _one(user, "discard").enabled)
+        user.find(marker="discard").click()
+        await _settled(lambda: shell.session.spec.pending == [])
+        await _settled(lambda: hint.text == FIELDS_HINT + STAGED_AND_SAVE)
+        # The same editor, on the same row: rebuilt, not reopened.
+        assert page.open == (0, T0) and _one(user, f"editor-hint:0:{T0}") is hint
+
+        to_range()
+        await _settled(lambda: hint.text == LINE_HINT + STAGED_AND_SAVE)
+        await _settled(lambda: _one(user, "save").enabled)
+        user.find(marker="save").click()
+        await _settled(lambda: shell.session.spec.pending == [])
+        assert shell.session.spec.saved_entry(A)["metrics"]["children"][0][
+            "metric"
+        ] == ("range")
+        await asyncio.sleep(0.25)
+        assert page.open == (0, T0) and _one(user, f"editor-hint:0:{T0}") is hint
+        assert hint.text == LINE_HINT + STAGED_AND_SAVE
+
+
 async def test_one_editor_at_a_time_page_wide(shell):
     """One open criterion, whatever card its row is on — and only the plot
     whose rings it moved is re-sent."""

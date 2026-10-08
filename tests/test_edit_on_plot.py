@@ -246,6 +246,51 @@ def test_the_runs_span_a_ring_is_held_to_is_the_one_inside_the_leafs_window(sess
         assert op.value["points"][1]["time"] == landed
 
 
+def test_a_window_edge_that_is_a_sample_is_in_the_runs_span(session):
+    """The scorer's slice takes both edges of the window (inclusive), and
+    so does the span a ring is held to: a run sampled every 0.25 under a
+    window from 0.25 to 0.75 spans exactly that, and a ring let go past
+    either end lands on the sample AT the edge — not on the one inside it,
+    0.5, where the ring already stands."""
+    from dstf.authoring.builtin.edit_on_plot import _run_span
+
+    tree = copy.deepcopy(TREE)
+    tree["children"][2]["window"] = {"start": 0.25, "end": 0.75}
+    tree["children"][2]["points"][1]["time"] = 0.5
+    session.stage([PatchOp(D, "add", "/metrics", tree)])
+    view = session.view(D, "x")
+    (leaf,) = [leaf for leaf in view.leaves if leaf.path == "/metrics/children/2"]
+    assert _run_span(view, leaf) == (0.25, 0.75)
+    ring = "/metrics/children/2/points/target/1"
+    for released, landed in ((1.00077, 0.75), (-0.0567, 0.25)):
+        op = _only_op(_drag(session, ring, {"xanchor": released, "yanchor": None}))
+        assert op.value["points"][1]["time"] == landed
+
+
+def test_a_window_no_sample_stands_in_has_no_span_and_its_grip_still_drags(session):
+    """A window between two samples holds none of the run: there is no
+    span to hold a time to, said as None — not the first and last of an
+    empty series — and a handle drawn all the same, a declared event's
+    late edge, is dragged as ever."""
+    from dstf.authoring.builtin.edit_on_plot import _run_span
+
+    leaf = {
+        "metric": "event-timing",
+        "variable": "x",
+        "events": [{"time": 0.35, "tolerance": 0.02}],
+        "window": {"start": 0.3, "end": 0.4},
+    }
+    _root_leaf_on_a(session, leaf)
+    view = session.view(A, "x")
+    (drawn,) = view.leaves
+    assert list(view.act_time) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert _run_span(view, drawn) is None
+    late = {"xanchor": 0.38, "yanchor": 0.5, "path": "M 10,0 L 17,6 L 17,-6 Z"}
+    op = _only_op(_drag(session, "/metrics/events/late/0", late, model_id=A))
+    # A number is both sides: the late edge at 0.38 is 0.03 either way.
+    assert op.value["events"] == [{"time": 0.35, "tolerance": 0.03}]
+
+
 def test_ids_that_name_no_movable_handle_snap_back(session):
     """A box, a window, a result line: drawn, not editable. Plotly lets
     every shape be dragged (`edits.shapePosition` has no per-shape switch),
