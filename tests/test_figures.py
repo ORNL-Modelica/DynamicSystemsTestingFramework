@@ -1506,22 +1506,28 @@ def _apex(shape: dict) -> tuple[float, float]:
     return float(found.group(1)), float(found.group(2))
 
 
+def _way(shape: dict, axis: str) -> int:
+    """Which way along ``axis`` a grip shape's arrow is DRAWN from its
+    anchor — ``+1`` towards larger values and later times — read off its
+    path: its apex stands 10 px that way, and on the other axis nowhere."""
+    apex = dict(zip("xy", _apex(shape)))
+    other = "y" if axis == "x" else "x"
+    assert abs(apex[axis]) == 10 and apex[other] == 0, (shape["name"], apex)
+    return 1 if apex[axis] > 0 else -1
+
+
 @pytest.mark.parametrize("mode", GRIP_VIEWS)
-def test_the_editable_figure_says_which_way_each_arrow_is_drawn(mode):
-    """An arrow is drawn 10 to 17 px from its anchor, along its axis, and
-    the map says which way — `outward`: +1 towards larger values and later
-    times. It is the way the shape's own path goes, on the grip's own axis
-    and on no other."""
+def test_each_arrow_is_drawn_along_the_axis_the_map_names_for_it(mode):
+    """An arrow is drawn 10 to 17 px from its anchor, along the axis the
+    map names for it and on no other. Which WAY is the path's alone: the
+    page reads no word for it, and the map holds none."""
     fig = variable_figure(GRIP_VIEWS[mode](), editable=True)
     grips = _pointer(fig)["grips"]
     shapes = {s["name"]: s for s in fig["layout"]["shapes"]}
     assert grips
     for name, said in grips.items():
-        apex = dict(zip("xy", _apex(shapes[name])))
-        other = "y" if said["axis"] == "x" else "x"
-        assert said["outward"] in (1, -1), name
-        assert apex[said["axis"]] == 10 * said["outward"], (name, apex)
-        assert apex[other] == 0, (name, apex)
+        assert _way(shapes[name], said["axis"]) in (1, -1), name
+        assert set(said) == {"group", "axis", "label"}, name
 
 
 def _low_peak_figure(lower_edge: float) -> dict:
@@ -1549,14 +1555,27 @@ def _drawn(fig: dict, local: str) -> tuple[dict, dict]:
     return shape, _pointer(fig)["grips"][name]
 
 
+def _ways(fig: dict, names=None) -> dict[str, int]:
+    """Per grip of ``fig`` (those of ``names``, when given): the way its
+    arrow is drawn along its own axis (`_way`)."""
+    grips = _pointer(fig)["grips"]
+    return {
+        s["name"]: _way(s, grips[s["name"]]["axis"])
+        for s in fig["layout"]["shapes"]
+        if s.get("name") in grips and (names is None or s["name"] in names)
+    }
+
+
 @pytest.mark.parametrize("mode", GRIP_VIEWS)
 def test_an_arrow_with_room_is_drawn_outward(mode):
     """Outside the edge it stands for: away from its target."""
     from dstf.comparison.geometry import _GRIP_OUTWARD
 
     fig = variable_figure(GRIP_VIEWS[mode](), editable=True)
-    for name, said in _pointer(fig)["grips"].items():
-        assert said["outward"] == _GRIP_OUTWARD[name.split("/")[-2]], name
+    ways = _ways(fig)
+    assert set(ways) == set(_pointer(fig)["grips"])
+    for name, way in ways.items():
+        assert way == _GRIP_OUTWARD[name.split("/")[-2]], name
 
 
 def test_an_arrow_that_would_leave_a_set_axis_range_is_drawn_inward():
@@ -1566,8 +1585,8 @@ def test_an_arrow_that_would_leave_a_set_axis_range_is_drawn_inward():
     panel and could not be pressed. Where an arrow's far end would pass
     the end of a set range — on the narrowest axis the figure plans for —
     it is drawn on the INSIDE of its edge: the other way from the same
-    anchor, and said so in the map, with its group, axis and words as they
-    were. An arrow with room, and the same window's other arrow, stay."""
+    anchor, with its group, axis and words in the map as they were. An
+    arrow with room, and the same window's other arrow, stay."""
     from dstf.figures.plotly import _GRIP_PATHS, GRIP_FAR_END, NARROWEST_AXIS
 
     room = GRIP_FAR_END / NARROWEST_AXIS * 2.85  # the arrow's length, in Hz
@@ -1575,21 +1594,22 @@ def test_an_arrow_that_would_leave_a_set_axis_range_is_drawn_inward():
     near, far = _low_peak_figure(0.05), _low_peak_figure(0.2)
     shape, said = _drawn(near, "peaks/lower/0")
     assert shape["xanchor"] == pytest.approx(0.05)
-    assert shape["path"] == _GRIP_PATHS["x", 1] and said["outward"] == 1
-    assert {k: v for k, v in said.items() if k != "outward"} == {
+    assert shape["path"] == _GRIP_PATHS["x", 1] and _way(shape, "x") == 1
+    assert said == {
         "group": f"{P0}/peaks/0",
         "axis": "x",
         "label": "Drag to set the lower tolerance",
     }
-    shape, said = _drawn(far, "peaks/lower/0")
-    assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
+    shape, said_far = _drawn(far, "peaks/lower/0")
+    assert shape["path"] == _GRIP_PATHS["x", -1] and _way(shape, "x") == -1
+    assert said_far == said
     for fig in (near, far):
-        shape, said = _drawn(fig, "peaks/upper/0")
-        assert shape["path"] == _GRIP_PATHS["x", 1] and said["outward"] == 1
+        shape, _said = _drawn(fig, "peaks/upper/0")
+        assert shape["path"] == _GRIP_PATHS["x", 1]
     # Just short of the room an arrow needs, and just past it.
     for edge, way in ((room * 0.99, 1), (room * 1.01, -1)):
-        shape, said = _drawn(_low_peak_figure(edge), "peaks/lower/0")
-        assert said["outward"] == way and shape["path"] == _GRIP_PATHS["x", way]
+        shape, _said = _drawn(_low_peak_figure(edge), "peaks/lower/0")
+        assert shape["path"] == _GRIP_PATHS["x", way] and _way(shape, "x") == way
 
 
 def test_an_upper_arrow_at_the_end_of_a_set_range_is_drawn_inward():
@@ -1603,11 +1623,11 @@ def test_an_upper_arrow_at_the_end_of_a_set_range_is_drawn_inward():
     vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
     fig = variable_figure(_grip_view(vc, t, sig), editable=True)
     assert fig["layout"]["xaxis2"]["range"] == pytest.approx([0.0, 7.0])
-    shape, said = _drawn(fig, "peaks/upper/0")
+    shape, _said = _drawn(fig, "peaks/upper/0")
     assert shape["xanchor"] == pytest.approx(7.0)
-    assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
-    shape, said = _drawn(fig, "peaks/lower/0")
-    assert shape["path"] == _GRIP_PATHS["x", -1] and said["outward"] == -1
+    assert shape["path"] == _GRIP_PATHS["x", -1] and _way(shape, "x") == -1
+    shape, _said = _drawn(fig, "peaks/lower/0")
+    assert shape["path"] == _GRIP_PATHS["x", -1] and _way(shape, "x") == -1
 
 
 def test_a_set_spectrum_range_mirrors_no_arrow_of_the_time_panel():
@@ -1630,14 +1650,10 @@ def test_a_set_spectrum_range_mirrors_no_arrow_of_the_time_panel():
     )
     low, high = fig["layout"]["xaxis2"]["range"]
     assert low == 0 and 0.2 < 17 / 500 * high
-    grips = {
-        name: said
-        for name, said in _pointer(fig)["grips"].items()
-        if "/points/" in name
-    }
-    assert len(grips) == 4
-    for name, said in grips.items():
-        assert said["outward"] == _GRIP_OUTWARD[name.split("/")[-2]], name
+    ways = _ways(fig, {n for n in _pointer(fig)["grips"] if "/points/" in n})
+    assert len(ways) == 4
+    for name, way in ways.items():
+        assert way == _GRIP_OUTWARD[name.split("/")[-2]], name
     # Nor one ON the spectrum that moves along its value axis, which is
     # autoranged: a third party's `lower` at 0.01 Hz points down.
     (leaf,) = peaks.leaves
@@ -1648,7 +1664,7 @@ def test_a_set_spectrum_range_mirrors_no_arrow_of_the_time_panel():
         replace(peaks, leaves=(replace(leaf, geometry=(*leaf.geometry, theirs)),)),
         editable=True,
     )
-    assert _pointer(fig)["grips"][theirs.id]["outward"] == -1
+    assert _ways(fig, {theirs.id}) == {theirs.id: -1}
 
 
 def test_the_editable_figure_names_the_ring_each_group_stands_around():
@@ -1688,16 +1704,15 @@ def test_a_third_party_grip_is_named_by_the_same_rule():
         f"{P0}/theirs/upper/a": {
             "group": f"{P0}/theirs/a",
             "axis": "y",
-            "outward": 1,
             "label": "Drag to set the upper tolerance",
         },
         f"{P0}/theirs/lower/a": {
             "group": f"{P0}/theirs/a",
             "axis": "y",
-            "outward": -1,
             "label": "Drag to set the lower tolerance",
         },
     }
+    assert _ways(fig) == {f"{P0}/theirs/upper/a": 1, f"{P0}/theirs/lower/a": -1}
 
 
 def test_only_the_open_leafs_rings_grips_and_bound_lines_are_draggable():

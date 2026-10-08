@@ -988,12 +988,11 @@ def _secondary_axis(title: str) -> dict:
 #:   (:func:`~dstf.comparison.geometry.grip_group` — a checkpoint, an event,
 #:   a peak: the page shows a group's arrows together, and with them those
 #:   of every group whose hover area overlaps its own), the ``axis`` it
-#:   moves on (the page's cursor over it), the ``label`` it carries as its
-#:   tooltip (:func:`~dstf.comparison.geometry.grip_label` — the words are
-#:   Python's), and ``outward`` — ``+1`` or ``-1``, the way along that axis
-#:   its arrow is DRAWN from its anchor (:func:`_grip_way`): the figure's
-#:   own word for a mirrored arrow, which the page does not read (the
-#:   arrow's path is drawn from the same call);
+#:   moves on (the page's cursor over it), and the ``label`` it carries as
+#:   its tooltip (:func:`~dstf.comparison.geometry.grip_label` — the words
+#:   are Python's). Which way along that axis its arrow is DRAWN
+#:   (:func:`_grip_way`) is in its shape's path and nowhere here: the page
+#:   reads the arrow's box as drawn;
 #: * ``targets``: per ring a group's grips stand around, by name, that
 #:   group — the ring is part of its group's hover area, and the plot's
 #:   hover label gives way next to it;
@@ -1104,7 +1103,6 @@ def _leaf_traces(
                 pointer["grips"][grip.id] = {
                     "group": grip_group(grip),
                     "axis": grip_axis(grip),
-                    "outward": _grip_way(grip, ctx),
                     "label": grip_label(grip),
                 }
             groups = {said["group"] for said in pointer["grips"].values()}
