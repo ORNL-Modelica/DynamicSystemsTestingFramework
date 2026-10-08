@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -30,7 +30,8 @@ DynamicSystemsTestingFramework/
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
-│   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf)
+│   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf),
+│   │                             #      sides.py (Sides — the ONE place a tolerance's number-or-pair is read or written)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
 │   │                             #      migrate_names.py (the `migrate-variable-names` rewrite; deleted at the v1.0 tag)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
@@ -40,12 +41,15 @@ DynamicSystemsTestingFramework/
 │   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
 │   │                             #      situation.py (a test's situation and the strip's sentence), spec_preview.py (an entry's
 │   │                             #      diff as test_spec.json would write it), needle.py (the drawers' budgeted filter matcher),
+│   │                             #      typed_number.py + typed_number.js (the tool's number field: it keeps what is typed until it is left),
+│   │                             #      unscorable.py (what an editor refuses to stage: a negative tolerance, bounds out of order),
 │   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages,
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
 │   │                             #      test_list (the Tests drawer's list), tree_card + plot_card, stats_card.py (the Statistics card),
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      picker.py (the add form's variable picker over picker_rows),
 │   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
+│   │                             #      grips.js (a plot's tolerance arrows: which show, which shapes take the pointer, what a release sends),
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
@@ -122,7 +126,9 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # edited there), its criteria tree closed to one line naming what failed, its plots — one per scored
 # variable or array in tree order, then watch plots (D140) — stacked and drawn as they scroll into
 # view, each with its criteria rows in tree order led by their ancestors (`and › k-of-n ›`),
-# a criterion's editor under its row (drag its handles on the plot above),
+# a criterion's editor under its row (drag its handles on the plot above; a tolerance is two
+# fields with a link toggle — linked writes one number, unlinked a lower/upper pair — and has an
+# arrow outside each side on the plot, shown while the pointer is near its point, D147),
 # a status strip under the test's row saying its situation and filling the one next action,
 # +/wrap/− on every tree node; the open tree draws a bar per level, folds its groups (the tab's,
 # per test), and a row's click opens its criterion's editor or a k-of-n's / weighted's fields under
@@ -233,7 +239,7 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 
 ### test_spec.json format
 
-Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. A variable a `metrics` leaf names is tracked too: every backend records, stores and scores it after the `UnitTests` variables and the `variables` patterns (D142), with no change to `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
+Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. A criterion's tolerance is one number or a pair `{"lower": a, "upper": b}` (D147; `docs/usage.md` lists the fields that take one), while a base tolerance — `comparison.tolerance`, `testing.json`'s `tolerance`, `--tolerance` — is ONE finite number or its test is refused. A variable a `metrics` leaf names is tracked too: every backend records, stores and scores it after the `UnitTests` variables and the `variables` patterns (D142), with no change to `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
 
 **A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
 
@@ -259,12 +265,14 @@ Simulation parameters live under `simulation`, comparison settings under `compar
 ### Comparison modes
 
 - **`nrmse`** (default) — `RMSE / signal_range`; pass if below tolerance.
-- **`tube`** — envelope around the reference trajectory. `tube_width_mode`: `"rel"` (fraction of |ref|), `"band"` (offset in signal units), `"absolute"` (literal y-bounds). Supports time-varying control points with linear or stepwise interpolation.
-- **`points`** — declared-checkpoint comparison. Empty list ⇒ final-value-only check (legacy behavior). Non-empty list ⇒ multi-point with per-point abs/rel y-tolerance and symmetric `time_tolerance` (x-tolerance) box check. Each point may set an explicit `value` (baseline-free) or fall back to `ref(time)`.
+- **`tube`** — envelope around the reference trajectory. `tube_width_mode`: `"rel"` (fraction of |ref|), `"band"` (offset in signal units), `"abs"` (literal y-bounds, from control points). Supports time-varying control points with linear or stepwise interpolation.
+- **`points`** — declared-checkpoint comparison. Empty list ⇒ final-value-only check (legacy behavior). Non-empty list ⇒ multi-point with per-point abs/rel y-tolerance and `time_tolerance` (x-tolerance) box check. Each point may set an explicit `value` (baseline-free) or fall back to `ref(time)`.
 - **`range`** — scalar `min_value` / `max_value` bounds on the signal; baseline-free (bounds come from the spec).
 - **`event-timing`** — compares event instants via Modelica duplicate-time detection; `time_tolerance` config; CLI-authoritative.
 - **`dominant-frequency`** — FFT peak matching against a declared-peaks table (`peaks: [{freq, tolerance, tolerance_mode}, ...]`); live JS scorer with windowed re-FFT and per-peak provenance.
 - **`scalar`** — scores one number named by `quantity`: a reduction of the leaf's variable (`{"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|"integral"}`; `mean` is time-weighted, `sample_mean` arithmetic) or a dotted statistics / diagnostics-summary path (`"CPUtime.final"`). abs/rel `tolerance` against the baseline scalar, or baseline-free `min_value` / `max_value` bounds; CLI-authoritative.
+
+Every tolerance above but `nrmse`'s — and a tube's constant width (`tube_abs` / `tube_rel`), not its `tube_min_width` — is a number or a pair `{"lower": a, "upper": b}`: with `d = actual − target` a check passes iff `−lower ≤ d ≤ upper` (relative sides scale by |target|; in time, lower is earlier and upper later), so a spec of numbers scores as it always did (D147).
 
 Leaves can be wrapped in an explicit `metrics` tree with combinators (`and`, `or`, `k-of-n`, `warn`, `weighted`) and scoped to a time window (`"window": {"start": ..., "end": ...}`).
 

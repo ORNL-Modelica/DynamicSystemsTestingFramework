@@ -421,7 +421,8 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 4. Metric-specific configuration is typed (frozen dataclass); its field
    metadata (`label`/`help`) drives the exported JSON-Schema and the authoring
    tool's auto-derived forms. Both read the same `derive_schema` in
-   `comparison/mode_schema.py`.
+   `comparison/mode_schema.py`. A tolerance that takes two sides is a field
+   typed `Sides` (item 11).
 5. `score_direction` declares which way a better score runs (`"lower"` for
    error-like, `"higher"` for coverage-like). The validator uses it to reject
    `weighted` nodes mixing directions.
@@ -438,8 +439,14 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    `HandleEdit` — `leaf` (the raw leaf as `metrics` holds it; never mutate
    it), `local` (the handle's id without its leaf path, e.g.
    `"tube/upper/3"`), `x` and `y` (the dragged position in data coordinates,
-   `None` for an axis that did not move) and `reference` (the primary
-   baseline's `(time, values)` at full resolution, or `None`) — and returns
+   `None` for an axis that did not move), `reference` (the primary
+   baseline's `(time, values)` at full resolution, unwindowed, or `None`),
+   `target` (the number a tolerance side is measured from where the leaf's
+   own geometry holds it — a `scalar` leaf's baseline scalar, read off its
+   `scalar/reference` line — else `None`) and `span` (the ACTUAL series'
+   first and last time as the scorer received it, sliced to the leaf's
+   window, or `None`: what bounds a time that is scored against the run) —
+   and returns
    the new raw leaf, or raises `HandleEditError` naming the handle and the
    reason for a drag the leaf cannot take — with the reason alone as its
    `reason` (`handles._refuse` builds both), which is what the tool shows in
@@ -450,12 +457,20 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    (`handles._written`), so drag arithmetic never lands float noise in the
    author's spec file. Leave it `None`
    and a drag of the metric's handle markers and lines is refused ("has no
-   on-plot handles"); the builtins `nrmse` and `event-timing` do. Only a
-   `Marker` or an `HLine` of `kind="handle"` reaches the editor: a drag of
-   anything else on the plot — a window, a box, a result line — snaps back
-   and stages nothing. The builtin editors are the worked examples: `tube`,
-   `points` and `dominant-frequency` move a list entry, `range` and `scalar`
-   a bound.
+   on-plot handles"); the builtin `nrmse` does. Only a `Marker` or an
+   `HLine` of `kind="handle"`, and a `Marker` or a `VLine` of `kind="grip"`
+   (item 12), reaches the editor: nothing else on the plot — a window, a
+   box, a result line — takes the pointer in the page, and a drag of one
+   that arrives all the same stages nothing. A grip moves on ONE axis: its
+   editor gets the released position on that axis and the grip's own
+   resolved position on the other, never something to write there. The
+   builtin editors are the worked examples: `tube`, `points` and
+   `dominant-frequency` move a list entry, `range` and `scalar` a bound
+   (`scalar/min|max`), and all but `range` a tolerance's side — a `scalar`'s
+   by its lines `scalar/upper|lower`, `kind="handle"`, the others by their
+   grips; `event-timing` has only those. `handles._set_side` is the one rule
+   for writing a dragged side: a number stays a number, a pair changes that
+   side alone, a side dragged across its target is refused.
 8. `seed` (default `None`) gives a new leaf its first values, from the data
    it will score: the authoring tool calls it when a criterion of this
    metric is added and when a criterion's metric is switched to it
@@ -478,8 +493,14 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 9. A config field holding a list of row dicts declares `columns` in its
    metadata — `(key, type)` pairs, one per row key, where `type` is
    `"float"` (a key the metric indexes: required, a blank cell is never staged),
-   `"float?"` (read with `.get`: optional, a blank cell omits the key) or a
-   tuple of choices whose first is the metric's default. The authoring tool's
+   `"float?"` (read with `.get`: optional, a blank cell omits the key),
+   `"sides"` / `"sides?"` (a tolerance — a number or a `{"lower", "upper"}`
+   pair — required or optional likewise, drawn as two fields and a link
+   toggle) or a tuple of choices whose first is the metric's default. A
+   `sides` entry may carry a third element, what its two sides are called,
+   lower first: `("time_tolerance", "sides?", ("before", "after"))`; without
+   one they read `−` / `+`. Read an entry by index, never by unpacking two.
+   The authoring tool's
    Edit on plot tab draws a table from it, with add and remove rows. The table
    holds a blank required cell locally — marked on the cell, nothing submitted
    until it is filled — and the capability's `act` still refuses one when called
@@ -495,6 +516,42 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
     the default: a failing criterion draws whatever it says, the open one
     always draws, and the swatch overrides it either way. The report does
     not read it.
+11. A tolerance is a number or a lower/upper pair (D147), and travels as
+    `comparison.sides.Sides(lower, upper)`. `build` is
+    `Callable[[dict, Sides], ComparisonMode]`: its second argument is the
+    leaf's resolved tolerance as a `Sides`, a number in the spec being both
+    sides — a metric with one ceiling refuses `not tolerance.equal` with a
+    `ValueError` (the leaf's config error) and reads `tolerance.upper`, as
+    `nrmse` does. Read any other tolerance field of your own through
+    `parse_sides(value, "<field name>")`, the one reader: its `ValueError`
+    names the field and is that leaf's config error when raised from `build`
+    or the mode's `__init__`, on both scoring paths; raised later, from
+    `compare`, it fails that leaf or variable all the same. Type the config
+    field `Sides` and
+    `derive_schema` classifies it `"sides"`: the form draws two fields and
+    a link toggle (`FieldSpec.side_labels` names them, from the field's
+    `side_labels` metadata, `−` / `+` by default), and `export-schema`
+    writes `oneOf` a number or an object with exactly `lower` and `upper`.
+    The meaning is the metric's to keep: with `d = actual − target`, pass
+    iff `−lower ≤ d ≤ upper`. `VariableComparison.tolerance_used` is a
+    `Sides`: the constructor takes a number too, but a metric that ASSIGNS
+    it assigns a `Sides`. Where it leaves Python as data, write
+    `as_written(sides)` (the number when the sides are equal, else the
+    pair); in a sentence, `sides_text(sides)`.
+12. Geometry of `kind="grip"` is the resolved position of one SIDE of a
+    tolerance: a `Marker` on a value's or a time's edge, a `VLine` on the
+    edge of a window that spans its panel. Its local id is
+    `<family>/<edge>/<key>`, the edge one of `upper` / `lower` (a value: it
+    moves on y), `before` / `after` or `early` / `late` (a time: on x; a
+    `VLine` always moves on x) — `points/upper/3`, `events/late/0`,
+    `tube/lower/const` — and its group is the id without the edge
+    (`points/3`), which is also how the handle it stands around reads
+    (`points/target/3`). A grip is never a trace and never drawn in a
+    figure that is not editable, so emitting one changes no report page; in
+    the tool it is an arrow just outside its edge, drawn for the open
+    criterion only and shown while the pointer is near its group. A side
+    that should be drawn on the report too is a `kind="handle"` line
+    instead, as the scalar's `scalar/upper` and `scalar/lower` are.
 
 ### Currently registered
 
@@ -809,18 +866,38 @@ stages an edit from a drag.
   hands over that shape's keys without their `shapes[N].` prefix, in data
   coordinates: `{"y0": 6.0, "y1": 6.0}` for a line dragged whole, one end's
   keys for a line dragged by an end, `{"xanchor": 4.0, "yanchor": 2.99}` for a
-  handle ring moved. A ring grabbed off-centre is resized instead and sends
-  pixel offsets in `x0`..`y1`, so read a ring only by `xanchor` / `yanchor`.
+  handle ring or a grip's arrow moved. Both are pixel-sized `path` shapes,
+  which move from wherever they are pressed and never resize; read one only
+  by `xanchor` / `yanchor`, and a grip only by the anchor on its own axis.
+  On the Test page the release passes through the page's `grips.js` first:
+  an axis the pointer travelled under 8 px along is sent as `None`
+  (unchanged), and a position let go outside the plot area is held to the
+  axis range the plot had when it was pressed.
   The shell interprets no positions; the capability does, from the handle's
   primitive type. After the handlers run, the shell re-sends the figure
   whether or not anything was staged, so a drag that changed nothing snaps
   back.
 - Any other relayout (a zoom) — once, with id `""` and the raw payload.
 
-In the tool's figure every shape is draggable (plotly.js has no working
-per-shape switch), and each `kind="handle"` Marker of a leaf named in
-`rings_for` gets a ring shape named with its id — on the Test page that is the
-open criterion alone (D131); lines, boxes and windows keep their own names. The
+In the tool's figure each `kind="handle"` Marker of a leaf named in
+`rings_for` gets a ring shape named with its id, and each `kind="grip"`
+primitive of such a leaf an arrow shape named with its id — on the Test page
+that is the open criterion alone (D131); lines, boxes and windows keep their
+own names. plotly.js makes every shape of an editable figure draggable and has
+no working per-shape switch, so the figure says which of its shapes take the
+pointer, in `layout.meta.dstf` (`figures/plotly.py::POINTER`):
+
+- `grips` — `{shape name: {"group", "axis", "label"}}` per grip arrow: the
+  group it shows with, the axis it moves on (`"x"` / `"y"`), its tooltip;
+- `targets` — `{ring name: group}` for each ring a group's grips stand
+  around;
+- `draggable` — the list of shape names an editor moves: the ringed leaves'
+  rings, grips and `kind="handle"` lines.
+
+The Test page's `grips.js` makes every shape the map does not name draggable
+inert, and shows a group's arrows only near it; a figure with no map is left
+as Plotly draws it. The map rides in the figure so that it is always the map
+of the figure the browser holds. The
 handler semantics are the hook's own, not the DOM's: each shape is dispatched
 from a snapshot of the handlers taken when its dispatch starts; a handler
 registered since is not called for it, one removed since (its panel rebuilt) is
@@ -836,7 +913,11 @@ the dataclass, and `render_form(schema, values, on_change)`
 (`authoring/forms.py`) turns each field into one NiceGUI control, calling
 `on_change` with the full values dict after every edit. A dataclass default is
 shown as the control's placeholder and never written; `ui_min` / `ui_max`
-validate rather than clamp; `passthrough` fields are shown read-only. The same
+validate rather than clamp; `passthrough` fields are shown read-only; a
+`sides` field is `forms.sides_control` — two number fields and a link toggle
+whose state is the shape of the field's value: a number while linked, a
+`{"lower", "upper"}` pair while not; a pair with one side typed changes
+nothing until the other is. The same
 `derive_schema` feeds `dstf export-schema`'s JSON-Schema emitter.
 
 The five shipped capabilities live in `authoring/builtin/` and register through

@@ -6398,8 +6398,9 @@ from drawn options: such a test gets a status of its own, **NOT RUN**.
 **Consequences.** A pending test's partial result is no longer read by
 `compare` or the tool: it has no plots, and the Variables drawer says
 what it says for a test never run. `--rerun sim-failed` and `run -i
-sim-failed` still select NOT RUN tests: they match `sim_success=False`,
-which a comparison with no result carries (nothing succeeded).
+sim-failed` still select NOT RUN tests: a category selects by the
+classifier's status (`cli.common._should_review`), and `sim-failed` takes
+SIM_FAIL and NOT RUN (nothing succeeded).
 
 ## D146 — The tree card shows where each row sits, folds its groups, and its rows open what they hold (2026-10-01)
 
@@ -6559,3 +6560,356 @@ level: the bars say the depth.
 patch or report change, and a plot's criteria rows are unchanged. Folds
 are volatile, the tab's, gone with it. Rows do not move by keyboard. The
 TRANSFORM gate is the controller's; nothing of it is recorded here.
+
+## D147 — A tolerance is a number or a lower/upper pair (2026-10-08)
+
+**Context.** Every tolerance a criterion carried was one number, applied
+the same on both sides of its target: a checkpoint that may overshoot but
+must not undershoot, an event that may come late but not early, could not
+be said. Step E of the tool's redesign asked for a lower and an upper
+tolerance with a link toggle, and handles for both on the plot. The owner
+ruled on the shape, its reach, the scalar's drawing and — after a spike
+with a real mouse — the handles' form and when they show; the controller
+made the calls numbered below, said to the owner and reversible. This is
+step E's first half (E1). Built from
+`docs/superpowers/plans/2026-10-02-two-sided-tolerance.md`, whose
+"Corrections 1" — two executing reviews and two spikes — override its task
+text, and from the fix batches of its reviews, which changed more than the
+plan held; what follows is the contract as built.
+
+**Decision.**
+
+1. *The shape (the owner's ruling).* A `tolerance` is one number OR the
+   pair `{"lower": a, "upper": b}`: one key, no second pair of keys beside
+   it. Chosen over two extra keys because now is the time to do it right,
+   and a pair object leaves room for more dimensions later. A number is
+   both sides. `comparison/sides.py` is the ONE place a number-or-pair is
+   read or written: `Sides(lower, upper)`; `parse_sides(value, what)` takes
+   a finite real number that is not a bool, a dict whose keys are EXACTLY
+   `lower` and `upper` (each such a number), or a `Sides`, and raises a
+   `ValueError` naming the field and the value as the JSON file holds it,
+   cut to 60 characters, for anything else. That is stricter than the
+   `float(...)` it replaces: the string `"0.01"` and `true` were scored as
+   tolerances and are config errors now, in every field of item 2 —
+   deliberate. (A scan of the owner's spec, `testing.json` and 898
+   baselines found 29 tolerance values, none a non-number.) `null` stays
+   what it was: an absent key for a row's `tolerance` / `time_tolerance`,
+   "no width" for `tube_abs` / `tube_rel`.
+2. *Which fields take a pair (the owner's ruling: every tolerance; the
+   list is the controller's).* The criterion's `tolerance` on `points` and
+   `scalar`; a `points` row's `tolerance` and `time_tolerance`;
+   `event-timing`'s `time_tolerance` and an `events` row's `tolerance`; a
+   `peaks` row's `tolerance`; a constant tube's `tube_abs` and `tube_rel`.
+   The same keys in `comparison.variable_overrides`. NOT `nrmse`'s
+   `tolerance` — one ceiling: an unequal pair is that leaf's config error,
+   "nrmse has one ceiling: tolerance must be a number" — and not
+   `tube_min_width`, a floor under both sides.
+3. *What the sides mean.* `d = actual − target`; a check passes iff
+   `−lower ≤ d ≤ upper`. In a `rel` mode each side is that fraction of
+   `|target|`. In time, `lower` is how much EARLIER and `upper` how much
+   LATER: a checkpoint's time box is `[t − lower, t + upper]`, an event's
+   window likewise. A peak's window is `[f·(1 − lower), f·(1 + upper)]`
+   (`rel`) or `[f − lower, f + upper]` (`abs`), from ONE helper the scorer
+   and the figure share (`_peak_window`; it was computed twice). A constant
+   tube's edges are `ref + upper` and `ref − lower` (`band`), or those
+   fractions of `|ref|` (`rel`); `tube_min_width` floors both. Each check
+   stays inclusive or strict as it was — declared points, scalar, events
+   and peaks inclusive, the implicit final-value check strict — on both
+   sides. The scalar's score stays the magnitude of its deviation, so what
+   a `weighted` combinator reads does not change meaning.
+4. *No sign check in the scorer.* A negative number was never refused and
+   is not refused in a pair: a negative number can never be met, and a
+   band inverted by a negative side holds nothing and is crossed by
+   nothing. The EDITOR refuses to write one (item 12).
+5. *Identity.* A spec holding only numbers scores bit for bit as it did,
+   and `v` and `{"lower": v, "upper": v}` give the same verdict, score
+   fields and geometry coordinates, for every mode and field. So the pass
+   test is on `d` itself, never on the band's edges (see Rejected);
+   `_violation_in_box` judges a checkpoint that way, with the old
+   `_min_delta_in_box` still supplying every reported number.
+6. *Where a malformed tolerance lands.* It is that criterion's config
+   error — the leaf's on the tree path, the variable's on the flat path —
+   naming the field (`points[1].tolerance must be a number or …`), and the
+   rest of the test is scored. Row tolerances are parsed in the mode's
+   `__init__`, where both paths catch, and again at use in the scorer. A
+   `ValueError` a mode raises at compare time fails its variable on the
+   flat path too, where it used to take the run down.
+7. *A base tolerance is ONE finite number (the owner's ruling).* The base
+   is what a criterion without a tolerance falls back to:
+   `comparison.tolerance` in a spec entry or a reference JSON,
+   `testing.json`'s `tolerance`, `--tolerance`. `sides.is_base_tolerance`
+   says which values are one: not a pair (nrmse, the default metric, has
+   one ceiling), not a string, a bool or a list, not NaN or an infinity.
+   Anything else is refused, never read loosely and never skipped for the
+   next base down:
+   - `comparator.refused_base_tolerance` is the one decision, asked first —
+     by `compare_one` right after the reference is read, before the
+     no-baseline and baseline-free short-circuits, and by `compare_test`
+     for a direct caller — of the base IN EFFECT (spec > baseline >
+     project). The test FAILS with no variable scored and the sentence as
+     its `error_message`: "the base tolerance must be a number; a
+     lower/upper pair belongs on a criterion (test_spec.json
+     comparison.tolerance is {…})" — where a pair belongs is said to a dict
+     alone. A failed simulation and a test with no result keep their own
+     status.
+   - `reporting.status.refusal` names that state once, and every surface
+     says the reason where it would name failing variables: the console,
+     the JUnit `<failure>`, the dashboard row's Message, the per-test page
+     ("Not scored: …"), the interactive review ("Error: …", and no
+     `[a]ccept`), and the tool — a `REFUSED` situation whose strip reads
+     "Not scored: …" and which no capability takes as its next action,
+     since accepting would not clear it.
+   - Accept refuses it: `storage.accept.accept_refusal` skips the test in
+     the one accept path with the sentence, its reference file untouched;
+     `store_reference` writes a base tolerance only when it is one, the
+     test's or else the old reference's.
+   - The project's is a `ConfigError` (one "Config error: …" line, exit 2;
+     `Session.open` refuses the project). `null` is unset.
+   - `spec-update` and the tool's Save refuse a patch that CHANGES
+     `comparison.tolerance` to something that is not one; a bad base the
+     patch did not touch does not block it, or nothing could remove it.
+     "Unchanged" compares the JSON text, so `1 → true` is a change.
+8. *What leaves Python, and what is said.* `VariableComparison.
+   tolerance_used` is a `Sides`. Where it leaves as data — the tree view's
+   `tolerance`, a leaf's diagnostics — it is `as_written`: the number when
+   the sides are equal, else the pair. In a sentence it is `sides_text`:
+   the one number as before, else the band's two edges as signed numbers,
+   `−1.000e-02 / +5.000e-02` (so a negative lower side reads `+`). With
+   uneven sides the criterion sentence says the deviation SIGNED, and of
+   the point or event pair furthest outside its own band, else of the
+   largest `|Δ|`. Words changed for some numbers-only specs too, never a
+   verdict or a score: a `points` or declared-events sentence names the
+   row it reports and the sides THAT row was held to wherever they are not
+   simply the criterion's one number ("Point at t=0.5: error 2.000e-03 vs
+   tolerance 1.000e-03 → FAIL"; "(relative)" after a `rel` row's); a
+   checkpoint that was never scored is reported first, with how many
+   scored rows fail beside it; declared events that were never found are
+   counted as such. Those sentences read new diagnostics keys, written
+   only where they apply: a leaf of one number whose reported row defers
+   to it — absolute, and of the largest delta — prints what it always
+   printed and records what it always recorded.
+9. *Geometry (the owner's ruling for the scalar; the kind is the
+   controller's).* A new primitive kind, `grip`: the resolved position of
+   one SIDE of a tolerance, id `<family>/<edge>/<key>` —
+   `points/upper|lower/i`, `points/before|after/i` only where the row
+   holds a `time_tolerance`, `points/upper|lower/final`,
+   `tube/upper|lower/const` (a tube of constant width; one with control
+   points has their rings), `events/early|late/i`, `peaks/lower|upper/i`.
+   A grip is never a trace and never drawn in a figure that is not
+   editable — four more dots per checkpoint would sit on every report
+   page: the report's figure is what the same geometry without its grips
+   draws, and six of the seven figure goldens are byte-identical. The
+   seventh is the one deliberate change to a report figure: a scalar
+   scored against its baseline draws what it allows, two lines
+   `scalar/upper` and `scalar/lower` of `kind="handle"`, as its bounds
+   form's lines are. A scalar on a statistic has no plot; its sides are
+   fields only.
+10. *The schema and the forms.* A field kind `sides` in `derive_schema`
+    (a `Sides` hint), its default as a spec would hold it, and
+    `FieldSpec.side_labels` — `−` / `+` unless the field's metadata says
+    (`event-timing`'s time tolerance: `early` / `late`). Row `columns`
+    gain the kinds `sides` and `sides?` and an optional third element, the
+    column's side labels (a checkpoint's time tolerance: `before` /
+    `after`). `export-schema` writes a `sides` field as `oneOf` a number
+    or an object with exactly `lower` and `upper`; nrmse's stays a number.
+11. *The editor's control (the owner's ruling).* Two number fields and a
+    link toggle, `forms.sides_control`, on a criterion's form and in a
+    table row. The shape the file holds IS the link state — nothing or a
+    number is linked, a pair is not, equal sides or not — and the tool
+    keeps no flag beside it. Linked, typing in either field sets both and
+    writes the number; unlinked, it writes the pair. Unlinking writes the
+    number twice; linking takes the LARGER side for both, so it never
+    narrows what the criterion allows (not "never fails a passing
+    criterion": a wider `dominant-frequency` window can take in a
+    neighbouring peak). With one side blank nothing is written, the blank
+    says "required" through the field's own `validation=` — NiceGUI resets
+    an `error` prop it did not set — and a table holds its whole list
+    back; a side emptied by way of values typed on the way puts back the
+    pair the spec held when the field took the focus. A half-typed pair
+    outlives a rebuild of its panel through `Panel.kept`, a record the
+    browser tab keeps per criterion (`TabState.kept`).
+12. *What the editor refuses, and how typing behaves.* A value that can
+    never score is refused where it is typed, before the stage
+    (`authoring/unscorable.py`): a negative tolerance — a number or either
+    side of a pair, the criterion's or a row's — a tube width as a
+    negative number, bounds out of order, a scalar's bounds equal. A
+    refused edit puts the leaf (or the row) back as the field found it,
+    and the field keeps what was typed. It is the editor's rule alone: the
+    Session, the parser and the scorer take a hand-written negative as
+    they always did. Every number field is a `TypedNumber`
+    (`authoring/typed_number.py` + `.js`): it shows what was typed until it
+    is left and takes a server value only while it is not being typed in —
+    a stage outlasts the gap between two keys, and the answer to one key
+    landed under the next (`0.25` over `0.3` read and staged `0.025`) —
+    and the wheel over a focused one scrolls the page, stepping nothing.
+13. *An edit that leaves the entry as saved is not pending.*
+    `Session.stage`, after the fold and the validation, drops every op of a
+    model whose entry with its pending ops applied equals its saved entry
+    as JSON reads it (`json_equal`: members in any order, `1` is `1.0`,
+    `true` is no number), and rescores it to its saved verdict. A flat
+    test whose entry differs only by a `metrics` member that is the tree
+    the saved entry already scores by — its implicit tree written out — is
+    as saved too. The count, the strip, the Tests drawer's mark, Save and
+    the preview read the one pending list; the preview's "These edits
+    leave the entry as saved." line is gone with the state it described.
+14. *The arrows (the owner's ruling, on a spike's pictures).* In the
+    tool's figure a grip is an arrow: a pixel-sized `path` triangle
+    anchored at its edge's data value, its apex 10 px outside the edge and
+    pointing at it, orange (`#E65100`) beside the rings' green. A window
+    spans its panel, so an event's and a peak's arrows are anchored on the
+    paper at the panel's mid-height. A ring is a pixel `path` too — a
+    pixel circle larger than 10 px has resize zones in plotly.js, and a
+    ring pressed off its centre was resized and staged nothing. An arrow
+    whose far end would pass a SET axis range (the spectrum's x) is drawn
+    on the inside of its edge.
+15. *The pointer map.* The editable figure says which of its shapes take
+    the pointer, in `layout.meta.dstf`: `grips` (per grip shape, its
+    `group`, the `axis` it moves on and its tooltip `label`), `targets`
+    (per ring its grips stand around, that group) and `draggable` (the
+    names an editor moves: the open leaves' rings, grips and handle
+    lines). `authoring/shell/grips.js` marks every other shape inert, so a
+    press on a box, a window, a result line or another criterion's bound
+    is the plot's own — under `edits.shapePosition` Plotly drags them all.
+    The map rides IN the figure, so it is always the map of the figure the
+    browser holds, and the page knows no metric's id pattern.
+16. *When the arrows show (the owner's rulings).* Hidden at rest; shown
+    while the pointer is on or near their checkpoint, event or peak, and
+    for the whole of a drag; and points that overlap or stand very close
+    show together. Each group has a hover area — the box of its ring and
+    its arrows' anchors, 25 px larger on every side; a window's, its edges
+    over its panel's whole height — and groups whose areas overlap or
+    touch are one CLUSTER: with the pointer in a cluster's areas every
+    arrow of every member shows, outside every area none. The mechanism is
+    the page's and never the figure's — a drag names a shape by index, and
+    a figure changed mid-drag loses it: `grips.js` marks each grip's path,
+    and the ones to show, and one static stylesheet rule hides a marked
+    grip that is not to show by `display: none`, since Plotly writes inline
+    `opacity` and `pointer-events` on every editable shape and a grip
+    hidden any other way is still grabbed. Every
+    redraw replaces the paths, so a `MutationObserver` marks them again
+    before paint, and what is shown is latched from a press to its
+    release. The plot's hover label gives way within 20 px of a shown
+    arrow or its ring. Where nothing hovers (`hover: none`, `pointer:
+    coarse`) the open criterion's arrows are always shown. An arrow whose
+    anchor is off the plot area keeps Plotly's clip — nothing of it is
+    painted in the margin — and its group's hover area is made of what is
+    on the plot; one whose edge is the plot's own edge is drawn whole in
+    the margin (see Rejected, the padding).
+17. *A release.* `grips.js` reads every release on its way to the server:
+    an axis the pointer travelled under 8 px along, press to release, is
+    sent as unchanged — 8 px is Plotly's own threshold, under which it
+    re-snaps the position it did not move (a sideways drag wrote `0.08`
+    as `0.0800462`) — and a position let go outside the plot area is held
+    to the axis range of the PRESS, so it lands on the plot's edge. A
+    grip moves on ONE axis: its editor is handed the released anchor on
+    that axis and the grip's own resolved position on the other.
+18. *A dragged side back to the leaf.* One rule, `handles._set_side`:
+    where the holder has no tolerance or a number, the drag writes a
+    number (linked: both sides move); where it has a pair, that side
+    alone; rounded to 12 significant digits like every dragged number.
+    The holder is the row's own tolerance where the row has one, else the
+    criterion's; a peak's row gets one on its first drag; auto-detected
+    events write the criterion's `time_tolerance`. Where the rows that
+    defer to the criterion differ in `tolerance_mode`, the dragged row
+    takes a tolerance of its own, seeded from the criterion's, because one
+    number means a fraction to a `rel` row and signal units to an `abs`
+    one. What a mode reads off the reference it reads off the reference AS
+    WINDOWED, as the scorer does. `HandleEdit` gains `target` (a scalar's
+    baseline scalar) and `span` (the run's first and last time inside the
+    leaf's window, which bounds where a checkpoint's ring may be let go);
+    `event-timing` gains an editor, `edit_events_handle`. Refused, each in
+    one sentence: a side dragged across its target, in its own name ("the
+    before side would cross its point's time"; a zero side is taken); a
+    `rel` side over a target, reference or baseline scalar of zero; a
+    peak's window that would reach 0 Hz, whichever arrow or ring moved it
+    there; a side measured from the reference on a leaf scored against
+    another baseline, or with none; a tolerance that would be no finite
+    number.
+19. *What the plot says.* A refused DRAG's reason is said in the editor
+    and on a line directly under the plot — the editor measured a screen
+    below the hand. The editor's hint is read off what the plot draws for
+    the open criterion (`figures.plotly.drags_of`): rings and arrows,
+    arrows alone, rings alone, lines alone, nothing. Each arrow carries a
+    tooltip naming the side it sets and a cursor for the axis it moves on.
+
+**Rejected, and why.**
+
+- *Two more keys beside `tolerance`.* The controller's recommendation;
+  the owner chose the pair (item 1).
+- *A pass test on the band's edges.* `lo ≤ v ≤ hi` with `lo = target −
+  limit` is not `|v − target| ≤ limit`: at target 1.0 and tolerance 0.1 an
+  actual of 1.1 fails the second (`1.1 − 1.0` exceeds `0.1` by a rounding
+  step) and passes the first. It would have broken item 5 at the
+  boundary, so the test is on `d`.
+- *Rings at the tolerance's edges.* They bury the target's ring whenever
+  a box is under about 16 px: with a tolerance of 0.001 a sideways drag
+  on the checkpoint rewrote the tolerance and left the time. Hence arrows
+  that stand outside the edge and never touch the ring.
+- *Hiding a grip by `visibility` or `opacity`, or by changing the figure
+  on hover.* Item 16 says why each fails.
+- *One group shown at a time.* Built first: the group nearest the
+  pointer, then by the arrows' drawn tips too, then with an advantage for
+  the shown one. At some spacings a facing arrow still could not be
+  reached, the display flickered between two groups, and a press where a
+  hidden arrow belonged moved the neighbour's ring. Replaced by the
+  clusters, on the owner's ruling.
+- *Our own axis padding for the arrows.* Invisible points past each grip
+  gave an autoranged axis headroom, and squashed the plot: with every
+  tolerance past the data, opening a criterion took 22.5 % off the value
+  axis's scale. plotly.js already autoranges over its shapes and pads a
+  pixel-sized path by its extent — the arrows alone take 14.6 % — so the
+  figure pads nothing, and the arrows are un-clipped by the stylesheet
+  instead: Plotly writes a shape's clip as an attribute, on its group and,
+  while it is held, on the path, and a stylesheet property beats both.
+
+**What was measured.** A 20,000-case sweep with a fixed seed, half of it
+with a sample placed exactly on an edge, holds the checkpoint's new
+verdict to the old one for equal sides, and a 3,000-case sweep per mode
+does for the scalar; 34 recorded cases — every mode, both scoring paths:
+fields, geometry coordinates, sentences, tree view — were identical across
+the refactor that made a tolerance travel as `Sides`. The controller's
+gate, a compare over a copy of the TRANSFORM work dir before and after
+the scoring change: 0 of 331 verdicts changed, 0 of 873 leaves' scores
+differ, the owner's files hash-identical. The arrows, the clusters, the
+8 px rule, the clamp and the un-clip were each tested in Chromium with a
+real mouse (plotly.js 3.1.1), a pixel at a time where the claim is a
+boundary: anchors 50 px apart are one cluster and 51 px two.
+
+**Known limits, left.**
+
+- A drag on a row that defers to the criterion's tolerance rewrites the
+  criterion's, so every deferring row moves (item 18). Nothing yet SAYS
+  when a row stopped deferring instead: an act returns a patch, and no
+  channel carries a note that is not an error.
+- Two checkpoints on the same spot: the arrows drawn later cover the
+  earlier ones.
+- A browser without CSS `:has` (Firefox before 121) clips an arrow at the
+  plot's edge as Plotly draws it. Reasoned from the rules, not run: only
+  Chromium was run.
+- The Playwright browser tests are not run in CI.
+
+**What E2 still owes.** The second half of step E, none of it built: the
+fields following a drag live (a handle still commits on release); arm a
+field, then click the plot; Ctrl+click adding a row that settles on the
+data; dragged values snapped to a readable precision (a drag writes 12
+significant digits). A live drag needs one thing this build did not: a
+`TypedNumber` that has been typed in takes no server value until it is
+left, so a field that must follow a drag while it still has the focus
+needs a way to accept one (the component's own note: a revision prop it
+watches).
+
+**What it reverses.** D135 item 1's "a rect still takes a drag: only a
+handle's is staged": in the page, a shape no editor moves now takes no
+pointer at all (the server still answers such a drag with nothing, for one
+that crosses a redraw). And a ring pressed off its centre moves; it no
+longer resizes.
+
+**Consequences.** `test_spec.json` and the reference JSON gain a shape,
+additive: a file holding only numbers reads and scores as it did, and the
+tool writes a pair only where a person unlinked one. What does break is
+loose input: a string or a bool where a tolerance belongs is a config
+error, and a base tolerance that is not one finite number refuses its
+test — a coordinated change for whoever holds such a file; the scan in
+item 1 found none in the owner's. `export-schema`'s output changes for the
+fields of item 2. The report's scalar figure gains two lines; no other
+report figure changes.

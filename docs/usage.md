@@ -38,6 +38,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
+| `tolerance` | No | The project's comparison tolerance (default: `1e-4`): what a test with no `comparison.tolerance` of its own, in its spec entry or its baseline, is scored with. One finite number — anything else is a config error (see "Tolerances with two sides"). `--tolerance` overrides it. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 
 All relative paths resolve from where `testing.json` is located.
@@ -331,7 +332,7 @@ The `scalar` metric scores a single number instead of a trajectory. Its required
 {"metric": "scalar", "variable": "solver cost", "quantity": "CPUtime.final", "tolerance": 0.5}
 ```
 
-`tolerance_mode` is `"abs"` (default; `|actual - reference| <= tolerance`) or `"rel"` (`<= tolerance * |reference|`, falling back to the absolute test when the reference is 0). Declaring `min_value` and/or `max_value` switches the leaf to a **baseline-free bounds check** — the scalar must lie inside the inclusive bounds, and no reference is consulted:
+`tolerance` is one number, or a pair `{"lower": a, "upper": b}` that says each side on its own (see "Tolerances with two sides", below). With `d = actual - reference`, `tolerance_mode` `"abs"` (the default) passes when `-lower <= d <= upper` — for a number, `|actual - reference| <= tolerance` — and `"rel"` takes each side as that fraction of `|reference|`, falling back to the absolute test when the reference is 0. Declaring `min_value` and/or `max_value` switches the leaf to a **baseline-free bounds check** — the scalar must lie inside the inclusive bounds, and no reference is consulted:
 
 ```json
 {"metric": "scalar", "variable": "pump.W", "quantity": {"reduce": "mean"}, "max_value": 5000}
@@ -346,6 +347,133 @@ variable. So a pattern such as `"variables": ["tank.*"]` keeps tracking new
 matches after a tree exists, and the warning is how you learn one needs a leaf.
 
 A window on a stats-path leaf is ignored — a stored scalar is not a time series. A stats-path leaf needs a `metrics` tree: in a flat `comparison.variable_overrides` entry the leaf only has the variable's own trajectory, so a string `quantity` there is a hard failure rather than a silent reduction of the wrong signal (a `{"reduce": ...}` override is fine).
+
+### Tolerances with two sides — a number or a lower/upper pair
+
+A criterion's tolerance is one number, or the pair `{"lower": a, "upper": b}`,
+which says each side on its own. A number is both sides: `0.02` and
+`{"lower": 0.02, "upper": 0.02}` score the same, and a spec that holds only
+numbers scores exactly as it did before a pair existed.
+
+**What the sides mean.** With `d = actual − target`, a check passes when
+`−lower ≤ d ≤ upper`: `lower` is how far under its target the value may be,
+`upper` how far over. In a relative mode each side is that fraction of
+`|target|`. In time, `lower` is how much EARLIER and `upper` how much LATER.
+
+**Which fields take a pair.**
+
+| Metric | Field | Its two sides |
+|---|---|---|
+| `points` | the criterion's `tolerance`, and a `points` row's own `tolerance` | under / over the checkpoint's target (its `value`, else the baseline at its time) — signal units, or fractions of the target's magnitude in a `rel` row |
+| `points` | a `points` row's `time_tolerance` | before / after the checkpoint's time |
+| `event-timing` | `time_tolerance`, and an `events` row's own `tolerance` | early / late |
+| `dominant-frequency` | a `peaks` row's `tolerance` | under / over the declared frequency — fractions of it in `rel` (the default), Hz in `abs` |
+| `scalar` | `tolerance` | under / over the baseline's scalar — fractions of its magnitude in `rel` |
+| `tube` | `tube_abs` (`band`) and `tube_rel` (`rel`) | under / over the reference |
+
+The same keys take a pair in a `comparison.variable_overrides` entry. These
+stay ONE number: `nrmse`'s `tolerance` (NRMSE has one ceiling: a pair whose
+sides differ is that criterion's config error, "nrmse has one ceiling:
+tolerance must be a number"), a tube's `tube_min_width` (a floor under both
+sides) and the `upper` / `lower` of a tube control point, which is a side
+already; and every base tolerance (below).
+
+The pair's keys are exactly `lower` and `upper`, each a finite number.
+Anything else in a field of the table — one side missing, a third key, a
+string such as `"0.01"`, `true` — is that criterion's config error, naming
+the field (`points[0].tolerance must be a number or {"lower": …, "upper": …},
+got …`): the criterion fails with that reason and the rest of the test is
+scored. No sign is checked: a negative number can never be met, and a pair
+with one negative side is a band that does not hold its target. (The
+authoring tool refuses to write a negative tolerance.)
+
+One example per metric:
+
+```json
+{
+  "metric": "points",
+  "variable": "tank.level",
+  "points": [
+    {"time": 5.0, "value": 2.0,
+     "tolerance": {"lower": 0.01, "upper": 0.05},
+     "time_tolerance": {"lower": 0.5, "upper": 0.1}}
+  ]
+}
+```
+
+The checkpoint passes when the run is between 1.99 and 2.05 somewhere from
+t = 4.5 to t = 5.1. A row without a `tolerance` takes the criterion's, number
+or pair, in the row's own `tolerance_mode`; a `points` criterion with no rows
+checks the final value against the criterion's `tolerance`, strictly on both
+sides (`−lower < d < upper`).
+
+```json
+{"metric": "event-timing", "variable": "valve.open", "time_tolerance": {"lower": 0.001, "upper": 0.005}}
+```
+
+Each event may come up to 1 ms early or 5 ms late. A declared event's own
+`tolerance` reads the same way.
+
+```json
+{"metric": "dominant-frequency", "variable": "rotor.w", "peaks": [{"freq": 50.0, "tolerance": {"lower": 0.01, "upper": 0.05}, "tolerance_mode": "rel"}]}
+{"metric": "dominant-frequency", "variable": "rotor.w", "peaks": [{"freq": 50.0, "tolerance": {"lower": 1.0, "upper": 3.0}, "tolerance_mode": "abs"}]}
+```
+
+The first looks for its peak from 49.5 Hz to 52.5 Hz — `f·(1 − lower)` to
+`f·(1 + upper)` — the second from 49 Hz to 53 Hz. A peak with no `tolerance`
+gets 1 % each side.
+
+```json
+{"metric": "scalar", "variable": "tank.level", "quantity": {"reduce": "max"}, "tolerance": {"lower": 0.5, "upper": 0.1}}
+{"metric": "scalar", "variable": "tank.level", "quantity": {"reduce": "max"}, "tolerance": {"lower": 0.05, "upper": 0.01}, "tolerance_mode": "rel"}
+```
+
+The first lets the maximum be up to 0.5 under the baseline's and up to 0.1
+over it; the second up to 5 % under and 1 % over.
+
+```json
+{"metric": "tube", "variable": "pipe.p[1]", "tube_width_mode": "band", "tube_abs": {"lower": 0.1, "upper": 0.5}}
+{"metric": "tube", "variable": "pipe.p[1]", "tube_width_mode": "rel", "tube_rel": {"lower": 0.01, "upper": 0.05}}
+```
+
+The first tube runs from `reference − 0.1` to `reference + 0.5`; the second
+from 1 % of `|reference|` under it to 5 % over.
+
+Where a criterion's line on the report names its tolerance, a pair reads as
+its two edges, `−1.000e-02 / +5.000e-02`, and the deviation beside it carries
+its sign, so the line says which side it lay on. A scalar scored against its
+baseline draws what it allows, on the report and in the tool: two dashed
+lines, at the baseline's scalar plus `upper` and minus `lower`.
+
+**The base tolerance stays one number.** The base tolerance is what a
+criterion with no tolerance of its own is scored with: `comparison.tolerance`
+in a spec entry, else the one in the baseline's reference JSON, else the
+project's (`tolerance` in `testing.json`, or `--tolerance`). It must be ONE
+finite number — not a pair (it is `nrmse`'s ceiling, and `nrmse` is the
+default metric), and not a string, a bool, a list, NaN or an infinity. One
+that is not is refused, never read loosely and never skipped for the next
+one down:
+
+- **The project's** is a config error: one line, `Config error: the base
+  tolerance must be a number (testing.json tolerance is "0.01")`, and exit
+  code 2 before anything runs; `dstf author` does not open the project.
+  `null` is unset.
+- **A test's** — its spec entry's or its baseline's, whichever is in effect
+  — FAILS the test without scoring a variable, and the reason is the test's
+  message: `the base tolerance must be a number; a lower/upper pair belongs
+  on a criterion (test_spec.json comparison.tolerance is {"lower": 0.1,
+  "upper": 0.2})`. The console, the JUnit `<failure>`, the dashboard row's
+  Message, the per-test page ("Not scored: …") and the Test page of `dstf
+  author` (the strip's "Not scored: …", the tree line's "nothing scored: …")
+  all say it. A test whose simulation failed, or that has no result, keeps
+  SIM_FAIL or NOT RUN.
+- **Accept refuses it.** `run --accept` and `compare --accept` leave the
+  test's reference file untouched, list it under "Skipped N test(s):" with
+  the reason and exit 1; the interactive review does not offer `a` for it;
+  the tool's Accept is grey for that test, with the reason, and stores the
+  others of a selection. Nothing writes one either: an accept never stores a
+  base tolerance that is no number, and `spec-update` — the tool's Save too —
+  refuses a patch that sets `comparison.tolerance` to one.
 
 ### Multiple named baselines
 
@@ -502,7 +630,7 @@ uv run dstf --config testing.json run -i
 | `--backend NAME` | Override the backend (e.g., `"Dymola 2025"`) |
 | `--backend-path PATH` | Override the backend executable path |
 | `--show-ide` | Show Dymola GUI instead of headless |
-| `--tolerance FLOAT` | Override NRMSE comparison tolerance |
+| `--tolerance FLOAT` | Override the project's comparison tolerance (`testing.json`'s `tolerance`); one finite number |
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
 | `--timeout SECS` | Per-test timeout in seconds (default: 600) |
 | `--work-dir PATH` | Override output directory |
@@ -526,7 +654,8 @@ recorded as pending — a run aborted while it was in flight — is refused with
 `NaN`, say) is refused with that reason and the review moves on to the next
 test; and a simulate-only test stores no baseline at all
 (`simulate-only test: no baseline stored`), since there is nothing to compare
-it against.
+it against. A test the comparison refused — a base tolerance that is not one
+number — prints its reason as `Error: …` and is not offered `a`.
 
 ### Live progress + final report
 
@@ -581,9 +710,10 @@ markup the server rendered. It shows
   lacks keeps its badge and its plot says "Not in this result: …" — with no
   chart when the plot's whole subject is missing. Each
   chart draws actual, reference and the criterion geometry
-  the metrics emitted (a tube's band, a range's bounds, a points leaf's
-  tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
-  scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
+  the metrics emitted (a tube's band, a range's bounds, a scalar's bounds
+  or — scored against its baseline — the two lines of what it allows, a
+  points leaf's tolerance boxes, event windows, the FFT spectrum on its own
+  axis pair, a scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
   live, which is how you read values off a plot. The legend sits above the
   plot area, and Plotly's toolbar stands vertically in a gutter right of the
   plot. A section's heading reads
@@ -782,8 +912,16 @@ red, each variable read by its label with its result-file name muted beside
 it; how many edits the test has and what the edits do to its verdict ("2
 edits · verdict would change PASS → FAIL"). When a test's first edit wrote its
 implicit tree out, the diff is against that tree, and a note says Save writes
-the tree too ("they score the same"); edits that cancel out (a context series
-added, then Reset layout) say "These edits leave the entry as saved." Below the
+the tree too ("Save also writes this test's 3 criteria out as a tree; they
+score the same."). Edits that leave a test's entry as the file holds it are
+not pending at all — a value typed and cleared again, a refused value put
+back, a context series added and then taken away by Reset layout: the
+header's count, the strip, the Tests drawer's mark, Save and this preview do
+not hold them, and the test is back at its saved verdict. "As the file holds
+it" is as JSON reads it: members in any order, `1` is `1.0`, `true` is no
+number. A flat test whose entry differs only by its own implicit tree written
+out — the tree it already scores by, with no other edit beside it — is as
+saved too: there is nothing to save. Below the
 tests, Save these / Discard these — the header's Save and Discard, over every
 pending edit. Its close button or Esc closes it; under 1024 px it lies over
 the header and the strip. An Esc while a menu or a dialog is open closes that
@@ -858,7 +996,8 @@ not hold it yet). Where the result FILE already holds the variable — Dymola's
 and the JSON driver's (Julia, Python) record every variable — the tool reads it
 again the moment the criterion is staged and scores it at once; the strip asks
 for a rerun only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
-reads 2 — its tree written out, and the edit.
+reads 2 — its tree written out, and the edit — and none again once that edit
+is put back (see the preview, above).
 
 Under the strip, the **Statistics card** shows every statistic the run and its
 baseline recorded, side by side — the rows the report's Statistics table
@@ -879,8 +1018,10 @@ exact match" for a count, "…within 10%, as a warning" for a time — that adds
 a `scalar` criterion on it at the end of the tree (a time inside a `warn`
 where it lands in an `and`) and opens its editor under the row. A row a
 criterion reads shows that criterion's pill and its requirement (`exact`,
-`±10%`, `in [a, b]`) instead; click the row to edit it there — tolerance,
-the tolerance mode, bounds; there is no plot. A criterion reading a quantity no
+`±10%`, `in [a, b]`; `−5% / +10%` where its tolerance's two sides differ)
+instead; click the row to edit it there — the tolerance's two fields, the
+tolerance mode, bounds; there is no plot, so the fields are the only way to
+its sides. A criterion reading a quantity no
 statistic holds gets a row under "Other scored quantities". The `+` is grey,
 with the reason as its tooltip, while a job holds the test, on a
 simulate-only test, where nothing is scored yet, where the last run no
@@ -904,8 +1045,8 @@ its ancestors' kinds (`and › k-of-n ›`): a swatch, a verdict pill,
 `metric · <the variable's label>`, the CLI's criterion line, and that node's
 controls (Edit tree, below). Clicking a row opens that criterion's editor
 below it, one at a time, with the plot above as its editing surface — drag a
-ring to move a handle, or edit the fields; every change is staged, and Save
-writes them. The criteria rows' header carries one `+` ("Add a criterion for
+ring, a tolerance arrow or a bound line, or edit the fields (see Edit on
+plot); every change is staged, and Save writes them. The criteria rows' header carries one `+` ("Add a criterion for
 x", x the plot's variable, a family's first member; its form's picker offers
 every variable of the result — see Edit tree). Context series are listed in a row above the
 plot, each with a `×` that takes it off. A derived plot has no Remove — an
@@ -1016,7 +1157,53 @@ Edit on plot. Every control change stages one `replace` of the whole leaf and
 rescores the test, so the figure and the verdicts follow the edit; consecutive
 replaces of one leaf collapse into one pending op, so the pending count and the
 exported patch carry one edit per leaf rather than a keystroke log (the preview
-shows the entry as it will be saved either way).
+shows the entry as it will be saved either way), and an edit that puts the
+leaf back as the file holds it leaves no pending op at all.
+
+A tolerance with two sides — every one but `nrmse`'s (see "Tolerances with
+two sides") — is two number fields with a link toggle between them: `−
+Tolerance` and `+ Tolerance` on a scalar, `− Default tolerance` / `+ Default
+tolerance` on points, `early` / `late` on an event-timing criterion's time
+tolerance, `− Tube abs` / `+ Tube abs` on a tube. The toggle's state is the
+shape `test_spec.json` holds, and the tool keeps no other record of it:
+
+- **linked** (the `link` icon, in the accent colour; how an unset tolerance
+  and a number open): both fields show the one number, typing in either sets
+  both, and the file holds a number. Clearing either clears both, and the
+  tolerance is unset.
+- **unlinked** (`link_off`, muted; how a pair opens, equal sides or not):
+  each field is its own side and the file holds `{"lower": …, "upper": …}`.
+  While one side is blank nothing is staged, the blank field says
+  "required", and the leaf holds the pair it held when that field was
+  entered — never a zero passed through on the way to empty. Both blank is
+  unset, and linked again.
+- **the toggle**: unlinking writes the number twice; linking takes the
+  LARGER side for both, so linking never narrows what the criterion allows.
+  Tab reaches it, Space flips it, and its name says the state ("Linked: both
+  sides of Tolerance change together").
+
+The in-effect line shows under the first field while both are empty. Under a
+plot, a half-typed pair stays as typed, blank and marked, when the editor is
+rebuilt by a drag on the plot or an edit in a table beside it.
+
+Every number field of the tool keeps what you type until you leave it: a
+stage rescores the test, which takes longer than the gap between two keys,
+and the answer to one key no longer lands under the keys after it. The mouse
+wheel over a focused number field scrolls the page and steps nothing; the
+arrow keys still step it.
+
+A value that can never score is refused where it is typed, before anything is
+staged: a negative tolerance — a number or either side of a pair, "tolerance
+must not be negative; got −0.5", "time_tolerance (early side) must not be
+negative; got −0.5" — a tube's `tube_abs` / `tube_rel` as a negative number
+(a pair with one negative side is a band shifted off its reference, and is
+taken), a lower bound above the upper one ("min_value 9 exceeds max_value
+2"), and a scalar's two bounds equal. Zero is a tolerance. The field keeps
+what was typed and the editor says the sentence; the leaf goes back to what
+it held when the field was entered, so a value passed through on the way
+(`-0` on the way to `-0.5`) is not left staged. This is the editor's rule
+alone: a `test_spec.json` written by hand with such a value is read and
+scored as it always was.
 
 **Edit tree** is the controls on every node of the tree and on every criteria
 row — `+`, wrap and `−` — and the `+` in each plot's criteria header. Each
@@ -1190,13 +1377,53 @@ place.) On a test whose flat criteria cannot become a tree without changing
 its scores, the editor draws no field and says that reason on one line, in
 place of both Edit criteria and Edit on plot; a reason both would give — a
 job holding the test — likewise appears once. The plot above the editor
-carries rings for the open criterion alone, and a handle belonging to another leaf is refused by name. What drags:
+carries rings and arrows for the open criterion alone, and nothing else on it
+takes the pointer: a press on a checkpoint's tolerance box, a window, a result
+line or another criterion's bound line is the plot's own (a box zoom). What
+drags:
 
 - a green ring on each tube control point (upper and lower edge), each
-  checkpoint and each declared peak (on the spectrum panel) — grab it at its
-  centre; a ring grabbed off its centre is resized rather than moved, and snaps
-  back with nothing staged;
-- the horizontal line of a `range` or `scalar` bound — drag it up or down.
+  checkpoint and each declared peak (on the spectrum panel) — press it
+  anywhere on the ring;
+- an orange arrow just outside each side of a tolerance: above and below a
+  checkpoint's box, and before and after it where the row holds a
+  `time_tolerance`; above and below the final-value box of a `points`
+  criterion with no rows; at the two edges of an event's window and of a
+  peak's window; above and below a tube of constant width, at the band's
+  middle sample;
+- the horizontal line of a `range` or `scalar` bound, and the two lines of
+  what a `scalar` scored against its baseline allows (the baseline's scalar
+  plus `upper`, minus `lower`) — drag it up or down. A scalar on a statistic
+  has no plot: its two fields are its sides.
+
+**When the arrows show.** At rest none does, so they do not clutter the plot.
+Each checkpoint, event or peak has a hover area — the box around its ring and
+its arrows' anchors, 25 px larger on every side; a window's, its edges over
+the whole height of its panel — and its arrows show while the pointer is in
+that area, and for the whole of a drag. Points whose areas overlap, or just
+touch, show their arrows together, as one cluster: with their nearest anchors
+50 px apart two points are one cluster, 51 px apart two. An arrow's tooltip says what it sets ("Drag to set
+the upper tolerance", "Drag to set how much earlier"), and the cursor over it
+the way it moves — up and down for a value's side, left and right for a
+time's or a frequency's. The plot's own hover label gives way within 20 px of
+a shown arrow or its ring, and reads the curve everywhere else. On a touch
+screen, where nothing hovers, the open criterion's arrows are always shown.
+An arrow whose edge is off the plot area (zoomed or panned away) is not
+drawn out in the margin and adds nothing to its point's hover area; one whose
+edge lies on the plot's own edge is drawn whole in the margin, over the tick
+labels, and takes a press there. An arrow of a peak's window
+that would fall outside the spectrum's own range — a lower one next to
+0 Hz — is drawn on the inside of its edge instead.
+
+**The hint line** at the top of the editor says what this criterion has to
+drag, read off what its plot draws: "Drag a ring or a tolerance arrow on the
+plot (hover a point to show its arrows), or edit the fields." (checkpoints,
+declared peaks); "Drag a tolerance arrow on the plot (hover near it to show
+the arrows), or edit the fields." (a tube of constant width, an event's
+window); "Drag a ring on the plot, or edit the fields." (a tube's control
+points); "Drag a line on the plot, or edit the fields." (a `range`, a
+`scalar`); "Edit the fields." (`nrmse`) — each followed by "Edits are staged
+as you make them; Save writes them."
 
 Releasing a drag stages one `replace` of the leaf the handle belongs to and
 rescores the test; the plot redraws in place, so your zoom stays. Consecutive
@@ -1208,40 +1435,101 @@ drags of one leaf collapse into one pending op. What a drag means:
   point's time.
 - A checkpoint with an explicit `value` moves in both time and value. One that
   follows the baseline (no `value`) moves in time only, so a drag never turns it
-  into a fixed-value check: dragged straight up or down it stages nothing, but
-  a drag that also moves sideways — by more than a sub-pixel tolerance,
-  1e-5 of the reference's time span — is a time move and stages the new time.
+  into a fixed-value check: dragged straight up or down it stages nothing, and
+  a drag that also goes 8 px or more sideways is a time move and stages the
+  new time.
 - A peak moves in frequency only; a bound moves in value only.
+- A tolerance arrow moves along ONE axis and sets its side to the distance
+  from the target to where it was let go: for a checkpoint, the height over
+  (`upper`) or under (`lower`) its target — over the target's magnitude in a
+  `rel` row — and the time before or after its own; for an event, the time
+  early or late; for a peak, the distance from its frequency, as a fraction
+  of it in `rel`; for a tube of constant width, the distance from the
+  reference at the arrow's own time; for a scalar's line, from the
+  baseline's scalar. Where the spec holds a number (linked) the drag writes
+  a number, and both sides move; where it holds a pair, that side alone.
+- The side is written where its row gets its tolerance: the row's own
+  `tolerance` / `time_tolerance` where it has one, else the criterion's —
+  so every row that defers to the criterion's moves with it. (Where the
+  deferring rows differ in `tolerance_mode`, the dragged row takes a
+  tolerance of its own, copied from the criterion's, and the others keep
+  reading the criterion's.) A peak without a `tolerance` gets one on its
+  first drag. Auto-detected events share the criterion's `time_tolerance`,
+  so every window moves.
+- An axis the pointer travelled less than 8 px along, press to release, is
+  left exactly as it was: a ring dragged sideways keeps its value to the
+  last digit, an arrow dragged across its axis moves nothing, and under 8 px
+  both ways the shape goes back and nothing is staged.
+- A shape let go outside the plot area lands on the plot's edge: its
+  position is held to the range the axes showed when it was pressed.
 - A time dragged past where the handle can be drawn lands on that edge, and
   the rest of the drag still applies. For a tube point or a baseline-following
   checkpoint that is the first or last reference sample inside the leaf's
   window; for a checkpoint with a `value`, the window's own start or end.
+  A checkpoint of either kind is also held inside the run's own first and
+  last sample in that window, where the two spans overlap: past the run it
+  would read "not scored".
 - A number a drag writes into the leaf is rounded to 12 significant digits, so
   the spec file reads `0.3`, not `0.30000000000000004`.
 
 After every drag the plot is redrawn from the staged spec, so anything the drag
-did not change goes back where it was. Everything on the plot is draggable —
-plotly.js offers no per-shape switch — but only the rings and bound lines edit:
-a window, an event line or a checkpoint's tolerance box snaps back. A drag the
-leaf cannot take snaps back too, and the reason shows above the editor's
-tables, prefixed with the leaf's path: an upper edge dragged below the lower one, a
-negative width, a `rel` width where the reference is zero, a control point moved
-onto another's time, a lower bound above the upper one (a `scalar` leaf also
-refuses equal bounds, which `range` accepts), a peak at zero or negative
-frequency, a `band` or `rel` width or any time on a leaf scored `against` a
-baseline other than the primary (the plot draws only the primary), the
-final-value ring of a `points` leaf with no declared points, or any handle of a
-metric with none to move (`event-timing`'s windows). Where two shapes overlap,
-the one drawn on top takes the drag; zoom in to separate them.
+did not change goes back where it was. A drag the leaf cannot take snaps back
+too, and its reason is said twice: in the editor, and on a line directly under
+the plot, above its criteria rows, where the hand is — the editor can be a
+screen below. The next edit of that criterion that goes through, a drag or a
+field, takes the line away; so does closing the criterion. (A refused FIELD
+edit is said in the editor only, where the typing is.) What is refused: an
+upper edge dragged below the lower one, a negative width, a `rel` width where
+the reference is zero, a control point moved onto another's time, a lower
+bound above the upper one (a `scalar` leaf also refuses equal bounds, which
+`range` accepts), a peak at zero or negative frequency, a `band` or `rel`
+width or any time on a leaf scored `against` a baseline other than the primary
+(the plot draws only the primary), the final-value ring of a `points` leaf
+with no declared points (its two arrows do move the criterion's tolerance),
+or any handle of a metric that has no drag editor. And for a tolerance's
+arrow or line:
+
+- a side dragged across its target — "the upper side would cross its target",
+  "the before side would cross its point's time", "the early side would cross
+  its event's time". A side of exactly zero is taken;
+- a `rel` side where there is nothing to be a fraction of: "the target is
+  zero" (a checkpoint), "the reference is zero at t=…" (a tube), "the
+  baseline scalar is zero";
+- a peak's window that would reach 0 Hz, whichever arrow moved — a number is
+  both sides, so its upper arrow dragged past twice the frequency is one —
+  and the peak's own ring where its `abs` window would ("the window would
+  reach 0 Hz"; of a pair whose lower side is already there, "the window's
+  lower side already reaches 0 Hz");
+- a side measured from the baseline on a leaf scored `against` another one,
+  or with no baseline at all;
+- a tolerance that would be no finite number.
+
+Where two shapes overlap, the one drawn on top takes the drag — of two
+checkpoints on the same spot, the arrows drawn later cover the earlier ones;
+zoom in to separate them, or use the fields.
 
 Beside the handles, the editor draws a table for each list field of the open
-criterion — `<path> · <metric> · <field>` for `tube_points`, `points`,
-`events` and `peaks` — one row per entry and a control per key. Every cell
+criterion — headed by the field's label: Control points (`tube_points`),
+Declared points (`points`), Declared events (`events`), Peaks (`peaks`) — one
+row per entry and a control per key. Every cell
 change stages the whole list as one `replace` of the leaf. A blank optional cell
 leaves its key out (a checkpoint with a blank `value` follows the baseline); a
 blank required cell (`time` on a tube point or an event, `freq` on a peak) is
 marked on the cell as `<key> is required`, and nothing in that table is staged
-until it is filled. `Remove row` drops the row. `Add row` copies the last row;
+until it is filled. A tolerance cell — a row's `tolerance`, a checkpoint's
+`time_tolerance` — is the form's two fields and link toggle, its sides named
+for what they are: `−` / `+`, `before` / `after` a checkpoint's time, `early`
+/ `late` for an event. Left empty it is left out of the row, which then
+follows the criterion's tolerance (a peak has none to follow: 1 % each
+side). With one side of an unlinked pair blank,
+the blank says "required" and nothing in that table is staged until it is
+filled or its row removed; the cell stays blank and marked through Add row,
+Remove row, a drag on the plot and an edit in the form above, each of which
+redraws the table. A negative tolerance is refused where it is typed — "row
+0: tolerance must not be negative; got −0.5", the rows counted from 0 — the
+cell keeps what was typed, and the row goes back to what it held when the
+cell was entered. A row too long for the editor wraps inside itself.
+`Remove row` drops the row. `Add row` copies the last row;
 where the table has a time, the new row's goes at the midpoint of the largest
 gap between the reference's first and last samples and the existing rows'
 times, so it stays clear of them (with no reference, the largest gap between
