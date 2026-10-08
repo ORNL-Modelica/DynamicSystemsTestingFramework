@@ -93,13 +93,13 @@ def test_the_write_gets_the_verdicts_as_they_stood_when_the_queue_drained(
     comparisons, not the ones the write was handed."""
     release = threading.Event()
     seen: list[dict] = []
-    monkeypatch.setattr(
-        dashboard,
-        "render_final",
-        lambda work_dir, comparisons, results: seen.append(
-            {c.model_id: c for c in comparisons}
-        ),
-    )
+    themes: list[str] = []
+
+    def render_final(work_dir, comparisons, results, theme):
+        seen.append({c.model_id: c for c in comparisons})
+        themes.append(theme)
+
+    monkeypatch.setattr(dashboard, "render_final", render_final)
     h.session._background.submit("a write ahead of it", lambda: release.wait(10))
     try:
         h.session.enqueue([A])
@@ -111,6 +111,8 @@ def test_the_write_gets_the_verdicts_as_they_stood_when_the_queue_drained(
         release.set()
     assert h.session.wait_background(10)
     assert classify(seen[0][A]) == FAIL
+    # the page is drawn in the project's theme, as the run's dashboard is
+    assert themes == [h.session.project.config.theme]
 
 
 @pytest.mark.parametrize(
