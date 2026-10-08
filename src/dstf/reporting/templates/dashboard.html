@@ -275,7 +275,7 @@ const REPORT_KEY = {{ report_key | tojson }};
 // state changes, so quiet stretches would otherwise look frozen).
 const SNAPSHOT_WALL = {{ updated_at }};
 const SNAPSHOT_ELAPSED = {{ elapsed }};
-// The count pills, in STATUS_ORDER: [status class, the word a person reads].
+// The count pills, in PILL_STATUSES' order: [status class, the word a person reads].
 const STATUSES = {{ statuses | tojson }};
 {% include 'filters.js' %}
 {% include 'dashboard.js' %}

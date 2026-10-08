@@ -47,7 +47,7 @@ from .rows import (
     row_from_status,
     summary_fields,
 )
-from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER, refusal
+from .status import PILL_STATUSES, STATUS_CLASSES, STATUS_LABELS, refusal
 from .theme import css_variables
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -377,10 +377,10 @@ def build_dashboard_context(
         "counts": snapshot.get("counts", {}),
         "tests": rows,
         "columns": COLUMNS,
-        # The count pills, in STATUS_ORDER: [status class, the word a
-        # person reads]. The class is the pill's key and the row's
+        # The count pills, in PILL_STATUSES' order: [status class, the
+        # word a person reads]. The class is the pill's key and the row's
         # data-status.
-        "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in STATUS_ORDER],
+        "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in PILL_STATUSES],
         "rerun_prefix": prefix,
         "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads

@@ -19,6 +19,8 @@ def test_every_status_has_one_word_and_one_class():
         "RUNNING": "running",
         "TIMED_OUT": "timed-out",
         "NOT RUN": "not-run",
+        # D150: a cancelled run left no result, and is counted as NOT RUN
+        "CANCELLED": "not-run",
     }
 
 
@@ -41,6 +43,9 @@ def test_a_live_state_before_any_comparison():
     assert st.live_status("timed_out") == "TIMED_OUT"
     assert st.live_status("failed") == "SIM_FAIL"
     assert st.live_status("passed") is None  # simulated, not yet scored
+    # D150: the simulation queue's cancel — a word, never the raw state
+    assert st.live_status("cancelled") == "CANCELLED"
+    assert "cancelled" in st.LIVE_STATES
 
 
 def test_the_order_pills_and_sorting_use():
@@ -53,7 +58,20 @@ def test_the_order_pills_and_sorting_use():
         "NO_REF",
         "TIMED_OUT",
         "NOT RUN",
+        "CANCELLED",
     )
+
+
+def test_a_cancelled_run_is_counted_as_not_run():
+    """D150: CANCELLED is its own word and no bucket of its own — it wears
+    NOT RUN's class, so every pill, tint and filter counts it there, and
+    the pills (one per class) do not list it."""
+    assert st.CANCELLED == st.STATUS_LABELS[st.CANCELLED] == "CANCELLED"
+    assert st.STATUS_CLASSES[st.CANCELLED] == st.STATUS_CLASSES[st.NOT_RUN]
+    assert st.CANCELLED not in st.FAILURES
+    assert st.PILL_STATUSES == tuple(s for s in st.STATUS_ORDER if s != st.CANCELLED)
+    classes = [st.STATUS_CLASSES[s] for s in st.PILL_STATUSES]
+    assert len(classes) == len(set(classes))
 
 
 def test_the_statuses_that_fail_a_run():

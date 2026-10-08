@@ -59,13 +59,34 @@ QUEUED = "QUEUED"
 RUNNING = "RUNNING"
 TIMED_OUT = "TIMED_OUT"
 
+#: A run stopped on request (the simulation queue's cancel, D150). It is
+#: recorded as cancelled and read back as NO result, so the classifier's
+#: word for the test is NOT RUN; this is the word a live row says for why.
+#: It wears NOT RUN's class: the pills, the tint and the exit code count it
+#: there — nothing ran to a verdict, so nothing failed (D145).
+CANCELLED = "CANCELLED"
+
 #: What the tool says for a test whose scoring raised: it has a result and
 #: no comparison at all. Not a status of the classifier's — it has no
 #: comparison to classify — and the Tests drawer counts it under SIM_FAIL.
 SCORING_FAILED = "scoring failed"
 
-#: Every status, in the order the count pills and a sort by status use.
-STATUS_ORDER = (QUEUED, RUNNING, PASS, FAIL, SIM_FAIL, NO_REF, TIMED_OUT, NOT_RUN)
+#: Every status, in the order a sort by status uses.
+STATUS_ORDER = (
+    QUEUED,
+    RUNNING,
+    PASS,
+    FAIL,
+    SIM_FAIL,
+    NO_REF,
+    TIMED_OUT,
+    NOT_RUN,
+    CANCELLED,
+)
+
+#: The statuses the count pills are drawn from, in their order: one per
+#: class. CANCELLED has none of its own — it is counted under NOT RUN's.
+PILL_STATUSES = tuple(s for s in STATUS_ORDER if s != CANCELLED)
 
 #: Status → the CSS class both HTML surfaces style it with. One table, so
 #: the dashboard, the report header and the tool cannot drift into two
@@ -79,6 +100,7 @@ STATUS_CLASSES = {
     RUNNING: "running",
     TIMED_OUT: "timed-out",
     NOT_RUN: "not-run",
+    CANCELLED: "not-run",
 }
 
 #: Status → the word a person reads. Only TIMED_OUT differs from its key.
@@ -89,6 +111,7 @@ _LIVE = {
     "running": RUNNING,
     "timed_out": TIMED_OUT,
     "failed": SIM_FAIL,
+    "cancelled": CANCELLED,
 }
 
 

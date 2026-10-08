@@ -1001,6 +1001,37 @@ def test_every_column_but_status_has_a_typed_filter(tmp_path):
     assert found == [(c.key, c.kind) for c in COLUMNS if c.kind != "status"]
 
 
+def test_a_cancelled_row_reads_cancelled_and_counts_as_not_run(tmp_path):
+    """D150: the queue's cancel leaves a status.json row "cancelled". The
+    page says CANCELLED on a not-run row — the NOT RUN pill counts and
+    filters it — where it said "status 'cancelled'" in the message."""
+    _write_status_json(
+        tmp_path,
+        {
+            "total": 1,
+            "elapsed": 1.0,
+            "counts": {},
+            "start_wall": 1.0,
+            "tests": [
+                {
+                    "test_key": "test_0001",
+                    "model_id": "Lib.A",
+                    "status": "cancelled",
+                    "detail": "Cancelled",
+                    "report_dir": "test_0001",
+                }
+            ],
+            "updated_at": 2.0,
+        },
+    )
+    render_final(tmp_path)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    (row,) = _body_rows(html)
+    assert _attrs(row)["data-status"] == "not-run"
+    assert '<span class="status-badge not-run">CANCELLED</span>' in row
+    assert "status &#39;cancelled&#39;" not in html and "status 'cancelled'" not in html
+
+
 def test_the_pills_are_the_statuses(tmp_path):
     html = _two_row_final_page(tmp_path)
     m = re.search(r"const STATUSES = (\[.*?\]);\n", html)

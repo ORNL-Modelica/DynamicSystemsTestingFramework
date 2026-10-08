@@ -2,7 +2,7 @@
 // Loaded inline via a Jinja include directive in dashboard.html.
 // Reads the top-level Jinja-injected constants: DASHBOARD_MODE
 // ('live' or 'final'), DASHBOARD_TOTAL (int) and STATUSES (the count
-// pills, [status class, word] in STATUS_ORDER).
+// pills, [status class, word] in PILL_STATUSES' order).
 
 (function() {
   const tbody = document.getElementById('results-tbody');

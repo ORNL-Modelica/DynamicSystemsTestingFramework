@@ -20,7 +20,9 @@ from typing import Any, Literal
 from ..comparison.types import TestComparison
 from .context_builder import worst_finite_score
 from .status import (
+    CANCELLED,
     LIVE_STATES,
+    NOT_RUN,
     STATUS_CLASSES,
     STATUS_LABELS,
     STATUS_ORDER,
@@ -434,6 +436,8 @@ def enrich_row(
     if not isinstance(status, str) or not status:
         text = summary.get("status_text")
         status = _STATUS_BY_LABEL.get(text) if isinstance(text, str) else None
-    if status in STATUS_LABELS:
+    if status in STATUS_LABELS and not (status == NOT_RUN and row.status == CANCELLED):
+        # A cancelled run scores NOT RUN — there is no result — and its
+        # live row already says why: it keeps its word (D150).
         changes["status"] = status
     return replace(row, **changes)

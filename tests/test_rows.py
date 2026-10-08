@@ -306,6 +306,34 @@ def test_a_summary_with_a_status_outside_the_vocabulary_keeps_the_rows():
     assert rich.status_text == "SIM_FAIL"
 
 
+def test_a_cancelled_live_row_says_cancelled_and_keeps_saying_it():
+    """D150: a run the queue stopped is recorded "cancelled". The row reads
+    the word (it read "status 'cancelled'"), counts where NOT RUN counts,
+    and keeps the word when the compare phase scores the test NOT RUN — the
+    verdict says only that there is no result, the live row says why. Any
+    other verdict replaces it, as it replaces every live state."""
+    row = row_from_status(
+        {
+            "test_key": "t",
+            "model_id": "Lib.A",
+            "status": "cancelled",
+            "detail": "Cancelled",
+        }
+    )
+    assert (row.status, row.status_text, row.status_class) == (
+        "CANCELLED",
+        "CANCELLED",
+        "not-run",
+    )
+    assert row.message == "Cancelled"
+    scored = enrich_row(
+        row, {"model_id": "Lib.A", "status": "NOT RUN"}, start_wall=None
+    )
+    assert scored.status == "CANCELLED"
+    rerun = enrich_row(row, {"model_id": "Lib.A", "status": "PASS"}, start_wall=None)
+    assert rerun.status == "PASS"
+
+
 def test_an_unknown_live_state_is_not_silently_simulated():
     """status.json is data too: a state the vocabulary does not know has no
     verdict, and says what it was rather than reading as SIMULATED with no
