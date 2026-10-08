@@ -551,11 +551,10 @@
     // box — 0 on it, Infinity with none shown. The box is the path's own,
     // as drawn: whichever way its arrow points, and wherever it is
     // staggered to. An arrow off the plot is of a shown group and is not
-    // shown: it is not asked.
-    const SHOWN = ".shapelayer path[data-grip-on]:not([data-grip-off])";
+    // displayed (style.py): it has no box, and is passed over.
     const arrow = (cx, cy) => {
       let nearest = Infinity;
-      for (const el of gd.querySelectorAll(SHOWN)) {
+      for (const el of gd.querySelectorAll(".shapelayer path[data-grip-on]")) {
         const b = el.getBoundingClientRect();
         if (!b.width && !b.height) continue;
         const dx = cx < b.left ? b.left - cx : cx > b.right ? cx - b.right : 0;
