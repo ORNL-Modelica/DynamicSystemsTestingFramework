@@ -12396,13 +12396,12 @@ def test_the_stylesheet_alone_takes_plotlys_clip_off_a_grip_in_two_rules():
     on its group as drawn, on the path itself while it is held — and a
     grip's arrow stands outside its edge. ONE mechanism un-clips it: the
     stylesheet, whose property beats the attribute wherever and whenever
-    it is written; `grips.js` takes no attribute off. The path's rule and
-    the group's are two rules, not one selector list: a browser without
-    `:has` drops the whole rule that names it. Neither rule takes the
-    clip off an arrow marked off the plot (`data-grip-off`). (What a person
-    gets is read in the browser: `test_an_arrow_pressed_in_the_margin_of_a_
-    zoomed_plot_stays_painted_while_held`, `test_an_arrow_whose_anchor_is_
-    off_the_plot_is_hidden_until_it_is_panned_back`.)"""
+    it is written; `grips.js` takes no attribute off. A rule for the path
+    and one for its group, and no third: neither takes the clip off an
+    arrow marked off the plot (`data-grip-off`). (What a person gets is
+    read in the browser: `test_an_arrow_pressed_in_the_margin_of_a_zoomed_
+    plot_stays_painted_while_held`, `test_an_arrow_whose_anchor_is_off_
+    the_plot_is_hidden_until_it_is_panned_back`.)"""
     import re
 
     from dstf.authoring.shell.plot_card import GRIPS_JS

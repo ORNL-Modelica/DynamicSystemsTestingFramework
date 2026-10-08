@@ -262,9 +262,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    beats a presentation attribute wherever it is written and whenever, so
    these two rules are the whole mechanism: nothing takes an attribute
    off, and an arrow pressed in the margin of a zoomed plot stays painted
-   while it is held. Two rules, never one selector list: a browser
-   without `:has` (Firefox before 121) drops the whole rule that names it,
-   and keeps the path's.
+   while it is held. A browser without `:has` (Firefox before 121) drops
+   the group's rule, and the path's alone un-clips nothing: there an
+   arrow at the plot's edge is clipped as Plotly draws it.
    Not an arrow whose ANCHOR is off the plot (`data-grip-off`, marked by
    `grips.js` on every redraw): it keeps Plotly's clip, held or not. The
    un-clip is for the 10 to 17 px an arrow stands outside an edge that is
