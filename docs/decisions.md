@@ -6839,7 +6839,9 @@ plan held; what follows is the contract as built.
     before side would cross its point's time"; a zero side is taken); a
     `rel` side over a target, reference or baseline scalar of zero; a
     peak's window that would reach 0 Hz, whichever arrow or ring moved it
-    there; a side measured from the reference on a leaf scored against
+    there ("already reaches", of one that was there before the drag: a
+    pair's lower side under its upper arrow, an `abs` window under its
+    ring); a side measured from the reference on a leaf scored against
     another baseline, or with none; a tolerance that would be no finite
     number.
 19. *What the plot says.* A refused DRAG's reason is said in the editor

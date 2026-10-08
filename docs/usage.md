@@ -1414,7 +1414,9 @@ drags:
 Each checkpoint, event or peak has a hover area — the box around its ring and
 its arrows' anchors, 25 px larger on every side; a window's, its edges over
 the whole height of its panel — and its arrows show while the pointer is in
-that area, and for the whole of a drag. Points whose areas overlap, or just
+that area, and for the whole of a drag. A scroll is read as a move: a
+checkpoint wheeled out from under a pointer at rest hides its arrows, and one
+wheeled under it shows them. Points whose areas overlap, or just
 touch, show their arrows together, as one cluster: with their nearest anchors
 50 px apart two points are one cluster, 51 px apart two. An arrow's tooltip says what it sets ("Drag to set
 the upper tolerance", "Drag to set how much earlier"), and the cursor over it
@@ -1512,7 +1514,8 @@ arrow or line:
 - a peak's window that would reach 0 Hz, whichever arrow moved — a number is
   both sides, so its upper arrow dragged past twice the frequency is one —
   and the peak's own ring where its `abs` window would ("the window would
-  reach 0 Hz"; of a pair whose lower side is already there, "the window's
+  reach 0 Hz"; of a window that was there before the drag — a pair's lower
+  side under its upper arrow, an `abs` window under its ring — "the window's
   lower side already reaches 0 Hz");
 - a side measured from the baseline on a leaf scored `against` another one,
   or with no baseline at all;
