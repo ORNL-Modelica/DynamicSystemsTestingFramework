@@ -33,7 +33,8 @@ over, and :attr:`LiveSnapshot.run` counts up so its caller drops what it had
 accumulated.
 
 A poll returns at most ``max_rows`` samples per name — fewer for a file
-with very wide rows, so that no read exceeds 16 MB. When more are new — the
+with very wide rows, so that no read of rows exceeds 16 MB (one row, where a
+single row is larger). When more are new — the
 first poll of a run already long under way, a name first asked for late —
 they are thinned to that many, evenly spaced and always ending on the newest
 row. Thinned rows are not served later: the live trace is a preview, and the
@@ -73,9 +74,10 @@ GONE: LiveState = "gone"
 #: Samples one poll returns per name at most (see the module docstring).
 MAX_ROWS = 2000
 
-#: No read of a poll exceeds this many bytes. The rows a poll returns are
-#: capped to fit; a thinned backlog spanning less is read in one piece and
-#: thinned in memory, a longer one a row at a time.
+#: No read of rows exceeds this many bytes (one row, where a single row is
+#: larger). The rows a poll returns are capped to fit; a thinned backlog
+#: spanning less is read in one piece and thinned in memory, a longer one a
+#: row at a time.
 _READ_BYTES = 16 << 20
 
 
