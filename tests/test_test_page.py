@@ -2352,7 +2352,13 @@ async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
         assert page.run_state() == "failed"
         assert page.badge.text == "SIM_FAIL"  # it ran, and failed (D145)
         said = {m: _one(user, m).text for m in _RUN_LINES}
-        assert said["strip-text"].startswith("The simulation failed.")
+        # the strip: the stored reason, then the next action (D151)
+        reason = shell.session.comparisons[C].error_message
+        assert reason.startswith("No Python result at ")
+        assert said["strip-text"] == (
+            f"{reason} — fix the model or its settings, then queue it again."
+        )
+        assert page.strip.situation is Situation.SIM_FAIL
         assert {m: t for m, t in said.items() if m != "strip-text"} == {
             "plots:count": "no plots: the run failed",
             "tree:summary": "nothing scored: the run failed",
@@ -2374,7 +2380,13 @@ async def test_a_pending_run_status_json_records_failed_says_the_run_failed(
         assert page.badge.text == "SIM_FAIL"
         assert page.run_state() == "failed"
         said = {m: _one(user, m).text for m in _RUN_LINES}
-        assert said["strip-text"].startswith("The simulation failed.")
+        # the strip: the stored reason, then the next action (D151)
+        reason = shell.session.comparisons[C].error_message
+        assert reason.startswith("No Python result at ")
+        assert said["strip-text"] == (
+            f"{reason} — fix the model or its settings, then queue it again."
+        )
+        assert page.strip.situation is Situation.SIM_FAIL
         assert said["plots:count"] == "no plots: the run failed"
 
 
