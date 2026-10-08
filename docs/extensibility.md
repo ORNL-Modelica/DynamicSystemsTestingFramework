@@ -895,9 +895,10 @@ pointer, in `layout.meta.dstf` (`figures/plotly.py::POINTER`):
   rings, grips and `kind="handle"` lines.
 
 The Test page's `grips.js` makes every shape the map does not name draggable
-inert, and shows a group's arrows only near it; a figure with no map is left
-as Plotly draws it. The map rides in the figure so that it is always the map
-of the figure the browser holds. The
+inert — and a line it does name, while that line is off the plot — and shows
+a group's arrows only near it; a figure with no map is left as Plotly draws
+it. The map rides in the figure so that it is always the map of the figure
+the browser holds. The
 handler semantics are the hook's own, not the DOM's: each shape is dispatched
 from a snapshot of the handlers taken when its dispatch starts; a handler
 registered since is not called for it, one removed since (its panel rebuilt) is

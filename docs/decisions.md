@@ -6796,7 +6796,21 @@ plan held; what follows is the contract as built.
     its arrows' anchors, 25 px larger on every side; a window's, its edges
     over its panel's whole height — and groups whose areas overlap or
     touch are one CLUSTER: with the pointer in a cluster's areas every
-    arrow of every member shows, outside every area none. The mechanism is
+    arrow of every member shows, outside every area none. Two arrows of
+    ONE cluster that would be painted over each other — of different
+    groups, both on the plot, sharing more than 1 px of what is painted
+    of them on both axes — are STAGGERED (the owner's ruling, on a
+    spike's pictures): each is moved across its own axis, a time or a
+    frequency arrow up or down, a value arrow left or right, by whole
+    steps of 9 px. In order along their axis each takes the first of one
+    step up (left), one down (right), three up, three down at which it
+    clears every arrow already placed and still lies inside its own
+    group's hover area — so the pointer never hides it on the way to it —
+    and a pair that leans parts the way it leans. Found on every redraw,
+    with the marks and the clusters, never on a move of the pointer. The
+    move is an attribute of the path that the stylesheet makes a
+    `transform`: the path Plotly drags is the one it drew, and a release
+    stages the edge where the pointer took it. The mechanism is
     the page's and never the figure's — a drag names a shape by index, and
     a figure changed mid-drag loses it: `grips.js` marks each grip's path,
     and the ones to show, and one static stylesheet rule hides a marked
@@ -6808,10 +6822,14 @@ plan held; what follows is the contract as built.
     release. The plot's hover label gives way within 20 px of a shown
     arrow or its ring. Where nothing hovers (`hover: none`, `pointer:
     coarse`) the open criterion's arrows are always shown. An arrow whose
-    anchor is off the plot area keeps Plotly's clip — nothing of it is
-    painted in the margin — and its group's hover area is made of what is
-    on the plot; one whose edge is the plot's own edge is drawn whole in
-    the margin (see Rejected, the padding).
+    anchor is off the plot area, by more than half a pixel, is not
+    displayed at all — one rule: no edge on the plot, no arrow; left
+    Plotly's clip alone, one drawn inward was painted whole inside the
+    panel — it is of no hover test, and its group's hover area is made of
+    what is on the plot. A ring is on the plot while any of it is drawn:
+    its centre within its own radius of the area. An arrow whose edge is
+    the plot's own edge is drawn whole in the margin (see Rejected, the
+    padding).
 17. *A release.* `grips.js` reads every release on its way to the server:
     an axis the pointer travelled under 8 px along, press to release, is
     sent as unchanged — 8 px is Plotly's own threshold, under which it
@@ -6872,6 +6890,11 @@ plan held; what follows is the contract as built.
   reached, the display flickered between two groups, and a press where a
   hidden arrow belonged moved the neighbour's ring. Replaced by the
   clusters, on the owner's ruling.
+- *On a shared spot, only the arrow whose edge is nearer the pointer is
+  drawn.* Measured on the spike not to work: at one spacing an arrow kept
+  4 px of its own, and of three arrows on one spot one was never drawn.
+- *A colliding arrow drawn inside its own box.* On the same spike's
+  pictures; not chosen — the owner chose the stagger (item 16).
 - *Our own axis padding for the arrows.* Invisible points past each grip
   gave an autoranged axis headroom, and squashed the plot: with every
   tolerance past the data, opening a criterion took 22.5 % off the value
@@ -6892,7 +6915,11 @@ the scoring change: 0 of 331 verdicts changed, 0 of 873 leaves' scores
 differ, the owner's files hash-identical. The arrows, the clusters, the
 8 px rule, the clamp and the un-clip were each tested in Chromium with a
 real mouse (plotly.js 3.1.1), a pixel at a time where the claim is a
-boundary: anchors 50 px apart are one cluster and 51 px two.
+boundary: anchors 50 px apart are one cluster and 51 px two. The stagger
+likewise, over pairs with their facing edges 18 to 40 px apart, event
+windows, three arrows on one spot, two facing value arrows and thirty
+checkpoints 12 px apart: every arrow pressed at its middle staged its own
+side, by the pixels dragged; one pass over 120 arrows took 2.3 ms.
 
 **Known limits, left.**
 
@@ -6900,8 +6927,12 @@ boundary: anchors 50 px apart are one cluster and 51 px two.
   criterion's, so every deferring row moves (item 18). Nothing yet SAYS
   when a row stopped deferring instead: an act returns a patch, and no
   channel carries a note that is not an error.
-- Two checkpoints on the same spot: the arrows drawn later cover the
-  earlier ones.
+- An arrow that no level clears stays at the first level it tried,
+  under the one drawn over it: the third on one spot where its group is
+  flat — three steps is 33.5 px from the arrow's line, and a hover area
+  reaches 25 px past its group's anchors — and the fifth on one spot
+  anywhere (reasoned from the four levels, not run). Two RINGS on one
+  spot are not staggered: the later-drawn takes the press.
 - A browser without CSS `:has` (Firefox before 121) clips an arrow at the
   plot's edge as Plotly draws it. Reasoned from the rules, not run: only
   Chromium was run.

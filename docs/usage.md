@@ -1407,8 +1407,9 @@ drags:
   middle sample;
 - the horizontal line of a `range` or `scalar` bound, and the two lines of
   what a `scalar` scored against its baseline allows (the baseline's scalar
-  plus `upper`, minus `lower`) — drag it up or down. A scalar on a statistic
-  has no plot: its two fields are its sides.
+  plus `upper`, minus `lower`) — drag it up or down. A line zoomed or panned
+  off the plot takes no pointer: bring it back into view, or use its field.
+  A scalar on a statistic has no plot: its two fields are its sides.
 
 **When the arrows show.** At rest none does, so they do not clutter the plot.
 Each checkpoint, event or peak has a hover area — the box around its ring and
@@ -1416,18 +1417,27 @@ its arrows' anchors, 25 px larger on every side; a window's, its edges over
 the whole height of its panel — and its arrows show while the pointer is in
 that area, and for the whole of a drag. A scroll is read as a move: a
 checkpoint wheeled out from under a pointer at rest hides its arrows, and one
-wheeled under it shows them. Points whose areas overlap, or just
-touch, show their arrows together, as one cluster: with their nearest anchors
-50 px apart two points are one cluster, 51 px apart two. An arrow's tooltip says what it sets ("Drag to set
+wheeled under it shows them, wherever on the page the pointer was resting.
+Points whose areas overlap, or just touch, show their arrows together, as one
+cluster: with their nearest anchors 50 px apart two points are one cluster,
+51 px apart two. Two arrows of a cluster that would be drawn over each other
+are staggered: each sits one step, 9 px, to the side of its place — a time or
+a frequency arrow above or below it, a value arrow left or right of it — and
+a third on the same spot three steps. A staggered arrow still sets its own
+edge, and a drag moves that edge as far as the pointer goes. An arrow's
+tooltip says what it sets ("Drag to set
 the upper tolerance", "Drag to set how much earlier"), and the cursor over it
 the way it moves — up and down for a value's side, left and right for a
 time's or a frequency's. The plot's own hover label gives way within 20 px of
 a shown arrow or its ring, and reads the curve everywhere else. On a touch
 screen, where nothing hovers, the open criterion's arrows are always shown.
-An arrow whose edge is off the plot area (zoomed or panned away) is not
-drawn out in the margin and adds nothing to its point's hover area; one whose
-edge lies on the plot's own edge is drawn whole in the margin, over the tick
-labels, and takes a press there. An arrow of a peak's window
+An arrow whose edge is off the plot area (zoomed or panned away, by more than
+half a pixel) is not drawn at all — neither out in the margin nor inside the
+plot — and adds nothing to its point's hover area; one whose edge lies on the
+plot's own edge is drawn whole in the margin, over the tick labels, and takes
+a press there. A ring counts as on the plot while any of it is drawn (its
+centre within its 7 px radius of the plot area): hovering what is left of it
+shows the arrows whose own edges are on the plot. An arrow of a peak's window
 that would fall outside the spectrum's own range — a lower one next to
 0 Hz — is drawn on the inside of its edge instead.
 
@@ -1522,8 +1532,11 @@ arrow or line:
 - a tolerance that would be no finite number.
 
 Where two shapes overlap, the one drawn on top takes the drag — of two
-checkpoints on the same spot, the arrows drawn later cover the earlier ones;
-zoom in to separate them, or use the fields.
+checkpoints on the same spot, the later one's ring covers the earlier one's
+(their arrows are staggered apart). An arrow that no step clears stays under
+the one drawn over it: the third on one spot, where its checkpoint's
+tolerance is under 8.5 px across the arrow's direction — three steps would
+take it out of the hover area. Zoom in to separate them, or use the fields.
 
 Beside the handles, the editor draws a table for each list field of the open
 criterion — headed by the field's label: Control points (`tube_points`),
