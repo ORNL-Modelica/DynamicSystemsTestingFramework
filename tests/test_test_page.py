@@ -3520,10 +3520,15 @@ NRMSE_AND_RANGE = {
 STAGED_AND_SAVE = " Edits are staged as you make them; Save writes them."
 
 
-RINGS_HINT = (
+BOTH_HINT = (
     "Drag a ring or a tolerance arrow on the plot (hover a point to "
     "show its arrows), or edit the fields."
 )
+ARROWS_HINT = (
+    "Drag a tolerance arrow on the plot (hover near it to show the arrows), "
+    "or edit the fields."
+)
+RINGS_HINT = "Drag a ring on the plot, or edit the fields."
 LINE_HINT = "Drag a line on the plot, or edit the fields."
 FIELDS_HINT = "Edit the fields."
 
@@ -3545,14 +3550,33 @@ async def test_the_editors_hint_says_what_drags_on_the_plot(shell):
         assert _one(user, "why:edit-on-plot").text == "nrmse has no on-plot handles"
 
 
-#: `test_handles.TREE`'s leaves on D, and a scalar scored against its
-#: baseline: what each draws to be dragged, and whether it has a table.
+#: `test_handles.TREE`'s leaves on D and four more — a scalar scored
+#: against its baseline, a tube of constant width, declared events and
+#: declared peaks: what each draws to be dragged, and whether it has a
+#: table.
+MORE_LEAVES = [
+    {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}},
+    {"metric": "tube", "variable": "x", "tube_width_mode": "band", "tube_abs": 0.3},
+    {
+        "metric": "event-timing",
+        "variable": "x",
+        "events": [{"time": 0.5, "tolerance": 0.1}],
+    },
+    {
+        "metric": "dominant-frequency",
+        "variable": "x",
+        "peaks": [{"freq": 1.0, "tolerance": 0.1}],
+    },
+]
 HINTS = [
-    (0, RINGS_HINT, True),  # tube: a ring per control point
+    (0, RINGS_HINT, True),  # tube: a ring per control point, and no arrow
     (1, LINE_HINT, False),  # range: its two bound lines
-    (2, RINGS_HINT, True),  # points: a ring per checkpoint, an arrow per side
+    (2, BOTH_HINT, True),  # points: a ring per checkpoint, an arrow per side
     (3, LINE_HINT, False),  # scalar, by its bounds
     (6, LINE_HINT, False),  # scalar, against its baseline: its two sides' lines
+    (7, ARROWS_HINT, True),  # a constant tube: an arrow per side, no ring
+    (8, ARROWS_HINT, True),  # events: a window's two arrows, no ring
+    (9, BOTH_HINT, True),  # peaks: a ring per declared peak, its window's arrows
 ]
 
 
@@ -3561,12 +3585,12 @@ async def test_the_hint_and_the_tables_line_follow_what_the_criterion_draws(
     shell, child, hint, table
 ):
     """Read off what the plot draws for the open criterion, not off its
-    metric's name: rings or arrows, lines alone, or nothing. And "drag on
-    the plot, or edit the table" is said where a table is drawn."""
+    metric's name: rings and arrows, arrows alone (a constant tube and an
+    event's window were told to "drag a ring" and to "hover a point" they
+    do not have), rings alone, lines alone, or nothing. And "drag on the
+    plot, or edit the table" is said where a table is drawn."""
     tree = copy.deepcopy(TREE)
-    tree["children"].append(
-        {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}}
-    )
+    tree["children"] += copy.deepcopy(MORE_LEAVES)
     _stage_tree(shell, D, tree)
     path = f"/metrics/children/{child}"
     async with user_simulation(root=shell.index) as user:
@@ -3602,7 +3626,7 @@ async def test_the_editors_hint_follows_a_switch_of_mode(shell):
         mode.set_value("range")
         await _settled(lambda: hint.text == LINE_HINT + STAGED_AND_SAVE)
         mode.set_value("points")
-        await _settled(lambda: hint.text == RINGS_HINT + STAGED_AND_SAVE)
+        await _settled(lambda: hint.text == BOTH_HINT + STAGED_AND_SAVE)
 
 
 async def test_one_editor_at_a_time_page_wide(shell):

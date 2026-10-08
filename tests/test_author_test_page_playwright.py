@@ -1015,8 +1015,8 @@ def test_the_editors_hint_names_what_the_open_criterion_drags(
     """A range's editor said "Drag a ring or a tolerance arrow on the plot
     (hover a point to show its arrows)": it has two bound lines, and no
     ring, arrow or point. It says to drag a line — which a real mouse then
-    does — and names no table, having none; a tube's says rings, and its
-    table."""
+    does — and names no table, having none; a tube with control points
+    says its rings — it has no arrow — and its table."""
     with _served(tmp_path, playwright_browser) as page:
         page.wait_for_timeout(700)
         _open_crit(page, 0, "range · x")
@@ -1046,8 +1046,7 @@ def test_the_editors_hint_names_what_the_open_criterion_drags(
         _open_crit(page, 0, "tube · x")
         expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
         expect(editor.locator(".dstf-why").first).to_have_text(
-            "Drag a ring or a tolerance arrow on the plot (hover a point to show "
-            "its arrows), or edit the fields." + STAGED_AND_SAVE,
+            "Drag a ring on the plot, or edit the fields." + STAGED_AND_SAVE,
             timeout=EXPECT_TIMEOUT,
         )
         expect(editor).to_contain_text("drag on the plot, or edit the table")

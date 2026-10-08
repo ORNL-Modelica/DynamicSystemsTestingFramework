@@ -1842,10 +1842,21 @@ def _line_then_ring_view():
 
 #: What a ringed leaf is dragged by, per view: rings and arrows, bound
 #: lines alone, or nothing.
+#: What each of `GRIP_VIEWS` gives beside its arrows: a ring per checkpoint
+#: or declared peak, or nothing — a constant tube's sides and an event's
+#: window have no point of their own.
+GRIP_DRAGS = {
+    "points": "rings+arrows",
+    "points-final": "rings+arrows",
+    "tube-constant": "arrows",
+    "event-timing-declared": "arrows",
+    "event-timing-auto": "arrows",
+    "dominant-frequency": "rings+arrows",
+}
 DRAGS = {
     "drawn-only": (_drawn_only_view, ""),
     "line-then-ring": (_line_then_ring_view, "rings"),
-    **{mode: (make, "rings") for mode, make in GRIP_VIEWS.items()},
+    **{mode: (make, GRIP_DRAGS[mode]) for mode, make in GRIP_VIEWS.items()},
     "tube-points": (lambda: _tube_view(tube_points=TUBE_POINTS), "rings"),
     "handles": (_handle_view, "rings"),  # rings AND a bound line
     "range": (lambda: _range_view(P0), "lines"),
@@ -1867,20 +1878,42 @@ TUBE_POINTS = [
 def test_what_a_leaf_is_dragged_by_is_what_the_figure_makes_draggable(mode):
     """`drags_of` says in a word what the editable figure gives a ringed
     leaf to be dragged by — for the editor's hint line. It is read off the
-    geometry, and is the figure's own map of that geometry: `rings` exactly
-    where a draggable shape is a ring or an arrow (pixel paths), `lines`
-    where every draggable shape is a line, nothing where there is none."""
-    from dstf.figures.plotly import drags_of
+    geometry, and is the figure's own map of that geometry (`POINTER`):
+    `arrows` exactly where the map names a grip, `rings` where a draggable
+    shape is a ring, both where it holds both; `lines` where every
+    draggable shape is a line, nothing where there is none."""
+    from dstf.figures.plotly import RING_PATH, drags_of
 
     make, drags = DRAGS[mode]
     view = make()
     (leaf,) = view.leaves
     assert drags_of(leaf.geometry) == drags
     fig = variable_figure(view, editable=True)
-    names = set(_pointer(fig)["draggable"])
-    kinds = {s["type"] for s in fig["layout"]["shapes"] if s.get("name") in names}
-    assert kinds <= {"path", "line"}, kinds
-    assert ("rings" if "path" in kinds else "lines" if kinds else "") == drags
+    pointer = _pointer(fig)
+    moved = [
+        s for s in fig["layout"]["shapes"] if s.get("name") in pointer["draggable"]
+    ]
+    assert {s["type"] for s in moved} <= {"path", "line"}
+    arrows = bool(pointer["grips"])
+    rings = any(s.get("path") == RING_PATH for s in moved)
+    # Every pixel path the map makes draggable is a ring or a grip's arrow.
+    assert all(
+        s.get("path") == RING_PATH or s["name"] in pointer["grips"]
+        for s in moved
+        if s["type"] == "path"
+    )
+    said = (
+        "rings+arrows"
+        if rings and arrows
+        else "arrows"
+        if arrows
+        else "rings"
+        if rings
+        else "lines"
+        if moved
+        else ""
+    )
+    assert said == drags
 
 
 # -- headroom for the open criterion's arrows -----------------------------------

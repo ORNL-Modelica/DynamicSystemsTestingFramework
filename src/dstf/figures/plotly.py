@@ -1011,19 +1011,33 @@ def _no_pointer() -> dict:
     return {"grips": {}, "targets": {}, "draggable": []}
 
 
-def drags_of(geometry: Iterable[Primitive]) -> Literal["rings", "lines", ""]:
+#: :func:`drags_of`'s words.
+Drags = Literal["rings+arrows", "arrows", "rings", "lines", ""]
+
+
+def drags_of(geometry: Iterable[Primitive]) -> Drags:
     """What the editable figure gives a ringed leaf of ``geometry`` to be
-    dragged by, in a word — :func:`_leaf_traces`' own rule, for a caller
-    that has to SAY it (the editor's hint line): ``"rings"`` where it draws
-    a ring (a handle marker) or an arrow (a grip), with or without lines;
+    dragged by, in a word — :func:`_leaf_traces`' own rule, what
+    :data:`POINTER` holds for that leaf, for a caller that has to SAY it
+    (the editor's hint line): ``"rings+arrows"`` where it draws a ring (a
+    handle marker) and an arrow (a grip) — a checkpoint, a declared peak;
+    ``"arrows"`` where it draws arrows and no ring — a tube of constant
+    width, an event's window; ``"rings"`` where rings and no arrow — a
+    tube's control points; each of those with or without lines.
     ``"lines"`` where the handle lines are all an editor moves; ``""``
     where nothing is. Read off the geometry, so the words follow what a
     metric draws and no list of metric names."""
-    lines = False
+    rings = arrows = lines = False
     for prim in geometry:
-        if prim.kind == "grip" or (isinstance(prim, Marker) and prim.kind == "handle"):
-            return "rings"
+        arrows = arrows or prim.kind == "grip"
+        rings = rings or (isinstance(prim, Marker) and prim.kind == "handle")
         lines = lines or (isinstance(prim, HLine) and prim.kind == "handle")
+    if rings and arrows:
+        return "rings+arrows"
+    if arrows:
+        return "arrows"
+    if rings:
+        return "rings"
     return "lines" if lines else ""
 
 

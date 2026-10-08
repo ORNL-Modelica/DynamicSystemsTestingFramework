@@ -32,7 +32,7 @@ from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
 from ...figures.assemble import leaves_by_variable
 from ...figures.families import family_label, group_families
-from ...figures.plotly import _LABELS, Visibility, drags_of
+from ...figures.plotly import _LABELS, Drags, Visibility, drags_of
 from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
 from ..session import Selection
@@ -81,12 +81,20 @@ _EDITED = ("metric", "variable", "params", "window", "against", "advisory")
 
 #: The open editor's hint line (`PlotCard._say_hint`), by what the plot
 #: draws for the open criterion to be dragged by (`figures.plotly.drags_of`)
-#: — rings or arrows, bound lines alone, nothing — and what follows each.
-EDITOR_HINTS = {
-    "rings": (
+#: — rings and arrows, arrows with no ring to hover, rings alone, bound
+#: lines alone, nothing — and what follows each. A constant tube and an
+#: event's window were told to drag a ring and to hover a point: they have
+#: arrows, and neither.
+EDITOR_HINTS: dict[Drags, str] = {
+    "rings+arrows": (
         "Drag a ring or a tolerance arrow on the plot (hover a point to show "
         "its arrows), or edit the fields."
     ),
+    "arrows": (
+        "Drag a tolerance arrow on the plot (hover near it to show the "
+        "arrows), or edit the fields."
+    ),
+    "rings": "Drag a ring on the plot, or edit the fields.",
     "lines": "Drag a line on the plot, or edit the fields.",
     "": "Edit the fields.",
 }
@@ -933,11 +941,12 @@ class PlotCard:
         self._say_hint()
         self._edited = self._edited_now(view)
 
-    def _drags(self) -> str:
+    def _drags(self) -> Drags:
         """What the plot draws for the open criterion to be dragged by —
         a key of `EDITOR_HINTS` — read off the geometry its leaf was scored
-        with, as the figure reads it: a range has lines and no ring, nrmse
-        nothing, and neither is known here by its name. Nothing where the
+        with, as the figure reads it: a range has lines and no ring, a
+        constant tube arrows and no ring, nrmse nothing, and none is known
+        here by its name. Nothing where the
         leaf was not scored, or where its metric has no editor for a drag
         (one would be refused)."""
         comp = self.page.shell.session.comparisons.get(self.page.model_id)
@@ -954,11 +963,12 @@ class PlotCard:
     def _say_hint(self) -> None:
         """The editor's hint line: what drags on the plot for the open
         criterion. The arrows show only while the pointer is near their
-        point, so the line is what tells a person they exist; a criterion
-        with lines alone is told to drag a line, and one that draws nothing
-        to drag (nrmse) only to edit its fields — its Edit on plot place
-        says why. Said again after an edit: the mode is a field of the
-        editor."""
+        point — or, where they stand around no point, near themselves — so
+        the line is what tells a person they exist; a criterion with rings
+        and no arrow is told to drag a ring, one with lines alone to drag a
+        line, and one that draws nothing to drag (nrmse) only to edit its
+        fields — its Edit on plot place says why. Said again after an edit:
+        the mode is a field of the editor."""
         if self.hint is None or self.hint.is_deleted:
             return
         self.hint.set_text(EDITOR_HINTS[self._drags()] + STAGED)
