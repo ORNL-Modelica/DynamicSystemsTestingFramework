@@ -25,6 +25,7 @@ import numpy as np
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import (
+    CANCELLED_RUN_STATUS,
     PENDING_RUN_STATUS,
     RECORDED_RUN_STATUSES,
     BatchManifest,
@@ -706,6 +707,10 @@ class Backend(ABC):
         (D145): the comparator reads a test with no result as NOT RUN, and a
         test whose run recorded a failure — here, or in ``status.json`` for a
         pending entry — as SIM_FAIL.
+
+        A run that was cancelled (:data:`CANCELLED_RUN_STATUS`, or a
+        cancelled run result in hand) yields no result either: it was
+        stopped on request, and what it left on disk is partial.
         """
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
@@ -733,10 +738,14 @@ class Backend(ABC):
                 rr = run_results.get(model_id)
                 test_model = test_lookup.get(model_id)
 
+                if rr is not None and rr.cancelled:
+                    continue  # stopped on request: no result
                 if rr and not rr.success:
                     _store(model_id, failed_run_result(rr))
                     continue
 
+                if rr is None and entry.get("last_run_status") == CANCELLED_RUN_STATUS:
+                    continue  # stopped on request: no result
                 if (
                     rr is None
                     and entry.get("last_run_status") == PENDING_RUN_STATUS
@@ -799,6 +808,22 @@ class Backend(ABC):
                 f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
             )
         return results
+
+    def result_of_run(
+        self, test: TestModel, test_key: str, run_result: TestRunResult
+    ) -> TestResult | None:
+        """What ONE run that just ended produced, from its run result in
+        hand: ``None`` for a cancelled run, the failure for a run that
+        failed, else the result read back (:meth:`read_run_result`).
+
+        :meth:`read_results`' per-test step for a caller holding one run
+        result — the simulation queue reads each test back as it finishes.
+        """
+        if run_result.cancelled:
+            return None
+        if not run_result.success:
+            return failed_run_result(run_result)
+        return self.read_run_result(test, test_key, run_result)
 
     def read_run_result(
         self,

@@ -210,6 +210,11 @@ class TestRunResult:
     # worker_killed=True (the .mat was written just before the watchdog
     # killed Dymola).
     worker_killed: bool = False
+    # The run was stopped on request (the simulation queue's cancel), so it
+    # is neither a failure nor a result: recorded as cancelled
+    # (BatchManifest.record_result) and read back as no result at all.
+    # ``success`` is False beside it.
+    cancelled: bool = False
 
 
 # Variables to exclude when resolving "*" or glob patterns (Dymola internals, etc.)
