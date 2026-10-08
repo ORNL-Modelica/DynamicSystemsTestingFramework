@@ -510,17 +510,53 @@ class TestPoints:
         assert landed(POINTS, 1.7, None) == 1.7
         assert landed(ending, 1.7, None) == 0.8
 
-    def test_a_following_points_time_is_bound_by_the_baseline_and_not_the_run(self):
-        # The run's span bounds a checkpoint scored against the RUN — one
-        # with a value of its own. One that follows the baseline is held
-        # to the baseline's span, as it was, whatever the run's: 0.9 stays
-        # on a run that ends at 0.75, and 1.5 lands on the baseline's end.
-        # (On such a short run the point at 0.9 is "not scored — outside
-        # actual trajectory": a following point there is not this bound's.)
-        new = _edit(POINTS, "points/target/0", 0.9, None, span=(0.0, 0.75))
-        assert new["points"][0] == {"time": 0.9, "tolerance": 0.05}
-        new = _edit(POINTS, "points/target/0", 1.5, None, span=(0.0, 2.0))
-        assert new["points"][0] == {"time": 1.0, "tolerance": 0.05}
+    def test_a_following_points_time_is_bound_by_the_baseline_and_the_run(self):
+        # A checkpoint that follows the baseline needs BOTH at its time: the
+        # baseline for its target, the run to be scored against. On a run
+        # that ends at 0.75 under a baseline 0..1, a ring let go at 0.9
+        # stayed there — "not scored — checkpoint time outside actual
+        # trajectory", and its ring gone. It lands where the two overlap.
+        def landed(leaf, x, span):
+            return _edit(leaf, "points/target/0", x, None, span=span)["points"][0]
+
+        assert landed(POINTS, 0.9, (0.0, 0.75)) == {"time": 0.75, "tolerance": 0.05}
+        assert (
+            landed(POINTS, 0.1, (0.25, 2.0))["time"] == 0.25
+        )  # a run that starts late
+        # The baseline's own ends, where the run goes past them ...
+        assert landed(POINTS, 1.5, (0.0, 2.0))["time"] == 1.0
+        assert landed(POINTS, -0.5, (-1.0, 2.0))["time"] == 0.0
+        # ... inside both, the time it was let go at ...
+        assert landed(POINTS, 0.6, (0.0, 0.75))["time"] == 0.6
+        # ... and with no span — a caller with no actual series — the
+        # baseline's alone, as it was.
+        assert landed(POINTS, 0.9, None)["time"] == 0.9
+        assert landed(POINTS, 1.5, None)["time"] == 1.0
+
+    def test_a_following_point_is_held_inside_its_window_and_the_run(self):
+        # The window narrows the baseline's span, the run's span is the
+        # samples the scorer keeps: the overlap of the two bounds the time.
+        leaf = _with(POINTS, window={"start": 0.1, "end": 0.8})
+
+        def landed(x, span):
+            return _edit(leaf, "points/target/0", x, None, span=span)["points"][0][
+                "time"
+            ]
+
+        ends = _edit(leaf, "points/target/0", 5.0, None)["points"][0]["time"]
+        starts = _edit(leaf, "points/target/0", -5.0, None)["points"][0]["time"]
+        assert starts < 0.5 < ends <= 0.8
+        assert landed(5.0, (0.25, 0.5)) == 0.5 and landed(-5.0, (0.25, 0.5)) == 0.25
+        assert landed(5.0, (0.0, 2.0)) == ends and landed(-5.0, (0.0, 2.0)) == starts
+
+    def test_a_run_that_never_meets_the_baseline_leaves_the_baselines_span(self):
+        # No time is in both: nothing there is scored whatever the ring
+        # does, and it is held to the baseline's span as it was — where
+        # its target is, never dragged off to a run it has no target on.
+        new = _edit(POINTS, "points/target/0", 0.9, None, span=(2.0, 3.0))
+        assert new["points"][0]["time"] == 0.9
+        new = _edit(POINTS, "points/target/0", 2.5, None, span=(2.0, 3.0))
+        assert new["points"][0]["time"] == 1.0
 
     def test_the_runs_span_bounds_a_time_MOVE_and_nothing_else(self):
         # A point authored outside the run, dragged vertically: no time

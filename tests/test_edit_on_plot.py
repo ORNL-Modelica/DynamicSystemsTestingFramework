@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import logging
 
 import pytest
@@ -199,6 +200,35 @@ def test_a_ring_with_its_own_value_let_go_past_the_run_lands_on_its_end(session)
     assert "not scored" not in leaf.summary.criterion, leaf.summary
     (drawn,) = [p for p in leaf.geometry if p.id == ring]
     assert (drawn.x, drawn.y) == (0.0, 0.75)
+
+
+def test_a_following_ring_let_go_past_a_short_runs_end_lands_on_it(session):
+    """A checkpoint that follows the baseline was held to the BASELINE's
+    span alone. On a run shorter than its baseline — the baseline 0..1, the
+    run 0..0.75 — a ring let go at 0.9 stayed there, read "not scored —
+    checkpoint time outside actual trajectory" and was no longer drawn. It
+    lands on the run's end: scored, its ring there."""
+    work = session.project.config.work_dir
+    t = [0.0, 0.25, 0.5, 0.75]
+    (work / "test_0004" / "result.json").write_text(
+        json.dumps(
+            {"success": True, "time": t, "variables": {"x": [v * 1.001 for v in t]}}
+        ),
+        encoding="utf-8",
+    )
+    session._reload_results()
+    _tree_on_d(session)
+    ring = "/metrics/children/2/points/target/0"  # follows the baseline
+    assert "value" not in TREE["children"][2]["points"][0]
+    op = _only_op(_drag(session, ring, {"xanchor": 0.9, "yanchor": None}))
+    assert op.value["points"][0] == {"time": 0.75, "tolerance": 0.05}
+    session.stage([op])
+    (leaf,) = [
+        lv for lv in session.view(D, "x").leaves if lv.path == "/metrics/children/2"
+    ]
+    assert "not scored" not in leaf.summary.criterion, leaf.summary
+    (drawn,) = [p for p in leaf.geometry if p.id == ring]
+    assert drawn.x == 0.75
 
 
 def test_the_runs_span_a_ring_is_held_to_is_the_one_inside_the_leafs_window(session):

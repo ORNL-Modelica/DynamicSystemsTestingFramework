@@ -10193,6 +10193,66 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
         assert f"Point at t={landed:g}: error" in row, row  # scored
 
 
+def _short_run_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A's run cut at t = 0.75 under a baseline that
+    goes on to 1, scored on x by one checkpoint that FOLLOWS the baseline."""
+    cfg, work = _points_on_x_project(tmp_path, [{"time": 0.25, "tolerance": 0.5}])
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    keep = [i for i, t in enumerate(payload["time"]) if t <= 0.75]
+    payload["time"] = [payload["time"][i] for i in keep]
+    payload["variables"] = {
+        name: [values[i] for i in keep] for name, values in payload["variables"].items()
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return cfg, work
+
+
+def test_a_following_ring_let_go_past_a_short_runs_end_lands_on_the_runs_end(
+    tmp_path, playwright_browser
+):
+    """A checkpoint that follows the baseline, on a run that ends before
+    its baseline does (0.75 under 0..1): its ring let go between the two —
+    and right of the plot — was held to the baseline's span alone, read
+    "not scored — checkpoint time outside actual trajectory", and its ring
+    was no longer drawn. It lands on the run's end, scored, its ring
+    there."""
+    name, tail = "points · x", "/points/target/0"
+    with _served(
+        tmp_path, playwright_browser, project=_short_run_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, name)
+        for release in ("between", "outside"):
+            at = _shape(page, tail)
+            ranges = page.evaluate(RANGES)
+            assert max(ranges["xaxis"]) > 0.99, ranges  # the baseline is drawn to 1
+            # 0.9: past the run's end, inside the baseline's.
+            to = (
+                at["x"] + (0.9 - at["xanchor"]) * at["ppx"]
+                if release == "between"
+                else VIEWPORT["width"] - 5
+            )
+            page.mouse.move(at["x"] - 20, at["y"] - 20)
+            page.mouse.move(at["x"], at["y"], steps=4)
+            page.mouse.down()
+            page.mouse.move(to, at["y"], steps=25)
+            page.mouse.up()
+            expect(page.locator(".dstf-header-row")).to_contain_text(
+                "1 pending edit", timeout=EXPECT_TIMEOUT
+            )
+            assert _staged_tree(page)["points"][0] == {"time": 0.75, "tolerance": 0.5}
+            ring = _settled_at(page, tail, "xanchor", 0.75)
+            assert ring["box"] is not None, ring
+            page.wait_for_timeout(300)
+            row = _crit(page, 0, name).inner_text()
+            print("SHORT RUN", release, row.replace("\n", " | "))
+            assert "not scored" not in row and "outside" not in row, row
+            assert "Point at t=0.75: error" in row, row  # scored
+            _discard(page)
+            _settled_at(page, tail, "xanchor", 0.25)
+
+
 # -- an axis the pointer barely moved along is not moved --------------------------
 
 #: An arrow of `_grips_project`'s second checkpoint, the unit vectors ACROSS

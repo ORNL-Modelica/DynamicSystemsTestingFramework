@@ -59,8 +59,9 @@ class HandleEdit:
     target: float | None = None
     #: The ACTUAL series' first and last time as the scorer receives it —
     #: sliced to the leaf's ``window`` — which bounds the time of a
-    #: checkpoint with a value of its own (:func:`edit_points_handle`).
-    #: ``None`` where the caller has no actual series: no such bound.
+    #: checkpoint (:func:`edit_points_handle`): it is scored against the
+    #: run, with a value of its own or the baseline's. ``None`` where the
+    #: caller has no actual series: no such bound.
     span: tuple[float, float] | None = None
 
 
@@ -567,14 +568,18 @@ def edit_points_handle(edit: HandleEdit) -> dict:
     ``x`` sets ``time`` — unless it lies within a sub-pixel tolerance of the
     current time (:func:`_time_move`) — and is refused on a leaf whose ``against``
     is not ``"primary"``. The time is clamped: for a checkpoint that follows
-    the baseline, into the span where it is drawn (the tube rule: the first
-    reference sample ``>= window.start`` to the last ``<= window.end``); for
-    one with an explicit ``value``, into the window's own ends AND into the
-    actual trajectory's span (``edit.span``) — the forward code scores and
-    draws it only where ``t ± time_tolerance`` meets that trajectory, so a
-    ring let go a little past the run's end (the time axis runs past the
-    data) read "not scored" and was no longer drawn. With no ``span`` — a
-    caller that has no actual series — the window's ends alone. A
+    the baseline, into the span where it has a target (the tube rule: the
+    first reference sample ``>= window.start`` to the last ``<=
+    window.end``); for one with an explicit ``value``, into the window's
+    own ends; and for either, into the actual trajectory's span
+    (``edit.span``) besides — the forward code scores and draws a
+    checkpoint only where ``t ± time_tolerance`` meets that trajectory, so
+    a ring let go a little past the run's end (the time axis runs past the
+    data; a run shorter than its baseline ends well inside it) read "not
+    scored" and was no longer drawn. A following checkpoint is held to
+    where the two spans OVERLAP; where they do not — a run that never
+    meets its baseline — to the baseline's alone, as with no ``span`` (a
+    caller that has no actual series). A
     checkpoint whose ``time``
     is absent or null — the trace-end sentinel — keeps it: ``x`` is ignored,
     a time is typed in the table. ``y`` sets ``value`` only when the point
@@ -605,9 +610,12 @@ def edit_points_handle(edit: HandleEdit) -> dict:
         _refuse_other_baseline(edit, leaf, "its time")
         follows_baseline = point.get("value") is None
         reference = _reference(edit) if follows_baseline else None
-        t = _clamped_time(edit, leaf, x, reference)
-        if not follows_baseline and edit.span is not None:
-            t = min(max(t, edit.span[0]), edit.span[1])
+        lo, hi = _time_span(edit, leaf, reference)
+        t = float(min(max(float(x), lo), hi))
+        if edit.span is not None:
+            first, last = edit.span
+            if not follows_baseline or max(lo, first) <= min(hi, last):
+                t = min(max(t, first), last)
         point["time"] = _written(t)
     if edit.y is not None and point.get("value") is not None:
         point["value"] = _written(edit.y)
