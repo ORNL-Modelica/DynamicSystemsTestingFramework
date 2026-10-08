@@ -133,7 +133,8 @@ src/dstf/
 │   │                         #   header.py, actions.py (ActionBar — a button per capability at a placement,
 │   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline, with
 │   │                         #   a RowTarget to open a form row under their row),
-│   │                         #   runs.py, tabstate.py, figure_hook.py (one hook per plot)
+│   │                         #   runs.py, tabstate.py, figure_hook.py (one hook per plot),
+│   │                         #   tab_theme.py (the tab's theme and its live switch, D148)
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
 │                             #   accept.py (the shared accept function), rerun.py (run_pipeline),
@@ -149,8 +150,9 @@ src/dstf/
                               #   the report's sections and the tool's plot cards list criteria by
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
-    ├── theme.py              # The token table — rendered to :root { --dstf-...: ... } for both
-                              #   pages and the tool, and to the tool's Quasar palette
+    ├── theme.py              # The token tables, one per bundled theme (`default`, `dark`; D148) —
+                              #   rendered to :root { --dstf-...: ... } for both pages and the tool,
+                              #   and to the tool's Quasar palette; a dark theme's dimmed status parts
     └── templates/            # interactive.html (server-rendered tree, summary, banner) + axes.js
                               #   (the report's: a secondary axis visible while a trace on it is) + report.js
                               #   (both copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
@@ -169,6 +171,9 @@ src/dstf/figures/
 │                             #   with its axis; the legend sits above the plot area on both tiers
 │                             #   plot_figure: several views on one plot (families in a hue ramp);
 │                             #   one view is variable_figure, unchanged
+├── palette.py                # What a figure takes from a theme, by name (D148): its chrome, the
+│                             #   five series colours a dark plot lightens, the layout template
+│                             #   (none for `default`: that figure is the one it always was)
 ├── families.py               # Array families: the last integer index, slice text, the hue ramp
 ├── assemble.py               # Trajectories + evaluated leaves → a VariableView
 └── decimate.py               # LTTB decimation on the view, before any trace exists

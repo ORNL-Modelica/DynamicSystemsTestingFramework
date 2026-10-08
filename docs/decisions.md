@@ -6963,3 +6963,171 @@ test — a coordinated change for whoever holds such a file; the scan in
 item 1 found none in the owner's. `export-schema`'s output changes for the
 fields of item 2. The report's scalar figure gains two lines; no other
 report figure changes.
+
+## D148 — Themes: a bundled default and dark, tokens to every surface (2026-10-08)
+
+**Context.** Every page already took its neutrals and its accent from one
+token table (`reporting/theme.py`, roadmap §1), and the redesign's brief
+(§3.9 / §3.10) ruled a theme is a NAME from a bundled set, switchable for
+the session in the tool. Step 7 of the roadmap built the second table. It
+had no plan: a prototype (a diff, measurements in Chromium and five sheets
+of screenshots) was put before the owner, who chose from the pictures;
+items 1-7 are those rulings, 8-14 the builder's calls, reversible. This
+entry is the contract as built.
+
+**Decision.**
+
+1. *The dark tokens (the owner's ruling).* Neutral grey, not blue-tinted:
+   page `#121212`, surface `#1e1e1e`, surface-hover `#2a2a2a`,
+   surface-active `#353535`, border `#484848`, border-hairline `#303030`,
+   text `#e4e4e4`, text-secondary `#b8b8b8`, text-muted `#9e9e9e`,
+   text-disabled `#7d7d7d`, accent `#64b5f6`, accent-hover `#90caf9`,
+   selection `#1d3a57`, shadow `rgba(0,0,0,0.5)`. The page is Quasar's own
+   dark page, so a Quasar piece nobody restyled sits on the same ground.
+2. *A 15th token in both themes: `on-accent`* — the text on a filled accent
+   button, `#ffffff` on `default` and `#0b1a2b` on `dark`. On a dark
+   surface no one blue both reads as link text and carries white text.
+3. *Status on dark is dimmed.* A filled badge is white on the status fill
+   in both themes. A row tint and a pill are the fill laid at 14 % and
+   24 % over the dark surface, and the text on them is the status's pastel
+   — the light table's pill border; warn's border is its fill, so its
+   pastel is `#ffd54f`. The pill's border is the fill at 60 %: that number
+   is the prototype's, shown in the pictures the owner chose from but not
+   ruled on by name. On `default` nothing about a status changes. Role
+   chips are the same in both themes.
+4. *Plot series are unchanged, except five that do not read on a dark
+   plot,* lightened on `dark` only: the soft-check overlay `#7B1FA2` →
+   `#ba68c8`, and four ramp stops of the array families — blue's darkest
+   `#0d47a1` → `#1264e2`, green's darkest `#1b5e20` → `#237b2a`, purple's
+   third `#7b1fa2` → `#a631d8` and darkest `#4a148c` → `#8a40e4`. The
+   shades are the builder's: each stop raised in lightness at its own hue
+   and saturation until it clears 3:1 on the dark plot and still stands
+   darker than the stop before it; the overlay is Material's Purple 300,
+   the light shade of the same family, since it sits in no ramp.
+5. *The figure's chrome follows the theme:* a reference event's line
+   (`#757575` → `#a8a8a8`), the ring and the handle markers (`#2e7d32` →
+   `#66bb6a`) with the ring's fill, a context series (the theme's
+   text-muted), and the layout template — paper and plot ground, grid,
+   zero line, axis line, ticks and titles, legend, hover label, toolbar.
+   Every other literal of the figure layer stays.
+6. *The report and the dashboard are themed at generation,* baked, with no
+   switch in those pages. The tool has a session switch per browser TAB:
+   the header's ⋮ holds an item named for the other theme; a reload of the
+   tab keeps its choice; the tab starts from `testing.json`'s `theme`.
+7. *`← Suite` wears the accent in both themes.* It was NiceGUI's own link
+   blue (`rgb(59 130 246)`), which is no token.
+8. *`theme` in `testing.json`* is `"default"` (the default) or `"dark"`.
+   Any other value — another name, a path, a non-string — is a
+   `ConfigError` naming the two. No CLI flag. `export-schema` is the
+   schema of `test_spec.json` and does not change.
+9. *The theme is an argument, never a process-wide setting.* The
+   dashboard's token block was set on its Jinja environment at import,
+   before any `Config` was read; it is rendered per page from a `theme`
+   argument now, and every renderer and figure builder takes one:
+   `render_live` / `render_final` / `render_final_to`, `ProgressReporter`,
+   `generate_comparison_plots`, `plot_page_keys`, `variable_figure`,
+   `plot_figure`, the Session's `figure` / `plot_figure`. Each defaults to
+   `"default"` so a direct caller is unchanged, and `tests/test_themes.py`
+   reads `src`: a call to any of them that leaves `theme=` out fails.
+10. *One named palette per theme in the figure layer*
+    (`figures/palette.py`): what a figure takes from a theme, read by
+    name — never a remap of literals after the figure is built. Its
+    colours are literals, as every figure colour is; a test pins the dark
+    ones to the dark tokens. `default` has NO template, and its figure is
+    the dict it always was.
+11. *The switch is live.* The `:root` token block is one `<style>`
+    rewritten in place, Quasar's palette variables and its dark mode
+    follow, and the Test page re-sends each DRAWN plot in the tab's theme
+    through `PlotCard.redraw` — a `Plotly.react` on the same node. The tab's
+    choice is in its `TabState`; the Session holds no theme, so two tabs in
+    two themes read one Session.
+12. *What Quasar draws itself:* a filled primary button's text is
+    `on-accent`, in a rule inside NiceGUI's `quasar_importants` layer —
+    Quasar's `.text-white` is `!important` there, and a layered important
+    beats any unlayered one. Cards, menus, dialogs, drawers, tooltips,
+    fields and separators take tokens under `body--dark`.
+13. *AG Grid under dark only.* NiceGUI turns the grid's colour scheme with
+    `body--dark`, and AG Grid's dark scheme is blue-tinted with white
+    text: under `body--dark` the Suite grid's ground, text and controls
+    are the theme's. Under `default` the grid keeps AG Grid's light scheme
+    as it was.
+14. *The window is the project's ground from its first HTML.* Which tab a
+    request belongs to is known only once the browser has connected, so a
+    page's first HTML carries `html { background: <the project's page> }`
+    and the tab's own tokens follow it in the cascade.
+
+**What was measured.** Contrast is WCAG 2's, computed in the tests from
+the tables, never copied in. On `dark`: text 13.1:1 on the surface,
+text-secondary 8.4, text-muted 6.2, the accent 7.5; `on-accent` on the
+accent 7.9, where white is 2.2. Each dimmed status's text on its tint is
+6.7 or more and on its pill 5.8 or more (fail is the lowest of both); the
+theme's own text on a tint 9.5 or more, text-muted 4.5 or more. Of every
+line colour the figure layer draws, five read under 2.2:1 on the dark plot
+and are the five of item 4, at 4.7, 3.1, 3.1, 3.2 and 3.1 after; a test
+scans a figure of every kind and finds exactly those five in the default
+figures and none under 3:1 in the dark ones. The lowest that stays is the
+purple ramp's second stop `#ab47bc`, 3.5; the accent blue `#1976D2` of an
+actual event's line, a sibling overlay and the blue ramp's third stop is
+3.6.
+
+Under `default`, the same fixture project rendered by the commit before
+this work and by this one: each per-test page differs by the one line
+`--dstf-on-accent: #ffffff;`, and the dashboard by that line and the one
+rule that uses it (its footer's primary button read `color: white`). The
+figure goldens are unchanged.
+
+In Chromium, on the tool's plotly.js 3.1.1 and the report's 2.35.0: a
+plot that is zoomed, has a criterion open and an edit staged from it comes
+through the switch as the SAME DOM node with its ranges, its
+`layout.meta.dstf`, its edit config and the staged edit; its arrows show
+under the pointer and a drag of one stages again; a reload keeps the
+tab's theme and a second tab does not get it. The prototype measured the
+alternative: `Plotly.relayout` with a template leaves the ring and the
+context series in the old colours, and the next server redraw paints the
+old ground again. The hover box is read under a real mouse on both tiers
+— ground, border and text as computed, with the trace's name in it.
+Before item 14 the window of a dark project was white for 0.2-1.1 s of
+every page load; after, it is the dark page from the first frame sampled.
+
+**What stays unthemed, and why.**
+
+- Status fills and badges, role chips, and every series colour but the
+  five: they carry meaning (the brief's ruling).
+- The figure's pass, fail, window and muted regions, the error red, the
+  grip's orange (4.4:1 on the dark plot) and a marker's white outline:
+  the owner's item 5 names what follows, and these are not in it.
+- The tree card's level bars: one table for both themes. The hovered
+  shade of level 2 reads just under 3:1 on the dark surface (2.96, the
+  prototype's measurement); a bar says where a row sits and is not text.
+- The Variables drawer's array glyph: the default accent ramp's four
+  blocks in both themes. It marks a row as an array and is tied to no
+  plot; its darkest block is 1.9:1 on the dark surface, dim but there.
+- AG Grid's light scheme on `default` (item 13), the column chooser's
+  shadow literal, and what the browser draws itself — a native tooltip, a
+  select's list — which follows `color-scheme: dark` and nothing of ours.
+- A figure a plug-in capability asks its `SessionView` for is the
+  default theme's unless the capability passes `theme`: nothing hands a
+  capability its tab's theme yet.
+- A tab that switched AWAY from the project's theme shows the project's
+  ground for the moment before it connects (item 14).
+
+**What was not run.** TRANSFORM: the gate was a fixture project with a
+Python backend. Any browser but Chromium. The Playwright tests are not
+run in CI.
+
+**What it reverses.** The roadmap's §7 and DESIGN.md said status fills
+and darks and the plot series keep their values in every theme; items 3
+and 4 make the two exceptions above, on `dark` only. `figures/plotly.py`
+said its traces follow no page theme: the context grey, the ring and the
+reference event line do now, through the palette.
+
+**Consequences.** `testing.json` gains an optional key; a file without it
+reads as it did. A project that sets `"theme": "dark"` gets dark pages on
+its next `run` or `compare` — the pages on disk are not rewritten until
+then. `render_*`, `ProgressReporter` and the figure builders gain an
+optional `theme` argument; `css_variables` and `quasar_palette` take a
+theme's NAME where they took a table; `HANDLE_RING`, `HANDLE_RING_FILL`
+and `CONTEXT_COLOR` are the palette's `ring`, `ring_fill` and `context`.
+A third bundled theme is one more table in `reporting/theme.py`, one more
+palette in `figures/palette.py` and, if it is dark, its name in
+`DARK_THEMES`; the switch goes around the names in order.

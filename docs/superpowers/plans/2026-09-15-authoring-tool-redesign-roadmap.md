@@ -32,7 +32,7 @@ queue. Between those, the visible work follows the brief's own sequence
 | 4 | Editing returns (brief §3.5, in its order) | to write | 3 | Shift+click adds a point on a real trace; brush sets a window |
 | 5 | The simulation queue | to write | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
 | 6 | Live results | to write | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
-| 7 | Themes | to write | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
+| 7 | Themes | BUILT (no plan: built from a prototype and D148) | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
 
 **Reordered after the owner's first hands-on look (2026-09-26).** The owner
 used 3b and 3c over TRANSFORM and ruled, on a two-round board, what comes
@@ -513,6 +513,13 @@ theme.
 
 **Gate.** The dashboard, a report page and the tool under `dark`, screenshots
 READ; the plot's background and grid follow, its series do not.
+
+**Status (built 2026-10-08).** Built with no plan, from a prototype and D148
+(`docs/decisions.md`), which is the contract as built. Two things the goal
+above says "unchanged" were ruled otherwise by the owner from pictures of the
+prototype, on `dark` only: a status's tint and pill are dimmed (its fill and
+its badge are not), and five plot colours that do not read on a dark plot are
+lightened. The gate was run over a fixture project, not over TRANSFORM.
 
 ---
 
