@@ -300,6 +300,22 @@ GRID_CSS = """
   --ag-border-color: var(--dstf-border); --ag-row-border-color: var(--dstf-border-hairline);
   --ag-accent-color: var(--dstf-accent); --ag-selected-row-background-color: var(--dstf-selection);
   --ag-wrapper-border-radius: 4px; }
+/* A dark theme (D148): NiceGUI turns the grid's own colour scheme with
+   `body--dark`, and AG Grid's dark scheme is blue-tinted with white text.
+   The grid's ground, text and controls are the theme's instead. A light
+   theme keeps AG Grid's light scheme as it was. */
+.body--dark .dstf-suite-grid {
+  --ag-background-color: var(--dstf-surface); --ag-foreground-color: var(--dstf-text);
+  --ag-text-color: var(--dstf-text); --ag-header-text-color: var(--dstf-text);
+  --ag-subtle-text-color: var(--dstf-text-muted);
+  --ag-odd-row-background-color: var(--dstf-surface);
+  --ag-row-hover-color: var(--dstf-surface-hover);
+  --ag-chrome-background-color: var(--dstf-surface-hover);
+  --ag-header-column-resize-handle-color: var(--dstf-border);
+  --ag-input-background-color: var(--dstf-surface); --ag-input-border-color: var(--dstf-border);
+  --ag-checkbox-unchecked-border-color: var(--dstf-text-muted);
+  --ag-tooltip-background-color: var(--dstf-surface-active); }
+.body--dark .dstf-ff { background: var(--dstf-surface); color: var(--dstf-text); }
 .dstf-suite-grid .dstf-num { font-family: var(--dstf-mono); }
 .dstf-grp { display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 8px;
   font-weight: 600; background: var(--dstf-surface-hover); cursor: pointer; }

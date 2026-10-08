@@ -24,10 +24,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from nicegui import app, ui
 
 from ...cli.common import _filter_tests
-from ...reporting.theme import css_variables, level_variables, quasar_palette
+from ...reporting.theme import level_variables
 from ..capabilities import Capability, Placement, plural, registered_capabilities
 from ..session import Selection, Session, SessionView
-from .style import STYLE
+from .style import QUASAR, STYLE
+from .tab_theme import TabTheme
+from .tabstate import TabState
 
 logger = logging.getLogger(__name__)
 
@@ -385,13 +387,17 @@ class Shell:
 
     # -- the pages ---------------------------------------------------------------
 
-    def page_setup(self) -> None:
+    def page_setup(
+        self, state: TabState, switched: Callable[[], None] | None = None
+    ) -> TabTheme:
         """Every page starts here: the Quasar palette and the token
-        stylesheet from `reporting.theme`, the shell's own on top — one token
+        stylesheet from `reporting.theme`, in the tab's theme (`TabTheme`,
+        which ``switched`` is handed to), the shell's own on top — one token
         table for the dashboard, the report and the tool (roadmap §1
         predicate 2; the body font is this shell's to apply)."""
-        ui.colors(**quasar_palette())
-        ui.add_css(css_variables() + level_variables() + STYLE)
+        theme = TabTheme(self, state, switched)
+        ui.add_css(level_variables() + STYLE + QUASAR)
+        return theme
 
     def mount(self) -> None:
         """The routes beside the index: the Suite table's two scripts, the

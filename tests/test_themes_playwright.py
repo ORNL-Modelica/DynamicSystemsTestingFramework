@@ -14,11 +14,14 @@ whose testing.json says `"theme": "dark"`, and read off the files.
 from __future__ import annotations
 
 import re
+from functools import partial
 
 import pytest
 
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
+
+from playwright.sync_api import expect  # noqa: E402
 
 from dstf.figures.palette import palette_of  # noqa: E402
 from dstf.reporting import theme  # noqa: E402
@@ -27,6 +30,7 @@ from test_themes import themed_project  # noqa: E402
 
 VIEWPORT = {"width": 1280, "height": 900}
 DARK = theme.DARK_THEME
+LIGHT = theme.DEFAULT_THEME
 
 
 def rgb(colour: str) -> str:
@@ -198,6 +202,254 @@ def test_a_dark_dashboard_dims_its_rows_and_keeps_its_badges(
     assert read["badge"] == [rgb(status["fill"]), "rgb(255, 255, 255)"]
     assert read["head"] == rgb(DARK["surface-hover"])
     assert read["primary"] == [rgb(DARK["accent"]), rgb(DARK["on-accent"])]
+
+
+# -- the tool -------------------------------------------------------------------
+
+#: What the page computes of its theme.
+PAGE_THEME = """
+() => {
+  const root = getComputedStyle(document.documentElement);
+  const filled = document.querySelector('.q-btn.bg-primary:not(.disabled)');
+  const back = document.querySelector('.dstf-subheader a');
+  return {
+    dark: document.body.classList.contains('body--dark'),
+    token: root.getPropertyValue('--dstf-page').trim(),
+    window: root.backgroundColor,
+    page: getComputedStyle(document.body).backgroundColor,
+    text: getComputedStyle(document.body).color,
+    primary: getComputedStyle(document.body).getPropertyValue('--q-primary').trim(),
+    filled: filled && [getComputedStyle(filled).backgroundColor,
+                       getComputedStyle(filled).color],
+    back: back && getComputedStyle(back).color,
+  };
+}
+"""
+
+#: Plot 0 as the browser holds it: what a switch must keep, and what it
+#: must change. ``stamp`` is a property written on the DOM node before the
+#: switch — a rebuilt plot has none.
+PLOT_STATE = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout;
+  const ring = (gd.layout.shapes || []).find(
+    s => s.xsizemode === 'pixel' && s.line && s.line.width === 2);
+  return {
+    stamp: gd.__dstfStamp || null,
+    xrange: fl.xaxis.range.map(v => +(+v).toFixed(6)),
+    yrange: fl.yaxis.range.map(v => +(+v).toFixed(6)),
+    meta: JSON.stringify((gd.layout.meta || {}).dstf || null),
+    grips: Object.keys(((gd.layout.meta || {}).dstf || {}).grips || {}).length,
+    edits: !!(gd._context.edits && gd._context.edits.shapePosition),
+    shapes: (gd.layout.shapes || []).length,
+    paper: fl.paper_bgcolor,
+    template: Object.keys((gd.layout.template || {}).layout || {}).length > 0,
+    ring: ring ? ring.line.color : null,
+  };
+}
+"""
+
+
+def page_theme(page, name: str) -> dict:
+    """What `PAGE_THEME` reads once the page's tokens are ``name``'s."""
+    table = theme.THEMES[name]
+    page.wait_for_function(
+        "(want) => getComputedStyle(document.documentElement)"
+        ".getPropertyValue('--dstf-page').trim() === want",
+        arg=table["page"],
+        timeout=15_000,
+    )
+    read = page.evaluate(PAGE_THEME)
+    assert read["dark"] is theme.is_dark(name)
+    assert read["window"] == read["page"] == rgb(table["page"])
+    assert read["text"] == rgb(table["text"])
+    assert read["primary"].lower() == table["accent"].lower()
+    return read
+
+
+def plot_drawn_in(page, name: str) -> dict:
+    """Plot 0 once the browser has drawn it in ``name``'s ground."""
+    want = (palette_of(name).template or {}).get("paper_bgcolor", "#fff")
+    page.wait_for_function(
+        "(want) => { const gd = document.querySelectorAll('.js-plotly-plot')[0];"
+        " return !!gd && !!gd._fullLayout && gd._fullLayout.paper_bgcolor === want; }",
+        arg=want,
+        timeout=15_000,
+    )
+    return page.evaluate(PLOT_STATE)
+
+
+def switch_theme(page, to: str) -> None:
+    """The header's ⋮, then the item that names the theme to go to."""
+    page.locator(".dstf-header-menu").click()
+    page.get_by_role("menuitem", name=f"{to.capitalize()} theme", exact=True).click()
+    page_theme(page, to)
+
+
+def test_a_dark_projects_tool_opens_dark_and_its_hover_box_is_dark(
+    tmp_path, playwright_browser
+):
+    """testing.json says dark: the tab opens in it — the window dark from
+    its first HTML, the page's grounds and text, the filled button's text,
+    the plot and, under a real mouse, the hover box with the trace's name."""
+    from test_author_test_page_playwright import _served
+
+    project = partial(themed_project, name="dark")
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        read = page_theme(page, "dark")
+        # The strip's Accept is the page's filled primary button.
+        assert read["filled"] == [rgb(DARK["accent"]), rgb(DARK["on-accent"])]
+        assert read["back"] == rgb(DARK["accent"])
+        first = page.evaluate(
+            "async (url) => { const html = await (await fetch(url)).text();"
+            " return /<style>html \\{ background: ([^;]+); \\}<\\/style>/.exec(html)[1]; }",
+            page.url,
+        )
+        assert first == DARK["page"]
+        state = plot_drawn_in(page, "dark")
+        assert state["template"] and state["edits"]
+        plot = page.locator(".js-plotly-plot").first
+        plot.evaluate("gd => gd.scrollIntoView({block: 'center'})")
+        page.wait_for_timeout(300)
+        assert_dark_plot(plot.evaluate(PLOT_GROUND))
+        x, y = page.evaluate(POINT_PIXEL, [plot.element_handle(), 0.5])
+        page.mouse.move(x - 40, y - 30)
+        page.mouse.move(x, y, steps=4)
+        page.wait_for_timeout(400)
+        assert_dark_hover(plot.evaluate(HOVER_BOX), "Actual")
+        # The item offers the way out, and names it.
+        page.locator(".dstf-header-menu").click()
+        expect(page.get_by_role("menuitem", name="Default theme")).to_be_visible()
+        expect(page.get_by_role("menuitem", name="Dark theme")).to_have_count(0)
+
+
+def test_a_switch_keeps_the_zoom_the_arrows_and_a_staged_edit(
+    tmp_path, playwright_browser
+):
+    """The session switch, live, on a plot that is zoomed, has a criterion
+    open and an edit staged from it: the SAME plot node comes back dark
+    with its ranges, its `layout.meta.dstf`, its edit config and its staged
+    edit; its arrows still show under the pointer and a drag of one stages
+    again. A reload keeps the tab's theme; a second tab does not get it;
+    the tab's Suite page is dark too, its grid on the theme's ground."""
+    from test_author_test_page_playwright import (
+        FOUR,
+        ZOOM_AND_STAMP,
+        _drag_arrow,
+        _grips_on,
+        _grips_project,
+        _group,
+        _open_for_grips,
+        _pending,
+        _served,
+        _shape,
+        _table_cell,
+    )
+
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        url = page.url
+        before = page_theme(page, "default")
+        assert before["filled"][1] == rgb(LIGHT["on-accent"])
+        assert before["back"] == rgb(LIGHT["accent"])
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        page.evaluate(ZOOM_AND_STAMP, [[0.0, 0.6], [0.0, 0.7]])
+        _drag_arrow(page, "/points/upper/0", 0, -20)
+        cell = _table_cell(page, 0, "+ tolerance")
+        expect(cell).not_to_have_value("0.05", timeout=15_000)
+        staged = cell.input_value()
+        assert _pending(page) == "1 pending edit"
+        page.wait_for_timeout(500)  # the redraw that answers the release
+        was = plot_drawn_in(page, "default")
+        # Two checkpoints, four arrows each.
+        assert was["stamp"] == "before-open" and was["grips"] == 8
+        assert not was["template"] and was["ring"] == palette_of("default").ring
+
+        switch_theme(page, "dark")
+        now = plot_drawn_in(page, "dark")
+        kept = ("stamp", "xrange", "yrange", "meta", "grips", "edits", "shapes")
+        assert {k: now[k] for k in kept} == {k: was[k] for k in kept}
+        assert now["xrange"] == [0.0, 0.6] and now["yrange"] == [0.0, 0.7]
+        assert now["template"] and now["ring"] == palette_of("dark").ring
+        # The staged edit: in the header, in the editor, nowhere re-typed.
+        assert _pending(page) == "1 pending edit"
+        expect(cell).to_have_value(staged)
+        assert page.evaluate(PAGE_THEME)["filled"][1] == rgb(DARK["on-accent"])
+
+        # The arrows: shown near their checkpoint, and one still drags.
+        at = _shape(page, "/points/target/0")
+        page.mouse.move(at["x"] - 40, at["y"] - 40)
+        page.mouse.move(at["x"], at["y"], steps=4)
+        page.wait_for_timeout(300)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        _drag_arrow(page, "/points/upper/0", 0, -15)
+        expect(cell).not_to_have_value(staged, timeout=15_000)
+        assert float(cell.input_value()) > float(staged)
+        assert "pending edit" in _pending(page)
+        page.wait_for_timeout(500)
+        after_drag = plot_drawn_in(page, "dark")
+        assert after_drag["xrange"] == now["xrange"]
+        assert after_drag["stamp"] == "before-open"
+
+        # A reload keeps the tab's theme and the Session's staged edit.
+        page.reload()
+        expect(page.locator(".js-plotly-plot").first).to_be_visible(timeout=15_000)
+        page_theme(page, "dark")
+        assert plot_drawn_in(page, "dark")["template"]
+        assert "pending edit" in _pending(page)
+
+        # A second tab on the same server starts in the project's theme.
+        other = page.context.new_page()
+        other.goto(url)
+        expect(other.locator(".js-plotly-plot").first).to_be_visible(timeout=15_000)
+        page_theme(other, "default")
+        assert not plot_drawn_in(other, "default")["template"]
+        other.locator(".dstf-header-menu").click()
+        expect(other.get_by_role("menuitem", name="Dark theme")).to_be_visible()
+        other.close()
+        assert page.evaluate(PAGE_THEME)["dark"] is True
+
+        # The tab's Suite page: dark, and the grid on the theme's ground.
+        page.goto(url.split("/test/")[0] + "/")
+        page.wait_for_selector(".ag-center-cols-container .ag-row[row-id]")
+        page_theme(page, "dark")
+        grid = page.evaluate(
+            """() => {
+              const row = document.querySelector(
+                '.ag-center-cols-container .ag-row[class*="dstf-tint-"]');
+              const cell = row.querySelector('.ag-cell:not(:has(.dstf-badge-cell))');
+              const css = (el, p) => getComputedStyle(el)[p];
+              return {
+                mode: document.querySelector('.dstf-suite-grid')
+                        .getAttribute('data-ag-theme-mode'),
+                wrapper: css(document.querySelector('.ag-root-wrapper'), 'backgroundColor'),
+                header: css(document.querySelector('.ag-header'), 'backgroundColor'),
+                headerText: css(document.querySelector('.ag-header-cell-text'), 'color'),
+                status: [...row.classList].find(c => c.startsWith('dstf-tint-')).slice(10),
+                row: css(row, 'backgroundColor'),
+                text: css(cell, 'color'),
+              };
+            }"""
+        )
+        tints = theme.status_colours("dark")
+        assert grid == {
+            "mode": "dark",
+            "wrapper": rgb(DARK["surface"]),
+            "header": rgb(DARK["surface-hover"]),
+            "headerText": rgb(DARK["text"]),
+            "status": grid["status"],
+            "row": rgb(tints[grid["status"]]["tint"]),
+            "text": rgb(DARK["text"]),
+        }
+        # And back, live: the grid follows with no reload.
+        switch_theme(page, "default")
+        page.wait_for_function(
+            "(want) => getComputedStyle(document.querySelector('.ag-root-wrapper'))"
+            ".backgroundColor === want",
+            arg=rgb(LIGHT["surface"]),
+            timeout=15_000,
+        )
 
 
 def test_the_palette_this_file_reads_is_the_figures():

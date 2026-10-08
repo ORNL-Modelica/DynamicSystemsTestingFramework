@@ -18,6 +18,10 @@ KEY = "dstf"
 @dataclass
 class TabState:
     checked: set[str] = field(default_factory=set)
+    #: The theme this tab switched to (D148; `tab_theme.py`), a bundled
+    #: name; None until it switches: the project's. The tab's, so a reload
+    #: and the tab's other page keep it and another tab does not get it.
+    theme: str | None = None
     #: The Test page's open drawer — "tests", "variables" or None — and
     #: every control of both drawers (3c; step T, Q7): the tab's, so a
     #: switch of test, which builds new drawers, keeps them.

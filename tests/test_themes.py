@@ -486,9 +486,10 @@ class TestFigures:
                 build(theme="solarized")
 
 
-#: What renders a page, and so takes the project's theme: a call in `src`
-#: that leaves `theme=` out renders the default theme whatever testing.json
-#: says, and nothing else would fail.
+#: What renders a page or builds a figure, and so takes a theme — the
+#: project's for a generated page, the tab's in the tool: a call in `src`
+#: that leaves `theme=` out draws the default theme whatever testing.json
+#: or the tab says, and nothing else would fail.
 RENDERERS = frozenset(
     {
         "render_live",
@@ -496,6 +497,11 @@ RENDERERS = frozenset(
         "render_final_to",
         "generate_comparison_plots",
         "ProgressReporter",
+        "plot_page_keys",
+        "plot_figure",
+        "variable_figure",
+        # The Session's own two, reached as `session.figure(...)`.
+        "figure",
     }
 )
 
@@ -522,8 +528,10 @@ class TestTheThemeIsHandedDown:
         calls = _render_calls()
         # The eight of `cli/run_cmds.py`, the tool's two, the pipeline's,
         # the reporter's own and its construction, the suite's and the
-        # review's page: fewer means the scan stopped finding them.
-        assert len(calls) >= 15, [(p, n) for p, n, _ in calls]
+        # review's page, and every figure built: the report's two, the
+        # Session's and its view's, the plot card's. Fewer means the scan
+        # stopped finding them.
+        assert len(calls) >= 24, [(p, n) for p, n, _ in calls]
         silent = [
             (path, line)
             for path, line, call in calls

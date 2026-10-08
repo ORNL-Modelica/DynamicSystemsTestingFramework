@@ -29,6 +29,32 @@ _TINTS = "".join(
     for status in STATUS
 )
 
+#: What Quasar draws itself, under a theme (D148; `Shell.page_setup` lays it
+#: after `STYLE`). Under `body--dark` — which `TabTheme` sets for a dark
+#: theme — Quasar paints its own surfaces from `--q-dark` / `--q-dark-page`
+#: (the palette's) and these are the pieces that name a colour of their own.
+QUASAR = """
+/* A filled primary button's text is the token's, not Quasar's white: on the
+   dark accent white reads 2.2:1. Quasar's `.text-white` is `!important`
+   INSIDE NiceGUI's `quasar_importants` layer, and a layered important beats
+   any unlayered one — the rule joins that layer and wins there on
+   specificity (unlayered, the button stayed rgb(255, 255, 255) in Chromium). */
+@layer quasar_importants {
+  .q-btn.bg-primary { color: var(--dstf-on-accent) !important; }
+}
+/* The window's own ground follows the tab's theme: `first_paint` gave it
+   the project's before this stylesheet arrived. */
+html { background: var(--dstf-page); }
+body.body--dark { background: var(--dstf-page); color: var(--dstf-text); }
+.body--dark .q-card, .body--dark .q-menu, .body--dark .q-dialog__inner > div,
+.body--dark .q-drawer { background: var(--dstf-surface); color: var(--dstf-text); }
+.body--dark .q-tooltip { background: var(--dstf-surface-active); color: var(--dstf-text); }
+.body--dark .q-field__native, .body--dark .q-field__input,
+.body--dark .q-field__label, .body--dark .q-item__label--caption {
+  color: var(--dstf-text-secondary); }
+.body--dark .q-separator { background: var(--dstf-border); }
+"""
+
 STYLE = (
     """
 body, .q-header, .q-drawer, .q-btn, .q-field, .q-badge, .q-dialog, .q-tooltip, .q-item {
