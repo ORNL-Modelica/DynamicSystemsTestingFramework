@@ -402,6 +402,32 @@ class TestWorkerRunTest:
         assert 'outputFormat="mat"' in expr
         assert 'fileNamePrefix="result"' in expr
 
+    def test_mat_sync_is_in_the_simulate_call_only_for_a_watched_run(self, tmp_path):
+        """``Config.live_results`` is the one switch: off (every CLI run) the
+        expression is the one above; on, it ends with the simflags."""
+        from dstf.backends.openmodelica.backend import OpenModelicaConfig
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+        test = _make_test(stop_time=5.0, number_of_intervals=100)
+        sent: dict[bool, str] = {}
+        for live in (False, True):
+            root = tmp_path / f"live_{live}"
+            root.mkdir()
+            cfg = _make_config(root, dependencies=["Modelica"], live_results=live)
+
+            def fake_simulate(expr: str, live=live):
+                sent[live] = expr
+                return {"resultFile": "", "messages": "stopped here"}
+
+            fake = FakeSession(responses={"simulate(": fake_simulate})
+            worker = OpenModelicaWorker(
+                0, cfg, OpenModelicaConfig.from_config(cfg), lambda fake=fake: fake
+            )
+            worker.start()
+            worker.run_test(test, "test_0001")
+        assert "simflags" not in sent[False] and "mat_sync" not in sent[False]
+        assert sent[True] == sent[False][: -len(")")] + ', simflags="-mat_sync=1")'
+
     def test_failure_surfaces_error_notices(self, tmp_path):
         """When simulate returns a record with empty resultFile + Error
         notices in getErrorString, run_test returns a readable error."""

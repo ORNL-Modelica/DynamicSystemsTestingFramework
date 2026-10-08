@@ -59,6 +59,9 @@ class OpenModelicaConfig:
     backend_setup: tuple[str, ...] = ()
     diagnostic_variables: tuple[str, ...] = ("CPUtime", "EventCounter")
     std_version: str = "latest"
+    #: Write each output row to the result file as it is produced
+    #: (``Config.live_results``).
+    mat_sync: bool = False
 
     @classmethod
     def from_config(cls, config: Config) -> OpenModelicaConfig:
@@ -71,6 +74,7 @@ class OpenModelicaConfig:
             omc_path=omc_path,
             backend_setup=tuple(config.backend_setup),
             diagnostic_variables=tuple(config.diagnostic_variables),
+            mat_sync=config.live_results,
         )
 
 
@@ -147,6 +151,7 @@ class OpenModelicaBackend(Backend):
             backend_setup=list(self.om_config.backend_setup),
             diagnostic_vars=list(self.om_config.diagnostic_variables),
             std_version=self.om_config.std_version,
+            mat_sync=self.om_config.mat_sync,
         )
         mos_path = test_dir / self.MOS_FILENAME
         mos_path.write_text(mos_text, encoding="utf-8")

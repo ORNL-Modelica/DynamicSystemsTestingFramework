@@ -337,6 +337,15 @@ class Config:
     default_points: bool = False
     timeout: int = 60
 
+    # The run's results will be read WHILE it is in progress (the authoring
+    # tool showing a running test). Set by that caller only: there is no
+    # testing.json key and no CLI flag, so a `dstf run` is never changed by
+    # it. A backend whose result file would otherwise reach the disk late
+    # pays to write it promptly — OpenModelica passes `-mat_sync=1`, measured
+    # at +3 % run time on a local disk and +59 % for an output-heavy run on a
+    # Windows mount. Dymola appends as it goes and needs nothing.
+    live_results: bool = False
+
     # Output
     work_dir: Path | None = None
 
