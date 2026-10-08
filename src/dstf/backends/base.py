@@ -373,6 +373,13 @@ class ItemRunner:
         """Bring the runner up. Raises ``RuntimeError`` whose text is the
         reason, in the backend's own words, when it cannot."""
 
+    def starting(self) -> tuple[str, float] | None:
+        """While the thing that runs tests is being brought up — the first
+        time, or back after a death: ``(phase, seconds so far)``, the phase
+        in the backend's own words. ``None`` otherwise, and always here:
+        this runner has nothing to start."""
+        return None
+
     def _run(self, test: TestModel, test_key: str) -> TestRunResult:
         """Run *test* to its end on the calling thread."""
         if self._cancel_asked:

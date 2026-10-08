@@ -111,6 +111,20 @@ class ItemPath(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class StartingWorker:
+    """A worker that is being brought up right now — its first start, or a
+    restart after a death."""
+
+    worker_id: int
+    #: The step the start is in, in the backend's own words
+    #: (``loadFile("/lib/package.mo")``, ``its launch``); ``""`` when the
+    #: backend names none.
+    phase: str
+    #: Seconds since this start began.
+    seconds: float
+
+
 @dataclass(eq=False)
 class _Slot:
     """One pool thread and the runner it drives."""
@@ -146,7 +160,8 @@ class SimulationPool:
     **Workers.** None exists until the first ``submit``; then as many as
     there are items to run, up to ``workers`` (``Config.parallel`` unless
     given). Setting ``workers`` higher starts more as items need them;
-    lower lets the surplus go as each finishes its item. They live until
+    lower lets the surplus go as each finishes its item. ``starting`` lists
+    the ones still coming up, with the phase each is in. They live until
     ``close`` — which the owner must call: the pool's threads are daemons
     and do not keep a dying process open, but nothing else ends the
     workers' tool processes.
@@ -229,6 +244,24 @@ class SimulationPool:
                 for _, slot in sorted(self._slots.items())
                 if slot.item is not None
             )
+
+    @property
+    def starting(self) -> tuple[StartingWorker, ...]:
+        """The workers being brought up right now, by worker id — empty once
+        each has started or failed to. A large library is minutes of load in
+        a live tool: this is what says so while the items wait."""
+        with self._cond:
+            runners = [
+                (slot_id, slot.runner)
+                for slot_id, slot in sorted(self._slots.items())
+                if slot.runner is not None
+            ]
+        found = []
+        for slot_id, runner in runners:
+            state = runner.starting()
+            if state is not None:
+                found.append(StartingWorker(slot_id, *state))
+        return tuple(found)
 
     def submit(self, test: TestModel) -> QueueItem:
         """Append *test*. Raises :class:`Refused` when it is already waiting
@@ -488,4 +521,11 @@ class SimulationPool:
             logger.exception("pool: a callback raised for %s", item.model_id)
 
 
-__all__ = ["ItemPath", "ItemState", "QueueItem", "Refused", "SimulationPool"]
+__all__ = [
+    "ItemPath",
+    "ItemState",
+    "QueueItem",
+    "Refused",
+    "SimulationPool",
+    "StartingWorker",
+]

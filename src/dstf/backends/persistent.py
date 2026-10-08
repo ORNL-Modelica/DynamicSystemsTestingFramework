@@ -56,6 +56,26 @@ class WorkerStartError(RuntimeError):
     :meth:`Worker.process_detail` beside it."""
 
 
+#: The ``testing.json`` key that bounds a worker's start, as a sentence that
+#: ends every "did not start within" message: the bound is a guess about the
+#: library, and the reader of the message is the one who can correct it.
+STARTUP_TIMEOUT_HINT = (
+    '(raise "worker_startup_timeout" in testing.json if this library needs longer)'
+)
+
+
+def start_timed_out_message(bound: float, detail: str = "") -> str:
+    """``did not start within 600 s — <detail> (raise "worker_startup_timeout"
+    ...)``: what a start that outlived its bound is failed with. *detail* is
+    the backend's :meth:`Worker.process_detail` — whether the tool still
+    runs, and the step it is in."""
+    return (
+        f"did not start within {bound:g} s"
+        + (f" — {detail}" if detail else "")
+        + f" {STARTUP_TIMEOUT_HINT}"
+    )
+
+
 class Worker(ABC):
     """One long-lived simulator subprocess wrapped as a test-running unit.
 
@@ -112,9 +132,12 @@ class Worker(ABC):
     #: shutdown runs, looking for children spawned inside that window.
     _ORPHAN_POLL_SECONDS: float = 0.25
     #: Seconds a start gets when ``testing.json`` sets no
-    #: ``worker_startup_timeout``. A backend whose first start is slow by
-    #: nature raises it (Julia compiles its packages).
-    startup_timeout: float = 60.0
+    #: ``worker_startup_timeout``. The bound is for a tool that hangs: one
+    #: that DIED is failed at once, whatever this says (:meth:`start_within`
+    #: watches the process). So it is generous — a large library is minutes
+    #: of ``loadFile`` in a live omc, and a bound below that fails a run that
+    #: only had to wait. A backend with a reason for another sets its own.
+    startup_timeout: float = 600.0
     #: How often :meth:`start_within` looks at a start in flight.
     _START_POLL_SECONDS: float = 0.25
     #: How often the watchdog looks at the tracked process while a test runs:
@@ -153,8 +176,11 @@ class Worker(ABC):
         self._start_abort = threading.Event()
         #: The tool call in flight, in the tool's own spelling
         #: (``loadModel(Modelica)``) — what :meth:`process_detail` says the
-        #: process died or stalled during. A backend sets it as it goes.
+        #: process died or stalled during, and :meth:`starting` the phase of
+        #: a start. A backend sets it as it goes.
         self._step: str = ""
+        #: ``time.monotonic()`` of the :meth:`start_within` in flight.
+        self._start_began: float | None = None
 
     @abstractmethod
     def start(self) -> None:
@@ -282,6 +308,24 @@ class Worker(ABC):
         if self._start_abandoned:
             raise WorkerStartError("its previous start never returned")
         bound = self.startup_bound() if timeout is None else float(timeout)
+        self._start_began = time.monotonic()
+        try:
+            self._start_bounded(bound)
+        finally:
+            self._start_began = None
+
+    def starting(self) -> tuple[str, float] | None:
+        """While a :meth:`start_within` is in flight: the step it is in, in
+        the tool's own spelling (``loadFile("...")``; ``""`` before the
+        backend named one), and the seconds since it began. ``None`` when no
+        start is in flight. Read from any thread — it is what a queue shows
+        for a worker that is slow to come up."""
+        began = self._start_began
+        if began is None:
+            return None
+        return self._step, time.monotonic() - began
+
+    def _start_bounded(self, bound: float) -> None:
         done = threading.Event()
         lock = threading.Lock()
         box: dict[str, BaseException] = {}
@@ -317,10 +361,7 @@ class Worker(ABC):
             elif process_gone(self.pids):
                 reason = self._safe_detail() or "its process exited during start"
             elif remaining <= 0:
-                detail = self._safe_detail()
-                reason = f"did not start within {bound:.0f} s" + (
-                    f" — {detail}" if detail else ""
-                )
+                reason = start_timed_out_message(bound, self._safe_detail())
         if reason is not None:
             with lock:
                 abandoned[0] = not done.is_set()
@@ -762,6 +803,9 @@ class WorkerRunner(ItemRunner):
     def start(self) -> None:
         self.worker.start_within()
         self.backend.note_versions([self.worker])
+
+    def starting(self) -> tuple[str, float] | None:
+        return self.worker.starting()
 
     def expect(self, test_key: str) -> None:
         super().expect(test_key)

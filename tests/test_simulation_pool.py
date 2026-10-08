@@ -26,8 +26,18 @@ import pytest
 
 from conftest import make_test_model
 from dstf.backends.base import Backend
-from dstf.backends.persistent import PersistentBackendBase, Worker
-from dstf.backends.pool import ItemState, QueueItem, Refused, SimulationPool
+from dstf.backends.persistent import (
+    STARTUP_TIMEOUT_HINT,
+    PersistentBackendBase,
+    Worker,
+)
+from dstf.backends.pool import (
+    ItemState,
+    QueueItem,
+    Refused,
+    SimulationPool,
+    StartingWorker,
+)
 from dstf.backends.types import Capability, TestResult, TestRunResult
 from dstf.pipeline import ItemRun, open_pool, run_pipeline
 
@@ -549,9 +559,9 @@ class TestStartBound:
             items = [pool.submit(_t(name)) for name in "ABC"]
             _wait_until(lambda: _ended(*items))
 
+            reason = f"did not start within 0.2 s {STARTUP_TIMEOUT_HINT}"
             message = (
-                "No Stub worker could start — worker 0: did not start within 0 s; "
-                "worker 1: did not start within 0 s"
+                f"No Stub worker could start — worker 0: {reason}; worker 1: {reason}"
             )
             assert pool.stopped == message
             for item in items:
@@ -561,6 +571,37 @@ class TestStartBound:
             assert backend.ran == []
             with pytest.raises(Refused, match="No Stub worker could start"):
                 pool.submit(_t("D"))  # the queue has stopped
+        finally:
+            release.set()
+            pool.close()
+
+    def test_a_worker_coming_up_is_listed_with_its_phase_and_seconds(self, tmp_path):
+        """What a queue shows while a large library loads: "starting worker
+        0 — loadFile(...) · 85 s". Gone once the worker is up."""
+        release, loading = threading.Event(), threading.Event()
+
+        def start(worker):
+            worker._step = 'loadFile("/lib/package.mo")'
+            loading.set()
+            release.wait(30)
+            worker._step = ""
+
+        backend, pool, _ = self._pool(tmp_path, start)
+        backend.config.worker_startup_timeout = 60.0
+        try:
+            assert pool.starting == ()  # no worker exists before a submit
+            item = pool.submit(_t("A"))
+            assert loading.wait(15)
+            (starting,) = pool.starting
+            assert isinstance(starting, StartingWorker)
+            assert starting.worker_id == 0
+            assert starting.phase == 'loadFile("/lib/package.mo")'
+            assert 0.0 <= starting.seconds < 15.0
+            assert item.state is ItemState.WAITING  # nothing took it yet
+
+            release.set()
+            _wait_until(lambda: _ended(item))
+            assert item.state is ItemState.FINISHED and pool.starting == ()
         finally:
             release.set()
             pool.close()

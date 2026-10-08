@@ -338,7 +338,7 @@ class Config:
     timeout: int = 60
     # Seconds a persistent worker's start may take (testing.json
     # `worker_startup_timeout`). None means "not set": each backend's own
-    # default applies (60 s; 240 s for Julia, whose first start compiles).
+    # default applies (`Worker.startup_timeout`: 600 s on every backend).
     worker_startup_timeout: float | None = None
 
     # The run's results will be read WHILE it is in progress (the authoring

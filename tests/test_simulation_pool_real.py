@@ -389,6 +389,6 @@ def test_omc_killed_during_start_fails_the_items_with_its_words(
             "No OpenModelica worker could start — worker 0: omc exited (code -9) "
             "during loadModel(Modelica)"
         )
-        assert seconds < 30.0  # at once, not at the 60 s bound
+        assert seconds < 30.0  # at once, not at the bound
     finally:
         pool.close()

@@ -230,7 +230,7 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `test_spec` — path to external test definitions file
 - `recognizers` — custom JSON recognizers appended to the bundled list (see `discovery/json_recognizer.py`)
 - `tolerance` — global NRMSE comparison tolerance (default: `1e-4`)
-- `worker_startup_timeout` — seconds a persistent worker may take to start before the run fails with the backend's message (default: 60; 240 for Julia)
+- `worker_startup_timeout` — seconds a persistent worker may take to start before the run fails with the backend's message, which names this key (default: 600 on every backend — the bound is for a tool that hangs; one that died fails at once)
 - `max_embedded_samples` — LTTB decimation cap per variable in `interactive.html` (default: 1000)
 - `diagnostic_variables` — variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`)
 

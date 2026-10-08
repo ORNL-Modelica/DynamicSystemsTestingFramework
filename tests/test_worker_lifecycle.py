@@ -27,6 +27,7 @@ import pytest
 from conftest import make_test_model
 from dstf.backends.base import no_worker_message
 from dstf.backends.persistent import (
+    STARTUP_TIMEOUT_HINT,
     PersistentBackendBase,
     Worker,
     WorkerRunner,
@@ -112,17 +113,94 @@ class TestBoundedStart:
         worker = _Worker(0, _config(tmp_path), start=lambda w: release.wait(30))
 
         t0 = time.monotonic()
-        with pytest.raises(WorkerStartError, match=r"did not start within 0 s"):
+        with pytest.raises(WorkerStartError) as raised:
             worker.start_within(0.2)
 
+        assert str(raised.value) == f"did not start within 0.2 s {STARTUP_TIMEOUT_HINT}"
         assert time.monotonic() - t0 < 5.0
         assert not worker.is_alive()
         release.set()
 
+    def test_the_message_names_the_step_and_the_key_to_raise(self, tmp_path):
+        """A slow load in a live tool is not a hang: the sentence says which
+        call the tool is in and which key gives it longer."""
+        release = threading.Event()
+
+        class _Loading(_Worker):
+            def process_detail(self):
+                return f"omc is still running during {self._step}"
+
+        def start(worker):
+            worker._step = 'loadFile("/lib/package.mo")'
+            release.wait(30)
+
+        worker = _Loading(0, _config(tmp_path), start=start)
+        with pytest.raises(WorkerStartError) as raised:
+            worker.start_within(0.2)
+        release.set()
+
+        assert str(raised.value) == (
+            "did not start within 0.2 s — omc is still running during "
+            'loadFile("/lib/package.mo") (raise "worker_startup_timeout" in '
+            "testing.json if this library needs longer)"
+        )
+
     def test_the_bound_comes_from_the_config_then_the_worker_class(self, tmp_path):
-        assert _Worker(0, _config(tmp_path)).startup_bound() == 60.0
+        assert _Worker(0, _config(tmp_path)).startup_bound() == 600.0
         configured = _config(tmp_path, worker_startup_timeout=7)
         assert _Worker(0, configured).startup_bound() == 7.0
+
+    def test_the_default_bound_outlasts_a_slow_library_load(self, tmp_path):
+        """A large library is minutes of `loadFile` in a live omc (142.9 s,
+        measured): the default is for a tool that hangs, so no backend's is
+        below ten minutes — and a start of 100 "seconds" passes the default
+        path, here with both scaled by a thousand."""
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
+        from dstf.backends.julia.persistent_backend import JuliaWorker
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+        assert Worker.startup_timeout >= 600.0
+        for cls in (DymolaWorker, OpenModelicaWorker, JuliaWorker):
+            assert cls.startup_timeout >= 600.0, cls.__name__
+
+        class _Scaled(_Worker):
+            startup_timeout = Worker.startup_timeout / 1000
+
+        worker = _Scaled(0, _config(tmp_path), start=lambda w: time.sleep(100 / 1000))
+        worker.start_within()  # the bound is startup_bound(): the default
+        assert worker.is_alive()
+
+    def test_a_start_in_flight_reports_its_step_and_its_seconds(self, tmp_path):
+        release, loading = threading.Event(), threading.Event()
+
+        def start(worker):
+            worker._step = 'loadFile("/lib/package.mo")'
+            loading.set()
+            release.wait(30)
+            worker._step = ""
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        assert worker.starting() is None  # nothing started yet
+        th = threading.Thread(target=worker.start_within, args=(30.0,))
+        th.start()
+        try:
+            assert loading.wait(10)
+            phase, seconds = worker.starting()
+            assert phase == 'loadFile("/lib/package.mo")' and 0.0 <= seconds < 10.0
+            time.sleep(0.05)
+            assert worker.starting()[1] > seconds  # it counts on
+        finally:
+            release.set()
+            th.join(10)
+        assert worker.is_alive() and worker.starting() is None  # started
+
+    def test_a_start_that_failed_is_not_starting_any_more(self, tmp_path):
+        release = threading.Event()
+        worker = _Worker(0, _config(tmp_path), start=lambda w: release.wait(30))
+        with pytest.raises(WorkerStartError):
+            worker.start_within(0.1)
+        assert worker.starting() is None
+        release.set()
 
     def test_an_abandoned_start_that_returns_later_is_closed(self, tmp_path):
         """The start thread nobody waits for any more must not leave a live
@@ -253,10 +331,8 @@ def test_a_run_whose_workers_hang_at_start_fails_with_the_message(tmp_path):
         backend.run_tests([make_test_model("Lib.A"), make_test_model("Lib.B")])
     release.set()
 
-    message = (
-        "No Stub worker could start — worker 0: did not start within 0 s; "
-        "worker 1: did not start within 0 s"
-    )
+    reason = f"did not start within 0.2 s {STARTUP_TIMEOUT_HINT}"
+    message = f"No Stub worker could start — worker 0: {reason}; worker 1: {reason}"
     assert str(raised.value) == f"{message}. Try re-running with --batch."
     manifest = json.loads((config.work_dir / "batch_manifest.json").read_text())
     assert {e["last_run_status"] for e in manifest.values()} == {"failed"}
