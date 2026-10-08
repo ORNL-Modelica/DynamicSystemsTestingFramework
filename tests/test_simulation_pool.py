@@ -587,32 +587,36 @@ class TestCancel:
 
     def test_a_stop_asked_as_the_simulation_finished_keeps_its_result(self, tmp_path):
         """`cancel` says the item was asked to stop, not that it will end
-        cancelled: a simulation that had finished is a result."""
-        backend = _FakeBackend(_config(tmp_path))
-        reading, release = threading.Event(), threading.Event()
+        cancelled: the stop reached the tool as its simulation completed,
+        and a simulation that finished is a result."""
 
-        class _SlowEnd(ItemRun):
-            def end(self, test, test_key, run_result):
-                reading.set()
-                release.wait(15)
-                return super().end(test, test_key, run_result)
+        class _FinishesAnyway(_FakeWorker):
+            def cancel_running(self, test_key):
+                self.b.gates["Lib.A"].set()  # the tool comes back, done
+                return True
 
+        class _Backend(_FakeBackend):
+            def make_worker(self, worker_id):
+                worker = _FinishesAnyway(worker_id, self.config, self)
+                self.workers.append(worker)
+                return worker
+
+        backend = _Backend(_config(tmp_path))
+        backend.gate("Lib.A")
         pool = SimulationPool(
-            backend, _SlowEnd(backend.config, backend=backend, store=_STORE)
+            backend, ItemRun(backend.config, backend=backend, store=_STORE)
         )
         try:
             item = pool.submit(_t("A"))
-            assert reading.wait(15) and item.state is ItemState.RUNNING
+            _wait_until(lambda: ("Lib.A", 0) in backend.ran)
             assert pool.cancel(item) is True
-            release.set()
             _wait_until(lambda: _ended(item))
 
             assert item.state is ItemState.FINISHED and item.message is None
             assert item.run_result.success and not item.run_result.cancelled
-            assert item.result.success
+            assert item.result.success and backend.closes == []
             assert _manifest(backend.config) == {"Lib.A": "passed"}
         finally:
-            release.set()
             pool.close()
 
     def test_a_backend_without_the_flag_refuses_with_a_sentence(self, tmp_path):
