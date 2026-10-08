@@ -246,6 +246,32 @@ async def test_a_typed_number_is_drawn_by_its_own_component():
         assert isinstance(made["n"], ui.number) and made["n"].value == 0.3
 
 
+@pytest.mark.parametrize("typed", ["-0", "-0.", "-0.0", "-0e3"])
+async def test_a_negative_zero_typed_is_a_zero(typed):
+    """`-0` is on the way to every negative number and is what a refused
+    `-0.5` backspaces to: a float of it is −0.0, which the field handed on
+    as it came — staged, and written `-0.0` by Save. Every number field of
+    the tool is this one, so here a zero is a zero whatever its sign."""
+    import math
+
+    made, heard = {}, []
+
+    def root():
+        made["n"] = TypedNumber(
+            label="n", value=0.3, on_change=lambda e: heard.append(e.value)
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(TypedNumber).trigger("update:modelValue", typed)
+        assert heard == [0.0] and math.copysign(1.0, heard[0]) == 1.0
+        assert math.copysign(1.0, made["n"].value) == 1.0
+        # A number that is not zero keeps its sign, and nothing is nothing.
+        user.find(TypedNumber).trigger("update:modelValue", "-0.5")
+        user.find(TypedNumber).trigger("update:modelValue", "")
+        assert heard[1:] == [-0.5, None]
+
+
 async def test_an_edit_resends_the_field_only_when_its_hint_changes(monkeypatch):
     """A prop written is the whole field sent again. The hint is written
     when a value takes it away and when a clearing brings it back, not on

@@ -34,6 +34,7 @@ from test_session import (  # noqa: E402
     D,
     _Gate,
     _project,
+    _session_with_entry,
     _two_var_project,
 )
 
@@ -593,6 +594,29 @@ async def test_a_negative_tolerance_typed_puts_the_leaf_back(session):
         assert tol.value == -0.5
         _keys(user, tol, "0.2")
         assert session.tree(A)["tolerance"] == 0.2
+        assert "edit-criteria" not in errors
+
+
+@pytest.mark.parametrize("saved", [0.3, 0])
+async def test_a_negative_zero_typed_in_a_criterions_field_is_staged_as_zero(
+    tmp_path, saved
+):
+    """`-0` in a criterion's tolerance — what `-0.5`, refused, backspaces
+    to — is a tolerance of 0, and is staged as that: it was −0.0, which
+    Save wrote as `-0.0`. Over a saved tolerance of 0 it is no edit."""
+    import json
+    import math
+
+    s = _session_with_entry(tmp_path, {"metrics": {**NRMSE_ROOT, "tolerance": saved}})
+    async with host(s, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        tol = _number(user, "Tolerance")
+        _keys(user, tol, "-0.5")
+        assert "edit-criteria" in errors and s.spec.pending == []
+        _keys(user, tol, "-0.")
+        staged = s.tree(A)["tolerance"]
+        assert staged == 0 and math.copysign(1.0, staged) == 1.0
+        assert len(s.spec.pending) == (1 if saved else 0)
+        assert "-0.0" not in json.dumps(s.export())
         assert "edit-criteria" not in errors
 
 

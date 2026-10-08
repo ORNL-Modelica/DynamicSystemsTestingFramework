@@ -27,7 +27,7 @@ from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.comparison.handles import HandleEditError  # noqa: E402
 from test_handles import TREE  # noqa: E402
-from test_session import A, D, _Gate, _project  # noqa: E402
+from test_session import A, D, _Gate, _project, _session_with_entry  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -1848,6 +1848,35 @@ async def test_a_refused_cell_entered_again_puts_back_what_the_spec_holds(
         )
         assert session.spec.pending == pending
         assert _cell(user, lower).value == -0.7
+
+
+@pytest.mark.parametrize("field", ["points", "peaks"])
+@pytest.mark.parametrize("saved", [0.05, 0])
+async def test_a_refused_cell_backspaced_to_a_negative_zero_stages_a_zero(
+    tmp_path, field, saved
+):
+    """A refused −0.5 in a row's tolerance, the cell left, entered again
+    and backspaced to `-0.`: that is a tolerance of 0, and is staged as
+    one — it was −0.0, one pending edit that Save wrote as `-0.0`. Where
+    the file's row holds 0 it is no edit at all."""
+    import math
+
+    leaf = copy.deepcopy(SIDED[field][0])
+    leaf[field][0]["tolerance"] = saved
+    session = _session_with_entry(tmp_path, {"metrics": leaf})
+    lower = f"/metrics:{field}:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _keys(user, lower, "-0.5")
+        await _settled(lambda: "got −0.5" in errors.get("edit-on-plot", ""))
+        assert session.spec.pending == []
+        user.find(marker=f"/metrics:{field}").trigger("focusin")
+        _keys(user, lower, "-0.")
+        await _settled(lambda: "edit-on-plot" not in errors)
+        await asyncio.sleep(0.25)
+        staged = _a_rows(session, field)[0]["tolerance"]
+        assert staged == 0 and math.copysign(1.0, staged) == 1.0
+        assert len(session.spec.pending) == (1 if saved else 0)
+        assert "-0.0" not in json.dumps(session.export())
 
 
 async def test_a_refused_cell_in_a_row_the_spec_does_not_hold_puts_back_its_own(

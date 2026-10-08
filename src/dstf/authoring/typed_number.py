@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from nicegui import ui
+from nicegui.events import GenericEventArguments
 
 
 class TypedNumber(ui.number, component="typed_number.js"):
@@ -41,3 +42,13 @@ class TypedNumber(ui.number, component="typed_number.js"):
         component = type(self).component
         assert component is not None  # the class statement registered it
         self.tag = component.tag
+
+    def _event_args_to_value(self, e: GenericEventArguments) -> float | None:
+        """What was typed, as the number it is — and a negative zero as
+        zero. `-0` is on the way to every negative number and is what a
+        refused `-0.5` backspaces to; a float of it is −0.0, which was
+        staged as it came and written `-0.0` by Save. Here, the one place a
+        typed text becomes a number for every field of the tool: a table's
+        cell and a tolerance's side take their value from this."""
+        value = super()._event_args_to_value(e)
+        return 0.0 if value == 0 else value
