@@ -33,6 +33,7 @@ class PatchOp:
     #: so an edit reads as itself, not as the whole tree added; and while
     #: the entry's ``metrics`` is this tree and nothing more, the ops that
     #: wrote it are no edit — they are dropped, whatever else is pending
+    #: but an edit of the ``variable_overrides`` the tree is built from
     #: (`Session.stage`). Not part of the op: not in `raw()`, not in its
     #: equality.
     materializes: bool = field(default=False, compare=False)

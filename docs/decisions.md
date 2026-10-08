@@ -6824,7 +6824,13 @@ plan held; what follows is the contract as built.
     hidden any other way is still grabbed. Every
     redraw replaces the paths, so a `MutationObserver` marks them again
     before paint, and what is shown is latched from a press to its
-    release. The plot's hover label gives way within 20 px of a shown
+    release. A scroll is read as a move: the page keeps ONE pointer
+    position for every plot (`grips.js` `pointer`), and in the frame
+    after a scroll each plot asks what is under it — once per frame,
+    however many scroll events the frame brings — so a checkpoint wheeled
+    out from under a pointer at rest hides its arrows and one wheeled
+    under it shows them, on a plot the pointer never moved over too. The
+    plot's hover label gives way within 20 px of a shown
     arrow or its ring. Where nothing hovers (`hover: none`, `pointer:
     coarse`) the open criterion's arrows are always shown. An arrow whose
     anchor is off the plot area, by more than half a pixel, is not
@@ -6937,7 +6943,15 @@ side, by the pixels dragged; one pass over 120 arrows took 2.3 ms.
   flat — three steps is 33.5 px from the arrow's line, and a hover area
   reaches 25 px past its group's anchors — and the fifth on one spot
   anywhere (reasoned from the four levels, not run). Two RINGS on one
-  spot are not staggered: the later-drawn takes the press.
+  spot are not staggered: the later-drawn takes the press, at its centre
+  and on its edge.
+- An arrow can stand on a neighbour's ring and take the press there: the
+  stagger parts arrows from arrows, not from rings. With time tolerances
+  of 12 px a side, of two checkpoints 25 px apart the second's `before`
+  arrow lies over the first ring's centre, and 18 or 15 px apart over
+  its far edge; a press on that part of the ring sets the neighbour's
+  side. (Both run with a real mouse: the rings on one spot, and the
+  arrows over those three spacings and three checkpoints in a row.)
 - A browser without CSS `:has` (Firefox before 121) clips an arrow at the
   plot's edge as Plotly draws it. Reasoned from the rules, not run: only
   Chromium was run.

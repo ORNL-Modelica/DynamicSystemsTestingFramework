@@ -927,7 +927,11 @@ header's count, the strip, the Tests drawer's mark, Save and this preview do
 not hold them, and the test is back at its saved verdict. The tree written
 out goes the same way once the edit that needed it is put back, whatever else
 is pending: a watch plot added beside a tolerance typed and cleared is one
-edit, and Save writes the `plots` and no `metrics`. "As the file holds
+edit, and Save writes the `plots` and no `metrics`. One edit keeps it: a
+change to the test's per-variable overrides (`comparison.variable_overrides`).
+The implicit tree is built from those, so with one edited the tree written
+out is no longer the tree the entry would score by without it, and it stays
+pending beside that edit. "As the file holds
 it" is as JSON reads it: members in any order, `1` is `1.0`, `true` is no
 number. A flat test whose entry differs only by its own implicit tree written
 out — the tree it already scores by, with no other edit beside it — is as
@@ -1425,7 +1429,11 @@ its arrows' anchors, 25 px larger on every side; a window's, its edges over
 the whole height of its panel — and its arrows show while the pointer is in
 that area, and for the whole of a drag. A scroll is read as a move: a
 checkpoint wheeled out from under a pointer at rest hides its arrows, and one
-wheeled under it shows them, wherever on the page the pointer was resting.
+wheeled under it shows them, wherever on the page the pointer was resting —
+on that plot or not. With the pointer at rest on a checkpoint, a turn of the
+wheel that takes the whole plot 300 px from under it hides the arrows, and
+the turn back shows them again with no move of the mouse; a checkpoint
+wheeled 300 px to a pointer resting above its plot shows them too.
 Points whose areas overlap, or just touch, show their arrows together, as one
 cluster: with their nearest anchors 50 px apart two points are one cluster,
 51 px apart two. Two arrows of a cluster that would be drawn over each other
