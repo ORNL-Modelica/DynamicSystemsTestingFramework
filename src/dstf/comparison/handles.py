@@ -790,8 +790,11 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
     window keeps its width in Hz and moves with its ring: a ring dragged
     to where that window's lower edge (:func:`~.algorithms._peak_window`,
     the scorer's) is at 0 Hz or below is refused as the grips are — 5 Hz
-    with 3 Hz either side, dragged to 2 Hz, was a window from −1 Hz. A
-    ``rel`` window is a fraction of its frequency and no ring brings it
+    with 3 Hz either side, dragged to 2 Hz, was a window from −1 Hz. Where
+    that edge was at 0 Hz or below BEFORE the drag (a window written by
+    hand: 5 Hz with 9 Hz below it) the ring did not bring it there, and the
+    refusal says "already", in the upper grip's words for the same state.
+    A ``rel`` window is a fraction of its frequency and no ring brings it
     there.
 
     ``peaks/lower/i`` and ``peaks/upper/i`` — the edges of the peak's
@@ -838,12 +841,17 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
         if edit.x <= 0:
             raise _refuse(edit, f"frequency {_num(edit.x)} must be positive")
         peak = leaf["peaks"][i]
+        was = peak.get("freq")
         peak["freq"] = _written(edit.x)
         if peak.get("tolerance_mode", "rel") != "rel":
             try:
-                low = _peak_window(peak, i)[0]
+                low, _high, sides, _mode = _peak_window(peak, i)
             except ValueError as err:
                 raise _refuse(edit, str(err)) from None
             if low <= 0:
+                # The same width about the frequency it had: where the
+                # window's lower edge stood before the ring moved.
+                if _is_number(was) and was - sides.lower <= 0:
+                    raise _refuse(edit, "the window's lower side already reaches 0 Hz")
                 raise _refuse(edit, "the window would reach 0 Hz")
     return leaf

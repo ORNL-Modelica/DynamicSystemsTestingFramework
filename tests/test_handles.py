@@ -1644,6 +1644,31 @@ class TestPeakSides:
         # Dragged right there is nothing to refuse.
         assert _edit(leaf, "peaks/declared/2", 40.0)["peaks"][2]["freq"] == 40.0
 
+    @pytest.mark.parametrize(
+        "tolerance",
+        [9.0, {"lower": 9.0, "upper": 1.0}, 5.0, {"lower": 5.0, "upper": 1.0}],
+    )
+    def test_a_ring_on_a_window_already_at_zero_hertz_says_already(self, tolerance):
+        """A window written by hand that reaches 0 Hz before anything is
+        dragged — 5 Hz with 9 Hz below it, or with exactly its own 5 — is
+        not the drag's doing, and the ring says so in the words the upper
+        arrow has for the same state: it said "would reach", of a window
+        that already did. Dragged far enough right it is short of 0 Hz
+        again, and that is written."""
+        leaf = copy.deepcopy(PEAK_SIDES)
+        row = {"freq": 5.0, "tolerance": tolerance, "tolerance_mode": "abs"}
+        leaf["peaks"][2] = row
+        for x in (2.0, 4.0, 5.0):
+            with pytest.raises(HandleEditError) as box:
+                _edit(leaf, "peaks/declared/2", x)
+            assert box.value.reason == "the window's lower side already reaches 0 Hz", x
+        assert _edit(leaf, "peaks/declared/2", 9.5)["peaks"][2] == {**row, "freq": 9.5}
+        # One a hair short of 0 Hz is brought there by the drag: "would".
+        row["tolerance"] = 4.99
+        with pytest.raises(HandleEditError) as box:
+            _edit(leaf, "peaks/declared/2", 4.0)
+        assert box.value.reason == "the window would reach 0 Hz"
+
     def test_a_ring_moves_a_rel_window_wherever_its_frequency_is_positive(self):
         """A `rel` window is a fraction of its frequency: it scales with
         the ring and no drag brings it to 0 Hz — whatever the fraction."""
