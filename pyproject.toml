@@ -111,6 +111,7 @@ ignore = [
 python_version = "3.10"
 files = [
     "src/dstf/authoring",
+    "src/dstf/backends/pool.py",
     "src/dstf/comparison",
     "src/dstf/discovery",
     "src/dstf/figures",

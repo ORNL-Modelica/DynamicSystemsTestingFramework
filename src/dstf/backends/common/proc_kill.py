@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
 
 def kill_process_tree(
     pid: int,
@@ -118,6 +121,65 @@ def snapshot_children(
     return snapshot
 
 
+def orphans_in(directory: str, born_after: float) -> set[tuple[int, float]]:
+    """Linux only: the processes a dead tool left behind in *directory*, as
+    ``(pid, create_time)`` pairs for :func:`kill_process_tree`.
+
+    A tool that dies by itself orphans its children, and a child nobody
+    recorded while the tool was alive cannot be found through it any more.
+    What it left is told from everything else on the machine by a mark of
+    three parts, ALL required:
+
+    * it runs in *directory* or below — the scratch directory of the one
+      test the dead tool was running, which the tool was told to work in
+      and no other worker uses;
+    * it was created no earlier than *born_after*, the tool's own creation
+      time on the same clock (a child cannot predate its parent);
+    * it has no parent of its own left: it hangs under init, or under a
+      reaper among this process's ancestors — where the kernel puts the
+      orphans of our descendants. A child of this process is not one, and
+      neither is a child of anybody else's live process.
+
+    Unreadable means unmarked: a process whose directory or parent cannot
+    be read is left alone. Other platforms report no working directory for
+    a foreign process without privileges, or do not reparent: ``set()``.
+    """
+    if not sys.platform.startswith("linux"):
+        return set()
+    try:
+        import psutil
+
+        reapers = {1} | {parent.pid for parent in psutil.Process().parents()}
+        root = os.path.realpath(directory)
+    except Exception:
+        return set()
+    found: set[tuple[int, float]] = set()
+    for proc in psutil.process_iter():
+        try:
+            if proc.ppid() not in reapers or proc.pid in reapers | {os.getpid()}:
+                continue
+            created = proc.create_time()
+            if created < born_after or proc.status() == psutil.STATUS_ZOMBIE:
+                continue
+            cwd = proc.cwd()
+            if cwd == root or cwd.startswith(root + os.sep):
+                found.add((proc.pid, created))
+        except Exception:
+            continue
+    return found
+
+
+def created_at(pids: set[int]) -> float | None:
+    """When the earliest of *pids* was created (the clock of
+    :func:`orphans_in`), or ``None`` when that cannot be read."""
+    try:
+        import psutil
+
+        return min(psutil.Process(pid).create_time() for pid in pids)
+    except Exception:
+        return None
+
+
 def process_gone(pids: set[int]) -> bool:
     """True when *pids* names at least one process and none of them is
     running any more — exited, or a zombie nobody has reaped yet.
@@ -142,12 +204,15 @@ def process_gone(pids: set[int]) -> bool:
         return False
 
 
-def live_children(pids: set[int]) -> list:
+def live_children(pids: set[int], name_hint: str | None = None) -> list:
     """Every descendant of *pids* alive right now, as ``psutil.Process``
     objects — what a backend's soft cancel looks through for the process
     doing the simulating. A zombie is not alive: a child killed a moment
-    ago stays in the table until its parent reaps it. Best-effort: ``[]``
-    on any failure."""
+    ago stays in the table until its parent reaps it. ``name_hint`` guards
+    each of *pids* as :func:`kill_process_tree` does: a PID whose process
+    is no longer the tool (recycled) hands over nobody's children — what
+    comes back is killed, or told to stop. Best-effort: ``[]`` on any
+    failure."""
     try:
         import psutil
     except ImportError:  # pragma: no cover — psutil is a hard dep in practice
@@ -155,7 +220,10 @@ def live_children(pids: set[int]) -> list:
     children: list = []
     for pid in list(pids):
         try:
-            for child in psutil.Process(pid).children(recursive=True):
+            parent = psutil.Process(pid)
+            if name_hint and name_hint not in (parent.name() or "").lower():
+                continue
+            for child in parent.children(recursive=True):
                 if child.status() != psutil.STATUS_ZOMBIE:
                     children.append(child)
         except Exception:

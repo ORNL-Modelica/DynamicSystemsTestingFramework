@@ -38,7 +38,13 @@ from .base import (
     _print_run_header,
     no_worker_message,
 )
-from .common.proc_kill import kill_process_tree, process_gone, snapshot_children
+from .common.proc_kill import (
+    created_at,
+    kill_process_tree,
+    orphans_in,
+    process_gone,
+    snapshot_children,
+)
 from .types import TestRunResult, timeout_message
 
 logger = logging.getLogger(__name__)
@@ -54,6 +60,26 @@ class WorkerStartError(RuntimeError):
     words — what its ``start()`` raised, or what :meth:`Worker.start_within`
     saw (the process gone, the bound passed) with
     :meth:`Worker.process_detail` beside it."""
+
+
+#: The ``testing.json`` key that bounds a worker's start, as a sentence that
+#: ends every "did not start within" message: the bound is a guess about the
+#: library, and the reader of the message is the one who can correct it.
+STARTUP_TIMEOUT_HINT = (
+    '(raise "worker_startup_timeout" in testing.json if this library needs longer)'
+)
+
+
+def start_timed_out_message(bound: float, detail: str = "") -> str:
+    """``did not start within 600 s — <detail> (raise "worker_startup_timeout"
+    ...)``: what a start that outlived its bound is failed with. *detail* is
+    the backend's :meth:`Worker.process_detail` — whether the tool still
+    runs, and the step it is in."""
+    return (
+        f"did not start within {bound:g} s"
+        + (f" — {detail}" if detail else "")
+        + f" {STARTUP_TIMEOUT_HINT}"
+    )
 
 
 class Worker(ABC):
@@ -112,16 +138,28 @@ class Worker(ABC):
     #: shutdown runs, looking for children spawned inside that window.
     _ORPHAN_POLL_SECONDS: float = 0.25
     #: Seconds a start gets when ``testing.json`` sets no
-    #: ``worker_startup_timeout``. A backend whose first start is slow by
-    #: nature raises it (Julia compiles its packages).
-    startup_timeout: float = 60.0
+    #: ``worker_startup_timeout``. The bound is for a tool that hangs: one
+    #: that DIED is failed at once, whatever this says (:meth:`start_within`
+    #: watches the process). So it is generous — a large library is minutes
+    #: of ``loadFile`` in a live omc, and a bound below that fails a run that
+    #: only had to wait. A backend with a reason for another sets its own.
+    startup_timeout: float = 600.0
     #: How often :meth:`start_within` looks at a start in flight.
     _START_POLL_SECONDS: float = 0.25
+    #: A start given up with NO process on record may be inside its launch
+    #: call (OMPython launches omc and waits for its port file in one call,
+    #: ~0.1 s): how long the give-up waits for that call to hand the process
+    #: over — to :meth:`_track_launch`, which kills it — before it returns.
+    #: Without the wait, a caller that exits right after the give-up takes
+    #: the start's thread with it and leaves the tool running.
+    launch_grace: float = 2.0
     #: How often the watchdog looks at the tracked process while a test runs:
     #: is it still there, and which children does it have. A walk of the
     #: process table per tick and worker (tens of ms on Windows), so not the
-    #: 0.25 s of the close path; a death is noticed within one tick.
-    _CHILD_WATCH_SECONDS: float = 2.0
+    #: 0.25 s of the close path; a death is noticed within one tick, and a
+    #: child born after the last one is on no record (see
+    #: :meth:`_record_orphans` for what finds it all the same).
+    _CHILD_WATCH_SECONDS: float = 0.5
     #: After :meth:`cancel_running` said the tool will come back on its own:
     #: how long it gets before the worker is killed instead.
     cancel_grace: float = 10.0
@@ -153,8 +191,11 @@ class Worker(ABC):
         self._start_abort = threading.Event()
         #: The tool call in flight, in the tool's own spelling
         #: (``loadModel(Modelica)``) — what :meth:`process_detail` says the
-        #: process died or stalled during. A backend sets it as it goes.
+        #: process died or stalled during, and :meth:`starting` the phase of
+        #: a start. A backend sets it as it goes.
         self._step: str = ""
+        #: ``time.monotonic()`` of the :meth:`start_within` in flight.
+        self._start_began: float | None = None
 
     @abstractmethod
     def start(self) -> None:
@@ -277,11 +318,32 @@ class Worker(ABC):
 
         ``start()`` runs on a daemon thread. One given up on is closed again
         if it ever returns, and this object is not started a second time: a
-        thread still inside ``start()`` writes its state.
+        thread still inside ``start()`` writes its state. The process it
+        launched is killed at the give-up when it is on record by then, by
+        :meth:`_track_launch` when it comes on record later — which the
+        give-up waits for, :attr:`launch_grace` at most.
         """
         if self._start_abandoned:
             raise WorkerStartError("its previous start never returned")
         bound = self.startup_bound() if timeout is None else float(timeout)
+        self._start_began = time.monotonic()
+        try:
+            self._start_bounded(bound)
+        finally:
+            self._start_began = None
+
+    def starting(self) -> tuple[str, float] | None:
+        """While a :meth:`start_within` is in flight: the step it is in, in
+        the tool's own spelling (``loadFile("...")``; ``""`` before the
+        backend named one), and the seconds since it began. ``None`` when no
+        start is in flight. Read from any thread — it is what a queue shows
+        for a worker that is slow to come up."""
+        began = self._start_began
+        if began is None:
+            return None
+        return self._step, time.monotonic() - began
+
+    def _start_bounded(self, bound: float) -> None:
         done = threading.Event()
         lock = threading.Lock()
         box: dict[str, BaseException] = {}
@@ -317,16 +379,16 @@ class Worker(ABC):
             elif process_gone(self.pids):
                 reason = self._safe_detail() or "its process exited during start"
             elif remaining <= 0:
-                detail = self._safe_detail()
-                reason = f"did not start within {bound:.0f} s" + (
-                    f" — {detail}" if detail else ""
-                )
+                reason = start_timed_out_message(bound, self._safe_detail())
         if reason is not None:
             with lock:
                 abandoned[0] = not done.is_set()
             if abandoned[0]:
                 self._start_abandoned = True
+                launched = bool(self.pids)
                 self._close_quietly()
+                if not launched:
+                    done.wait(self.launch_grace)
                 raise WorkerStartError(reason)
             # It returned in the same instant: judged by its own outcome.
         exc = box.get("exc")
@@ -340,6 +402,28 @@ class Worker(ABC):
         if not isinstance(exc, Exception):
             raise exc
         raise WorkerStartError(str(exc)) from exc
+
+    def _track_launch(self, pid: int | None) -> None:
+        """The process this start launched EXISTS: record it. ``start()``
+        calls this the moment it does — before the first wait on the tool,
+        not when the launch call hands back a finished session — because a
+        start is given up from another thread, and the give-up can only
+        kill what is on record.
+
+        And the other way round: when the start was given up BEFORE the
+        process existed, nobody is left to kill it, so this kills it and
+        raises :class:`WorkerStartError`. (``_start_abandoned`` is set
+        before the give-up reads ``pids``, and ``pids`` is written here
+        before the flag is read: one of the two always sees the process.)
+        *pid* is ``None`` when the backend could not learn it.
+        """
+        self.pids = {int(pid)} if pid else set()
+        if self._start_abandoned:
+            if pid:
+                # No name guard: the launch call handed this PID over a
+                # moment ago and still holds its handle — it is not reused.
+                kill_process_tree(int(pid))
+            raise WorkerStartError("its start was given up")
 
     def abandon_start(self) -> None:
         """Give up this worker's :meth:`start_within`, from another thread
@@ -476,10 +560,33 @@ class Worker(ABC):
 
     def _snapshot_orphan_children(self) -> None:
         """Record the tracked processes' current descendants for later."""
+        self._orphan_children |= self._live_descendants()
+
+    def _live_descendants(self) -> set[tuple[int, float]]:
+        found: set[tuple[int, float]] = set()
         for pid in list(self.pids):
-            self._orphan_children |= snapshot_children(
-                pid, name_hint=self.kill_name_hint
-            )
+            found |= snapshot_children(pid, name_hint=self.kill_name_hint)
+        return found
+
+    def _record_orphans(self, test_key: str, tool_born: float | None) -> None:
+        """The tool died by itself while it ran *test_key*: add what it left
+        behind to the record :meth:`_kill_tracked_pids` kills.
+
+        The ticks' record misses a child born after the last one — dymosim
+        appears and the tool is killed within the same half second. On
+        Linux such a child is still found, by the mark of
+        :func:`~.common.proc_kill.orphans_in`: parentless, born after this
+        worker's tool (*tool_born*), running in this test's own directory.
+        A process that fails any part is never touched.
+
+        What remains out of reach: on Linux, a child born after the last
+        tick that has left the test's directory; elsewhere, any child born
+        after the last tick (:attr:`_CHILD_WATCH_SECONDS`).
+        """
+        work_dir = getattr(self.config, "work_dir", None)
+        if tool_born is None or work_dir is None:
+            return
+        self._orphan_children |= orphans_in(str(Path(work_dir) / test_key), tool_born)
 
     def _kill_tracked_pids(self) -> None:
         """Force-kill the process trees attributed to this worker.
@@ -530,7 +637,9 @@ class Worker(ABC):
         :attr:`_CHILD_WATCH_SECONDS`) fails the test and closes the worker,
         which kills the children recorded while it was alive: a tool that
         dies by itself orphans its simulation process, and nothing reaches
-        an orphan through a parent that no longer exists.
+        an orphan through a parent that no longer exists. A child born
+        after the last look is found by its mark where the platform allows
+        (:meth:`_record_orphans`, which also says what stays out of reach).
         """
         result_box: list[TestRunResult | None] = [None]
         exc_box: list[BaseException | None] = [None]
@@ -567,10 +676,22 @@ class Worker(ABC):
             daemon=True,
             name=f"{self.exec_thread_prefix}-exec-{self.worker_id}",
         )
+        # Read while the tool is certain to be there: what it leaves behind
+        # if it dies is told by having been born after it.
+        tool_born = created_at(self.pids)
         t.start()
         try:
             return self._watch_test(
-                test, test_key, timeout, start_ts, t, done, wake, result_box, exc_box
+                test,
+                test_key,
+                timeout,
+                start_ts,
+                t,
+                done,
+                wake,
+                result_box,
+                exc_box,
+                tool_born,
             )
         finally:
             self.disarm()
@@ -586,6 +707,7 @@ class Worker(ABC):
         wake: threading.Event,
         result_box: list,
         exc_box: list,
+        tool_born: float | None,
     ) -> "TestRunResult":
         """The watchdog's wait, and what each way out of it returns."""
 
@@ -609,14 +731,19 @@ class Worker(ABC):
             wake.wait(min(self._CHILD_WATCH_SECONDS, remaining))
             if done.is_set() or self._cancel is not None:
                 break
+            # Walk first, look second: a tool that dies between the two
+            # leaves an empty walk, which must not replace the record of
+            # the tick before — that record is all there is of its
+            # children.
+            children = self._live_descendants()
             if process_gone(self.pids):
+                self._orphan_children |= children
                 gone = True
                 break
             # The tree as it is NOW, not accumulated: a test spawns and
             # reaps compilers for minutes, and only what is alive when the
             # parent dies is worth a kill.
-            self._orphan_children = set()
-            self._snapshot_orphan_children()
+            self._orphan_children = children
 
         if self._cancel is not None and not done.is_set():
             if self._cancel == "soft" and self._soft_cancel(test_key):
@@ -635,6 +762,7 @@ class Worker(ABC):
             # backend's, and close() drops the handle they hang off.
             detail = self._safe_detail()
             elapsed = time.monotonic() - start_ts
+            self._record_orphans(test_key, tool_born)
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             with self._quiet():
                 self.close(grace=1.0)
@@ -679,6 +807,8 @@ class Worker(ABC):
             # simulation may still have completed before the interface died,
             # so disk gets its chance here too.
             elapsed = time.monotonic() - start_ts
+            if process_gone(self.pids):
+                self._record_orphans(test_key, tool_born)
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             with self._quiet():
                 self.close(grace=1.0)
@@ -701,6 +831,7 @@ class Worker(ABC):
             # turns a lost connection into a failed result): close, so the
             # next test restarts the worker instead of failing against a
             # dead process, and the recorded children go with it.
+            self._record_orphans(test_key, tool_born)
             self._close_quietly()
         if self._cancel is not None and not result.success:
             # What a stopped simulation reports ("stopped early", a failed
@@ -763,8 +894,11 @@ class WorkerRunner(ItemRunner):
         self.worker.start_within()
         self.backend.note_versions([self.worker])
 
-    def expect(self, test_key: str) -> None:
-        super().expect(test_key)
+    def starting(self) -> tuple[str, float] | None:
+        return self.worker.starting()
+
+    def expect(self, test_key: str, token: object) -> None:
+        super().expect(test_key, token)
         self.worker.arm(test_key)
 
     def _stop_test(self, test_key: str) -> bool:

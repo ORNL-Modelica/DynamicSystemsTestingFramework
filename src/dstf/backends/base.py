@@ -363,8 +363,10 @@ class ItemRunner:
         self.worker_id = worker_id
         self._lock = Lock()
         #: The test this runner is on, from ``expect`` to the end of ``run``,
-        #: and whether a stop was asked of it.
+        #: the token of that run (``expect``), and whether a stop was asked
+        #: of it.
         self._key: str | None = None
+        self._token: object | None = None
         self._cancel_asked = False
 
     # -- hooks ---------------------------------------------------------
@@ -372,6 +374,13 @@ class ItemRunner:
     def start(self) -> None:
         """Bring the runner up. Raises ``RuntimeError`` whose text is the
         reason, in the backend's own words, when it cannot."""
+
+    def starting(self) -> tuple[str, float] | None:
+        """While the thing that runs tests is being brought up — the first
+        time, or back after a death: ``(phase, seconds so far)``, the phase
+        in the backend's own words. ``None`` otherwise, and always here:
+        this runner has nothing to start."""
+        return None
 
     def _run(self, test: TestModel, test_key: str) -> TestRunResult:
         """Run *test* to its end on the calling thread."""
@@ -396,51 +405,63 @@ class ItemRunner:
         here, a start otherwise. A backend that cannot stop a test lets it
         finish."""
         if test_key is not None and Capability.CANCEL in self.backend.capabilities:
-            self.cancel(test_key)
+            with self._lock:
+                token = self._token if self._key == test_key else None
+            self.cancel(token)
 
     def close(self) -> None:
         """Let go of the runner, on its own thread; idempotent."""
 
     # -- template ------------------------------------------------------
 
-    def expect(self, test_key: str) -> None:
-        """*test_key* is about to run here: a ``cancel`` for it is heard
-        from now on. The pool calls this under its own lock, as it publishes
-        the key, so no cancel can fall between the two."""
+    def expect(self, test_key: str, token: object) -> None:
+        """*test_key* is about to run here, as *token*: a ``cancel(token)``
+        is heard from now on. The token is the caller's own name for this
+        ONE run (the pool's is the queue item) — a test's key comes back
+        with every rerun of the test, so a stop named by the key could land
+        on the run after the one it was meant for. The pool calls this under
+        its own lock, as it publishes the key, so no cancel can fall between
+        the two."""
         with self._lock:
-            self._key, self._cancel_asked = test_key, False
+            self._key, self._token, self._cancel_asked = test_key, token, False
 
     def run(self, test: TestModel, test_key: str) -> TestRunResult:
         """Run *test* to its end on the calling thread. Never raises on a
-        test-level failure; a ``cancel`` makes it return promptly."""
+        test-level failure; a ``cancel`` makes it return promptly. A run
+        nobody announced (``expect``) has no token and cannot be
+        cancelled."""
         with self._lock:
             if self._key != test_key:
-                self._key, self._cancel_asked = test_key, False
+                self._key, self._token, self._cancel_asked = test_key, None, False
         try:
             return self._run(test, test_key)
         finally:
             with self._lock:
-                self._key = None
+                self._key = self._token = None
 
-    def cancel(self, test_key: str) -> bool:
-        """Stop *test_key*, from another thread; ``False`` when it is not the
-        test this runner is on. Only called on a backend that declares
-        :attr:`Capability.CANCEL`. :meth:`run` then returns a failed or
-        ``cancelled`` result — or the test's own, if it finished anyway."""
-        with self._lock:
-            if self._key != test_key:
-                return False
-            self._cancel_asked = True
+    def cancel(self, token: object) -> bool:
+        """Stop the run announced as *token*, from another thread; ``False``
+        when this runner is not on it — it has ended, or never was here.
+        Only called on a backend that declares :attr:`Capability.CANCEL`.
+        :meth:`run` then returns a failed or ``cancelled`` result — or the
+        test's own, if it finished anyway."""
         # The test may be a few statements short of having a process to
         # stop; ask until it has one or has ended. Bounded all the same: a
         # stop that cannot be delivered must not hold the caller.
         deadline = time.monotonic() + 5.0
-        while not self._stop_test(test_key) and time.monotonic() < deadline:
+        asked = False
+        while True:
+            # Looked at and stopped under one lock: the run cannot end, and
+            # the next one begin under the same key, between the two.
             with self._lock:
-                if self._key != test_key:
-                    break
+                if token is None or self._token is not token or self._key is None:
+                    return asked
+                self._cancel_asked = asked = True
+                if self._stop_test(self._key):
+                    return True
+            if time.monotonic() >= deadline:
+                return True
             time.sleep(0.01)
-        return True
 
 
 class Backend(ABC):

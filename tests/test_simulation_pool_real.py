@@ -15,6 +15,16 @@ What they pin, measured where a number is printed (run with `-s`):
 * OpenModelica: a run completes and equals `run_pipeline`'s; a cancel kills
   omc's children and omc is reused; omc killed during `loadModel` fails the
   waiting items with omc's own words instead of hanging.
+* Both: a start given up — its bound passed, or the pool closed — while the
+  tool is still coming up leaves no tool process, launched before the
+  give-up or after it. And the tool killed from outside a moment after its
+  simulation process appeared takes that process with it: the item fails,
+  the worker is restarted for the next.
+
+"No tool process is left" is asked of the whole machine, not of pytest's
+descendants: a tool whose worker lost track of it is an orphan, and an
+orphan hangs under init. Ours are told from another session's by a mark in
+the environment every process a test launches inherits.
 """
 
 from __future__ import annotations
@@ -24,6 +34,7 @@ import os
 import shutil
 import signal
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -73,7 +84,10 @@ package QueueLib "Scratch models for the simulation pool's hardware tests"
 end QueueLib;
 """
 
-_TOOLS = ("dymola", "dymosim", "omc")
+#: `result` is the model omc compiled, named after its result-file prefix.
+_TOOLS = ("dymola", "dymosim", "omc", "result")
+#: The environment variable `no_tool_left` sets for the length of a test.
+_MARK = "DSTF_POOL_TEST_MARK"
 
 
 def _project(tmp_path: Path, backend_name: str, work: str):
@@ -132,15 +146,19 @@ def _project(tmp_path: Path, backend_name: str, work: str):
 
 
 def _tool_processes() -> list[tuple[int, str]]:
-    """Every live Dymola / dymosim / omc process under this pytest process."""
+    """Every live Dymola / dymosim / omc process this test started, wherever
+    it hangs in the process table now."""
+    mark = os.environ[_MARK]
     found = []
-    for proc in psutil.Process().children(recursive=True):
+    for proc in psutil.process_iter():
         try:
             name = proc.name().lower()
-            if proc.status() != psutil.STATUS_ZOMBIE and name.startswith(_TOOLS):
+            if not name.startswith(_TOOLS) or proc.status() == psutil.STATUS_ZOMBIE:
+                continue
+            if proc.environ().get(_MARK) == mark:
                 found.append((proc.pid, name))
         except psutil.Error:
-            continue
+            continue  # gone, or another user's: not ours either way
     return found
 
 
@@ -151,6 +169,27 @@ def _wait_until(pred, timeout: float, what: str) -> None:
             return
         time.sleep(0.02)
     raise AssertionError(f"{what} not reached within {timeout:.0f} s")
+
+
+def _assert_no_tool_lingers(seconds: float = 6.0) -> None:
+    """Watch for *seconds*: no tool process of ours lives past half a second.
+
+    Asked right after a close, not "eventually": a tool nobody tracks does
+    go away by itself once the start that launched it returns — seconds
+    later, and never when the process that owns that thread has exited by
+    then. One launched after the give-up is killed at its birth, so it may
+    be seen once."""
+    first_seen: dict[int, float] = {}
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        alive = dict(_tool_processes())
+        first_seen = {pid: first_seen.get(pid, now) for pid in alive}
+        lingering = {
+            pid: alive[pid] for pid, since in first_seen.items() if now - since > 0.5
+        }
+        assert not lingering, f"left running after the close: {lingering}"
+        time.sleep(0.05)
 
 
 def _ended(*items) -> bool:
@@ -188,7 +227,8 @@ def _manifest(config) -> dict[str, str]:
 
 
 @pytest.fixture
-def no_tool_left():
+def no_tool_left(monkeypatch):
+    monkeypatch.setenv(_MARK, uuid.uuid4().hex)
     assert _tool_processes() == []
     yield
     _wait_until(lambda: _tool_processes() == [], 15, "every tool process gone")
@@ -276,6 +316,104 @@ def test_dymola_cancel_during_translation(tmp_path, no_tool_left):
     finally:
         pool.close()
     assert _manifest(config) == {"Slow": "cancelled", "Fast": "passed"}
+
+
+def _tool_killed_mid_simulation(
+    tmp_path, backend_name: str, tool: str, simulation: str, delay: float
+):
+    """*tool* is killed from outside *delay* seconds after its *simulation*
+    process appeared — within one watch tick for a short delay, so no tick
+    recorded that process. It must not outlive the tool."""
+    config, tests, backend = _project(tmp_path, backend_name, "pool")
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=1)
+    try:
+        slow, fast = pool.submit(tests["Slow"]), pool.submit(tests["Fast"])
+        _wait_until(lambda: _named(simulation) != [], 300, f"{simulation} running")
+        (tool_pid,) = _named(tool)
+        time.sleep(delay)
+        simulations = _named(simulation)
+        assert simulations and slow.state is ItemState.RUNNING
+        os.kill(tool_pid, signal.SIGKILL)
+
+        _wait_until(lambda: _ended(slow), 60, "the item failed")
+        assert slow.state is ItemState.FAILED, slow.state
+        _wait_until(
+            lambda: not set(simulations) & set(_named(simulation)),
+            10,
+            f"the orphaned {simulation} killed",
+        )
+        _wait_until(lambda: _ended(fast), 300, "the next item finished")
+        assert fast.state is ItemState.FINISHED, fast.message
+        assert tool_pid not in _named(tool)  # a NEW tool ran it
+    finally:
+        pool.close()
+    return slow
+
+
+@pytest.mark.dymola
+@pytest.mark.parametrize("delay", [0.0, 0.2, 1.0])
+def test_dymola_killed_as_dymosim_appears_takes_dymosim_with_it(
+    tmp_path, no_tool_left, delay
+):
+    slow = _tool_killed_mid_simulation(tmp_path, "Dymola", "dymola", "dymosim", delay)
+    print(f"\nDymola killed {delay} s after dymosim appeared: {slow.message}")
+
+
+@pytest.mark.ompython
+@pytest.mark.parametrize("delay", [0.0, 1.0])
+def test_omc_killed_as_the_model_starts_takes_the_model_with_it(
+    tmp_path, no_tool_left, delay
+):
+    slow = _tool_killed_mid_simulation(tmp_path, "OpenModelica", "omc", "result", delay)
+    print(f"\nomc killed {delay} s after the model started: {slow.message}")
+
+
+def _start_given_up(tmp_path, backend_name: str, bound: float):
+    """Two workers whose start gets *bound* seconds — less than the tool
+    needs: both items fail with the bound's sentence. Returns them after
+    the pool closed."""
+    config, tests, backend = _project(tmp_path, backend_name, "pool")
+    config.worker_startup_timeout = bound
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=2)
+    try:
+        fast, fast2 = pool.submit(tests["Fast"]), pool.submit(tests["Fast2"])
+        _wait_until(lambda: _ended(fast, fast2), 60, "the items failed")
+    finally:
+        pool.close()
+    return fast, fast2
+
+
+@pytest.mark.dymola
+@pytest.mark.parametrize("bound", [0.3, 2.0])
+def test_dymola_start_given_up_at_its_bound_leaves_no_dymola(
+    tmp_path, no_tool_left, bound
+):
+    """The interface's constructor launches Dymola and then waits seconds
+    for it to answer: a start given up inside that wait used to leave the
+    Dymola it had launched running, a licence seat with it."""
+    fast, fast2 = _start_given_up(tmp_path, "Dymola", bound)
+
+    assert fast.state is fast2.state is ItemState.FAILED
+    assert f"worker 0: did not start within {bound:g} s" in fast.message
+    assert '"worker_startup_timeout"' in fast.message
+    _assert_no_tool_lingers()
+
+
+@pytest.mark.dymola
+@pytest.mark.parametrize("delay", [0.3, 2.0])
+def test_dymola_pool_closed_during_the_start_leaves_no_dymola(
+    tmp_path, no_tool_left, delay
+):
+    config, tests, backend = _project(tmp_path, "Dymola", "pool")
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=2)
+    try:
+        fast, fast2 = pool.submit(tests["Fast"]), pool.submit(tests["Fast2"])
+        time.sleep(delay)
+    finally:
+        pool.close()
+
+    assert fast.state is fast2.state is ItemState.REMOVED
+    _assert_no_tool_lingers()
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +527,20 @@ def test_omc_killed_during_start_fails_the_items_with_its_words(
             "No OpenModelica worker could start — worker 0: omc exited (code -9) "
             "during loadModel(Modelica)"
         )
-        assert seconds < 30.0  # at once, not at the 60 s bound
+        assert seconds < 30.0  # at once, not at the bound
     finally:
         pool.close()
+
+
+@pytest.mark.ompython
+@pytest.mark.parametrize("bound", [0.05, 0.5])
+def test_openmodelica_start_given_up_at_its_bound_leaves_no_omc(
+    tmp_path, no_tool_left, bound
+):
+    """0.05 s lands inside OMPython's launch (omc up, its port file awaited),
+    0.5 s inside `loadModel(Modelica)`."""
+    fast, fast2 = _start_given_up(tmp_path, "OpenModelica", bound)
+
+    assert fast.state is fast2.state is ItemState.FAILED
+    assert f"worker 0: did not start within {bound:g} s" in fast.message
+    _assert_no_tool_lingers()

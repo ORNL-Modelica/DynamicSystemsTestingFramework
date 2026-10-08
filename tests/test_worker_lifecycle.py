@@ -27,6 +27,7 @@ import pytest
 from conftest import make_test_model
 from dstf.backends.base import no_worker_message
 from dstf.backends.persistent import (
+    STARTUP_TIMEOUT_HINT,
     PersistentBackendBase,
     Worker,
     WorkerRunner,
@@ -52,6 +53,9 @@ def _ok(test, test_key) -> TestRunResult:
     return TestRunResult(model_id=test.model_id, test_key=test_key, success=True)
 
 
+_SLEEP = "import time; time.sleep(120)"
+
+
 class _Worker(Worker):
     """A template worker whose `run_test` blocks on a gate, and whose start
     is scripted."""
@@ -59,6 +63,7 @@ class _Worker(Worker):
     _START_POLL_SECONDS = 0.02
     _CHILD_WATCH_SECONDS = 0.05
     cancel_grace = 2.0
+    launch_grace = 0.0  # these starts launch nothing, unless a test says so
 
     def __init__(self, worker_id, config, *, start=None, soft_cancel=None):
         super().__init__(worker_id, config)
@@ -112,17 +117,94 @@ class TestBoundedStart:
         worker = _Worker(0, _config(tmp_path), start=lambda w: release.wait(30))
 
         t0 = time.monotonic()
-        with pytest.raises(WorkerStartError, match=r"did not start within 0 s"):
+        with pytest.raises(WorkerStartError) as raised:
             worker.start_within(0.2)
 
+        assert str(raised.value) == f"did not start within 0.2 s {STARTUP_TIMEOUT_HINT}"
         assert time.monotonic() - t0 < 5.0
         assert not worker.is_alive()
         release.set()
 
+    def test_the_message_names_the_step_and_the_key_to_raise(self, tmp_path):
+        """A slow load in a live tool is not a hang: the sentence says which
+        call the tool is in and which key gives it longer."""
+        release = threading.Event()
+
+        class _Loading(_Worker):
+            def process_detail(self):
+                return f"omc is still running during {self._step}"
+
+        def start(worker):
+            worker._step = 'loadFile("/lib/package.mo")'
+            release.wait(30)
+
+        worker = _Loading(0, _config(tmp_path), start=start)
+        with pytest.raises(WorkerStartError) as raised:
+            worker.start_within(0.2)
+        release.set()
+
+        assert str(raised.value) == (
+            "did not start within 0.2 s — omc is still running during "
+            'loadFile("/lib/package.mo") (raise "worker_startup_timeout" in '
+            "testing.json if this library needs longer)"
+        )
+
     def test_the_bound_comes_from_the_config_then_the_worker_class(self, tmp_path):
-        assert _Worker(0, _config(tmp_path)).startup_bound() == 60.0
+        assert _Worker(0, _config(tmp_path)).startup_bound() == 600.0
         configured = _config(tmp_path, worker_startup_timeout=7)
         assert _Worker(0, configured).startup_bound() == 7.0
+
+    def test_the_default_bound_outlasts_a_slow_library_load(self, tmp_path):
+        """A large library is minutes of `loadFile` in a live omc (142.9 s,
+        measured): the default is for a tool that hangs, so no backend's is
+        below ten minutes — and a start of 100 "seconds" passes the default
+        path, here with both scaled by a thousand."""
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
+        from dstf.backends.julia.persistent_backend import JuliaWorker
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+        assert Worker.startup_timeout >= 600.0
+        for cls in (DymolaWorker, OpenModelicaWorker, JuliaWorker):
+            assert cls.startup_timeout >= 600.0, cls.__name__
+
+        class _Scaled(_Worker):
+            startup_timeout = Worker.startup_timeout / 1000
+
+        worker = _Scaled(0, _config(tmp_path), start=lambda w: time.sleep(100 / 1000))
+        worker.start_within()  # the bound is startup_bound(): the default
+        assert worker.is_alive()
+
+    def test_a_start_in_flight_reports_its_step_and_its_seconds(self, tmp_path):
+        release, loading = threading.Event(), threading.Event()
+
+        def start(worker):
+            worker._step = 'loadFile("/lib/package.mo")'
+            loading.set()
+            release.wait(30)
+            worker._step = ""
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        assert worker.starting() is None  # nothing started yet
+        th = threading.Thread(target=worker.start_within, args=(30.0,))
+        th.start()
+        try:
+            assert loading.wait(10)
+            phase, seconds = worker.starting()
+            assert phase == 'loadFile("/lib/package.mo")' and 0.0 <= seconds < 10.0
+            time.sleep(0.05)
+            assert worker.starting()[1] > seconds  # it counts on
+        finally:
+            release.set()
+            th.join(10)
+        assert worker.is_alive() and worker.starting() is None  # started
+
+    def test_a_start_that_failed_is_not_starting_any_more(self, tmp_path):
+        release = threading.Event()
+        worker = _Worker(0, _config(tmp_path), start=lambda w: release.wait(30))
+        with pytest.raises(WorkerStartError):
+            worker.start_within(0.1)
+        assert worker.starting() is None
+        release.set()
 
     def test_an_abandoned_start_that_returns_later_is_closed(self, tmp_path):
         """The start thread nobody waits for any more must not leave a live
@@ -138,6 +220,110 @@ class TestBoundedStart:
         with pytest.raises(WorkerStartError, match="never returned"):
             worker.start_within(5.0)
         assert worker.n_started == 1
+
+    def test_a_given_up_start_kills_the_process_it_had_launched(self, tmp_path):
+        """The tool is up and the start still waits on it when the bound
+        passes: the worker is closed, and the tool goes with it."""
+        release = threading.Event()
+        launched: list[subprocess.Popen] = []
+
+        def start(worker):
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            worker._track_launch(proc.pid)
+            release.wait(30)  # the tool's first answer, which never comes
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        try:
+            with pytest.raises(WorkerStartError, match="did not start within"):
+                worker.start_within(0.3)
+
+            assert launched, "the start never launched its tool"
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert not worker.is_alive() and worker.pids == set()
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_a_process_launched_after_the_give_up_is_killed_at_its_birth(
+        self, tmp_path
+    ):
+        """Given up before the tool existed: nobody is left to kill it, so
+        the launch does — and the start ends there."""
+        release, ended = threading.Event(), threading.Event()
+        launched: list[subprocess.Popen] = []
+        raised: list[BaseException] = []
+
+        def start(worker):
+            release.wait(30)  # e.g. the launch waiting for a free port
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            try:
+                worker._track_launch(proc.pid)
+            except WorkerStartError as exc:
+                raised.append(exc)
+                raise
+            finally:
+                ended.set()
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        try:
+            with pytest.raises(WorkerStartError):
+                worker.start_within(0.1)
+            assert launched == []
+
+            release.set()
+            assert ended.wait(10)
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert [str(exc) for exc in raised] == ["its start was given up"]
+            assert not worker.is_alive()
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_the_launch_itself_kills_what_an_abandoned_start_brought_up(self, tmp_path):
+        """Before the start returns, not after: the give-up waits only for
+        that return, and its caller may be gone a moment later."""
+        proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        worker = _Worker(0, _config(tmp_path))
+        worker._start_abandoned = True
+        try:
+            with pytest.raises(WorkerStartError, match="its start was given up"):
+                worker._track_launch(proc.pid)
+            assert proc.wait(10) is not None
+        finally:
+            proc.kill()
+
+    def test_the_give_up_waits_for_a_launch_in_flight(self, tmp_path):
+        """A launch call that hands its process over only when it returns
+        (OMPython's): the give-up does not return before that — a caller
+        that exits right after it would leave the tool running."""
+        release = threading.Event()
+        launched: list[subprocess.Popen] = []
+
+        def start(worker):
+            release.wait(30)  # inside the launch call
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            worker._track_launch(proc.pid)
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        worker.launch_grace = 20.0
+        threading.Timer(0.4, release.set).start()
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(WorkerStartError, match="did not start within 0.1 s"):
+                worker.start_within(0.1)
+
+            # Launched, and killed, by the time the give-up returned.
+            assert len(launched) == 1 and launched[0].wait(5) is not None
+            assert time.monotonic() - t0 < 10.0  # the launch's return, not the grace
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
 
     def test_a_start_whose_process_died_fails_at_once(self, tmp_path):
         """Not at the bound: the moment the tracked process is gone."""
@@ -253,10 +439,8 @@ def test_a_run_whose_workers_hang_at_start_fails_with_the_message(tmp_path):
         backend.run_tests([make_test_model("Lib.A"), make_test_model("Lib.B")])
     release.set()
 
-    message = (
-        "No Stub worker could start — worker 0: did not start within 0 s; "
-        "worker 1: did not start within 0 s"
-    )
+    reason = f"did not start within 0.2 s {STARTUP_TIMEOUT_HINT}"
+    message = f"No Stub worker could start — worker 0: {reason}; worker 1: {reason}"
     assert str(raised.value) == f"{message}. Try re-running with --batch."
     manifest = json.loads((config.work_dir / "batch_manifest.json").read_text())
     assert {e["last_run_status"] for e in manifest.values()} == {"failed"}
@@ -300,7 +484,29 @@ def _tool_with_child():
 
 
 def _gone(proc: psutil.Process) -> bool:
-    return not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE
+    try:
+        return not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True  # reaped between the two looks
+
+
+def _on_record(worker, child: psutil.Process) -> bool:
+    """A watch tick has recorded *child* among the tool's children."""
+    return any(pid == child.pid for pid, _ in tuple(worker._orphan_children))
+
+
+def _kill_quietly(*procs) -> None:
+    for proc in procs:
+        try:
+            proc.kill()
+        except (psutil.Error, OSError):
+            pass
+
+
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="an orphan is found by its working directory and its parent",
+)
 
 
 class TestWorkerDeath:
@@ -318,10 +524,10 @@ class TestWorkerDeath:
             )
             th.start()
             worker.entered.wait(10)
-            time.sleep(0.3)  # several watch ticks: the child is on record
+            _wait_until(lambda: _on_record(worker, child), 30)
             parent.kill()  # the tool dies by itself; its child is orphaned
             parent.wait()
-            th.join(20)
+            th.join(60)
 
             assert not th.is_alive(), "the watchdog never noticed the death"
             result = box["r"]
@@ -330,13 +536,93 @@ class TestWorkerDeath:
             # Charged against the restart budget: nobody killed it on purpose.
             assert result.worker_killed is False and result.timed_out is False
             assert not worker.is_alive()
-            _wait_until(lambda: _gone(child))
+            _wait_until(lambda: _gone(child), 30)
         finally:
-            for proc in (child, parent):
-                try:
-                    proc.kill()
-                except (psutil.Error, OSError):
-                    pass
+            _kill_quietly(child, parent)
+
+    def test_a_tool_that_dies_between_two_looks_still_loses_its_children(
+        self, tmp_path, monkeypatch
+    ):
+        """The tick walks the tool's tree and looks whether the tool is
+        there. A death between the two used to leave the child on no
+        record: the look said "alive", the walk that followed found nothing
+        and replaced the record of the tick before."""
+        import dstf.backends.persistent as persistent
+
+        parent, child = _tool_with_child()
+        worker = _Worker(0, _config(tmp_path))
+        real_gone = persistent.process_gone
+        died: list[bool] = []
+
+        def dies_right_after_the_look(pids):
+            gone = real_gone(pids)
+            if not gone and not died and _on_record(worker, child):
+                died.append(True)
+                parent.kill()
+                parent.wait()
+            return gone
+
+        monkeypatch.setattr(persistent, "process_gone", dies_right_after_the_look)
+        try:
+            worker.start()
+            worker.pids = {parent.pid}
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert died and "exited during the test" in result.error_message
+            _wait_until(lambda: _gone(child), 30)
+        finally:
+            _kill_quietly(child, parent)
+
+    @linux_only
+    def test_a_child_no_tick_saw_is_found_by_its_mark_and_no_stranger_is(
+        self, tmp_path
+    ):
+        """dymosim appears and the tool is killed within one tick: the
+        record is empty. What the tool left is found by all of — parentless,
+        born after the tool, in this test's directory — and a process that
+        fails one of the three is never touched."""
+        test_dir, sibling = tmp_path / "test_0001", tmp_path / "test_0002"
+        test_dir.mkdir()
+        sibling.mkdir()
+        sleeper = [sys.executable, "-c", _SLEEP]
+        # Born before the tool, orphaned, in the test's directory.
+        launcher, (older,) = _spawn_tool(tmp_path, [(sleeper, str(test_dir))])
+        launcher.kill()
+        launcher.wait()
+        time.sleep(0.1)
+        # The tool's own: one in the test's directory, one in a sibling's.
+        tool, (left_behind, elsewhere) = _spawn_tool(
+            tmp_path, [(sleeper, str(test_dir)), (sleeper, str(sibling))]
+        )
+        # Not an orphan: this process's child, in the test's directory.
+        ours = subprocess.Popen(sleeper, cwd=test_dir)
+        strangers = {
+            "born before the tool": older,
+            "running in another test's directory": elsewhere,
+            "that is somebody's live child": psutil.Process(ours.pid),
+        }
+
+        class _Blind(_Worker):
+            def _live_descendants(self):
+                return set()  # no tick ever saw a child
+
+        worker = _Blind(0, _config(tmp_path))
+        try:
+            worker.start()
+            worker.pids = {tool.pid}
+            threading.Thread(
+                target=lambda: (worker.entered.wait(30), tool.kill(), tool.wait())
+            ).start()
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert "exited during the test" in result.error_message
+            _wait_until(lambda: _gone(left_behind), 30)
+            time.sleep(0.3)  # a kill of a stranger would have landed by now
+            for why, proc in strangers.items():
+                assert not _gone(proc), f"killed a process {why}"
+        finally:
+            _kill_quietly(left_behind, tool, ours, *strangers.values())
+            ours.wait()
 
     def test_the_dispatch_step_restarts_after_a_death(self, tmp_path):
         """Failed, then the next test restarts the worker — as a worker
@@ -349,7 +635,13 @@ class TestWorkerDeath:
             worker.start()
             worker.pids = {parent.pid}
             runner = WorkerRunner(backend, worker)
-            threading.Timer(0.3, lambda: (parent.kill(), parent.wait())).start()
+
+            def die_once_on_record():
+                _wait_until(lambda: _on_record(worker, child), 30)
+                parent.kill()
+                parent.wait()
+
+            threading.Thread(target=die_once_on_record).start()
 
             first = runner.run(make_test_model("Lib.A"), "test_0001")
             assert not first.success and not worker.is_alive()
@@ -358,13 +650,9 @@ class TestWorkerDeath:
             second = runner.run(make_test_model("Lib.B"), "test_0002")
             assert second.success
             assert worker.n_started == 2 and worker._n_restarts == 0
-            _wait_until(lambda: _gone(child))
+            _wait_until(lambda: _gone(child), 30)
         finally:
-            for proc in (child, parent):
-                try:
-                    proc.kill()
-                except (psutil.Error, OSError):
-                    pass
+            _kill_quietly(child, parent)
 
 
 # ---------------------------------------------------------------------------
@@ -455,13 +743,85 @@ class TestCancel:
         assert box["r"].success
         assert worker.request_cancel("test_0001") is False  # it ended
 
+    def test_a_runner_hears_only_the_token_of_the_run_it_is_on(self, tmp_path):
+        """Not a key (a rerun has the same), not another run's token, and
+        nothing at all for a run nobody announced."""
+        backend = _Backend(_config(tmp_path))
+        backend.quiet = True
+        worker = _Worker(0, backend.config)
+        worker.start()
+        runner = WorkerRunner(backend, worker)
+        token, box = object(), {}
+
+        def run(key):
+            box[key] = runner.run(make_test_model("Lib.A"), key)
+
+        runner.expect("test_0001", token)
+        th = threading.Thread(target=run, args=("test_0001",))
+        th.start()
+        assert worker.entered.wait(10)
+        assert runner.cancel(object()) is False  # another run's
+        assert runner.cancel("test_0001") is False  # the key is not the token
+        assert runner.cancel(None) is False
+        time.sleep(0.2)
+        assert th.is_alive() and worker.is_alive()  # nothing landed
+
+        assert runner.cancel(token) is True
+        th.join(10)
+        assert box["test_0001"].cancelled
+        assert runner.cancel(token) is False  # that run is over
+
+        worker.gate.set()
+        worker.entered.clear()
+        th = threading.Thread(target=run, args=("test_0002",))  # unannounced
+        th.start()
+        th.join(10)
+        assert box["test_0002"].success
+
+    def test_a_tool_that_died_as_the_test_returned_is_closed_and_restarted(
+        self, tmp_path
+    ):
+        """An interface that turns a lost connection into a failed result:
+        `run_test` returns, and the worker would look alive. It is closed,
+        so the next test starts a new tool instead of failing on a dead one."""
+        tool = subprocess.Popen([sys.executable, "-c", _SLEEP])
+
+        class _Returns(_Worker):
+            def run_test(self, test, test_key, progress=None):
+                if tool.poll() is None:
+                    tool.kill()
+                    tool.wait()
+                    return TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        error_message="connection lost",
+                    )
+                return _ok(test, test_key)
+
+        backend = _Backend(_config(tmp_path))
+        backend.quiet = True
+        worker = _Returns(0, backend.config)
+        worker.start()
+        worker.pids = {tool.pid}
+        runner = WorkerRunner(backend, worker)
+
+        first = runner.run(make_test_model("Lib.A"), "test_0001")
+        assert first.error_message == "connection lost" and not first.cancelled
+        assert not worker.is_alive() and worker.n_closed == 1
+
+        second = runner.run(make_test_model("Lib.B"), "test_0002")
+        assert second.success and worker.n_started == 2
+
     def test_a_cancelled_kill_is_not_charged_to_the_restart_budget(self, tmp_path):
         backend = _Backend(_config(tmp_path))
         backend.quiet = True
         worker = _Worker(0, backend.config)
         worker.start()
         runner = WorkerRunner(backend, worker)
-        threading.Timer(0.2, lambda: runner.cancel("test_0001")).start()
+        token = object()
+        runner.expect("test_0001", token)
+        threading.Timer(0.2, lambda: runner.cancel(token)).start()
 
         first = runner.run(make_test_model("Lib.A"), "test_0001")
         assert first.cancelled and not worker.is_alive()
@@ -480,22 +840,52 @@ posix_only = pytest.mark.skipif(
 )
 
 
-def _spawn_tool(tmp_path, children: list[tuple[list[str], str]]):
+def _spawn_tool(
+    tmp_path, children: list[tuple[list[str], str]], name: str | None = None
+):
     """A stand-in tool process whose children are *children* — ``(argv,
-    cwd)`` each. Returns ``(tool, [psutil child])`` once they all run."""
-    script = (
-        "import subprocess, sys, time, json\n"
-        "for argv, cwd in json.loads(sys.argv[1]):\n"
-        "    print(subprocess.Popen(argv, cwd=cwd).pid, flush=True)\n"
-        "time.sleep(120)\n"
-    )
-    import json
+    cwd)`` each. Returns ``(tool, [psutil child])`` once they all run.
 
-    tool = subprocess.Popen(
-        [sys.executable, "-c", script, json.dumps(children)], stdout=subprocess.PIPE
-    )
+    With *name* the tool is a shell script of that name, so that is its
+    process name (``dymola``, ``omc`` — what a worker's PID guard asks
+    for); without, a Python process."""
+    if name is None:
+        script = (
+            "import subprocess, sys, time, json\n"
+            "for argv, cwd in json.loads(sys.argv[1]):\n"
+            "    print(subprocess.Popen(argv, cwd=cwd).pid, flush=True)\n"
+            "time.sleep(120)\n"
+        )
+        import json
+
+        argv = [sys.executable, "-c", script, json.dumps(children)]
+    else:
+        import shlex
+
+        path = tmp_path / "tools" / name
+        path.parent.mkdir(exist_ok=True)
+        lines = ["#!/bin/sh"]
+        for child_argv, cwd in children:
+            lines += [
+                f"(cd {shlex.quote(cwd)} && exec {shlex.join(child_argv)}) &",
+                "echo $!",
+            ]
+        # Parked on its stdin, not on `wait`: it outlives its children, and
+        # has none of its own beside them.
+        path.write_text("\n".join([*lines, "read _", ""]))
+        path.chmod(0o755)
+        argv = [str(path)]
+    tool = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     assert tool.stdout is not None
-    return tool, [psutil.Process(int(tool.stdout.readline())) for _ in children]
+    found = [psutil.Process(int(tool.stdout.readline())) for _ in children]
+    if name is not None:
+        _wait_until(lambda: psutil.Process(tool.pid).name() == name)
+    return tool, found
+
+
+#: The compiler that builds dymosim: "dymosim" on its command line (``-o
+#: dymosim``), not as its name.
+_COMPILER = [sys.executable, "-c", _SLEEP, "-o", "dymosim"]
 
 
 def _kill_all(tool, children) -> None:
@@ -537,33 +927,52 @@ class TestDymolaStop:
             tmp_path,
             [
                 ([self._dymosim(tmp_path), "120"], str(sim_dir)),
-                # The compiler: "dymosim" on its command line, not its name.
-                (["sleep", "120", "dymosim"], str(other)),
+                (_COMPILER, str(other)),
             ],
+            name="dymola",
         )
         try:
             _wait_until(lambda: children[0].name() == "dymosim")
+            _wait_until(lambda: "dymosim" in children[1].cmdline())
+            assert children[1].name() != "dymosim"
             worker = self._worker(tmp_path)
             worker.pids = {tool.pid}
 
             assert worker.cancel_running("test_0001") is True
             assert (sim_dir / "stop").read_text() == ""
             assert not (other / "stop").exists()
-            assert all(child.is_running() for child in children)
+            assert not any(_gone(child) for child in children)  # asked, not killed
         finally:
             _kill_all(tool, children)
 
     def test_during_translation_there_is_nothing_to_ask(self, tmp_path):
         other = tmp_path / "elsewhere"
         other.mkdir()
-        tool, children = _spawn_tool(
-            tmp_path, [(["sleep", "120", "dymosim"], str(other))]
-        )
+        tool, children = _spawn_tool(tmp_path, [(_COMPILER, str(other))], name="dymola")
         try:
+            _wait_until(lambda: "dymosim" in children[0].cmdline())
             worker = self._worker(tmp_path)
             worker.pids = {tool.pid}
             assert worker.cancel_running("test_0001") is False
             assert not (other / "stop").exists()
+            assert not _gone(children[0])  # the compiler was there to be asked
+        finally:
+            _kill_all(tool, children)
+
+    def test_a_tracked_pid_that_is_no_longer_dymola_asks_nobody(self, tmp_path):
+        """A recycled PID: the dymosim under it is somebody else's."""
+        sim_dir = tmp_path / "test_0001"
+        sim_dir.mkdir()
+        tool, children = _spawn_tool(
+            tmp_path, [([self._dymosim(tmp_path), "120"], str(sim_dir))]
+        )
+        try:
+            _wait_until(lambda: children[0].name() == "dymosim")
+            worker = self._worker(tmp_path)
+            worker.pids = {tool.pid}  # a Python process now
+
+            assert worker.cancel_running("test_0001") is False
+            assert not (sim_dir / "stop").exists()
         finally:
             _kill_all(tool, children)
 
@@ -576,6 +985,107 @@ class TestDymolaStop:
         assert Capability.CANCEL not in DymolaBackend.capabilities
 
 
+@posix_only
+class TestDymolaLaunch:
+    """Dymola is on record from the moment its process exists — not from the
+    moment the interface's constructor, which then waits for it to answer,
+    hands back a finished session."""
+
+    def _interface(self, gate_before_launch: threading.Event | None = None):
+        launched: list[subprocess.Popen] = []
+        answered = threading.Event()
+
+        class _Interface:
+            """DymolaInterface's shape where the launch is concerned."""
+
+            def __init__(self, showwindow=False, dymolapath=None):
+                self._dymola_process = None
+                if gate_before_launch is not None:
+                    gate_before_launch.wait(30)
+                self._start_dymola(dymolapath)
+                answered.wait(30)  # ping ... ping ... until Dymola answers
+
+            def _start_dymola(self, dymolapath):
+                self._dymola_process = subprocess.Popen([dymolapath, "120"])
+                launched.append(self._dymola_process)
+
+        return _Interface, launched, answered
+
+    def _worker(self, tmp_path, interface_cls, bound: float):
+        import shutil
+
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
+
+        exe = tmp_path / "bin" / "dymola"  # the name the kill guard asks for
+        exe.parent.mkdir()
+        shutil.copy(shutil.which("sleep"), exe)
+        worker = DymolaWorker(
+            0,
+            SimpleNamespace(
+                work_dir=tmp_path, backend_path=exe, worker_startup_timeout=bound
+            ),
+            SimpleNamespace(show_ide=False, backend_setup=[]),
+            interface_cls,
+        )
+        worker._START_POLL_SECONDS = 0.02
+        return worker
+
+    def test_a_start_given_up_during_the_launch_kills_dymola(self, tmp_path):
+        interface_cls, launched, answered = self._interface()
+        worker = self._worker(tmp_path, interface_cls, 0.3)
+        try:
+            with pytest.raises(WorkerStartError, match="did not start within 0.3 s"):
+                worker.start_within()
+
+            assert len(launched) == 1, "the constructor never launched"
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert worker.dymola is None and worker.pids == set()
+        finally:
+            answered.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_a_dymola_launched_after_the_give_up_is_killed_at_once(self, tmp_path):
+        gate = threading.Event()
+        interface_cls, launched, answered = self._interface(gate)
+        worker = self._worker(tmp_path, interface_cls, 0.1)
+        try:
+            with pytest.raises(WorkerStartError):
+                worker.start_within()
+            assert launched == []
+
+            gate.set()  # the launch goes ahead on the thread nobody waits for
+            _wait_until(lambda: len(launched) == 1)
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert worker.dymola is None
+        finally:
+            gate.set()
+            answered.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_a_started_worker_tracks_the_launched_process(self, tmp_path):
+        interface_cls, launched, answered = self._interface()
+        answered.set()
+        worker = self._worker(tmp_path, interface_cls, 5.0)
+        interface_cls.cd = lambda self, path: None
+        interface_cls.openModel = lambda self, path: True
+        interface_cls.ExecuteCommand = lambda self, cmd: True
+        interface_cls.getLastErrorLog = lambda self: ""
+        interface_cls.close = lambda self: None
+        worker.config.dependencies = []
+        worker.config.library_dir = tmp_path
+        try:
+            worker.start_within()
+            assert worker.is_alive() and worker.pids == {launched[0].pid}
+            worker.close(grace=0.5)
+            _wait_until(lambda: launched[0].poll() is not None)
+        finally:
+            for proc in launched:
+                proc.kill()
+
+
+@posix_only
 class TestOpenModelicaStop:
     def _worker(self, tmp_path, session=None):
         from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
@@ -589,9 +1099,22 @@ class TestOpenModelicaStop:
         worker.session = session
         return worker
 
+    def test_a_tracked_pid_that_is_no_longer_omc_loses_no_child(self, tmp_path):
+        """A recycled PID: its children are somebody else's, and stay."""
+        tool, children = _spawn_tool(tmp_path, [([sys.executable, "-c", _SLEEP], ".")])
+        try:
+            worker = self._worker(tmp_path)
+            worker.pids = {tool.pid}  # a Python process now
+
+            assert worker.cancel_running("test_0001") is False
+            time.sleep(0.3)  # a kill would have landed by now
+            assert not _gone(children[0])
+        finally:
+            _kill_all(tool, children)
+
     def test_omc_s_children_are_killed_and_omc_is_left(self, tmp_path):
         tool, children = _spawn_tool(
-            tmp_path, [([sys.executable, "-c", "import time; time.sleep(120)"], ".")]
+            tmp_path, [([sys.executable, "-c", _SLEEP], ".")], name="omc"
         )
         try:
             worker = self._worker(tmp_path)
@@ -620,6 +1143,28 @@ class TestOpenModelicaStop:
         )
         process.poll = lambda: None
         assert worker.process_detail().startswith("omc is still running during")
+
+    def test_the_detail_leaves_out_omc_s_startup_notices(self, tmp_path):
+        """A slow `loadFile` in a live omc: the log holds what omc wrote as
+        it came up and nothing since — not a word about the load."""
+        log = ["Created ZeroMQ Server.\nDumped server port in file: /tmp/om.port.1f\n"]
+        session = SimpleNamespace(
+            omc_process=SimpleNamespace(
+                _omc_process=SimpleNamespace(poll=lambda: None),
+                get_log=lambda: log[0],
+            )
+        )
+        worker = self._worker(tmp_path, session)
+        worker._step = 'loadFile("/lib/package.mo")'
+
+        assert worker.process_detail() == (
+            'omc is still running during loadFile("/lib/package.mo")'
+        )
+        log[0] += "Error: out of memory\n\n"  # ...and the last line that is one
+        assert worker.process_detail() == (
+            'omc is still running during loadFile("/lib/package.mo"); '
+            "omc log: Error: out of memory"
+        )
 
     def test_the_backend_that_holds_the_worker_declares_cancel(self):
         from dstf.backends.openmodelica.backend import OpenModelicaBackend
@@ -680,6 +1225,41 @@ def test_a_cancel_flag_without_a_stop_is_refused_at_registration():
 
     with pytest.raises(TypeError, match="Capability.CANCEL"):
         _validate_capabilities(_Claims, "Claims")
+
+
+def test_a_driver_that_had_finished_keeps_its_result_when_cancelled_late(
+    tmp_path, monkeypatch
+):
+    """The stop arrives after the driver exited 0 and before its run was
+    read: there is nothing left to kill, and what it wrote is a result."""
+    from conftest import python_example_copy
+    from dstf.backends import select_backend
+    from dstf.backends.common import json_driver
+
+    config, _ = python_example_copy(tmp_path)
+    quick = config.source_path / "Quick.py"
+    quick.write_text(
+        "def simulate(stop_time, tolerance):\n"
+        "    return {'time': [0.0, 1.0], 'variables': {'x': [0.0, 1.0]}}\n"
+    )
+    backend = select_backend(config, persistent=True)
+    backend.quiet = True
+    real_run = json_driver.run_killable
+    asked: list[bool] = []
+
+    def finished_then_cancelled(cmd, **kw):
+        proc = real_run(cmd, **kw)
+        asked.append(backend.cancel_test("test_0001"))
+        return proc
+
+    monkeypatch.setattr(json_driver, "run_killable", finished_then_cancelled)
+    test = make_test_model("Lib.Quick", source_file=quick, variable_patterns=["x"])
+
+    result = backend.run_single_test(test, "test_0001", 1, 1)
+
+    assert asked == [True]  # the stop was taken: its process was on record
+    assert result.success and not result.cancelled, result.error_message
+    assert backend._cancelled == set()
 
 
 def test_the_python_backend_kills_the_test_s_subprocess(tmp_path):

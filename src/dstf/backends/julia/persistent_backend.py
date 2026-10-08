@@ -41,7 +41,7 @@ from pathlib import Path
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..common.json_driver import resolve_source_file
-from ..persistent import PersistentBackendBase, Worker
+from ..persistent import STARTUP_TIMEOUT_HINT, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult, timeout_message
 from .backend import JuliaBackend, JuliaConfig
 
@@ -75,10 +75,6 @@ class JuliaWorker(Worker):
     """
 
     kill_name_hint = "julia"
-    # Max seconds to wait for a worker's startup "ready" pulse when
-    # testing.json sets no worker_startup_timeout. MTK + OrdinaryDiffEq
-    # precompiled-cache load takes ~15-40s, a first run minutes; allow plenty.
-    startup_timeout = 240.0
 
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
         super().__init__(worker_id, config)
@@ -121,7 +117,10 @@ class JuliaWorker(Worker):
             bufsize=1,  # line-buffered
             cwd=str(self.julia_cfg.project_dir),
         )
-        self.pids = {self.proc.pid}
+        self._track_launch(self.proc.pid)
+        # MTK + OrdinaryDiffEq: ~15-40 s from the precompiled cache, minutes
+        # on a first run.
+        self._step = "its package load"
 
         self._stdout_thread = threading.Thread(
             target=self._reader_loop,
@@ -146,9 +145,10 @@ class JuliaWorker(Worker):
             self.close(grace=0.5)
             raise RuntimeError(
                 f"Julia worker {self.worker_id} did not emit ready within "
-                f"{bound}s. stderr tail: "
+                f"{bound:g} s {STARTUP_TIMEOUT_HINT}. stderr tail: "
                 f"{self._stderr_tail(6)}"
             )
+        self._step = ""
 
     # ---------------------------------------------------------------
 

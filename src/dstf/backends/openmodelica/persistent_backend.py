@@ -206,6 +206,21 @@ def _resolve_session_pid(session) -> int | None:
     return None
 
 
+#: What omc writes to its log as it comes up, on every start — the last
+#: lines of the log of an omc that is merely busy, and no news about it.
+_OMC_STARTUP_LINES = ("Created ZeroMQ Server", "Dumped server port in file")
+
+
+def _last_log_line(log: str) -> str:
+    """The last line of omc's log that says something about omc: its
+    startup notices are skipped. ``""`` when there is none."""
+    for line in reversed(log.splitlines()):
+        line = line.strip()
+        if line and not line.startswith(_OMC_STARTUP_LINES):
+            return line[-300:]
+    return ""
+
+
 def _is_notice_line(line: str) -> bool:
     lower = line.lower()
     return (
@@ -273,9 +288,10 @@ class OpenModelicaWorker(Worker):
                 "neither getpid() nor a reachable Popen handle.",
                 self.worker_id,
             )
-            self.pids = set()
-        else:
-            self.pids = {pid}
+        # OMPython launches omc and waits for its port file inside one call
+        # (well under a second on a healthy install, 10 s at its own bound),
+        # so this is the first moment the PID can be read.
+        self._track_launch(pid)
 
         self._exec(f'setCommandLineOptions("--std={self.om_config.std_version}")')
 
@@ -348,10 +364,10 @@ class OpenModelicaWorker(Worker):
         if self._step:
             state += f" during {self._step}"
         try:
-            log = (omc.get_log() or "").strip()
+            log = _last_log_line(omc.get_log() or "")
         except Exception:
             log = ""
-        return state + (f"; omc log: {log[-300:]}" if log else "")
+        return state + (f"; omc log: {log}" if log else "")
 
     def cancel_running(self, test_key: str) -> bool:
         """Kill what omc spawned for the test — make and the compiler during
@@ -363,7 +379,7 @@ class OpenModelicaWorker(Worker):
         does when omc has not come back within ``cancel_grace``.
         """
         killed = False
-        for child in live_children(self.pids):
+        for child in live_children(self.pids, name_hint=self.kill_name_hint):
             try:
                 child.kill()
                 killed = True

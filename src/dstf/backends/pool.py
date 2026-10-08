@@ -111,6 +111,20 @@ class ItemPath(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class StartingWorker:
+    """A worker that is being brought up right now — its first start, or a
+    restart after a death."""
+
+    worker_id: int
+    #: The step the start is in, in the backend's own words
+    #: (``loadFile("/lib/package.mo")``, ``its launch``); ``""`` when the
+    #: backend names none.
+    phase: str
+    #: Seconds since this start began.
+    seconds: float
+
+
 @dataclass(eq=False)
 class _Slot:
     """One pool thread and the runner it drives."""
@@ -146,7 +160,8 @@ class SimulationPool:
     **Workers.** None exists until the first ``submit``; then as many as
     there are items to run, up to ``workers`` (``Config.parallel`` unless
     given). Setting ``workers`` higher starts more as items need them;
-    lower lets the surplus go as each finishes its item. They live until
+    lower lets the surplus go as each finishes its item. ``starting`` lists
+    the ones still coming up, with the phase each is in. They live until
     ``close`` — which the owner must call: the pool's threads are daemons
     and do not keep a dying process open, but nothing else ends the
     workers' tool processes.
@@ -230,6 +245,24 @@ class SimulationPool:
                 if slot.item is not None
             )
 
+    @property
+    def starting(self) -> tuple[StartingWorker, ...]:
+        """The workers being brought up right now, by worker id — empty once
+        each has started or failed to. A large library is minutes of load in
+        a live tool: this is what says so while the items wait."""
+        with self._cond:
+            runners = [
+                (slot_id, slot.runner)
+                for slot_id, slot in sorted(self._slots.items())
+                if slot.runner is not None
+            ]
+        found = []
+        for slot_id, runner in runners:
+            state = runner.starting()
+            if state is not None:
+                found.append(StartingWorker(slot_id, *state))
+        return tuple(found)
+
     def submit(self, test: TestModel) -> QueueItem:
         """Append *test*. Raises :class:`Refused` when it is already waiting
         or running, and when the pool is closed or stopped."""
@@ -274,10 +307,12 @@ class SimulationPool:
         return True
 
     def cancel(self, item: QueueItem) -> bool:
-        """Stop a running *item*'s simulation; it ends CANCELLED (``on_end``
-        follows from its thread). ``False`` when it is not running — waiting
-        (``remove`` it) or already ended. Raises :class:`Refused` when it
-        runs on a backend that cannot stop a test."""
+        """Ask a running *item*'s simulation to stop: ``True`` when it was
+        asked. It then ends CANCELLED — unless its simulation had already
+        finished, which stays the result it is, FINISHED (``on_end`` follows
+        from its thread either way). ``False`` when it is not running —
+        waiting (``remove`` it) or already ended. Raises :class:`Refused`
+        when it runs on a backend that cannot stop a test."""
         with self._cond:
             if item.state is not ItemState.RUNNING:
                 return False
@@ -291,9 +326,11 @@ class SimulationPool:
             runner, test_key = slot.runner, item.test_key
         # Before its key exists the item has not reached its runner: the
         # flag set above is what its thread sees. After, the runner expects
-        # the key (set under this lock), so the stop reaches the test.
+        # the item (announced under this lock), so the stop reaches its run
+        # — and no other: by now the item may have ended and the same test
+        # be running again, under the same key.
         if runner is not None and test_key is not None:
-            runner.cancel(test_key)
+            runner.cancel(item)
         return True
 
     def close(self) -> None:
@@ -435,7 +472,7 @@ class SimulationPool:
                 item.test_key = test_key
                 stopped_early = item._stop_asked
                 if not stopped_early:
-                    runner.expect(test_key)
+                    runner.expect(test_key, item)
             if stopped_early:
                 run_result = TestRunResult(
                     model_id=item.model_id,
@@ -488,4 +525,11 @@ class SimulationPool:
             logger.exception("pool: a callback raised for %s", item.model_id)
 
 
-__all__ = ["ItemPath", "ItemState", "QueueItem", "Refused", "SimulationPool"]
+__all__ = [
+    "ItemPath",
+    "ItemState",
+    "QueueItem",
+    "Refused",
+    "SimulationPool",
+    "StartingWorker",
+]

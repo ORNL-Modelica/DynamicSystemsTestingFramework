@@ -25,9 +25,19 @@ import psutil
 import pytest
 
 from conftest import make_test_model
-from dstf.backends.base import Backend
-from dstf.backends.persistent import PersistentBackendBase, Worker
-from dstf.backends.pool import ItemState, QueueItem, Refused, SimulationPool
+from dstf.backends.base import Backend, ItemRunner
+from dstf.backends.persistent import (
+    STARTUP_TIMEOUT_HINT,
+    PersistentBackendBase,
+    Worker,
+)
+from dstf.backends.pool import (
+    ItemState,
+    QueueItem,
+    Refused,
+    SimulationPool,
+    StartingWorker,
+)
 from dstf.backends.types import Capability, TestResult, TestRunResult
 from dstf.pipeline import ItemRun, open_pool, run_pipeline
 
@@ -39,6 +49,13 @@ def _wait_until(pred, timeout: float = 15.0, what: str = "condition") -> None:
             return
         time.sleep(0.005)
     raise AssertionError(f"{what} not reached")
+
+
+def _gone(proc: psutil.Process) -> bool:
+    try:
+        return not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True  # reaped between the two looks
 
 
 def _ended(*items: QueueItem) -> bool:
@@ -58,6 +75,7 @@ class _FakeWorker(Worker):
 
     _START_POLL_SECONDS = 0.02
     _CHILD_WATCH_SECONDS = 0.05
+    launch_grace = 0.0  # these starts launch nothing
 
     def __init__(self, worker_id, config, backend):
         super().__init__(worker_id, config)
@@ -340,6 +358,42 @@ class TestCallbacks:
         assert threading.current_thread().name not in events.threads
         assert all("stub-pool-" in name for name in events.threads)
 
+    def test_on_end_runs_outside_the_pool_s_lock(self, tmp_path):
+        """A callback that takes its time must not hold the queue: another
+        thread reads it and submits to it meanwhile."""
+        backend = _FakeBackend(_config(tmp_path))
+        in_callback, release = threading.Event(), threading.Event()
+
+        def on_end(item):
+            in_callback.set()
+            release.wait(15)
+
+        pool = SimulationPool(
+            backend,
+            ItemRun(backend.config, backend=backend, store=_STORE),
+            on_end=on_end,
+        )
+        try:
+            a = pool.submit(_t("A"))
+            assert in_callback.wait(15)
+            box: dict = {}
+
+            def read():
+                box.update(waiting=pool.waiting, running=pool.running)
+                box["b"] = pool.submit(_t("B"))
+
+            reader = threading.Thread(target=read, daemon=True)
+            reader.start()
+            reader.join(5)
+
+            assert not reader.is_alive(), "on_end ran under the pool's lock"
+            assert box["waiting"] == () and box["running"] == ()
+            assert a.state is ItemState.FINISHED  # final before its callback
+            assert box["b"].state is ItemState.WAITING  # A's thread is in on_end
+        finally:
+            release.set()
+            pool.close()
+
     def test_a_callback_may_submit_and_one_that_raises_costs_nothing(self, tmp_path):
         backend = _FakeBackend(_config(tmp_path))
         box: dict = {}
@@ -430,6 +484,141 @@ class TestCancel:
             release.set()
             pool.close()
 
+    def test_a_cancel_after_the_key_and_before_the_run_still_lands(
+        self, tmp_path, monkeypatch
+    ):
+        """The item has its key and its runner expects it; the run itself
+        has not begun. The stop is kept for it: it ends cancelled without
+        its simulation having started."""
+        backend = _FakeBackend(_config(tmp_path))
+        keyed, go = threading.Event(), threading.Event()
+        real_run = ItemRunner.run
+
+        def held(runner, test, test_key):
+            keyed.set()
+            go.wait(15)
+            return real_run(runner, test, test_key)
+
+        monkeypatch.setattr(ItemRunner, "run", held)
+        pool = SimulationPool(
+            backend, ItemRun(backend.config, backend=backend, store=_STORE)
+        )
+        try:
+            item = pool.submit(_t("A"))
+            assert keyed.wait(15) and item.test_key == "test_0001"
+            assert pool.cancel(item) is True
+            go.set()
+            _wait_until(lambda: _ended(item))
+
+            assert item.state is ItemState.CANCELLED
+            assert backend.ran == []
+            assert _manifest(backend.config) == {"Lib.A": "cancelled"}
+        finally:
+            go.set()
+            pool.close()
+
+    def test_a_cancel_during_a_restart_is_heard_when_the_test_would_start(self, stub):
+        backend, pool, _ = stub
+        backend.raises.add("Lib.A")  # leaves the worker dead
+        a = pool.submit(_t("A"))
+        _wait_until(lambda: _ended(a))
+        restarting, release = threading.Event(), threading.Event()
+        backend.start_script = lambda worker: (restarting.set(), release.wait(15))
+        try:
+            b = pool.submit(_t("B"))
+            assert restarting.wait(15)
+            _wait_until(lambda: b.test_key is not None)
+            (starting,) = pool.starting  # a restart is a start, and shows
+            assert starting.worker_id == 0
+
+            assert pool.cancel(b) is True
+            release.set()
+            _wait_until(lambda: _ended(b))
+
+            assert b.state is ItemState.CANCELLED
+            assert [model for model, _ in backend.ran] == ["Lib.A"]  # B never ran
+            assert backend.starts == [0, 0] and pool.starting == ()
+        finally:
+            release.set()
+
+    def test_a_cancel_that_arrives_late_does_not_stop_the_test_s_next_run(
+        self, stub, monkeypatch
+    ):
+        """The stop is the ITEM's. Asked of item one and held up on its way
+        to the runner, it finds the same test running again — same key,
+        same worker — as item two, which nobody asked to stop."""
+        backend, pool, _ = stub
+        backend.gate("Lib.A")
+        on_its_way, go = threading.Event(), threading.Event()
+        real_cancel = ItemRunner.cancel
+
+        def held(runner, token):
+            on_its_way.set()
+            go.wait(15)
+            return real_cancel(runner, token)
+
+        monkeypatch.setattr(ItemRunner, "cancel", held)
+        one = pool.submit(_t("A"))
+        _wait_until(lambda: backend.ran == [("Lib.A", 0)])
+        box: dict = {}
+        asker = threading.Thread(target=lambda: box.update(asked=pool.cancel(one)))
+        asker.start()
+        try:
+            assert on_its_way.wait(15)
+            backend.gates["Lib.A"].set()  # item one ends by itself meanwhile
+            _wait_until(lambda: _ended(one))
+            backend.gate("Lib.A")
+            two = pool.submit(_t("A"))
+            _wait_until(lambda: backend.ran == [("Lib.A", 0)] * 2)
+            assert two.test_key == one.test_key and two.worker_id == one.worker_id
+
+            go.set()
+            asker.join(15)
+            time.sleep(0.3)  # a stop would have landed by now
+            assert two.state is ItemState.RUNNING and backend.closes == []
+            backend.gates["Lib.A"].set()
+            _wait_until(lambda: _ended(two))
+
+            assert box["asked"] is True  # one WAS running when it was asked
+            assert one.state is ItemState.FINISHED  # ...and had finished anyway
+            assert two.state is ItemState.FINISHED and two.result.success
+        finally:
+            go.set()
+
+    def test_a_stop_asked_as_the_simulation_finished_keeps_its_result(self, tmp_path):
+        """`cancel` says the item was asked to stop, not that it will end
+        cancelled: the stop reached the tool as its simulation completed,
+        and a simulation that finished is a result."""
+
+        class _FinishesAnyway(_FakeWorker):
+            def cancel_running(self, test_key):
+                self.b.gates["Lib.A"].set()  # the tool comes back, done
+                return True
+
+        class _Backend(_FakeBackend):
+            def make_worker(self, worker_id):
+                worker = _FinishesAnyway(worker_id, self.config, self)
+                self.workers.append(worker)
+                return worker
+
+        backend = _Backend(_config(tmp_path))
+        backend.gate("Lib.A")
+        pool = SimulationPool(
+            backend, ItemRun(backend.config, backend=backend, store=_STORE)
+        )
+        try:
+            item = pool.submit(_t("A"))
+            _wait_until(lambda: ("Lib.A", 0) in backend.ran)
+            assert pool.cancel(item) is True
+            _wait_until(lambda: _ended(item))
+
+            assert item.state is ItemState.FINISHED and item.message is None
+            assert item.run_result.success and not item.run_result.cancelled
+            assert item.result.success and backend.closes == []
+            assert _manifest(backend.config) == {"Lib.A": "passed"}
+        finally:
+            pool.close()
+
     def test_a_backend_without_the_flag_refuses_with_a_sentence(self, tmp_path):
         class _NoCancel(_FakeBackend):
             capabilities = frozenset({Capability.PERSISTENT_WORKERS})
@@ -484,6 +673,27 @@ class TestWorkerCount:
             _wait_until(lambda: _ended(*items))
         finally:
             pool.close()
+
+    @pytest.mark.parametrize("asked", [0, -3])
+    def test_a_count_below_one_is_one(self, tmp_path, asked):
+        """However it is given — the config's, the constructor's, set later
+        — a queue with no worker would hold its items for good."""
+        backend = _FakeBackend(_config(tmp_path, parallel=asked))
+        path = ItemRun(backend.config, backend=backend, store=_STORE)
+        from_config = SimulationPool(backend, path)
+        given = SimulationPool(backend, path, workers=asked)
+        try:
+            assert from_config.workers == 1 and given.workers == 1
+            given.workers = 3
+            given.workers = asked
+            assert given.workers == 1
+
+            items = [from_config.submit(_t("A")), given.submit(_t("B"))]
+            _wait_until(lambda: _ended(*items))
+            assert [item.state for item in items] == [ItemState.FINISHED] * 2
+        finally:
+            from_config.close()
+            given.close()
 
     def test_only_as_many_workers_as_there_are_items(self, tmp_path):
         backend = _FakeBackend(_config(tmp_path, parallel=4))
@@ -549,9 +759,9 @@ class TestStartBound:
             items = [pool.submit(_t(name)) for name in "ABC"]
             _wait_until(lambda: _ended(*items))
 
+            reason = f"did not start within 0.2 s {STARTUP_TIMEOUT_HINT}"
             message = (
-                "No Stub worker could start — worker 0: did not start within 0 s; "
-                "worker 1: did not start within 0 s"
+                f"No Stub worker could start — worker 0: {reason}; worker 1: {reason}"
             )
             assert pool.stopped == message
             for item in items:
@@ -561,6 +771,37 @@ class TestStartBound:
             assert backend.ran == []
             with pytest.raises(Refused, match="No Stub worker could start"):
                 pool.submit(_t("D"))  # the queue has stopped
+        finally:
+            release.set()
+            pool.close()
+
+    def test_a_worker_coming_up_is_listed_with_its_phase_and_seconds(self, tmp_path):
+        """What a queue shows while a large library loads: "starting worker
+        0 — loadFile(...) · 85 s". Gone once the worker is up."""
+        release, loading = threading.Event(), threading.Event()
+
+        def start(worker):
+            worker._step = 'loadFile("/lib/package.mo")'
+            loading.set()
+            release.wait(30)
+            worker._step = ""
+
+        backend, pool, _ = self._pool(tmp_path, start)
+        backend.config.worker_startup_timeout = 60.0
+        try:
+            assert pool.starting == ()  # no worker exists before a submit
+            item = pool.submit(_t("A"))
+            assert loading.wait(15)
+            (starting,) = pool.starting
+            assert isinstance(starting, StartingWorker)
+            assert starting.worker_id == 0
+            assert starting.phase == 'loadFile("/lib/package.mo")'
+            assert 0.0 <= starting.seconds < 15.0
+            assert item.state is ItemState.WAITING  # nothing took it yet
+
+            release.set()
+            _wait_until(lambda: _ended(item))
+            assert item.state is ItemState.FINISHED and pool.starting == ()
         finally:
             release.set()
             pool.close()
@@ -645,26 +886,73 @@ class TestWorkerDeath:
         try:
             a, b = pool.submit(_t("A")), pool.submit(_t("B"))
             _wait_until(lambda: ("Lib.A", 0) in backend.ran)
-            time.sleep(0.3)  # several watch ticks: the child is on record
+            _wait_until(
+                lambda: any(
+                    pid == child.pid
+                    for pid, _ in tuple(backend.workers[0]._orphan_children)
+                ),
+                30,
+                what="a watch tick recording the child",
+            )
             tool.kill()
             tool.wait()
-            _wait_until(lambda: _ended(a, b))
+            _wait_until(lambda: _ended(a, b), 30)
 
             assert a.state is ItemState.FAILED
             assert a.message == "Worker process exited during the test"
             assert b.state is ItemState.FINISHED and backend.starts == [0, 0]
-            _wait_until(
-                lambda: (
-                    not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
-                ),
-                what="the orphaned child killed",
-            )
+            _wait_until(lambda: _gone(child), 30, what="the orphaned child killed")
         finally:
             for proc in (child, tool):
                 try:
                     proc.kill()
                 except (psutil.Error, OSError):
                     pass
+
+    def test_the_stopped_queue_names_the_failures_that_stand(self, tmp_path):
+        """Worker 0 could not start, was started again later and worked,
+        then left as surplus. When worker 1 dies for good the queue stops
+        with worker 1's reason — not with one worker 0 had recovered from."""
+        backend = _FakeBackend(_config(tmp_path, parallel=2))
+        refuse: set[int] = {0}
+
+        def start(worker):
+            if worker.worker_id in refuse:
+                raise RuntimeError("licence seat taken")
+
+        backend.start_script = start
+        backend.gate("Lib.A", "Lib.B")
+        pool = SimulationPool(
+            backend, ItemRun(backend.config, backend=backend, store=_STORE)
+        )
+        try:
+            a, b = pool.submit(_t("A")), pool.submit(_t("B"))
+            _wait_until(lambda: ("Lib.A", 1) in backend.ran)
+            _wait_until(lambda: list(pool._slots) == [1], what="worker 0 gone")
+            assert pool._failures == {0: "licence seat taken"}
+
+            refuse.clear()
+            pool.workers = 2  # worker 0 again: this time it starts, and takes B
+            _wait_until(lambda: ("Lib.B", 0) in backend.ran)
+            backend.gates["Lib.B"].set()
+            _wait_until(lambda: _ended(b))
+            pool.workers = 1  # the idle one, worker 0, leaves — no failure
+            _wait_until(lambda: list(pool._slots) == [1], what="worker 0 gone again")
+
+            backend.raises.add("Lib.A")  # worker 1 dies...
+            refuse.add(1)  # ...and cannot come back
+            backend.gates["Lib.A"].set()
+            c = pool.submit(_t("C"))
+            _wait_until(lambda: _ended(a, c))
+
+            assert b.state is ItemState.FINISHED and c.state is ItemState.FAILED
+            assert pool.stopped == (
+                "No Stub worker could start — worker 1: Worker dead; restart exhausted"
+            )
+        finally:
+            for gate in backend.gates.values():
+                gate.set()
+            pool.close()
 
     def test_a_worker_that_cannot_be_restarted_stops_the_queue(self, stub):
         backend, pool, events = stub
@@ -727,6 +1015,45 @@ class TestClose:
         with pytest.raises(Refused, match="closed"):
             pool.submit(_t("E"))
         pool.close()  # idempotent
+
+    @pytest.mark.parametrize("cancelled_first", [False, True])
+    def test_close_does_not_wait_out_a_soft_stop_s_grace(
+        self, tmp_path, cancelled_first
+    ):
+        """A soft stop gives the tool `cancel_grace` to come back on its
+        own. A close asks hard: the worker is killed now, also when a soft
+        stop is already waiting for the tool."""
+
+        class _IgnoresTheStop(_FakeWorker):
+            cancel_grace = 60.0
+
+            def cancel_running(self, test_key):
+                return True  # asked; the tool does not come back
+
+        class _Backend(_FakeBackend):
+            def make_worker(self, worker_id):
+                worker = _IgnoresTheStop(worker_id, self.config, self)
+                self.workers.append(worker)
+                return worker
+
+        backend = _Backend(_config(tmp_path))
+        backend.gate("Lib.A")
+        pool = SimulationPool(
+            backend, ItemRun(backend.config, backend=backend, store=_STORE)
+        )
+        try:
+            item = pool.submit(_t("A"))
+            _wait_until(lambda: ("Lib.A", 0) in backend.ran)
+            if cancelled_first:
+                assert pool.cancel(item) is True
+                time.sleep(0.2)  # the watchdog is inside the grace
+                assert item.state is ItemState.RUNNING
+            t0 = time.monotonic()
+        finally:
+            pool.close()
+
+        assert time.monotonic() - t0 < 10.0  # not the 60 s of the grace
+        assert item.state is ItemState.CANCELLED and backend.closes == [0]
 
     def test_close_while_a_worker_is_still_starting(self, tmp_path):
         before = threading.active_count()
@@ -832,6 +1159,47 @@ class TestWithoutWorkers:
 
         assert slow.state is ItemState.FINISHED  # it succeeded: a result
 
+    def test_close_stops_a_running_test_on_a_backend_that_can(self, tmp_path):
+        """No worker to kill: the close goes through the backend's own stop,
+        for the run that is on the thread now."""
+
+        class _Stoppable(_SingleTestBackend):
+            capabilities = frozenset({Capability.CANCEL})
+
+            def __init__(self, config):
+                super().__init__(config)
+                self.stopped: list[str] = []
+
+            def cancel_test(self, test_key):
+                self.stopped.append(test_key)
+                self.gate.set()
+                return True
+
+            def run_single_test(self, test, test_key, index, total):
+                self.threads.append(threading.current_thread().name)
+                self.gate.wait(60)
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    error_message="killed",
+                )
+
+        backend = _Stoppable(_config(tmp_path))
+        pool = SimulationPool(
+            backend, ItemRun(backend.config, backend=backend, store=_STORE)
+        )
+        try:
+            slow = pool.submit(_t("Slow"))
+            _wait_until(lambda: backend.threads != [])
+            t0 = time.monotonic()
+        finally:
+            pool.close()
+
+        assert time.monotonic() - t0 < 10.0
+        assert backend.stopped == ["test_0001"]
+        assert slow.state is ItemState.CANCELLED
+
     def test_a_backend_that_only_runs_batches_is_refused_up_front(self, tmp_path):
         class _BatchOnly(Backend):
             def run_tests(self, tests):  # pragma: no cover
@@ -845,6 +1213,36 @@ class TestWithoutWorkers:
             SimulationPool(
                 backend, ItemRun(backend.config, backend=backend, store=_STORE)
             )
+
+
+class TestItemRun:
+    """What happens around one item's run on disk."""
+
+    def test_a_rerun_wipes_what_the_test_s_last_run_left(self, stub):
+        """Its report directory (the sidecar the dashboard reads a verdict
+        from) and its simulation directory — and nobody else's."""
+        backend, pool, _ = stub
+        work = backend.config.work_dir
+        first, other = pool.submit(_t("A")), pool.submit(_t("B"))
+        _wait_until(lambda: _ended(first, other))
+        stale = [
+            work / "reports" / "test_0001" / "comparison_data.json",
+            work / "test_0001" / "result.mat",
+        ]
+        kept = [
+            work / "reports" / "test_0002" / "comparison_data.json",
+            work / "test_0002" / "result.mat",
+        ]
+        for path in (*stale, *kept):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("from the last run")
+
+        again = pool.submit(_t("A"))
+        _wait_until(lambda: _ended(again))
+
+        assert again.test_key == "test_0001" and again.state is ItemState.FINISHED
+        assert [path.exists() for path in stale] == [False, False]
+        assert [path.exists() for path in kept] == [True, True]
 
 
 # ---------------------------------------------------------------------------
@@ -961,7 +1359,7 @@ def test_the_python_backend_through_the_pool_equals_run_pipeline(tmp_path):
         pool.close()
 
     assert slow.state is ItemState.CANCELLED and cancel_seconds < 10.0
-    assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
+    assert _gone(child)
     assert removed.state is ItemState.REMOVED and removed.test_key is None
     assert [item.state for item in finished] == [ItemState.FINISHED] * 3
     assert [model for what, model in events.log if what == "start"] == [
@@ -1008,3 +1406,107 @@ def test_the_python_backend_through_the_pool_equals_run_pipeline(tmp_path):
     assert status["metadata"]["backend_name"] == "Python"
     assert status["metadata"]["tool_version"].startswith("Python 3")
     assert (config.work_dir / "dashboard.html").exists()
+
+
+def _comparable(value):
+    """*value* with what differs between two runs of one test taken out:
+    wall-clock numbers. Arrays become lists, dataclasses dicts."""
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        value = {f.name: getattr(value, f.name) for f in dataclasses.fields(value)}
+    if isinstance(value, dict):
+        return {
+            key: "<seconds>"
+            if key in _WALL_CLOCK and isinstance(inner, (int, float))
+            else _comparable(inner)
+            for key, inner in value.items()
+        }
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (list, tuple)):
+        return [_comparable(inner) for inner in value]
+    return value
+
+
+#: Statistics' timings, and the manifest's stamp of when a run ended.
+_WALL_CLOCK = {
+    "wall_time",
+    "elapsed",
+    "sim_wall",
+    "translation_wall",
+    "total_wall",
+    "last_run_at",
+}
+
+
+def test_a_pool_run_of_a_test_with_a_baseline_equals_run_pipeline_s(tmp_path):
+    """A test that HAS a baseline is known by its reference id: its report
+    directory is `ref_NNNN`, the work dir carries the id mapping, the
+    manifest entry its `ref_id`. Through the pool, each of these — and the
+    whole result — is what `run_pipeline` leaves for the same tests."""
+    from dstf.backends import select_backend
+    from dstf.storage.accept import accept_run_results
+    from dstf.storage.reference_store import ReferenceStore
+
+    def project(work: str):
+        config, tests = _python_project(tmp_path, work)
+        backend = select_backend(config, persistent=True)
+        backend.quiet = True
+        return config, tests, backend, ReferenceStore(config)
+
+    # Fast1 gets a baseline; Fast2 has none.
+    config, tests, backend, store = project("seed")
+    seeded = run_pipeline(config, [tests["Fast1"]], backend=backend, store=store)
+    assert (
+        accept_run_results(store, [tests["Fast1"]], seeded.results, config.work_dir)[0]
+        == 1
+    )
+
+    # Fast2 first: Fast1's test key (test_0002) is then not its ref id.
+    order = ("Fast2", "Fast1")
+    config, tests, backend, store = project("pool")
+    assert store.index.get_id("QueueLib.Fast1") == "0001"
+    stale = config.work_dir / "reports" / "ref_0001" / "comparison_data.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("an earlier run's verdict")
+    pool = open_pool(config, backend=backend, store=store, workers=1)
+    try:
+        items = [pool.submit(tests[name]) for name in order]
+        _wait_until(lambda: _ended(*items))
+        pool.path.write_status(items)
+    finally:
+        pool.close()
+    assert not stale.exists()  # wiped under the name the report is kept by
+
+    cli_config, cli_tests, cli_backend, cli_store = project("cli")
+    outcome = run_pipeline(
+        cli_config,
+        [cli_tests[name] for name in order],
+        backend=cli_backend,
+        store=cli_store,
+    )
+
+    def on_disk(config):
+        manifest = json.loads((config.work_dir / "batch_manifest.json").read_text())
+        status = json.loads((config.work_dir / "status.json").read_text())
+        return {
+            "manifest": _comparable(manifest),
+            "id mapping": (config.work_dir / "reference_manifest.json").read_text(),
+            "report dirs": {
+                row["model_id"]: row["report_dir"] for row in status["tests"]
+            },
+        }
+
+    assert on_disk(config) == on_disk(cli_config)
+    assert on_disk(config)["report dirs"] == {
+        "QueueLib.Fast2": "test_0001",
+        "QueueLib.Fast1": "ref_0001",
+    }
+    assert backend.ref_id_map == cli_backend.ref_id_map
+    assert backend.ref_id_map == {"QueueLib.Fast1": "ref_0001"}
+    for item in items:
+        assert item.state is ItemState.FINISHED
+        expected = outcome.results[item.model_id]
+        assert _comparable(item.result) == _comparable(expected), item.model_id
+        assert item.result.variables[0].values.size == 201
