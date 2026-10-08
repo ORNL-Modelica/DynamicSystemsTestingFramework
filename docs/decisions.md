@@ -7000,17 +7000,26 @@ not made were made before anything was built (see What was measured).
    is dragged. Every other field of the row is what `Add row` gives. It is
    the metric's own function, `MetricDescriptor.place_row` over a
    `handles.RowPlace`, beside `edit_handle`; `row_noun` says what the row
-   is called, or that a click adds none to that leaf.
-3. *Arm a field, then click (the owner's ruling).* A field that names a
-   place on the plot has a ⌖. Pressing it arms that field — one per tab,
-   which one editor per page makes true — fills its ⌖, and turns the
-   editor's hint into "Click the plot to set <the field's label> — Esc
-   cancels."; the next plain click on that criterion's plot sets the field
-   and disarms. Esc, pressing ⌖ again, closing the editor and opening
-   another criterion disarm. The ⌖ is out of the Tab order (the
-   controller's): it is the first half of a gesture whose second is a
-   click on the plot, and in the order Tab from one side of a tolerance
-   met a ⌖ before the link toggle.
+   is called, or that a click adds none to that leaf. A row placed ON
+   one that stands there is refused, naming it ("a checkpoint already
+   stands at t=0.6 (row 2)"): within ONE snap step of a row's time —
+   after any clamp — or, for a peak, inside a declared peak's own
+   window. Two Ctrl+clicks on one spot left two rows.
+3. *Arm a field, then click (the owner's ruling).* What a click can
+   place has a ⌖. Pressing it arms it — one per tab, which one editor per
+   page makes true — fills its ⌖, and says so twice: the editor's hint
+   becomes "Click the plot to set <its label> — Esc cancels.", and the
+   PLOT's own card says the same on a line under the plot, in the accent,
+   with an accent outline about the plot (an attribute of the card the
+   stylesheet reads) — the ⌖ can be a screen below the plot the click is
+   made on. The next plain click on the panel it belongs to sets it and
+   disarms. Disarmed besides by: Esc; the ⌖ again; closing the editor;
+   opening another criterion; a row added to or removed from a table; a
+   change of mode; and ANY edit of the test — a Discard, a Save, another
+   tab's, a Ctrl+click, a typed value — since a ⌖ names a row by its index
+   and a field by its keys, and an edit can put another under the name.
+   The ⌖ is out of the Tab order (the controller's): it is the first half
+   of a gesture whose second is a click on the plot.
 4. *The fields follow a held handle (the owner's ruling).* While a ring, an
    arrow or a bound line is held and moved, the fields its release would
    change show what it would write. Nothing is staged before the release.
@@ -7026,25 +7035,38 @@ not made were made before anything was built (see What was measured).
    a click whose `detail` is 2 or more (a double-click resets the axes), a
    click more than 4 px from its press (a Ctrl+drag ends in a real click
    where it is let go), a click on a shape an editor moves (a press there
-   is a drag's), on the toolbar or the legend, or outside every panel's
-   plot area. A panel is a pair of axes that overlays no other: the time
+   is a drag's), or outside every panel's
+   plot area, where the toolbar and the legend are. A panel is a pair of axes that overlays no other: the time
    plot's, the spectrum's. What a click MEANS is the server's: the page
    never knows what is armed or which metric is open.
 7. *A click that sets a field is a drag of its handle released at the
-   click (the controller's).* `handles.handle_fields(leaf, local)` says
-   which field a handle writes on each axis; where a handle of the open
-   leaf writes the armed field the click goes through that handle's
-   `edit_handle`, so its clamps, refusals and sentences are the drag's —
-   a refused click says why on the line under the plot and leaves the field
-   armed. Of several handles that write one field (a criterion's tolerance
-   its rows defer to) the one nearest the click is used. A tolerance side's
-   EDGE lands on the click. Fields with no handle are set from the click's
-   own coordinate: a window's start and end and a declared event's time
-   from its x; a checkpoint's BLANK value from its y — its ring does not
-   write one, and arming the field is the author asking for it. A row's
-   blank tolerance takes one of its own first, from what it deferred to. A
-   field that names no place — a mode, `against`, `tube_min_width`,
-   `nrmse`'s ceiling — has no ⌖.
+   click (the controller's; which fields carry a ⌖ is the review's).* ONE
+   rule, `edit_on_plot._target`, says how a click sets a thing in the
+   criterion's CURRENT state — the ⌖ is drawn by it (`placeable`) and the
+   click acts by it (`placed`), so no ⌖ stands where a click would be
+   refused as setting nothing.
+   - A TABLE ROW has one ⌖, in its first cell ("row 2"): the click is its
+     ring let go there, through the ring's own editor — its time, a peak's
+     frequency, from the click's x; its value from the click's y only
+     where the row HOLDS one, so a checkpoint that follows the baseline
+     goes on following it. A declared event has no ring: its time is the
+     click's x. A row's tolerance sides have their arrows, or are typed.
+   - A criterion's own field has a ⌖ where a handle of the leaf writes it
+     (`handles.handle_fields`): a bound, a side of a tolerance the plot
+     draws. Of several handles that write one field (a tolerance its rows
+     defer to) the one nearest the click is used, and the side's EDGE
+     lands on the click. So there is none on the width of a tube's
+     inactive mode, on a scalar's bounds while it is scored by its
+     tolerance (or the reverse), on a time tolerance nothing defers to.
+   - Two fields with no handle are set from the click itself: a window's
+     start and end (its x), and a BLANK bound of a leaf that draws its
+     other one (its y, then the bounds' own refusal).
+   Every one of these belongs to ONE panel — the axes its handle or its
+   meaning lives on — and a click on the other is refused in words that
+   name where to click ("row 1 is set on the time plot"), stages nothing
+   and leaves it armed: a click on the spectrum wrote its magnitude as a
+   value. A refused click says why on the line under the plot and stays
+   armed. A refusal is a person's own (`unscorable.Refused`): shown, never logged.
 8. *A live drag is fields only (the controller's).* Plotly says nothing
    during a shape drag and its cover takes every move from the plot, so
    the page listens on the document in the capture phase and sends the
@@ -7058,15 +7080,19 @@ not made were made before anything was built (see What was measured).
    it without staging or rescoring. The box or band a handle belongs to
    still follows on release: a figure changed under a held shape loses the
    drag. A refused, unmoved or abandoned drag puts the fields back.
-9. *A preview is not a value.* `TypedNumber.preview(value, revision)` sets
-   two props beside the field's value — what to show instead, and the
-   number of the drag it is of — so nothing reaches `on_change` and
-   nothing can be staged by showing it. The component shows a preview
-   whatever its typing state, except in a field typed in since that drag
-   began: what a person types is never painted over. (D147 expected a
-   field to keep the focus through a drag; in Chromium the press on a
-   shape takes it — see What was measured — and the rule holds either
-   way.)
+9. *A preview is not a value, and not a prop.* `TypedNumber.preview(
+   value, revision)` calls a METHOD of the field's component in the page:
+   what to show instead of what it holds, and the number of the drag it is
+   of. The value is untouched, so nothing reaches `on_change` and nothing
+   can be staged by showing it. It was a prop first: a prop write resends
+   the element, and NiceGUI 3.16 then renders the page's whole tree again
+   — a 50 to 77 ms task in the browser for every move of a held handle
+   with thirty rows open. A method call redraws that field alone. The
+   component shows a preview whatever its typing state, except in a field
+   typed in since that drag began: what a person types is never painted
+   over. (D147 expected a field to keep the focus through a drag; in
+   Chromium the press on a shape takes it — see What was measured — and
+   the rule holds either way.)
 10. *Every move and release is numbered (the controller's).* The page
     numbers them, rising; the release carries a number past every move of
     its drag, and `FigureHook` drops a move numbered at or under the last
@@ -7130,7 +7156,13 @@ slowed by 250 ms a stage changed neither the fields nor the leaf. A press
 on a ring or an arrow takes the focus off a field in Chromium
 (`document.activeElement` is the body). plotly.js rejects a promise where a
 Ctrl+drag is let go — on the tool before this step too; nothing is shown
-for it.
+for it. The cost of an editor of thirty checkpoints, before this step /
+with a ⌖ in every cell and the preview as a prop / as built (one machine,
+medians of three): open 431–450 / 579 / 469 ms; the rebuild after a
+release 531–608 / 696 / 557 ms; DOM nodes of the editor 1921 / 2841 /
+2081; browser tasks over 50 ms during a two-second drag 0 / 21 (60 ms the
+median) / 0; pointer moves the page took in those two seconds 56–60 / 21
+/ 46. A points row is one line at 1280 px and two at 1024 px, as before.
 
 **Known limits, left.**
 
@@ -7138,17 +7170,19 @@ for it.
   click before the second resets the axes: a click is acted on when it
   arrives, not after a double-click's wait.
 - A Ctrl+double-click adds one row, by its first click.
-- The preview follows the handle's own fields; the box, band or window it
-  belongs to is redrawn on release.
+- While a handle is held the box, band, window and arrows that depend on
+  it stay where they were; they are redrawn on release.
+- A redraw under a held handle — a value typed in another field with the
+  keyboard while the mouse holds one — can make the preview differ from
+  what the release stages (0.46 shown, 0.53 staged in the review's probe).
+- A tolerance side dragged less than half a step past its target is
+  written 0, not refused: it is snapped first.
+- The window losing the focus mid-drag stops the previews for that drag.
 - A key typed in a field during a drag that leaves a valid value stages it
   — a typed value always does — and the plot is redrawn under the held
   shape.
-- A ⌖ in every number cell costs room and time. A cell sized to its
-  label is 24 px wider, and at 1280 px a points row's `Remove row` is on a
-  second line. And an editor of thirty checkpoints draws 180 of them on
-  every rebuild: the browser test that drags forty arrows of such a table
-  took 143 s before this step and 198 s after (its own waits for each
-  release among it).
+- A ⌖ costs a little: an editor of thirty checkpoints has 32 (one a row,
+  two on its window) — see the cost measured below.
 - Only Chromium was run; the Playwright browser tests are not run in CI.
 
 **What it reverses.** D147's "a handle still commits on release, the fields

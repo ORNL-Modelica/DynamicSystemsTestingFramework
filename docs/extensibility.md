@@ -917,7 +917,7 @@ stages an edit from a drag.
   or under the last release or end it heard, so a preview that arrives late
   never paints over what the release staged.
 - `dstf_click` (D149) — a click on the plot that is no double-click, ends
-  no drag and is on no draggable shape, the toolbar or the legend: id `""`
+  no drag, is on no draggable shape and is inside a panel's plot area: id `""`
   and `{"xaxis", "yaxis", "x", "y", "xrange", "yrange", "ctrl", "shift",
   "alt", "meta"}` — the axes of the PANEL under the pointer (`"x"` / `"y"`
   the time plot, `"x2"` / `"y2"` the spectrum), the position in them and
@@ -933,24 +933,37 @@ no plot (a dialog, a tree row, a Statistics row):
 
 - `panel.place_button(pointer, label)` draws a ⌖ into the current slot — a
   number field's `append` slot is the place (`with field.add_slot("append")`)
-  — that ARMS the field you call `pointer`; `label` is what the hint line
-  says is being set. The builtins name a field by its keys into the leaf
-  (`("points", 3, "time")`, `("tolerance", "upper")`), which is also how
-  `handles.handle_fields` names one. `render_form(..., place=panel.
-  place_button)` draws them for a form's bounds and tolerance sides.
+  — that ARMS what you call `pointer`; `label` is what the hint line and
+  the line under the plot say is being set. Draw one only where a click
+  can set the thing in the state it is in: the builtins ask
+  `edit_on_plot.placeable(view, model_id=…, variable=…, path=…)`, the rule
+  `placed` acts by, and name a criterion's field by its keys into the leaf
+  (`("tolerance", "upper")`, as `handles.handle_fields` names one) and a
+  table's row by its table and index (`("points", 3)`).
+  `render_form(..., place=fn)` offers `fn(pointer, label, field)` every
+  number field and tolerance side. `panel.can_place` says whether the
+  panel is beside a plot at all.
 - `panel.on_place(handler)` — `handler(pointer, click)` is called for a
-  PLAIN click on the plot while a field THIS panel drew a ⌖ for is armed;
-  return `submit`'s answer: `True` disarms, `False` (refused) leaves it
+  PLAIN click on the plot while something THIS panel drew a ⌖ for is
+  armed; `click` is the `dstf_click` payload with `label`, the armed ⌖'s.
+  Return `submit`'s answer: `True` disarms, `False` (refused) leaves it
   armed and the refusal is said under the plot. `edit_on_plot.placed(...)`
-  turns a pointer and a click into the new leaf, for a panel whose fields
-  are the leaf's own.
+  turns a pointer and a click into the new leaf, and refuses a click on
+  the panel the thing does not belong to.
+- `panel.disarm()` — for a panel to call when what a ⌖ named moved under
+  it with no edit saying so (a table's row added or removed while its
+  list is held back, its fields swapped for another mode's). Every edit
+  of the test disarms by itself.
 - `panel.preview(leaf, revision)` hands every panel of the editor the leaf
   a held handle WOULD write (`None`: over); `panel.on_preview(handler)`
   receives it. Show it with `TypedNumber.preview(value, revision)` /
   `SidesControl.preview` / `Form.preview`, which change what a field SHOWS
   and never its value — nothing reaches `on_change`, nothing is staged —
   and which leave a field typed in since that `revision` (the drag's
-  number) alone.
+  number) alone. A preview is a METHOD CALL on the field's component, not
+  a prop: in NiceGUI 3.16 a prop write resends the element and the browser
+  renders the page's whole tree again (50–77 ms with a 30-row table), so
+  anything of your own that follows a held handle should do the same.
 
 In the tool's figure each `kind="handle"` Marker of a leaf named in
 `rings_for` gets a ring shape named with its id, and each `kind="grip"`

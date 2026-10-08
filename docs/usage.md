@@ -1452,7 +1452,7 @@ points); "Drag a line on the plot, or edit the fields." (a `range`, a
 click adds to, "Ctrl+click adds a point." (a checkpoint; "an event", "a
 peak", "a control point" for the others) — each followed by "Edits are staged
 as you make them; Save writes them." While a field is armed (below) the line
-says only what the next click does: "Click the plot to set value of row 1 —
+says only what the next click does: "Click the plot to set row 1 —
 Esc cancels."
 
 **Ctrl+click adds a row that settles on the data.** With a criterion open,
@@ -1472,34 +1472,47 @@ pending edit — placed by what it clicks ON, not by the pixel:
 Every other field of the new row is what **Add row** gives. A criterion with
 no rows — `nrmse`, `range`, `scalar`, a tube of constant width — takes no
 Ctrl+click. A click that names no place for a row says why under the plot:
-the run has no event, that event or peak is already declared, a control
-point already stands at that time, a peak is added on the spectrum. A
+the run has no event, a peak is added on the spectrum — or a row already
+stands there ("a checkpoint already stands at t=0.6 (row 2)"): within one
+snap step of it, or, for a peak, inside a declared peak's own window. A
 double-click still resets the axes, a Ctrl+drag is still Plotly's own, and a
 press on a ring, an arrow or a bound is a drag: none of them adds anything.
 Rows are removed in the table.
 
-**Arm a field, then click the plot.** Every field that names a place on the
-plot has a small ⌖ at its right end: a bound, each side of a tolerance, a
-window's start and end, and in a table a row's time, value, frequency, widths
-and tolerance sides. (A mode, `against`, a tube's minimum width and
-`nrmse`'s tolerance name none.) Press ⌖ and the field is **armed** — its ⌖
-is filled, the hint says what the next click sets, the pointer over the plot
-is a crosshair — and the next plain click on that criterion's plot sets the
-field and disarms it. One field is armed at a time; Esc, pressing ⌖ again,
-closing the editor or opening another criterion disarms. The ⌖ is the
-mouse's — the gesture ends in a click on the plot — and Tab passes it by.
+**Arm it, then click the plot.** What a click on the plot can place has a
+small ⌖: each row of a table has ONE, in its first cell, and a criterion's
+own field has one where the plot draws it — a bound, a side of a tolerance
+some row is held to, a window's start and end. (A mode, `against`, a tube's
+minimum width, `nrmse`'s tolerance, the width of the tube mode not in use,
+a scalar's bounds while it is scored by its tolerance: none.) Press ⌖ and
+it is **armed** — its ⌖ is filled, the hint says "Click the plot to set row
+2 — Esc cancels.", and the plot itself says so too, with an accent outline
+and the same sentence under it — and the next plain click on its plot sets
+it and disarms. One is armed at a time. Esc, pressing ⌖ again, closing the
+editor, opening another criterion, adding or removing a row, changing the
+mode, and any edit of the test — Discard and Save too — disarm. The ⌖ is
+the mouse's — the gesture ends in a click on the plot — and Tab passes it
+by.
 
-A click is a drag of that field's handle released at the click, so it is
-clamped and refused exactly as the drag is — a refused click says why under
-the plot and leaves the field armed. A tolerance side's EDGE lands on the
-click: the side becomes the distance from its target to where you clicked. A
-criterion's default tolerance is measured from the row nearest the click
-among those that defer to it. A row's blank tolerance takes one of its own
-first (from the criterion's, else zero). The fields with no handle are set
-from the click's own coordinate: a window's start and end and a declared
-event's time from its x, and the blank `value` of a checkpoint that follows
-the baseline from its y — which, like typing one, makes it a fixed-value
-check.
+A click is a drag released at the click, so it is snapped, clamped and
+refused exactly as the drag is — a refused click says why under the plot
+and leaves the field armed.
+
+- A **row** is placed as its ring dragged to the click: its time (a peak's
+  frequency) from the click's x, and its value from the click's y where
+  the row holds a value of its own — a checkpoint that follows the
+  baseline goes on following it. A declared event's time is the click's x.
+  A row's tolerance sides are set by their arrows, or typed.
+- A **tolerance side** of the criterion: its EDGE lands on the click — the
+  side becomes the distance from its target to where you clicked, measured
+  from the row nearest the click among those that defer to it.
+- A **bound**: the click's y — through its line, or directly where the
+  bound is still blank.
+- A **window's** start or end: the click's x.
+
+Each belongs to one panel. A click on the other — the spectrum, with a
+checkpoint's row armed — is refused ("row 1 is set on the time plot") and
+leaves it armed.
 
 **The fields follow a held handle.** While a ring, an arrow or a bound line
 is held and moved, the fields it will change show the value its release
