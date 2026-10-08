@@ -6,6 +6,8 @@ A file can be written with only its first ``points`` rows and with any
 column count in ``data_2``'s header (``declared``), which is how a run in
 progress looks: Dymola's count lags the rows, OpenModelica's is 0 until the
 end. ``ResultMat.rows`` gives the bytes of further rows to append.
+
+``Trace`` is what a caller of the live reader keeps while it polls.
 """
 
 from __future__ import annotations
@@ -151,3 +153,29 @@ def write_result_mat(
         f.write(table[:written].tobytes(order="C"))
         spans["data_2"] = (start, data, f.tell())
     return ResultMat(path=path, spans=spans, table=table, expected=expected)
+
+
+class Trace:
+    """What a caller of ``LiveMatReader`` keeps: each name's samples,
+    appended poll by poll and dropped when the reader starts over on a new
+    run. ``series(name)`` is then that name's series so far."""
+
+    def __init__(self) -> None:
+        self.run = 0
+        self.time: dict[str, list[np.ndarray]] = {}
+        self.values: dict[str, list[np.ndarray]] = {}
+        self.snapshots: list = []
+
+    def take(self, snap):
+        if snap.run != self.run:
+            self.run = snap.run
+            self.time.clear()
+            self.values.clear()
+        for name, s in snap.series.items():
+            self.time.setdefault(name, []).append(s.time)
+            self.values.setdefault(name, []).append(s.values)
+        self.snapshots.append(snap)
+        return snap
+
+    def series(self, name: str) -> tuple[np.ndarray, np.ndarray]:
+        return np.concatenate(self.time[name]), np.concatenate(self.values[name])

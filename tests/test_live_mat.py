@@ -27,7 +27,7 @@ from dstf.backends.common.live_mat import (
     LiveSnapshot,
 )
 from dstf.backends.common.mat_reader import read_result_mat
-from mat4_files import ResultMat, write_result_mat
+from mat4_files import ResultMat, Trace, write_result_mat
 
 FIXTURES = Path(__file__).parent / "fixtures"
 STORED = [
@@ -53,31 +53,6 @@ def _result(path: Path, tool="dymola", dtype="<f4", n=40, scale=1.0, **kw) -> Re
     )
 
 
-class _Trace:
-    """What a caller of the reader keeps: each name's samples, appended poll
-    by poll and dropped when the reader starts over."""
-
-    def __init__(self) -> None:
-        self.run = 0
-        self.time: dict[str, list[np.ndarray]] = {}
-        self.values: dict[str, list[np.ndarray]] = {}
-        self.snapshots: list[LiveSnapshot] = []
-
-    def take(self, snap: LiveSnapshot) -> LiveSnapshot:
-        if snap.run != self.run:
-            self.run = snap.run
-            self.time.clear()
-            self.values.clear()
-        for name, s in snap.series.items():
-            self.time.setdefault(name, []).append(s.time)
-            self.values.setdefault(name, []).append(s.values)
-        self.snapshots.append(snap)
-        return snap
-
-    def series(self, name: str) -> tuple[np.ndarray, np.ndarray]:
-        return np.concatenate(self.time[name]), np.concatenate(self.values[name])
-
-
 def _same(got: np.ndarray, want: np.ndarray) -> bool:
     return (
         got.dtype == want.dtype
@@ -86,7 +61,7 @@ def _same(got: np.ndarray, want: np.ndarray) -> bool:
     )
 
 
-def _assert_trace(trace: _Trace, mat: ResultMat, rows: int | None = None) -> None:
+def _assert_trace(trace: Trace, mat: ResultMat, rows: int | None = None) -> None:
     for name in NAMES:
         t, v = trace.series(name)
         assert _same(t, mat.time[:rows]), f"time of {name}"
@@ -132,7 +107,7 @@ def test_every_row_is_served_once_in_order_while_a_writer_appends(
         done.set()
 
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     writer = threading.Thread(target=write)
     writer.start()
     try:
@@ -159,7 +134,7 @@ def test_a_half_written_row_waits_for_its_other_half(tmp_path):
     mat = _result(path, points=3, declared=1)
     half = mat.row_bytes // 2
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     with open(path, "ab") as f:
         f.write(mat.rows(3, 4)[:half])
     snap = trace.take(reader.poll(NAMES))
@@ -211,7 +186,7 @@ def test_one_reader_follows_a_file_from_nothing_to_its_rows(tmp_path):
     assert (snap.state, snap.run, snap.rows, snap.time) == (RUNNING, 0, 0, None)
     assert set(snap.series) == set(NAMES)
     assert all(len(s.time) == 0 for s in snap.series.values())
-    trace = _Trace()
+    trace = Trace()
     with open(path, "ab") as f:
         f.write(mat.rows(0, 6))
     trace.take(reader.poll(NAMES))
@@ -233,7 +208,7 @@ def test_a_name_first_asked_for_late_gets_its_rows_from_the_start(tmp_path):
     path = tmp_path / "res.mat"
     mat = _result(path, points=10, declared=1)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     trace.take(reader.poll(["x"]))
     with open(path, "ab") as f:
         f.write(mat.rows(10, 25))
@@ -291,7 +266,7 @@ def test_a_deleted_file_is_gone_and_the_next_one_is_read_from_its_start(tmp_path
     path = tmp_path / "res.mat"
     old = _result(path, n=40)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     assert trace.take(reader.poll(NAMES)).rows == 40
     path.unlink()
     gone = trace.take(reader.poll(NAMES))
@@ -312,7 +287,7 @@ def test_the_directory_removed_between_polls(tmp_path):
     path = test_dir / "dsres.mat"
     _result(path, n=40)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     assert trace.take(reader.poll(NAMES)).state == RUNNING
     shutil.rmtree(test_dir)  # nothing of ours holds it
     assert trace.take(reader.poll(NAMES)).state == GONE
@@ -333,7 +308,7 @@ def test_a_file_that_got_smaller_is_another_run(tmp_path):
     path = tmp_path / "res.mat"
     _result(path, n=40)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     trace.take(reader.poll(NAMES))
     inode = path.stat().st_ino
     new = _result(path, n=12, scale=3.0)
@@ -349,7 +324,7 @@ def test_another_inode_is_another_run_even_when_it_continues_the_old_one(tmp_pat
     path = tmp_path / "res.mat"
     mat = _result(path, n=40, points=25, declared=1)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     assert trace.take(reader.poll(NAMES)).rows == 25
     staged = tmp_path / "staged.mat"
     _result(staged, n=40, declared=1)
@@ -370,7 +345,7 @@ def test_the_same_inode_grown_past_the_old_file_is_another_run(tmp_path, asked):
     path = tmp_path / "res.mat"
     _result(path, n=40, points=10, declared=1)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     assert trace.take(reader.poll(asked)).rows == 10
     inode = path.stat().st_ino
     new = _result(path, n=40, scale=3.0, declared=1)  # rewritten in place
@@ -386,7 +361,7 @@ def test_an_unreadable_file_is_no_news_not_a_new_run(tmp_path, monkeypatch):
     path = tmp_path / "res.mat"
     mat = _result(path, n=40, points=10, declared=1)
     reader = LiveMatReader(path)
-    trace = _Trace()
+    trace = Trace()
     trace.take(reader.poll(NAMES))
     real_open = open
 
@@ -489,7 +464,7 @@ def test_a_long_backlog_is_thinned_to_the_cap_and_ends_on_the_newest_row(
         # room for the cap's 100 rows, not for the backlog's span
         assert live_mat._READ_BYTES < 1003 * mat.row_bytes
     reader = LiveMatReader(path, max_rows=100)
-    trace = _Trace()
+    trace = Trace()
     snap = trace.take(reader.poll(NAMES))
     assert snap.rows == 1003 and snap.time == float(mat.time[1002])
     t = snap.series["x"].time
