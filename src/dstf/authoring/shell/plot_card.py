@@ -39,6 +39,7 @@ from ..session import Selection
 from ..tree_text import leaf_name, parent_kinds
 from .actions import InlineHost, RowTarget
 from .figure_hook import FigureHook
+from .placing import Placing
 from .tree_card import leaf_readout, leaf_status
 from .widgets import MiddleCut, Pill
 
@@ -99,6 +100,12 @@ EDITOR_HINTS: dict[Drags, str] = {
     "": "Edit the fields.",
 }
 STAGED = " Edits are staged as you make them; Save writes them."
+#: What the hint adds for a criterion whose metric has rows a Ctrl+click
+#: adds to (D149), ``{}`` being what the row is called — the metric's own
+#: word (`MetricDescriptor.row_noun`) — and what it says INSTEAD while a
+#: field is armed, ``{}`` being that field's label.
+ADDS = " Ctrl+click adds {}."
+ARMED = "Click the plot to set {} — Esc cancels."
 
 #: The hover module of the tolerance grips (`grips.js`): its file, and where
 #: the shell serves it — beside the Suite table's scripts.
@@ -345,6 +352,8 @@ class PlotCard:
         # Created here, attached in `show()`: a panel hosted under this card
         # subscribes before there is a plot to attach to.
         self.hook = FigureHook(on_shape_moved=self.redraw)
+        #: The open editor's ⌖ buttons and its armed field (D149).
+        self.placing = Placing(self.hook, self._armed_moved)
         self.rows: dict[str, CriterionRow] = {}
         self.pills: dict[str, Pill] = {}
         #: The criteria header's host: what attaches at VARIABLE, inline
@@ -935,6 +944,7 @@ class PlotCard:
                 # outlives them: a drag rebuilds the whole editor.
                 kept=partial(self.page.kept, path),
                 on_said=self._said,
+                placing=self.placing,
             )
             self.editor.build()
         view = self._view(view)
@@ -971,7 +981,53 @@ class PlotCard:
         the mode is a field of the editor."""
         if self.hint is None or self.hint.is_deleted:
             return
-        self.hint.set_text(EDITOR_HINTS[self._drags()] + STAGED)
+        armed = self.placing.armed
+        if armed is not None:
+            # While a field is armed the line says the one thing a click
+            # on the plot now does.
+            self.hint.set_text(ARMED.format(armed.label))
+            return
+        self.hint.set_text(EDITOR_HINTS[self._drags()] + self._adds() + STAGED)
+
+    def _adds(self) -> str:
+        """What a Ctrl+click adds to the open criterion, as the hint's
+        sentence: its metric's own word for a row, or nothing where a
+        click adds none — a metric with no rows, a tube of constant width,
+        a metric no drag edits (its Edit on plot place is not drawn)."""
+        raw = self.page._node(self.open_path or "")
+        desc = registry.metric(str((raw or {}).get("metric", registry.DEFAULT_METRIC)))
+        if raw is None or desc is None or desc.place_row is None:
+            return ""
+        noun = desc.row_noun(raw) if desc.row_noun is not None else None
+        return ADDS.format(noun) if noun else ""
+
+    def _armed_moved(self) -> None:
+        """The armed field changed (`Placing`): the hint says it, and the
+        plot's own element — an attribute the stylesheet reads — shows the
+        pointer as one that places."""
+        self._say_hint()
+        if self.slot is not None and not self.slot.is_deleted:
+            if self.placing.armed is not None:
+                self.slot.props("data-armed")
+            else:
+                self.slot.props(remove="data-armed")
+
+    def clicked(self, click: Any) -> None:
+        """A click on this card's plot, as the page reports it (`grips.js`,
+        D149): Ctrl+click adds a row to the open criterion, and a plain one
+        sets its armed field. Nothing with no editor open here."""
+        if (
+            self.plot is not None
+            and self.editor is not None
+            and isinstance(click, dict)
+        ):
+            self.placing.clicked(click)
+
+    def moved(self, move: Any) -> None:
+        """A handle of this card's plot is HELD (`grips.js`, D149): its
+        would-be position, for the editor's fields to follow."""
+        if self.plot is not None:
+            self.hook.move(move)
 
     def _said(self, text: str | None) -> None:
         """What the open editor's error line just said (`InlineHost`'s
@@ -995,6 +1051,7 @@ class PlotCard:
         row then staged nothing and showed nothing (the review, in
         Chromium). A refused drag's line under the plot goes with it."""
         self._said(None)
+        self.placing.forget()
         if self.editor is not None:
             self.editor.clear()
         if self.editor_box is not None and not self.editor_box.is_deleted:

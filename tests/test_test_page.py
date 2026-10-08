@@ -3568,15 +3568,23 @@ MORE_LEAVES = [
         "peaks": [{"freq": 1.0, "tolerance": 0.1}],
     },
 ]
+#: What the hint adds where a Ctrl+click adds a row (D149), in the
+#: metric's own word for one.
+ADDS = " Ctrl+click adds {}."
 HINTS = [
-    (0, RINGS_HINT, True),  # tube: a ring per control point, and no arrow
+    # tube: a ring per control point, and no arrow
+    (0, RINGS_HINT + ADDS.format("a control point"), True),
     (1, LINE_HINT, False),  # range: its two bound lines
-    (2, BOTH_HINT, True),  # points: a ring per checkpoint, an arrow per side
+    # points: a ring per checkpoint, an arrow per side
+    (2, BOTH_HINT + ADDS.format("a point"), True),
     (3, LINE_HINT, False),  # scalar, by its bounds
     (6, LINE_HINT, False),  # scalar, against its baseline: its two sides' lines
-    (7, ARROWS_HINT, True),  # a constant tube: an arrow per side, no ring
-    (8, ARROWS_HINT, True),  # events: a window's two arrows, no ring
-    (9, BOTH_HINT, True),  # peaks: a ring per declared peak, its window's arrows
+    # a constant tube: an arrow per side, no ring — and no row to add
+    (7, ARROWS_HINT, True),
+    # events: a window's two arrows, no ring
+    (8, ARROWS_HINT + ADDS.format("an event"), True),
+    # peaks: a ring per declared peak, its window's arrows
+    (9, BOTH_HINT + ADDS.format("a peak"), True),
 ]
 
 
@@ -3626,7 +3634,8 @@ async def test_the_editors_hint_follows_a_switch_of_mode(shell):
         mode.set_value("range")
         await _settled(lambda: hint.text == LINE_HINT + STAGED_AND_SAVE)
         mode.set_value("points")
-        await _settled(lambda: hint.text == BOTH_HINT + STAGED_AND_SAVE)
+        added = ADDS.format("a point")
+        await _settled(lambda: hint.text == BOTH_HINT + added + STAGED_AND_SAVE)
 
 
 async def test_the_editors_hint_is_the_leafs_again_after_a_discard_and_after_a_save(

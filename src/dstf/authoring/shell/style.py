@@ -444,6 +444,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    server renders, not a class. */
 .dstf-sides > .q-btn[aria-pressed="true"] { color: var(--dstf-accent); }
 .dstf-sides > .q-btn[aria-pressed="false"] { color: var(--dstf-text-muted); }
+/* A field's ⌖ (D149): muted at rest, the accent on a fill while its field
+   is ARMED — the next click on the plot sets it. Read off `aria-pressed`,
+   which the server renders. And over an armed criterion's plot the pointer
+   is one that places. */
+.dstf-arm { color: var(--dstf-text-muted); }
+.dstf-arm[aria-pressed="true"] {
+  color: var(--dstf-accent);
+  background: color-mix(in srgb, var(--dstf-accent) 18%, transparent);
+}
+.dstf-plot-slot[data-armed] .nsewdrag { cursor: crosshair !important; }
 .dstf-sides-hinted > .q-field:first-child {
   min-width: min(var(--dstf-hint-width), calc(100cqw - 180px));
 }

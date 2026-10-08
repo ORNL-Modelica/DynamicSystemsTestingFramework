@@ -199,6 +199,11 @@ class TestPage:
             self.focus_bar.set_visibility(False)
             self.column = ui.column().classes("dstf-plots w-full gap-3").mark("plots")
         ui.on("dstf_plot_visible", lambda e: self.on_visible(e.args))
+        # The plots' own channel (`grips.js`, D149): a click that is no
+        # drag, a handle held, and Esc while a field is armed.
+        ui.on("dstf_plot_click", lambda e: self.on_plot("clicked", e.args))
+        ui.on("dstf_grip_move", lambda e: self.on_plot("moved", e.args))
+        ui.on("dstf_disarm", lambda _e: self.disarm())
         self.shell.register(self)
         self.sync()
         self.rail.open(self.state.drawer)
@@ -860,6 +865,22 @@ class TestPage:
             return
         if 0 <= index < len(self.cards):
             self.cards[index].show()
+
+    def on_plot(self, what: str, arg: Any) -> None:
+        """A click on a plot (``clicked``) or a handle held on one
+        (``moved``), named by its `ui.plotly`'s element id: handed to the
+        card that plot is on. One for a plot this page no longer has — a
+        rebuild crossed it — is nothing."""
+        plot = arg.get("plot") if isinstance(arg, dict) else None
+        for card in self.cards:
+            if card.plot is not None and card.plot.id == plot:
+                getattr(card, what)(arg)
+                return
+
+    def disarm(self) -> None:
+        """Esc: no field is armed (D149)."""
+        for card in self.cards:
+            card.placing.disarm()
 
     def _observe(self) -> None:
         ui.run_javascript(OBSERVE)

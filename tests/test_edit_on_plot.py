@@ -793,7 +793,11 @@ async def test_the_tables_line_is_said_only_where_a_table_is_drawn(session):
     )
     async with host(session, EditOnPlot(), on_range) as (user, _errors, figure):
         await user.should_not_see("edit the table")
-        assert [kind for kind, _ in figure.handlers] == ["plotly_relayout"]
+        assert [kind for kind, _ in figure.handlers] == [
+            "plotly_relayout",
+            "dstf_move",
+            "dstf_click",
+        ]
 
 
 async def test_the_rows_scroll_and_add_row_does_not(session):
@@ -1575,8 +1579,9 @@ async def test_add_row_after_a_row_holding_a_pair(session):
 async def test_a_tolerance_cell_is_as_wide_as_its_label(session):
     """An empty cell draws its label full size, and the cells' 120 px cut
     "before time_tolerance": each side of a tolerance cell asks for its own
-    label's width (`forms.label_width`), the longer label the wider."""
-    from dstf.authoring.forms import label_width
+    label's width (`forms.label_width`), the longer label the wider — and
+    for the ⌖ that stands at its right end (`forms.PLACE_PX`, D149)."""
+    from dstf.authoring.forms import PLACE_PX, label_width
 
     _root_leaf_on_a(session, SIDED["points"][0])
     async with host(session, EditOnPlot(), ON_A) as (user, _errors, _figure):
@@ -1585,7 +1590,9 @@ async def test_a_tolerance_cell_is_as_wide_as_its_label(session):
             for side in ("lower", "upper"):
                 cell = _cell(user, f"/metrics:points:0:{key}:{side}")
                 widths[cell.props["label"]] = cell._style["min-width"]
-        assert widths == {label: f"{label_width(label)}px" for label in widths}
+        assert widths == {
+            label: f"{label_width(label) + PLACE_PX}px" for label in widths
+        }
         assert set(widths) >= {"before time_tolerance", "after time_tolerance"}
         # 146 px is what Chromium draws the longest of them in.
         assert label_width("before time_tolerance") >= 146

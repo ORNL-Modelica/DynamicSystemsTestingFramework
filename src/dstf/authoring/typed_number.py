@@ -28,12 +28,11 @@ class TypedNumber(ui.number, component="typed_number.js"):
     field is left first (a browser steps a focused number input by 1 per
     notch).
 
-    There is no way to set a FOCUSED field from the server, because nothing
-    does: Discard and a drag on the plot rebuild the editor, and a linked
-    twin's mirror lands in the field that is not typed in. A feature that
-    does replace the value of a field being typed in has to add that — a
-    revision prop the component watches, bumped beside the value, on which
-    it takes the server's value whatever its typing state.
+    A field's own VALUE is still never set from the server while it is
+    typed in: Discard and a released drag rebuild the editor, and a linked
+    twin's mirror lands in the field that is not typed in. What the server
+    does show in a field that may hold the focus is a PREVIEW
+    (:meth:`preview`, D149): beside the value, never in its place.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -42,6 +41,22 @@ class TypedNumber(ui.number, component="typed_number.js"):
         component = type(self).component
         assert component is not None  # the class statement registered it
         self.tag = component.tag
+
+    def preview(self, value: float | None, revision: int = 0) -> None:
+        """Show ``value`` in the field in place of what it holds — a handle
+        held on the plot, the field following it (D149) — or, with None,
+        what it holds again. The field's value does not change, so nothing
+        is handed to ``on_change`` and nothing is staged. ``revision`` is
+        the number of the drag the preview is of: the component shows a
+        preview whatever its typing state — a field typed in and then left
+        for the plot keeps the focus — but not in a field typed in since
+        THAT drag began (``typed_number.js``)."""
+        props = self.props
+        same = props.get("preview") == value
+        if same and (value is None or props.get("revision") == revision):
+            return  # every write of a prop resends the field
+        props["preview"], props["revision"] = value, revision
+        self.update()
 
     def _event_args_to_value(self, e: GenericEventArguments) -> float | None:
         """What was typed, as the number it is — and a negative zero as

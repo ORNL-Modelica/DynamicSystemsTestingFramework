@@ -45,6 +45,19 @@
 // One instance per plot card (`DstfGrips.install(id)` / `.destroy(id)`, the
 // card's `ui.plotly` element id — plot_card.py): its own clusters, its own
 // pointer, its own latch.
+//
+// And what the pointer SAYS to the server beside Plotly's own events (D149),
+// since this module already holds the press, the travel and the ranges:
+//
+// * a CLICK on the plot (`dstf_plot_click`) — where, in the axes of the
+//   panel under the pointer, what those axes showed, and the modifier keys.
+//   Plotly's own click event carries neither a position nor a key through
+//   NiceGUI. The server decides what a click is: Ctrl+click adds a row, a
+//   plain one sets an armed field;
+// * a handle HELD (`dstf_grip_move`) — where its release would put it, a
+//   few times a second, so the editor's fields follow the pointer. Plotly
+//   says nothing during a shape drag;
+// * Esc while a field is armed (`dstf_disarm`).
 (() => {
   if (window.DstfGrips) return;
 
@@ -83,6 +96,18 @@
   // the release to move a shape on it, px — Plotly's own threshold (its
   // `MINDRAG`): under it Plotly moves nothing on that axis.
   const MOVED = 8;
+  // How far the pointer may travel, press to click, for the click to be a
+  // click, px: a Ctrl+drag (Plotly's zoom box under a held key) ends in a
+  // real click where it is let go.
+  const CLICKED = 4;
+  // The least time between two moves of a held handle sent to the server,
+  // ms: at most 15 a second, each a preview the server computes.
+  const PACE = 66;
+  // Every move and every release is numbered, rising, page-wide: the
+  // server drops a move numbered under a release it has heard (a preview
+  // must not land after what the release staged). From the clock, so a
+  // reloaded page's numbers are above the last page's.
+  let seq = Date.now();
 
   const own = (map, name) =>
     map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
@@ -131,10 +156,20 @@
     pointer = null;
   });
 
-  function create(gd) {
+  // Esc while a field is armed disarms it. The armed field is the
+  // server's to know — its ⌖ says so in `aria-pressed`, which the server
+  // renders — so this only asks; Esc with nothing armed is everyone
+  // else's.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.querySelector('.dstf-arm[aria-pressed="true"]')) {
+      emitEvent("dstf_disarm");
+    }
+  }, true);
+
+  function create(gd, id) {
     const st = {
       gd, clusters: [], on: null, latched: false, xy: null, ranges: {}, press: null,
-      travel: null, failed: false, frame: 0,
+      travel: null, failed: false, frame: 0, held: null, ended: null,
     };
 
     // An arrow says what it sets — a tooltip, the SVG `title` child — in
@@ -614,6 +649,21 @@
           st.ranges[key] = axis.range.slice();
         }
       }
+      // The handle this press holds, if it is on one (`follow`): the
+      // shape an editor moves, where the figure has it NOW — Plotly moves
+      // the drawn path under the pointer and writes the figure only at
+      // the release. Not under Ctrl: Plotly takes that press as a
+      // right-click.
+      st.held = st.ended = null;
+      const el = e.target instanceof Element ? e.target.closest(".shapelayer [data-index]") : null;
+      if (el && e.button === 0 && !e.ctrlKey && !el.hasAttribute("data-inert")) {
+        const index = +el.getAttribute("data-index");
+        const s = ((gd.layout && gd.layout.shapes) || [])[index];
+        const info = said(gd);
+        if (s && info && info.draggable.has(s.name)) {
+          st.held = { index, drag: ++seq, last: 0, pending: false, to: null };
+        }
+      }
     });
     const up = guarded((e) => {
       if (!st.latched) return;
@@ -624,6 +674,17 @@
         x: Math.abs(e.clientX - st.press[0]),
         y: Math.abs(e.clientY - st.press[1]),
       };
+      // The held handle is let go: no move of it is sent from here on,
+      // and the release is numbered past every one that was (`released`).
+      // Under MOVED px on both axes Plotly moves nothing and says nothing:
+      // the drag ends here, and the server is told so.
+      if (st.held) {
+        st.ended = { index: st.held.index, seq: ++seq };
+        st.held = null;
+        if (st.travel && st.travel.x < MOVED && st.travel.y < MOVED) {
+          emitEvent("dstf_grip_move", { plot: id, seq: st.ended.seq, end: true });
+        }
+      }
       const box = gd.getBoundingClientRect();
       const over =
         e.clientX >= box.left && e.clientX <= box.right &&
@@ -633,7 +694,134 @@
     // A release outside the window never arrives.
     const blur = guarded(() => {
       st.latched = false;
+      if (st.held) {
+        st.held = null;
+        emitEvent("dstf_grip_move", { plot: id, seq: ++seq, end: true });
+      }
       here(null);
+    });
+
+    // What the axes of shape `s` SHOWED at the press, as spans: what the
+    // server snaps a placed value by (`comparison/snap.py`). An axis the
+    // shape is not on in data — an arrow anchored to the paper — has none.
+    const visible = (s) => {
+      const span = (letter, ref) => {
+        const range = /^[xy]\d*$/.test(ref) ? st.ranges[letter + "axis" + ref.slice(1)] : null;
+        return range ? Math.abs(range[1] - range[0]) : null;
+      };
+      return { x: span("x", s.xref || "x"), y: span("y", s.yref || "y") };
+    };
+
+    // Where the release of the held handle would put it, as the relayout
+    // that release would send: the figure's position at the press plus
+    // the pointer's travel, an axis the pointer went under MOVED px along
+    // not moved (Plotly's own rule, and `released`'s) — measured in
+    // Chromium to be the release's own number, bit for bit — and held to
+    // the range of the press, as `released` holds a release. A bound line
+    // moves in y, both its ends; a ring or an arrow by its anchor.
+    const would = (held) => {
+      const s = ((gd.layout && gd.layout.shapes) || [])[held.index];
+      const fl = gd._fullLayout;
+      if (!s || !fl || !st.press || !held.to) return null;
+      const out = {};
+      const put = (letter, key, from) => {
+        const ref = s[letter + "ref"] || letter;
+        if (!/^[xy]\d*$/.test(ref) || typeof from !== "number") return;
+        const axis = fl[letter + "axis" + ref.slice(1)];
+        const range = st.ranges[letter + "axis" + ref.slice(1)];
+        if (!axis || !range) return;
+        const travel = held.to[letter === "x" ? 0 : 1] - st.press[letter === "x" ? 0 : 1];
+        let value = null;
+        if (Math.abs(travel) >= MOVED) {
+          value = axis.p2d(axis.d2p(from) + travel);
+          value = Math.min(Math.max(value, Math.min(...range)), Math.max(...range));
+        }
+        out[`shapes[${held.index}].${key}`] = value;
+      };
+      if (s.type === "line") {
+        put("y", "y0", s.y0);
+        put("y", "y1", s.y1);
+      } else {
+        put("x", "xanchor", s.xanchor);
+        put("y", "yanchor", s.yanchor);
+      }
+      out[`shapes[${held.index}].visible`] = visible(s);
+      out[`shapes[${held.index}].drag`] = held.drag;
+      return out;
+    };
+
+    // A handle is HELD and the pointer moved: its would-be position goes
+    // to the server, once a frame at the most and PACE ms apart, the last
+    // one always sent. Heard on the document, in the capture phase:
+    // Plotly's drag cover takes every move from the plot itself.
+    const send = guarded((held) => {
+      held.pending = false;
+      if (st.held !== held) return; // let go meanwhile
+      const wait = PACE - (performance.now() - held.last);
+      if (wait > 0) {
+        held.pending = true;
+        setTimeout(() => requestAnimationFrame(() => send(held)), wait);
+        return;
+      }
+      const update = would(held);
+      if (!update) return;
+      held.last = performance.now();
+      emitEvent("dstf_grip_move", { plot: id, seq: ++seq, update });
+    });
+    const follow = (e) => {
+      const held = st.held;
+      if (!held) return;
+      held.to = [e.clientX, e.clientY];
+      if (held.pending) return;
+      held.pending = true;
+      requestAnimationFrame(() => send(held));
+    };
+
+    // The panel under the pointer (viewport px) and the pointer in its
+    // axes — a panel is a pair of axes that overlays no other: the time
+    // plot's, the spectrum's — with what each axis shows; null outside
+    // every panel's plot area.
+    const spot = (cx, cy) => {
+      const fl = gd._fullLayout;
+      if (!fl || !fl._plots) return null;
+      const box = gd.getBoundingClientRect();
+      for (const plot of Object.values(fl._plots)) {
+        const xa = plot.xaxis;
+        const ya = plot.yaxis;
+        if (!xa || !ya || xa.overlaying || ya.overlaying) continue;
+        const px = cx - box.left - xa._offset;
+        const py = cy - box.top - ya._offset;
+        if (px < 0 || px > xa._length || py < 0 || py > ya._length) continue;
+        return {
+          xaxis: xa._id, yaxis: ya._id, x: xa.p2d(px), y: ya.p2d(py),
+          xrange: xa.range.slice(), yrange: ya.range.slice(),
+        };
+      }
+      return null;
+    };
+
+    // A CLICK on the plot, said to the server with where it is. Not a
+    // double-click (it resets the axes: `detail` counts the clicks); not
+    // the click that ends a drag — a Ctrl+drag draws Plotly's zoom box
+    // and ends in a real click where it is let go; not one on a shape an
+    // editor moves (a ring, an arrow, a bound: a press there is a drag's),
+    // on the toolbar or on the legend; not one outside every panel. Heard
+    // in the capture phase: a plain click here is one Plotly makes itself
+    // after its own handling, and it is still this plot's.
+    const clicked = guarded((e) => {
+      if (e.detail >= 2 || !(e.target instanceof Element)) return;
+      if (st.press && Math.hypot(e.clientX - st.press[0], e.clientY - st.press[1]) > CLICKED) {
+        return;
+      }
+      if (e.target.closest(".modebar-container, .legend")) return;
+      const shape = e.target.closest(".shapelayer [data-index]");
+      if (shape && !shape.hasAttribute("data-inert")) return;
+      const at = spot(e.clientX, e.clientY);
+      if (!at) return;
+      emitEvent("dstf_plot_click", {
+        plot: id, ...at,
+        ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey,
+      });
     });
     // A scroll moves the plot under a pointer at rest, and no mouse event
     // says so: the arrows of a checkpoint wheeled out from under the
@@ -685,6 +873,8 @@
       const info = said(gd);
       const travel = st.travel;
       st.travel = null;
+      const ended = st.ended;
+      st.ended = null;
       const out = { ...update };
       if (!info) return out;
       for (const [key, value] of Object.entries(update)) {
@@ -692,6 +882,10 @@
         if (!m || typeof value !== "number") continue;
         const s = shapes[+m[1]];
         if (!s || !info.draggable.has(s.name)) continue;
+        // What its axes showed, for the server's snap, and the release's
+        // number: past every move of the drag it ends.
+        out[`shapes[${m[1]}].visible`] = visible(s);
+        out[`shapes[${m[1]}].seq`] = ended ? ended.seq : ++seq;
         if (travel && travel[m[2]] < MOVED) {
           out[key] = null;
           continue;
@@ -709,6 +903,8 @@
 
     gd.addEventListener("mousemove", move);
     gd.addEventListener("mouseleave", leave);
+    gd.addEventListener("click", clicked, true);
+    document.addEventListener("mousemove", follow, true);
     document.addEventListener("mousedown", down, true);
     document.addEventListener("mouseup", up, true);
     window.addEventListener("blur", blur);
@@ -753,7 +949,10 @@
     st.destroy = () => {
       gd.removeEventListener("mousemove", move);
       gd.removeEventListener("mouseleave", leave);
+      gd.removeEventListener("click", clicked, true);
+      document.removeEventListener("mousemove", follow, true);
       document.removeEventListener("mousedown", down, true);
+      st.held = null;
       document.removeEventListener("mouseup", up, true);
       window.removeEventListener("blur", blur);
       window.removeEventListener("scroll", scrolled, true);
@@ -776,7 +975,7 @@
         return;
       }
       this.destroy(id);
-      instances.set(id, create(gd));
+      instances.set(id, create(gd, id));
     },
     destroy(id) {
       const st = instances.get(id);

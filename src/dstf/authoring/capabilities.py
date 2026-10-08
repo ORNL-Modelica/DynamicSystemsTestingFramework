@@ -11,7 +11,7 @@ import exactly as it calls ``register_metric``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -169,6 +169,21 @@ class FigureHook(Protocol):
       ``xanchor``/``yanchor``).
       A relayout mixing shape keys with others is a shape relayout.
     - Any other relayout (a zoom): once, with id ``""`` and the raw payload.
+    - ``dstf_move`` (D149): a handle HELD on the plot, at most about 15
+      times a second — once per shape, with the payload its release would
+      carry (so a capability reads both with one function) plus ``drag``,
+      the number of the drag it is of; or once with id ``""`` and
+      ``{"end": True}`` for a drag that ended without a release. A move is
+      a preview: nothing is to be staged from it. One that arrives after
+      its drag's release is dropped by the shell.
+    - ``dstf_click`` (D149): a click on the plot that is no drag, no
+      double-click and on no draggable shape — id ``""`` and ``{"xaxis",
+      "yaxis", "x", "y", "xrange", "yrange", "ctrl", "shift", "alt",
+      "meta"}``: the axes of the panel under the pointer, the position in
+      them and what they showed.
+    - A release's and a move's per-shape payload also carries ``visible``,
+      ``{"x": span, "y": span}``: what the shape's axes showed at the
+      press, which a placed value is snapped by.
 
     Handler semantics: each shape index is dispatched in turn, ascending,
     from its own snapshot of the handlers, taken when that shape's dispatch
@@ -205,6 +220,40 @@ class Panel(Protocol):
 
     figure: FigureHook
     kept: dict[Any, Any]
+
+    def place_button(self, pointer: Hashable, label: str) -> None:
+        """Draw a ⌖ for the field this panel calls ``pointer`` — into the
+        current slot; a number field's ``append`` slot is the place — that
+        ARMS it (D149): the next plain click on the plot is handed to
+        `on_place` with that ``pointer``. ``label`` is what the hint line
+        says is being set. The builtins name a field by its keys into the
+        leaf (``("points", 3, "time")``). One field is armed on a page at a
+        time; pressing ⌖ again, Esc and closing the editor disarm. Draws
+        nothing where the panel is beside no plot."""
+        ...
+
+    def on_place(self, handler: Callable[[Hashable, dict], bool]) -> None:
+        """``handler(pointer, click)`` is called when the plot is clicked
+        while a field THIS panel drew a ⌖ for is armed — ``click`` is the
+        ``dstf_click`` payload. It returns whether the click went through
+        (`submit`'s answer): then the field is disarmed; refused, it stays
+        armed, and the refusal is said under the plot. Registers nothing
+        where the panel is beside no plot."""
+        ...
+
+    def preview(self, leaf: dict | None, revision: int = 0) -> None:
+        """Hand every panel of this editor the leaf a handle held on the
+        plot WOULD write (D149), or None when it is over — each shows it in
+        its own fields (`on_preview`), and nothing is staged. ``revision``
+        is the drag's number, the same for every move of one drag. A no-op
+        where the panel is beside no plot."""
+        ...
+
+    def on_preview(self, handler: Callable[[dict | None, int], None]) -> None:
+        """``handler(leaf, revision)`` is called with what any panel of
+        this editor handed `preview`. Registers nothing where the panel is
+        beside no plot."""
+        ...
 
     def submit(self, **inputs: Any) -> bool:
         """Hand the capability's inputs to the shell, which calls ``act`` and
