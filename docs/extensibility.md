@@ -445,7 +445,10 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    own geometry holds it — a `scalar` leaf's baseline scalar, read off its
    `scalar/reference` line — else `None`) and `span` (the ACTUAL series'
    first and last time as the scorer received it, sliced to the leaf's
-   window, or `None`: what bounds a time that is scored against the run) —
+   window, or `None`: what bounds a time that is scored against the run)
+   and `visible` (what the x and the y axis the position was read on SHOWED,
+   as two spans — the page's, at the press or the click; `None` for an axis
+   the caller cannot say) —
    and returns
    the new raw leaf, or raises `HandleEditError` naming the handle and the
    reason for a drag the leaf cannot take — with the reason alone as its
@@ -455,7 +458,16 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    field path, and a leaf equal to the input stages nothing. The builtin
    editors round every float they write to 12 significant digits
    (`handles._written`), so drag arithmetic never lands float noise in the
-   author's spec file. Leave it `None`
+   author's spec file — after they SNAP it (D149): a value the pointer
+   placed goes through `comparison.snap.snapped(value, span, fraction=…)`,
+   the one snap rule — `10 ** round(log10(span / 1000))` is the step, a
+   coordinate or a side in the axis' units is rounded to a multiple of it,
+   a relative side (`fraction=True`) to 3 significant digits, and with no
+   span nothing is snapped. Snap first, then clamp and refuse, so what is
+   judged is what would be written; an editor of your own should do the
+   same with `edit.visible`. The same editor answers three callers with one
+   payload: a release, the PREVIEW of a handle still held, and a click that
+   sets an armed field — so it must be pure. Leave it `None`
    and a drag of the metric's handle markers and lines is refused ("has no
    on-plot handles"); the builtin `nrmse` does. Only a `Marker` or an
    `HLine` of `kind="handle"`, and a `Marker` or a `VLine` of `kind="grip"`
@@ -552,6 +564,24 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
     criterion only and shown while the pointer is near its group. A side
     that should be drawn on the report too is a `kind="handle"` line
     instead, as the scalar's `scalar/upper` and `scalar/lower` are.
+13. `place_row` (default `None`) is what a Ctrl+click on the plot adds to
+    the metric's table (D149): it takes a `handles.RowPlace` — `leaf`,
+    `blanks` (per list field, the row the editor's Add row would append:
+    every field the click does not set), `panel` (`"time"` /
+    `"spectrum"`), `x` and `y` in that panel's axes, `reference` and
+    `actual` (`(time, values)`, unwindowed), `geometry` (what the plot
+    draws for the leaf: where the builtins find the run's events and its
+    spectrum), `visible` and `span` as `HandleEdit` has them — and returns
+    the leaf with one more row, SETTLED ON THE DATA rather than on the
+    pixel, or raises `HandleEditError` where the click names no place for
+    one. Return the leaf unchanged to add nothing. `row_noun(leaf)` says
+    what such a row is called ("a point") for the editor's hint, or `None`
+    where a click adds nothing to that leaf (the builtin tube of constant
+    width). `handles.handle_fields(leaf, local)` is the third inverse: the
+    field of the leaf a handle writes on each axis it moves on, as a path
+    of keys — how "arm a field, then click the plot" finds a field's
+    handle; a handle of your own that it does not know is simply not
+    reachable from a ⌖.
 
 ### Currently registered
 
@@ -878,6 +908,49 @@ stages an edit from a drag.
   whether or not anything was staged, so a drag that changed nothing snaps
   back.
 - Any other relayout (a zoom) — once, with id `""` and the raw payload.
+- `dstf_move` (D149) — a handle HELD on the plot, at most about 15 times a
+  second: once per shape, with the payload its release would carry — so one
+  function reads both — plus `drag`, the number of the drag it is of; or
+  once with id `""` and `{"end": True}` for a drag that ended with no
+  release. A move is a preview: stage nothing from it. The hook numbers
+  every move and release (the page's sequence) and DROPS a move numbered at
+  or under the last release or end it heard, so a preview that arrives late
+  never paints over what the release staged.
+- `dstf_click` (D149) — a click on the plot that is no double-click, ends
+  no drag and is on no draggable shape, the toolbar or the legend: id `""`
+  and `{"xaxis", "yaxis", "x", "y", "xrange", "yrange", "ctrl", "shift",
+  "alt", "meta"}` — the axes of the PANEL under the pointer (`"x"` / `"y"`
+  the time plot, `"x2"` / `"y2"` the spectrum), the position in them and
+  what they showed. The shell decides nothing about a click; Edit on plot
+  takes a Ctrl (or ⌘) click as "add a row".
+- A release's and a move's per-shape payload also carries `visible`,
+  `{"x": span, "y": span}` — what that shape's axes showed at the press
+  (`None` for an axis it is not on in data) — and `seq`, its number.
+
+**A click that sets a field, and a preview (D149).** Four `Panel` members
+are the editor's side of the plot; each is a no-op where the panel is beside
+no plot (a dialog, a tree row, a Statistics row):
+
+- `panel.place_button(pointer, label)` draws a ⌖ into the current slot — a
+  number field's `append` slot is the place (`with field.add_slot("append")`)
+  — that ARMS the field you call `pointer`; `label` is what the hint line
+  says is being set. The builtins name a field by its keys into the leaf
+  (`("points", 3, "time")`, `("tolerance", "upper")`), which is also how
+  `handles.handle_fields` names one. `render_form(..., place=panel.
+  place_button)` draws them for a form's bounds and tolerance sides.
+- `panel.on_place(handler)` — `handler(pointer, click)` is called for a
+  PLAIN click on the plot while a field THIS panel drew a ⌖ for is armed;
+  return `submit`'s answer: `True` disarms, `False` (refused) leaves it
+  armed and the refusal is said under the plot. `edit_on_plot.placed(...)`
+  turns a pointer and a click into the new leaf, for a panel whose fields
+  are the leaf's own.
+- `panel.preview(leaf, revision)` hands every panel of the editor the leaf
+  a held handle WOULD write (`None`: over); `panel.on_preview(handler)`
+  receives it. Show it with `TypedNumber.preview(value, revision)` /
+  `SidesControl.preview` / `Form.preview`, which change what a field SHOWS
+  and never its value — nothing reaches `on_change`, nothing is staged —
+  and which leave a field typed in since that `revision` (the drag's
+  number) alone.
 
 In the tool's figure each `kind="handle"` Marker of a leaf named in
 `rings_for` gets a ring shape named with its id, and each `kind="grip"`
@@ -925,8 +998,9 @@ The five shipped capabilities live in `authoring/builtin/` and register through
 this same call — Edit criteria and Edit tree return a `Patch`, Accept a
 `StoreWrite` over the shared accept function, Rerun a `Job` that builds its own
 backend through `select_backend` and runs it through `run_pipeline`, and Edit on
-plot a `Patch` from a metric's `edit_handle` or a table's rows — the one
-builtin client of the figure hook.
+plot a `Patch` from a metric's `edit_handle`, its `place_row` or a table's
+rows — the one builtin client of the figure hook's events (Edit criteria
+arms its own fields and shows previews through the `Panel` alone).
 
 §4.6 and §4.7 of [the two-tier architecture
 design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) have the

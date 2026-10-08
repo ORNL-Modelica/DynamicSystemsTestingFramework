@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D149 on-plot editing). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -128,7 +128,9 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # view, each with its criteria rows in tree order led by their ancestors (`and › k-of-n ›`),
 # a criterion's editor under its row (drag its handles on the plot above; a tolerance is two
 # fields with a link toggle — linked writes one number, unlinked a lower/upper pair — and has an
-# arrow outside each side on the plot, shown while the pointer is near its point, D147),
+# arrow outside each side on the plot, shown while the pointer is near its point, D147;
+# Ctrl+click on the plot adds a row that settles on the data, a field's ⌖ arms it for the next
+# click, the fields follow a held handle, and every placed value is snapped to its axis, D149),
 # a status strip under the test's row saying its situation and filling the one next action,
 # +/wrap/− on every tree node; the open tree draws a bar per level, folds its groups (the tab's,
 # per test), and a row's click opens its criterion's editor or a k-of-n's / weighted's fields under
