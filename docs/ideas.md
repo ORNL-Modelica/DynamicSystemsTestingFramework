@@ -1876,3 +1876,43 @@ planning.
   browser: an `integral` scalar is in y-times-time units, and the scorer
   draws its lines on the y axis like any other reduction's; if they land
   off the curve and stretch the axis, an `integral` should draw none.
+- **A warm, pre-imported server for the browser tests (2026-10-08, from the
+  two-sided tolerance build, D147)**: every Playwright test of the tool
+  starts its own `dstf author` process (`_served` in
+  `tests/test_author_test_page_playwright.py`) and waits for it to serve.
+  The shell's imports alone — NiceGUI, plotly, the shell — take 7 to 8 s
+  here, and the two author files collect about 235 tests (215 in the
+  Test-page file), so some 25 to 30 minutes of a run is processes
+  importing the same modules; the Test-page file takes about an hour
+  locally. None of it runs in CI (`quality.yml` deselects `playwright`),
+  which D147 lists as a limit. One server process that has done its
+  imports and forks, or re-opens a fresh project, per test would take most
+  of that away. To settle first: what a test may leave behind in a shared
+  process (the Session is one project per process; `tabstate` is the
+  tab's), and whether a fork after NiceGUI's import is safe. Not built.
+- **Staging off the UI loop (2026-10-08, from the two-sided tolerance
+  build, D147)**: every keystroke in an editor field stages — a full merge
+  and a rescore of the test — synchronously on the UI loop: 11 to 17 ms on
+  a TRANSFORM-sized test, as measured during the build. `TypedNumber`
+  (`authoring/typed_number.py`) took the visible damage away, the answer
+  to one key landing under the next; two typing races are left that need
+  keys closer together than a stage, so above a person's typing speed at
+  that cost. A larger test, or a slower machine, lowers that bar. Staging
+  on a worker with the newest value winning (a debounce is the cheap
+  half) would remove the races rather than outrun them; E2's live drag,
+  a stage per pointer move, will meet the same cost. Not changed: at
+  today's cost no person reaches them.
+- **Pin the axis ranges while a criterion is open (2026-10-08, from the
+  two-sided tolerance build, D147)**: opening a criterion adds its arrows
+  to the figure, and plotly.js autoranges an axis over its shapes, padding
+  a pixel-sized path by its extent. With tolerances that reach past the
+  data, opening the criterion therefore rescales the plot — 14.6 % off the
+  value axis's scale on a 234 px axis (Chromium) — and closing it scales
+  it back, so the curve moves under the eye at the moment it is being
+  read. Setting each axis's range to what it was just before the open,
+  widened only as far as an arrow would otherwise leave the plot, would
+  hold the picture still; a zoom or a double-click reset then has to mean
+  the same as it does on a closed plot. Beside it: the arrows of an edge
+  at the plot's own edge are drawn in the margin by a stylesheet rule that
+  needs CSS `:has` (D147's limits), which a pinned range with a margin
+  would not.
