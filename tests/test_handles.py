@@ -557,6 +557,18 @@ class TestPoints:
         assert new["points"][0]["time"] == 0.9
         new = _edit(POINTS, "points/target/0", 2.5, None, span=(2.0, 3.0))
         assert new["points"][0]["time"] == 1.0
+        # A run that starts where the baseline ends meets it at ONE time,
+        # and that is where the checkpoint is held.
+        for x in (0.9, 1.5):
+            new = _edit(POINTS, "points/target/0", x, None, span=(1.0, 2.0))
+            assert new["points"][0]["time"] == 1.0, x
+        # The same rule for a checkpoint with a value of its own, whose own
+        # span is its window: a run wholly outside that leaves the window.
+        leaf = _with(POINTS, window={"start": 0.1, "end": 0.8})
+        new = _edit(leaf, "points/target/1", 0.95, None, span=(0.9, 1.0))
+        assert new["points"][1]["time"] == 0.8
+        new = _edit(leaf, "points/target/1", 0.95, None, span=(0.8, 1.0))
+        assert new["points"][1]["time"] == 0.8  # they touch: the one time
 
     def test_the_runs_span_bounds_a_time_MOVE_and_nothing_else(self):
         # A point authored outside the run, dragged vertically: no time

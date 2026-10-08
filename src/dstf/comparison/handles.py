@@ -576,10 +576,10 @@ def edit_points_handle(edit: HandleEdit) -> dict:
     checkpoint only where ``t ± time_tolerance`` meets that trajectory, so
     a ring let go a little past the run's end (the time axis runs past the
     data; a run shorter than its baseline ends well inside it) read "not
-    scored" and was no longer drawn. A following checkpoint is held to
-    where the two spans OVERLAP; where they do not — a run that never
-    meets its baseline — to the baseline's alone, as with no ``span`` (a
-    caller that has no actual series). A
+    scored" and was no longer drawn. So a checkpoint is held to where its
+    own span and the run's OVERLAP — a single time where they only touch;
+    where they do not (a run that never meets its baseline) to its own
+    alone, as with no ``span`` (a caller that has no actual series). A
     checkpoint whose ``time``
     is absent or null — the trace-end sentinel — keeps it: ``x`` is ignored,
     a time is typed in the table. ``y`` sets ``value`` only when the point
@@ -614,7 +614,7 @@ def edit_points_handle(edit: HandleEdit) -> dict:
         t = float(min(max(float(x), lo), hi))
         if edit.span is not None:
             first, last = edit.span
-            if not follows_baseline or max(lo, first) <= min(hi, last):
+            if max(lo, first) <= min(hi, last):
                 t = min(max(t, first), last)
         point["time"] = _written(t)
     if edit.y is not None and point.get("value") is not None:
