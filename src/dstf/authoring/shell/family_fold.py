@@ -75,8 +75,7 @@ class FoldRow:
         self.folding, self.key, self.fold = folding, key, fold
         self.taker: str | None = None
         self.host = _NoControls()
-        self.variable = fold.variables[0]
-        #: What the open editor's fields were built from (`_stamp`).
+        #: What the open editor's fields were built from (`stamp`).
         self._edited: str | None = None
         self.row = ui.row().classes("dstf-crit dstf-fold items-center gap-3 w-full")
         # The row IS the way in, as a criterion's is: its editor opens below

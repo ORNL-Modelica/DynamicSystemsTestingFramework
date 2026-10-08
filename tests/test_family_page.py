@@ -626,3 +626,24 @@ def test_a_folded_rows_placement_is_edit_criterias_and_edit_familys_alone():
         if Placement.FAMILY_CRITERION in c.placements
     ]
     assert placed == ["edit-family", "edit-criteria"]
+
+
+async def test_an_add_from_a_tree_row_reveals_the_fold_on_its_plot(tmp_path):
+    """A tree row's `+` has no plot of its own: the folded row it made is
+    opened on the first plot that holds it."""
+    from test_test_page import _open_form
+
+    shell = _shell(*family_project(tmp_path, 20, tracked=(), fail=()))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        _click(user, _one(user, "tree:toggle"))
+        await _settled(lambda: page.tree.rows.visible)
+        await _open_form(user, f"add:{ROOT}", f"tree-row:{ROOT}")
+        mark = f"apply-add:{ROOT}"
+        with page.client:
+            _one(user, f"{mark}:variable").set_value(element(4))
+            _one(user, f"{mark}:indices").set_value("4:6")
+        _click(user, _one(user, mark))
+        key = fold_key(leaf(1))
+        await _settled(lambda: page.open == (1, key))
+        assert page.cards[1].rows[key].name.text == "nrmse · pipe.T[4:6]"
