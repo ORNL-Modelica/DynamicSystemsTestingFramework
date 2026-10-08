@@ -32,7 +32,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .algorithms import _find_event_boundaries
+from .algorithms import _find_event_boundaries, _peak_window
 from .sides import parse_sides
 from .types import _EPS
 
@@ -778,7 +778,13 @@ def edit_events_handle(edit: HandleEdit) -> dict:
 
 def edit_peaks_handle(edit: HandleEdit) -> dict:
     """``peaks/declared/i`` → ``peaks[i]["freq"]`` from ``x``, refused
-    ``<= 0``; ``y`` (the spectrum's amplitude) is ignored.
+    ``<= 0``; ``y`` (the spectrum's amplitude) is ignored. An ``abs``
+    window keeps its width in Hz and moves with its ring: a ring dragged
+    to where that window's lower edge (:func:`~.algorithms._peak_window`,
+    the scorer's) is at 0 Hz or below is refused as the grips are — 5 Hz
+    with 3 Hz either side, dragged to 2 Hz, was a window from −1 Hz. A
+    ``rel`` window is a fraction of its frequency and no ring brings it
+    there.
 
     ``peaks/lower/i`` and ``peaks/upper/i`` — the edges of the peak's
     window — → that side of ``peaks[i]["tolerance"]``, by
@@ -790,7 +796,9 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
     ``abs`` — is refused, whichever grip moved: no window reaches 0 Hz. A
     lower edge dragged there is one; so is the UPPER edge of a row holding
     a number, dragged past twice the frequency, since the number is both
-    sides (2.61 was written to both)."""
+    sides (2.61 was written to both). The upper grip of a PAIR writes the
+    upper side alone: where the lower one reaches 0 Hz it did so before the
+    drag, and the refusal says that — "already", not "would"."""
     _check_position(edit)
     _, role, segment = _parse(edit, "peaks", 3)
     if role not in ("declared", "lower", "upper"):
@@ -808,14 +816,26 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
             if freq == 0.0:
                 raise _refuse(edit, "the declared frequency is zero")
             value = value / abs(freq)
+        # A pair's upper grip leaves its lower side as it was.
+        kept = role == "upper" and isinstance(peak.get("tolerance"), dict)
         _set_side(edit, peak, "tolerance", role, value)
         # `_set_side` wrote what it parsed: a number or a whole pair.
         lower = parse_sides(peak["tolerance"], "tolerance").lower
         if lower >= (1.0 if rel else freq):
+            if kept:
+                raise _refuse(edit, "the window's lower side already reaches 0 Hz")
             raise _refuse(edit, "the window would reach 0 Hz")
         return leaf
     if edit.x is not None:
         if edit.x <= 0:
             raise _refuse(edit, f"frequency {_num(edit.x)} must be positive")
-        leaf["peaks"][i]["freq"] = _written(edit.x)
+        peak = leaf["peaks"][i]
+        peak["freq"] = _written(edit.x)
+        if peak.get("tolerance_mode", "rel") != "rel":
+            try:
+                low = _peak_window(peak, i)[0]
+            except ValueError as err:
+                raise _refuse(edit, str(err)) from None
+            if low <= 0:
+                raise _refuse(edit, "the window would reach 0 Hz")
     return leaf

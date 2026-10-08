@@ -1522,12 +1522,93 @@ class TestPeakSides:
         was, short of 0 Hz, however far the upper one goes."""
         new = _grip(PEAK_SIDES, "peaks/upper/1", 40.0)
         assert new["peaks"][1]["tolerance"] == {"lower": 0.125, "upper": 9.0}
-        # ... and one whose lower edge ALREADY reaches 0 Hz takes no write.
+        # ... and one whose lower edge ALREADY reaches 0 Hz takes no write —
+        # in the words for what is so: the upper grip moved nothing there.
         wide = copy.deepcopy(PEAK_SIDES)
         wide["peaks"][1]["tolerance"] = {"lower": 1.0, "upper": 0.25}
         with pytest.raises(HandleEditError) as box:
             _grip(wide, "peaks/upper/1", 6.0)
+        assert box.value.reason == "the window's lower side already reaches 0 Hz"
+
+    @pytest.mark.parametrize(
+        ("tolerance", "mode"),
+        [({"lower": 1.5, "upper": 0.25}, "rel"), ({"lower": 9.0, "upper": 1.0}, "abs")],
+    )
+    def test_already_is_said_of_a_pairs_upper_grip_alone(self, tolerance, mode):
+        """ "Already" is for the side the drag did not write: a pair's lower
+        side under its upper grip. The lower grip, and either grip of a
+        number, write the side that reaches 0 Hz: that "would"."""
+        wide = copy.deepcopy(PEAK_SIDES)
+        wide["peaks"][2] = {"freq": 8.0, "tolerance": tolerance, "tolerance_mode": mode}
+        with pytest.raises(HandleEditError) as box:
+            _grip(wide, "peaks/upper/2", 12.0)
+        assert box.value.reason == "the window's lower side already reaches 0 Hz"
+        with pytest.raises(HandleEditError) as box:
+            _grip(wide, "peaks/lower/2", -1.0)
+        assert box.value.reason == "the window would reach 0 Hz"
+        # Its lower grip brought short of 0 Hz is the way out, and is written.
+        new = _grip(wide, "peaks/lower/2", 4.0)["peaks"][2]["tolerance"]
+        assert new == {
+            "lower": 0.5 if mode == "rel" else 4.0,
+            "upper": tolerance["upper"],
+        }
+        # A number that reaches it, dragged by its upper grip to one that
+        # still does: the write is what reaches 0 Hz.
+        linked = copy.deepcopy(PEAK_SIDES)
+        linked["peaks"][2] = {"freq": 8.0, "tolerance": 9.0, "tolerance_mode": "abs"}
+        with pytest.raises(HandleEditError) as box:
+            _grip(linked, "peaks/upper/2", 16.5)
         assert box.value.reason == "the window would reach 0 Hz"
 
     def test_the_declared_peak_still_moves(self):
         assert _edit(PEAK_SIDES, "peaks/declared/0", 3.0)["peaks"][0]["freq"] == 3.0
+
+    @pytest.mark.parametrize(
+        ("tolerance", "refused", "nearest"),
+        [
+            # A number: both sides, 3 Hz.
+            (3.0, (2.0, 3.0, 0.5), 3.25),
+            # A pair: its lower side, 3 Hz.
+            ({"lower": 3.0, "upper": 0.5}, (2.0, 3.0), 3.25),
+            # None of its own: 0.01 Hz each side, as the scorer reads it.
+            (None, (0.01, 0.005), 0.02),
+        ],
+    )
+    def test_a_ring_dragged_left_cannot_put_an_abs_window_at_zero_hertz(
+        self, tolerance, refused, nearest
+    ):
+        """An `abs` window keeps its width in Hz and moves with its ring: a
+        peak at 5 Hz, 3 Hz either side, its ring dragged to 2 Hz was a
+        window from −1 to 5 Hz. The grips refuse a window that reaches
+        0 Hz; so does the ring, in the same words."""
+        leaf = copy.deepcopy(PEAK_SIDES)
+        row = {"freq": 5.0, "tolerance_mode": "abs"}
+        if tolerance is not None:
+            row["tolerance"] = tolerance
+        leaf["peaks"][2] = row
+        for x in refused:
+            with pytest.raises(HandleEditError) as box:
+                _edit(leaf, "peaks/declared/2", x)
+            assert box.value.reason == "the window would reach 0 Hz", x
+            assert str(box.value) == "peaks/declared/2: the window would reach 0 Hz"
+        new = _edit(leaf, "peaks/declared/2", nearest)["peaks"][2]
+        assert new == {**row, "freq": nearest}
+        # Dragged right there is nothing to refuse.
+        assert _edit(leaf, "peaks/declared/2", 40.0)["peaks"][2]["freq"] == 40.0
+
+    def test_a_ring_moves_a_rel_window_wherever_its_frequency_is_positive(self):
+        """A `rel` window is a fraction of its frequency: it scales with
+        the ring and no drag brings it to 0 Hz — whatever the fraction."""
+        assert _edit(PEAK_SIDES, "peaks/declared/0", 0.001)["peaks"][0]["freq"] == 0.001
+        assert _edit(PEAK_SIDES, "peaks/declared/3", 0.001)["peaks"][3]["freq"] == 0.001
+        wide = copy.deepcopy(PEAK_SIDES)
+        wide["peaks"][1]["tolerance"] = {"lower": 1.0, "upper": 0.25}
+        assert _edit(wide, "peaks/declared/1", 3.0)["peaks"][1]["freq"] == 3.0
+
+    def test_a_ring_of_an_abs_row_with_a_tolerance_the_scorer_refuses_says_so(self):
+        """The window is the scorer's (`_peak_window`): a tolerance it
+        cannot read is refused in its words, as a grip's write is."""
+        leaf = copy.deepcopy(PEAK_SIDES)
+        leaf["peaks"][2]["tolerance"] = {"lower": 0.5}
+        with pytest.raises(HandleEditError, match=r"peaks\[2\]\.tolerance"):
+            _edit(leaf, "peaks/declared/2", 6.0)
