@@ -52,9 +52,10 @@ TRANSFORM gate:
 | U4 | Moving a subtree: drag in the tree card and "Move to…", auto-wrapped in `and`; a refused drop says why | Q4, Q9 | BUILT (`2026-09-30-move-a-subtree.md`; D144; 4bafd71..77f5c81, other fixes' commits interleaved); its TRANSFORM gate is the controller's |
 | U5 | The tree card's structure: a bar per level and a `root` tag; groups fold (the tab's, per test; Expand / Collapse all); a click on a row opens its criterion's editor or a k-of-n's / weighted's fields under it; a ⤓ shows a criterion where it is drawn | Q1-Q13, R1, R2 (the tree-card grill, 2026-10-01) | BUILT (`2026-10-01-tree-card-structure.md`; D146; c5e9cd7..3e72142, its fix batches included); its TRANSFORM gate is the controller's |
 
-3d (the slice field, the folded criteria row) is BUILT (D152; `13155f6..0fb1687`
-on its own branch, with no written plan — from the owner's two rulings of
-2026-10-08 on mock-ups and the controller's eight calls): the Indices field
+3d (the slice field, the folded criteria row) is BUILT (D152; `13155f6..6a5515e`
+on its own branch, the fix batch of its executing review included, with no
+written plan — from the owner's two rulings of 2026-10-08 on mock-ups and
+the controller's eight calls): the Indices field
 is in the ADD FORM and in the folded row's editor, not on the Variables
 drawer's row the brief drew; Add writes one literal leaf per chosen element
 as it stages, so nothing is expanded at Save; and under a family's plot

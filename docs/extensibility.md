@@ -817,7 +817,10 @@ form never shows a value its node no longer has; build its fields from the view
 each time. The row also closes when its host is rebuilt, when its row is hidden
 and when its node is gone. In a dialog (a button placement) the form is drawn
 in the dialog, below the panel; the criterion editor has no row, and `row`
-raises there. `panel.reveal(leaf_path)` asks the page to open that criterion's
+raises there. `panel.retitle(title)` says the open row's title again, for a
+form whose subject follows a choice made in it (the add form's `Add a
+criterion for pipe.T[1:20]` follows its Indices); it does nothing while no
+row of the panel's is open. `panel.reveal(leaf_path)` asks the page to open that criterion's
 editor once the page has drawn it — after an add, the new criterion — on the
 plot the panel's row is on when that plot draws the criterion's variable, else
 on the first plot that does, and to scroll it just into view. It records the

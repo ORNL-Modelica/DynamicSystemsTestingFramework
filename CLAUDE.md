@@ -142,9 +142,10 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # EVERY variable of the result file and the run's diagnostics (a searchable picker; the Metric
 # list follows the choice); a criterion's variable is tracked by that, and the strip asks for a
 # rerun where the last run did not record it. An element of an array picked there takes
-# Indices (`1:5:20`, `1:3,7`): one criterion per chosen element. Under a family's plot identical
-# criteria fold into ONE row (`tube · pipe.T[1:20]`, `18 pass · 2 fail`) whose editor changes
-# them all and whose Indices add or remove elements; its chevron unfolds it (D152).
+# Indices (`1:5:20`, `1:3,7`; a count beside it and on Add): one criterion per chosen element.
+# Under a family's plot identical criteria fold into ONE row (`tube · pipe.T[1:20]`, `18 pass ·
+# 2 fail`) whose editor changes them all and whose Indices add or remove elements; its chevron
+# unfolds it to its members, and an element with its own criterion follows them (D152).
 # An editor's field says the tolerance in effect
 # (the test's / baseline's / project's) under it. Focus shows one plot alone,
 # a select switches plots. Variable labels are cut in the middle (head…[3]).

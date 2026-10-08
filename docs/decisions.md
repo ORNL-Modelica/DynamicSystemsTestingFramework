@@ -6975,7 +6975,8 @@ brief's ruling §3.10: leaves stay literal, the tool shows them folded). The
 owner ruled the two questions that were his on mock-ups on 2026-10-08 (R1,
 R2 below); the controller made the calls numbered D1-D8, said to the owner
 and reversible. Built on its own branch from those rulings, with no written
-plan; what follows is the contract as built.
+plan, and then corrected by the fix batch of an executing review, whose
+decisions are folded in below; what follows is the contract as built.
 
 **Decision.**
 
@@ -6985,28 +6986,41 @@ plan; what follows is the contract as built.
    under the picker, filled with every element it has (`1:20`). It takes an
    index (`3`), a range with its end INCLUDED (`1:5`), a stepped range
    written start:step:end as Modelica writes it (`1:5:20` is 1, 6, 11, 16),
-   and a comma list of those in any order (`1:3,7,10:2:20`); the indices
-   are the result file's, so they start at 1
-   (`figures.families.parse_slice`). Add — or Enter in the field — writes
-   ONE criterion per chosen element, literal leaves, siblings where a
-   single criterion would have landed: at the end of a combinator, right
-   after the criterion whose `+` was clicked, or beside a root leaf as an
-   `and` of them all. This REPLACES the brief's and DESIGN.md's field on
-   the Variables drawer's folded row: a drawer row adds series to a plot,
-   and a field there chose elements for nothing that scores them. The
-   leaves are seeded ONCE, from the first chosen element: a `range`'s
-   bounds or a `tube`'s width seeded per element would be twenty different
-   criteria, and nothing would fold. Why the field is offered for any
-   element picked, with all of them filled in: the picker lists elements,
-   not families, and a family has no row to pick.
-2. *One folded row that edits all (R2).* Under a family's plot, the
+   and a comma list of those in any order (`1:3,7,10:2:20`)
+   (`figures.families.parse_slice`). The indices are the result file's:
+   any whole number from 0, in ASCII digits, and what is checked is that
+   the family HAS each one — a zero-based array (`y[0]` … `y[4]`) is
+   filled `0:4` and takes it; a floor of 1 refused the field's own text.
+   Add — or Enter in the field — writes ONE criterion per chosen element,
+   literal leaves, siblings where a single criterion would have landed: at
+   the end of a combinator, right after the criterion whose `+` was
+   clicked, or beside a root leaf as an `and` of them all. This REPLACES
+   the brief's and DESIGN.md's field on the Variables drawer's folded row:
+   a drawer row adds series to a plot, and a field there chose elements
+   for nothing that scores them. The leaves are seeded ONCE, from the
+   first chosen element: a `range`'s bounds or a `tube`'s width seeded per
+   element would be twenty different criteria, and nothing would fold.
+2. *What the field starts at, and what it says.* Opened from the plot's
+   `+` or a group's, the field holds every element — the picker lists
+   elements, not families, and a family has no row to pick. Opened from
+   the `+` on the row of ONE element (a criterion's, under a plot or in
+   the tree), it holds that element's own index: that `+` is asked for a
+   second criterion there, and "all twenty" added nineteen nobody meant.
+   Beside the field a count of what it names, as it is typed (`20
+   elements`), and Add reads the same (`Add 20 criteria`): `1:20:5` is
+   start:step:end — ONE element — and reads as five. A text that names
+   nothing yet says why in the count's place. The form row opened from a
+   plot's `+` is titled by what is being added to, following the pick and
+   the Indices (`Add a criterion for pipe.T[1:5:16]`, `Panel.retitle`),
+   not by the plot it was opened from.
+3. *One folded row that edits all (R2).* Under a family's plot, the
    elements whose criterion is IDENTICAL fold into one row: a chevron, the
    worst of their verdicts as its pill, `metric · <the family with the
    folded indices>` (`tube · pipe.T[1:20]`) and a count by verdict (`18
    pass · 2 fail`, with an advisory and an unscored count when either is
    non-zero). An element whose criterion differs from the rest is its own
    row, as before.
-3. *"Identical" (D1).* Leaves fold when they are elements of ONE family by
+4. *"Identical" (D1).* Leaves fold when they are elements of ONE family by
    result-file name (`families.family_of`, D140's rule), children of ONE
    node, and ONE criterion: the same metric, parameters, window and
    baseline — everything but `variable` — compared as JSON
@@ -7017,18 +7031,16 @@ plan; what follows is the contract as built.
    `pipe.T[11:20]`), each standing where its first member's row was. A
    second identical leaf on an element the fold already holds stays its
    own row: a fold names each element once. A `UnitTests` element never
-   folds (D140) and gets no Indices field: each is a test quantity of its
-   own. Why the same parent: "edit all" under an `and` must not reach into
-   an `or` beside it.
-4. *The label.* The index text is `families.slice_text`'s, the one place
+   folds and gets no Indices field: each is a test quantity and a plot of
+   its own (D140), so no plot's rows hold two of them — the add form asks
+   the test, and the fold needs no rule of its own. Why the same parent:
+   "edit all" under an `and` must not reach into an `or` beside it.
+5. *The label.* The index text is `families.slice_text`'s, the one place
    that prints a slice: an arithmetic run as before (`1:20`, `1:5:16`),
    and — new — a list with an unbroken run of three or more prints that
    run as a range, so a family with one element taken out reads
-   `pipe.T[1,2,4:20]` and one with a gap `1:6,8:20`. This reaches every
-   surface that prints a family's indices, the report's plot titles
-   included: a family that was neither whole nor evenly stepped printed as
-   a bare comma list and now prints its runs.
-5. *The fold is derived every time (D2).* Nothing remembers it: not the
+   `pipe.T[1,2,4:20]` and one with a gap `1:6,8:20`.
+6. *The fold is derived every time (D2).* Nothing remembers it: not the
    spec, not the Session, not the page. A member edited on its own is its
    own row at the next paint and, edited back, folds again. The chevron
    unfolds a fold to its members' rows — each exactly the row it was, with
@@ -7039,16 +7051,22 @@ plan; what follows is the contract as built.
    the tab's folds them again, as it unfolds the tree card's groups — each
    back to its default. A criterion asked for by name — the tree line's
    jump, an add's reveal, the tree's ⤓, "Edit on its plot" — unfolds its
-   fold and shows its own row.
-6. *Rows are repainted, never rebuilt, when the fold moves.* The
+   fold and shows its own row; so does a criterion typed to a SHUT fold's
+   value, which joins it with its editor open.
+7. *Rows are repainted, never rebuilt or moved, when the fold moves.* The
    criteria's rows stand flat, in tree order, where the card drew them; a
    fold's row is put in before its first member's row, and a member is its
    own row with two attributes — `data-member` (the indent) and `hidden`
    (under a closed fold). Attributes, not classes: a server repaint of a
-   row's classes writes its whole class attribute. So a field being typed
-   in is the same field after the keystroke that takes its row out of a
-   fold; rebuilt, it lost the focus on the first key.
-7. *The folded row's editor is fields only (D3).* The same form as one
+   row's classes writes its whole class attribute. Where a row is SHOWN is
+   its CSS `order`: a fold's row, its members as ONE block under it, and
+   then — a sibling of the fold, flush with it, never between two of its
+   members — the row of an element with its own criterion. So a field
+   being typed in is the same field, with the focus, after the keystroke
+   that takes its row out of a fold; rebuilt or moved in the document, it
+   lost the focus on the first key. The cost: Tab goes through the rows in
+   tree order, not in the order shown.
+8. *The folded row's editor is fields only (D3).* The same form as one
    member's criterion (Edit criteria at a new placement, FAMILY_CRITERION,
    with the members in `Selection.leaf_paths`), showing the value they
    share; each change replaces EVERY member's leaf, its own variable kept.
@@ -7058,44 +7076,76 @@ plan; what follows is the contract as built.
    at one place cannot be told apart or dragged as one. A refusal — a
    value that can never score, a window that ends before it starts — is
    one refusal, and stages nothing for any member. A mode switched there
-   is seeded from the first member, as an add is.
-8. *One gesture, one pending edit (D4).* An add over several elements, a
-   folded field's change and an Indices edit each stage ONE op: the whole
-   tree their per-leaf ops give (`family_rows.as_one` — `add /metrics`, as
-   a move stages, D144), applied by the spec's own patch applier. The
-   header counts 1. `Session.stage`'s rules hold unchanged, because they
-   already hold for a move: a second whole-tree op in a row replaces the
-   first, so a value typed into a folded field is one edit and not a
-   keystroke log; a tree put back as the saved entry scores is no edit and
-   leaves nothing pending, flat entry or not; and a flat test materializes
-   nothing first — its op IS the tree. What that costs: on a flat test the
-   preview shows the whole tree as added, as it does after a move, where a
-   single criterion's edit shows the materialized tree as the base and the
-   one leaf as the change. N per-leaf ops were the other honest shape, and
-   a batch is never collapsed (`Session.stage`): twenty ops per keystroke.
-9. *Indices in the folded editor (D5).* The field holds the elements the
-   criterion is on. Enter or Apply removes the leaf of each element left
-   out and adds one, with the fold's parameters, for each new element,
-   right after the fold's LAST member, in index order. An index the family
-   does not have — the family being every element the last result's file
-   holds, and the members themselves — is refused in a sentence naming its
-   size ("pipe.T[1:20] has 20 elements; 21 is not one of them."). An empty
-   field is refused: "Indices is empty. To remove the criterion, unfold
-   this row and remove its criteria instead." The elements it already
-   holds stage nothing. Afterwards the rows are redrawn (leaves came or
-   went) and the fold's editor is open again on what it holds; down to one
-   element, that criterion's own editor is. An element the last run did
-   not record is a criterion all the same (D142): the strip asks for a
-   rerun.
-10. *An open fold's members are held together.* While a fold's editor is
-    open, its members stay one fold and apart from every other leaf,
-    whatever they equal. A value typed there passes through others on its
-    way (`0.05` is `0.0` first); one equal to another group's would merge
-    the two, and the next key would carry that group along. Closed, two
-    groups at one value are one criterion and one fold. This is the one
-    thing the derivation is told beside the tree, and it lasts only as
-    long as the editor: if an edit from elsewhere takes the members apart,
-    the editor closes.
+   is seeded from the first member, as an add is. The act is handed each
+   member by path AND by name, and refuses the whole edit when a path no
+   longer holds that member: an edit staged elsewhere moves the tree under
+   an open row's paths, and "every member" then overwrote whatever
+   criterion stood there.
+9. *One gesture, one op (D4).* An add over several elements, a folded
+   field's change and an Indices edit each stage ONE op: the whole tree
+   their per-leaf ops give (`family_rows.as_one` — `add /metrics`, as a
+   move stages, D144), applied by the spec's own patch applier, every
+   node the gesture does not name as it was. A second such op in a row
+   replaces the first, so a value typed into a folded field is one edit
+   and not a keystroke log; and a tree put back as the saved entry scores
+   is no edit and leaves nothing pending. On a test with a saved tree the
+   header counts 1. On a FLAT test it counts 2, as it does for one
+   criterion's edit there: the op is marked as an edit of the tree
+   (`PatchOp.edits_tree`), so `Session.stage` writes the implicit tree out
+   first, marked, and the preview diffs the gesture against that tree and
+   says "Save also writes this test's criteria out as a tree". Unmarked —
+   as first built — the preview showed every line of the tree as added,
+   with no note, and an Indices removal showed nothing deleted. N per-leaf
+   ops were the other honest shape, and a batch is never collapsed
+   (`Session.stage`): twenty ops per keystroke.
+10. *What a gesture did, in words.* Its op carries one sentence per thing
+    it did (`PatchOp.notes`), which the preview lists above the entry's
+    diff: `tolerance → 0.05 on 20 criteria of pipe.T[1:20]`, `Indices:
+    removed pipe.T[20]`, `added 4 criteria: pipe.T[1:5:16]`. Where an op
+    replaces the one before, a sentence about the same field replaces its
+    sentence and any other is kept: a value typed over is one line, two
+    gestures are two.
+11. *Indices in the folded editor (D5).* The field holds the elements the
+    criterion is on, with a count of what Enter would do beside it as it
+    is typed (`→ 5 elements (removes 15)`, `(adds 2)`, `(no change)`).
+    Enter or Apply removes the leaf of each element left out and adds one,
+    with the fold's parameters, for each new element; Esc puts back the
+    text applied last. The group's leaves stay in INDEX order — a new
+    element goes right after the member with the next smaller index,
+    before the first when it is smaller than all — so `1:20`, `1:5:20`,
+    `1:20` leaves the tree as it was, and nothing pending; added after the
+    last member, the leaves came back 1, 6, 11, 16, 2, 3, … and Save
+    rewrote a tree nobody had changed. (This replaces the controller's
+    "right after the group's last member".) An index the family does not
+    have — the family being every element the last result's file holds
+    and every name the test scores — is refused in a sentence naming its
+    size ("pipe.T[1:20] has 20 elements; 21 is not one of them."). An
+    element that already has a criterion of the fold's metric under that
+    node — its own tolerance, or a `warn` of its own — is not given a
+    second one beside it: "pipe.T[3] already has its own nrmse criterion
+    under this group — edit or remove that one, or leave 3 out". An
+    element that already has the fold's very criterion there is a member,
+    and never gets a second leaf. A change that would remove more than
+    half of the fold's criteria asks once, inline ("Removes 19 of 20
+    criteria — Apply again to confirm"). An empty field is refused:
+    "Indices is empty. To remove the criterion, unfold this row and remove
+    its criteria instead." The elements it already holds stage nothing.
+    Afterwards the rows are redrawn (leaves came or went) and the fold's
+    editor is open again on what it holds; down to one element, that
+    criterion's own editor is. An element the last run did not record is a
+    criterion all the same (D142): the strip asks for a rerun.
+12. *An open fold's members are held together — until its editor
+    closes.* While a fold's editor is open, its members stay one fold and
+    apart from every other leaf, whatever they equal. A value typed there
+    passes through others on its way (`0.05` is `0.0` first); one equal to
+    another group's would merge the two, and the next key would carry
+    that group along. Closing the editor — Done, another criterion or
+    form opened, the card rebuilt — releases the hold and repaints the
+    rows from the tree AT ONCE: no event follows a close, and left as
+    painted a fold typed to its neighbour's value read as two rows of one
+    criterion, whose Indices then offered the neighbour as a gap. If an
+    edit from elsewhere takes the members apart, the editor closes. This
+    is the one thing the derivation is told beside the tree.
 
 **What the spec holds.** Nothing new. `test_spec.json` holds one literal
 leaf per element, in the tree, exactly as twenty criteria added by hand
@@ -7104,18 +7154,34 @@ written before this folds the same way when its leaves are identical. The
 leaves are literal from the moment they are staged — the preview shows
 them — so nothing is expanded at Save.
 
-**What is unchanged (D6, D7).** Scoring, the spec format, the patch
-envelope and the report: `reporting.tree_rows.criteria_rows` is one row
-per leaf, the report's page lists every leaf of a family's plot, and its
-page for a fixture with a six-element family is byte-identical before and
-after this change. The tree card keeps one line per leaf. The Variables
-drawer's folded row is as D134 left it, with no field.
+**What is unchanged (D6, D7).** Scoring, the spec format and the patch
+envelope. The report's criteria: `reporting.tree_rows.criteria_rows` is
+one row per leaf, the report's page lists every leaf of a family's plot,
+and its page for a fixture with a six-element family is byte-identical
+before and after this change. The tree card keeps one line per leaf. The
+Variables drawer's folded row is as D134 left it, with no field.
+
+**One report string changes.** A family whose elements are neither all of
+a run nor evenly stepped — `pipe.T[1]`, `[2]`, `[4]`, `[5]`, `[6]` on one
+plot — printed every index in its plot title and legend
+(`pipe.T[1,2,4,5,6]`) and now prints its runs (`pipe.T[1,2,4:6]`), on the
+report as in the tool: item 5's `slice_text` is the one place a slice is
+printed. A whole or evenly stepped family prints as it did.
 
 **A multi-dimensional family (D8).** The fold rule is `families.py`'s,
 not extended: a name folds on its LAST single-integer index. So Indices
 means that last index — for `port[2, 1].C[3]` the 3, within the family
 `port[2, 1].C[]` — and a two-dimensional position (`x[2,3]`) is no family,
 folds with nothing and gets no field.
+
+**Known limits.** Under a `weighted` node an Indices change or an add over
+a slice is refused: the node carries one weight per child, and neither
+writes weights (a single add there is refused the same way). With about
+200 elements in one fold, a key in a folded field holds the page for
+about half a second and an Indices change for about 1.3 s (measured by
+the executing review): each rescores the test once and repaints two
+hundred rows. Tab follows the tree's order of rows, not the order shown
+(item 7).
 
 **What is not built.** A remove-all on the folded row: an empty Indices
 says to unfold and remove the rows. Handles for a fold on the plot. A glob
@@ -7125,10 +7191,11 @@ its fold's Indices adds the new elements. Indices over more than one
 dimension. The profile plot kind (`docs/ideas.md`). A folded row in the
 report or in the tree card. The page's own keyboard access to a folded
 row's editor: its chevron is a button, its row — like a criterion's — is
-opened by a click.
+opened by a click. Esc closes no editor.
 
-**Consequences.** Only the tool changes, and one printed text: a family's
-indices with a gap (item 4). A capability placed at CRITERION is not
-offered for a fold unless it also names FAMILY_CRITERION and handles
-`leaf_paths`. The TRANSFORM gate is the controller's; nothing of it is
+**Consequences.** Only the tool changes, and the one printed text above.
+A capability placed at CRITERION is not offered for a fold unless it also
+names FAMILY_CRITERION and handles `leaf_paths`. `Panel` gains `retitle`;
+`PatchOp` gains two fields that are no part of the op (`edits_tree`,
+`notes`). The TRANSFORM gate is the controller's; nothing of it is
 recorded here.

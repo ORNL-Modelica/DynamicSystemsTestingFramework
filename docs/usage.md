@@ -1078,20 +1078,32 @@ when either is non-zero). The chevron unfolds it to its members, each the
 criterion's own row indented under it, with its own swatch, editor, handles
 and node controls; which rows are unfolded is the browser tab's. Clicking the
 folded row opens its editor: one member's fields, showing the value they
-share, and every change is applied to ALL of them as one pending edit. It
-draws no handles — "These fields change all 20 criteria. Unfold to drag one
-on the plot." Its **Indices** field holds the elements the criterion is on, in
-the add form's syntax (see Edit tree); Enter or Apply removes the criterion of
-each element left out and adds one, with the same parameters, for each new
-one, right after the fold's last. An index the last result does not have is
-refused ("pipe.T[1:20] has 20 elements; 21 is not one of them."), and an empty
-field says to unfold the row and remove its criteria instead. A member whose
-criterion is edited on its own stands as its own row from then on, and the
-fold's label shows the gap (`pipe.T[1,2,4:20]`); edited back, it folds again.
-Two groups of one family are two folded rows, and a `UnitTests` element never
-folds. None of this is stored: `test_spec.json` holds one literal leaf per
-element, the tree card shows one line per leaf, and the report lists every
-leaf.
+share, and every change is applied to ALL of them as one edit (on a test with
+no saved tree the count reads 2, as for any criterion's edit there: its tree
+written out, and the edit). It draws no handles — "These fields change all 20
+criteria. Unfold to drag one on the plot." Its **Indices** field holds the
+elements the criterion is on, in the add form's syntax (see Edit tree), and
+beside it what Enter would do, as it is typed: `→ 5 elements (removes 15)`,
+`(adds 2)`, `(no change)`. Enter or Apply removes the criterion of each
+element left out and adds one, with the same parameters, for each new one, in
+index order among the fold's; Esc puts back the text applied last. A change
+that would remove more than half of the fold's criteria asks once ("Removes
+19 of 20 criteria — Apply again to confirm"). An index the last result does
+not have is refused ("pipe.T[1:20] has 20 elements; 21 is not one of them."),
+so is an element that already has a criterion of that metric of its own
+there ("pipe.T[3] already has its own nrmse criterion under this group — edit
+or remove that one, or leave 3 out"), and an empty field says to unfold the
+row and remove its criteria instead. A member whose criterion is edited on its
+own stands as its own row from then on — shown after the fold's members,
+flush with the fold's row — and the fold's label shows the gap
+(`pipe.T[1,2,4:20]`); edited back, it folds again. While a fold's editor is
+open its members stay that fold whatever is typed; Done shows the rows as the
+tree has them. Two groups of one family are two folded rows, and a `UnitTests`
+element never folds. None of this is stored: `test_spec.json` holds one
+literal leaf per element, the tree card shows one line per leaf, and the
+report lists every leaf. The preview says what each of these gestures did
+above the entry's diff (`tolerance → 0.05 on 20 criteria of pipe.T[1:20]`,
+`Indices: removed pipe.T[20]`).
 
 A plot's legend holds its signals only — actual, reference, any overlays and
 its context series —
@@ -1265,17 +1277,21 @@ choice: a diagnostic offers `scalar` only, anything else every metric that
 scores a time series (and the one chosen before a diagnostic comes back).
 When the variable chosen is an element of an array the result holds more of
 (`pipe.T[12]` of `pipe.T[1]` … `pipe.T[20]`), an **Indices** field shows under
-the picker, filled with every element (`1:20`). It takes an index (`3`), a
-range with its end included (`1:5`), a stepped range written start:step:end as
-Modelica writes it (`1:5:20` is 1, 6, 11, 16) and a comma list of those
-(`1:3,7,10:2:20`), the indices as the result file names them; an index the
-family lacks is refused. Add — or Enter in the field — writes one criterion
-per chosen element where a single one would have landed, all with the same
-parameters (seeded once, from the first chosen element), as ONE pending edit
-— the whole tree, as a move stages; `3` alone adds the one. Under the family's
-plot they read as one folded row (above). A family behind a multi-dimensional
-index (`port[2, 1].C[3]`) is indexed by its last index; a `UnitTests` element
-gets no field.
+the picker, filled with every element (`1:20`) — or, when the form was opened
+from the `+` on one element's own row, with that element's index (`3`). It
+takes an index, a range with its end included (`1:5`), a stepped range written
+start:step:end as Modelica writes it (`1:5:20` is 1, 6, 11, 16) and a comma
+list of those (`1:3,7,10:2:20`), the indices as the result file names them (a
+zero-based array has a `0`); an index the family lacks is refused. Under the
+field a count of what it names, as it is typed (`20 elements`), and Add reads
+the same (`Add 20 criteria`) — `1:20:5` is ONE element; the form's title says
+what is being added to (`Add a criterion for pipe.T[1:5:16]`). Add — or Enter
+in the field — writes one criterion per chosen element where a single one
+would have landed, all with the same parameters (seeded once, from the first
+chosen element), as ONE edit — the whole tree, as a move stages; `3` alone
+adds the one. Under the family's plot they read as one folded row (above). A
+family behind a multi-dimensional index (`port[2, 1].C[3]`) is indexed by its
+last index; a `UnitTests` element gets no field.
 A criterion on a variable the test did not track is what tracks it: every
 backend records, stores and scores a criterion's variables after the test's
 `UnitTests` variables and `variables` patterns, with no change to `variables`
