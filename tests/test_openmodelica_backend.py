@@ -54,14 +54,18 @@ class TestOpenModelicaBackendUnit:
         cls = get_backend_class(cfg)
         assert cls is OpenModelicaBackend
 
-    def test_capabilities_batch_and_persistent(self):
+    def test_capabilities_batch_persistent_and_live(self):
         from dstf.backends.openmodelica.backend import (
             OpenModelicaBackend,
         )
         from dstf.backends.types import Capability
 
         assert OpenModelicaBackend.capabilities == frozenset(
-            {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS},
+            {
+                Capability.BATCH_FALLBACK,
+                Capability.PERSISTENT_WORKERS,
+                Capability.LIVE_RESULTS,
+            },
         )
 
     def test_artifact_files_are_static(self):

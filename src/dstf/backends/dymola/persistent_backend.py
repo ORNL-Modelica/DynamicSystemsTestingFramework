@@ -706,7 +706,13 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     #: Declared explicitly, not inherited-and-extended: this class does
     #: persistent orchestration, so the batch class's BATCH_FALLBACK
     #: would be a false claim here (B2 review finding 5).
-    capabilities = frozenset({Capability.PERSISTENT_WORKERS, Capability.FMU_EXPORT})
+    capabilities = frozenset(
+        {
+            Capability.PERSISTENT_WORKERS,
+            Capability.FMU_EXPORT,
+            Capability.LIVE_RESULTS,
+        }
+    )
 
     @classmethod
     def preflight(cls, config) -> None:

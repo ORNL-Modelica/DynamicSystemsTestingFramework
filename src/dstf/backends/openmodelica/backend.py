@@ -36,6 +36,7 @@ from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
+    unfinished_result,
 )
 from ..types import (
     Capability,
@@ -58,6 +59,9 @@ class OpenModelicaConfig:
     backend_setup: tuple[str, ...] = ()
     diagnostic_variables: tuple[str, ...] = ("CPUtime", "EventCounter")
     std_version: str = "latest"
+    #: Write each output row to the result file as it is produced
+    #: (``Config.live_results``).
+    mat_sync: bool = False
 
     @classmethod
     def from_config(cls, config: Config) -> OpenModelicaConfig:
@@ -70,6 +74,7 @@ class OpenModelicaConfig:
             omc_path=omc_path,
             backend_setup=tuple(config.backend_setup),
             diagnostic_variables=tuple(config.diagnostic_variables),
+            mat_sync=config.live_results,
         )
 
 
@@ -81,6 +86,9 @@ class OpenModelicaBackend(Backend):
         {
             Capability.BATCH_FALLBACK,
             Capability.PERSISTENT_WORKERS,
+            # The simulation executable appends result_res.mat as it goes:
+            # in blocks, or a row at a time under `-mat_sync=1`.
+            Capability.LIVE_RESULTS,
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -143,6 +151,7 @@ class OpenModelicaBackend(Backend):
             backend_setup=list(self.om_config.backend_setup),
             diagnostic_vars=list(self.om_config.diagnostic_variables),
             std_version=self.om_config.std_version,
+            mat_sync=self.om_config.mat_sync,
         )
         mos_path = test_dir / self.MOS_FILENAME
         mos_path.write_text(mos_text, encoding="utf-8")
@@ -328,6 +337,10 @@ class OpenModelicaBackend(Backend):
         variables, diagnostics = extract_variables(mat_data, test, diag_names)
         stats = fold_diagnostics_into_statistics(stats, diagnostics)
 
+        unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)
+        if unfinished is not None:
+            return unfinished
+
         return TestResult(
             model_id=test.model_id,
             success=True,
@@ -343,3 +356,7 @@ class OpenModelicaBackend(Backend):
     @classmethod
     def result_series(cls, test_dir, names):
         return result_files.mat_series(test_dir / cls.RESULT_MAT_FILENAME, names)
+
+    @classmethod
+    def live_result_path(cls, test_dir: Path) -> Path:
+        return test_dir / cls.RESULT_MAT_FILENAME

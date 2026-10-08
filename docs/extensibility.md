@@ -135,6 +135,7 @@ capabilities: frozenset[Capability]  # members of backends.types.Capability
 | `PERSISTENT_WORKERS` | Holds loaded model(s) in memory across tests (performance: no per-test startup). |
 | `BATCH_FALLBACK` | Exposes a non-interactive script-driven mode when persistent workers aren't available. |
 | `FMU_EXPORT` | Can export a test artefact as an FMU (enables cross-backend verification). |
+| `LIVE_RESULTS` | The result file grows while the run is in progress and can be read then; `live_result_path` says which file. See "Live results" below. |
 
 Features in the framework (CLI flags, report sections, cross-backend chains) gate on capabilities, not on backend names. A new backend that declares `FMU_EXPORT` automatically participates in cross-backend verification with no framework change.
 
@@ -155,6 +156,7 @@ A Backend must:
 2. Implement `run_tests(tests) -> list[BatchManifest]` (or inherit a default that uses `run_single_test`).
 3. Implement `read_result(test) -> Dataset` returning a typed Dataset.
 4. Implement `export_fmu(test) -> Path` iff the class declares `Capability.FMU_EXPORT`.
+   Override `live_result_path(test_dir) -> Path` iff it declares `Capability.LIVE_RESULTS`.
 5. Use `ProgressReporter` (backend-agnostic, already exists) for live-dashboard status.
 6. Put all tool-specific code under `backends/<name>/`. No tool-specific imports in framework core.
 
@@ -174,6 +176,103 @@ without them stays valid and its tests plot tracked variables only. Neither
 may raise on a missing, half-written or malformed file: one test's file must
 not break a whole report. `backends/common/result_files.py` holds the three
 bundled formats (`.mat`, `result.json`, `.npz`) as name/series pairs.
+
+### The `.mat` reader: rows are counted from the file's size
+
+`backends/common/mat_reader.py` is the one reader of DSresult `.mat` files
+(Dymola's `dsres.mat`, OpenModelica's `result_res.mat`). Its rule:
+
+- **How many time points a file holds comes from its size, never from the
+  count in its header.** The trajectory matrix `data_2` is the file's last
+  matrix and both tools write its header before its rows. Dymola's count
+  starts at 1 and stays behind the rows while a run is in progress;
+  OpenModelica's is 0 until the run ends (unless `-mat_sync=1`, below).
+  Neither is completed when a run is killed. `read_result_mat` and
+  `list_result_mat_variables` therefore read the whole time points present:
+  a file cut mid-point yields the points before the cut, and a short file
+  never raises.
+- **Readable is not finished.** A verdict still asks for a finished file,
+  and what says so is the header's own count: it equals the points present,
+  there is at least one, and no byte follows them. `read_mat_time_extents`
+  and `mat_reaches_time` (the Dymola completion check, the OpenModelica disk
+  rescue) answer for a finished file only. `mat_shortfall(path)` says in
+  words why a file is not one; both DSresult backends' `read_result` ask it
+  (`result_variables.unfinished_result`), so the rows of a killed run come
+  back to be **shown**, inside a result that is a failure — nothing scores
+  them or offers them as a baseline.
+
+A backend that writes this format reuses the reader and the gate; one that
+writes another format owes the same two properties to its own reader if it
+wants its partial results shown.
+
+### Live results: reading a result while its run writes it
+
+A backend whose result file grows during a run declares
+`Capability.LIVE_RESULTS` and overrides one classmethod:
+
+```python
+@classmethod
+def live_result_path(cls, test_dir: Path) -> Path:   # test_dir = work_dir/<test_key>
+    return test_dir / "dsres.mat"
+```
+
+The base class returns `None`. Registration fails for a class that declares
+the flag without the override. Dymola and OpenModelica declare it (batch and
+persistent classes); Python, Julia and FMPy write their result once, at the
+end, and do not.
+
+The file is followed with `backends/common/live_mat.py`:
+
+```python
+reader = LiveMatReader(path, max_rows=2000)   # one per result-file path; no I/O yet
+snap = reader.poll(names)                     # about once a second
+```
+
+`poll(names)` returns an immutable `LiveSnapshot`:
+
+| Field | Meaning |
+|---|---|
+| `state` | `"gone"` — no file at the path (not created yet, or removed); `"starting"` — a file whose header matrices are not whole yet; `"running"` — rows are served as they arrive. A finished file also reads `"running"`: the reader does not judge whether a run has ended. |
+| `run` | Which file under the path this is, from 0. It goes up each time the reader starts over; a caller that accumulates series drops them when it changes. |
+| `rows` | Whole rows (time points) the file holds. |
+| `time` | The time of the last whole row; `None` before the first. |
+| `series` | `{name: LiveSeries(time, values)}` — for each requested name the file has, the samples that are **new since that name was last served** (empty arrays when none are; a name the file lacks is left out). Read-only arrays in the file's own precision, resolved by the full reader's code: an alias keeps its sign, a parameter is a constant. |
+
+What the reader guarantees, and why:
+
+- **Nothing is held between polls**: open, `fstat`, read, close. A
+  persistent worker wipes a test's directory before each run, and on Windows
+  a held handle makes that removal fail.
+- **No memory map**: a map over a file that is then truncated in place kills
+  the process.
+- **Only new rows are read**: in the steady state one read, from the last
+  row served through the newest. A read of rows is bounded at 16 MB.
+- **It never raises** for what the file is: short, half-written, vanishing,
+  being recreated, or not a result at all.
+- **A new run is recognised** when the file was gone at a poll, its
+  (device, inode) changed, it got smaller, or the last row served no longer
+  reads back as it did (a recreated file takes the removed one's inode on
+  ext4, so identity and size alone can say "the same file, longer").
+- **A poll returns at most `max_rows` samples per name.** A longer backlog —
+  the first poll of a run long under way, a name first asked for late — is
+  thinned to that many, evenly spaced and always ending on the newest row.
+  Thinned rows are not served later; the finished file is read by
+  `read_result_mat`.
+- A name's samples, concatenated over the polls of one run, are that name's
+  series, whenever it was first asked for.
+
+A reader belongs to one poller; it is not thread-safe.
+
+**`Config.live_results`** (default off) is the one run option: a caller that
+will watch a run sets it before building the backend. There is no
+`testing.json` key and no CLI flag, so `dstf run` is never changed by it. A
+backend whose file would otherwise reach the disk late pays to write it
+promptly: OpenModelica adds `simflags="-mat_sync=1"` to its `simulate()`
+call (without it rows arrive a 4 KB block at a time). Dymola appends as it
+goes and needs nothing. Under `-mat_sync=1` OpenModelica also keeps the
+header's count current, so a watched run's file is "finished" by its header
+at every moment; what stops a killed one from passing is that it stopped
+short of the stop time, and the run's recorded verdict.
 
 ### The `VariableResult` contract: name vs expression
 

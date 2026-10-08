@@ -123,6 +123,8 @@ def _format_sim_kwarg(key: str, value) -> str:
 def build_simulate_args(
     test: TestModel,
     diagnostic_vars: Iterable[str],
+    *,
+    mat_sync: bool = False,
 ) -> list[str]:
     """Build the ``key=value`` strings for an OM ``simulate(...)`` call.
 
@@ -135,6 +137,12 @@ def build_simulate_args(
     ``output_interval`` → ``numberOfIntervals`` when that's what the test
     specified. Solver names are lowercased here so a framework-wide
     Dymola-style ``"Dassl"`` survives the crossing.
+
+    ``mat_sync`` adds ``simflags="-mat_sync=1"``: the simulation executable
+    then writes each output row to the result file as it is produced, where
+    it otherwise leaves them in a buffer until a block is full. A run that
+    is watched (``Config.live_results``) asks for it; no other run does, so
+    with it off the arguments are exactly what they were before it existed.
     """
     diagnostic_vars = list(diagnostic_vars)  # read twice below
     args: list[str] = []
@@ -163,6 +171,8 @@ def build_simulate_args(
         ],
     )
     args.append(_format_sim_kwarg("variableFilter", var_filter))
+    if mat_sync:
+        args.append(_format_sim_kwarg("simflags", "-mat_sync=1"))
     return args
 
 
@@ -175,6 +185,7 @@ def build_simulate_mos(
     backend_setup: list[str],
     diagnostic_vars: list[str],
     std_version: str = "latest",
+    mat_sync: bool = False,
 ) -> str:
     """Assemble the full per-test .mos script.
 
@@ -210,7 +221,7 @@ def build_simulate_mos(
 
     lines.append(f'cd("{fwd(test_dir)}");')
 
-    sim_args = build_simulate_args(test, diagnostic_vars)
+    sim_args = build_simulate_args(test, diagnostic_vars, mat_sync=mat_sync)
     # Bare simulate(...) — omc REPL-echoes the SimulationResult record to
     # stdout, which log_parser parses. No ``res := ...`` assignment and no
     # follow-up prints (see module docstring).

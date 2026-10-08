@@ -35,6 +35,9 @@ class Capability(str, Enum):
     BATCH_FALLBACK = "batch-fallback"
     #: Backend can export a test artefact as an FMU (enables cross-backend verification).
     FMU_EXPORT = "fmu-export"
+    #: The result file grows while the run is in progress and can be read
+    #: then: ``Backend.live_result_path`` says which file.
+    LIVE_RESULTS = "live-results"
 
 
 class DatasetType(str, Enum):

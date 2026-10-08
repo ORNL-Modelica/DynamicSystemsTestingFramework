@@ -3,11 +3,35 @@
 Uses a custom MAT4 binary parser with numpy.memmap for selective variable
 reading. This avoids loading the entire data_2 matrix (which can be hundreds
 of MB for large models) when only a few variables are needed.
+
+**How many time points a file holds comes from its SIZE, never from the
+count in its header.** The trajectory matrix ``data_2`` is the file's last
+matrix and both tools write its header BEFORE its rows: Dymola's count
+starts at 1 and lags the rows by tens to hundreds of them while a run is in
+progress, OpenModelica's stays 0 until the run ends. Neither is completed
+when a run is killed. So the reader takes the whole time points the file
+holds — a file cut mid-point yields the points before the cut — and a
+crashed or timed-out run's rows are readable to where they stop.
+
+Readable is not finished. A VERDICT (:func:`read_mat_time_extents`,
+:func:`mat_reaches_time`) and a scored read (:func:`mat_shortfall`) still
+ask for a finished file, and what says a file is finished is the header's
+own count: it equals the points present and nothing follows them. A partial
+result is shown, never scored and never rescued as a pass.
+
+The anchor for "``data_2`` is last": every result both tools were seen to
+write (Dymola 2026x, omc 1.27) ends with it, with no byte after its last
+point. A writer that appended a matrix after ``data_2`` would make this
+reader count that matrix's bytes as time points; such a file is then not
+"finished" by the rule above (its header counts fewer), so it would fail
+loudly rather than score.
 """
 
 import logging
+import os
 import struct
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -24,12 +48,46 @@ _MAT4_DTYPES = {
 }
 
 
-def _scan_mat4_headers(f) -> dict:
+#: The trajectory matrix: the one whose column count is taken from the size.
+_TRAJECTORY = "data_2"
+
+
+class _Scan(NamedTuple):
+    """What a file's headers and its size say it holds."""
+
+    #: name → (data_offset, dtype, mrows, ncols) of every matrix the file
+    #: holds whole, and of the trajectory with the columns PRESENT.
+    blocks: dict
+    #: The trajectory header's own column count; ``None`` without one.
+    declared: int | None
+    #: Bytes after the trajectory's last whole column.
+    trailing: int
+
+    @property
+    def finished(self) -> bool:
+        """Did its writer finish this file: a trajectory of at least one
+        time point, as many as its header counts, and nothing after."""
+        block = self.blocks.get(_TRAJECTORY)
+        return (
+            block is not None
+            and block[3] > 0
+            and block[3] == self.declared
+            and self.trailing == 0
+        )
+
+
+def _scan_mat4_headers(f) -> _Scan:
     """Scan a MAT4 file and return metadata for each top-level variable.
 
-    Returns dict of {name: (data_offset, dtype, mrows, ncols)}.
     Only reads headers + variable names, skips all data payloads via seek().
+
+    The trajectory's column count — its time points — is worked out from
+    the file's size: the whole columns present (see the module docstring).
+    The scan stops there, and at the first matrix before it that the file
+    does not hold whole yet; a caller missing a matrix it needs then has
+    nothing to read.
     """
+    size = os.fstat(f.fileno()).st_size
     variables = {}
     while True:
         hdr_bytes = f.read(20)
@@ -37,6 +95,8 @@ def _scan_mat4_headers(f) -> dict:
             break
 
         mopt, mrows, ncols, imagf, namlen = struct.unpack("<5i", hdr_bytes)
+        if namlen <= 0 or mrows < 0 or ncols < 0:
+            break  # not a header: a cut or foreign file
 
         # Extract data type from mopt: P = (mopt % 100) // 10
         p_code = (mopt % 100) // 10
@@ -44,17 +104,29 @@ def _scan_mat4_headers(f) -> dict:
 
         # Read variable name
         name_bytes = f.read(namlen)
+        if len(name_bytes) < namlen:
+            break
         name = name_bytes.rstrip(b"\x00").decode("latin1")
 
         data_offset = f.tell()
+
+        if name == _TRAJECTORY:
+            col_bytes = mrows * dtype.itemsize
+            payload = max(0, size - data_offset)
+            present = payload // col_bytes if col_bytes else 0
+            variables[name] = (data_offset, dtype, mrows, present)
+            return _Scan(variables, ncols, payload - present * col_bytes)
+
         data_size = mrows * ncols * dtype.itemsize
+        if data_offset + data_size > size:
+            break  # this matrix is not all there yet
 
         variables[name] = (data_offset, dtype, mrows, ncols)
 
         # Skip past the data payload
         f.seek(data_offset + data_size)
 
-    return variables
+    return _Scan(variables, None, 0)
 
 
 def _read_mat4_block(f, info) -> np.ndarray:
@@ -102,7 +174,7 @@ def list_result_mat_variables(mat_path: Path) -> list[str] | None:
     """
     try:
         with open(mat_path, "rb") as f:
-            blocks = _scan_mat4_headers(f)
+            blocks = _scan_mat4_headers(f).blocks
 
             if "name" not in blocks:
                 logger.error("No 'name' matrix in %s", mat_path)
@@ -120,6 +192,93 @@ def list_result_mat_variables(mat_path: Path) -> list[str] | None:
     except Exception as e:
         logger.error("Failed to read %s: %s", mat_path, e)
         return None
+
+
+def _read_tables(f, blocks, mat_path: Path):
+    """The header matrices a trajectory is read through: every variable's
+    name, its ``dataInfo`` entry as one row ``(matrix, column, interpolation,
+    protected)``, and ``data_1`` (``None`` when the file has none).
+    """
+    # review 2026-07-06 (finding 74): binNormal files would decode
+    # as transposed garbage returned as success. Refuse loudly.
+    _raise_if_binnormal(f, blocks, mat_path)
+
+    # Dymola stores names as (max_name_len, n_vars) — transpose so
+    # each row is one variable name.
+    name_matrix = _read_mat4_block(f, blocks["name"]).T
+    data_info = _read_mat4_block(f, blocks["dataInfo"])
+
+    data_1 = None
+    if "data_1" in blocks:
+        data_1 = _read_mat4_block(f, blocks["data_1"])
+
+    # MAT4 stores dataInfo column-major as (4, n_vars) — each column is one
+    # variable's {data_matrix, col, interp, protected} quad. We want to
+    # index by variable, so transpose to (n_vars, 4). The 4-row invariant
+    # is fixed by the DSresult format; an earlier shape[0]<shape[1]
+    # heuristic silently broke for MATs with n_vars <= 4 (only surfaced
+    # on OM where tight variableFilter often leaves a handful of vars).
+    if (
+        data_info.ndim == 2
+        and data_info.shape[0] == 4
+        or data_info.ndim == 2
+        and data_info.shape[0] < data_info.shape[1]
+    ):
+        data_info = data_info.T
+
+    return _parse_name_matrix(name_matrix), data_info, data_1
+
+
+def _variable_sources(
+    names: list[str],
+    data_info: np.ndarray,
+    data_1: np.ndarray | None,
+    n_trajectories: int,
+    mat_path: Path,
+    wanted: set[str] | None = None,
+):
+    """Where each readable variable's values are: yields ``(name, row,
+    negate, constant)`` — ``row`` of ``data_2`` for a trajectory, or
+    ``constant`` (``row`` is then ``None``) for a parameter of ``data_1``;
+    ``negate`` for an alias stored with the opposite sign. A variable the
+    file gives no data for is left out, as is one not in ``wanted``.
+    """
+    for i, name in enumerate(names):
+        if i >= len(data_info):
+            break
+
+        # Skip variables we don't need
+        if wanted is not None and name not in wanted:
+            continue
+
+        info = data_info[i]
+        data_matrix_idx = int(info[0])
+        col_idx = int(info[1])
+        if col_idx == 0:
+            # review 2026-07-06 (finding 74): dataInfo column 0 means "not
+            # stored in a data matrix" (abscissa marker); abs(0)-1 == -1
+            # previously wrapped to the LAST row — returning the wrong
+            # variable's data under the requested name.
+            logger.debug(
+                "Variable %s has dataInfo column 0 in %s; skipping",
+                name,
+                mat_path,
+            )
+            continue
+        negate = col_idx < 0
+        col = abs(col_idx) - 1
+
+        if data_matrix_idx == 1 and data_1 is not None:
+            if col >= data_1.shape[0]:
+                continue
+            # data_1 stores constants/parameters. Dymola typically uses
+            # 2 columns (start_value, end_value). Use the first value.
+            val = data_1[col, 0] if data_1.ndim == 2 else data_1[col]
+            yield name, None, negate, float(val)
+        elif data_matrix_idx == 2:
+            if col >= n_trajectories:
+                continue
+            yield name, col, negate, None
 
 
 def read_result_mat(
@@ -141,11 +300,15 @@ def read_result_mat(
             Uses numpy.memmap on data_2 to read only the needed rows,
             avoiding loading the entire trajectory matrix into memory.
 
-    Returns dict with variable names as keys and (time, values) tuples.
+    Returns dict with variable names as keys and (time, values) tuples —
+    over the whole time points the file HOLDS, which for a run in progress
+    or a killed one is fewer than the run asked for (and none at all before
+    its first point: every series is then empty). Whether the file is a
+    finished result is :func:`mat_shortfall`'s question, not this one's.
     """
     try:
         with open(mat_path, "rb") as f:
-            blocks = _scan_mat4_headers(f)
+            blocks = _scan_mat4_headers(f).blocks
 
             if "name" not in blocks:
                 logger.error("No 'name' matrix in %s", mat_path)
@@ -155,35 +318,8 @@ def read_result_mat(
                 logger.error("Missing dataInfo or data_2 in %s", mat_path)
                 return None
 
-            # review 2026-07-06 (finding 74): binNormal files would decode
-            # as transposed garbage returned as success. Refuse loudly.
-            _raise_if_binnormal(f, blocks, mat_path)
-
             # Load small matrices eagerly.
-            # Dymola stores names as (max_name_len, n_vars) — transpose so
-            # each row is one variable name.
-            name_matrix = _read_mat4_block(f, blocks["name"]).T
-            data_info = _read_mat4_block(f, blocks["dataInfo"])
-
-            data_1 = None
-            if "data_1" in blocks:
-                data_1 = _read_mat4_block(f, blocks["data_1"])
-
-        all_var_names = _parse_name_matrix(name_matrix)
-
-        # MAT4 stores dataInfo column-major as (4, n_vars) — each column is one
-        # variable's {data_matrix, col, interp, protected} quad. We want to
-        # index by variable, so transpose to (n_vars, 4). The 4-row invariant
-        # is fixed by the DSresult format; an earlier shape[0]<shape[1]
-        # heuristic silently broke for MATs with n_vars <= 4 (only surfaced
-        # on OM where tight variableFilter often leaves a handful of vars).
-        if (
-            data_info.ndim == 2
-            and data_info.shape[0] == 4
-            or data_info.ndim == 2
-            and data_info.shape[0] < data_info.shape[1]
-        ):
-            data_info = data_info.T
+            all_var_names, data_info, data_1 = _read_tables(f, blocks, mat_path)
 
         # Memory-map data_2 for selective row access.
         # MAT4 is column-major: Fortran order gives correct (mrows, ncols) indexing.
@@ -191,77 +327,31 @@ def read_result_mat(
         # from MATLAB convention). Dymola stores data_2 as (n_timesteps, n_vars) in
         # MATLAB convention, so mrows=n_timesteps, ncols=n_vars.
         d2_offset, d2_dtype, d2_mrows, d2_ncols = blocks["data_2"]
-        data_2 = np.memmap(
-            mat_path,
-            dtype=d2_dtype,
-            mode="r",
-            offset=d2_offset,
-            shape=(d2_mrows, d2_ncols),
-            order="F",
-        )
+        if d2_mrows == 0 or d2_ncols == 0:
+            # No time point yet: there is nothing to map.
+            data_2 = np.empty((max(d2_mrows, 1), 0), dtype=d2_dtype)
+        else:
+            data_2 = np.memmap(
+                mat_path,
+                dtype=d2_dtype,
+                mode="r",
+                offset=d2_offset,
+                shape=(d2_mrows, d2_ncols),
+                order="F",
+            )
 
         time = np.array(data_2[0, :])  # Copy time out of memmap
 
-        # Determine which rows we actually need to read
-        needed_rows = set()
-        if variable_names is not None:
-            for i, name in enumerate(all_var_names):
-                if i >= len(data_info):
-                    break
-                if name not in variable_names:
-                    continue
-                info = data_info[i]
-                data_matrix_idx = int(info[0])
-                col_idx = int(info[1])
-                if col_idx == 0:
-                    # review 2026-07-06 (finding 74): column 0 = "no data
-                    # column"; abs(0)-1 == -1 would wrap to the last row.
-                    continue
-                col = abs(col_idx) - 1
-                if data_matrix_idx == 2:
-                    needed_rows.add(col)
-
         result = {}
-        for i, name in enumerate(all_var_names):
-            if i >= len(data_info):
-                break
-
-            # Skip variables we don't need
-            if variable_names is not None and name not in variable_names:
-                continue
-
-            info = data_info[i]
-            data_matrix_idx = int(info[0])
-            col_idx = int(info[1])
-            if col_idx == 0:
-                # review 2026-07-06 (finding 74): dataInfo column 0 means "not
-                # stored in a data matrix" (abscissa marker); abs(0)-1 == -1
-                # previously wrapped to the LAST row — returning the wrong
-                # variable's data under the requested name.
-                logger.debug(
-                    "Variable %s has dataInfo column 0 in %s; skipping",
-                    name,
-                    mat_path,
-                )
-                continue
-            negate = col_idx < 0
-            col = abs(col_idx) - 1
-
-            if data_matrix_idx == 1 and data_1 is not None:
-                if col >= data_1.shape[0]:
-                    continue
-                # data_1 stores constants/parameters. Dymola typically uses
-                # 2 columns (start_value, end_value). Use the first value
-                # and expand to match time length.
-                val = data_1[col, 0] if data_1.ndim == 2 else data_1[col]
-                values = np.full_like(time, float(val))
-            elif data_matrix_idx == 2:
-                if col >= data_2.shape[0]:
-                    continue
-                # Only this row is actually read from disk (memmap)
-                values = np.array(data_2[col, :])
+        for name, row, negate, constant in _variable_sources(
+            all_var_names, data_info, data_1, d2_mrows, mat_path, variable_names
+        ):
+            if row is None:
+                # A parameter: its one value at every time point.
+                values = np.full_like(time, constant)
             else:
-                continue
+                # Only this row is actually read from disk (memmap)
+                values = np.array(data_2[row, :])
 
             if negate:
                 values = -values
@@ -275,39 +365,39 @@ def read_result_mat(
         return None
 
 
-def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
-    """Cheaply read just the first and last time values from a Dymola .mat.
+def _time_at(f, block, point: int) -> float:
+    """The time of one time point: row 0 of the trajectory's column."""
+    offset, dtype, mrows, _ = block
+    f.seek(offset + point * mrows * dtype.itemsize)
+    return float(np.frombuffer(f.read(dtype.itemsize), dtype=dtype)[0])
 
-    Useful for verifying a simulation reached its requested stop time
-    (a partial / killed simulation can leave a valid-looking .mat with
-    data only up to where it stopped). Returns None if the file is
-    unreadable or contains no time data.
+
+def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
+    """Cheaply read just the first and last time values of a FINISHED
+    Dymola .mat.
+
+    Useful for verifying a simulation reached its requested stop time.
+    Returns None if the file is unreadable, contains no time data, or was
+    not finished by its writer (``_Scan.finished``): the rows of a killed
+    run are readable to where they stop, and a run whose last row reached
+    the stop time under a header that was never completed still did not
+    finish. This is the verdict's reading; :func:`read_result_mat` is the
+    one that shows what is there.
 
     Bypasses the full variable-iteration in read_dymola_mat — Dymola stores
-    time as row 0 of data_2, so we only need that single row from disk.
+    time as row 0 of data_2, so we only need two values from disk.
     """
     try:
         with open(mat_path, "rb") as f:
-            blocks = _scan_mat4_headers(f)
+            scan = _scan_mat4_headers(f)
             # review 2026-07-06 (finding 74) applies here too: in a binNormal
             # file data_2 is stored untransposed, so row 0 is not time — the
             # extents would be garbage. The raise lands in the handler below.
-            _raise_if_binnormal(f, blocks, mat_path)
-        if "data_2" not in blocks:
-            return None
-        d2_offset, d2_dtype, d2_mrows, d2_ncols = blocks["data_2"]
-        # Map only enough to read row 0 (time) — column-major Fortran order
-        data_2 = np.memmap(
-            mat_path,
-            dtype=d2_dtype,
-            mode="r",
-            offset=d2_offset,
-            shape=(d2_mrows, d2_ncols),
-            order="F",
-        )
-        if d2_mrows == 0 or d2_ncols == 0:
-            return None
-        return float(data_2[0, 0]), float(data_2[0, -1])
+            _raise_if_binnormal(f, scan.blocks, mat_path)
+            if not scan.finished:
+                return None
+            block = scan.blocks[_TRAJECTORY]
+            return _time_at(f, block, 0), _time_at(f, block, block[3] - 1)
     except Exception:
         return None
 
@@ -319,9 +409,10 @@ def mat_reaches_time(
     """Did the trajectory in ``mat_path`` reach ``target_time``?
 
     Returns ``(reached, last_time)``; ``last_time`` is None when the file
-    is unreadable. The relative tolerance mirrors the persistent-OM
-    disk-rescue rule so success-path and rescue-path verdicts can't
-    disagree about the same file (D99).
+    is unreadable or unfinished (:func:`read_mat_time_extents`). The
+    relative tolerance mirrors the persistent-OM disk-rescue rule so
+    success-path and rescue-path verdicts can't disagree about the same
+    file (D99).
     """
     extents = read_mat_time_extents(mat_path)
     if extents is None:
@@ -329,6 +420,39 @@ def mat_reaches_time(
     last_time = extents[1]
     tol = max(1e-6, abs(target_time) * 1e-6)
     return last_time + tol >= target_time, last_time
+
+
+def mat_shortfall(mat_path: Path) -> str | None:
+    """Why ``mat_path`` is not a finished result, in words for a person —
+    ``None`` when it is one.
+
+    The scored read asks this beside :func:`read_result_mat`: the rows of
+    an unfinished file are returned to be SHOWN, and this is what keeps
+    them from being scored or accepted as a baseline.
+    """
+    name = Path(mat_path).name
+    try:
+        with open(mat_path, "rb") as f:
+            scan = _scan_mat4_headers(f)
+            _raise_if_binnormal(f, scan.blocks, mat_path)
+            if scan.finished:
+                return None
+            block = scan.blocks.get(_TRAJECTORY)
+            if block is None:
+                return f"{name} unreadable"
+            points = block[3]
+            if points == 0:
+                return f"Empty result: {name} holds no time point"
+            held = f"{points} time point{'s' if points != 1 else ''}"
+            held += f" up to t={_time_at(f, block, points - 1):.6g}"
+            if scan.trailing:
+                held += f" and {scan.trailing} bytes of a further one"
+            return (
+                f"Partial result: {name} holds {held}, its header counts "
+                f"{scan.declared} — the run did not finish writing it"
+            )
+    except Exception:
+        return f"{name} unreadable"
 
 
 def _parse_name_matrix(name_matrix: np.ndarray) -> list[str]:

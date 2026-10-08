@@ -27,7 +27,7 @@ The framework is a pipeline of six typed, plug-in layers:
 
 **Backend capabilities** are declared on the backend contract, not inferred from type:
 - `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`,
-  `FMU_EXPORT`) and `produced_datasets: frozenset[DatasetType]`.
+  `FMU_EXPORT`, `LIVE_RESULTS`) and `produced_datasets: frozenset[DatasetType]`.
 Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
 
 ### Layer ↔ Code mapping (Current)
@@ -93,8 +93,10 @@ src/dstf/
 │   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
 │   ├── base.py               # Backend ABC + RunSetup/_prepare_run (types/persistent/batch_manifest split out, D116)
 │   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
-│   ├── common/               # Shared: mat_reader, process tree-kill, result variables, JSON-driver base,
-│   │                         #   result_files (any variable of a result file, by name: .mat / result.json / .npz)
+│   ├── common/               # Shared: mat_reader (rows counted from the file's size), process tree-kill,
+│   │                         #   result variables, JSON-driver base,
+│   │                         #   result_files (any variable of a result file, by name: .mat / result.json / .npz),
+│   │                         #   live_mat (LiveMatReader: a .mat polled while its run writes it)
 │   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
 │   ├── dymola/               # DymolaBackend (.mos batch) + PersistentDymolaBackend (Python interface)
 │   ├── fmpy/                 # FmpyBackend (in-process; per-test thread)
@@ -393,7 +395,7 @@ Two manifest files are written to the work directory before simulation starts:
 
 ```
 Backend (ABC)
-  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS
   ├── artifact_files: tuple[tuple[str, str], ...]  # (filename, label) pairs for the report
   ├── run_tests(tests) → list[BatchManifest]       # override for batch execution
   ├── run_single_test(test, ...) → TestRunResult   # override for per-process execution
@@ -442,6 +444,7 @@ Each backend declares its capabilities via `frozenset[Capability]`:
 - `PERSISTENT_WORKERS` — long-lived worker process; library loads once, amortized across N tests.
 - `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
 - `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaBackend` only today — the batch `DymolaBackend` has no `.mos` export path and does not declare it; OM deferred per D69).
+- `LIVE_RESULTS` — the result file grows while the run is in progress; `live_result_path(test_dir)` names it and `backends/common/live_mat.py`'s `LiveMatReader` follows it (Dymola and OpenModelica; see [extensibility.md](extensibility.md) §3 "Live results").
 
 `backends.select_backend(config, persistent=True)` — which `cli/run_cmds.py`'s `_get_backend` wraps for the CLI — swaps to the persistent variant only when the backend **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
 

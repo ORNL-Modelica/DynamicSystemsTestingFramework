@@ -19,6 +19,7 @@ from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
+    unfinished_result,
 )
 from ..types import (
     Capability,
@@ -73,6 +74,7 @@ class DymolaBackend(Backend):
         {
             Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
             Capability.BATCH_FALLBACK,  # .mos script backend (--batch flag)
+            Capability.LIVE_RESULTS,  # dymosim appends dsres.mat as it goes
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -557,6 +559,10 @@ class DymolaBackend(Backend):
         )
         stats = fold_diagnostics_into_statistics(stats, diagnostics)
 
+        unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)
+        if unfinished is not None:
+            return unfinished
+
         return TestResult(
             model_id=test.model_id,
             success=True,
@@ -572,6 +578,10 @@ class DymolaBackend(Backend):
     @classmethod
     def result_series(cls, test_dir, names):
         return result_files.mat_series(test_dir / "dsres.mat", names)
+
+    @classmethod
+    def live_result_path(cls, test_dir: Path) -> Path:
+        return test_dir / "dsres.mat"
 
 
 # ---------------------------------------------------------------------------

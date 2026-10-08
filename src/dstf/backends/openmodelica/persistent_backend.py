@@ -390,6 +390,7 @@ class OpenModelicaWorker(Worker):
         sim_args = build_simulate_args(
             test,
             self.om_config.diagnostic_variables,
+            mat_sync=self.om_config.mat_sync,
         )
         simulate_expr = f"simulate({test.model_id}, {', '.join(sim_args)})"
 
