@@ -9350,6 +9350,79 @@ def test_an_arrow_beside_a_border_its_checkpoint_is_past_paints_nothing(
         _shot(page, tmp_path, "arrows-beside-the-left-border")
 
 
+def test_a_ring_partly_on_the_plot_shows_its_groups_arrows(
+    tmp_path, playwright_browser
+):
+    """A ring is on the plot while any of it is drawn. Its centre 3 px
+    outside the left border, Plotly's clip leaves 4 px of it: the cursor
+    on them is `move`, a press there drags the checkpoint — and hovering
+    them showed no arrow, because the ring was off the plot by its centre
+    and its group's area was its `after` edge's alone, 128 px away. A ring
+    counts while its centre is within its own radius, 7 px, of the plot
+    area: on what is drawn of it the group shows, the arrows whose OWN
+    edges are on the plot — `after`; the upper and lower ones, about a
+    column that is off it, and `before` are not drawn. At 6.5 px the same;
+    at 7.6 px, past its radius — under half a pixel of its outline is left
+    — nothing shows there."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _scale(page, {"xaxis": [0.55, 1285.0], "yaxis": [0.4, 146.0]})
+
+        def on_what_is_left(px: float, inside: float) -> tuple[list[str], dict]:
+            """The ring's centre ``px`` outside the left border: the arrows
+            displayed with the pointer ``inside`` px inside that border,
+            at the ring's height, and what takes a press there."""
+            _put_outside(page, "/points/target/1", "left", px)
+            area = page.evaluate(PLOT_AREA)
+            ring = _shape(page, "/points/target/1")
+            at = (area["left"] + inside, ring["y"])
+            _rest(page)
+            page.mouse.move(at[0] + 40, at[1] - 40)
+            page.mouse.move(*at, steps=6)
+            page.wait_for_timeout(150)
+            under = page.evaluate(
+                """([x, y, index]) => {
+                  const el = document.elementFromPoint(x, y);
+                  return {ring: el.getAttribute('data-index') === String(index)
+                                && !!el.closest('.shapelayer'),
+                          cursor: getComputedStyle(el).cursor};
+                }""",
+                [*at, ring["index"]],
+            )
+            return _grips_on(page)["shown"], under
+
+        shown, under = on_what_is_left(3.0, 2)
+        assert under == {"ring": True, "cursor": "move"}, under
+        assert shown == ["points/after/1"], shown
+        assert _off(page) == sorted(
+            _group("points", 0, FOUR)
+            + _group("points", 1, ("upper", "lower", "before"))
+        )
+        _shot(page, tmp_path, "a-ring-3px-past-the-left-border")
+        # And it is the ring a person drags from there: 30 px right.
+        cell = _table_cell(page, 1, "time")
+        was = cell.input_value()
+        page.mouse.down()
+        page.mouse.move(
+            page.evaluate(PLOT_AREA)["left"] + 32,
+            _shape(page, "/points/target/1")["y"],
+            steps=10,
+        )
+        page.mouse.up()
+        expect(cell).not_to_have_value(was, timeout=EXPECT_TIMEOUT)
+        assert float(cell.input_value()) - float(was) == pytest.approx(
+            30 / 1285, abs=1 / 1285
+        )
+        _discard(page)
+        _settled_at(page, "/points/target/1", "xanchor", float(was))
+
+        shown, under = on_what_is_left(6.5, 0.4)
+        assert shown == ["points/after/1"], (shown, under)
+        shown, under = on_what_is_left(7.6, 0.4)
+        assert shown == [], (shown, under)
+
+
 # -- a refused drag's reason, under the plot ------------------------------------
 
 

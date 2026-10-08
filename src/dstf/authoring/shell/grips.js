@@ -152,15 +152,17 @@
     // `top` to its `bottom`.
     //
     // And whether that anchor is OFF the plot: outside the plot area by
-    // more than EDGE px on either axis — the one the arrow moves on (its
-    // edge is past the end of the axis) or the other (its checkpoint is).
-    const placed = (s, fl) => {
+    // more than `allowed` px on either axis. For an arrow that is EDGE px
+    // (the default), on the axis it moves on (its edge is past the end of
+    // the axis) or the other (its checkpoint is); a ring is allowed its
+    // radius (`areas`).
+    const placed = (s, fl, allowed = EDGE) => {
       const xa = fl["xaxis" + (s.xref || "x").slice(1)];
       if (!xa) return null;
       const paper = s.yref === "paper";
       const ya = fl["yaxis" + (paper ? xa.anchor : s.yref || "y").slice(1)];
       if (!ya) return null;
-      const within = (p, axis) => p >= -EDGE && p <= axis._length + EDGE;
+      const within = (p, axis) => p >= -allowed && p <= axis._length + allowed;
       const px = xa.d2p(s.xanchor);
       const py = paper ? null : ya.d2p(s.yanchor);
       const size = fl._size;
@@ -174,23 +176,34 @@
       };
     };
 
-    // What is PAINTED of the arrow `s` anchored at `at` (`placed`), as a
-    // box in pixels of the graph div: the path the figure sizes in pixels
-    // about that anchor (positive y is UP), and the half of its outline's
-    // width that stands outside it. Or null for a path that says no point.
-    const painted = (s, at) => {
+    // The points of the path the figure sizes shape `s` by, in pixels
+    // about its anchor (positive y is UP) — an arrow's corners, a ring's
+    // arcs with their control points.
+    const points = (s) => {
       const n = (typeof s.path === "string" && s.path.match(/-?\d*\.?\d+/g)) || [];
-      if (n.length < 2) return null;
+      const out = [];
+      for (let k = 0; k + 1 < n.length; k += 2) out.push([+n[k], +n[k + 1]]);
+      return out;
+    };
+
+    // What is PAINTED of the arrow `s` anchored at `at` (`placed`), as a
+    // box in pixels of the graph div: its path about that anchor, and the
+    // half of its outline's width that stands outside it. Or null for a
+    // path that says no point.
+    const painted = (s, at) => {
       const half = ((dict(s.line) || {}).width || 0) / 2;
       const box = { l: Infinity, r: -Infinity, t: Infinity, b: -Infinity };
-      for (let k = 0; k + 1 < n.length; k += 2) {
-        box.l = Math.min(box.l, at.x + +n[k] - half);
-        box.r = Math.max(box.r, at.x + +n[k] + half);
-        box.t = Math.min(box.t, at.y - +n[k + 1] - half);
-        box.b = Math.max(box.b, at.y - +n[k + 1] + half);
+      for (const [dx, dy] of points(s)) {
+        box.l = Math.min(box.l, at.x + dx - half);
+        box.r = Math.max(box.r, at.x + dx + half);
+        box.t = Math.min(box.t, at.y - dy - half);
+        box.b = Math.max(box.b, at.y - dy + half);
       }
-      return box;
+      return box.l <= box.r ? box : null;
     };
+
+    // How far the ring `s` reaches from its anchor, px: its radius.
+    const radius = (s) => Math.max(0, ...points(s).flat().map(Math.abs));
 
     // Plotly replaces every shape path on a react or a newPlot: the marks go
     // with them, and are put back from what the figure says of its shapes.
@@ -310,11 +323,15 @@
     // whole height. A ring whose group has no grip has no area.
     //
     // Of the members that are ON the plot (`placed`) alone: an arrow whose
-    // anchor is off it is not displayed (`mark`), and a ring whose centre
-    // is off it is cut by Plotly's clip, half of it at the most painted. A
-    // group partly on the plot has the area of what is on it; one that is
-    // off it whole — its ring and every arrow — has none, and nothing
-    // shows for it wherever the pointer is.
+    // anchor is off it is not displayed (`mark`). A RING is on the plot
+    // while any of it is drawn — its centre within its own radius of the
+    // plot area: Plotly clips it to the area, and what is left of it has
+    // the `move` cursor and drags; by its centre alone, a ring 3 px past
+    // the border showed 4 px, dragged, and showed no arrow. A group
+    // partly on the plot has the area of what is on it — and shows the
+    // arrows whose own edges are; one that is off it whole — its ring and
+    // every arrow — has none, and nothing shows for it wherever the
+    // pointer is.
     const areas = () => {
       const fl = gd._fullLayout;
       const out = new Map();
@@ -337,7 +354,7 @@
         const grip = gripOf(info, s.name);
         const g = grip ? grip.group : ringOf(info, s.name);
         if (g === null) continue;
-        const at = placed(s, fl);
+        const at = placed(s, fl, grip ? EDGE : radius(s));
         if (!at) continue;
         if (grip) gripped.add(g);
         if (at.off) continue;
