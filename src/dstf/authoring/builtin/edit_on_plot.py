@@ -598,10 +598,13 @@ def _table(
     #: the control.
     pairs: list[tuple[dict, str, SidesControl]] = []
     #: The list as the spec holds it — what this table was built on, then
-    #: what it last staged — and, per row shown, that row's index in it:
-    #: None for a row added while a cell held the list back.
+    #: what it last staged — and, per row shown, where that row comes from:
+    #: its index in that list, or, for a row added while a cell held the
+    #: list back, the row as it was added (a copy: the spec holds no row
+    #: for it yet, and the index it is shown at may be ANOTHER row's there
+    #: — one removed while the list was held back).
     spec: list[dict] = copy.deepcopy(rows)
-    origin: list[int | None] = list(range(len(rows)))
+    origin: list[int | dict] = list(range(len(rows)))
     #: ``(field, index in the spec's list, column)`` -> ``{"base": what the
     #: spec's row holds there, "shown": None for a blank cell, else the
     #: half pair its fields show}``: `Panel.kept`, the one record of what
@@ -623,7 +626,7 @@ def _table(
         stand: called after every edit of one, whatever it staged."""
         for k in [k for k in kept if k[0] == field]:
             del kept[k]
-        at_of = {id(row): at for row, at in zip(rows, origin) if at is not None}
+        at_of = {id(row): at for row, at in zip(rows, origin) if isinstance(at, int)}
         for row in rows:
             at = at_of.get(id(row))
             if at is None:
@@ -667,11 +670,15 @@ def _table(
         starts a field from the leaf its last accepted submit left
         (`edit_criteria`'s ``taken["leaf"]``). A row the spec does not hold
         yet (added while the list was held back) has no staged value: it
-        starts from what it was added with."""
+        starts from what it was added with (its `origin`) — every time it
+        is entered, not the first alone. Started from what the row SHOWS,
+        a cell left on a refused value and entered again went back to that
+        value: the put-back was refused in turn, and a `-0` typed on the
+        way stayed in the list once the rest of it could be staged."""
         if taken["cell"] != (i, key):
             taken["cell"] = (i, key)
             at = origin[i]
-            start = rows[i] if at is None else spec[at]
+            start = spec[at] if isinstance(at, int) else at
             taken["entered"] = copy.deepcopy(start.get(key))
 
     def left() -> None:
@@ -743,7 +750,7 @@ def _table(
     def add() -> None:
         left()
         rows.append(_new_row(columns, rows, span()))
-        origin.append(None)
+        origin.append(copy.deepcopy(rows[-1]))
         render()
         submit()
 

@@ -2015,6 +2015,61 @@ async def test_a_cell_of_a_row_the_spec_does_not_hold_takes_its_first_key(sessio
         assert "edit-on-plot" not in errors
 
 
+@pytest.mark.parametrize("field", ["points", "events"])
+@pytest.mark.parametrize(
+    "typed",
+    [("", "-0", "-0.", "-0.7"), ("-0.7",)],
+    ids=["by way of blank and -0", "at once"],
+)
+async def test_a_refused_cell_of_an_added_row_entered_again_goes_back_to_its_own(
+    session, field, typed
+):
+    """A row added while the list is held back is in no staged list, and
+    sits where the staged list holds ANOTHER row: three rows, the third
+    removed and one added in its place while row 0 shows a refused −0.5.
+    The added row copies the row above it (0.3); the staged list still
+    holds 0.4 there, the removed row's. Its cell refused (−3), row 0 fixed,
+    and the cell entered again and typed over with another negative: what
+    goes back, and is staged, is what the row was ADDED with — not the −3
+    it showed (that put-back was refused in turn, and the `-0` typed on the
+    way stayed staged), and never the 0.4 of the row that was there."""
+    leaf = copy.deepcopy(SIDED[field][0])
+    first = leaf[field][0]
+    leaf[field] = [
+        {**first, "time": 0.2, "tolerance": 0.05},
+        {**first, "time": 0.5, "tolerance": 0.3},
+        {**first, "time": 0.8, "tolerance": 0.4},
+    ]
+    _root_leaf_on_a(session, leaf)
+    held = copy.deepcopy(leaf[field])
+    table = f"/metrics:{field}"
+    cell = table + ":{}:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _keys(user, cell.format(0), "-0.5")
+        await _settled(lambda: "row 0" in errors.get("edit-on-plot", ""))
+        user.find(marker=f"{table}:2:remove").click()
+        await asyncio.sleep(0.25)
+        user.find(marker=f"{table}:add").click()
+        await asyncio.sleep(0.25)
+        assert _cell(user, cell.format(2)).value == 0.3
+        _keys(user, cell.format(2), "-3")
+        await asyncio.sleep(0.25)
+        user.find(marker=table).trigger("focusin")
+        _keys(user, cell.format(0), "0.2")
+        await _settled(lambda: "row 2" in errors.get("edit-on-plot", ""))
+        # Refused whole the whole way: the spec holds its three rows.
+        assert _a_rows(session, field) == held
+        user.find(marker=table).trigger("focusin")
+        _keys(user, cell.format(2), *typed)
+        await _settled(lambda: "got −0.7" in errors.get("edit-on-plot", ""))
+        await asyncio.sleep(0.25)
+        assert errors["edit-on-plot"] == (
+            "ValueError: row 2: tolerance must not be negative; got −0.7"
+        )
+        assert [r.get("tolerance") for r in _a_rows(session, field)] == [0.2, 0.3, 0.3]
+        assert _cell(user, cell.format(2)).value == -0.7
+
+
 def test_a_rows_edit_takes_a_pair_and_a_number_and_drops_a_blank(session):
     _root_leaf_on_a(session, SIDED["points"][0])
     rows = [
