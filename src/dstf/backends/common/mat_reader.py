@@ -122,6 +122,93 @@ def list_result_mat_variables(mat_path: Path) -> list[str] | None:
         return None
 
 
+def _read_tables(f, blocks, mat_path: Path):
+    """The header matrices a trajectory is read through: every variable's
+    name, its ``dataInfo`` entry as one row ``(matrix, column, interpolation,
+    protected)``, and ``data_1`` (``None`` when the file has none).
+    """
+    # review 2026-07-06 (finding 74): binNormal files would decode
+    # as transposed garbage returned as success. Refuse loudly.
+    _raise_if_binnormal(f, blocks, mat_path)
+
+    # Dymola stores names as (max_name_len, n_vars) — transpose so
+    # each row is one variable name.
+    name_matrix = _read_mat4_block(f, blocks["name"]).T
+    data_info = _read_mat4_block(f, blocks["dataInfo"])
+
+    data_1 = None
+    if "data_1" in blocks:
+        data_1 = _read_mat4_block(f, blocks["data_1"])
+
+    # MAT4 stores dataInfo column-major as (4, n_vars) — each column is one
+    # variable's {data_matrix, col, interp, protected} quad. We want to
+    # index by variable, so transpose to (n_vars, 4). The 4-row invariant
+    # is fixed by the DSresult format; an earlier shape[0]<shape[1]
+    # heuristic silently broke for MATs with n_vars <= 4 (only surfaced
+    # on OM where tight variableFilter often leaves a handful of vars).
+    if (
+        data_info.ndim == 2
+        and data_info.shape[0] == 4
+        or data_info.ndim == 2
+        and data_info.shape[0] < data_info.shape[1]
+    ):
+        data_info = data_info.T
+
+    return _parse_name_matrix(name_matrix), data_info, data_1
+
+
+def _variable_sources(
+    names: list[str],
+    data_info: np.ndarray,
+    data_1: np.ndarray | None,
+    n_trajectories: int,
+    mat_path: Path,
+    wanted: set[str] | None = None,
+):
+    """Where each readable variable's values are: yields ``(name, row,
+    negate, constant)`` — ``row`` of ``data_2`` for a trajectory, or
+    ``constant`` (``row`` is then ``None``) for a parameter of ``data_1``;
+    ``negate`` for an alias stored with the opposite sign. A variable the
+    file gives no data for is left out, as is one not in ``wanted``.
+    """
+    for i, name in enumerate(names):
+        if i >= len(data_info):
+            break
+
+        # Skip variables we don't need
+        if wanted is not None and name not in wanted:
+            continue
+
+        info = data_info[i]
+        data_matrix_idx = int(info[0])
+        col_idx = int(info[1])
+        if col_idx == 0:
+            # review 2026-07-06 (finding 74): dataInfo column 0 means "not
+            # stored in a data matrix" (abscissa marker); abs(0)-1 == -1
+            # previously wrapped to the LAST row — returning the wrong
+            # variable's data under the requested name.
+            logger.debug(
+                "Variable %s has dataInfo column 0 in %s; skipping",
+                name,
+                mat_path,
+            )
+            continue
+        negate = col_idx < 0
+        col = abs(col_idx) - 1
+
+        if data_matrix_idx == 1 and data_1 is not None:
+            if col >= data_1.shape[0]:
+                continue
+            # data_1 stores constants/parameters. Dymola typically uses
+            # 2 columns (start_value, end_value). Use the first value.
+            val = data_1[col, 0] if data_1.ndim == 2 else data_1[col]
+            yield name, None, negate, float(val)
+        elif data_matrix_idx == 2:
+            if col >= n_trajectories:
+                continue
+            yield name, col, negate, None
+
+
 def read_result_mat(
     mat_path: Path,
     variable_names: set[str] | None = None,
@@ -155,35 +242,8 @@ def read_result_mat(
                 logger.error("Missing dataInfo or data_2 in %s", mat_path)
                 return None
 
-            # review 2026-07-06 (finding 74): binNormal files would decode
-            # as transposed garbage returned as success. Refuse loudly.
-            _raise_if_binnormal(f, blocks, mat_path)
-
             # Load small matrices eagerly.
-            # Dymola stores names as (max_name_len, n_vars) — transpose so
-            # each row is one variable name.
-            name_matrix = _read_mat4_block(f, blocks["name"]).T
-            data_info = _read_mat4_block(f, blocks["dataInfo"])
-
-            data_1 = None
-            if "data_1" in blocks:
-                data_1 = _read_mat4_block(f, blocks["data_1"])
-
-        all_var_names = _parse_name_matrix(name_matrix)
-
-        # MAT4 stores dataInfo column-major as (4, n_vars) — each column is one
-        # variable's {data_matrix, col, interp, protected} quad. We want to
-        # index by variable, so transpose to (n_vars, 4). The 4-row invariant
-        # is fixed by the DSresult format; an earlier shape[0]<shape[1]
-        # heuristic silently broke for MATs with n_vars <= 4 (only surfaced
-        # on OM where tight variableFilter often leaves a handful of vars).
-        if (
-            data_info.ndim == 2
-            and data_info.shape[0] == 4
-            or data_info.ndim == 2
-            and data_info.shape[0] < data_info.shape[1]
-        ):
-            data_info = data_info.T
+            all_var_names, data_info, data_1 = _read_tables(f, blocks, mat_path)
 
         # Memory-map data_2 for selective row access.
         # MAT4 is column-major: Fortran order gives correct (mrows, ncols) indexing.
@@ -202,66 +262,16 @@ def read_result_mat(
 
         time = np.array(data_2[0, :])  # Copy time out of memmap
 
-        # Determine which rows we actually need to read
-        needed_rows = set()
-        if variable_names is not None:
-            for i, name in enumerate(all_var_names):
-                if i >= len(data_info):
-                    break
-                if name not in variable_names:
-                    continue
-                info = data_info[i]
-                data_matrix_idx = int(info[0])
-                col_idx = int(info[1])
-                if col_idx == 0:
-                    # review 2026-07-06 (finding 74): column 0 = "no data
-                    # column"; abs(0)-1 == -1 would wrap to the last row.
-                    continue
-                col = abs(col_idx) - 1
-                if data_matrix_idx == 2:
-                    needed_rows.add(col)
-
         result = {}
-        for i, name in enumerate(all_var_names):
-            if i >= len(data_info):
-                break
-
-            # Skip variables we don't need
-            if variable_names is not None and name not in variable_names:
-                continue
-
-            info = data_info[i]
-            data_matrix_idx = int(info[0])
-            col_idx = int(info[1])
-            if col_idx == 0:
-                # review 2026-07-06 (finding 74): dataInfo column 0 means "not
-                # stored in a data matrix" (abscissa marker); abs(0)-1 == -1
-                # previously wrapped to the LAST row — returning the wrong
-                # variable's data under the requested name.
-                logger.debug(
-                    "Variable %s has dataInfo column 0 in %s; skipping",
-                    name,
-                    mat_path,
-                )
-                continue
-            negate = col_idx < 0
-            col = abs(col_idx) - 1
-
-            if data_matrix_idx == 1 and data_1 is not None:
-                if col >= data_1.shape[0]:
-                    continue
-                # data_1 stores constants/parameters. Dymola typically uses
-                # 2 columns (start_value, end_value). Use the first value
-                # and expand to match time length.
-                val = data_1[col, 0] if data_1.ndim == 2 else data_1[col]
-                values = np.full_like(time, float(val))
-            elif data_matrix_idx == 2:
-                if col >= data_2.shape[0]:
-                    continue
-                # Only this row is actually read from disk (memmap)
-                values = np.array(data_2[col, :])
+        for name, row, negate, constant in _variable_sources(
+            all_var_names, data_info, data_1, d2_mrows, mat_path, variable_names
+        ):
+            if row is None:
+                # A parameter: its one value at every time point.
+                values = np.full_like(time, constant)
             else:
-                continue
+                # Only this row is actually read from disk (memmap)
+                values = np.array(data_2[row, :])
 
             if negate:
                 values = -values
