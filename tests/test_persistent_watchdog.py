@@ -133,7 +133,7 @@ class TestKillsWholeProcessTree:
         worker = OpenModelicaWorker(
             0,
             SimpleNamespace(work_dir=tmp_path),
-            SimpleNamespace(std_version="3.3", diagnostic_variables=[]),
+            SimpleNamespace(std_version="3.3", diagnostic_variables=[], mat_sync=False),
             lambda: None,
         )
         worker.pids = {2001}
@@ -338,7 +338,7 @@ class TestExecThreadPinsItsInterface:
         worker = OpenModelicaWorker(
             0,
             SimpleNamespace(work_dir=tmp_path),
-            SimpleNamespace(std_version="3.3", diagnostic_variables=[]),
+            SimpleNamespace(std_version="3.3", diagnostic_variables=[], mat_sync=False),
             lambda: None,
         )
         worker.session = first
