@@ -2312,6 +2312,66 @@ def test_the_variables_drawer_edits_the_extras_with_a_real_mouse(
         _ring_is(page, 1)
 
 
+def test_a_watch_plot_beside_a_tolerance_typed_and_cleared_saves_the_plot_alone(
+    tmp_path, playwright_browser
+):
+    """A's entry has no tree in the file. A watch plot added, then a
+    tolerance typed into a criterion and cleared: one pending edit — the
+    plot's — a preview that shows `plots` added and says nothing of a tree
+    Save would write, and a Save that writes `plots` and no `metrics`. It
+    was three pending edits, "Save also writes this test's 2 criteria out
+    as a tree", and a `metrics` block in the file."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        spec = next(tmp_path.rglob("test_spec.json"))
+        original = spec.read_bytes()
+        cards = page.locator(".dstf-plot")
+        header = page.locator(".dstf-header-row")
+        _open_vars(page)
+        a0 = _var_row(page, "a0")
+        a0.hover()
+        a0.locator(".dstf-var-new").click()
+        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        _open_vars(page)  # closed: the criteria rows have the page's width
+
+        cards.nth(0).scroll_into_view_if_needed()
+        _open_crit(page, 0, "nrmse · x")
+        editor = page.locator(".dstf-editor")
+        tolerance = editor.get_by_label("Tolerance", exact=True)
+        _retype(page, tolerance, "0.5")
+        # The tree written out, the leaf's edit, and the plot's.
+        expect(header).to_contain_text("3 pending edits", timeout=EXPECT_TIMEOUT)
+        _retype(page, tolerance, "")
+        expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        expect(tolerance).to_have_value("")
+
+        header.get_by_role("button", name=re.compile(r"pending edit")).click()
+        drawer = page.locator(".dstf-pending-drawer")
+        expect(drawer).to_contain_text(
+            "1 pending edit · 1 test", timeout=EXPECT_TIMEOUT
+        )
+        expect(drawer.locator(".dstf-diff-line").first).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(400)  # the drawer's slide
+        assert "out as a tree" not in drawer.inner_text()
+        added = drawer.locator(".dstf-diff-add").all_inner_texts()
+        assert any('"plots": [' in line for line in added), added
+        assert not any("metric" in line for line in added), added
+        try:
+            drawer.get_by_role("button", name="Save these").click()
+            expect(header).to_contain_text("0 pending edits", timeout=EXPECT_TIMEOUT)
+            (entry,) = [
+                e
+                for e in json.loads(spec.read_text(encoding="utf-8"))["tests"]
+                if e["model"] == A
+            ]
+            assert entry["plots"] == [{"var": "a0"}] and "metrics" not in entry
+            expect(cards).to_have_count(3)
+        finally:
+            spec.write_bytes(original)
+
+
 #: An element's computed background, and the selection token's as the
 #: browser resolves it on a probe element.
 BACKGROUNDS = """e => {

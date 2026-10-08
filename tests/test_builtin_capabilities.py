@@ -3879,18 +3879,15 @@ def test_an_unknown_action_is_refused_before_its_inputs_are_read(session):
         EditTree().act(view, action="swap", model_id=A, path=ROOT)
 
 
-def test_a_move_after_rescore_folds_the_materialization_and_is_unmarked(
-    two_var_session,
-):
+def test_a_move_after_rescore_stages_its_whole_tree_unmarked(two_var_session):
     from dstf.authoring.tree_move import Dest
 
     s = two_var_session
-    # Beside another edit: alone, the tree `rescore` writes out is the
-    # entry as saved, and no op stays for a move to fold.
+    # The tree `rescore` writes out is no edit, beside another or alone:
+    # no op of it stays for a move to fold onto, and the move's is its own.
     s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
     s.rescore(A)
-    _plots, marked = s.spec.pending
-    assert marked.materializes  # the op the move folds is the marked one
+    assert [op.path for op in s.spec.pending] == ["/plots"]
     s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
     _plots, pending = s.spec.pending
     assert (pending.op, pending.path, pending.materializes) == ("add", ROOT, False)

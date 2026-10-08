@@ -1115,29 +1115,33 @@ class TestOpen:
 
 def _written_out(session: Session, model_id: str):
     """``model_id``'s implicit tree staged so that it STAYS, and the
-    comparison scored by it. Alone it is no pending edit — an entry with
-    nothing but its own tree written out is as saved — so it is staged
-    beside a watch-plot extra, which scoring never reads."""
-    name = session.comparisons[model_id].variables[0].name
-    session.stage([PatchOp(model_id, "add", "/plots", [{"var": name, "context": []}])])
-    return session.rescore(model_id)
+    comparison scored by it. Written out and nothing else it is no pending
+    edit, beside whatever else is pending (`Session.stage`) — so its first
+    leaf's tolerance is pinned at the value that leaf already scores with:
+    an edit of the tree that changes no number."""
+    in_effect = session.comparisons[model_id].variables[0].tolerance_used
+    assert in_effect.equal
+    session.stage(
+        [PatchOp(model_id, "add", "/metrics/children/0/tolerance", in_effect.upper)]
+    )
+    return session.comparisons[model_id]
 
 
 class TestRescoreAndStage:
-    def test_rescore_beside_another_edit_stages_the_materialization_spec_update_would(
+    def test_a_first_leaf_edit_stages_the_materialization_spec_update_would(
         self, session
     ):
         entry = session.spec.entry(A)
         assert "metrics" not in entry
         _written_out(session, A)
-        assert session.spec.pending[1:] == [
+        assert session.spec.pending[:1] == [
             PatchOp(A, "add", "/metrics", implicit_tree_op(entry)["value"])
         ]
         assert (
-            session.spec.pending[1].raw()
+            session.spec.pending[0].raw()
             == materialize_implicit_metrics(entry, [LOOSEN.raw()])[0]
         )
-        # And again is a no-op: the tree is there now.
+        # And a rescore is a no-op: the tree is there now.
         session.rescore(A)
         assert len(session.spec.pending) == 2
 
@@ -3770,26 +3774,210 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         )
         assert [op.path for op in s.spec.pending] == ["/metrics", self.LEAF]
 
-    def test_a_tree_written_out_beside_another_edit_stays_with_it(self, session):
-        """Every OTHER member must be as saved: with the test's tolerance
-        edited, the tree written out is part of what Save writes."""
-        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
-        session.rescore(A)
-        assert [op.path for op in session.spec.pending] == ["/comparison", "/metrics"]
-        session.stage([PatchOp(A, "remove", "/comparison")])
-        assert session.spec.pending == []
-
-    def test_a_plots_edit_beside_the_tree_written_out_stays(self, session):
-        session.rescore(A)
-        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
-        leaf = session.tree(A)["children"][0]
-        session.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": 0.5})])
-        session.stage([PatchOp(A, "replace", self.LEAF, leaf)])
+    def test_a_tree_written_out_beside_an_edit_scoring_never_reads_does_not_stay(
+        self, session
+    ):
+        """A watch plot added, a tolerance typed and cleared: the entry
+        differs from the file's by its ``plots`` — and by ``metrics``, the
+        tree it already scores by. That tree is no edit beside another any
+        more than alone: its ops go and the plots edit stays. It stayed —
+        four ops pending, a preview saying Save also writes the tree, and a
+        Save that wrote a ``metrics`` block where only ``plots`` changed."""
+        plots = [{"var": "x", "context": []}]
+        session.stage([PatchOp(A, "add", "/plots", plots)])
+        session.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
         assert [op.path for op in session.spec.pending] == [
             "/plots",
             "/metrics",
-            self.LEAF,
+            f"{self.LEAF}/tolerance",
         ]
+        session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+        assert session.spec.pending == [PatchOp(A, "add", "/plots", plots)]
+        assert "metrics" not in session.spec.entry(A)
+        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
+        assert classify(session.comparisons[A]) == FAIL  # rescored, as saved
+        session.save()
+        saved = session.spec.saved_entry(A)
+        assert saved["plots"] == plots and "metrics" not in saved
+        # The tree is there to edit again, as before the first edit.
+        assert session.tree(A)["children"] == [{"metric": "nrmse", "variable": "x"}]
+
+    def test_a_tolerance_left_beside_a_plots_edit_is_saved_with_its_tree(self, session):
+        """The other half: a value typed and LEFT is an edit of the tree,
+        and the tree goes to the file with it."""
+        plots = [{"var": "x", "context": []}]
+        session.stage([PatchOp(A, "add", "/plots", plots)])
+        session.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+        assert [op.path for op in session.spec.pending] == [
+            "/plots",
+            "/metrics",
+            f"{self.LEAF}/tolerance",
+        ]
+        assert classify(session.comparisons[A]) == PASS
+        session.save()
+        saved = session.spec.saved_entry(A)
+        assert saved["metrics"]["children"] == [
+            {"metric": "nrmse", "variable": "x", "tolerance": 0.5}
+        ]
+        assert saved["plots"] == plots
+        again = Session()
+        again.open(
+            session.project.config.config_file, work_dir=session.project.config.work_dir
+        )
+        assert classify(again.comparisons[A]) == PASS and again.spec.pending == []
+
+    @pytest.mark.parametrize(
+        ("steps", "left"),
+        [
+            ("tolerance plot clear", ["/plots"]),
+            ("plot tolerance clear plot", ["/plots", "/plots/-"]),
+            ("plot tolerance plot clear", ["/plots", "/plots/-"]),
+            ("tolerance plot clear unplot", []),
+            ("plot rescore", ["/plots"]),
+            ("test-tolerance tolerance clear", ["/comparison"]),
+        ],
+    )
+    def test_the_order_of_the_edits_does_not_matter(self, tmp_path, steps, left):
+        """The tree's ops go wherever they sit among the others, and the
+        others stay in their order; with those undone as well, nothing is
+        pending and Save leaves the file's bytes alone. (`_two_var_project`'s
+        A scores x and y: a plots entry for each.)"""
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        before = s.spec.path.read_bytes()
+        plots = iter(
+            [("/plots", [{"var": "x", "context": []}]), ("/plots/-", {"var": "y"})]
+        )
+        for step in steps.split():
+            if step == "tolerance":
+                s.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+            elif step == "clear":
+                s.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+            elif step == "plot":
+                s.stage([PatchOp(A, "add", *next(plots))])
+            elif step == "unplot":
+                s.stage([PatchOp(A, "remove", "/plots")])
+            elif step == "test-tolerance":
+                s.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+            else:
+                s.rescore(A)
+        assert [op.path for op in s.spec.pending] == left
+        assert "metrics" not in s.spec.entry(A)
+        if not left:
+            s.save()
+            assert s.spec.path.read_bytes() == before
+
+    def test_a_tree_written_out_beside_the_tests_tolerance_scores_as_the_flat_entry(
+        self, session
+    ):
+        """The test's own tolerance is read by the flat path and by the
+        tree's leaves alike: the tree written out beside an edit of it is
+        still the tree the entry scores by, and goes. With the tolerance
+        put back nothing is pending. (This test pinned the opposite — "the
+        tree written out is part of what Save writes" — while the rule was
+        that every other member be as saved.)"""
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        flat = session.comparisons[A]
+        assert classify(flat) == PASS  # nrmse 0.153 under 1.0
+        session.rescore(A)
+        assert [op.path for op in session.spec.pending] == ["/comparison"]
+        assert classify(session.comparisons[A]) == PASS
+        assert session.comparisons[A].variables[0] == flat.variables[0]
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert session.spec.pending == []
+
+    def test_a_tree_the_edited_overrides_would_not_build_stays(self, session):
+        """A flat entry's tree is built from its ``variable_overrides``.
+        With those edited, the tree the SAVED entry scores by is not the
+        one the entry would score by without its ``metrics``: here the
+        override loosens x to 0.5 (PASS) and the tree's leaf, its tolerance
+        cleared, scores at the config's 0.01 (FAIL). Dropping the tree
+        would turn that FAIL into the override's PASS — an edit lost."""
+        loose = {"variable_overrides": {"x": {"tolerance": 0.5}}}
+        session.stage([PatchOp(A, "add", "/comparison", loose)])
+        assert classify(session.comparisons[A]) == PASS
+        session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+        assert [op.path for op in session.spec.pending] == [
+            "/comparison",
+            "/metrics",
+            f"{self.LEAF}/tolerance",
+        ]
+        assert session.spec.entry(A)["metrics"] == session.tree(A)
+        assert session.tree(A)["children"] == [{"metric": "nrmse", "variable": "x"}]
+        assert classify(session.comparisons[A]) == FAIL
+
+    def test_a_tree_moved_and_moved_back_beside_a_plots_edit_does_not_stay(
+        self, tmp_path
+    ):
+        """A move stages the whole tree, unmarked: which tree the saved
+        entry scores by is asked of the saved entry."""
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        implicit = s.tree(A)
+        moved = {**implicit, "children": implicit["children"][::-1]}
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        s.stage([PatchOp(A, "add", "/metrics", moved)])
+        assert [op.path for op in s.spec.pending] == ["/plots", "/metrics"]
+        s.stage([PatchOp(A, "add", "/metrics", implicit)])
+        assert [op.path for op in s.spec.pending] == ["/plots"]
+
+    def test_two_models_in_one_stage_each_keep_what_is_theirs(self, session):
+        """Decided per model: A's tree goes and its plots edit stays, D's
+        tolerance — staged in the same call — stays with D's tree."""
+        for m in (A, D):
+            session.stage([PatchOp(m, "add", "/plots", [{"var": "x", "context": []}])])
+            session.stage([PatchOp(m, "add", f"{self.LEAF}/tolerance", 0.5)])
+        session.stage(
+            [
+                PatchOp(A, "remove", f"{self.LEAF}/tolerance"),
+                PatchOp(D, "replace", f"{self.LEAF}/tolerance", 0.25),
+            ]
+        )
+        assert [(op.model_id, op.path) for op in session.spec.pending] == [
+            (A, "/plots"),
+            (D, "/plots"),
+            (D, "/metrics"),
+            (D, f"{self.LEAF}/tolerance"),
+            (D, f"{self.LEAF}/tolerance"),
+        ]
+        assert session.spec.entry(D)["metrics"]["children"][0]["tolerance"] == 0.25
+
+    def test_a_saved_tree_beside_a_plots_edit_is_as_it_was(self, tmp_path):
+        """The rule is the flat entry's: a test with a tree in the file
+        keeps every op, whatever its tree is edited to."""
+        s = _session_with_entry(tmp_path, {"metrics": self.AUTHORED})
+        default = {"metric": "nrmse", "variable": "x"}
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        s.stage([PatchOp(A, "replace", self.LEAF, default)])
+        assert [op.path for op in s.spec.pending] == ["/plots", self.LEAF]
+        assert s.spec.entry(A)["metrics"]["children"] == [default]
+
+    def test_the_trees_ops_go_only_where_the_others_alone_give_the_rest(
+        self, session, monkeypatch
+    ):
+        """What is dropped is checked by doing it: the ops that stay,
+        applied to the saved entry, must give the entry as edited but for
+        its ``metrics``. No op the patch whitelist admits can make that
+        false (a pointer under ``/comparison`` or ``/plots`` reads nothing
+        under ``/metrics``), so the replay is given a wrong answer here —
+        and then nothing is dropped."""
+        import dstf.authoring.session as session_module
+
+        real = session_module.apply_patch_to_document
+
+        def replay(data, model_id, ops, **kw):
+            real(data, model_id, ops, **kw)
+            data["tests"][0]["plots"] = []
+            return data
+
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        session.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+        monkeypatch.setattr(session_module, "apply_patch_to_document", replay)
+        session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+        assert len(session.spec.pending) == 4
+        assert "metrics" in session.spec.entry(A)
 
     def test_a_leaf_removed_from_the_tree_written_out_is_an_edit(self, tmp_path):
         """Not "any tree of default leaves": the tree the SAVED entry scores
@@ -3978,23 +4166,33 @@ class TestTheMaterializationIsMarked:
             False,
         ]
 
-    def test_rescores_materialization_is_marked_and_is_not_previewed_as_added(
+    def test_rescores_materialization_is_marked(self, session, monkeypatch):
+        """`rescore` marks the tree it stages as `stage` marks its own, and
+        the mark is what lets it go again at no cost: which tree the saved
+        entry scores by is read off the op, never by scoring the test as
+        saved (a merge of the whole spec and a compare, per look)."""
+
+        def scored(*_a, **_k):
+            raise AssertionError("the saved entry was scored for a rescore")
+
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        monkeypatch.setattr(session, "saved_comparisons", scored)
+        session.rescore(A)
+        assert [op.path for op in session.spec.pending] == ["/plots"]
+
+    def test_a_tree_written_out_beside_a_plots_edit_is_not_previewed_as_added(
         self, session
     ):
         from dstf.authoring.spec_preview import entry_lines
 
-        _written_out(session, A)
-        _plots, tree = session.spec.pending
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        session.stage([LOOSEN])
+        _plots, tree, _edit = session.spec.pending
         assert tree.materializes
         lines = entry_lines(session.spec.preview_base(A), session.spec.entry(A))
-        assert {line.text.strip() for line in lines if line.kind == "add"} >= {
-            '"plots": ['
-        }
-        assert not any("metrics" in line.text for line in lines if line.kind == "add")
-        session.stage([LOOSEN])
-        lines = entry_lines(session.spec.preview_base(A), session.spec.entry(A))
         added = [line.text.strip() for line in lines if line.kind == "add"]
-        assert '"tolerance": 0.5' in added and '"metric": "nrmse",' not in added
+        assert '"plots": [' in added and '"tolerance": 0.5' in added
+        assert '"metric": "nrmse",' not in added
 
     def test_a_capabilitys_patch_cannot_claim_a_mark(self, session):
         """Only the Session's own materialization is the scored tree: a

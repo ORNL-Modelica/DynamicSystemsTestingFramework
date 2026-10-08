@@ -6746,10 +6746,16 @@ plan held; what follows is the contract as built.
     `Session.stage`, after the fold and the validation, drops every op of a
     model whose entry with its pending ops applied equals its saved entry
     as JSON reads it (`json_equal`: members in any order, `1` is `1.0`,
-    `true` is no number), and rescores it to its saved verdict. A flat
-    test whose entry differs only by a `metrics` member that is the tree
-    the saved entry already scores by — its implicit tree written out — is
-    as saved too. The count, the strip, the Tests drawer's mark, Save and
+    `true` is no number), and rescores it to its saved verdict. Before
+    that it drops, for a test with no tree in the file, the ops on
+    `/metrics` while the entry's `metrics` is the tree the saved entry
+    already scores by — its implicit tree written out — and the test's
+    `variable_overrides`, which that tree is built from, are as saved: the
+    tree is no edit alone, and none beside a plots edit either (the first
+    build asked that every other member be as saved, and Save wrote a
+    `metrics` block where only `plots` had changed). With an override
+    edited the tree stays: without it the entry would score by another.
+    The count, the strip, the Tests drawer's mark, Save and
     the preview read the one pending list; the preview's "These edits
     leave the entry as saved." line is gone with the state it described.
 14. *The arrows (the owner's ruling, on a spike's pictures).* In the

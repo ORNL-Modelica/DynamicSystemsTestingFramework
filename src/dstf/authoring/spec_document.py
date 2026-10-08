@@ -30,10 +30,11 @@ class PatchOp:
     #: The ``add /metrics`` `Session.stage` prepends to a flat entry's first
     #: per-leaf edit: the implicit tree written out, scoring the same. The
     #: pending drawer diffs against the saved entry WITH it (`preview_base`)
-    #: so an edit reads as itself, not as the whole tree added; and an entry
-    #: that differs from the saved one by this tree alone is as saved — its
-    #: ops are dropped (`Session.stage`). Not part of the op: not in
-    #: `raw()`, not in its equality.
+    #: so an edit reads as itself, not as the whole tree added; and while
+    #: the entry's ``metrics`` is this tree and nothing more, the ops that
+    #: wrote it are no edit — they are dropped, whatever else is pending
+    #: (`Session.stage`). Not part of the op: not in `raw()`, not in its
+    #: equality.
     materializes: bool = field(default=False, compare=False)
 
     def raw(self) -> dict:
@@ -129,9 +130,10 @@ class SpecDocument:
         edit of it. A model the file has no entry for is as saved while its
         entry would hold its model and nothing else — an entry that says
         nothing (a tree added to an annotation-only test, then removed).
-        The document's half of the rule: an entry that differs only by the
-        tree it already scores by is as saved too, and only the Session
-        knows that tree (`Session._only_its_tree_written_out`)."""
+        The document's half of the rule: a ``metrics`` member that is the
+        tree the saved entry already scores by is no edit either, and only
+        the Session knows that tree — it takes those ops out before asking
+        this (`Session._its_tree_written_out`)."""
         from ..discovery.spec_update import spec_entry
 
         bare = {"model": model_id}

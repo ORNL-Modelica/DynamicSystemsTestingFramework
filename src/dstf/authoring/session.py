@@ -31,7 +31,7 @@ from ..backends.types import (
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
-from ..discovery.patch_apply import PatchError
+from ..discovery.patch_apply import PatchError, apply_patch_to_document
 from ..discovery.plots import (
     PlotExtra,
     ResolvedPlot,
@@ -47,6 +47,7 @@ from ..discovery.spec_update import (
     implicit_tree_op,
     is_literal_variable,
     needs_materialization,
+    spec_entry,
     unknown_override_modes,
     validate_entry_metric_tree,
 )
@@ -593,9 +594,11 @@ class Session:
         ``spec-update`` prepends, so the document the tool edits and the one
         it saves never differ in shape — but only when that tree scores
         exactly what the flat path scored (Conventions #7); otherwise the
-        test is scored as loaded and nothing is staged. On a test with no
-        other pending edit that op does not stay: its entry with nothing
-        but its own tree written out is as saved (`stage`)."""
+        test is scored as loaded and nothing is staged. That op does not
+        stay while it is the tree the saved entry scores by, whatever else
+        is pending: an entry's own tree written out is no edit of it
+        (`stage`). It stays where a pending op edited the overrides it is
+        built from."""
         self._refuse_if_locked([model_id])
         op, _why = self._materialization(model_id)
         if op is not None:
@@ -608,7 +611,7 @@ class Session:
                         op["op"],
                         op["path"],
                         op["value"],
-                        materializes=self._saved_scoring_tree(model_id),
+                        materializes=self._saved_scoring_tree(self.spec, model_id),
                     )
                 ]
             )
@@ -1149,7 +1152,7 @@ class Session:
                         tree_op["op"],
                         tree_op["path"],
                         tree_op.get("value"),
-                        materializes=self._saved_scoring_tree(model_id),
+                        materializes=self._saved_scoring_tree(self.spec, model_id),
                     )
                 )
             # The ops as given: `rescore`'s materialization carries its mark.
@@ -1206,16 +1209,25 @@ class Session:
         # thing the count, the strip, the Tests drawer's mark, Save and the
         # preview read: every op of such a model goes. After the checks
         # above, so a stage that is refused is refused as it was; the model
-        # is still rescored below, back to its saved verdict. A flat entry
-        # with nothing but its own tree written out is as saved too
-        # (`_only_its_tree_written_out`): the first per-leaf edit writes
-        # that tree, and the edit put back left it — "2 unsaved", and a Save
-        # that added a `metrics` block scoring as the entry already did.
-        put_back = {
-            m
-            for m in models
-            if candidate.as_saved(m) or self._only_its_tree_written_out(candidate, m)
-        }
+        # is still rescored below, back to its saved verdict. A flat entry's
+        # own tree written out is no edit of it either
+        # (`_its_tree_written_out`): the first per-leaf edit writes that
+        # tree, and the edit put back left it — "2 unsaved", and a Save that
+        # added a `metrics` block scoring as the entry already did. Those
+        # ops go FIRST and the rest is then asked whether it is as saved:
+        # beside a plots edit the tree goes and the plots edit stays, and
+        # with nothing else changed nothing is left.
+        gone = [op for m in models for op in self._its_tree_written_out(candidate, m)]
+        if gone:
+            candidate = SpecDocument(
+                self.spec.path,
+                self.spec.loaded,
+                self.spec.content_hash,
+                # By identity: an op equal to a dropped one (a second
+                # `add /metrics` of the same tree) is dropped as itself.
+                [op for op in candidate.pending if not any(op is g for g in gone)],
+            )
+        put_back = {m for m in models if candidate.as_saved(m)}
         if put_back:
             candidate = SpecDocument(
                 self.spec.path,
@@ -1223,6 +1235,7 @@ class Session:
                 self.spec.content_hash,
                 [op for op in candidate.pending if op.model_id not in put_back],
             )
+        if gone or put_back:
             effective = candidate.effective()
         tests = self._merge(
             project.config, project.scanned, effective
@@ -1619,14 +1632,30 @@ class Session:
                 f"scoring {model_id} failed ({len(failures)} of {len(to_read)} models)"
             ) from error
 
-    def _only_its_tree_written_out(
+    def _its_tree_written_out(
         self, candidate: SpecDocument, model_id: str
-    ) -> bool:
-        """Whether ``candidate``'s entry for the model differs from the
-        SAVED one only by a ``metrics`` member, and that member is the tree
-        the saved entry already scores by — its implicit tree, written out.
-        Every other member (``plots``, ``comparison``, ...) is as saved; a
-        saved entry with a tree of its own is never this.
+    ) -> list[PatchOp]:
+        """The model's ops in ``candidate`` that do nothing but write out,
+        as ``metrics``, the tree its SAVED entry already scores by — the ops
+        `stage` drops; ``[]`` when there are none to drop. They are every op
+        of the model on ``/metrics``, when all of this holds:
+
+        - the saved entry has no tree of its own and the entry as edited
+          has one, equal to the tree the saved entry scores by;
+        - the entry would score by that same tree WITHOUT its ``metrics``:
+          a flat entry's tree is built from its ``variable_overrides``
+          (`_saved_scoring_tree`), so those are as saved. With an override
+          edited, the entry the other ops leave scores by another tree, and
+          taking this one away would change its verdict;
+        - the other ops alone, applied to the saved entry, give the entry
+          as edited but for its ``metrics`` — done, not argued, so that
+          what is kept is what was there.
+
+        The other members need not be as saved: a watch plot added beside a
+        tolerance typed and cleared is one pending edit, the plot's. It was
+        the whole entry or nothing, and the tree stayed pending beside any
+        other edit — counted, previewed as "Save also writes the tree", and
+        saved as a ``metrics`` block where only ``plots`` had changed.
 
         "The tree the saved entry scores by" is `_materialization`'s and no
         other's, so what is dropped here and what `stage` writes out cannot
@@ -1642,44 +1671,55 @@ class Session:
         implicit one again, unmarked."""
         saved = candidate.saved_entry(model_id) or {"model": model_id}
         entry = candidate.entry(model_id)
-        if entry is None or has_metrics(saved) or not has_metrics(entry):
-            return False
-
-        def rest(of: dict) -> dict:
-            return {k: v for k, v in of.items() if k != "metrics"}
-
-        if not json_equal(rest(entry), rest(saved)):
-            return False
-        marked = [
-            op.value
-            for op in candidate.pending
-            if op.model_id == model_id and op.materializes
-        ]
+        if entry is None or not has_metrics(entry):
+            return []
+        if not self._saved_scoring_tree(candidate, model_id):
+            return []
+        mine = [op for op in candidate.pending if op.model_id == model_id]
+        marked = [op.value for op in mine if op.materializes]
         if marked:
             tree = marked[0]
         else:
             op, _why = self._materialization(model_id, saved=True)
             if op is None:
-                return False
+                return []
             tree = op["value"]
-        return json_equal(entry["metrics"], tree)
+        if not json_equal(entry["metrics"], tree):
+            return []
 
-    def _saved_scoring_tree(self, model_id: str) -> bool:
-        """Whether the tree `_materialization` builds now is the one the
-        SAVED entry scores — what marks it (`PatchOp.materializes`). Never
-        when the saved entry has its own ``metrics``: it scores that tree,
-        and one built after a pending op removed it is a change. Otherwise
-        the tree is built from ``comparison.variable_overrides`` (the
-        tracked variables are not stageable), so it is when those are as
-        saved."""
+        def writes_the_tree(op: PatchOp) -> bool:
+            return op.path == "/metrics" or op.path.startswith("/metrics/")
+
+        def rest(of: dict) -> dict:
+            return {k: v for k, v in of.items() if k != "metrics"}
+
+        kept = [op.raw() for op in mine if not writes_the_tree(op)]
+        try:
+            alone = apply_patch_to_document({"tests": [saved]}, model_id, kept)
+        except PatchError:
+            return []
+        if not json_equal(rest(spec_entry(alone, model_id) or {}), rest(entry)):
+            return []
+        return [op for op in mine if writes_the_tree(op)]
+
+    def _saved_scoring_tree(self, spec: SpecDocument, model_id: str) -> bool:
+        """Whether the tree `_materialization` builds for the model's entry
+        in ``spec`` — the Session's document, or the candidate `stage` is
+        deciding on — is the one the SAVED entry scores: what marks it
+        (`PatchOp.materializes`), and what lets it go again
+        (`_its_tree_written_out`). Never when the saved entry has its own
+        ``metrics``: it scores that tree, and one built after a pending op
+        removed it is a change. Otherwise the tree is built from
+        ``comparison.variable_overrides`` (the tracked variables are not
+        stageable), so it is when those are as saved."""
 
         def overrides(entry: dict) -> dict:
             return (entry.get("comparison") or {}).get("variable_overrides") or {}
 
-        saved = self.spec.saved_entry(model_id) or {"model": model_id}
+        saved = spec.saved_entry(model_id) or {"model": model_id}
         if has_metrics(saved):
             return False
-        return overrides(saved) == overrides(self.spec.entry(model_id) or {})
+        return overrides(saved) == overrides(spec.entry(model_id) or {})
 
     def _materialization(
         self, model_id: str, *, saved: bool = False
@@ -1689,7 +1729,7 @@ class Session:
         shows, in the report's order, so leaf ``i`` is
         ``/metrics/children/i`` on both tiers. ``saved``: for the entry as
         the FILE holds it and the comparison of that (`saved_comparison`),
-        whatever is pending — the tree `_only_its_tree_written_out` drops.
+        whatever is pending — the tree `_its_tree_written_out` drops.
         For a test tracked by its
         ``.mo`` annotation those names are in no spec entry (and the entry
         may not exist yet: the op creates it). ``(None, None)`` when the

@@ -917,7 +917,10 @@ score the same."). Edits that leave a test's entry as the file holds it are
 not pending at all — a value typed and cleared again, a refused value put
 back, a context series added and then taken away by Reset layout: the
 header's count, the strip, the Tests drawer's mark, Save and this preview do
-not hold them, and the test is back at its saved verdict. "As the file holds
+not hold them, and the test is back at its saved verdict. The tree written
+out goes the same way once the edit that needed it is put back, whatever else
+is pending: a watch plot added beside a tolerance typed and cleared is one
+edit, and Save writes the `plots` and no `metrics`. "As the file holds
 it" is as JSON reads it: members in any order, `1` is `1.0`, `true` is no
 number. A flat test whose entry differs only by its own implicit tree written
 out — the tree it already scores by, with no other edit beside it — is as
