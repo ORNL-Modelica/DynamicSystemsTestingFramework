@@ -18,6 +18,11 @@
 // still could not be reached, the display flickered between two groups,
 // and a press where a hidden arrow belonged moved the neighbour's ring.)
 //
+// WHERE a shown arrow is drawn is its figure's to say, but for two arrows of
+// one cluster that would be drawn over each other: those are STAGGERED, each
+// moved a step across its own axis (`stagger`), so that every arrow shown
+// can be seen and pressed.
+//
 // The figure never changes with the hover: a drag names a shape by INDEX, and
 // a figure changed mid-drag loses it. Hiding is one static rule of the shell's
 // stylesheet (style.py) over the paths this module marks —
@@ -53,6 +58,25 @@
   // was dragged to, on either side of it: that edge is the plot's own, and
   // its arrow — all in the margin — is the one the un-clip is for.
   const EDGE = 0.5;
+  // Two arrows COLLIDE when what is painted of them shares more than this
+  // on BOTH axes, px. An arrow is 12 px across and its 1 px outline stands
+  // half a pixel outside it: two value arrows 12 px apart touch corner to
+  // corner and share that one pixel of outline. At 0 that is a collision:
+  // of thirty checkpoints 12 px apart every value arrow was moved, left
+  // and right by turns, each ONTO its neighbour — 28 pairs colliding where
+  // none had.
+  const OVERLAP = 1;
+  // How far a colliding arrow is moved ACROSS its own axis, px a step, and
+  // the steps it may take, in the order it tries them. One step each way
+  // parts a pair by 18 px, 5 px clear of each other; a third on the same
+  // spot clears both at three. The stylesheet (style.py) turns the steps
+  // into pixels: the same 9.
+  const STEP = 9;
+  const LEVELS = [-1, 1, -3, 3];
+  // How far across its axis an arrow must already stand from those it
+  // collides with to be moved THAT way first, px: a pair on a slope parts
+  // the way it leans.
+  const LEAN = 0.5;
   // How far the pointer must travel along an axis, press to release, for
   // the release to move a shape on it, px — Plotly's own threshold (its
   // `MINDRAG`): under it Plotly moves nothing on that axis.
@@ -121,8 +145,9 @@
     // drawn NOW (`_fullLayout`: the axes' ranges of this very redraw, a
     // pan's every step too), or null where it is on no axis of the figure.
     // An arrow anchored to the PAPER in y (an event's or a peak's window
-    // spans its panel) has no y of its own: `y` is null, and it reaches
-    // from the panel's `top` to its `bottom`.
+    // spans its panel) is drawn at a height of the paper, `y`, and stands
+    // for no value there: it is `paper`, and it reaches from the panel's
+    // `top` to its `bottom`.
     //
     // And whether that anchor is OFF the plot: outside the plot area by
     // more than EDGE px on either axis — the one the arrow moves on (its
@@ -138,13 +163,33 @@
       const within = (p, axis) => p >= -EDGE && p <= axis._length + EDGE;
       const px = xa.d2p(s.xanchor);
       const py = paper ? null : ya.d2p(s.yanchor);
+      const size = fl._size;
       return {
         x: xa._offset + px,
-        y: paper ? null : ya._offset + py,
+        y: paper ? size.t + size.h * (1 - s.yanchor) : ya._offset + py,
+        paper,
         top: ya._offset,
         bottom: ya._offset + ya._length,
         off: !(within(px, xa) && (paper || within(py, ya))),
       };
+    };
+
+    // What is PAINTED of the arrow `s` anchored at `at` (`placed`), as a
+    // box in pixels of the graph div: the path the figure sizes in pixels
+    // about that anchor (positive y is UP), and the half of its outline's
+    // width that stands outside it. Or null for a path that says no point.
+    const painted = (s, at) => {
+      const n = (typeof s.path === "string" && s.path.match(/-?\d*\.?\d+/g)) || [];
+      if (n.length < 2) return null;
+      const half = ((dict(s.line) || {}).width || 0) / 2;
+      const box = { l: Infinity, r: -Infinity, t: Infinity, b: -Infinity };
+      for (let k = 0; k + 1 < n.length; k += 2) {
+        box.l = Math.min(box.l, at.x + +n[k] - half);
+        box.r = Math.max(box.r, at.x + +n[k] + half);
+        box.t = Math.min(box.t, at.y - +n[k + 1] - half);
+        box.b = Math.max(box.b, at.y - +n[k + 1] + half);
+      }
+      return box;
     };
 
     // Plotly replaces every shape path on a react or a newPlot: the marks go
@@ -164,10 +209,14 @@
     // painted in the margin, about a ring that was not drawn, and took a
     // press there. The mark is this pass's, like the others: of the
     // figure as this redraw draws it.
+    //
+    // Returns the arrows that are ON the plot, each with what is painted
+    // of it (`painted`), for `stagger`.
     const mark = () => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
       const fl = gd._fullLayout;
+      const arrows = [];
       for (const el of gd.querySelectorAll(".shapelayer [data-index]")) {
         const shape = shapes[+el.getAttribute("data-index")] || {};
         el.toggleAttribute("data-inert", !!info && !info.draggable.has(shape.name));
@@ -178,14 +227,24 @@
           el.setAttribute("data-grip", grip.group);
           el.toggleAttribute("data-grip-on", shown(el));
           el.toggleAttribute("data-grip-off", !!at && at.off);
+          el.removeAttribute("data-grip-shift");
           tell(el, grip);
+          const box = at && !at.off ? painted(shape, at) : null;
+          if (box) {
+            arrows.push({
+              el, group: grip.group, axis: grip.axis,
+              index: +el.getAttribute("data-index"), x: at.x, y: at.y, ...box,
+            });
+          }
         } else if (el.hasAttribute("data-grip")) {
           el.removeAttribute("data-grip");
           el.removeAttribute("data-grip-on");
           el.removeAttribute("data-grip-off");
+          el.removeAttribute("data-grip-shift");
           untell(el);
         }
       }
+      return arrows;
     };
 
     // The marks, taken off: every shape as Plotly draws it, clipped to
@@ -195,6 +254,7 @@
         el.removeAttribute("data-grip");
         el.removeAttribute("data-grip-on");
         el.removeAttribute("data-grip-off");
+        el.removeAttribute("data-grip-shift");
         untell(el);
       }
       for (const el of gd.querySelectorAll("[data-inert]")) {
@@ -277,8 +337,8 @@
         if (grip) gripped.add(g);
         if (at.off) continue;
         if (!grip) {
-          if (at.y !== null) rings.push([g, at.x, at.y]);
-        } else if (at.y === null) {
+          if (!at.paper) rings.push([g, at.x, at.y]);
+        } else if (at.paper) {
           reach(g, at.x, at.top, at.bottom);
         } else {
           reach(g, at.x, at.y, at.y);
@@ -307,11 +367,11 @@
     // nothing from its empty corner. In PIXELS of the figure as it is
     // drawn, so they are found again wherever the shapes are drawn again
     // (`remark`) — a zoom parts a cluster, a dragged anchor joins two —
-    // and never on a move of the pointer.
-    const clustered = () => {
+    // and never on a move of the pointer. `hover` is `areas()`'s.
+    const clustered = (hover) => {
       const meet = (p, q) => p.l <= q.r && q.l <= p.r && p.t <= q.b && q.t <= p.b;
       let clusters = [];
-      for (const [g, area] of areas()) {
+      for (const [g, area] of hover) {
         const joined = { groups: new Set([g]), areas: [area], rings: [...area.rings] };
         const apart = [];
         // Every cluster the new area overlaps becomes one with it.
@@ -327,6 +387,96 @@
         clusters = [...apart, joined];
       }
       return clusters;
+    };
+
+    // STAGGER. A cluster shows all its members' arrows at once, and two of
+    // them can be drawn on one spot: with the facing edges of two
+    // neighbours 20 to 34 px apart at one height — two event windows
+    // always are at one — the `after` arrow of the first and the `before`
+    // of the second were one triangle on the screen, the later-drawn took
+    // the press, and a press on what looked like the first's arrow moved
+    // the second's side. The rule:
+    //
+    // 1. Two arrows COLLIDE when both are on the plot, are of DIFFERENT
+    //    groups of ONE cluster, and what is painted of them (`painted`)
+    //    shares more than OVERLAP px on both axes. (Arrows of two clusters
+    //    are never shown together, and never meet: by 4 each is inside its
+    //    own group's area, and two clusters' areas do not overlap.)
+    // 2. An arrow that collides is moved ACROSS its own axis — a time or a
+    //    frequency arrow up or down, a value arrow left or right — by
+    //    whole steps of STEP px. In order along their axis (then as
+    //    drawn), each takes the first of LEVELS — one step up (left), one
+    //    down (right), three up, three down — at which it clears every
+    //    arrow already placed: those that collide with nothing, where the
+    //    figure draws them, and those moved before it. One that already
+    //    stands LEAN px or more below (right of) the arrows it collides
+    //    with tries down (right) first: a pair parts the way it leans.
+    // 3. Found here, after every redraw, with the marks and the clusters
+    //    (`remark`), and never on a move of the pointer: what is drawn
+    //    with the pointer near is what was there before it came.
+    // 4. A moved arrow stays REACHABLE: as drawn it lies inside its own
+    //    group's hover area, so the pointer on its way from the ring to
+    //    it never leaves the area and hides it. A level that would put any
+    //    of it outside is not one it may take: three steps is 33.5 px from
+    //    the arrow's own line and an area reaches 25 px past its group's
+    //    anchors, so a group that is flat across the arrow's axis — a
+    //    checkpoint whose value tolerance is under 8.5 px, for a time
+    //    arrow — has one step each way and no more.
+    // 5. An arrow that clears at no level it may take is left at the first
+    //    it tried, still colliding: the third arrow on one spot where its
+    //    group is flat, the fifth on one spot anywhere.
+    //
+    // The move is an ATTRIBUTE of the path, `data-grip-shift`, the steps
+    // as a number; the stylesheet (style.py) makes it a `transform`. So
+    // the path Plotly drags is the one it drew: held, it follows the
+    // pointer by the pointer's own travel, and a release says its edge
+    // where the pointer took it, never the step it is drawn aside by.
+    // `arrows` is `mark()`'s, `hover` `areas()`'s.
+    const stagger = (arrows, hover) => {
+      // To the hundredth of a pixel, as an area's edge is (`areas`).
+      const shared = (lo, hi) => Math.round((hi - lo) * 100) / 100;
+      const collide = (p, q) =>
+        shared(Math.max(p.l, q.l), Math.min(p.r, q.r)) > OVERLAP &&
+        shared(Math.max(p.t, q.t), Math.min(p.b, q.b)) > OVERLAP;
+      const across = (a) => (a.axis === "x" ? a.y : a.x);
+      const along = (a) => (a.axis === "x" ? a.x : a.y);
+      // Arrow `a` as it is painted `k` steps across its axis.
+      const moved = (a, k) =>
+        a.axis === "x"
+          ? { ...a, t: a.t + k * STEP, b: a.b + k * STEP }
+          : { ...a, l: a.l + k * STEP, r: a.r + k * STEP };
+      const inside = (box, area) =>
+        box.l >= area.l && box.r <= area.r && box.t >= area.t && box.b <= area.b;
+      for (const cluster of st.clusters) {
+        const members = arrows.filter((a) => cluster.groups.has(a.group));
+        // Per colliding arrow, those it collides with.
+        const rivals = new Map();
+        const rival = (a, other) => rivals.set(a, [...(rivals.get(a) || []), other]);
+        members.forEach((p, i) => {
+          for (const q of members.slice(i + 1)) {
+            if (p.group === q.group || !collide(p, q)) continue;
+            rival(p, q);
+            rival(q, p);
+          }
+        });
+        const set = members.filter((a) => !rivals.has(a));
+        const moving = [...rivals.keys()];
+        moving.sort((p, q) => along(p) - along(q) || p.index - q.index);
+        for (const a of moving) {
+          const others = rivals.get(a);
+          const lean = across(a) - others.reduce((sum, o) => sum + across(o), 0) / others.length;
+          const levels = lean >= LEAN ? LEVELS.map((k) => -k) : LEVELS;
+          const area = hover.get(a.group);
+          const clears = (k) => {
+            const there = moved(a, k);
+            return inside(there, area) && !set.some((o) => collide(o, there));
+          };
+          const level = levels.find(clears);
+          const taken = level === undefined ? levels[0] : level;
+          set.push(moved(a, taken));
+          a.el.setAttribute("data-grip-shift", String(taken));
+        }
+      }
     };
 
     // The cluster whose area holds the pointer (viewport px), or null: at
@@ -502,15 +652,18 @@
     // whichever ancestor of the plot scrolls is heard on the way down.
     window.addEventListener("scroll", scrolled, { capture: true, passive: true });
 
-    // The marks, the clusters, and which of them the pointer is in: after
-    // every redraw — the one after a release too, shown if the pointer is
-    // still there. Whatever moves a shape's pixels draws it again: a zoom,
-    // a pan, a reset, a resize of the window, a trace hidden from the
-    // legend, the server's own update are each a relayout or a replot, and
-    // Plotly draws every shape anew in each (`shapes.draw`).
+    // The marks, the clusters, the colliding arrows' moves, and which
+    // cluster the pointer is in: after every redraw — the one after a
+    // release too, shown if the pointer is still there. Whatever moves a
+    // shape's pixels draws it again: a zoom, a pan, a reset, a resize of
+    // the window, a trace hidden from the legend, the server's own update
+    // are each a relayout or a replot, and Plotly draws every shape anew
+    // in each (`shapes.draw`).
     const remark = guarded(() => {
-      mark();
-      st.clusters = clustered();
+      const arrows = mark();
+      const hover = areas();
+      st.clusters = clustered(hover);
+      stagger(arrows, hover);
       here(st.xy);
     });
 

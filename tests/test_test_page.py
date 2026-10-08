@@ -12463,6 +12463,43 @@ def test_the_stylesheet_alone_takes_plotlys_clip_off_a_grip_in_two_rules():
     assert not re.search(r"Attribute\(\s*[\"']clip-path", GRIPS_JS.read_text("utf-8"))
 
 
+def test_the_stylesheet_moves_a_staggered_arrow_by_the_modules_own_step():
+    """A colliding arrow is moved across its axis by whole steps:
+    `grips.js` works out, at STEP px a step, which of its LEVELS clears
+    the arrows already placed, and marks the path with the level
+    (`data-grip-shift`); the stylesheet turns the level into pixels. Two
+    files, one number: every level has its rule, at the module's step, and
+    a time arrow is moved in y, a value arrow in x. (What a person gets is
+    read in the browser: `test_colliding_arrows_are_staggered_and_each_
+    takes_its_own_press`.)"""
+    import re
+
+    from dstf.authoring.shell.plot_card import GRIPS_JS
+    from dstf.authoring.shell.style import STYLE
+
+    js = GRIPS_JS.read_text("utf-8")
+    step = int(re.search(r"const STEP = (\d+);", js).group(1))
+    levels = json.loads(re.search(r"const LEVELS = (\[[^\]]+\]);", js).group(1))
+    assert (step, levels) == (9, [-1, 1, -3, 3])
+    css = re.sub(r"\s+", " ", STYLE)
+    path = ".js-plotly-plot .shapelayer path"
+    for level in levels:
+        assert (
+            f'{path}[data-grip-shift="{level}"] {{ --grip-across: {level * step}px; }}'
+            in css
+        )
+    assert css.count("--grip-across:") == len(levels)
+    assert (
+        f'{path}[data-grip-axis="x"][data-grip-shift]'
+        " { transform: translate(0, var(--grip-across)); }"
+    ) in css
+    assert (
+        f'{path}[data-grip-axis="y"][data-grip-shift]'
+        " { transform: translate(var(--grip-across), 0); }"
+    ) in css
+    assert css.count("transform: translate(") == 2
+
+
 def test_an_arrows_cursor_rule_carries_no_important_and_the_inert_rule_does():
     """plotly.js sets a draggable shape's cursor by CLASS — `setCursor` adds
     `cursor-move`, styled by `.js-plotly-plot .plotly .cursor-move`

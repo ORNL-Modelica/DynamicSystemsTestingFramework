@@ -274,6 +274,24 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]:not([data-grip-off])) {
   clip-path: none;
 }
+/* An arrow that would be drawn over another of its cluster is moved ACROSS
+   its own axis by whole steps of 9 px (`grips.js` `stagger`, which marks
+   it with the steps: `data-grip-shift`, -3, -1, 1 or 3): a time or a
+   frequency arrow up or down, a value arrow left or right. A `transform`
+   of the stylesheet, so the path Plotly drew and drags is untouched: held,
+   it follows the pointer from where it is painted, and a release says its
+   edge. The 9 is `grips.js`'s STEP — it works out which arrows clear which
+   at that step. */
+.js-plotly-plot .shapelayer path[data-grip-shift="-3"] { --grip-across: -27px; }
+.js-plotly-plot .shapelayer path[data-grip-shift="-1"] { --grip-across: -9px; }
+.js-plotly-plot .shapelayer path[data-grip-shift="1"] { --grip-across: 9px; }
+.js-plotly-plot .shapelayer path[data-grip-shift="3"] { --grip-across: 27px; }
+.js-plotly-plot .shapelayer path[data-grip-axis="x"][data-grip-shift] {
+  transform: translate(0, var(--grip-across));
+}
+.js-plotly-plot .shapelayer path[data-grip-axis="y"][data-grip-shift] {
+  transform: translate(var(--grip-across), 0);
+}
 /* The cursor over an arrow is the way it moves — up and down for a value
    side, left and right for a time or a frequency side — by the axis
    `grips.js` marks it with. Plotly's own for a draggable shape is `move`,

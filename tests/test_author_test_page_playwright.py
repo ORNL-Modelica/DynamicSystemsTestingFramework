@@ -9436,9 +9436,16 @@ async ([card, axes]) => {
 }
 """
 
+#: How far a staggered arrow is moved across its own axis, px a step — the
+#: ruling's number, said here and not read from the page.
+STAGGER = 9
+
 #: The grip whose name ends ``tail``, as plot ``card`` holds it NOW: its
 #: anchor in viewport pixels, the way its arrow is DRAWN from it — read off
-#: its path, so a mirrored arrow says so itself — and its panel's box.
+#: its path, so a mirrored arrow says so itself — its panel's box, and how
+#: far ACROSS its axis it is moved (``sx``, ``sy``): the steps the page
+#: marked it with (``shift``), `STAGGER` px each. (Whether it is PAINTED
+#: there is `_shape`'s box to say, once it is displayed.)
 ARROW_AT = """
 ([card, tail]) => {
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
@@ -9451,18 +9458,22 @@ ARROW_AT = """
   const paper = s.yref === 'paper';
   const ya = fl['yaxis' + (paper ? xa.anchor : s.yref || 'y').slice(1)];
   const apex = /M\\s*(-?[0-9.]+)\\s*,\\s*(-?[0-9.]+)/.exec(s.path);
+  const ux = Math.sign(parseFloat(apex[1])), uy = -Math.sign(parseFloat(apex[2]));
+  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  const across = __STAGGER__ * +((el && el.getAttribute('data-grip-shift')) || 0);
   return {
     index: i, name: s.name, paper, xanchor: s.xanchor, yanchor: s.yanchor,
     x: rect.left + xa._offset + xa.d2p(s.xanchor),
     y: rect.top + (paper ? fl._size.t + fl._size.h * (1 - s.yanchor)
                          : ya._offset + ya.d2p(s.yanchor)),
-    ux: Math.sign(parseFloat(apex[1])), uy: -Math.sign(parseFloat(apex[2])),
+    ux, uy, sx: ux ? 0 : across, sy: ux ? across : 0,
     left: rect.left + xa._offset, right: rect.left + xa._offset + xa._length,
     top: rect.top + ya._offset, bottom: rect.top + ya._offset + ya._length,
     ppx: xa._length / Math.abs(xa.range[1] - xa.range[0]),
+    ppy: paper ? null : ya._length / Math.abs(ya.range[1] - ya.range[0]),
   };
 }
-"""
+""".replace("__STAGGER__", str(STAGGER))
 
 #: Shape ``index`` of plot ``card`` at viewport ``(x, y)``: whether the hover
 #: module marks it shown and it is seen (`_SEEN`), and whether a press there
@@ -9753,8 +9764,13 @@ def _come_to(page, tail: str, card: int = 0) -> tuple[dict, tuple[float, float]]
 
 
 def _along(arrow: dict, px: float) -> tuple[float, float]:
-    """The point ``px`` pixels from the arrow's anchor, along it."""
-    return arrow["x"] + arrow["ux"] * px, arrow["y"] + arrow["uy"] * px
+    """The point ``px`` pixels from the arrow's anchor, along it, on the
+    arrow's centreline WHERE IT IS DRAWN: a staggered arrow's is moved
+    across its axis."""
+    return (
+        arrow["x"] + arrow["ux"] * px + arrow["sx"],
+        arrow["y"] + arrow["uy"] * px + arrow["sy"],
+    )
 
 
 def _reach(page, tail: str, card: int = 0) -> int:
@@ -9814,24 +9830,27 @@ def _points_on_x_project(tmp_path: Path, points: list[dict]) -> tuple[Path, Path
 
 
 def _checkpoints_project(
-    tmp_path: Path, places: tuple[tuple[int, float], ...]
+    tmp_path: Path, places: tuple[tuple, ...]
 ) -> tuple[Path, Path]:
     """A scored on x by one checkpoint per ``(time in thousandths, value)``
     of ``places``, each holding a PAIR for its tolerance (0.1 either side)
     and for its time tolerance (0.012 either side) — a dragged side moves
     one cell. At `TIME_SCALE` a thousandth of time is a pixel: each ring
     has its arrows' anchors 12 px before and after it, 20 px above and
-    below, so its hover area is 74 px wide and 90 px tall about it."""
+    below, so its hover area is 74 px wide and 90 px tall about it. A
+    place's third member, where it has one, is what its checkpoint says
+    otherwise: sides of its own."""
     return _points_on_x_project(
         tmp_path,
         [
             {
-                "time": round(at / 1000, 6),
-                "value": value,
+                "time": round(place[0] / 1000, 6),
+                "value": place[1],
                 "tolerance": {"lower": 0.1, "upper": 0.1},
                 "time_tolerance": {"lower": 0.012, "upper": 0.012},
+                **(place[2] if len(place) > 2 else {}),
             }
-            for at, value in places
+            for place in places
         ],
     )
 
@@ -9885,6 +9904,173 @@ def _over(box: dict, *points) -> bool:
     )
 
 
+#: Every arrow of plot ``card`` as the page holds it NOW, by the tail of its
+#: name: its group, the axis it moves on, the steps it is staggered by
+#: (`data-grip-shift`), whether it is marked off the plot and — while it is
+#: displayed — its box on the screen (the path's own: the half pixel of its
+#: outline is not in it) and how many of the 9 px of its centreline, along
+#: its axis through the middle of that box, are its own to a press
+#: (`document.elementFromPoint`).
+GRIPS_DRAWN = """
+(card) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const shapes = gd.layout.shapes || [], said = gd.layout.meta.dstf;
+  const out = {};
+  for (const el of gd.querySelectorAll('.shapelayer path[data-grip]')) {
+    const s = shapes[+el.getAttribute('data-index')];
+    const b = el.getBoundingClientRect();
+    const axis = el.getAttribute('data-grip-axis');
+    const x = (b.left + b.right) / 2, y = (b.top + b.bottom) / 2;
+    let own = 0;
+    for (let k = -4; k <= 4; k++) {
+      own += document.elementFromPoint(
+        axis === 'x' ? x + k : x, axis === 'x' ? y : y + k) === el;
+    }
+    out[s.name.split('/').slice(-3).join('/')] = {
+      group: said.grips[s.name].group.split('/').slice(-2).join('/'), axis,
+      shift: +(el.getAttribute('data-grip-shift') || 0),
+      off: el.hasAttribute('data-grip-off'),
+      box: b.width > 0 && b.height > 0
+        ? {left: b.left, top: b.top, right: b.right, bottom: b.bottom, x, y} : null,
+      own,
+    };
+  }
+  return out;
+}
+"""
+
+
+def _grips_drawn(page, card: int = 0) -> dict[str, dict]:
+    return page.evaluate(GRIPS_DRAWN, card)
+
+
+def _shifts(page, card: int = 0) -> dict[str, int]:
+    """The arrows of plot ``card`` that are staggered, and by how many
+    steps."""
+    drawn = _grips_drawn(page, card)
+    return {tail: grip["shift"] for tail, grip in drawn.items() if grip["shift"]}
+
+
+def _paint(box: dict) -> dict:
+    """What is PAINTED of an arrow whose path's box is ``box``: its 1 px
+    outline stands half a pixel outside the path."""
+    return {
+        "l": box["left"] - 0.5,
+        "r": box["right"] + 0.5,
+        "t": box["top"] - 0.5,
+        "b": box["bottom"] + 0.5,
+    }
+
+
+def _collide(p: dict, q: dict) -> bool:
+    """The ruling: two arrows collide when what is painted of them shares
+    MORE than a pixel on both axes — to the hundredth of a pixel."""
+    a, b = _paint(p["box"]), _paint(q["box"])
+    return (
+        round(min(a["r"], b["r"]) - max(a["l"], b["l"]), 2) > 1
+        and round(min(a["b"], b["b"]) - max(a["t"], b["t"]), 2) > 1
+    )
+
+
+def _shown_cluster(page, areas: dict[str, dict], cluster: list[str]) -> dict[str, dict]:
+    """The arrows of ``cluster`` as they are drawn with the pointer where a
+    person comes at the first of them from (`_come_to`): all displayed."""
+    tails = _arrows_of(areas, cluster)
+    _come_to(page, f"/{tails[0]}")
+    drawn = _grips_drawn(page)
+    assert all(drawn[tail]["box"] is not None for tail in tails), (cluster, drawn)
+    return {tail: drawn[tail] for tail in tails}
+
+
+def _left_colliding(drawn: dict[str, dict]) -> list[tuple[str, str]]:
+    """The pairs of one cluster's arrows ``drawn`` (`_shown_cluster`), of
+    DIFFERENT groups, that collide as they are drawn."""
+    tails = sorted(drawn)
+    return [
+        (p, q)
+        for i, p in enumerate(tails)
+        for q in tails[i + 1 :]
+        if drawn[p]["group"] != drawn[q]["group"] and _collide(drawn[p], drawn[q])
+    ]
+
+
+def _tree_diff(a, b, path: str = "") -> list[str]:
+    """Where two trees differ, as paths."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return [
+            found
+            for key in sorted(set(a) | set(b))
+            for found in _tree_diff(a.get(key), b.get(key), f"{path}/{key}")
+        ]
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        return [
+            found
+            for i, (x, y) in enumerate(zip(a, b, strict=True))
+            for found in _tree_diff(x, y, f"{path}/{i}")
+        ]
+    return [] if a == b else [path]
+
+
+def _tree_at(tree, path: str):
+    for key in path.strip("/").split("/"):
+        tree = tree[int(key)] if isinstance(tree, list) else tree[key]
+    return tree
+
+
+#: What each edge's arrow sets in the staged tree, under its own row: the
+#: field, and the side of the pair it holds.
+SIDES = {
+    "upper": ("tolerance", "upper"),
+    "lower": ("tolerance", "lower"),
+    "before": ("time_tolerance", "lower"),
+    "after": ("time_tolerance", "upper"),
+    "early": ("tolerance", "lower"),
+    "late": ("tolerance", "upper"),
+}
+
+
+def _stages_its_own_side(page, tail: str, shown: list[str]) -> None:
+    """Come at the arrow ``tail`` from its ring or its window's edge and
+    walk onto its middle a pixel at a time: ``shown`` — its cluster's
+    arrows — are displayed at every step, it among them. It is painted
+    there, and a press there is its own. Dragged 12 px further out: held,
+    it follows the pointer; let go, the STAGED tree (`author_hooks.py`'s
+    `/__tree`) differs in its own side of its own row and nowhere else, by
+    those 12 px to half a pixel. The edit is discarded."""
+    family, edge, row = tail.split("/")
+    path = "/{}/{}/{}/{}".format(family, row, *SIDES[edge])
+    was = _staged_tree(page)
+    arrow, home = _come_to(page, f"/{tail}")
+    middle = _along(arrow, 13.5)
+    way = _line(home, middle)
+    assert _shown_at(page, way) == [shown] * len(way), tail
+    state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *middle])
+    assert state["displayed"] and state["hit"] == tail, (tail, state)
+    box = _shape(page, f"/{tail}")["box"]
+    assert box is not None, tail
+    assert math.dist((box["x"], box["y"]), middle) < 0.6, (tail, box, middle)
+    page.mouse.down()
+    _walk(page, middle, _along(arrow, 13.5 + 12))
+    held = _shape(page, f"/{tail}")["box"]
+    assert held is not None, tail
+    assert (
+        math.dist(
+            (held["x"], held["y"]),
+            (box["x"] + 12 * arrow["ux"], box["y"] + 12 * arrow["uy"]),
+        )
+        <= 1
+    ), (tail, box, held)
+    page.mouse.up()
+    anchor = "xanchor" if arrow["ux"] else "yanchor"
+    _moved_off(page, f"/{tail}", anchor, arrow[anchor])
+    _staged_becomes(page, lambda tree: _tree_diff(was, tree), [path])
+    by = _tree_at(_staged_tree(page), path) - _tree_at(was, path)
+    scale = arrow["ppx"] if arrow["ux"] else arrow["ppy"]
+    assert abs(by * scale - 12) < 0.5, (tail, by, scale)
+    _discard(page)
+    _settled_at(page, f"/{tail}", anchor, arrow[anchor])
+
+
 def test_far_apart_checkpoints_show_their_own_arrows_and_between_them_none(
     tmp_path, playwright_browser
 ):
@@ -9936,6 +10122,9 @@ def test_far_apart_checkpoints_show_their_own_arrows_and_between_them_none(
 #: The checkpoints of each clustered case: ``(time in thousandths, value)``,
 #: in the order they are declared — the order their arrows are drawn in.
 CLUSTERED = {
+    # The first's `after` arrow and the second's `before` on one spot, but
+    # for a pixel: the facing edges are 26 px apart, and both are STAGGERED.
+    "50 px apart": ((400, 0.5), (450, 0.5)),
     "40 px apart": ((400, 0.5), (440, 0.5)),
     "30 px apart": ((400, 0.5), (430, 0.5)),
     "25 px apart": ((400, 0.5), (425, 0.5)),
@@ -9950,22 +10139,28 @@ CLUSTERED = {
     # 60 px apart in time and 70 px in value: the two areas overlap in a
     # corner, and the box around both has two corners in neither.
     "an L": ((400, 0.3), (460, 0.65)),
-    # On ONE spot: every arrow of the first is drawn under the second's.
+    # On ONE spot: every arrow of the first would be drawn under the
+    # second's, and all eight are staggered.
     "one spot": ((500, 0.5), (500, 0.5)),
 }
 
-#: The cases none of whose arrows is drawn over another, and how many they
+#: The cases none of whose arrows is drawn over anything, and how many they
 #: are: what the screen holds of the grips' orange there is that many whole
-#: arrows. In every other case two members' arrows overlap, and it is at
-#: least one member's four.
+#: arrows. In every other case it is at least one member's four (an arrow
+#: may stand on a neighbour's ring).
 APART = {"40 px apart": 8, "a chain of three": 12, "an L": 8}
 
-#: The arrows of a case that are NOT whole under the pointer: how many of
-#: their 7 centreline px are their own, and whose arrow — a member's, drawn
-#: later — a press on the rest, and at their middle, takes. Every other
-#: arrow of every case: all 7, and its own middle.
-COVERED = {
-    "one spot": {f"points/{edge}/0": (0, f"points/{edge}/1") for edge in FOUR},
+#: The steps each arrow of a case is STAGGERED by, across its own axis:
+#: negative up (a time arrow) or left (a value arrow). Every arrow not
+#: named, of every case, is drawn where the figure has it.
+SHIFTED = {
+    "50 px apart": {"points/after/0": -1, "points/before/1": 1},
+    # Side by side: the two upper arrows share 4 px of their 12, and the
+    # two lower ones.
+    "8 px apart": {
+        f"points/{edge}/{i}": 2 * i - 1 for edge in ("upper", "lower") for i in (0, 1)
+    },
+    "one spot": {f"points/{edge}/{i}": 2 * i - 1 for edge in FOUR for i in (0, 1)},
 }
 
 
@@ -10090,12 +10285,19 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
 ):
     """REACH: every arrow of every member of a cluster has all 7 px of its
     centreline displayed and under the pointer, coming onto it from its
-    own ring — except where another member's arrow is drawn on top of it,
-    and there it is the LATER-drawn one a press takes (`COVERED`: two
-    checkpoints on one spot). And a press on an arrow's middle drags THAT
-    arrow: the one cell of its own row and no other — the first's `after`
-    where it stands on the second, the `before` of the middle of three,
-    which, hidden, had let the press through to the neighbour's ring."""
+    own ring a pixel at a time — the arrows that would be drawn on one
+    spot too, each moved a step across its axis (`SHIFTED`: two
+    checkpoints 50 px apart, 8 px apart, on one spot) and painted where
+    that puts it. And a press on an arrow's middle drags THAT arrow: held,
+    it follows the pointer; let go, the one cell of its own row moved, by
+    the 12 px the pointer went, and no other — the first's `after` where
+    it stood on the second's `before`, the `before` of the middle of
+    three, which, hidden, had let the press through to the neighbour's
+    ring.
+
+    (Drawn where the figure has them, the first's `after` and the second's
+    `before` 50 px apart were one triangle: 0 of the first's 7 px were its
+    own, and a press on its middle moved the second's side.)"""
     places = CLUSTERED[case]
     project = partial(_checkpoints_project, places=places)
     with _served(tmp_path, playwright_browser, project=project) as page:
@@ -10105,12 +10307,13 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
         every = _arrows_of(areas, sorted(areas))
         tails = [f"points/{edge}/{i}" for i in range(len(places)) for edge in FOUR]
         assert sorted(tails) == every
-        covered = COVERED.get(case, {})
 
         reach = {}
         for tail in tails:
             arrow, home = _come_to(page, f"/{tail}")
-            _walk(page, home, _along(arrow, 10.5))
+            # From the ring onto the arrow: shown at every pixel of the way.
+            way = _line(home, _along(arrow, 10.5))
+            assert _shown_at(page, way) == [every] * len(way), (case, tail)
             own, under = 0, set()
             for k in range(7):
                 at = _along(arrow, 10.5 + k)
@@ -10118,59 +10321,444 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
                 assert _displayed(page) == every, (case, tail, k)
                 state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *at])
                 assert state["displayed"], (case, tail, k, state)
-                if state["index"] == arrow["index"]:
-                    own += 1
-                    continue
-                # Not its own: a member's arrow, drawn later, on top.
-                assert state["arrow"] and state["index"] > arrow["index"], (
-                    case,
-                    tail,
-                    k,
-                    state,
-                )
+                own += state["index"] == arrow["index"]
                 under.add(state["hit"])
             reach[tail] = (own, sorted(under))
         print("REACH", case, reach)
-        assert reach == {
-            tail: (
-                (covered[tail][0], [covered[tail][1]]) if tail in covered else (7, [])
-            )
-            for tail in tails
-        }, (case, reach)
+        assert reach == {tail: (7, [tail]) for tail in tails}, (case, reach)
+        assert _shifts(page) == SHIFTED.get(case, {}), case
 
         labels = list(POINT_CELLS.values())
         for tail in tails:
-            # The arrow a press at this one's middle takes: itself, or the
-            # one drawn on top of it.
-            taken = covered[tail][1] if tail in covered else tail
-            _, edge, row = taken.split("/")
+            _, edge, row = tail.split("/")
             was = _cells(page, len(places), labels)
             arrow, home = _come_to(page, f"/{tail}")
             middle = _along(arrow, 13.5)
             _walk(page, home, middle)
             state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *middle])
-            assert state["hit"] == taken, (case, tail, state)
+            assert state["hit"] == tail, (case, tail, state)
+            # Painted where the pointer is: its box's middle.
+            box = _shape(page, f"/{tail}")["box"]
+            assert box is not None, (case, tail)
+            assert math.dist((box["x"], box["y"]), middle) < 0.6, (tail, box, middle)
             page.mouse.down()
             _walk(page, middle, _along(arrow, 13.5 + 12))
+            held = _shape(page, f"/{tail}")["box"]
+            assert held is not None, (case, tail)
+            assert (
+                math.dist(
+                    (held["x"], held["y"]),
+                    (box["x"] + 12 * arrow["ux"], box["y"] + 12 * arrow["uy"]),
+                )
+                <= 1
+            ), (case, tail, box, held)
             page.mouse.up()
             cell = (int(row), POINT_CELLS[edge])
             anchor = "xanchor" if edge in ("before", "after") else "yanchor"
             expect(_table_cell(page, *cell)).not_to_have_value(
                 was[cell], timeout=EXPECT_TIMEOUT
             )
-            _moved_off(page, f"/{taken}", anchor, arrow[anchor])
+            _moved_off(page, f"/{tail}", anchor, arrow[anchor])
             now = _cells(page, len(places), labels)
             moved = [key for key in was if was[key] != now[key]]
             assert moved == [cell], (case, tail, moved)
-            # 12 px further out, at 1 px per thousandth or 200 per unit.
+            # 12 px further out, at 1 px per thousandth or 200 per unit: a
+            # staggered arrow's side is where the pointer took it, never
+            # the step it is drawn aside by.
             by = float(now[cell]) - float(was[cell])
             scale = 1000 if edge in ("before", "after") else 200
-            assert abs(by * scale - 12) < 1, (case, tail, by)
+            assert abs(by * scale - 12) < 0.5, (case, tail, by)
             _discard(page)
-            _settled_at(page, f"/{taken}", anchor, arrow[anchor])
+            _settled_at(page, f"/{tail}", anchor, arrow[anchor])
             expect(_table_cell(page, *cell)).to_have_value(
                 was[cell], timeout=EXPECT_TIMEOUT
             )
+
+
+# -- arrows that would be drawn on one spot are staggered -------------------------
+#
+# The owner's ruling, chosen from pictures: within a cluster, two arrows that
+# would be drawn over each other are each moved a step ACROSS their own axis
+# — a time or a frequency arrow up or down, a value arrow left or right — 9
+# px a step: the first of one step up (left), one down (right), three up,
+# three down that clears every arrow already placed, and at which the arrow
+# is still inside its own group's hover area. Found on every redraw.
+
+
+def _pair_places(gaps: tuple[int, ...], per_row: int = 6) -> tuple[tuple, ...]:
+    """Two level checkpoints per gap of ``gaps``: the facing edges of their
+    time tolerances — the first's `after`, the second's `before` — that
+    many px apart at `TIME_SCALE`. Pair after pair 150 px on, ``per_row``
+    to a row, the rows 100 px apart: every pair is a cluster of its own."""
+    places = []
+    for k, gap in enumerate(gaps):
+        at, value = 60 + 150 * (k % per_row), 0.3 + 0.5 * (k // per_row)
+        places += [(at, value), (at + 24 + gap, value)]
+    return tuple(places)
+
+
+#: The facing-edge gaps of `_pair_places`' pairs, px: the two arrows are 7
+#: px long and start 10 px outside their edges, so they share more than a
+#: pixel of what is painted of them between 20 and 34 px, ends not included.
+GAPS = (18, 20, 24, 26, 27, 30, 32, 34, 36, 38, 40)
+
+FLAT = {"tolerance": {"lower": 0.01, "upper": 0.01}}
+LONG_BEFORE = {"time_tolerance": {"lower": 0.042, "upper": 0.012}}
+
+#: The checkpoints of the `mixed` scene, at `TIME_SCALE`:
+#: 0-2, three 46 px apart — each `after` on the next one's `before`;
+#: 3-5, THREE arrows on one spot — the first's `after`, the second's
+#: `before` and the third's, whose before side is 42 px long;
+#: 6-8, the same three with a value tolerance of 2 px: groups too FLAT to
+#: hold an arrow three steps up;
+#: 9-10, a pair 51 px apart on a slope, 20 px apart in value — the control:
+#: nothing collides;
+#: 11-12, two at one time, 66 px apart in value: the lower one's `upper`
+#: arrow and the upper one's `lower` face each other on one spot.
+MIXED = (
+    (100, 0.5),
+    (146, 0.5),
+    (192, 0.5),
+    (300, 0.5),
+    (351, 0.5),
+    (381, 0.5, LONG_BEFORE),
+    (500, 0.5, FLAT),
+    (551, 0.5, FLAT),
+    (581, 0.5, {**FLAT, **LONG_BEFORE}),
+    (700, 0.5),
+    (751, 0.6),
+    (900, 0.3),
+    (900, 0.63),
+)
+
+
+def _event_pairs_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A scored on x by three PAIRS of declared
+    events, each window 20 px either side of its event at 1000 px a unit:
+    the facing edges of a pair 20, 27 and 34 px apart, pair from pair 300
+    px on."""
+    cfg, work = _two_var_project(tmp_path)
+    events = []
+    for k, gap in enumerate((20, 27, 34)):
+        first = 150 + 300 * k
+        for at in (first, first + 40 + gap):
+            events.append(
+                {
+                    "time": round(at / 1000, 6),
+                    "tolerance": {"lower": 0.02, "upper": 0.02},
+                }
+            )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "metric": "event-timing",
+                "variable": "x",
+                "events": events,
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+THIRTY = tuple(
+    (400 + 12 * k, 0.5, {"time_tolerance": {"lower": 0.003, "upper": 0.003}})
+    for k in range(30)
+)
+
+#: The scenes of staggered arrows: the project, the criterion opened and the
+#: scale it is read at, the steps each staggered arrow is moved by (every
+#: other arrow: none), and the pairs LEFT colliding — none, but where no
+#: level an arrow may take clears it.
+STAGGERED = {
+    # Two level checkpoints at every facing-edge gap of `GAPS`.
+    "pairs": (
+        partial(_checkpoints_project, places=_pair_places(GAPS)),
+        "points · x",
+        TIME_SCALE,
+        {
+            f"points/{edge}/{2 * k + i}": 2 * i - 1
+            for k, gap in enumerate(GAPS)
+            if 20 < gap < 34
+            for i, edge in enumerate(("after", "before"))
+        },
+        [],
+    ),
+    # Two event windows, facing edges 20, 27 and 34 px apart: `late` on
+    # `early` at 27.
+    "windows": (
+        _event_pairs_project,
+        "event-timing · x",
+        {"xaxis": [-0.05, 1000.0]},
+        {"events/late/2": -1, "events/early/3": 1},
+        [],
+    ),
+    "mixed": (
+        partial(_checkpoints_project, places=MIXED),
+        "points · x",
+        TIME_SCALE,
+        {
+            "points/after/0": -1,
+            "points/before/1": 1,
+            "points/after/1": -1,
+            "points/before/2": 1,
+            # Three on one spot: up, down, and three steps up.
+            "points/after/3": -1,
+            "points/before/4": 1,
+            "points/before/5": -3,
+            # The flat three: three steps up is outside the third's area —
+            # 33.5 px from its line, and its area ends 27 px from it — so
+            # it is left at the first level it tried, on the first's arrow.
+            "points/after/6": -1,
+            "points/before/7": 1,
+            "points/before/8": -1,
+            # Two FACING value arrows: left, and right.
+            "points/lower/12": -1,
+            "points/upper/11": 1,
+        },
+        [("points/after/6", "points/before/8")],
+    ),
+    # Thirty level checkpoints 12 px apart, their time tolerance 3 px: each
+    # `after` stands on the `before` three checkpoints on, and every value
+    # arrow shares exactly ONE pixel of outline with its neighbour's.
+    "thirty": (
+        partial(_checkpoints_project, places=THIRTY),
+        "points · x",
+        TIME_SCALE,
+        {
+            **{f"points/after/{k}": -1 for k in range(27)},
+            **{f"points/before/{k}": 1 for k in range(3, 30)},
+        },
+        [],
+    ),
+}
+
+#: How long one pass over a plot's shapes — the marks, the clusters, the
+#: stagger — takes, ms: the page's observer runs it as a microtask when a
+#: shape's node is added, so a node is added and the microtask awaited, 60
+#: times. And how many arrows the pass went over.
+PASS_COST = """
+async () => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const layer = gd.querySelector('.shapelayer [data-index]').parentNode;
+  const took = [];
+  for (let i = 0; i < 60; i++) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('data-index', '99999');
+    const t0 = performance.now();
+    layer.appendChild(g);
+    await null;
+    took.push(performance.now() - t0);
+    g.remove();
+  }
+  took.sort((p, q) => p - q);
+  return {median: took[30], worst: took[59],
+          arrows: gd.querySelectorAll('.shapelayer path[data-grip]').length};
+}
+"""
+
+
+@pytest.mark.parametrize(
+    ("scene", "part", "parts"),
+    [
+        ("pairs", 0, 2),
+        ("pairs", 1, 2),
+        ("windows", 0, 1),
+        ("mixed", 0, 1),
+        ("thirty", 0, 3),
+        ("thirty", 1, 3),
+        ("thirty", 2, 3),
+    ],
+)
+def test_colliding_arrows_are_staggered_and_each_takes_its_own_press(
+    tmp_path, playwright_browser, scene, part, parts
+):
+    """Two arrows of one cluster that would be painted over each other
+    took ONE press between them — the later-drawn's: with the facing edges
+    of two checkpoints 27 px apart the first's `after` arrow had none of
+    its centreline to itself, and a press on its middle moved the second's
+    `before` side. They are STAGGERED (`STAGGERED`: the scenes, and the
+    steps each arrow is moved by). In every scene:
+
+    * the arrows moved are the ones the ruling moves, by its steps, and
+      every other is where the figure has it;
+    * as drawn, no two arrows of different groups collide (`_collide`) —
+      but the pair the ruling leaves, where no level clears — and every
+      arrow is inside its own group's hover area;
+    * each has 7 or more of the 9 px of its centreline to itself;
+    * what the screen holds of the grips' orange over each staggered arrow
+      is an arrow's worth: two that collided are two blobs;
+    * coming from its ring, each is displayed at every pixel of the way,
+      and a press on its middle, dragged 12 px out, stages its OWN side of
+      its own row and nothing else, by those 12 px (`_stages_its_own_side`
+      — one arrow in ``parts`` per run of a large scene).
+
+    And a pass over thirty checkpoints' 120 arrows stays under 10 ms."""
+    project, name, axes, shifted, left = STAGGERED[scene]
+    with _served(tmp_path, playwright_browser, project=project, hooks=True) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, name, axes)
+        areas = _areas(page)
+        every = _arrows_of(areas, sorted(areas))
+        assert _off(page) == [], scene
+
+        drawn: dict[str, dict] = {}
+        colliding = []
+        for cluster in _clusters(areas):
+            shown = _shown_cluster(page, areas, cluster)
+            colliding += _left_colliding(shown)
+            for tail in (t for t in shown if shown[t]["shift"]):
+                paint = _paint(shown[tail]["box"])
+                exact = {
+                    "left": paint["l"] + 6,
+                    "top": paint["t"] + 6,
+                    "right": paint["r"] - 6,
+                    "bottom": paint["b"] - 6,
+                }
+                assert _orange(page, exact) >= 0.8 * ARROW_PX, (scene, tail)
+            if any(shown[tail]["shift"] for tail in shown):
+                painted = _orange_in(page, *(areas[key] for key in cluster))
+                whole = len(shown) - len(_left_colliding(shown))
+                assert painted >= 0.8 * ARROW_PX * whole, (scene, cluster, painted)
+                if scene != "pairs" or shown.keys() & {"points/after/8"}:
+                    _shot(
+                        page,
+                        tmp_path,
+                        f"stagger-{scene}-{cluster[0].replace('/', '-')}",
+                    )
+                    print("SHOT", scene, cluster[0], {k: areas[k] for k in cluster})
+            drawn.update(shown)
+        assert sorted(drawn) == every, scene
+        assert colliding == left, (scene, colliding)
+        assert _shifts(page) == shifted, scene
+        covered = {under for under, _ in left}
+        for tail, grip in drawn.items():
+            # Where the ruling draws it: 13.5 px out along its axis, its
+            # steps across.
+            arrow = page.evaluate(ARROW_AT, [0, f"/{tail}"])
+            middle = _along(arrow, 13.5)
+            assert math.dist((grip["box"]["x"], grip["box"]["y"]), middle) < 0.6, (
+                tail,
+                grip,
+                middle,
+            )
+            area, paint = areas[grip["group"]], _paint(grip["box"])
+            assert area["l"] <= paint["l"] and paint["r"] <= area["r"], (tail, paint)
+            assert area["t"] <= paint["t"] and paint["b"] <= area["b"], (tail, paint)
+            if tail not in covered:
+                assert grip["own"] >= 7, (scene, tail, grip)
+        own = sorted(grip["own"] for tail, grip in drawn.items() if tail not in covered)
+        print("STAGGER", scene, len(drawn), "arrows; own px of 9, the least:", own[0])
+
+        if scene == "thirty" and part == 0:
+            cost = page.evaluate(PASS_COST)
+            print("PASS", cost)
+            assert cost["arrows"] == 120 and cost["median"] < 10, cost
+
+        for under, over in left:
+            # The stated limit: the one drawn later takes the press.
+            arrow, home = _come_to(page, f"/{under}")
+            middle = _along(arrow, 13.5)
+            _walk(page, home, middle)
+            state = page.evaluate(UNDER_POINTER, [0, arrow["index"], *middle])
+            assert state["displayed"] and state["hit"] == over, (under, state)
+        for cluster in _clusters(areas):
+            shown = _arrows_of(areas, cluster)
+            for tail in shown:
+                if tail in covered or int(tail.rsplit("/", 1)[1]) % parts != part:
+                    continue
+                _stages_its_own_side(page, tail, shown)
+
+
+def _pan_by(page, dx: float) -> None:
+    """Drag plot 0 sideways by ``dx`` px with the toolbar's Pan — pressed
+    near the top of the plot area, clear of every hover area — and hold."""
+    area = page.evaluate(PLOT_AREA)
+    at = (area["left"] + 0.75 * (area["right"] - area["left"]), area["top"] + 12)
+    page.mouse.move(*at)
+    page.mouse.down()
+    page.mouse.move(at[0] + dx, at[1], steps=12)
+    page.wait_for_timeout(150)
+
+
+def test_a_stagger_is_found_again_wherever_the_arrows_are_drawn_again(
+    tmp_path, playwright_browser
+):
+    """The moves are of the figure AS IT IS DRAWN, found on every redraw
+    with the marks and the clusters: of two checkpoints 50 px apart the
+    first's `after` and the second's `before` are staggered. A box zoom
+    that spreads the pair, a pan that takes the first's edge off the plot
+    (while it is held, and let go), an edit that moves the second's edge —
+    the server's redraw — and a narrower window each leave nothing
+    colliding, and no arrow is moved; put back, the two are staggered
+    again."""
+    project = partial(_checkpoints_project, places=CLUSTERED["50 px apart"])
+    moved = SHIFTED["50 px apart"]
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        assert _shifts(page) == moved
+
+        # A box zoom, the real mouse: the pair some 125 px apart.
+        was = _ranges_text(page)
+        _box_zoom(page, (0.3, 0.7), (0.05, 0.95))
+        page.wait_for_function(RANGES_MOVED, arg=was, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        after = page.evaluate(ARROW_AT, [0, "/points/after/0"])
+        before = page.evaluate(ARROW_AT, [0, "/points/before/1"])
+        assert before["x"] - after["x"] > 50, (after, before)
+        assert _shifts(page) == {}
+        _scale(page, TIME_SCALE)
+        assert _shifts(page) == moved
+
+        # A pan: the first's `after` edge 8 px off the plot's left, the
+        # second's `before` edge still on it. Held, and let go.
+        _pan_mode(page)
+        area = page.evaluate(PLOT_AREA)
+        after = page.evaluate(ARROW_AT, [0, "/points/after/0"])
+        _pan_by(page, -(after["x"] - area["left"] + 8))
+        assert "points/after/0" in _off(page) and "points/before/1" not in _off(page)
+        assert _shifts(page) == {}
+        page.mouse.up()
+        page.wait_for_timeout(400)
+        assert _shifts(page) == {}
+        _scale(page, TIME_SCALE)
+        assert _shifts(page) == moved
+
+        # The server's redraw: the second's before side typed 30 px long.
+        cell = _table_cell(page, 1, "before time_tolerance")
+        cell.fill("0.03")
+        cell.press("Tab")
+        _settled_at(page, "/points/before/1", "xanchor", 0.42)
+        assert _shifts(page) == {}
+        _discard(page)
+        _settled_at(page, "/points/before/1", "xanchor", 0.438)
+        assert _shifts(page) == moved
+
+        # A window 900 px wide: the same range on a narrower plot.
+        wide = _shape(page, "/points/target/0")["ppx"]
+        page.set_viewport_size({"width": 900, "height": VIEWPORT["height"]})
+        page.wait_for_function(
+            """(wide) => {
+              const xa = document.querySelectorAll('.js-plotly-plot')[0]._fullLayout.xaxis;
+              return xa._length / Math.abs(xa.range[1] - xa.range[0]) < 0.8 * wide;
+            }""",
+            arg=wide,
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(300)
+        assert _shifts(page) == {}
+        page.set_viewport_size(VIEWPORT)
+        page.wait_for_function(
+            """(wide) => {
+              const xa = document.querySelectorAll('.js-plotly-plot')[0]._fullLayout.xaxis;
+              return xa._length / Math.abs(xa.range[1] - xa.range[0]) > 0.99 * wide;
+            }""",
+            arg=wide,
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(300)
+        assert _shifts(page) == moved
 
 
 @pytest.mark.parametrize("gap", [50, 51])
