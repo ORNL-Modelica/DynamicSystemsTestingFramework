@@ -361,6 +361,11 @@ class Config:
     # will let this rise to 2000 at the same budget.
     max_embedded_samples: int = 1000
 
+    # The bundled theme (D148) the dashboard and the report pages are
+    # generated in and `dstf author` opens with: a NAME of
+    # reporting.theme.THEMES — no path, no inline colours, no CLI flag.
+    theme: str = "default"
+
     # User-provided recognizers (PTA.3) — parsed from testing.json's
     # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
     # Stored on Config so they're scoped to this run (no module-registry leak
@@ -560,6 +565,19 @@ class Config:
         # Reporter payload budget
         if "max_embedded_samples" in file_config:
             self.max_embedded_samples = int(file_config["max_embedded_samples"])
+
+        # The theme: one of the bundled names, wherever it was said.
+        from .reporting.theme import THEMES
+
+        if "theme" in file_config:
+            self.theme, named = file_config["theme"], "testing.json theme"
+        else:
+            named = "theme"
+        if not isinstance(self.theme, str) or self.theme not in THEMES:
+            raise ConfigError(
+                f"{named} is {json.dumps(self.theme, default=str)}: the bundled themes are "
+                f"{', '.join(THEMES)}"
+            )
 
         # User-provided recognizers (PTA.3) — declarative JSON specs become
         # Recognizer instances stored on Config. CLI-provided recognizers
