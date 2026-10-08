@@ -768,22 +768,52 @@ posix_only = pytest.mark.skipif(
 )
 
 
-def _spawn_tool(tmp_path, children: list[tuple[list[str], str]]):
+def _spawn_tool(
+    tmp_path, children: list[tuple[list[str], str]], name: str | None = None
+):
     """A stand-in tool process whose children are *children* — ``(argv,
-    cwd)`` each. Returns ``(tool, [psutil child])`` once they all run."""
-    script = (
-        "import subprocess, sys, time, json\n"
-        "for argv, cwd in json.loads(sys.argv[1]):\n"
-        "    print(subprocess.Popen(argv, cwd=cwd).pid, flush=True)\n"
-        "time.sleep(120)\n"
-    )
-    import json
+    cwd)`` each. Returns ``(tool, [psutil child])`` once they all run.
 
-    tool = subprocess.Popen(
-        [sys.executable, "-c", script, json.dumps(children)], stdout=subprocess.PIPE
-    )
+    With *name* the tool is a shell script of that name, so that is its
+    process name (``dymola``, ``omc`` — what a worker's PID guard asks
+    for); without, a Python process."""
+    if name is None:
+        script = (
+            "import subprocess, sys, time, json\n"
+            "for argv, cwd in json.loads(sys.argv[1]):\n"
+            "    print(subprocess.Popen(argv, cwd=cwd).pid, flush=True)\n"
+            "time.sleep(120)\n"
+        )
+        import json
+
+        argv = [sys.executable, "-c", script, json.dumps(children)]
+    else:
+        import shlex
+
+        path = tmp_path / "tools" / name
+        path.parent.mkdir(exist_ok=True)
+        lines = ["#!/bin/sh"]
+        for child_argv, cwd in children:
+            lines += [
+                f"(cd {shlex.quote(cwd)} && exec {shlex.join(child_argv)}) &",
+                "echo $!",
+            ]
+        # Parked on its stdin, not on `wait`: it outlives its children, and
+        # has none of its own beside them.
+        path.write_text("\n".join([*lines, "read _", ""]))
+        path.chmod(0o755)
+        argv = [str(path)]
+    tool = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     assert tool.stdout is not None
-    return tool, [psutil.Process(int(tool.stdout.readline())) for _ in children]
+    found = [psutil.Process(int(tool.stdout.readline())) for _ in children]
+    if name is not None:
+        _wait_until(lambda: psutil.Process(tool.pid).name() == name)
+    return tool, found
+
+
+#: The compiler that builds dymosim: "dymosim" on its command line (``-o
+#: dymosim``), not as its name.
+_COMPILER = [sys.executable, "-c", _SLEEP, "-o", "dymosim"]
 
 
 def _kill_all(tool, children) -> None:
@@ -825,33 +855,52 @@ class TestDymolaStop:
             tmp_path,
             [
                 ([self._dymosim(tmp_path), "120"], str(sim_dir)),
-                # The compiler: "dymosim" on its command line, not its name.
-                (["sleep", "120", "dymosim"], str(other)),
+                (_COMPILER, str(other)),
             ],
+            name="dymola",
         )
         try:
             _wait_until(lambda: children[0].name() == "dymosim")
+            _wait_until(lambda: "dymosim" in children[1].cmdline())
+            assert children[1].name() != "dymosim"
             worker = self._worker(tmp_path)
             worker.pids = {tool.pid}
 
             assert worker.cancel_running("test_0001") is True
             assert (sim_dir / "stop").read_text() == ""
             assert not (other / "stop").exists()
-            assert all(child.is_running() for child in children)
+            assert not any(_gone(child) for child in children)  # asked, not killed
         finally:
             _kill_all(tool, children)
 
     def test_during_translation_there_is_nothing_to_ask(self, tmp_path):
         other = tmp_path / "elsewhere"
         other.mkdir()
-        tool, children = _spawn_tool(
-            tmp_path, [(["sleep", "120", "dymosim"], str(other))]
-        )
+        tool, children = _spawn_tool(tmp_path, [(_COMPILER, str(other))], name="dymola")
         try:
+            _wait_until(lambda: "dymosim" in children[0].cmdline())
             worker = self._worker(tmp_path)
             worker.pids = {tool.pid}
             assert worker.cancel_running("test_0001") is False
             assert not (other / "stop").exists()
+            assert not _gone(children[0])  # the compiler was there to be asked
+        finally:
+            _kill_all(tool, children)
+
+    def test_a_tracked_pid_that_is_no_longer_dymola_asks_nobody(self, tmp_path):
+        """A recycled PID: the dymosim under it is somebody else's."""
+        sim_dir = tmp_path / "test_0001"
+        sim_dir.mkdir()
+        tool, children = _spawn_tool(
+            tmp_path, [([self._dymosim(tmp_path), "120"], str(sim_dir))]
+        )
+        try:
+            _wait_until(lambda: children[0].name() == "dymosim")
+            worker = self._worker(tmp_path)
+            worker.pids = {tool.pid}  # a Python process now
+
+            assert worker.cancel_running("test_0001") is False
+            assert not (sim_dir / "stop").exists()
         finally:
             _kill_all(tool, children)
 
@@ -964,6 +1013,7 @@ class TestDymolaLaunch:
                 proc.kill()
 
 
+@posix_only
 class TestOpenModelicaStop:
     def _worker(self, tmp_path, session=None):
         from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
@@ -977,9 +1027,22 @@ class TestOpenModelicaStop:
         worker.session = session
         return worker
 
+    def test_a_tracked_pid_that_is_no_longer_omc_loses_no_child(self, tmp_path):
+        """A recycled PID: its children are somebody else's, and stay."""
+        tool, children = _spawn_tool(tmp_path, [([sys.executable, "-c", _SLEEP], ".")])
+        try:
+            worker = self._worker(tmp_path)
+            worker.pids = {tool.pid}  # a Python process now
+
+            assert worker.cancel_running("test_0001") is False
+            time.sleep(0.3)  # a kill would have landed by now
+            assert not _gone(children[0])
+        finally:
+            _kill_all(tool, children)
+
     def test_omc_s_children_are_killed_and_omc_is_left(self, tmp_path):
         tool, children = _spawn_tool(
-            tmp_path, [([sys.executable, "-c", "import time; time.sleep(120)"], ".")]
+            tmp_path, [([sys.executable, "-c", _SLEEP], ".")], name="omc"
         )
         try:
             worker = self._worker(tmp_path)

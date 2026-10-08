@@ -330,7 +330,7 @@ class DymolaWorker(Worker):
         the compile — ``False``, and the watchdog does that.
         """
         asked = False
-        for child in live_children(self.pids):
+        for child in live_children(self.pids, name_hint=self.kill_name_hint):
             try:
                 if child.name().lower() not in _DYMOSIM_NAMES:
                     continue

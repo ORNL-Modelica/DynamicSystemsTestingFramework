@@ -364,7 +364,7 @@ class OpenModelicaWorker(Worker):
         does when omc has not come back within ``cancel_grace``.
         """
         killed = False
-        for child in live_children(self.pids):
+        for child in live_children(self.pids, name_hint=self.kill_name_hint):
             try:
                 child.kill()
                 killed = True

@@ -204,12 +204,15 @@ def process_gone(pids: set[int]) -> bool:
         return False
 
 
-def live_children(pids: set[int]) -> list:
+def live_children(pids: set[int], name_hint: str | None = None) -> list:
     """Every descendant of *pids* alive right now, as ``psutil.Process``
     objects — what a backend's soft cancel looks through for the process
     doing the simulating. A zombie is not alive: a child killed a moment
-    ago stays in the table until its parent reaps it. Best-effort: ``[]``
-    on any failure."""
+    ago stays in the table until its parent reaps it. ``name_hint`` guards
+    each of *pids* as :func:`kill_process_tree` does: a PID whose process
+    is no longer the tool (recycled) hands over nobody's children — what
+    comes back is killed, or told to stop. Best-effort: ``[]`` on any
+    failure."""
     try:
         import psutil
     except ImportError:  # pragma: no cover — psutil is a hard dep in practice
@@ -217,7 +220,10 @@ def live_children(pids: set[int]) -> list:
     children: list = []
     for pid in list(pids):
         try:
-            for child in psutil.Process(pid).children(recursive=True):
+            parent = psutil.Process(pid)
+            if name_hint and name_hint not in (parent.name() or "").lower():
+                continue
+            for child in parent.children(recursive=True):
                 if child.status() != psutil.STATUS_ZOMBIE:
                     children.append(child)
         except Exception:
