@@ -123,6 +123,10 @@ class StartingWorker:
     phase: str
     #: Seconds since this start began.
     seconds: float
+    #: Whether it is being brought BACK: a worker that died is restarted
+    #: under the item it is to run, which is running meanwhile; a first
+    #: start has no item yet.
+    restart: bool = False
 
 
 @dataclass(eq=False)
@@ -252,15 +256,15 @@ class SimulationPool:
         a live tool: this is what says so while the items wait."""
         with self._cond:
             runners = [
-                (slot_id, slot.runner)
+                (slot_id, slot.runner, slot.item is not None)
                 for slot_id, slot in sorted(self._slots.items())
                 if slot.runner is not None
             ]
         found = []
-        for slot_id, runner in runners:
+        for slot_id, runner, restart in runners:
             state = runner.starting()
             if state is not None:
-                found.append(StartingWorker(slot_id, *state))
+                found.append(StartingWorker(slot_id, *state, restart=restart))
         return tuple(found)
 
     def submit(self, test: TestModel) -> QueueItem:

@@ -529,7 +529,7 @@ class TestCancel:
             assert restarting.wait(15)
             _wait_until(lambda: b.test_key is not None)
             (starting,) = pool.starting  # a restart is a start, and shows
-            assert starting.worker_id == 0
+            assert starting.worker_id == 0 and starting.restart is True
 
             assert pool.cancel(b) is True
             release.set()
@@ -794,7 +794,7 @@ class TestStartBound:
             assert loading.wait(15)
             (starting,) = pool.starting
             assert isinstance(starting, StartingWorker)
-            assert starting.worker_id == 0
+            assert starting.worker_id == 0 and starting.restart is False
             assert starting.phase == 'loadFile("/lib/package.mo")'
             assert 0.0 <= starting.seconds < 15.0
             assert item.state is ItemState.WAITING  # nothing took it yet

@@ -26,6 +26,7 @@ from ..queue_rows import (
     CANCEL,
     OPEN,
     REMOVE,
+    RESTARTING,
     QueueRow,
     counts_text,
     indicator,
@@ -408,7 +409,8 @@ class QueuePanel:
 
 
 def _words(row: QueueRow) -> str:
-    """The row's state line: its words, and its worker while it runs."""
-    if row.worker is None:
+    """The row's state line: its words, and its worker while it runs — the
+    worker's line above says which while it is being brought back."""
+    if row.worker is None or row.progress == RESTARTING:
         return row.words
     return f"{row.words} · worker {row.worker}"

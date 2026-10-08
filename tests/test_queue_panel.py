@@ -313,6 +313,35 @@ async def test_a_starting_worker_is_listed_and_the_next_row_says_so(shell):
             shell.session._pool = None
 
 
+async def test_a_worker_brought_back_reads_restarting_and_so_does_its_row(shell):
+    """A worker that died is restarted under the test it is to run: the
+    row read `running · N s` for the whole of a library's load."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _hold(shell, A, ItemState.RUNNING)  # on worker 1
+        _hold(shell, B, ItemState.WAITING)
+        shell.session._pool = _StartingPool(
+            StartingWorker(0, "loadModel(Modelica)", 5.2, restart=True)
+        )
+        try:
+            assert shell.clocked()
+            for page in shell.pages:
+                page.handle({"event": "poll"})
+            assert _one(user, "queue-starting-worker").text == (
+                "restarting worker 1 — loadModel(Modelica) · 5 s"
+            )
+            assert _one(user, f"queue-words:{A}").text == "running · worker restarting"
+            assert _one(user, f"queue-words:{B}").text == "waiting · 1 ahead"
+
+            shell.session._pool.starting = ()
+            for page in shell.pages:
+                page.handle({"event": "poll"})
+            words = _one(user, f"queue-words:{A}").text
+            assert words.startswith("running · ") and words.endswith(" s · worker 1")
+        finally:
+            shell.session._pool = None
+
+
 async def test_a_store_write_s_line_is_shown_in_the_panel(shell):
     async with user_simulation(root=shell.index) as user:
         await _open(user)

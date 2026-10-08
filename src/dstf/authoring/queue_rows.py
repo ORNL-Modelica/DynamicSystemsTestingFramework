@@ -40,7 +40,8 @@ class QueueRow:
     #: The state in words: ``waiting · 3 ahead`` (``waiting · next`` with
     #: none, ``waiting · worker starting`` while no worker is up),
     #: ``running · 42 s`` (``running · t = 42 / 100 s`` where the backend
-    #: has a live view, D151),
+    #: has a live view, D151; ``running · worker restarting`` while its
+    #: worker is brought back after a death),
     #: ``finished · 9 s``, ``failed: <the backend's message, one line>``,
     #: ``cancelled``.
     words: str
@@ -55,8 +56,8 @@ class QueueRow:
     #: Seconds since it started while it runs; its run's length once ended.
     elapsed: float | None = None
     #: How far a running item's result file has got (``t = 42 / 100 s``,
-    #: ``starting`` before its first row); None on a backend with no live
-    #: view, and for an item that is not running.
+    #: ``starting`` before its first row), or ``worker restarting``; None on
+    #: a backend with no live view, and for an item that is not running.
     progress: str | None = None
     #: The backend's message for a failed item, in full.
     message: str | None = None
@@ -74,7 +75,7 @@ class QueueRow:
 _TRACEBACK = "Traceback (most recent call last):"
 
 
-def _one_line(text: str) -> str:
+def one_line(text: str) -> str:
     """``text`` as one line: its first line that says something — and, for
     a message that carries a Python traceback, what was raised (the
     traceback's LAST line) after whatever the message said before it. The
@@ -94,14 +95,20 @@ def _one_line(text: str) -> str:
 _LONG_PATH = re.compile(r'"(?:[A-Za-z]:)?[/\\][^"]*[/\\]([^"/\\]+)"')
 
 
+#: A running row whose worker died and is being brought back.
+RESTARTING = "worker restarting"
+
+
 def starting_text(worker: StartingWorker) -> str:
     """One starting worker, as the queue panel lists it: ``starting worker
     1 — loadFile("…/package.mo") · 85 s``, the phase in the backend's own
     words with a path cut to its last part; ``starting worker 1 · 85 s``
-    where the backend names no phase."""
+    where the backend names no phase; ``restarting worker 1 — …`` for one
+    brought back after a death."""
     phase = _LONG_PATH.sub(r'"…/\1"', worker.phase)
     doing = f" — {phase}" if phase else ""
-    return f"starting worker {worker.worker_id + 1}{doing} · {worker.seconds:.0f} s"
+    verb = "restarting" if worker.restart else "starting"
+    return f"{verb} worker {worker.worker_id + 1}{doing} · {worker.seconds:.0f} s"
 
 
 def starting_texts(session: Session) -> list[str]:
@@ -115,7 +122,7 @@ def _row(
     number: int,
     ahead: int,
     now: float,
-    starting: bool,
+    starting: frozenset[int],
 ) -> QueueRow:
     state = session.item_state(item)
     started = item.started_at is not None
@@ -139,7 +146,13 @@ def _row(
     elif state is ItemState.RUNNING:
         elapsed = max(0.0, now - (item.started_at or now))
         why = session.cannot_cancel
-        live = session.live_runs.progress(item)
+        # Its worker died and is being brought back: the test has not begun
+        # again, whatever its file or its clock would say.
+        live = (
+            RESTARTING
+            if item.worker_id in starting
+            else session.live_runs.progress(item)
+        )
         fields = {
             "words": f"running · {live or f'{elapsed:.0f} s'}",
             "progress": live,
@@ -168,7 +181,7 @@ def _row(
             message = item.message or "the simulation failed"
             fields.update(
                 status=SIM_FAIL if started else NOT_RUN,
-                words=f"failed: {_one_line(message)}",
+                words=f"failed: {one_line(message)}",
                 message=message,
             )
     return QueueRow(
@@ -180,7 +193,7 @@ def queue_rows(session: Session, *, now: float | None = None) -> list[QueueRow]:
     """The queue's rows, in run order. ``now`` is the clock a running row's
     elapsed seconds are read against (``time.time()``)."""
     clock = time.time() if now is None else now
-    starting = bool(session.starting_workers)
+    starting = frozenset(w.worker_id for w in session.starting_workers)
     rows: list[QueueRow] = []
     ahead = 0
     for number, item in enumerate(session.queue, start=1):
@@ -238,7 +251,7 @@ def indicator(session: Session) -> Indicator:
     )
     stopped = session.queue_stopped
     if stopped is not None:
-        line = _one_line(stopped)
+        line = one_line(stopped)
         short = (
             line
             if len(line) <= INDICATOR_WIDTH
