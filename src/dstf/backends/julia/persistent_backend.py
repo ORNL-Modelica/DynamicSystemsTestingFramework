@@ -169,7 +169,10 @@ class JuliaWorker(Worker):
         Overrides the base watchdog: the response arrives on a queue, so a
         deadline poll reads it directly instead of parking a blocking call
         on an exec thread the watchdog would then have to abandon. The kill
-        and the restart-accounting flags are the shared ones.
+        and the restart-accounting flags are the shared ones, and so is the
+        cancel (``Worker.request_cancel``): the poll sees it within a tick.
+        The driver has no stop short of its process, so a cancel is the
+        timeout's kill, uncharged.
         """
         if self.proc is None or self.proc.poll() is not None:
             return TestRunResult(
@@ -218,6 +221,20 @@ class JuliaWorker(Worker):
         deadline = wall_start + timeout
         while True:
             remaining = deadline - time.monotonic()
+            if self._cancel is not None:
+                self._kill_tracked_pids()
+                self._await_killed_process()
+                elapsed = time.monotonic() - wall_start
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    sim_wall=elapsed,
+                    error_message="Cancelled",
+                    cancelled=True,
+                    worker_killed=True,
+                )
             if remaining <= 0:
                 self._kill_tracked_pids()
                 self._await_killed_process()
@@ -472,6 +489,8 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
         {
             Capability.PERSISTENT_WORKERS,
             Capability.BATCH_FALLBACK,
+            # The worker's: its poll loop honours Worker.request_cancel.
+            Capability.CANCEL,
         }
     )
 

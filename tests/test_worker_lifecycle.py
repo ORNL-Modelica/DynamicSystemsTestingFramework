@@ -635,7 +635,8 @@ class TestOpenModelicaStop:
 def test_every_cancel_flag_has_a_stop_behind_it():
     """The flag is what the queue gates on: a registered class that declares
     it stops its own single-test path, a persistent variant's worker runs
-    under the shared watchdog (whose kill is the stop of last resort)."""
+    under the shared watchdog (whose kill is the stop of last resort) or
+    reads the cancel in a watchdog of its own."""
     import dstf.backends as backends
     from dstf.backends.base import Backend
     from dstf.backends.types import Capability
@@ -653,11 +654,17 @@ def test_every_cancel_flag_has_a_stop_behind_it():
             assert cls.cancel_test is not Backend.cancel_test, name
         if variant is not None and Capability.CANCEL in variant.capabilities:
             declared.add(f"{name} (persistent)")
+            hears = variant.worker_cls.run_test_with_timeout
             assert (
-                variant.worker_cls.run_test_with_timeout is Worker.run_test_with_timeout
+                hears is Worker.run_test_with_timeout
+                or "_cancel" in hears.__code__.co_names
             ), name
-    assert {"Python", "Dymola (persistent)", "OpenModelica (persistent)"} <= declared
-    assert not {"FMPy", "Julia", "Julia (persistent)"} & declared
+    assert declared == {
+        "Python",
+        "Dymola (persistent)",
+        "OpenModelica (persistent)",
+        "Julia (persistent)",
+    }
 
 
 def test_a_cancel_flag_without_a_stop_is_refused_at_registration():

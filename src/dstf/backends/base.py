@@ -348,6 +348,10 @@ class ItemRunner:
     (:meth:`Backend.run_single_test`) on the pool's thread. A persistent
     backend's is :class:`~dstf.backends.persistent.WorkerRunner`, over one
     :class:`~dstf.backends.persistent.Worker`.
+
+    A subclass overrides the hooks (``start``, ``_run``, ``_stop_test``,
+    ``stop``, ``close``); ``expect`` / ``run`` / ``cancel`` are the template
+    that makes a cancel land whenever it arrives after ``expect``.
     """
 
     #: Set when this runner can take no more tests: the sentence why. The
@@ -357,20 +361,33 @@ class ItemRunner:
     def __init__(self, backend: "Backend", worker_id: int):
         self.backend = backend
         self.worker_id = worker_id
+        self._lock = Lock()
+        #: The test this runner is on, from ``expect`` to the end of ``run``,
+        #: and whether a stop was asked of it.
+        self._key: str | None = None
+        self._cancel_asked = False
+
+    # -- hooks ---------------------------------------------------------
 
     def start(self) -> None:
         """Bring the runner up. Raises ``RuntimeError`` whose text is the
         reason, in the backend's own words, when it cannot."""
 
-    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+    def _run(self, test: TestModel, test_key: str) -> TestRunResult:
         """Run *test* to its end on the calling thread."""
+        if self._cancel_asked:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                error_message="Cancelled",
+                cancelled=True,
+            )
         return self.backend.run_single_test(test, test_key, 1, 1)
 
-    def cancel(self, test_key: str) -> bool:
-        """Stop *test_key*, from another thread; ``False`` when it is not the
-        test running here. Only called on a backend that declares
-        :attr:`Capability.CANCEL`. :meth:`run` then returns a ``cancelled``
-        result."""
+    def _stop_test(self, test_key: str) -> bool:
+        """Stop *test_key* now; ``False`` while there is nothing to stop yet
+        (its process does not exist) — ``cancel`` asks again."""
         return self.backend.cancel_test(test_key)
 
     def stop(self, test_key: str | None) -> None:
@@ -379,10 +396,51 @@ class ItemRunner:
         here, a start otherwise. A backend that cannot stop a test lets it
         finish."""
         if test_key is not None and Capability.CANCEL in self.backend.capabilities:
-            self.backend.cancel_test(test_key)
+            self.cancel(test_key)
 
     def close(self) -> None:
         """Let go of the runner, on its own thread; idempotent."""
+
+    # -- template ------------------------------------------------------
+
+    def expect(self, test_key: str) -> None:
+        """*test_key* is about to run here: a ``cancel`` for it is heard
+        from now on. The pool calls this under its own lock, as it publishes
+        the key, so no cancel can fall between the two."""
+        with self._lock:
+            self._key, self._cancel_asked = test_key, False
+
+    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+        """Run *test* to its end on the calling thread. Never raises on a
+        test-level failure; a ``cancel`` makes it return promptly."""
+        with self._lock:
+            if self._key != test_key:
+                self._key, self._cancel_asked = test_key, False
+        try:
+            return self._run(test, test_key)
+        finally:
+            with self._lock:
+                self._key = None
+
+    def cancel(self, test_key: str) -> bool:
+        """Stop *test_key*, from another thread; ``False`` when it is not the
+        test this runner is on. Only called on a backend that declares
+        :attr:`Capability.CANCEL`. :meth:`run` then returns a failed or
+        ``cancelled`` result — or the test's own, if it finished anyway."""
+        with self._lock:
+            if self._key != test_key:
+                return False
+            self._cancel_asked = True
+        # The test may be a few statements short of having a process to
+        # stop; ask until it has one or has ended. Bounded all the same: a
+        # stop that cannot be delivered must not hold the caller.
+        deadline = time.monotonic() + 5.0
+        while not self._stop_test(test_key) and time.monotonic() < deadline:
+            with self._lock:
+                if self._key != test_key:
+                    break
+            time.sleep(0.01)
+        return True
 
 
 class Backend(ABC):
@@ -526,6 +584,11 @@ class Backend(ABC):
         Not needed if run_tests is overridden entirely (e.g., batch execution).
         """
         raise NotImplementedError("Override run_tests() or run_single_test()")
+
+    @property
+    def label(self) -> str:
+        """The backend's name in a sentence a person reads ("Dymola")."""
+        return self.config.backend
 
     def prepare_item_runners(self) -> None:
         """Once per pool, before the first :meth:`item_runner`. Raises

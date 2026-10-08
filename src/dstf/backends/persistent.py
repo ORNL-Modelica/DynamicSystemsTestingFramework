@@ -282,7 +282,6 @@ class Worker(ABC):
         lock = threading.Lock()
         box: dict[str, BaseException] = {}
         abandoned = [False]
-        self._start_abort.clear()
 
         def _body() -> None:
             try:
@@ -339,9 +338,23 @@ class Worker(ABC):
         raise WorkerStartError(str(exc)) from exc
 
     def abandon_start(self) -> None:
-        """Give up a :meth:`start_within` in flight, from another thread (the
-        pool closing while a worker starts). No-op when none is."""
+        """Give up this worker's :meth:`start_within`, from another thread
+        (the pool closing): the one in flight, and any later one — it is not
+        taken back."""
         self._start_abort.set()
+
+    def arm(self, test_key: str) -> None:
+        """*test_key* is about to run here: :meth:`request_cancel` for it is
+        heard from now on, before the watchdog is up. The dispatch step arms
+        first, so a cancel that arrives during a restart is not lost."""
+        with self._run_lock:
+            if self._running_key != test_key:
+                self._running_key, self._cancel = test_key, None
+                self._wake = threading.Event()
+
+    def disarm(self) -> None:
+        with self._run_lock:
+            self._running_key = self._wake = self._cancel = None
 
     def _safe_detail(self) -> str:
         try:
@@ -519,9 +532,22 @@ class Worker(ABC):
         exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
         done = threading.Event()
-        wake = threading.Event()
+        self.arm(test_key)
         with self._run_lock:
-            self._running_key, self._cancel, self._wake = test_key, None, wake
+            wake = self._wake
+            cancelled_early = self._cancel is not None
+        assert wake is not None  # armed just above
+        if cancelled_early:
+            # Asked to stop before it started: nothing ran, the worker is
+            # as it was.
+            self.disarm()
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                error_message="Cancelled",
+                cancelled=True,
+            )
 
         def _worker_body():
             try:
@@ -543,8 +569,7 @@ class Worker(ABC):
                 test, test_key, timeout, start_ts, t, done, wake, result_box, exc_box
             )
         finally:
-            with self._run_lock:
-                self._running_key = self._wake = None
+            self.disarm()
 
     def _watch_test(
         self,
@@ -734,23 +759,35 @@ class WorkerRunner(ItemRunner):
         self.worker.start_within()
         self.backend.note_versions([self.worker])
 
-    def cancel(self, test_key: str) -> bool:
+    def expect(self, test_key: str) -> None:
+        super().expect(test_key)
+        self.worker.arm(test_key)
+
+    def _stop_test(self, test_key: str) -> bool:
         return self.worker.request_cancel(test_key)
 
     def stop(self, test_key: str | None) -> None:
-        if test_key is None:
-            self.worker.abandon_start()
-        elif not self.worker.request_cancel(test_key, hard=True):
-            # A worker with its own watchdog (Julia) hears no cancel: take
-            # its process away, and its wait ends on the dead pipe.
-            self.worker._close_quietly()
+        # A (re)start in flight is given up; a test in flight is ended by
+        # the kill, not by the backend's soft stop and its grace.
+        self.worker.abandon_start()
+        if test_key is not None:
+            self.worker.request_cancel(test_key, hard=True)
 
     def close(self) -> None:
         self.worker.close()
 
-    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+    def _run(self, test: TestModel, test_key: str) -> TestRunResult:
         """Run *test* on this worker. Never raises: a worker that cannot be
         restarted, and one that raises, are both a failed result."""
+        # Armed before the restart below, so a cancel that arrives while the
+        # worker is being brought back is heard when the test would start.
+        self.worker.arm(test_key)
+        try:
+            return self._run_armed(test, test_key)
+        finally:
+            self.worker.disarm()
+
+    def _run_armed(self, test: TestModel, test_key: str) -> TestRunResult:
         w, backend = self.worker, self.backend
         if not w.is_alive():
             if not self._restart(count_against_budget=not self._prev_killed_worker):
@@ -1354,3 +1391,7 @@ class PersistentBackendBase(Backend):
     @property
     def run_summary_phrase(self) -> str:
         return f"Persistent {self.backend_label} run complete"
+
+    @property
+    def label(self) -> str:
+        return self.backend_label or super().label

@@ -25,12 +25,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .backends.base import Backend
-    from .backends.types import TestResult
+    from .backends.pool import QueueItem, SimulationPool
+    from .backends.types import TestResult, TestRunResult
     from .config import Config
     from .discovery.test_registry import TestModel
     from .storage.batch_manifest import BatchManifest
@@ -263,4 +266,135 @@ def run_pipeline(
         results=results,
         scope_tests=scope_tests,
         notices=notices,
+    )
+
+
+class ItemRun:
+    """The run pipeline for ONE test at a time — what :func:`run_pipeline`
+    does for a list, cut at the test: its key and "pending" stamp, the wipe
+    of that test's stale state only, and after the run its recorded verdict
+    and its one result read back.
+
+    It is the simulation pool's ``ItemPath``: the pool's threads call
+    :meth:`begin` and :meth:`end` around each run, so both serialize their
+    read-modify-write of ``batch_manifest.json`` on one lock.
+
+    What a list run writes once per run is NOT written per item:
+    ``status.json`` and ``dashboard.html`` are one run's snapshot, and a
+    queue's live view is the tool's own pages. :meth:`write_status` writes
+    them for the items given, when asked (a queue that drained).
+    """
+
+    def __init__(self, config: Config, *, backend: Backend, store: ReferenceStore):
+        self.config = config
+        self.backend = backend
+        self.store = store
+        self._manifest_lock = threading.Lock()
+
+    def begin(self, test: TestModel) -> str:
+        """Key *test*, stamp it pending and clear what its last run left;
+        returns its key."""
+        config, backend = self.config, self.backend
+        ref_id = self.store.index.get_id(test.model_id)
+        if ref_id:
+            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
+        with self._manifest_lock:
+            _, keyed = backend.key_tests([test])
+        wipe_stale_state_for_scope(
+            config, [test], backend.ref_id_map, wipe_sim_dirs=True
+        )
+        return keyed[0][1]
+
+    def end(
+        self, test: TestModel, test_key: str, run_result: TestRunResult
+    ) -> TestResult | None:
+        """Record *run_result* in the manifest (a cancelled run as
+        cancelled) and return the result read back — ``None`` for a
+        cancelled run, the failure for a failed one."""
+        from .storage.batch_manifest import BatchManifest
+
+        work_dir = self.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        with self._manifest_lock:
+            # Re-read: another item's thread has saved since this one's
+            # begin, and ref ids may have been assigned by an accept.
+            manifest = BatchManifest.load(work_dir / "batch_manifest.json")
+            manifest.enrich_ref_ids(self.store.index)
+            manifest.record_result(run_result)
+        return self.backend.result_of_run(test, test_key, run_result)
+
+    def write_status(self, items: Iterable[QueueItem]) -> None:
+        """Write ``status.json`` and the (live) ``dashboard.html`` for the
+        *items* that ran — one snapshot, as a list run leaves it at its end,
+        each row passed / failed / timed_out / cancelled. Items that never
+        ran (removed, or failed before a worker started) have no row. The
+        caller renders the final page (``render_final``) as after a run."""
+        from .backends.progress import ProgressReporter, TestStatus
+        from .reporting.dashboard_render import build_rerun_prefix
+
+        work_dir = self.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        rows = []
+        for item in items:
+            rr = item.run_result
+            if rr is None or item.test_key is None:
+                continue
+            if rr.cancelled:
+                status = "cancelled"
+            elif rr.timed_out:
+                status = "timed_out"
+            else:
+                status = "passed" if rr.success else "failed"
+            rows.append(
+                TestStatus(
+                    test_key=item.test_key,
+                    model_id=item.model_id,
+                    status=status,
+                    started_wall=item.started_at,
+                    elapsed=rr.elapsed,
+                    detail=None if rr.success else item.message,
+                    worker_id=item.worker_id,
+                    report_dir=self.backend.ref_id_map.get(item.model_id)
+                    or item.test_key,
+                    field_sources=item.test.field_sources,
+                )
+            )
+        work_dir.mkdir(parents=True, exist_ok=True)
+        progress = ProgressReporter(
+            work_dir,
+            len(rows),
+            rerun_prefix=build_rerun_prefix(self.config),
+            metadata=self.backend._build_run_metadata(**self.backend.run_versions()),
+        )
+        progress.load(rows)
+        progress.finalize()
+
+
+def open_pool(
+    config: Config,
+    *,
+    backend: Backend,
+    store: ReferenceStore,
+    on_start: Callable[[QueueItem], None] | None = None,
+    on_end: Callable[[QueueItem], None] | None = None,
+    workers: int | None = None,
+) -> SimulationPool:
+    """A simulation pool over *backend* that runs each item through
+    :class:`ItemRun` — the pool's ``path``, so ``pool.path.write_status``
+    writes ``status.json`` and the dashboard for the items given.
+
+    *backend* runs the items, so it is the persistent-preferring one
+    (``select_backend(config, persistent=True)``). See
+    :class:`~dstf.backends.pool.SimulationPool` for the queue itself, the
+    callbacks' contract and ``workers``.
+    """
+    from .backends.pool import SimulationPool
+
+    write_id_mapping(store, config)
+    return SimulationPool(
+        backend,
+        ItemRun(config, backend=backend, store=store),
+        on_start=on_start,
+        on_end=on_end,
+        workers=workers,
     )

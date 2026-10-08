@@ -455,6 +455,47 @@ class TestJuliaTimeoutKill:
         assert killed == [(4242, "julia")]
         assert worker.pids == set()
 
+    def test_a_cancel_is_the_same_kill_and_a_cancelled_result(
+        self, tmp_path, monkeypatch
+    ):
+        """Julia's own poll loop hears `request_cancel` — the driver has no
+        stop short of its process."""
+        from dstf.backends import persistent as sim_persistent
+        from dstf.backends.julia import persistent_backend as jpr
+
+        (tmp_path / "Lib.A.jl").write_text("# stub")
+        worker = jpr.JuliaWorker(
+            0,
+            SimpleNamespace(work_dir=tmp_path, source_path=tmp_path),
+            SimpleNamespace(julia_binary=Path("julia"), project_dir=tmp_path),
+        )
+        worker.proc = SimpleNamespace(
+            pid=4242,
+            stdin=io.StringIO(),
+            stdout=io.StringIO(""),
+            stderr=io.StringIO(""),
+            poll=lambda: None,
+            kill=lambda: None,
+            wait=lambda timeout=None: 0,
+        )
+        worker.pids = {4242}
+        killed: list[int] = []
+        monkeypatch.setattr(
+            sim_persistent,
+            "kill_process_tree",
+            lambda pid, name_hint=None: killed.append(pid),
+        )
+        worker.arm("test_0001")
+        threading.Timer(0.2, lambda: worker.request_cancel("test_0001")).start()
+
+        t0 = time.monotonic()
+        tr = worker.run_test_with_timeout(_tm(), "test_0001", timeout=60)
+
+        assert tr.cancelled and tr.worker_killed and not tr.timed_out
+        assert tr.error_message == "Cancelled"
+        assert killed == [4242] and not worker.is_alive()
+        assert time.monotonic() - t0 < 5.0
+
 
 # ---------------------------------------------------------------------------
 # Orphans: the child outlives a graceful parent exit

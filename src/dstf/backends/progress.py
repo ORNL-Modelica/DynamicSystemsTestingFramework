@@ -24,7 +24,8 @@ from pathlib import Path
 class TestStatus:
     test_key: str
     model_id: str
-    status: str = "queued"  # queued | running | passed | failed | timed_out
+    # queued | running | passed | failed | timed_out | cancelled
+    status: str = "queued"
     started_at: float | None = None  # time.monotonic — for accurate elapsed computation
     started_wall: float | None = (
         None  # time.time (epoch) — for JS to compute live "running for Ns"
@@ -146,6 +147,13 @@ class ProgressReporter:
                 ts.elapsed = elapsed
                 ts.detail = detail
         self._write()
+
+    def load(self, tests: list[TestStatus]) -> None:
+        """Take rows that are already final, whole, with no write per row —
+        a queue that drained reports itself in one snapshot. ``finalize``
+        writes it."""
+        with self._lock:
+            self._tests = {t.test_key: t for t in tests}
 
     def _snapshot(self) -> dict:
         with self._lock:
