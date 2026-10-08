@@ -3794,6 +3794,11 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
         assert session.spec.pending == [PatchOp(A, "add", "/plots", plots)]
         assert "metrics" not in session.spec.entry(A)
+        # The TEST is the one that entry makes: merged from the document
+        # the tree's ops were taken out of, it has no tree of its own. (The
+        # verdict cannot tell: the tree written out scores as the flat
+        # entry does.)
+        assert session.project.test(A).metric_tree_spec is None
         assert session.spec.preview_base(A) == session.spec.saved_entry(A)
         assert classify(session.comparisons[A]) == FAIL  # rescored, as saved
         session.save()
@@ -4047,6 +4052,32 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         assert session.spec.entry(A)["metrics"]["children"][0]["tolerance"] == 0.5
         session.stage([PatchOp(A, "replace", "/metrics", implicit)])
         assert session.spec.pending == []
+
+    @pytest.mark.parametrize(("saved", "staged"), [(1, True), (True, 1)])
+    def test_a_tree_holding_true_for_the_saved_trees_one_is_an_edit(
+        self, tmp_path, saved, staged
+    ):
+        """Which tree the saved entry scores by is compared as JSON reads
+        it, as the entry is: the override's `1` written out as `true` — or
+        its `true` as `1` — is another tree, though Python's ``==`` calls
+        the two equal, and stays pending. The same number as `1.0` goes."""
+        override = {"mode": "event-timing", "count_must_match": saved}
+        s = _session_with_entry(
+            tmp_path, {"comparison": {"variable_overrides": {"x": override}}}
+        )
+        implicit = s.tree(A)
+        (leaf,) = implicit["children"]
+        assert leaf["count_must_match"] is saved
+        other = {**implicit, "children": [{**leaf, "count_must_match": staged}]}
+        s.stage([PatchOp(A, "add", "/metrics", other)])
+        assert [op.path for op in s.spec.pending] == ["/metrics"]
+        assert s.spec.entry(A)["metrics"] == other
+        s.stage([PatchOp(A, "add", "/metrics", implicit)])
+        assert s.spec.pending == []
+        if saved == 1 and saved is not True:
+            as_float = {**implicit, "children": [{**leaf, "count_must_match": 1.0}]}
+            s.stage([PatchOp(A, "add", "/metrics", as_float)])
+            assert s.spec.pending == []
 
     def test_a_null_metrics_in_the_file_is_no_tree_of_its_own(self, tmp_path):
         """``"metrics": null`` is a flat entry (`has_metrics`): the tree

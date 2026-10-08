@@ -7926,9 +7926,13 @@ CONNECTED = """() => [...window.DstfGrips.instances.values()]
 
 
 def test_a_rebuilt_page_leaves_no_hover_instance_behind(tmp_path, playwright_browser):
-    """A criterion added from a plot's `+` rebuilds every card: each
-    dropped plot takes its hover instance — and that instance's document
-    and window listeners — with it, and each plot drawn again has its own."""
+    """A criterion added from a plot's `+` rebuilds every card, and so does
+    the Discard that takes it away: each dropped plot takes its hover
+    instance — and that instance's document and window listeners, the
+    window's `scroll` one among them — with it, and each plot drawn again
+    has its own. Six rebuilds on, the document and the window hold what
+    they held after the first build; the page's ONE `mousemove` listener,
+    which keeps the pointer for every plot, is still one."""
     with _served(tmp_path, playwright_browser, project=_grips_project) as page:
         page.wait_for_timeout(700)
         first = page.evaluate(CONNECTED)
@@ -7936,35 +7940,50 @@ def test_a_rebuilt_page_leaves_no_hover_instance_behind(tmp_path, playwright_bro
         assert len(first) == page.locator(".js-plotly-plot").count()
 
         def held() -> list[int]:
-            """Each instance holds one of each: the page's others aside."""
+            """Each instance holds one of each: the page's others aside.
+            Last, the document's `mousemove` listeners — none is an
+            instance's."""
             n = len(page.evaluate(CONNECTED))
             return [
                 _listeners(page, "mousedown") - n,
                 _listeners(page, "mouseup") - n,
                 _listeners(page, "blur", on="window") - n,
+                _listeners(page, "scroll", on="window") - n,
+                _listeners(page, "mousemove"),
             ]
 
         others = held()
+        assert others[-1] >= 1, others  # the page's pointer is listened for
         rows = page.locator(".dstf-crit").count()
-        page.locator(".dstf-plot").first.get_by_role(
-            "button", name="Add a criterion for x"
-        ).click()
-        apply_add = page.get_by_role("button", name="Add", exact=True)
-        expect(apply_add).to_be_visible(timeout=EXPECT_TIMEOUT)
-        apply_add.click()
-        expect(page.locator(".dstf-crit")).not_to_have_count(
-            rows, timeout=EXPECT_TIMEOUT
-        )
-        page.wait_for_timeout(800)
-        after = page.evaluate(CONNECTED)
-        assert after and all(after), after
-        assert len(after) == page.locator(".js-plotly-plot").count()
-        # The dropped plots' listeners went with them: the document and the
-        # window hold one of each per instance, and what they held besides.
-        assert held() == others
-        page.locator(".dstf-header-row").get_by_role(
-            "button", name=re.compile("Discard")
-        ).click()
+        for _ in range(3):
+            page.locator(".dstf-plot").first.get_by_role(
+                "button", name="Add a criterion for x"
+            ).click()
+            apply_add = page.get_by_role("button", name="Add", exact=True)
+            expect(apply_add).to_be_visible(timeout=EXPECT_TIMEOUT)
+            apply_add.click()
+            expect(page.locator(".dstf-crit")).to_have_count(
+                rows + 1, timeout=EXPECT_TIMEOUT
+            )
+            page.wait_for_timeout(800)
+            after = page.evaluate(CONNECTED)
+            assert after and all(after), after
+            assert len(after) == page.locator(".js-plotly-plot").count()
+            # The dropped plots' listeners went with them: the document and
+            # the window hold one of each per instance, and what they held
+            # besides.
+            assert held() == others
+            page.locator(".dstf-header-row").get_by_role(
+                "button", name=re.compile("Discard")
+            ).click()
+            expect(page.locator(".dstf-crit")).to_have_count(
+                rows, timeout=EXPECT_TIMEOUT
+            )
+            page.wait_for_timeout(800)
+            back = page.evaluate(CONNECTED)
+            assert back and all(back), back
+            assert len(back) == page.locator(".js-plotly-plot").count()
+            assert held() == others
 
 
 def test_a_touch_screen_shows_the_open_criterions_grips_always(
@@ -8169,6 +8188,72 @@ def test_a_plot_wheeled_under_a_pointer_never_moved_over_it_shows_its_arrows(
         assert _wheel_to(page, -by) == [start, []]
         page.wait_for_timeout(300)
         assert _displayed(page) == []
+
+
+#: Count IN THE PAGE the `scroll` events the window hears and the hit tests
+#: made (`document.elementFromPoint`: the hover module's one, asking what
+#: is under the pointer after a scroll — grips.js `rehere`).
+FRAME_WATCH = """
+() => {
+  const watch = window.__dstfFrames = {scrolls: 0, tests: 0};
+  const real = document.elementFromPoint.bind(document);
+  document.elementFromPoint = (x, y) => { watch.tests++; return real(x, y); };
+  window.addEventListener('scroll', () => { watch.scrolls++; },
+    {capture: true, passive: true});
+}
+"""
+
+#: Scroll ``n`` boxes of the page's own in ONE task — the browser sends
+#: each its `scroll` event in the next frame, all in that frame — and
+#: return what `FRAME_WATCH` counted two frames on.
+SCROLL_BURST = """
+async (n) => {
+  const watch = window.__dstfFrames, boxes = [];
+  for (let i = 0; i < n; i++) {
+    const box = document.createElement('div'), tall = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:0;bottom:0;width:20px;height:20px;'
+      + 'overflow:auto;opacity:0;pointer-events:none';
+    tall.style.height = '200px';
+    box.appendChild(tall);
+    document.body.appendChild(box);
+    boxes.push(box);
+  }
+  const frame = () => new Promise(done => requestAnimationFrame(done));
+  await frame(); await frame();
+  watch.scrolls = watch.tests = 0;
+  for (const box of boxes) box.scrollTop = 50;
+  await frame(); await frame();
+  const counted = {scrolls: watch.scrolls, tests: watch.tests,
+                   instances: window.DstfGrips.instances.size};
+  for (const box of boxes) box.remove();
+  return counted;
+}
+"""
+
+
+def test_the_scrolls_of_one_frame_are_one_look_under_the_pointer(
+    tmp_path, playwright_browser
+):
+    """The window hears every scroll of the page, each scrolling box's own:
+    six in one frame are six events, and the hover module looks under the
+    pointer ONCE for them, per plot — in the frame after, not once per
+    event. And again for the next frame's: the one look is asked for anew."""
+    project = partial(_checkpoints_project, places=((500, 0.5),))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        four = _group("points", 0, FOUR)
+        (ring,) = _areas(page)["points/0"]["rings"]
+        _rest(page)
+        page.mouse.move(ring[0], ring[1] - 30)
+        page.mouse.move(*ring, steps=5)
+        assert _displayed(page) == four
+        page.evaluate(FRAME_WATCH)
+        for _ in range(2):
+            counted = page.evaluate(SCROLL_BURST, 6)
+            assert counted["scrolls"] == 6, counted
+            assert counted["tests"] == counted["instances"] >= 1, counted
+        assert _displayed(page) == four  # nothing moved under the pointer
 
 
 # -- a shape no editor moves takes no pointer ----------------------------------
@@ -10741,7 +10826,11 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
     own ring a pixel at a time — the arrows that would be drawn on one
     spot too, each moved a step across its axis (`SHIFTED`: two
     checkpoints 50 px apart, 8 px apart, on one spot) and painted where
-    that puts it. And a press on an arrow's middle drags THAT arrow: held,
+    that puts it: with the pointer on an arrow's middle the screen holds
+    the cluster's arrows in the grips' orange, as many as with the pointer
+    on a ring (an arrow in the plot's own background is displayed, under
+    the pointer and takes the press all the same). And a press on an
+    arrow's middle drags THAT arrow: held,
     it follows the pointer; let go, the one cell of its own row moved, by
     the 12 px the pointer went, and no other — the first's `after` where
     it stood on the second's `before`, the `before` of the middle of
@@ -10762,6 +10851,9 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
         assert sorted(tails) == every
 
         reach = {}
+        whole = 0.8 * ARROW_PX * APART.get(case, 4)
+        _rest(page)
+        assert _orange_in(page, *areas.values()) == 0, case
         for tail in tails:
             arrow, home = _come_to(page, f"/{tail}")
             # From the ring onto the arrow: shown at every pixel of the way.
@@ -10776,6 +10868,10 @@ def test_every_arrow_of_a_cluster_is_under_the_pointer_and_drags_its_own_row(
                 assert state["displayed"], (case, tail, k, state)
                 own += state["index"] == arrow["index"]
                 under.add(state["hit"])
+                if k == 3:
+                    # On the screen, with the pointer on its middle.
+                    painted = _orange_in(page, *areas.values())
+                    assert painted >= whole, (case, tail, painted)
             reach[tail] = (own, sorted(under))
         print("REACH", case, reach)
         assert reach == {tail: (7, [tail]) for tail in tails}, (case, reach)

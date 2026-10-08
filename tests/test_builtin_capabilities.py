@@ -707,6 +707,18 @@ async def test_a_negative_zero_typed_in_a_criterions_field_is_staged_as_zero(
         assert "edit-criteria" not in errors
 
 
+async def test_a_tiny_number_typed_in_a_criterions_field_is_staged_as_typed(session):
+    """What makes a typed `-0` a zero makes nothing else one: `1e-5` in a
+    tolerance and `-1e-9` in a bound are staged as those numbers."""
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(WINDOWED))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        _keys(user, _number(user, "Lower bound (optional)"), "-1e-9")
+        assert session.tree(A)["min_value"] == -1e-9
+        _keys(user, _number(user, "Upper bound (optional)"), "1e-5")
+        assert session.tree(A) == {**WINDOWED, "min_value": -1e-9, "max_value": 1e-5}
+        assert "edit-criteria" not in errors
+
+
 async def test_a_negative_tube_width_typed_puts_the_leaf_back(session):
     """`-0.3` typed over a tube's width of 0.3 — linked: both sides —
     passes through nothing and `-0`, which the leaf takes; refused, the

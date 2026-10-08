@@ -272,6 +272,32 @@ async def test_a_negative_zero_typed_is_a_zero(typed):
         assert heard[1:] == [-0.5, None]
 
 
+@pytest.mark.parametrize(
+    ("typed", "number"),
+    [("1e-5", 1e-5), ("-1e-9", -1e-9), ("0.00001", 1e-5), ("-5e-324", -5e-324)],
+)
+async def test_a_tiny_number_typed_is_not_a_zero(typed, number):
+    """Only a ZERO loses its sign: a number next to zero — a tolerance of
+    1e-5, a bound of −1e-9, the smallest float there is — is handed on as
+    typed, sign and all."""
+    import math
+
+    made, heard = {}, []
+
+    def root():
+        made["n"] = TypedNumber(
+            label="n", value=0.3, on_change=lambda e: heard.append(e.value)
+        )
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(TypedNumber).trigger("update:modelValue", typed)
+        assert heard == [number] and made["n"].value == number
+        assert number != 0 and math.copysign(1.0, heard[0]) == math.copysign(
+            1.0, number
+        )
+
+
 async def test_an_edit_resends_the_field_only_when_its_hint_changes(monkeypatch):
     """A prop written is the whole field sent again. The hint is written
     when a value takes it away and when a clearing brings it back, not on
