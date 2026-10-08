@@ -436,3 +436,41 @@ def test_the_running_page_at_1024_keeps_its_words_on_the_page(
     finally:
         _release(cfg, A)
         _stop(proc)
+
+
+def test_a_failed_run_s_reason_is_on_its_page_after_its_queue_row_is_cleared(
+    tmp_path, playwright_browser
+):
+    """The backend's own message, one line of it in the strip and the whole
+    on hover — it was on the queue's row alone, and Clear finished took it."""
+    proc, _url, page, _context, errors, _cfg = _served(
+        tmp_path, playwright_browser, setup=_gated(A)
+    )
+    said = re.compile(
+        r"^Python execution failed: RuntimeError: boom in simulate — fix the "
+        r"model or its settings, then queue it again\.$"
+    )
+    try:
+        _box(page, A).click()
+        _queue(page, "Queue 1")
+        expect(_words(page, A)).to_have_text(
+            re.compile("^failed: .*boom in simulate$"), timeout=RUN_TIMEOUT
+        )
+        page.get_by_role("button", name="Clear finished").click()
+        expect(page.locator(".dstf-queue-row")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(_suite_status(page, A)).to_have_text("SIM_FAIL")
+
+        page.locator(f".ag-row[row-id='{A}'] a").first.click()
+        expect(page).to_have_url(
+            re.compile(r"/test/FakeLib\.A$"), timeout=EXPECT_TIMEOUT
+        )
+        strip = page.locator(STRIP)
+        expect(strip).to_have_text(said, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-strip")).to_have_class(re.compile("dstf-strip-red"))
+        strip.hover()
+        tip = page.locator(".q-tooltip", has_text="Traceback (most recent call last)")
+        expect(tip).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(tip).to_contain_text("RuntimeError: boom in simulate")
+        assert _console(errors) == []
+    finally:
+        _stop(proc)

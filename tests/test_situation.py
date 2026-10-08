@@ -6,11 +6,20 @@ from dataclasses import replace
 
 import pytest
 
-from dstf.authoring.queue_rows import QueueRow
+from dstf.authoring import live_rows
+from dstf.authoring.live_rows import NOT_AVAILABLE, Partial
+from dstf.authoring.queue_rows import RESTARTING, QueueRow
 from dstf.authoring.situation import CANCELLED_SENTENCE, Situation, Strip, strip_for
 from dstf.backends.pool import ItemState
 
 S = Situation
+
+
+def _said(strip: Strip) -> tuple[Situation, str, str]:
+    """A strip's situation, tone and sentence — what the tables below pin;
+    its note and its tip have tests of their own."""
+    return strip.situation, strip.tone, strip.sentence
+
 
 # The test's row in the simulation queue (`queue_rows.queue_row`), one per
 # state an item passes through.
@@ -251,7 +260,7 @@ ROWS = [
 
 @pytest.mark.parametrize(("inputs", "situation", "tone", "sentence"), ROWS)
 def test_each_situation_has_its_tone_and_sentence(inputs, situation, tone, sentence):
-    assert strip_for(**inputs) == Strip(situation, tone, sentence)
+    assert _said(strip_for(**inputs)) == (situation, tone, sentence)
 
 
 def test_the_values_are_the_lower_case_names():
@@ -380,12 +389,16 @@ NEW_ROWS = [
 
 @pytest.mark.parametrize(("inputs", "situation", "tone", "sentence"), NEW_ROWS)
 def test_new_variables_ask_for_the_test_to_be_queued(inputs, situation, tone, sentence):
-    assert strip_for(**inputs) == Strip(situation, tone, sentence)
+    assert _said(strip_for(**inputs)) == (situation, tone, sentence)
 
 
 def test_nothing_new_is_todays_sentence():
     for inputs, situation, tone, sentence in ROWS:
-        assert strip_for(**inputs, new_variables=0) == Strip(situation, tone, sentence)
+        assert _said(strip_for(**inputs, new_variables=0)) == (
+            situation,
+            tone,
+            sentence,
+        )
 
 
 @pytest.mark.parametrize(
@@ -505,3 +518,127 @@ def test_a_refused_test_does_not_offer_accept_as_the_next_action():
     assert (
         "accept" not in strip_for(status="FAIL", has_result=True, refused="x").sentence
     )
+
+
+# -- a running test's file, and a run that did not finish (D151) -----------------
+
+
+def test_a_running_strip_says_how_far_the_file_has_got_where_it_is_read():
+    live = replace(RUNNING, progress="t = 42 / 100 s")
+    strip = strip_for(queue=live, status="NOT RUN")
+    assert _said(strip) == (S.RUNNING, "grey", "Running on worker 2 — t = 42 / 100 s")
+    assert strip.note == ""
+    starting = strip_for(queue=replace(RUNNING, progress="starting"))
+    assert starting.sentence == "Running on worker 2 — starting"
+    restarting = strip_for(queue=replace(RUNNING, progress=RESTARTING))
+    assert restarting.sentence == "Running on worker 2 — worker restarting"
+    assert restarting.note == ""
+
+
+def test_a_running_strip_says_once_that_its_backend_has_no_live_view():
+    strip = strip_for(queue=RUNNING, status="NOT RUN")
+    assert strip.sentence == "Running on worker 2 — 42 s"
+    assert strip.note == NOT_AVAILABLE
+    assert strip_for(queue=QUEUED).note == ""
+
+
+@pytest.mark.parametrize(
+    ("how", "status", "situation", "tone"),
+    [
+        (live_rows.CANCELLED, "NOT RUN", S.CANCELLED, "grey"),
+        (live_rows.TIMED_OUT, "SIM_FAIL", S.SIM_FAIL, "red"),
+        (live_rows.FAILED, "SIM_FAIL", S.SIM_FAIL, "red"),
+    ],
+)
+def test_a_partial_result_s_strip_says_where_it_stopped(how, status, situation, tone):
+    partial = Partial(how, 19.2, 200.0)
+    strip = strip_for(status=status, has_result=status == "SIM_FAIL", partial=partial)
+    assert _said(strip) == (situation, tone, f"{how} at t = 19.2 of 200 s — not scored")
+    # ... whether or not the queue still lists the run
+    listed = strip_for(queue=CANCELLED, status=status, partial=partial)
+    assert listed.sentence == strip.sentence
+
+
+def test_a_partial_result_comes_after_the_queue_s_hold_and_pending_edits():
+    partial = Partial(live_rows.CANCELLED, 19.2, 200.0)
+    assert strip_for(queue=RUNNING, partial=partial).situation is S.RUNNING
+    assert strip_for(edits=1, status="NOT RUN", partial=partial).situation is S.EDITS
+    # ... and says nothing once the test has a result that was scored
+    scored = strip_for(status="PASS", has_result=True, partial=partial)
+    assert scored.situation is S.PASS
+
+
+# -- a failed run's own reason ---------------------------------------------------
+
+TIMEOUT = (
+    "Timed out after 12s (raise it per test with simulation.timeout in "
+    "test_spec.json, or globally with --timeout)"
+)
+CRASH = (
+    "Python execution failed: Traceback (most recent call last):\n"
+    '  File "A.py", line 3, in simulate\n'
+    "RuntimeError: boom in simulate"
+)
+
+
+def test_a_failed_run_s_strip_says_the_backend_s_reason_then_the_next_action():
+    """It was on the queue's row alone, which Clear finished removes: the
+    strip reads the comparison's message, the stored run result's."""
+    strip = strip_for(status="SIM_FAIL", has_result=True, failure=TIMEOUT)
+    assert _said(strip) == (
+        S.SIM_FAIL,
+        "red",
+        f"{TIMEOUT} — fix the model or its settings, then queue it again.",
+    )
+    assert strip.tip == TIMEOUT
+    # with or without the queue's row
+    assert strip_for(queue=SIM_FAILED, status="SIM_FAIL", failure=TIMEOUT) == strip
+
+
+def test_a_long_reason_is_one_line_with_the_whole_of_it_on_hover():
+    strip = strip_for(status="SIM_FAIL", has_result=True, failure=CRASH)
+    assert strip.sentence == (
+        "Python execution failed: RuntimeError: boom in simulate — fix the "
+        "model or its settings, then queue it again."
+    )
+    assert strip.tip == CRASH
+
+
+def test_a_failed_run_that_said_nothing_of_why_keeps_the_plain_sentence():
+    plain = "The simulation failed. Fix the model or its settings, then queue it again."
+    for failure in (None, "", "Simulation failed"):
+        strip = strip_for(status="SIM_FAIL", has_result=True, failure=failure)
+        assert (strip.sentence, strip.tip) == (plain, "")
+
+
+def test_a_failed_partial_result_says_where_it_stopped_and_why():
+    partial = Partial(live_rows.FAILED, 5.85, 30.0)
+    strip = strip_for(
+        status="SIM_FAIL", has_result=True, partial=partial, failure=CRASH
+    )
+    assert strip.sentence == (
+        "Failed at t = 5.85 of 30 s — not scored. Python execution failed: "
+        "RuntimeError: boom in simulate — fix the model or its settings, then "
+        "queue it again."
+    )
+    assert strip.tip == CRASH
+    # a cancel is nobody's failure: no reason to say
+    stopped = Partial(live_rows.CANCELLED, 5.85, 30.0)
+    cancelled = strip_for(status="NOT RUN", partial=stopped, failure="No simulation")
+    assert cancelled.sentence == "Cancelled at t = 5.85 of 30 s — not scored"
+    assert cancelled.tip == ""
+
+
+def test_a_test_no_worker_could_start_says_one_line_of_the_pool_s_message():
+    message = "No Dymola worker could start — worker 0: licence\nsecond line"
+    row = replace(START_FAILED, message=message)
+    strip = strip_for(queue=row, status="NOT RUN")
+    assert _said(strip) == (
+        S.START_FAILED,
+        "red",
+        "No Dymola worker could start — worker 0: licence",
+    )
+    assert strip.tip == message
+    # a message that is not a failure's is not said as one
+    passing = strip_for(status="PASS", has_result=True, failure="ignored")
+    assert passing.sentence == "Passes against its baseline." and passing.tip == ""

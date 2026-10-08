@@ -8,6 +8,7 @@ growing, a zoom surviving, the pills gone — is
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 
 import numpy as np
@@ -22,12 +23,14 @@ from dstf.authoring import live_rows  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import PARTIAL  # noqa: E402
 from dstf.authoring.live_rows import NOT_AVAILABLE, NOT_SCORED, WAITING  # noqa: E402
+from dstf.authoring.queue_rows import one_line  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell.shell import TICK, Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
-from dstf.authoring.situation import Situation  # noqa: E402
+from dstf.authoring.situation import Situation, strip_for  # noqa: E402
 from dstf.backends.common.live_mat import LiveMatReader  # noqa: E402
 from dstf.backends.pool import ItemState  # noqa: E402
+from dstf.reporting.status import SIM_FAIL, classify  # noqa: E402
 from live_fake import live_project, make_live, steer  # noqa: E402
 from test_session import A  # noqa: E402
 
@@ -342,3 +345,109 @@ async def test_a_cancelled_run_s_page_shows_what_it_wrote(live):
         view = shell.view_for(Selection(tests=frozenset({A})))
         (accept,) = [c for c in caps.registered_capabilities() if c.name == "accept"]
         assert accept.available(view) == PARTIAL
+
+
+# -- a failed run's own reason, on its page ---------------------------------------
+
+FIX_IT = " — fix the model or its settings, then queue it again."
+
+
+def _timeout(shell: Shell, seconds: int) -> None:
+    """A's own timeout in the spec, read by the Session."""
+    spec_path = shell.session.spec.path
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["simulation"]["timeout"] = seconds
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    shell.session.reload()
+    shell.tick()
+
+
+async def test_a_timed_out_run_s_strip_says_why_and_keeps_saying_it(live):
+    """The reason was on the queue's row alone, and Clear finished removes
+    the row. The strip reads the stored run result's message."""
+    shell, examples = live
+    session = shell.session
+    _timeout(shell, 8)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        steer(examples, A, hold=4)  # held at t = 0.15 until the timeout
+        (item,) = session.enqueue([A])
+        await _until(
+            shell,
+            lambda: _strip(user).endswith("t = 0.15 / 1 s"),
+            "t = 0.15",
+        )
+        await _until(
+            shell, lambda: item.state is ItemState.FAILED, "the timeout", tries=3000
+        )
+        await _until(
+            shell, lambda: page.strip.situation is Situation.SIM_FAIL, "its strip"
+        )
+
+        message = session.comparisons[A].error_message
+        assert "8.0s timeout" in message
+        said = f"Timed out at t = 0.15 of 1 s — not scored. {message}{FIX_IT}"
+        assert _strip(user) == said
+        assert "dstf-strip-red" in _one(user, "strip").classes
+        assert page.strip.tip.visible and page.strip.tip.text == message
+        assert _one(user, "status").text == "SIM_FAIL"
+
+        session.clear_finished()  # the queue's row, and its copy of the reason
+        shell.tick()
+        assert session.queue == [] and _strip(user) == said
+        assert page.strip.tip.text == message
+
+
+async def test_a_crashed_run_s_strip_says_why_after_the_row_and_the_tool_went(plain):
+    """A run that raised, on a backend with no partial result to show: the
+    backend's message, one line of it, then the next action — after Clear
+    finished, and in a tool started again on the same work dir."""
+    shell, examples = plain
+    session = shell.session
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        steer(examples, A, boom="")
+        (item,) = session.enqueue([A])
+        await _until(
+            shell, lambda: item.state is ItemState.FAILED, "the crash", tries=3000
+        )
+        await _until(
+            shell, lambda: page.strip.situation is Situation.SIM_FAIL, "its strip"
+        )
+
+        message = session.comparisons[A].error_message
+        assert "Traceback" in message and "boom in simulate" in message
+        line = one_line(message)
+        assert line.endswith("RuntimeError: boom in simulate") and "\n" not in line
+        said = f"{line}{FIX_IT}"
+        assert _strip(user) == said
+        assert page.strip.tip.visible and page.strip.tip.text == message
+        assert session.partial(A) is None  # nothing of it is drawn
+
+        session.clear_finished()
+        shell.tick()
+        assert session.queue == [] and _strip(user) == said
+
+    # A tool started again reads the reason from the run's stored result.
+    session.wait_background(30)
+    again = Shell(session.spec.path.parent / "testing.json", work_dir=_work(session))
+    again.session.open(
+        session.spec.path.parent / "testing.json", work_dir=_work(session)
+    )
+    again.session.rescan_done.wait(30)
+    comp = again.session.comparisons[A]
+    # (The JSON driver reads the failure back from result.json, without the
+    # "Python execution failed:" its run result led with: the same reason.)
+    comp = again.session.comparisons[A]
+    assert classify(comp) == SIM_FAIL
+    assert comp.error_message.rstrip().endswith("RuntimeError: boom in simulate")
+    strip = strip_for(status=SIM_FAIL, has_result=True, failure=comp.error_message)
+    assert strip.sentence == f"RuntimeError: boom in simulate{FIX_IT}"
+    assert strip.tip == comp.error_message and "Traceback" in strip.tip
+    again.session.stop_queue()
+
+
+def _work(session):
+    return session.project.config.work_dir

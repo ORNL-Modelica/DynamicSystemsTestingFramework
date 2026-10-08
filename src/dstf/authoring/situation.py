@@ -24,6 +24,7 @@ from ..comparison.tree_spec import tree_variables
 from ..reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL
 from .capabilities import plural
 from .live_rows import CANCELLED, NOT_AVAILABLE
+from .queue_rows import one_line
 
 if TYPE_CHECKING:
     from ..backends.types import TestResult
@@ -71,9 +72,26 @@ class Strip:
     #: A line under the strip, said once: why a running test's page shows
     #: no growing trace (D151). Empty for every other strip.
     note: str = ""
+    #: What the sentence is one line of — a failed run's message in full,
+    #: shown on hover. Empty where the sentence is the whole of it.
+    tip: str = ""
 
 
 _ACCEPT_IT = "If the new behaviour is right, accept it as the baseline."
+
+#: What a failed run's strip ends with: its one next action.
+_FIX_IT = "fix the model or its settings, then queue it again."
+#: The comparator's words for a failed run that said nothing of why.
+_NO_REASON = "Simulation failed"
+
+
+def _why(failure: str | None) -> str:
+    """A failed run's own reason as one line with no full stop — the
+    backend's message, as the Suite table's Message column has it — or
+    ``""`` where the run recorded none."""
+    line = one_line(failure or "").rstrip(".")
+    return "" if line == _NO_REASON else line
+
 
 #: The strip of a test whose run was cancelled (D150).
 CANCELLED_SENTENCE = (
@@ -146,6 +164,7 @@ def strip_for(
     new_variables: int = 0,
     refused: str | None = None,
     partial: Partial | None = None,
+    failure: str | None = None,
 ) -> Strip:
     """The strip for one test. ``queue`` is its row in the simulation
     queue (`queue_rows.queue_row`), None when the queue lists no item of
@@ -162,7 +181,10 @@ def strip_for(
     the last run did not record (:func:`new_variables`); ``refused`` why
     the comparison refused the test (`reporting.status.refusal`), or None;
     ``partial`` what its last run left when it did not finish
-    (`Session.partial`), or None."""
+    (`Session.partial`), or None; ``failure`` the message its comparison
+    carries (`TestComparison.error_message`) — for a failed run the
+    backend's own, read back from the run's stored result, so it is there
+    after the queue's row is cleared and after the tool is started again."""
     S = Situation
     if queue is not None and queue.state is ItemState.WAITING:
         return Strip(S.QUEUED, "grey", f"Queued — {queue.words}")
@@ -194,21 +216,33 @@ def strip_for(
         # nobody's failure; a timeout and a crash are the test's.
         if partial.how == CANCELLED:
             return Strip(S.CANCELLED, "grey", partial.sentence)
-        return Strip(S.SIM_FAIL, "red", partial.sentence)
+        why = _why(failure) if status == SIM_FAIL else ""
+        return Strip(
+            S.SIM_FAIL,
+            "red",
+            f"{partial.sentence}. {why} — {_FIX_IT}" if why else partial.sentence,
+            tip=(failure or "") if why else "",
+        )
     if queue is not None and queue.state is ItemState.CANCELLED:
         return Strip(S.CANCELLED, "grey", CANCELLED_SENTENCE)
     if queue is not None and queue.state is ItemState.FAILED and not queue.started:
-        return Strip(S.START_FAILED, "red", queue.message or queue.words)
+        said = queue.message or ""
+        return Strip(S.START_FAILED, "red", one_line(said) or queue.words, tip=said)
     # NOT RUN is the classifier's word for this situation (D145): the
     # header's badge and the strip say one thing. A SIM_FAIL is a run that
     # reached a verdict, and reads as one below.
     if status == NOT_RUN or (not has_result and status is None):
         return Strip(S.NO_RESULT, "grey", "No result yet — queue it to simulate it.")
     if status == SIM_FAIL:
+        # The backend's own reason, not only that it failed: it was on the
+        # queue's row alone, and Clear finished took it away.
+        why = _why(failure)
+        if why:
+            return Strip(S.SIM_FAIL, "red", f"{why} — {_FIX_IT}", tip=failure or "")
         return Strip(
             S.SIM_FAIL,
             "red",
-            "The simulation failed. Fix the model or its settings, then queue it again.",
+            f"The simulation failed. {_FIX_IT[0].upper()}{_FIX_IT[1:]}",
         )
     if refused and status == FAIL:
         # Before NEW_VARIABLES: a rerun records the variable, and the test

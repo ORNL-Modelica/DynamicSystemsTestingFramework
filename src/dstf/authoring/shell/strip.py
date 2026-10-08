@@ -42,6 +42,11 @@ class StatusStrip:
             .mark("strip") as self.row
         ):
             self.text = ui.label().classes("dstf-strip-text").mark("strip-text")
+            # The sentence in full where it is one line of more (a failed
+            # run's message): on hover, and for a screen reader.
+            with self.text:
+                self.tip = ui.tooltip("").mark("strip-text:tip")
+            self.tip.set_visibility(False)
             with ui.row().classes("dstf-strip-actions items-center gap-2"):
                 self.preview = (
                     ui.button("Preview and save", on_click=self._preview)
@@ -114,6 +119,8 @@ class StatusStrip:
         self.text.set_text(strip.sentence)
         self.note.set_text(strip.note)
         self.note.set_visibility(bool(strip.note))
+        self.tip.set_text(strip.tip)
+        self.tip.set_visibility(bool(strip.tip))
         # Before the bar's refresh: its emphasis reads the situation.
         self.situation = strip.situation
         self._show_edit_buttons(
@@ -144,6 +151,7 @@ class StatusStrip:
         self.situation = None
         self.text.set_text("")
         self.note.set_visibility(False)
+        self.tip.set_visibility(False)
         self._tone("grey")
         self._show_edit_buttons(False)
         self._show_queue_buttons(None)
