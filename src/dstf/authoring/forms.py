@@ -68,10 +68,10 @@ _OTHER = {"lower": "upper", "upper": "lower"}
 #: there — and so carry a ⌖ (D149); a two-sided tolerance always does, each
 #: side its edge. A mode, a minimum width, nrmse's one ceiling name none.
 PLACED = ("min_value", "max_value")
-#: The room a ⌖ takes at a field's right end, px (Quasar's `append`
-#: slot: 12 px of padding and a dense round `xs` button), which a field
+#: The room a ⌖ takes at a field's right end, px — a dense round `xs`
+#: button and the 4 px the stylesheet leaves before it — which a field
 #: sized to show its label uncut has to add.
-PLACE_PX = 36
+PLACE_PX = 24
 #: `render_form`'s ``place``: draw the ⌖ of the field at this pointer (its
 #: keys into the leaf), with this label, into the current slot.
 Place = Callable[[tuple, str], None]

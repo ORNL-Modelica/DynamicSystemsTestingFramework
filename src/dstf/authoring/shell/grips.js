@@ -676,12 +676,20 @@
       };
       // The held handle is let go: no move of it is sent from here on,
       // and the release is numbered past every one that was (`released`).
-      // Under MOVED px on both axes Plotly moves nothing and says nothing:
-      // the drag ends here, and the server is told so.
+      // Where it is let go is said ONCE MORE first: a move is sent a frame
+      // late and PACE ms apart, so the last one the fields showed could be
+      // short of the release — and stayed so for as long as the server
+      // took to stage it. Under MOVED px on both axes Plotly moves nothing
+      // and says nothing: the drag ends here, and the server is told so.
       if (st.held) {
-        st.ended = { index: st.held.index, seq: ++seq };
+        const held = st.held;
         st.held = null;
-        if (st.travel && st.travel.x < MOVED && st.travel.y < MOVED) {
+        const unmoved = st.travel && st.travel.x < MOVED && st.travel.y < MOVED;
+        held.to = [e.clientX, e.clientY];
+        const update = unmoved ? null : would(held);
+        if (update) emitEvent("dstf_grip_move", { plot: id, seq: ++seq, update });
+        st.ended = { index: held.index, seq: ++seq };
+        if (unmoved) {
           emitEvent("dstf_grip_move", { plot: id, seq: st.ended.seq, end: true });
         }
       }

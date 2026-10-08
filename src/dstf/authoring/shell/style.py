@@ -449,6 +449,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    which the server renders. And over an armed criterion's plot the pointer
    is one that places. */
 .dstf-arm { color: var(--dstf-text-muted); }
+/* Close to its field's end: Quasar's 12 px before an appended control made
+   a points row, ten controls and eight of these, a line taller at 1280. */
+.q-field__append:has(> .dstf-arm) { padding-left: 4px; }
 .dstf-arm[aria-pressed="true"] {
   color: var(--dstf-accent);
   background: color-mix(in srgb, var(--dstf-accent) 18%, transparent);

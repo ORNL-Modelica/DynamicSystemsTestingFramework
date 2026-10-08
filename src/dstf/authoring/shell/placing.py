@@ -57,12 +57,14 @@ class Placing:
 
     def button(self, owner: str, pointer: Hashable, label: str) -> None:
         """Draw the ⌖ of the field ``owner``'s panel calls ``pointer``,
-        into the current slot. A button, so Tab reaches it and Enter
-        presses it; its click never reaches the field it sits in."""
+        into the current slot; its click never reaches the field it sits
+        in. Out of the Tab order: it is the first half of a gesture whose
+        second is a click on the plot, and in it Tab from a field met a ⌖
+        before the next field — twice in every tolerance."""
         armed = Armed(owner, pointer, label)
         button = (
             ui.button(icon="my_location", color=None)
-            .props("flat dense round size=xs")
+            .props('flat dense round size=xs tabindex="-1"')
             .classes("dstf-arm")
             .on(
                 "click",
@@ -72,8 +74,9 @@ class Placing:
         )
         button.props["aria-label"] = f"Set {label} by a click on the plot"
         button.props["aria-pressed"] = "true" if self.armed == armed else "false"
-        with button:
-            ui.tooltip("Set by a click on the plot")
+        # The browser's own tooltip, not an element: a table of thirty
+        # checkpoints draws 180 of these on every rebuild of the editor.
+        button.props["title"] = "Set by a click on the plot"
         self._buttons[owner, pointer] = button
 
     def toggle(self, armed: Armed) -> None:
