@@ -13,17 +13,16 @@ import numpy as np
 import pytest
 
 from conftest import make_test_model
-from dstf.authoring.capabilities import Artifact, Job, OpenProject, Patch, StoreWrite
+from dstf.authoring.capabilities import Artifact, OpenProject, Patch, StoreWrite
 from dstf.authoring.session import (
     NO_TREE,
     NOTHING_SCORED,
-    JobRunningError,
-    LockedError,
     Session,
     SessionView,
     StaleSpecError,
 )
 from dstf.authoring.spec_document import PatchOp, SpecDocument
+from dstf.backends.pool import ItemState
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config, ConfigError
 from dstf.discovery.patch_apply import PatchError
@@ -555,7 +554,7 @@ class TestOpen:
     ):
         """``metadata`` with no ``backend_name`` (written when the key was
         "simulator") — ``recorded_backend``'s warning is the project's first
-        notice, so the job panel shows it."""
+        notice, so the queue panel shows it."""
         cfg, work = _project(tmp_path)
         (work / "status.json").write_text(
             json.dumps({"metadata": {"simulator_name": "Python"}, "tests": []})
@@ -691,7 +690,7 @@ class TestOpen:
         scorer bug) must not abort the read: every result is stored, every
         model is announced, the batch event fires, the failed model's stale
         verdict is dropped rather than shown, and the failure is raised once
-        — `_finish_job` records it as the job's error; `open` propagates it."""
+        — `open` propagates it."""
         import dstf.authoring.session as session_mod
 
         real = session_mod.compare_one
@@ -1009,9 +1008,11 @@ class TestOpen:
         phases = [e["phase"] for e in events]
         assert phases.index("done") < phases.index("rescan")
 
-    def test_a_locked_model_is_left_to_its_job_by_the_rescan(
+    def test_a_running_model_is_left_to_its_run_by_the_rescan(
         self, tmp_path, monkeypatch
     ):
+        """Its directory is being rewritten and its result arrives when its
+        run ends: the rescan's re-merge neither re-reads nor rescores it."""
         import queue
 
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -1022,14 +1023,7 @@ class TestOpen:
         s = Session(post=posted.put)
         s.open(cfg, work_dir=tmp_path / "work")
         comp = s.comparisons[before.model_id]
-        release = threading.Event()
-        s.apply(
-            Job(
-                run=lambda ctx: release.wait(10),
-                label="rerun",
-                models=frozenset({before.model_id}),
-            )
-        )
+        _running(s, before.model_id)
         rescored = []
         s.on("results", lambda e: rescored.append(set(e["models"])))
         # The rescan's re-merge, run on "the UI loop" — and the open's other
@@ -1037,11 +1031,8 @@ class TestOpen:
         for _ in range(2):
             posted.get(timeout=10)()
         assert s.rescan_done.is_set()
-        assert s.comparisons[before.model_id] is comp  # not rescored under the lock
+        assert s.comparisons[before.model_id] is comp  # not rescored mid-run
         assert all(before.model_id not in r for r in rescored)
-        release.set()
-        posted.get(timeout=10)()  # the job's completion
-        assert s.running is None
 
     def test_a_late_thread_from_a_previous_open_does_not_mark_this_one_ready(
         self, tmp_path, monkeypatch
@@ -1054,7 +1045,7 @@ class TestOpen:
         s = Session()
         s.open(cfg, work_dir=tmp_path / "work")
         first_rescan, first_index = s.rescan_done, s.overlay_index_ready
-        s.open(cfg, work_dir=tmp_path / "work")  # allowed: no job, no pending edits
+        s.open(cfg, work_dir=tmp_path / "work")  # nothing queued, no pending edits
         assert s.rescan_done is not first_rescan
         assert s.overlay_index_ready is not first_index
         assert s.rescan_done.wait(10.0) and s.overlay_index_ready.wait(5.0)
@@ -1523,7 +1514,7 @@ class TestRescoreAndStage:
         assert session.tree_or_reason(D)[1] is None
         session.comparisons[D].variables[0].name = "x[1]"
         assert session.tree_or_reason(D) == (None, STALE)
-        assert STALE == "its last run no longer holds what it scored — rerun it"
+        assert STALE == "its last run no longer holds what it scored — queue it again"
         with pytest.raises(PatchError, match=f"{D}: {STALE}$"):
             session.stage([PatchOp(D, "add", "/metrics/children/0/tolerance", 0.5)])
         session.comparisons[D].variables[0].name = ""
@@ -1809,26 +1800,20 @@ class TestSaveDiscardExport:
         assert "model" not in env
 
 
-def _started(session):
-    """Capture the RunningJob from the started event — reading
-    `session.running` after apply() races a job that completes at once."""
-    jobs = []
-    session.on(
-        "job", lambda e: jobs.append(e["job"]) if e["state"] == "started" else None
-    )
-    return jobs
+def _running(session: Session, model_id: str):
+    """``model_id`` as the queue's RUNNING item, no pool behind it
+    (`test_session_queue.fake_item`): what a test of a file read puts in
+    the queue. `_ended` takes it out. Imported here: that module imports
+    this one."""
+    from test_session_queue import fake_item
+
+    return fake_item(session, model_id, ItemState.RUNNING)
 
 
-class _Gate:
-    """A job that blocks until released, so the lock set can be observed."""
+def _ended(session: Session, item) -> None:
+    from test_session_queue import drop_item
 
-    def __init__(self):
-        self.release = threading.Event()
-        self.seen = None
-
-    def __call__(self, ctx):
-        self.seen = ctx
-        assert self.release.wait(5)
+    drop_item(session, item)
 
 
 class TestOutcomes:
@@ -1838,7 +1823,7 @@ class TestOutcomes:
         before = session.spec.path.read_bytes()
         session.apply(Patch(ops=[LOOSEN]))
         assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
-        assert session.spec.path.read_bytes() == before and session.running is None
+        assert session.spec.path.read_bytes() == before and session.queue == []
         assert session.project.store.get_reference(B) is None
 
     def test_store_write_runs_against_the_store_and_reloads_results(self, session):
@@ -1849,7 +1834,7 @@ class TestOutcomes:
             StoreWrite(run=lambda store: calls.append(store), models=frozenset({B}))
         )
         assert calls == [session.project.store]
-        assert session.spec.pending == [] and session.running is None
+        assert session.spec.pending == [] and session.queue == []
         assert seen and seen[-1] == {A, B, C, D, G}
 
     def test_a_store_write_that_reports_a_line_notices_it_after_the_reload(
@@ -1857,22 +1842,19 @@ class TestOutcomes:
     ):
         order = []
         session.on("results", lambda e: order.append("results"))
-        session.on("job", lambda e: order.append(e["state"]))
+        session.on("notice", lambda e: order.append("notice"))
         events = []
-        session.on(
-            "job", lambda e: events.append(e) if e["state"] == "written" else None
-        )
+        session.on("notice", events.append)
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
         assert session.notices == ["stored 1"]
-        assert [e["state"] for e in events] == ["written"]
-        assert events[0]["message"] == "stored 1"
-        assert order == ["results", "written"]  # the reload first
+        assert events == [{"event": "notice", "message": "stored 1"}]
+        assert order == ["results", "notice"]  # the reload first
 
     def test_a_store_write_that_reports_nothing_notices_nothing(self, session):
-        states = []
-        session.on("job", lambda e: states.append(e["state"]))
+        events = []
+        session.on("notice", events.append)
         session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
-        assert session.notices == [] and states == []
+        assert session.notices == [] and events == []
 
     def test_close_empties_the_notices(self, session):
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
@@ -1916,201 +1898,15 @@ class TestOutcomes:
         assert session.notices == ["stored 1"] and session.artifacts == [art]
         assert session.project is not None
 
-    def test_after_reload_gets_the_rescored_comparisons(self, session):
-        """A job that wrote a run finishes its artifacts with the verdicts
-        (a rerun's dashboard): `after_reload` is called once the reload has
-        rescored, with the project and the Session's comparisons."""
-        seen: list[tuple] = []
-        jobs = _started(session)
-        session.apply(
-            Job(
-                run=lambda ctx: None,
-                label="rerun",
-                models=frozenset({A}),
-                after_reload=lambda project, comps: seen.append((project, comps)),
-            )
-        )
-        assert jobs[0].done.wait(5) and jobs[0].reloaded
-        assert session.wait_background(5)  # the hook runs off the UI loop
-        ((project, comps),) = seen
-        assert project is session.project
-        assert comps == session.comparisons and comps is not session.comparisons
-
-    def test_a_raising_after_reload_does_not_fail_a_good_reload(self, session, caplog):
-        def boom(project, comps):
-            raise OSError("disk full")
-
-        jobs = _started(session)
-        session.apply(
-            Job(
-                run=lambda ctx: None,
-                label="rerun",
-                models=frozenset({A}),
-                after_reload=boom,
-            )
-        )
-        assert jobs[0].done.wait(5)
-        assert jobs[0].error is None and jobs[0].reloaded
-        assert session.wait_background(5)
-        assert "after_reload" in caplog.text
-
-    def test_no_after_reload_for_a_failed_job(self, session):
-        seen: list[object] = []
-
-        def fail(ctx):
-            raise RuntimeError("the run broke")
-
-        jobs = _started(session)
-        session.apply(
-            Job(
-                run=fail,
-                label="rerun",
-                models=frozenset({A}),
-                after_reload=lambda p, c: seen.append(p),
-            )
-        )
-        assert jobs[0].done.wait(5) and jobs[0].error is not None
-        assert session.wait_background(5)
-        assert seen == []
-
-    def test_open_drops_the_last_job(self, session):
-        """The outcome line is project-scoped like a notice: a swap calls
-        open, never close, so LibA's `finished:` would otherwise sit in the
-        next project's panel."""
-        jobs = _started(session)
-        session.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
-        assert jobs[0].done.wait(5)
-        assert session.last_job is jobs[0]
-        config = session.project.config
-        session.open(config.config_file, work_dir=config.work_dir)
-        assert session.last_job is None
-
-    def test_a_failed_open_keeps_the_live_projects_last_job(self, session):
-        """The reset sits at the commit point with the notices': an open that
-        never replaces the project must not blank its outcome line."""
-        from dstf.config import ConfigError
-
-        jobs = _started(session)
-        session.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
-        assert jobs[0].done.wait(5)
-        config = session.project.config
-        (config.work_dir / "status.json").write_text(
-            json.dumps({"metadata": {"backend_name": "Nonesuch"}, "tests": []})
-        )
-        with pytest.raises(ConfigError, match="Nonesuch"):
-            session.open(config.config_file, work_dir=config.work_dir)
-        assert session.last_job is jobs[0]
-
-    def test_job_runs_on_a_thread_locks_its_models_and_reloads_on_completion(
-        self, session
-    ):
-        gate = _Gate()
-        events = []
-        session.on("job", lambda e: events.append(e["state"]))
-        work = session.project.config.work_dir
-
-        def fix_a_then_wait(ctx):
-            # What a rerun does: A's result on disk changes. Reloading must see it.
-            t = [i / 4 for i in range(5)]
-            (work / "test_0001" / "result.json").write_text(
-                json.dumps({"success": True, "time": t, "variables": {"x": t}}),
-                encoding="utf-8",
-            )
-            gate(ctx)
-
-        session.apply(Job(run=fix_a_then_wait, label="rerun", models=frozenset({A})))
-        assert session.running is not None and session.running.models == {A}
-        assert events == ["started"]
-        with pytest.raises(LockedError, match="rerun is running"):
-            session.stage([LOOSEN])
-        with pytest.raises(LockedError):
-            session.rescore(A)
-        with pytest.raises(LockedError):
-            session.apply(StoreWrite(run=lambda s: None, models=frozenset({A, B})))
-        session.stage(
-            [PatchOp(B, "add", "/comparison", {"tolerance": 0.2})]
-        )  # B is free
-        with pytest.raises(JobRunningError):
-            session.apply(Job(run=gate, label="second", models=frozenset({B})))
-        job = session.running
-        gate.release.set()
-        assert job.done.wait(5)
-        assert session.running is None and job.error is None
-        assert gate.seen.models == {A} and gate.seen.project is session.project
-        assert events == ["started", "finished"]
-        assert (
-            classify(session.comparisons[A]) == PASS
-        )  # the reload read the rewritten result
-
-    def test_job_failure_is_recorded_and_unlocks(self, session):
-        jobs = _started(session)
-
-        def boom(ctx):
-            raise RuntimeError("driver died")
-
-        session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
-        (job,) = jobs
-        assert job.done.wait(5)
-        assert session.running is None and "driver died" in str(job.error)
-        session.stage([LOOSEN])  # unlocked again
-
-    def test_job_without_reload_leaves_results_alone(self, session):
-        jobs = _started(session)
-        seen = []
-        session.on("results", lambda e: seen.append(e["models"]))
-        session.apply(
-            Job(
-                run=lambda ctx: None,
-                label="export",
-                models=frozenset(),
-                reloads_results=False,
-            )
-        )
-        (job,) = jobs
-        assert job.done.wait(5)
-        assert seen == [] and session.running is None
-
-    def test_open_and_close_refuse_while_a_job_runs(self, session, tmp_path):
-        gate = _Gate()
-        jobs = _started(session)
-        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        with pytest.raises(JobRunningError):
-            session.close()
-        with pytest.raises(JobRunningError):
-            session.apply(OpenProject(config_path=session.project.config.config_file))
-        gate.release.set()
-        assert jobs[0].done.wait(5)
-
-    def test_completion_goes_through_post(self, tmp_path):
-        cfg, work = _project(tmp_path)
-        posted = []
-        s = Session(post=posted.append)
-        s.open(cfg, work_dir=work)
-        # The open's own post first: the sibling index ready (D141).
-        assert s.overlay_index_ready.wait(5.0)
-        for _ in range(50):
-            if posted:
-                break
-            threading.Event().wait(0.05)
-        posted.pop(0)()
-        s.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
-        deadline = threading.Event()
-        for _ in range(50):
-            if posted:
-                break
-            deadline.wait(0.1)
-        assert (
-            len(posted) == 1 and s.running is not None
-        )  # not finished until the loop runs it
-        posted[0]()
-        assert s.running is None
-
-    def test_artifact_is_recorded_and_nothing_reloads(self, session):
+    def test_artifact_is_recorded_noticed_and_nothing_reloads(self, session):
         seen = []
         session.on("results", lambda e: seen.append(e))
+        noticed = []
+        session.on("notice", noticed.append)
         art = Artifact(paths=[Path("x.png")], label="PNG")
         session.apply(art)
         assert session.artifacts == [art] and seen == []
+        assert noticed == [{"event": "notice", "artifact": art}]
 
     def test_open_project_swaps_the_project(self, session, tmp_path):
         other_cfg, other_work = _project(tmp_path / "other")
@@ -2140,97 +1936,35 @@ class TestOutcomes:
         assert LOOSEN in session.spec.pending
 
 
-class TestLockAndCompletion:
-    """The lock has no side door; completion cannot wedge the Session."""
+class TestWhatAnOutcomeLeavesAlone:
+    """An outcome reaches no further than its own effect: a running model
+    is not read, a write that raises changes nothing, a patch rescores its
+    models only."""
 
-    def test_rescore_of_a_locked_model_is_refused_before_any_staging(self, session):
-        """G is not materializable, so rescore's OWN guard is what refuses
-        (the earlier test hit stage's guard through materialization)."""
-        gate = _Gate()
-        jobs = _started(session)
-        session.apply(Job(run=gate, label="rerun", models=frozenset({G})))
-        with pytest.raises(LockedError, match="rerun is running"):
-            session.rescore(G)
-        assert SessionView(session).is_locked(G) is True
-        gate.release.set()
-        assert jobs[0].done.wait(5)
-
-    def test_a_running_job_records_when_it_started(self, session):
-        """The job panel ignores a status.json older than this, so the
-        previous run's snapshot is never shown as this job's progress."""
-        gate = _Gate()
-        jobs = _started(session)
-        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        assert abs(session.running.started_wall - time.time()) < 5.0
-        gate.release.set()
-        assert jobs[0].done.wait(5)
-
-    def test_a_reload_during_a_job_keeps_the_locked_model_as_it_was(self, session):
-        """What the run pipeline does at start: clear the model's directory.
-        A StoreWrite on a free model reloads results; the locked model must
-        keep its in-memory result and verdict until the job's own reload."""
-        gate = _Gate()
-        jobs = _started(session)
+    def test_a_reload_while_a_model_runs_keeps_it_as_it_was(self, session):
+        """What the pool does when a test starts: clear its directory. A
+        StoreWrite on another model reloads results; the running model
+        keeps what the Session holds for it, and is read again only once
+        its run has ended."""
         work = session.project.config.work_dir
         before = session.comparisons[A]
-        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        item = _running(session, A)
         (work / "test_0001" / "result.json").unlink()
         events = []
         session.on("loading", events.append)
         session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
-        # A is locked: to_read is B, C, D, G — four announcements, total 4.
+        # A is running: to_read is B, C, D, G — four announcements, total 4.
         assert [e["total"] for e in events if e.get("phase") == "results"] == [4] * 4
         assert (
             session.comparisons[A] is before
             and classify(session.comparisons[A]) == FAIL
         )
         assert session.project.results[A].success
-        gate.release.set()
-        assert jobs[0].done.wait(5)
+        _ended(session, item)
+        session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
         assert (
             classify(session.comparisons[A]) == SIM_FAIL
-        )  # now the job's reload sees the disk
-
-    def test_a_post_that_raises_still_finishes_the_job(self, tmp_path):
-        cfg, work = _project(tmp_path)
-
-        def dead_loop(fn):
-            raise RuntimeError("loop closed")
-
-        s = Session(post=dead_loop)
-        s.open(cfg, work_dir=work)
-        jobs = _started(s)
-        s.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
-        assert jobs[0].done.wait(5)
-        assert s.running is None and "loop closed" in str(jobs[0].error)
-
-    def test_a_listener_that_raises_still_marks_the_job_done(self, session):
-        events = []
-        session.on("job", lambda e: events.append(e["state"]))
-
-        def boom(e):
-            if e["state"] != "started":
-                raise RuntimeError("element deleted")
-
-        session.on("job", boom)
-        jobs = _started(session)
-        session.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
-        assert jobs[0].done.wait(5)
-        assert session.running is None and events[-1] == "finished"
-
-    def test_a_failed_job_emits_failed_and_skips_the_reload(self, session):
-        events = []
-        seen = []
-        session.on("job", lambda e: events.append(e["state"]))
-        session.on("results", lambda e: seen.append(e["models"]))
-        jobs = _started(session)
-
-        def boom(ctx):
-            raise RuntimeError("driver died")
-
-        session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
-        assert jobs[0].done.wait(5)
-        assert events == ["started", "failed"] and seen == []
+        )  # nothing runs it now: the reload sees the disk
 
     def test_a_store_write_that_raises_leaves_the_session_unchanged(self, session):
         before = dict(session.comparisons)
@@ -2240,7 +1974,7 @@ class TestLockAndCompletion:
 
         with pytest.raises(OSError):
             session.apply(StoreWrite(run=boom, models=frozenset({B})))
-        assert session.comparisons == before and session.running is None
+        assert session.comparisons == before and session.queue == []
         assert session.spec.pending == []
 
     def test_a_patch_rescores_only_its_models(self, session):
@@ -2496,8 +2230,6 @@ class TestSessionView:
             "spec_path",
             "pending",
             "selection",
-            "running",
-            "last_job",
             "comparisons",
             "artifacts",
             "notices",
@@ -2519,7 +2251,10 @@ class TestSessionView:
             # the tree or why there is none, in the one text every surface
             # says it with
             "tree_or_reason",
-            "is_locked",
+            # where a test stands in the queue, and why nothing can be
+            # queued: what Queue and Accept answer `available` from
+            "queue_state",
+            "queue_refusal",
         }
         assert not public & {
             "stage",
@@ -2530,12 +2265,15 @@ class TestSessionView:
             "close",
             "reload",
             "select",
+            "enqueue",
+            "remove",
+            "cancel",
         }
 
     def test_the_project_view_reaches_no_store_writer(self, session):
         """§4.6: enforcement is structural. The view's project is a frozen
-        projection; the store's writers exist only behind StoreWrite.run and
-        JobContext, which the Session hands out."""
+        projection; the store's writers exist only behind StoreWrite.run,
+        which the Session hands the store."""
         import dataclasses
 
         pv = SessionView(session).project
@@ -2571,7 +2309,10 @@ class TestSessionView:
         session.stage([LOOSEN])
         assert view.pending == tuple(session.spec.pending)
         assert view.comparisons[A] is session.comparisons[A]
-        assert view.is_locked(A) is False
+        assert view.queue_state(A) is None and view.queue_refusal is None
+        item = _running(session, D)
+        assert view.queue_state(D) is ItemState.RUNNING
+        _ended(session, item)
         with pytest.raises(TypeError):
             view.comparisons[A] = None  # a read-only mapping
         assert view.notices == ()
@@ -3226,21 +2967,19 @@ class TestPlots:
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         assert s.plots(A)[0].missing == ("z",)
 
-    def test_a_locked_model_whose_names_were_never_read_marks_nothing_missing(
+    def test_a_running_model_whose_names_were_never_read_marks_nothing_missing(
         self, tmp_path
     ):
-        """While a job holds the model, the file is not listed — and a
-        listing never read is not a listing of nothing: the file-only z is
-        not named missing (it is, once the names are read)."""
-        from dstf.authoring.session import RunningJob
-
+        """While the model runs, the file is not listed — and a listing
+        never read is not a listing of nothing: the file-only z is not
+        named missing (it is, once the names are read)."""
         s = self._open(tmp_path)
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         s._reads.pop(A, None)
-        s.running = RunningJob(label="rerun", models=frozenset({A}))
+        item = _running(s, A)
         assert [p.missing for p in s.plots(A)] == [(), ()]
         assert not s._reads_for(A).names_read
-        s.running = None
+        _ended(s, item)
         assert [p.missing for p in s.plots(A)] == [(), ()]
         assert s._reads_for(A).names_read
 
@@ -3300,72 +3039,69 @@ class TestPlotsInTheSpecsOrder:
         assert [p.subject for p in s.plots(B)] == [(n,) for n in names]
 
 
-class TestPlotsUnderALock:
-    """The file reads behave as `view` and `figure` always have for a model a
-    job holds: from memory, never from the directory the job is rewriting."""
+class TestPlotsOfARunningModel:
+    """The file reads behave as `view` and `figure` always have for a model
+    the queue is running: from memory, never from the directory its run is
+    rewriting."""
 
-    def _locked(self, tmp_path):
-        from dstf.authoring.session import RunningJob
-
+    def _open_running(self, tmp_path):
         cfg, work = _plots_project(tmp_path)
         s = Session()
         s.open(cfg, work_dir=work)
-        s.running = RunningJob(label="rerun", models=frozenset({A}))
-        return s, work
+        return s, _running(s, A)
 
-    def test_a_locked_models_result_file_is_not_opened_and_nothing_is_cached(
+    def test_a_running_models_result_file_is_not_opened_and_nothing_is_cached(
         self, tmp_path, monkeypatch
     ):
         from dstf.backends.python.backend import PythonBackend
 
-        s, _ = self._locked(tmp_path)
+        s, item = self._open_running(tmp_path)
 
         def boom(cls, *a):
-            raise AssertionError("a locked model's work dir was read")
+            raise AssertionError("a running model's work dir was read")
 
         monkeypatch.setattr(PythonBackend, "result_names", classmethod(boom))
         monkeypatch.setattr(PythonBackend, "result_series", classmethod(boom))
         assert s.variable_names(A) == ["x", "y"]
         assert s.view(A, "z").act_time is None
         assert s._reads[A].names is None and s._reads[A].series == {}
-        s.running = None
+        _ended(s, item)
         monkeypatch.undo()
         assert s.variable_names(A) == ["x", "y", "a0", "z"]
         assert s.view(A, "z").act_values.tolist() == [7.0] * 5
 
-    def test_what_was_read_before_the_lock_is_still_served(self, tmp_path):
-        from dstf.authoring.session import RunningJob
-
+    def test_what_was_read_before_the_run_is_served_until_its_start_is_heard(
+        self, tmp_path
+    ):
+        """The pool marks an item RUNNING before it clears the directory,
+        and the Session hears of the start a tick later: until then it
+        serves what it read, and opens nothing."""
         cfg, work = _plots_project(tmp_path)
         s = Session()
         s.open(cfg, work_dir=work)
         assert s.view(A, "z").act_values.tolist() == [7.0] * 5
         assert s.variable_names(A) == ["x", "y", "a0", "z"]
-        s.running = RunningJob(label="rerun", models=frozenset({A}))
+        _running(s, A)
         (work / "test_0001" / "result.json").write_text("{half", encoding="utf-8")
         assert s.view(A, "z").act_values.tolist() == [7.0] * 5
         assert s.variable_names(A) == ["x", "y", "a0", "z"]
 
-    def _locked_with_layout(self, tmp_path):
-        """A staged multi-series layout BEFORE the lock (a staged edit
-        rescores, which a locked model refuses), then the lock."""
-        from dstf.authoring.session import RunningJob
-
+    def _running_with_layout(self, tmp_path):
+        """A staged multi-series layout, then its model running."""
         cfg, work = _plots_project(tmp_path)
         s = Session()
         s.open(cfg, work_dir=work)
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
-        s.running = RunningJob(label="rerun", models=frozenset({A}))
-        return s
+        return s, _running(s, A)
 
-    def test_a_multi_series_base_read_under_the_lock_is_not_cached(self, tmp_path):
-        """`_file_series` answers None under a lock and caches nothing — "the
-        job's reload answers it". The base built from that None must not be
-        cached either: a job that ends without dropping `_reads` (a successful
-        `Job(reloads_results=False)`) would leave z's EMPTY base behind."""
-        s = self._locked_with_layout(tmp_path)
+    def test_a_multi_series_base_read_while_it_runs_is_not_cached(self, tmp_path):
+        """`_file_series` answers None for a running model and caches nothing
+        — the run's end answers it. The base built from that None must not
+        be cached either: with the model's reads still held, z's EMPTY base
+        would be the one drawn."""
+        s, item = self._running_with_layout(tmp_path)
         s.plot_figure(A, 0)
-        s.running = None  # the job ended without dropping `_reads`
+        _ended(s, item)  # out of the queue, its reads still held
         fig = s.plot_figure(A, 0)
         drawn = [
             (tr["meta"]["id"], len(tr["y"]))
@@ -3374,33 +3110,26 @@ class TestPlotsUnderALock:
         ]
         assert drawn == [("actual", 5), ("context/z", 5)]
 
-    def test_a_single_series_base_read_under_the_lock_is_not_cached(self, tmp_path):
-        s = self._locked_with_layout(tmp_path)
+    def test_a_single_series_base_read_while_it_runs_is_not_cached(self, tmp_path):
+        s, item = self._running_with_layout(tmp_path)
         s.figure(A, "z")
-        s.running = None
+        _ended(s, item)
         fig = s.figure(A, "z")
         assert [
             tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"
         ] == ["actual"]
 
-    def test_a_failed_job_drops_what_was_read_of_its_models(self, tmp_path):
-        """No reload follows a failed job, and its half-run rewrote the files."""
+    def test_a_run_that_ends_drops_what_was_read_of_its_model(self, tmp_path):
+        """Its run rewrote the files, whatever it came to: the Session,
+        taking the ended item in, drops that model's reads and no other's."""
         cfg, work = _plots_project(tmp_path)
         s = Session()
         s.open(cfg, work_dir=work)
         s.view(A, "z")
         s.view(D, "x")
-        gate = _Gate()
-        jobs = _started(s)
-
-        def run(ctx):
-            gate(ctx)
-            raise RuntimeError("the run died")
-
-        s.apply(Job(run=run, label="rerun", models=frozenset({A})))
-        gate.release.set()
-        assert jobs[0].done.wait(5)
-        assert jobs[0].error is not None
+        item = _running(s, A)
+        item.state, item.message = ItemState.CANCELLED, "Cancelled"
+        s._item_ended(item)  # what the pool's `on_end` posts
         assert A not in s._reads and D in s._reads
 
 
@@ -4315,15 +4044,6 @@ class TestPerTestDiscardAndSavedVerdict:
         assert session.spec.pending == []
         assert classify(session.comparisons[D]) == PASS
 
-    def test_discard_of_one_model_is_refused_while_a_job_runs(self, session):
-        from dstf.authoring.session import RunningJob
-
-        session.stage([self.LOOSEN_A])
-        session.running = RunningJob(label="Rerun", models=frozenset({B}))
-        with pytest.raises(JobRunningError):
-            session.discard(models={A})
-        assert session.spec.pending == [self.LOOSEN_A]
-
     def test_discard_of_a_model_with_nothing_pending_says_nothing(self, session):
         """No op of D is pending: the discard changes nothing, and says so
         by emitting nothing — no page repaints for it."""
@@ -4396,7 +4116,7 @@ class TestACriterionOnAFileVariable:
     """The owner's O2: staging a criterion on a variable the loaded result
     lacks re-reads the model when its result FILE holds the variable (a
     backend that records everything), so it scores at once; a name the
-    file lacks is left for a rerun, and nothing is re-read."""
+    file lacks is left for the test's next run, and nothing is re-read."""
 
     def _leaf(self, variable: str) -> PatchOp:
         return PatchOp(

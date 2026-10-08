@@ -1,43 +1,52 @@
-"""End to end (spec §6): open, rerun one test, accept it.
+"""End to end (spec §6): open, queue one test, accept it, queue it again.
 
 Against a temporary copy of ``examples/python/PythonTestingLib`` with its
 ``Python/`` partition removed — nothing has a baseline and no run has
-happened, so every test opens as a simulation failure. The scenario then
-runs one test through the real backend, stages an edit on a locked model
-while it runs, accepts the result and reruns it once more.
+happened, so every test opens NOT RUN. The scenario then runs one test
+through the real backend on the Session's simulation queue (D150), stages
+an edit on it while it runs, accepts the result and queues it once more.
 
 Pure Python: the capabilities' ``act`` is called directly and the outcomes
-go through ``Session.apply``, so no NiceGUI is involved. ``Session()``
-takes no ``post``, so a job's completion runs on the worker thread and
-``RunningJob.done`` is the wait (pytest-timeout is not a dependency: the
-bound is ``wait(60)`` and the assertion on its return value is the
-failure). Only ``ConstantCsv`` is ever run — ~0.25 s, no scipy.
+go through ``Session.apply``, so no NiceGUI is involved. The pool's
+callbacks arrive on its own threads and are posted: ``Loop`` (from
+``test_session_queue``) stands in for the UI loop and runs them on the
+test's thread. A test that reads the Session BETWEEN a run's start and its
+end runs the posted calls one at a time (``_until``): the simulations here
+are the example's own — ``ConstantCsv`` is ~0.25 s, no scipy — and cannot
+be held (pytest-timeout is not a dependency: every wait is bounded and
+raises).
 """
 
 from __future__ import annotations
 
 import json
+import queue
 import re
+import threading
+import time
 
+import psutil
 import pytest
 
 from conftest import python_example_copy
 from dstf.authoring.builtin.accept import Accept
-from dstf.authoring.builtin.rerun import Rerun
-from dstf.authoring.session import (
-    JobRunningError,
-    LockedError,
-    Selection,
-    Session,
-    SessionView,
-)
+from dstf.authoring.builtin.enqueue import EnqueueTests
+from dstf.authoring.session import QueueError, Selection, Session, SessionView
 from dstf.authoring.spec_document import PatchOp
+from dstf.authoring.suite_rows import suite_row
+from dstf.backends.pool import ItemState
 from dstf.backends.progress import read_status
-from dstf.reporting.status import NOT_RUN, PASS, classify
+from dstf.reporting.status import FAIL, NOT_RUN, PASS, RUNNING, classify
+from test_session_queue import Loop
 
 CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
 SIMPLE_RAMP = "PythonTestingLib.Examples.SimpleRamp"
 POINTS_CHECK = "PythonTestingLib.Examples.PointsCheck"
+
+#: 1.0 is outside [0.99, 0.5]: ConstantCsv fails under this edit.
+TIGHTEN = PatchOp(
+    CONSTANT_CSV, "replace", "/comparison/variable_overrides/x/max_value", 0.5
+)
 
 
 def _assert_silent(capsys) -> None:
@@ -46,13 +55,74 @@ def _assert_silent(capsys) -> None:
     assert (captured.out, captured.err) == ("", "")
 
 
-def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
+class Tool:
+    """A Session whose posts a test runs, as the shell's tick does."""
+
+    def __init__(self) -> None:
+        self.loop = Loop()
+        self.session = Session(post=self.loop.post)
+        #: The state of every `queue` event the Session emitted, in order.
+        self.said: list[str] = []
+        self.session.on("queue", lambda event: self.said.append(event["state"]))
+
+    def open(self, config, work_dir) -> Session:
+        self.session.open(config.config_file, work_dir=work_dir)
+        # The open's rescan ends on the loop when the scan was cached.
+        self.loop.until(self.session.rescan_done.is_set, what="the open's rescan")
+        return self.session
+
+    def view(self, *models: str) -> SessionView:
+        return SessionView(self.session, Selection(tests=frozenset(models)))
+
+    def queue(self, *models: str) -> None:
+        self.session.apply(EnqueueTests().act(self.view(*models)))
+
+    def finished(self, *models: str) -> None:
+        """Until every one of ``models`` ran to its end and was taken in."""
+        self.loop.until(
+            lambda: all(
+                self.session.queue_state(m) is ItemState.FINISHED for m in models
+            ),
+            what=f"{models} finished",
+        )
+
+    def until(self, state: str, timeout: float = 60.0) -> None:
+        """Run what was posted ONE call at a time until the Session says
+        ``state`` of its queue. One at a time, so the test stands between a
+        run's start and its end however fast the simulation is: the end is
+        posted and waits for the next call."""
+        seen = len(self.said)
+        deadline = time.monotonic() + timeout
+        while state not in self.said[seen:]:
+            try:
+                fn = self.loop.posted.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                raise AssertionError(f"the queue never said {state!r}") from None
+            fn()
+
+
+@pytest.fixture
+def tool():
+    """Whatever the test asserted, it leaves no simulation behind: the
+    queue's pool is ended, its threads joined and its subprocesses gone."""
+    me = psutil.Process()
+    before = {p.pid for p in me.children(recursive=True)}
+    t = Tool()
+    yield t
+    t.session.stop_queue()
+    assert t.session.wait_background(30)
+    assert not [th for th in threading.enumerate() if "-pool-" in th.name]
+    started = [p for p in me.children(recursive=True) if p.pid not in before]
+    _gone, alive = psutil.wait_procs(started, timeout=10)
+    assert alive == []
+
+
+def test_open_queue_accept_queue_again_over_the_python_example(tmp_path, capsys, tool):
     config, _tests = python_example_copy(tmp_path, baselines=False)
     work_dir = tmp_path / "work"
     assert not work_dir.exists()  # no run has happened yet
 
-    session = Session()  # no post: the completion runs on the worker thread
-    session.open(config.config_file, work_dir=work_dir)
+    session = tool.open(config, work_dir)
     project = session.project
 
     # Nothing ran, so `read_last_results` is empty and every test is scored
@@ -68,61 +138,65 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
         assert classify(comp) == NOT_RUN, model_id
         assert comp.error_message == "No simulation results found"
     assert project.backend.quiet is True
+    others = {m: session.comparisons[m] for m in (SIMPLE_RAMP, POINTS_CHECK)}
     _assert_silent(capsys)
 
-    # 1. The rerun starts; its models are locked from the moment `apply`
-    # returns (the RunningJob is set before the thread starts).
-    view = SessionView(session, Selection(tests=frozenset({CONSTANT_CSV})))
-    session.apply(Rerun().act(view))
-    job = session.running
-    assert job is not None and job.label == "rerun"
+    # 1. The test is queued and starts: it reads RUNNING, with no result.
+    view = tool.view(CONSTANT_CSV)
+    tool.queue(CONSTANT_CSV)
+    assert [i.model_id for i in session.queue] == [CONSTANT_CSV]
+    tool.until("started")
+    assert session.queue_state(CONSTANT_CSV) is ItemState.RUNNING
+    assert suite_row(session, CONSTANT_CSV).status == RUNNING
+    assert CONSTANT_CSV not in project.results
+    assert classify(session.comparisons[CONSTANT_CSV]) == NOT_RUN
 
-    with pytest.raises(LockedError, match="rerun is running") as locked:
-        # The lock check precedes op parsing, so the op's own validity is
-        # not what refuses this.
-        session.stage(
-            [
-                PatchOp(
-                    CONSTANT_CSV,
-                    "replace",
-                    "/comparison/variable_overrides/x/max_value",
-                    2.0,
-                )
-            ]
-        )
-    assert locked.value.models == frozenset({CONSTANT_CSV})
-    # A model the job does not hold still takes an edit. `add`, because the
-    # entry has no `comparison` member (a `replace` there is a PatchError)
-    # and `/simulation/*` is outside the stageable whitelist.
-    session.stage([PatchOp(SIMPLE_RAMP, "add", "/comparison/tolerance", 0.5)])
-    assert len(session.spec.pending) == 1
-    # Discard (and Save) wait for the job: its reload scores the spec.
-    with pytest.raises(JobRunningError, match="rerun is still running"):
-        session.discard()
-    assert len(session.spec.pending) == 1
+    # An edit of the running test is staged, not refused: it is scored when
+    # the result arrives.
+    session.stage([TIGHTEN])
+    assert [op.model_id for op in session.spec.pending] == [CONSTANT_CSV]
+    # Accept is refused, before the click and at it: the result it would
+    # store is about to be replaced by this run's.
+    refusal = f"{CONSTANT_CSV} is running: accept it when its run has ended"
+    assert Accept().available(view) == refusal
+    with pytest.raises(QueueError) as refused:
+        session.apply(Accept().act(view))
+    assert str(refused.value) == refusal
+    assert not list(project.config.reference_dir.glob("ref_*.json"))
 
-    # 2. The job finishes and the results are reloaded from disk.
-    assert job.done.wait(60)
-    assert job.error is None
+    # 2. It ends: its own result is taken and it alone is rescored, with the
+    # criteria as they stand now.
+    tool.until("ended")
+    assert session.queue_state(CONSTANT_CSV) is ItemState.FINISHED
+    assert project.results[CONSTANT_CSV].success
+    assert set(project.results) == {CONSTANT_CSV}
+    assert classify(session.comparisons[CONSTANT_CSV]) == FAIL  # the staged edit
+    for model_id, comp in others.items():
+        assert session.comparisons[model_id] is comp, model_id
+        assert classify(comp) == NOT_RUN, model_id
     session.discard()
     assert not session.spec.pending
-    assert session.running is None
-    assert project.results[CONSTANT_CSV].success
     comp = session.comparisons[CONSTANT_CSV]
     assert classify(comp) == PASS
     # Its only leaf is `range`, which scores against declared bounds: it
     # passes before any baseline exists.
     assert comp.has_reference is False
-    assert read_status(work_dir)["counts"]["passed"] == 1
-    # The run ended on a static page: a live one would refresh forever.
+    # The queue drained: status.json lists the one item that ran, and the
+    # page is a static one — a live one would refresh forever.
+    assert session.wait_background(30)
+    status = read_status(work_dir)
+    assert [(t["model_id"], t["status"]) for t in status["tests"]] == [
+        (CONSTANT_CSV, "passed")
+    ]
+    assert status["counts"]["passed"] == 1
     page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
     assert '<meta http-equiv="refresh"' not in page
-    for model_id in (SIMPLE_RAMP, POINTS_CHECK):
-        assert classify(session.comparisons[model_id]) == NOT_RUN, model_id
     _assert_silent(capsys)
 
-    # 3. Accept stores the baseline through the shared accept function and
-    # says so in one notice line; the reload sees the new reference.
+    # 3. Its run has ended: Accept stores the baseline through the shared
+    # accept function and says so in one notice line; the reload sees the
+    # new reference.
+    assert Accept().available(view) is True
     session.apply(Accept().act(view))
     assert session.notices[-1].startswith("Accept: stored 1")
     comp = session.comparisons[CONSTANT_CSV]
@@ -140,19 +214,24 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     assert b"\r" not in raw and raw.endswith(b"\n")  # LF on every platform (D122)
     _assert_silent(capsys)
 
-    # 4. A second rerun, on a fresh backend of its own, leaves the store
-    # exactly as it was.
+    # 4. Queued again: its last result goes when the run starts, and the run
+    # leaves the store exactly as it was.
     stored_bytes = reference.read_bytes()
-    session.apply(Rerun().act(view))
-    second = session.running
-    assert second is not None
-    assert second.done.wait(60)
-    assert second.error is None
-    assert session.running is None
+    tool.queue(CONSTANT_CSV)
+    tool.until("started")
+    assert CONSTANT_CSV not in project.results
+    assert classify(session.comparisons[CONSTANT_CSV]) == NOT_RUN
+    tool.until("ended")
+    assert [(i.model_id, i.state) for i in session.queue] == [
+        (CONSTANT_CSV, ItemState.FINISHED)
+    ] * 2
     comp = session.comparisons[CONSTANT_CSV]
     assert classify(comp) == PASS
     assert comp.has_reference is True
     assert reference.read_bytes() == stored_bytes
+    assert sorted(p.name for p in reference.parent.glob("ref_*.json")) == [
+        "ref_0001.json"
+    ]
 
     # 5. Nothing printed at any point in the scenario.
     _assert_silent(capsys)
@@ -169,58 +248,45 @@ def _dashboard_status(work_dir, model_id: str) -> str:
     return found.group(1)
 
 
-#: 1.0 is outside [0.99, 0.5]: ConstantCsv fails under this edit.
-TIGHTEN = PatchOp(
-    CONSTANT_CSV, "replace", "/comparison/variable_overrides/x/max_value", 0.5
-)
-
-
-def test_a_tool_rerun_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path):
-    """The run's own last render is static and unscored (the Session scores
-    what it reloads); once the Session has rescored, the rerun renders the
-    same page with its verdicts: the rerun test the staged edit makes fail
-    reads fail, the other pass — not pending."""
+def test_a_drained_queue_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path, tool):
+    """Once nothing is queued or running the Session writes the page, static,
+    with ITS verdicts: the test the staged edit makes fail reads fail, the
+    other pass — not pending."""
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
-    session.stage([TIGHTEN])  # the rerun of ConstantCsv fails
-    view = SessionView(
-        session, Selection(tests=frozenset({CONSTANT_CSV, POINTS_CHECK}))
-    )
-    session.apply(Rerun().act(view))
-    job = session.running
-    assert job is not None and job.done.wait(60) and job.error is None
-    assert session.wait_background(10)  # the rerun's render is off the loop
+    session = tool.open(config, work_dir)
+    session.stage([TIGHTEN])  # the run of ConstantCsv fails
+    tool.queue(CONSTANT_CSV, POINTS_CHECK)
+    tool.finished(CONSTANT_CSV, POINTS_CHECK)
+    assert session.wait_background(30)  # the drain's render is off the loop
     page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
     assert '<meta http-equiv="refresh"' not in page
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
     assert _dashboard_status(work_dir, POINTS_CHECK) == "pass"
 
 
-def test_save_and_discard_after_a_rerun_leave_its_dashboard_alone(tmp_path):
-    """The dashboard is the report of the last run, compare or tool Rerun: a
-    rerun under an unsaved edit leaves the edit's verdicts in it, and a Save
-    or a Discard after it does not rewrite it (D137 §6)."""
+def test_save_and_discard_after_a_drained_queue_leave_its_dashboard_alone(
+    tmp_path, tool
+):
+    """The dashboard is the report of the last run, compare or drained
+    queue: a test run under an unsaved edit leaves the edit's verdicts in
+    it, and a Save or a Discard after it does not rewrite it (D137 §6)."""
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
+    session = tool.open(config, work_dir)
     session.stage([TIGHTEN])
-    view = SessionView(session, Selection(tests=frozenset({CONSTANT_CSV})))
-    session.apply(Rerun().act(view))
-    job = session.running
-    assert job is not None and job.done.wait(60) and job.error is None
-    assert session.wait_background(10)
+    tool.queue(CONSTANT_CSV)
+    tool.finished(CONSTANT_CSV)
+    assert session.wait_background(30)
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
     page = (work_dir / "dashboard.html").read_bytes()
     session.discard()
     assert session.comparisons[CONSTANT_CSV].passed
-    assert session.wait_background(10)
+    assert session.wait_background(30)
     assert (work_dir / "dashboard.html").read_bytes() == page
     session.stage([TIGHTEN])
     session.save()
-    assert session.wait_background(10)
+    assert session.wait_background(30)
     assert (work_dir / "dashboard.html").read_bytes() == page
 
 
@@ -229,20 +295,16 @@ def _dashboard_models(work_dir) -> list[str]:
     return re.findall(r'<tr[^>]*data-model="([^"]*)"', page)
 
 
-def test_a_tool_reruns_dashboard_lists_every_test(tmp_path):
-    """A rerun of one test rewrites status.json with that test alone; the
-    page the rerun renders lists every test the Session scored, not its one
+def test_a_drained_queues_dashboard_lists_every_test(tmp_path, tool):
+    """A queue that ran one test rewrites status.json with that test alone;
+    the page it renders lists every test the Session scored, not its one
     row."""
     config, _tests = python_example_copy(tmp_path)
     work_dir = tmp_path / "work"
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
-    session.apply(
-        Rerun().act(SessionView(session, Selection(tests=frozenset({CONSTANT_CSV}))))
-    )
-    job = session.running
-    assert job is not None and job.done.wait(60) and job.error is None
-    assert session.wait_background(10)
+    session = tool.open(config, work_dir)
+    tool.queue(CONSTANT_CSV)
+    tool.finished(CONSTANT_CSV)
+    assert session.wait_background(30)
     assert [t["model_id"] for t in read_status(work_dir)["tests"]] == [CONSTANT_CSV]
     every = {CONSTANT_CSV, SIMPLE_RAMP, POINTS_CHECK}
     assert sorted(_dashboard_models(work_dir)) == sorted(every)
@@ -250,12 +312,12 @@ def test_a_tool_reruns_dashboard_lists_every_test(tmp_path):
 
 
 def test_a_criterion_on_a_variable_the_python_backend_recorded_scores_at_once(
-    tmp_path,
+    tmp_path, tool
 ):
     """The owner's O2 over a real backend: the Python backend records every
     variable the script returns, so a criterion staged on one the spec does
     not track re-reads the result — APPENDED after the tracked ones — and
-    scores it with no rerun; the strip counts nothing new."""
+    scores it with no second run; the strip counts nothing new."""
     from dstf.authoring.situation import new_variables
 
     config, _tests = python_example_copy(tmp_path)
@@ -269,16 +331,15 @@ def test_a_criterion_on_a_variable_the_python_backend_recorded_scores_at_once(
         encoding="utf-8",
     )
     work_dir = tmp_path / "work"
-    session = Session()
-    session.open(config.config_file, work_dir=work_dir)
-    view = SessionView(session, Selection(tests=frozenset({CONSTANT_CSV})))
-    session.apply(Rerun().act(view))
-    job = session.running
-    assert job is not None and job.done.wait(60) and job.error is None
+    session = tool.open(config, work_dir)
+    tool.queue(CONSTANT_CSV)
+    tool.finished(CONSTANT_CSV)
     assert [v.name for v in session.project.results[CONSTANT_CSV].variables] == ["x"]
+    ran = len(session.queue)
 
     leaf = {"metric": "range", "variable": "y", "min_value": 0.5, "max_value": 1.5}
     session.stage([PatchOp(CONSTANT_CSV, "add", "/metrics/children/-", leaf)])
+    assert len(session.queue) == ran  # nothing was queued for it
     result = session.project.results[CONSTANT_CSV]
     assert [(v.index, v.name) for v in result.variables] == [(1, "x"), (2, "y")]
     test = session.project.test(CONSTANT_CSV)

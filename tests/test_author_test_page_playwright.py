@@ -358,7 +358,7 @@ def test_the_strips_menu_says_it_is_open_and_why_an_item_is_grey(
     with _served(tmp_path, playwright_browser, project=_two_var_project) as page:
         page.goto(page.url.split("test/")[0] + f"test/{C}")
         expect(page.locator(".dstf-strip-text")).to_have_text(
-            "No result yet — rerun to simulate it.", timeout=EXPECT_TIMEOUT
+            "No result yet — queue it to simulate it.", timeout=EXPECT_TIMEOUT
         )
         more = page.locator('.dstf-strip button[aria-label="More actions"]')
         expect(more).to_be_visible(timeout=EXPECT_TIMEOUT)
@@ -2502,7 +2502,7 @@ LINES_OF = """e => { const s = getComputedStyle(e);
 #: Test page's header room enough that nothing beside it wrapped.
 LONG_MODEL = "FakeLib.HeatExchangers.GenericDistributed.Examples.CounterFlowWithWall"
 #: Longer still, the length of a TRANSFORM example's id: with the subheader
-#: kept to one line, Accept and Rerun ended wholly past a 900 px window.
+#: kept to one line, Accept and the run button ended wholly past a 900 px window.
 TRANSFORM_MODEL = (
     "TRANSFORM.HeatExchangers.GenericDistributed_HX.Examples."
     "GenericDistributed_HX_withMass"
@@ -2560,7 +2560,7 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
     keep one line. With an edit pending and a model id as long as a real
     library's, a TRANSFORM example's, or longer than a line, nothing in the
     Test page's subheader is cut off at 1280 or 900 px: kept to one line, it
-    put Accept and Rerun past the window's edge. Its buttons keep one line
+    put Accept and the run button past the window's edge. Its buttons keep one line
     at 1280 and at most two at 900 (the owner's ruling for the header), the
     TEST actions end at the status strip's right edge (the strip under it
     holds them now), and "← Suite" keeps one line. The
@@ -3327,38 +3327,19 @@ GRIPS = """() => [...document.querySelectorAll('.dstf-tree-row')].map(r => {
 })"""
 
 
-def test_a_hidden_handle_keeps_its_place_and_a_lock_shifts_no_pill(
-    tmp_path, playwright_browser
-):
+def test_a_hidden_handle_keeps_its_place(tmp_path, playwright_browser):
     """The root's handle is hidden and keeps its 20 px, so the root's pill
-    and a depth-1 pill stand exactly one level's bar (8 px) apart; a job's
-    lock hides every handle and moves no pill. Quasar's `.hidden` (what
-    `set_visibility(False)` adds) sits in a cascade layer that beats an
-    unlayered `!important`, so it took the handle's width with it."""
+    and a depth-1 pill stand exactly one level's bar (8 px) apart. Quasar's
+    `.hidden` (what `set_visibility(False)` adds) sits in a cascade layer
+    that beats an unlayered `!important`, so it took the handle's width
+    with it."""
     k = "/metrics/children/0"
-    with _served(
-        tmp_path, playwright_browser, project=_nested_project, hooks=True
-    ) as page:
+    with _served(tmp_path, playwright_browser, project=_nested_project) as page:
         _show_tree(page, 5)
         free = {g["path"]: g for g in page.evaluate(GRIPS)}
         assert free["/metrics"]["w"] == 20 and not free["/metrics"]["shown"]
         assert free[k]["shown"] and free[k]["w"] == 20
         assert free[k]["pill"] - free["/metrics"]["pill"] == 8
-        base = page.url.split("test/")[0]
-        try:
-            with urllib.request.urlopen(f"{base}__lock?model={A}") as r:
-                json.loads(r.read())
-            expect(page.locator(".dstf-tree .dstf-why").first).to_contain_text(
-                "rerun is running", timeout=EXPECT_TIMEOUT
-            )
-            locked = {g["path"]: g for g in page.evaluate(GRIPS)}
-            assert all(not g["shown"] and g["w"] == 20 for g in locked.values())
-            assert {p: g["pill"] for p, g in locked.items()} == {
-                p: g["pill"] for p, g in free.items()
-            }
-        finally:
-            with urllib.request.urlopen(f"{base}__unlock") as r:
-                json.loads(r.read())
 
 
 # -- the plot's +, inline; the editor opens after Add (Q3 A) ----------------

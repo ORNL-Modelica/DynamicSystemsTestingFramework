@@ -410,8 +410,9 @@ class InlineHost:
     returned an outcome, and only then: an act returning ``None`` changed
     nothing, and the rebuild it would trigger discards a half-typed row
     for nothing. `follow()` is how a host that is never rebuilt keeps up
-    with `available`: a job's lock comes and goes without the tree's shape
-    moving — and with ``kept``, when what a panel kept there was dropped.
+    with `available`: a capability's answer can move without the tree's
+    shape moving (until D150 a job's lock did, on every run) — and with
+    ``kept``, when what a panel kept there was dropped.
     ``kept(name)`` is `Panel.kept` for capability ``name``'s panel in this
     host: the dict its owner keeps across this host's rebuilds. Without
     one, each build of a panel gets a dict of its own.
@@ -473,8 +474,9 @@ class InlineHost:
                 self.figure.clear(self._owner(name))
         if self.row is not None:
             # A form row lives only as long as the host whose panel opened
-            # it: rebuilt under a job's lock, the host said "rerun is
-            # running" while its row stayed open with live buttons, and an
+            # it: rebuilt to its why-line (under the single job's lock,
+            # before D150), the host said "rerun is running" while its
+            # row stayed open with live buttons, and an
             # act from it staged nothing and showed nothing — the error
             # label had gone with the rebuild (the Task 5 review).
             self.row.page.drop_row(self.row)
@@ -486,8 +488,8 @@ class InlineHost:
             # rebuilt to its why-line leaves the kind to the row's text.
             if self.row.lead is not None and not self.row.lead.is_deleted:
                 self.row.lead.clear()
-            # And what they registered for the drag: a host rebuilt under
-            # a job's lock takes no drop and offers no handle.
+            # And what they registered for the drag: a host rebuilt to its
+            # why-line takes no drop and offers no handle.
             self.row.on_drop = self.row.zones = None
             # And its click: a host rebuilt to its why-line opens no form.
             self.row.click = None
@@ -509,8 +511,8 @@ class InlineHost:
             self.clear()
             skip = None
         # The why-lines drawn so far. Edit criteria and Edit on plot are both
-        # refused on a test the Session has no tree for, or one a job holds,
-        # and the editor read the same sentence twice (the review).
+        # refused on a test the Session has no tree for, and the editor
+        # read the same sentence twice (the review).
         said: set[str] = set()
         for cap, avail in placed:
             if cap.name == skip:
@@ -532,9 +534,10 @@ class InlineHost:
         """Rebuild when an `available` answer has moved since this host was
         built, and only then (the Task 4 review): a row that is repainted
         rather than rebuilt otherwise keeps the answer of the moment it was
-        drawn — a tree opened during a rerun kept "rerun is running on …"
-        after the job ended, and one opened before the job kept controls
-        that a lock refuses. A full build resets the error labels, which is
+        drawn — under the single job's lock (before D150) a tree opened
+        during a rerun kept "rerun is running on …" after the job ended,
+        and one opened before it kept controls the lock refused. A full
+        build resets the error labels, which is
         why hiding a stale one is not this method's job.
 
         Also when what a panel KEPT (`Panel.kept`) has been dropped under

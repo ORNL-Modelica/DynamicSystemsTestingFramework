@@ -229,7 +229,7 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
             "button", name=re.compile(r"^Accept 2 results as baselines")
         )
         expect(accept).to_be_enabled(timeout=EXPECT_TIMEOUT)
-        rerun = page.get_by_role("button", name=re.compile(r"^Rerun 2 selected tests$"))
+        rerun = page.get_by_role("button", name=re.compile(r"^Queue 2$"))
         expect(rerun).to_be_enabled(timeout=EXPECT_TIMEOUT)
 
         # A click on A's name views A: the Test page, in this tab.
@@ -250,9 +250,9 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
             == "rgb(244, 67, 54)"
         )
         # Its TEST-placement buttons speak of this one test.
-        expect(
-            page.get_by_role("button", name=re.compile(r"^Rerun 1 selected test$"))
-        ).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(page.get_by_role("button", name=re.compile(r"^Queue 1$"))).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
 
         # Back to the Suite: D and G are still selected, A is not (viewing ≠
         # selecting).
@@ -509,7 +509,7 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
         _box(page, A).click()
         _box(page, D).click()
         expect(selection).to_contain_text("2 selected", timeout=EXPECT_TIMEOUT)
-        rerun = page.get_by_role("button", name="Rerun 2 selected tests", exact=True)
+        rerun = page.get_by_role("button", name="Queue 2", exact=True)
         accept = page.get_by_role(
             "button", name="Accept 2 results as baselines", exact=True
         )
@@ -517,7 +517,7 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
         expect(accept).to_be_enabled()
         rerun.hover()
         expect(page.locator(".q-tooltip")).to_have_text(
-            "Rerun 2 selected tests", timeout=EXPECT_TIMEOUT
+            "Queue 2", timeout=EXPECT_TIMEOUT
         )
         # A filter that hides one selected row says so; the actions still
         # count both.
@@ -536,7 +536,7 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
         expect(selection).to_have_text("", timeout=EXPECT_TIMEOUT)
         expect(_box(page, A)).not_to_be_checked()
         expect(
-            page.get_by_role("button", name="Rerun needs a selection", exact=True)
+            page.get_by_role("button", name="Queue needs a selection", exact=True)
         ).to_be_disabled(timeout=EXPECT_TIMEOUT)
         page.locator(".ag-row[row-id='FakeLib.A'] a.dstf-name-link").click()
         expect(page).to_have_url(
@@ -781,7 +781,7 @@ def test_a_running_pill_that_is_on_stays_until_switched_off(
         running = page.locator("button[data-pill='running']")
         expect(running).to_have_count(0)  # nothing runs
         _box(page, D).click()
-        rerun = re.compile(r"^Rerun 1 selected test$")
+        rerun = re.compile(r"^Queue 1$")
         page.get_by_role("button", name=rerun).first.click()
         page.locator(".q-dialog").get_by_role("button", name=rerun).click()
         expect(running).to_have_text("RUNNING 1", timeout=EXPECT_TIMEOUT)
@@ -878,9 +878,9 @@ def test_the_header_checkbox_selects_only_the_rows_shown(tmp_path, playwright_br
         assert page.evaluate(
             "() => DstfSuite.api.getSelectedNodes().map(n => n.data.id)"
         ) == ["FakeLib.C"]
-        expect(
-            page.get_by_role("button", name="Rerun 1 selected test", exact=True)
-        ).to_be_enabled(timeout=EXPECT_TIMEOUT)
+        expect(page.get_by_role("button", name="Queue 1", exact=True)).to_be_enabled(
+            timeout=EXPECT_TIMEOUT
+        )
         assert errors == [], errors
         context.close()
     finally:
@@ -1380,7 +1380,7 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
         page.goto(url)
         expect(page.locator(ROWS)).to_have_count(5, timeout=EXPECT_TIMEOUT)
         _box(page, D).click()
-        rerun = re.compile(r"^Rerun 1 selected test$")
+        rerun = re.compile(r"^Queue 1$")
         page.get_by_role("button", name=rerun).first.click()
         page.locator(".q-dialog").get_by_role("button", name=rerun).click()
         expect(header).to_contain_text("1 running", timeout=EXPECT_TIMEOUT)

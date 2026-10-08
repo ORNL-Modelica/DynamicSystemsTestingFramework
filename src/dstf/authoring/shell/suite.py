@@ -1,8 +1,8 @@
 """The Suite page (brief §3.2 "two pages", §3.8; DESIGN.md "Tables"): what a
 batch acts on. The header, the progress line, one toolbar — the count pills
 and the view toggles (drawn by the table's script), the selection's label,
-the batch actions as icons — the Suite table (`suite_grid.py`), the runs
-card. The table filters, sorts and groups in the browser; Python sends its
+the batch actions as icons — the Suite table (`suite_grid.py`) and, beside
+it, the queue panel (`queue_panel.py`). The table filters, sorts and groups in the browser; Python sends its
 rows and receives its selection, which lives in the tab (`tabstate.py`),
 never in the Session (D129). One object per browser tab."""
 
@@ -19,7 +19,7 @@ from ..session import Selection
 from ..suite_rows import suite_rows
 from .actions import ActionBar
 from .header import Header
-from .runs import RunsCard
+from .queue_panel import ANCHOR, QueuePanel
 from .suite_grid import GRID_CSS, STORAGE, SuiteGrid, scripts_html
 from .tabstate import TabState, caught_up, connected_tab_state, heard_spec
 
@@ -95,12 +95,20 @@ class SuitePage:
                 )
             self.ids = self.shell.visible_tests()
             self._sent = list(self.ids)
-            self.grid = SuiteGrid(
-                self._rows(self.ids),
-                selected=self.state.checked,
-                on_selection=self._on_selection,
-            ).mark("grid")
-            self.runs = RunsCard(self.shell)
+            with ui.element("div").classes("dstf-suite-body"):
+                with ui.element("div").classes("dstf-suite-main"):
+                    self.grid = SuiteGrid(
+                        self._rows(self.ids),
+                        selected=self.state.checked,
+                        on_selection=self._on_selection,
+                    ).mark("grid")
+                self.queue = QueuePanel(self.shell)
+        # The header's indicator links here from every page; the panel is
+        # drawn after the browser looked for the anchor.
+        ui.run_javascript(
+            f"if (location.hash === '#{ANCHOR}') "
+            f"document.getElementById('{ANCHOR}')?.scrollIntoView();"
+        )
         self.grid.seal()
         self.shell.register(self)
         self.refresh()
@@ -142,18 +150,17 @@ class SuitePage:
 
     def handle(self, event: dict[str, Any]) -> None:
         """Every Session event, from the shell's tick. No early return: the
-        card, the actions and the rows are independent regions, and a
+        panel, the actions and the rows are independent regions, and a
         `spec` (a close, an `OpenProject`) is exactly the event after which
-        the card must not show the previous project's outcome. The rows an
+        the panel must not show the previous project's queue. The rows an
         event touches are collected; `flush` sends them."""
         self.header.handle(event)
         kind = event["event"]
         if kind == "spec":
             # The tab's folds: every page of it hears the rule (K1).
             heard_spec(self.state, event)
-        if kind in ("job", "poll", "opened", "spec"):
-            self.runs.refresh()  # `spec`: an open or a close resets the card's sources
-        if kind in ("results", "job", "spec", "opened") or (
+        self.queue.handle(event)
+        if kind in ("results", "queue", "notice", "spec", "opened") or (
             kind == "loading" and event.get("phase") == "done"
         ):
             self.actions.refresh()
@@ -175,12 +182,11 @@ class SuitePage:
             # verdict — repainting only the event's models left every row
             # reading "…" after a failed reopen.
             return set(self.ids)
-        if kind in ("spec", "results"):
+        if kind in ("spec", "results", "queue"):
             return {str(m) for m in event.get("models", ())}
         if kind == "loading" and event.get("phase") == "results":
             return {str(event["model"])}
-        job = event.get("job") if kind == "job" else None
-        return set(job.models) if job is not None else set()
+        return set()
 
     def flush(self) -> None:
         """This tick's rows, as ONE transaction: the Accept path queues N + 2

@@ -85,24 +85,24 @@ async def test_icon_buttons_with_captions_as_tooltips(shell):
     bars: list[ActionBar] = []
     async with user_simulation(root=_bar(shell, checked, bars, icons=True)) as user:
         await user.open("/")
-        await user.should_see(marker="action:rerun", retries=20)
+        await user.should_see(marker="action:enqueue", retries=20)
         bar = bars[0]
-        rerun = _one(user, "action:rerun")
-        assert rerun.props.get("icon") == "replay" and not rerun.text
+        queue = _one(user, "action:enqueue")
+        assert queue.props.get("icon") == "playlist_add" and not queue.text
         # Unavailable: the reason is the tooltip and the accessible name.
-        assert _one(user, "action:rerun:tip").text == "Rerun needs a selection"
-        assert rerun.props.get("aria-label") == "Rerun needs a selection"
-        assert not rerun.enabled
+        assert _one(user, "action:enqueue:tip").text == "Queue needs a selection"
+        assert queue.props.get("aria-label") == "Queue needs a selection"
+        assert not queue.enabled
         checked.update({A, D})
         bar.refresh()
-        assert rerun.enabled
-        assert _one(user, "action:rerun:tip").text == "Rerun 2 selected tests"
-        assert rerun.props.get("aria-label") == "Rerun 2 selected tests"
+        assert queue.enabled
+        assert _one(user, "action:enqueue:tip").text == "Queue 2"
+        assert queue.props.get("aria-label") == "Queue 2"
         accept = _one(user, "action:accept")
         assert accept.props.get("icon") == "done_all" and not accept.text
         # A disabled Quasar button takes no pointer events: the tooltip is
         # on the span around it.
-        assert _one(user, "action:rerun:tip").parent_slot.parent.tag == "span"
+        assert _one(user, "action:enqueue:tip").parent_slot.parent.tag == "span"
         user.find(marker="action:accept").click()
         await user.should_see(marker="panel:accept", retries=20)
 
@@ -123,8 +123,8 @@ async def test_a_bar_without_icons_keeps_its_text_buttons(shell):
     bars: list[ActionBar] = []
     async with user_simulation(root=_bar(shell, {A}, bars, icons=False)) as user:
         await user.open("/")
-        await user.should_see(marker="action:rerun", retries=20)
-        assert _one(user, "action:rerun").text == "Rerun 1 selected test"
+        await user.should_see(marker="action:enqueue", retries=20)
+        assert _one(user, "action:enqueue").text == "Queue 1"
         assert not _one(user, "action:accept").props.get("icon")
 
 
@@ -222,17 +222,17 @@ async def test_a_bar_with_no_menu_capability_draws_no_more_button(shell):
     bars: list[ActionBar] = []
     async with user_simulation(root=_emphasis_bar(shell, {}, bars)) as user:
         await user.open("/")
-        await user.should_see(marker="action:rerun", retries=20)
+        await user.should_see(marker="action:enqueue", retries=20)
         assert _none(user, "action-more")
-        assert "flat" in _one(user, "action:rerun").props
+        assert "flat" in _one(user, "action:enqueue").props
 
 
 async def test_a_bar_without_emphasis_draws_todays_outlined_buttons(shell):
     bars: list[ActionBar] = []
     async with user_simulation(root=_bar(shell, {A}, bars, icons=False)) as user:
         await user.open("/")
-        await user.should_see(marker="action:rerun", retries=20)
-        for marker in ("action:rerun", "action:accept"):
+        await user.should_see(marker="action:enqueue", retries=20)
+        for marker in ("action:enqueue", "action:accept"):
             props = _one(user, marker).props
             assert "outline" in props and "unelevated" not in props
             assert "flat" not in props
@@ -242,12 +242,12 @@ async def test_a_bar_without_emphasis_draws_todays_outlined_buttons(shell):
 async def test_a_cleared_bar_draws_its_buttons_afresh(shell):
     """`clear` forgets what the buttons were built from: the next refresh
     draws them again, whatever the emphasis (a test that comes back)."""
-    answers = {"rerun": Emphasis.NEXT}
+    answers = {"enqueue": Emphasis.NEXT}
     bars: list[ActionBar] = []
     async with user_simulation(root=_emphasis_bar(shell, answers, bars)) as user:
         await user.open("/")
-        await user.should_see(marker="action:rerun", retries=20)
+        await user.should_see(marker="action:enqueue", retries=20)
         bars[0].clear()
-        assert _none(user, "action:rerun") and bars[0].actions == {}
+        assert _none(user, "action:enqueue") and bars[0].actions == {}
         bars[0].refresh()
-        assert "unelevated" in _one(user, "action:rerun").props
+        assert "unelevated" in _one(user, "action:enqueue").props

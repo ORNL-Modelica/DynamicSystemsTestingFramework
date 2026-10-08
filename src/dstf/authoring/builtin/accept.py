@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ...backends.pool import ItemState
 from ...reporting.status import classify, refusal
 from ...storage.accept import accept_run_results
 from ...storage.batch_manifest import unfinished_run_models
@@ -44,6 +45,9 @@ SIM_FAILED = "simulation failed"
 SIMULATE_ONLY = "simulate-only: no baseline"
 NO_VARIABLES = "no tracked variables in result"
 WILL_STORE = "will store"
+
+#: The states of a test the simulation queue holds.
+_HELD = (ItemState.WAITING, ItemState.RUNNING)
 
 
 def _rows(s: SessionView) -> list[tuple[str, str, str]]:
@@ -88,7 +92,7 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
 
 
 def _report(stored: int, skipped: list[tuple[str, str]], *, reference_dir: Path) -> str:
-    """The one line the job panel shows. A partial accept has no other way
+    """The one line the queue panel shows. A partial accept has no other way
     to say which tests it refused and why."""
     parts = [f"Accept: stored {stored} baseline(s) to {reference_dir}"]
     parts += [f"; skipped {model_id}: {reason}" for model_id, reason in skipped]
@@ -117,6 +121,10 @@ class Accept:
         Situation.NEW_VARIABLES: Emphasis.MENU,
         Situation.SIM_FAIL: Emphasis.MENU,
         Situation.NO_RESULT: Emphasis.MENU,
+        Situation.QUEUED: Emphasis.MENU,
+        Situation.RUNNING: Emphasis.MENU,
+        Situation.CANCELLED: Emphasis.MENU,
+        Situation.START_FAILED: Emphasis.MENU,
     }
 
     def available(self, s: SessionView) -> bool | str:
@@ -126,12 +134,13 @@ class Accept:
         if not s.selection.tests:
             return "Accept needs a selection"
         selection = s.selection.tests
-        running = s.running
-        if running is not None:
-            locked = [t.model_id for t in project.tests if s.is_locked(t.model_id)]
-            locked = [m for m in locked if m in selection]
-            if locked:
-                return f"{running.label} is running on {locked[0]}"
+        for test in project.tests:
+            # The Session's refusal (`apply`), said before the click: the
+            # result in memory is about to be replaced by its run's.
+            state = s.queue_state(test.model_id)
+            if test.model_id in selection and state in _HELD:
+                doing = "running" if state is ItemState.RUNNING else "queued"
+                return f"{test.model_id} is {doing}: accept it when its run has ended"
         # The button's answer comes from the rows the panel draws, so an
         # enabled button never reads `Accept 0`: a pending, simulate-only or
         # variable-less result is a row the write will not store, and the

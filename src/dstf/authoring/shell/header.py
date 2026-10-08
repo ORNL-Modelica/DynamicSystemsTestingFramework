@@ -1,5 +1,5 @@
 """The header both pages share (DESIGN.md "Header"; brief §3.3): "DSTF", the
-library and the backend's name on the left; the run indicator in the
+library and the backend's name on the left; the queue indicator in the
 centre; the pending count with Save and Discard on the right, and a ⋮ menu
 at the end holding the rarely used actions — Export, Change backend…, Open
 in another backend…, the dashboard and Stop server, each with its full
@@ -34,11 +34,13 @@ from ...reporting.status import SCORING_FAILED, classify
 from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..errors import user_text
+from ..queue_rows import stop_reason
 from ..session import StaleSpecError
 from ..situation import SEP, verdict_phrase
 from ..spec_document import PatchOp
 from ..spec_preview import entry_lines, spans
 from .actions import log_unless_users
+from .queue_panel import QueueIndicator
 from .widgets import Action
 
 if TYPE_CHECKING:
@@ -140,7 +142,7 @@ class Header:
             with self.backend_name:
                 self.backend_tip = ui.tooltip("").mark("backend-name:tip")
             ui.space()
-            self.runs = ui.label().classes("text-secondary").mark("runs")
+            self.queue = QueueIndicator(shell)
             ui.space()
             self.pending = (
                 ui.button(on_click=self.drawer.toggle)
@@ -269,10 +271,7 @@ class Header:
         self.backend_why.set_text(why or "")
         self.backend_why.set_visibility(why is not None)
         self.other.set_enabled(project is not None)
-        running = s.running
-        self.runs.set_text(
-            f"1 running · {running.label}" if running is not None else "idle"
-        )
+        self.queue.refresh()
         n = len(s.spec.pending)
         self.pending.set_text(plural(n, "pending edit"))
         reason = "no pending edits" if n == 0 else shell.busy_reason()
@@ -282,7 +281,7 @@ class Header:
         self.discard.set(f"Discard {plural(n, 'edit')}", reason)
         # The drawer's own Save and Discard, gated as these are — here, not
         # in its build: that runs only when what the preview shows moved,
-        # and a job starting or the load moves nothing it shows.
+        # and the load moves nothing it shows.
         self.drawer.save.set("Save these", reason)
         self.drawer.discard.set("Discard these", reason)
         self.export_text.set_text(f"Export {plural(n, 'edit')} to spec_patch.json")
@@ -295,11 +294,11 @@ class Header:
 
     def _backend_why(self) -> str | None:
         """Why the backend cannot change now (brief §3.6: refused while edits
-        are pending or a run is in flight), or None."""
+        are pending or the queue holds a test), or None."""
         s = self.shell.session
         if s.project is None:
             return "no project open"
-        busy = self.shell.busy_reason()
+        busy = self.shell.busy_reason() or stop_reason(s)
         if busy is not None:
             return f"backend change waits: {busy}"
         n = len(s.spec.pending)
@@ -378,7 +377,7 @@ class Header:
                 def reload() -> None:
                     try:
                         self.shell.session.reload()
-                    except Exception as e:  # refused while a job runs
+                    except Exception as e:  # said in the dialog's place, never raised
                         log_unless_users(e, "reload")
                         ui.notify(user_text(e), type="warning")
                         return
@@ -395,8 +394,6 @@ class Header:
             ui.notify(f"save failed: {e}", type="negative")
 
     def _discard(self) -> None:
-        # Refused while a job runs: the button greys on the next tick, and a
-        # click within the one the job started in still reaches the Session.
         try:
             self.shell.session.discard()
         except Exception as e:
@@ -417,8 +414,9 @@ class Header:
     # -- stop ----------------------------------------------------------------------
 
     def _stop(self) -> None:
-        """Stop server (brief §3.3): at once with nothing to lose; else a
-        confirm naming what would be lost."""
+        """Stop server (brief §3.3, §3.6): at once with nothing to lose; else
+        a confirm naming what would be lost — unsaved edits, and the tests
+        the queue still holds, which stopping removes or cancels."""
         reasons = self.shell.stop_reasons()
         if not reasons:
             self.shell.stop()

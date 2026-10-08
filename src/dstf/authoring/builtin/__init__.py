@@ -13,7 +13,7 @@ def register_builtins() -> None:
     from .edit_criteria import EditCriteria
     from .edit_on_plot import EditOnPlot
     from .edit_tree import EditTree
-    from .rerun import Rerun
+    from .enqueue import EnqueueTests
 
     if EditCriteria.name not in names:
         register_capability(EditCriteria())
@@ -21,7 +21,7 @@ def register_builtins() -> None:
         register_capability(EditTree())
     if Accept.name not in names:
         register_capability(Accept())
-    if Rerun.name not in names:
-        register_capability(Rerun())
+    if EnqueueTests.name not in names:
+        register_capability(EnqueueTests())
     if EditOnPlot.name not in names:
         register_capability(EditOnPlot())

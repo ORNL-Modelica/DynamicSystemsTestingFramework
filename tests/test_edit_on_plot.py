@@ -22,12 +22,14 @@ from capability_host import host  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.edit_on_plot import EditOnPlot  # noqa: E402
-from dstf.authoring.capabilities import Job, Patch  # noqa: E402
+from dstf.authoring.capabilities import Patch  # noqa: E402
 from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.comparison.handles import HandleEditError  # noqa: E402
 from test_handles import TREE  # noqa: E402
-from test_session import A, D, _Gate, _project, _session_with_entry  # noqa: E402
+from test_session import A, D, _project, _session_with_entry  # noqa: E402
+from test_session_queue import drop_item, fake_item  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -690,17 +692,30 @@ def test_a_leaf_with_a_table_but_no_drag_editor_is_available(session):
     assert EditOnPlot().available(SessionView(session, ON_A)) is True
 
 
-def test_available_names_the_job_holding_the_lock(session):
+def test_available_does_not_read_the_queue(session):
+    """A queued or running test stays editable (D150): `available` answers
+    for the test as it stands, and its place in the queue is no reason."""
     _tree_on_d(session)
-    gate = _Gate()
-    session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
-    try:
-        assert (
-            EditOnPlot().available(SessionView(session, ON_D))
-            == f"rerun is running on {D}"
-        )
-    finally:
-        gate.release.set()
+    view = SessionView(session, ON_D)
+    waiting = fake_item(session, D, ItemState.WAITING)
+    assert EditOnPlot().available(view) is True
+    op = _only_op(
+        _drag(session, "/metrics/children/1/range/max", {"y0": 1.5, "y1": 1.5})
+    )
+    session.apply(Patch(ops=(op,)))
+    assert session.spec.pending[-1].value["max_value"] == 1.5
+    drop_item(session, waiting)
+
+    running = fake_item(session, D, ItemState.RUNNING)
+    assert EditOnPlot().available(view) is True
+    # The Session takes the start in: the last result goes, and the answer
+    # is the one a test with no result gets — the queue's item or not.
+    session._item_started(running)
+    assert D not in session.project.results
+    held = EditOnPlot().available(view)
+    drop_item(session, running)
+    assert held == EditOnPlot().available(view)
+    assert "running" not in str(held)
 
 
 # -- the panel ---------------------------------------------------------------

@@ -218,9 +218,6 @@ class StatsCard:
         self.rows_by_path: dict[str, ui.row] = {}
         self.slots: dict[str, ui.column] = {}
         self._shape: tuple = ()
-        #: The job holding this test when the `+`s were drawn: they grey
-        #: under it, and are redrawn when it comes or goes.
-        self._lock: str | None = None
         self._toggle: ui.button | None = None
         self._summary: ui.label | None = None
         #: The one open editor: its leaf, its host and box, and the leaf as
@@ -289,17 +286,8 @@ class StatsCard:
                 self.page.drop_editor()
             self._build(shown, reads)
             return
-        lock = self._locked()
-        moved, self._lock = lock != self._lock, lock
         for host in self.hosts:
-            # The rows stand; what a `+` MAY do does not. A job's lock greys
-            # it (a why-line in its place said the same thing on every
-            # row) — an answer `available` does not carry, so `follow`
-            # cannot see it move.
-            if moved:
-                host.build()
-            else:
-                host.follow()
+            host.follow()
         for stat in shown:
             self.painters[stat.path].paint(stat, reads.get(stat.path, []))
         if self.editor is not None:
@@ -311,13 +299,6 @@ class StatsCard:
                 self._edited = edited
             else:
                 self.editor.follow()
-
-    def _locked(self) -> str | None:
-        """The label of the job holding this test, or None."""
-        running = self.page.shell.session.running
-        if running is None or self.page.model_id not in running.models:
-            return None
-        return str(running.label)
 
     # -- the closed line -------------------------------------------------------
 
@@ -346,7 +327,6 @@ class StatsCard:
 
     def _build(self, shown: list[StatRow], reads: dict[str, list[dict]]) -> None:
         self.close_editor()
-        self._lock = self._locked()
         for host in self.hosts:
             host.clear()
         self.hosts, self.painters = [], {}

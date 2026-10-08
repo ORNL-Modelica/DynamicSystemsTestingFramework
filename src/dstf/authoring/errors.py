@@ -2,7 +2,7 @@
 
 The errors a person can cause — a patch the validator refuses, a drag a
 criterion cannot take, a move the tree refuses, a value out of range, a
-locked spec, a running job — read as their plain reason: the location is
+locked spec, a test the queue holds — read as their plain reason: the location is
 already on the screen, beside the row or the plot it came from. The
 validator's refusal of a tree of warnings read "PatchError: validator
 rejected the patched tree: metrics: tree has no leaf targeting 'primary'
@@ -12,10 +12,11 @@ Anything else is a bug and keeps its class name, so it can be reported.
 
 from __future__ import annotations
 
+from ..backends.pool import Refused
 from ..comparison.handles import HandleEditError
 from ..config import ConfigError
 from ..discovery.patch_apply import PatchError
-from .session import JobRunningError, LockedError
+from .session import QueueError
 from .tree_move import MoveRefused
 
 #: What a person's own edit raises. Shown as its reason and never logged.
@@ -23,8 +24,9 @@ USER_ERRORS: tuple[type[BaseException], ...] = (
     PatchError,
     HandleEditError,
     ConfigError,
-    LockedError,
-    JobRunningError,
+    # The simulation queue's refusals: the Session's and the pool's own.
+    QueueError,
+    Refused,
     # A move the tree refuses — a Move to… menu or a drag map gone stale
     # under an edit staged since offers one — is said, not a bug.
     MoveRefused,

@@ -18,9 +18,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from ..comparison.types import TestComparison
     from ..storage.reference_store import ReferenceStore
-    from .session import Project, SessionView
+    from .session import SessionView
     from .spec_document import PatchOp
 
 
@@ -79,16 +78,6 @@ def plural(count: int, noun: str, many: str | None = None) -> str:
     return f"{count} {many}" if many is not None else f"{count} {noun}s"
 
 
-@dataclass(frozen=True)
-class JobContext:
-    """What a job's callable receives: the open project and the models the
-    job locked. Sub-project 5's run callable reads its config and tests
-    from here."""
-
-    project: Project
-    models: frozenset[str]
-
-
 @dataclass(frozen=True, kw_only=True)
 class Patch:
     """Ops to stage; the Session rescores their models."""
@@ -99,9 +88,9 @@ class Patch:
 @dataclass(frozen=True, kw_only=True)
 class StoreWrite:
     """A write against the reference store; results reload afterwards.
-    ``models`` names what it touches, so a locked model can refuse it.
+    ``models`` names what it touches: a queued or running one refuses it.
 
-    ``run`` returns the one line the job panel shows — what the write did,
+    ``run`` returns the one line the queue panel shows — what the write did,
     including what it refused and why — or ``None`` when there is nothing
     to say. A partial write has no other way to report its skips, and
     raising after some baselines were stored would mislead."""
@@ -111,23 +100,14 @@ class StoreWrite:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Job:
-    """Work on a worker thread. The Session locks ``models`` while it runs
-    and, unless ``reloads_results`` is false, reloads results and rescores
-    them when it completes."""
+class Enqueue:
+    """Tests for the simulation queue (D150), in the order to run them. The
+    Session appends them — a test already queued or running is skipped —
+    and each result is read back and rescored as its test ends. A queued
+    test runs with the spec as it stands when it STARTS, pending edits
+    applied."""
 
-    run: Callable[[JobContext], None]
-    label: str
-    models: frozenset[str]
-    reloads_results: bool = True
-    #: Called once the reload has rescored, with the project and a copy of
-    #: the Session's comparisons, so a job that wrote a run can finish its
-    #: artifacts with the verdicts (a rerun's dashboard). OFF the UI loop,
-    #: on the Session's background thread, in order with its own dashboard
-    #: renders: the job reads as finished before it has run. Not called for
-    #: a failed job or one that reloads nothing; one that raises is logged
-    #: and the job stays good.
-    after_reload: Callable[[Project, dict[str, TestComparison]], None] | None = None
+    models: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -144,7 +124,7 @@ class OpenProject:
     work_dir: Path | None = None  # the run's work dir, when not the default
 
 
-Outcome = Patch | StoreWrite | Job | Artifact | OpenProject | None
+Outcome = Patch | StoreWrite | Enqueue | Artifact | OpenProject | None
 
 
 class FigureHook(Protocol):
@@ -325,15 +305,15 @@ class Capability(Protocol):
 
     def available(self, s: SessionView) -> bool | str:
         """``True``, or ``False`` / the sentence saying why it is unavailable
-        and what would enable it ("Accept needs a selection", "rerun is
-        running on FakeLib.A"). The greyed button carries it where the
+        and what would enable it ("Accept needs a selection", "FakeLib.A is
+        already queued"). The greyed button carries it where the
         placement draws one; at CRITERION, NODE, STATISTIC and
         STATISTIC_CRITERION it is shown in the panel's place."""
         ...
 
     def caption(self, s: SessionView) -> str:
         """The button's label: its object, its effect and a count
-        ("Rerun 2 selected tests"). At zero it still says what it
+        ("Accept 2 results as baselines"). At zero it still says what it
         would do; ``available`` then carries the sentence. The inline
         placements (CRITERION, NODE, STATISTIC, STATISTIC_CRITERION) draw
         no button and never read it."""
@@ -343,7 +323,7 @@ class Capability(Protocol):
 
     def act(self, s: SessionView, **inputs: Any) -> Outcome | Sequence[Outcome]:
         """What this capability's inputs DO, as an outcome the Session
-        applies — a Patch, a Job, a StoreWrite, an Artifact, an OpenProject,
+        applies — a Patch, a StoreWrite, an Enqueue, an Artifact, an OpenProject,
         or a sequence of them.
 
         Returning ``None`` means nothing happened: the host applies

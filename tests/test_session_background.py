@@ -1,22 +1,23 @@
 """The Session's work off the UI loop and the dashboard it leaves alone
-(D137 §6): a job's `after_reload` (Rerun's dashboard render) runs on one
-background thread, in order, on the comparisons of its own reload; a job
-waits for it before it runs; Save, Discard and Reload never rewrite the work
-dir's `dashboard.html` — it is the report of the last run, compare or tool
-Rerun — and are refused while a job runs."""
+(D137 §6, D150): the drained queue's `status.json` and dashboard are
+written on one background thread, in order, on the verdicts as they stood
+when the queue drained; Save, Discard and Reload never rewrite the work
+dir's `dashboard.html` — it is the report of the last run, compare or
+drained queue."""
 
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
-from dstf.authoring.capabilities import Job
-from dstf.authoring.session import JobRunningError, Session
+import dstf.reporting.dashboard_render as dashboard
+from dstf.authoring.session import Session, _Background
+from dstf.backends.pool import ItemState
 from dstf.reporting.dashboard_render import render_final
 from dstf.reporting.status import FAIL, PASS, classify
-from test_session import LOOSEN, A, _project, _started
+from test_session import LOOSEN, A, D, _project
+from test_session_queue import Harness
 
 
 @pytest.fixture
@@ -27,6 +28,15 @@ def opened(tmp_path):
     s = Session()
     s.open(cfg, work_dir=work)
     return s, work
+
+
+@pytest.fixture
+def h(tmp_path):
+    """FakeLib with a queue that runs (`test_session_queue.Harness`)."""
+    harness = Harness(tmp_path)
+    yield harness
+    harness.session.stop_queue()
+    harness.session.wait_background(30)
 
 
 def test_save_discard_and_reload_leave_the_dashboard_byte_identical(opened):
@@ -49,181 +59,87 @@ def test_save_discard_and_reload_leave_the_dashboard_byte_identical(opened):
     assert (work / "dashboard.html").read_bytes() == before
 
 
-def test_a_jobs_after_reload_runs_off_the_ui_loop(opened):
-    """Rerun's `after_reload` renders the dashboard: the job's completion
+def test_the_drained_queue_s_write_runs_off_the_ui_loop(h, monkeypatch):
+    """The dashboard's render is the slow part of the write: the item's end
     (on the UI loop in the tool) must not wait for it."""
-    s, _work = opened
     release, ran = threading.Event(), threading.Event()
+    threads: list[str] = []
 
-    def slow(project, comparisons):
+    def slow(work_dir, **kwargs):
+        threads.append(threading.current_thread().name)
         assert release.wait(10)
         ran.set()
 
-    jobs = _started(s)
-    s.apply(
-        Job(
-            run=lambda ctx: None,
-            label="rerun",
-            models=frozenset({A}),
-            after_reload=slow,
-        )
-    )
+    monkeypatch.setattr(dashboard, "render_final", slow)
+    h.session.enqueue([D])
     try:
-        assert jobs[0].done.wait(5) and jobs[0].reloaded  # finished, hook pending
-        assert not ran.is_set()
+        h.ended(D)  # taken in, the write pending
+        assert (
+            h.state(D) is ItemState.FINISHED
+            and classify(h.session.comparisons[D]) == PASS
+        )
+        assert not h.session.wait_background(0.2) and not ran.is_set()
     finally:
         release.set()
-    assert s.wait_background(10) and ran.is_set()
+    assert h.session.wait_background(10) and ran.is_set()
+    assert threads == ["dstf-background"]
 
 
-def test_after_reload_gets_the_comparisons_of_its_own_reload(opened, monkeypatch):
-    """The hook renders the verdicts the job's reload scored, even when it
-    waits its turn behind another: an edit staged meanwhile changes the
-    Session's comparisons, not the ones it was handed."""
-    import dstf.authoring.session as session_mod
-
-    # The second job starts while the first's hook still runs (past the
-    # wait), so its own hook queues behind it.
-    monkeypatch.setattr(session_mod, "BACKGROUND_WAIT", 0.1)
-    s, _work = opened
+def test_the_write_gets_the_verdicts_as_they_stood_when_the_queue_drained(
+    h, monkeypatch
+):
+    """The page is the drained queue's report, even when its write waits
+    its turn behind another: an edit staged meanwhile changes the Session's
+    comparisons, not the ones the write was handed."""
     release = threading.Event()
     seen: list[dict] = []
-
-    def blocking(project, comparisons):
-        assert release.wait(10)
-
-    jobs = _started(s)
-    s.apply(
-        Job(
-            run=lambda ctx: None,
-            label="rerun",
-            models=frozenset({A}),
-            after_reload=blocking,
-        )
+    monkeypatch.setattr(
+        dashboard,
+        "render_final",
+        lambda work_dir, comparisons, results: seen.append(
+            {c.model_id: c for c in comparisons}
+        ),
     )
+    h.session._background.submit("a write ahead of it", lambda: release.wait(10))
     try:
-        assert jobs[0].done.wait(5)
-        s.apply(
-            Job(
-                run=lambda ctx: None,
-                label="rerun",
-                models=frozenset({A}),
-                after_reload=lambda p, c: seen.append(c),
-            )
-        )
-        assert jobs[1].done.wait(5)
-        s.stage([LOOSEN])  # rescored while the second hook waits its turn
-        assert classify(s.comparisons[A]) == PASS
+        h.session.enqueue([A])
+        h.ended(A)
+        assert classify(h.session.comparisons[A]) == FAIL
+        h.session.stage([LOOSEN])  # rescored while the write waits its turn
+        assert classify(h.session.comparisons[A]) == PASS
     finally:
         release.set()
-    assert s.wait_background(10)
+    assert h.session.wait_background(10)
     assert classify(seen[0][A]) == FAIL
-
-
-def test_a_job_runs_after_the_last_jobs_after_reload(opened):
-    """Rerun then Rerun: the first's render, still queued, must not land on
-    the second's live page — the second run starts once it has landed."""
-    s, _work = opened
-    order: list[str] = []
-
-    def slow(project, comparisons):
-        time.sleep(0.5)
-        order.append("first render")
-
-    jobs = _started(s)
-    s.apply(
-        Job(
-            run=lambda ctx: None,
-            label="rerun",
-            models=frozenset({A}),
-            after_reload=slow,
-        )
-    )
-    assert jobs[0].done.wait(5)
-    s.apply(
-        Job(
-            run=lambda ctx: order.append("second run"),
-            label="rerun",
-            models=frozenset({A}),
-            reloads_results=False,
-        )
-    )
-    assert jobs[1].done.wait(10) and jobs[1].error is None
-    assert order == ["first render", "second run"]
 
 
 @pytest.mark.parametrize(
     "exc", [SystemExit(3), KeyboardInterrupt(), OSError("disk full")]
 )
-def test_a_raising_hook_is_logged_and_the_next_one_runs(opened, caplog, exc):
-    """Whatever a hook raises — SystemExit too — is logged; the thread goes
+def test_a_raising_write_is_logged_and_the_next_one_runs(h, monkeypatch, caplog, exc):
+    """Whatever a write raises — SystemExit too — is logged; the thread goes
     on, so `wait_background` never hangs on a thread that died busy."""
-    s, _work = opened
     ran = threading.Event()
 
-    def boom(project, comparisons):
+    def boom(work_dir, **kwargs):
         raise exc
 
-    jobs = _started(s)
+    monkeypatch.setattr(dashboard, "render_final", boom)
     with caplog.at_level("ERROR", logger="dstf.authoring.session"):
-        s.apply(
-            Job(
-                run=lambda ctx: None,
-                label="rerun",
-                models=frozenset({A}),
-                after_reload=boom,
-            )
-        )
-        assert jobs[0].done.wait(5) and jobs[0].error is None
-        assert s.wait_background(5)
-    assert "rerun: after_reload failed" in caplog.text
-    s.apply(
-        Job(
-            run=lambda ctx: None,
-            label="rerun",
-            models=frozenset({A}),
-            after_reload=lambda p, c: ran.set(),
-        )
-    )
-    assert jobs[1].done.wait(5)
-    assert s.wait_background(5) and ran.is_set()
-
-
-class TestRefusedWhileAJobRuns:
-    """Save, Discard and Reload change what a running job's reload scores:
-    the header refuses them, and so does the Session."""
-
-    def _running(self, s):
-        release = threading.Event()
-        s.apply(
-            Job(
-                run=lambda ctx: release.wait(10),
-                label="rerun",
-                models=frozenset({"FakeLib.B"}),
-                reloads_results=False,
-            )
-        )
-        assert s.running is not None
-        return release
-
-    @pytest.mark.parametrize("act", ["save", "discard", "reload"])
-    def test_refused(self, opened, act):
-        s, _work = opened
-        s.stage([LOOSEN])
-        release = self._running(s)
-        try:
-            with pytest.raises(JobRunningError, match="rerun is still running"):
-                getattr(s, act)()
-            assert len(s.spec.pending) == 2  # nothing saved, nothing dropped
-        finally:
-            release.set()
+        h.session.enqueue([D])
+        h.ended(D)
+        assert h.state(D) is ItemState.FINISHED
+        assert h.session.wait_background(5)
+    assert "the queue's status.json and dashboard failed" in caplog.text
+    monkeypatch.setattr(dashboard, "render_final", lambda work_dir, **kw: ran.set())
+    h.session.enqueue([D])
+    h.ended(D)
+    assert h.session.wait_background(5) and ran.is_set()
 
 
 def test_the_background_runs_what_it_is_handed_in_order():
-    """Two renders queued behind a running one land in the order handed —
-    the later Rerun's page is the one left on disk."""
-    from dstf.authoring.session import _Background
-
+    """Two writes queued behind a running one land in the order handed —
+    the later drain's page is the one left on disk."""
     bg = _Background()
     first_running, release = threading.Event(), threading.Event()
     ran: list[str] = []

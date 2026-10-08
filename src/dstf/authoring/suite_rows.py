@@ -2,7 +2,7 @@
 (``reporting.rows``) built from what the Session holds — its comparison
 through ``summary_fields`` (the numbers the report's sidecar carries,
 computed the same way), the result's timing, the test's provenance, its
-staged edits and a running job. In process: a sidecar is the
+staged edits and its place in the simulation queue. In process: a sidecar is the
 full-resolution context, one JSON parse per test. No UI framework here
 (the Session tier)."""
 
@@ -13,8 +13,16 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from ..backends.pool import ItemState
 from ..reporting.rows import TestRow, summary_fields
-from ..reporting.status import RUNNING, SCORING_FAILED, SIM_FAIL
+from ..reporting.status import (
+    CANCELLED,
+    NOT_RUN,
+    QUEUED,
+    RUNNING,
+    SCORING_FAILED,
+    SIM_FAIL,
+)
 
 if TYPE_CHECKING:
     from .session import Session
@@ -31,8 +39,10 @@ def suite_row(
     failed: Collection[str] = (),
     edits: Mapping[str, int] | None = None,
 ) -> TestRow:
-    """One Suite row. A running job beats every other state; then the
-    comparison; then a scoring failure the open announced (``failed`` —
+    """One Suite row. A test the queue holds reads QUEUED or RUNNING,
+    whatever else is true of it; then the comparison — CANCELLED where it
+    has no result because its run in the queue was stopped (until that
+    row is cleared); then a scoring failure the open announced (``failed`` —
     the shell's set, kept until the next open, so a model a later rescore
     scored reads its verdict, not the failure); else the row waits for its
     verdict. ``edits`` is the pending-op count per model; ``suite_rows``
@@ -45,9 +55,11 @@ def suite_row(
         field_sources=dict(test.field_sources) if test is not None else {},
         edits=counts.get(model_id, 0),
     )
-    running = session.running
+    state = session.queue_state(model_id)
     comp = session.comparisons.get(model_id)
-    if running is not None and model_id in running.models:
+    if state is ItemState.WAITING:
+        return replace(row, status=QUEUED)
+    if state is ItemState.RUNNING:
         return replace(row, status=RUNNING)
     if comp is not None:
         result = project.results.get(model_id) if project is not None else None
@@ -57,9 +69,12 @@ def suite_row(
             ref_id=f"ref_{comp.test_id}" if comp.test_id else None,
             field_sources=row.field_sources,
         )
+        status = s["status"]
+        if state is ItemState.CANCELLED and status == NOT_RUN:
+            status = CANCELLED
         return replace(
             row,
-            status=s["status"],
+            status=status,
             ref_id=s["ref_id"],
             worst_score=s["worst_nrmse"],
             n_unscored=s["n_unscored"],

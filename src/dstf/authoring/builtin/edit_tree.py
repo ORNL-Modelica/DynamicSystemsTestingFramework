@@ -221,13 +221,10 @@ class EditTree:
         model_id = next(iter(sel.tests))
         if sel.quantity is not None:
             # A Statistics row's `+` is drawn grey with the add form's
-            # reason where nothing can be added (A9), a job's lock included:
-            # a why-line in place of it, on every row, said the same thing
-            # twenty times (57 on a TRANSFORM card).
+            # reason where nothing can be added (A9): a why-line in place
+            # of it, on every row, said the same thing twenty times (57 on
+            # a TRANSFORM card).
             return True
-        locked = _locked_by(s, model_id)
-        if locked is not None:
-            return locked
         tree, why = s.tree_or_reason(model_id)
         if tree is None:
             assert why is not None  # `tree` is None
@@ -712,7 +709,7 @@ def _cluster(
     (the page's cost tests)."""
     tree = s.tree(model_id)
     node = node_or_none(tree, path)
-    if node is None:  # `available` already says so; a job may race
+    if node is None:  # `available` already says so; an edit may race
         return
     is_combinator = "combinator" in node
     # `+` adds at the end of a combinator, right after a leaf: the
@@ -1084,7 +1081,7 @@ def _move_menu(
     def fill() -> None:
         menu.clear()
         tree = s.tree(model_id)
-        if tree is None:  # `available` already says why; a job may race
+        if tree is None:  # `available` already says why; an edit may race
             return
         places = move_destinations(
             tree, path, validate=_validator(s, model_id), names=s.labels(model_id)
@@ -1118,14 +1115,6 @@ def _move_menu(
     button.mark(f"move:{path}")
 
 
-def _locked_by(s: SessionView, model_id: str) -> str | None:
-    """Why nothing may edit ``model_id`` now — the job holding it — or None."""
-    running = s.running
-    if running is not None and s.is_locked(model_id):
-        return f"{running.label} is running on {model_id}"
-    return None
-
-
 def _statistic_plus(
     ui: Any, s: SessionView, ui_panel: Panel, model_id: str, quantity: str
 ) -> None:
@@ -1134,14 +1123,12 @@ def _statistic_plus(
     lands in an `and`), added at the END of the root (Q6 b), or as
     ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
     after it. Grey with the add form's reason where nothing can take it:
-    a job holding the test, a simulate-only test, a test with no tree to
+    a simulate-only test, a test with no tree to
     add to (the Session's `tree_or_reason`), a root that takes no child
     alone."""
     tree, why = s.tree_or_reason(model_id)
-    locked = _locked_by(s, model_id)
-    if locked is not None:
-        reason: str | None = locked
-    elif _simulate_only(s, model_id):
+    reason: str | None
+    if _simulate_only(s, model_id):
         # Tree or not: the comparator scores nothing on it.
         reason = SIMULATE_ONLY
     elif tree is None:

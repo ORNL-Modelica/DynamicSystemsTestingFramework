@@ -2,13 +2,15 @@
 row directly under the test's row, inside the header that stays at the
 top. It says the test's situation (`authoring.situation`) in a tone, and
 fills the one next action: the shell's own Preview and save / Discard for
-pending edits (quiet when the edits name a variable only a rerun records),
-and the TEST-placement capabilities, each drawn as its
+pending edits (quiet when the edits name a variable only a new run
+records), its own Remove or Cancel for a test the simulation queue holds
+(D150), and the TEST-placement capabilities, each drawn as its
 declared `emphasis` for the situation says — filled, quiet, or in the ⋮.
 The strip knows no capability by name."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from nicegui import ui
@@ -21,6 +23,7 @@ from .actions import ActionBar, log_unless_users
 from .widgets import Action
 
 if TYPE_CHECKING:
+    from ...backends.pool import QueueItem
     from .test_page import TestPage
 
 TONES = ("grey", "red", "amber")
@@ -55,6 +58,22 @@ class StatusStrip:
                 # which edits this one drops.
                 with self.discard.button:
                     ui.tooltip(DISCARD_TIP)
+                # The queue's two: a queued test's next action is Remove, a
+                # running one's Cancel — on a backend that cannot stop a
+                # test, the sentence saying so in its place.
+                self.remove = (
+                    ui.button("Remove", on_click=self._remove)
+                    .props("unelevated dense no-caps color=primary")
+                    .mark("strip-remove")
+                )
+                self.cancel = (
+                    ui.button("Cancel", on_click=self._cancel)
+                    .props("unelevated dense no-caps color=negative")
+                    .mark("strip-cancel")
+                )
+                self.cancel_why = (
+                    ui.label().classes("dstf-why").mark("strip-cancel:why")
+                )
                 self.actions = ActionBar(
                     page.shell,
                     Placement.TEST,
@@ -66,11 +85,12 @@ class StatusStrip:
                     ),
                 )
         self._show_edit_buttons(False)
+        self._show_queue_buttons(None)
 
     def _show_edit_buttons(self, editing: bool, *, filled: bool = True) -> None:
         """Preview and save and Discard, shown while edits are pending;
         Preview and save is the filled next action unless the edits name a
-        variable only a rerun records — Rerun is then the one filled (the
+        variable only a new run records — Queue is then the one filled (the
         owner's O1), and Preview and save is quiet, still one click."""
         self.preview.set_visibility(editing)
         self.discard.container.set_visibility(editing)
@@ -95,8 +115,22 @@ class StatusStrip:
             filled=strip.situation is not Situation.EDITS_NEW,
         )
         self.discard.set("Discard", self.page.shell.busy_reason())
+        self._show_queue_buttons(strip.situation)
         self.actions.container.set_visibility(True)
         self.actions.refresh()
+
+    def say(self, strip: Strip) -> None:
+        """The sentence alone: a running test's seconds move once a second,
+        and nothing else of the strip does."""
+        self.text.set_text(strip.sentence)
+
+    def _show_queue_buttons(self, situation: Situation | None) -> None:
+        why = self.page.shell.session.cannot_cancel
+        running = situation is Situation.RUNNING
+        self.remove.set_visibility(situation is Situation.QUEUED)
+        self.cancel.set_visibility(running and why is None)
+        self.cancel_why.set_text(why or "")
+        self.cancel_why.set_visibility(running and why is not None)
 
     def forget(self) -> None:
         """No test: no sentence, no buttons (the page's `_gone`)."""
@@ -104,6 +138,7 @@ class StatusStrip:
         self.text.set_text("")
         self._tone("grey")
         self._show_edit_buttons(False)
+        self._show_queue_buttons(None)
         self.actions.clear()
         self.actions.container.set_visibility(False)
 
@@ -111,12 +146,29 @@ class StatusStrip:
         self.page.header.drawer.show(self.page.model_id)
 
     def _discard(self) -> None:
-        # THIS test's edits; the header's Discard is every test's. Refused
-        # while a job runs, as the header's is: the button greys on the
-        # next tick, and a click within the one the job started in still
-        # reaches the Session.
+        # THIS test's edits; the header's Discard is every test's.
         try:
             self.page.shell.session.discard(models={self.page.model_id})
         except Exception as e:
             log_unless_users(e, "discard")
             ui.notify(user_text(e), type="warning")
+
+    def _remove(self) -> None:
+        self._queue_act(self.page.shell.session.remove, "has already started")
+
+    def _cancel(self) -> None:
+        self._queue_act(self.page.shell.session.cancel, "is no longer running")
+
+    def _queue_act(self, act: Callable[[QueueItem], bool], missed: str) -> None:
+        """Remove or Cancel this test's item; a refusal — the pool's, or the
+        item having moved on since the strip was painted — is said."""
+        session, model_id = self.page.shell.session, self.page.model_id
+        item = session.queue_item(model_id)
+        try:
+            done = item is not None and act(item)
+        except Exception as e:
+            log_unless_users(e, "queue")
+            ui.notify(user_text(e), type="warning")
+            return
+        if not done:
+            ui.notify(f"{model_id} {missed}", type="warning")

@@ -23,7 +23,9 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from test_session import A, B, C, D, G, _project  # noqa: E402
+from test_session_queue import drop_item, fake_item  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -143,14 +145,14 @@ async def test_the_selection_the_grid_reports_is_the_tabs_and_the_actions(shell)
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         page = _suite(shell, user)
-        rerun = page.actions.actions["rerun"].button
-        assert not rerun.enabled
+        queue = page.actions.actions["enqueue"].button
+        assert not queue.enabled
         page._on_selection([A, D])
         assert page.state.checked == {A, D}
-        assert rerun.enabled
-        assert rerun.props["aria-label"] == "Rerun 2 selected tests"
+        assert queue.enabled
+        assert queue.props["aria-label"] == "Queue 2"
         page._on_selection([])
-        assert page.state.checked == set() and not rerun.enabled
+        assert page.state.checked == set() and not queue.enabled
 
 
 async def test_a_selection_survives_a_visit_to_a_test(shell):
@@ -310,19 +312,29 @@ async def test_a_new_test_in_the_spec_gets_a_row(shell, sent):
         assert "FakeLib.E" in _suite(shell, user).ids
 
 
-async def test_a_job_paints_its_rows_running_then_their_verdicts(shell, sent):
-    from dstf.authoring.session import RunningJob
-
+async def test_a_queue_event_paints_its_rows_queued_running_then_their_verdicts(
+    shell, sent
+):
+    """The rows a `queue` event names are repainted, and no other: QUEUED
+    while a test waits, RUNNING once it starts, its verdict when the queue
+    no longer holds it."""
+    session = shell.session
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        job = RunningJob(label="rerun", models=frozenset({A, D}))
-        shell.session.running = job
-        shell._events.put({"event": "job", "state": "started", "job": job})
+        a = fake_item(session, A, ItemState.WAITING)
+        d = fake_item(session, D, ItemState.WAITING)
+        session._emit("queue", state="queued", models={A, D})
         shell.tick()
-        assert sent == [_tx(update=[(A, "RUNNING", 0), (D, "RUNNING", 0)])]
+        assert sent == [_tx(update=[(A, "QUEUED", 0), (D, "QUEUED", 0)])]
         sent.clear()
-        shell.session.running = None
-        shell._events.put({"event": "job", "state": "finished", "job": job})
+        a.state, a.started_at, a.worker_id = ItemState.RUNNING, time.time(), 0
+        session._emit("queue", state="started", models={A})
+        shell.tick()
+        assert sent == [_tx(update=[(A, "RUNNING", 0)])]  # D's row is not sent
+        sent.clear()
+        drop_item(session, a)
+        drop_item(session, d)
+        session._emit("queue", state="removed", models={A, D})
         shell.tick()
         assert sent == [_tx(update=[(A, "FAIL", 0), (D, "PASS", 0)])]
 
@@ -451,7 +463,7 @@ async def test_rows_dropped_and_named_again_in_one_tick_are_repainted(shell, sen
 def test_the_count_pills_are_the_status_tables_and_include_not_run():
     """The Suite's pills are handed to its script from Python, in the words
     of `reporting.status` (the script spells none); NOT RUN has its own
-    (D145), after NO_REF."""
+    (D145), after NO_REF, and the queue's two — QUEUED, RUNNING — come last."""
     from dstf.authoring.shell.suite_grid import PILLS, scripts_html
 
     assert [k for k, _ in PILLS] == [
@@ -461,8 +473,14 @@ def test_the_count_pills_are_the_status_tables_and_include_not_run():
         "no-ref",
         "not-run",
         "edited",
+        "queued",
         "running",
     ]
+    assert PILLS[-3:] == (
+        ("edited", "EDITED"),
+        ("queued", "QUEUED"),
+        ("running", "RUNNING"),
+    )
     assert dict(PILLS)["not-run"] == "NOT RUN"
     assert 'window.DstfSuitePills = [["pass", "PASS"]' in scripts_html("k")
     assert '["not-run", "NOT RUN"]' in scripts_html("k")

@@ -10,6 +10,7 @@ import copy
 import dataclasses
 import json
 import logging
+import time
 
 import pytest
 
@@ -20,7 +21,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Artifact, Job, Patch, Placement  # noqa: E402
+from dstf.authoring.capabilities import Artifact, Patch, Placement  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell import plot_card  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
@@ -29,7 +30,9 @@ from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import STATS, TestPage  # noqa: E402
 from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
 from dstf.authoring.shell.widgets import MiddleCut, middle_split  # noqa: E402
+from dstf.authoring.situation import CANCELLED_SENTENCE, Situation  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.figures.plotly import RING_PATH  # noqa: E402
 from dstf.reporting.tree_rows import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
@@ -41,9 +44,9 @@ from test_session import (  # noqa: E402
     C,
     D,
     G,
-    _Gate,
     _two_var_project,
 )
+from test_session_queue import fake_item  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -414,14 +417,14 @@ async def test_a_host_says_each_distinct_sentence_once(shell):
     first capability to say a sentence says it; a different sentence is a
     line of its own."""
     _only(
-        _Probe("one", {Placement.CRITERION}, answer="rerun is running on FakeLib.A"),
-        _Probe("two", {Placement.CRITERION}, answer="rerun is running on FakeLib.A"),
+        _Probe("one", {Placement.CRITERION}, answer="needs a baseline"),
+        _Probe("two", {Placement.CRITERION}, answer="needs a baseline"),
         _Probe("three", {Placement.CRITERION}, answer="three has no handles"),
     )
     box, root = _hosted(shell)
     async with user_simulation(root=root) as user:
         await user.open("/")
-        assert _one(user, "why:one").text == "rerun is running on FakeLib.A"
+        assert _one(user, "why:one").text == "needs a baseline"
         assert _none(user, "why:two")
         assert _one(user, "why:three").text == "three has no handles"
 
@@ -475,10 +478,10 @@ async def test_follow_rebuilds_a_host_only_when_an_available_answer_moved(shell)
         panel = _one(user, "probe:one")
         box[0].follow()
         assert _one(user, "probe:one") is panel  # nothing moved, nothing rebuilt
-        probe.answer = "rerun is running on FakeLib.A"
+        probe.answer = "needs a baseline"
         box[0].follow()
         assert _none(user, "probe:one")
-        assert _one(user, "why:one").text == "rerun is running on FakeLib.A"
+        assert _one(user, "why:one").text == "needs a baseline"
         probe.answer = True
         box[0].follow()
         assert _none(user, "why:one") and _one(user, "probe:one") is not panel
@@ -542,6 +545,19 @@ async def _test_page(shell, user, model=A) -> TestPage:
     shell.mount()
     await _open(user, f"/test/{model}")
     return _page(shell, user)
+
+
+def _hold(shell, model, state: ItemState = ItemState.WAITING):
+    """``model`` in the simulation queue in ``state``, with no pool behind
+    it, said to the pages as the Session says it."""
+    item = fake_item(shell.session, model, state)
+    shell.session._emit(
+        "queue",
+        state="started" if state is ItemState.RUNNING else "queued",
+        models={model},
+    )
+    shell.tick()
+    return item
 
 
 def _stage_tree(shell, model=D, tree=None):
@@ -694,40 +710,48 @@ async def test_show_tree_opens_the_rows_with_controls_on_every_node(shell):
         await _settled(lambda: not page.tree.rows.visible)
 
 
-async def test_a_tree_rows_controls_follow_the_job_that_locked_the_test(shell):
-    """A tree opened DURING a rerun drew its rows on "rerun is running on
-    …"; the rows are not rebuilt when the job ends, so without `follow`
-    that sentence stood for the rest of the page's life."""
-    _stage_tree(shell)
-    gate = _Gate()
+async def test_a_tree_rows_controls_follow_a_refusal_that_went(no_tree_shell):
+    """A tree opened while the Session will not materialize the test's tree
+    draws its rows on that refusal; the rows are not rebuilt when a staged
+    override lifts it, so without `follow` that sentence would stand for
+    the rest of the page's life."""
+    from dstf.authoring.session import NO_TREE
+
+    shell = no_tree_shell
     async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user, D)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
-        await _settled(lambda: shell.session.running is not None)
+        page = await _test_page(shell, user)
         user.find(marker="tree:toggle").click()
         await _settled(lambda: page.tree.rows.visible)
         host = "node:/metrics"
+        row = page.tree.rows_by_path["/metrics"]
         assert _inside(user, "wrap:/metrics", host) == []
         (why,) = _inside(user, "why:edit-tree", host)
-        assert why.text == f"rerun is running on {D}"
-        gate.release.set()
+        assert why.text == NO_TREE
+        shell.session.stage([SHADOW_X])
         await _settled(lambda: bool(_inside(user, "wrap:/metrics", host)))
         assert _inside(user, "why:edit-tree", host) == []
+        assert page.tree.rows_by_path["/metrics"] is row  # followed, not rebuilt
 
 
-async def test_a_criteria_rows_controls_follow_the_lock_the_other_way(shell):
-    """The reverse: a row drawn before the job kept clickable controls
-    under the lock, and the error a click earned then stayed on the row."""
-    gate = _Gate()
+async def test_a_criteria_rows_controls_follow_a_refusal_that_came(no_tree_shell):
+    """The reverse: without `follow` a row drawn while its tree could be
+    edited would keep clickable controls once the Session refuses it, and
+    the error a click earns then would stay on the row."""
+    from dstf.authoring.session import NO_TREE
+
+    shell = no_tree_shell
+    shell.session.stage([SHADOW_X])
     async with user_simulation(root=shell.index) as user:
-        await _test_page(shell, user)
+        page = await _test_page(shell, user)
         host = f"node:0:{T0}"
+        row = page.cards[0].rows[T0]
         assert _inside(user, f"wrap:{T0}", host)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        shell.session.discard()
         await _settled(lambda: _inside(user, f"wrap:{T0}", host) == [])
         (why,) = _inside(user, "why:edit-tree", host)
-        assert why.text == f"rerun is running on {A}"
-        gate.release.set()
+        assert why.text == NO_TREE
+        assert page.cards[0].rows[T0] is row  # followed, not rebuilt
+        shell.session.stage([SHADOW_X])
         await _settled(lambda: bool(_inside(user, f"wrap:{T0}", host)))
 
 
@@ -2286,13 +2310,13 @@ async def test_a_refused_test_says_why_on_the_tree_line_and_the_strip(tmp_path):
         assert _one(user, "tree:summary").text == f"nothing scored: {_REFUSED}"
         assert _one(user, "strip-text").text == f"Not scored: {_REFUSED}."
         assert "dstf-strip-red" in _one(user, "strip").classes
-        # Rerun, and an Accept no more prominent than a quiet button, greyed
+        # Queue, and an Accept no more prominent than a quiet button, greyed
         # with the reason: accepting a refused test is refused.
-        assert _strip_buttons(user) == {"accept": "quiet", "rerun": "quiet"}
+        assert _strip_buttons(user) == {"accept": "quiet", "enqueue": "quiet"}
         assert not _one(user, "action:accept").enabled
         assert _one(user, "action:accept:why").text == _REFUSED
         assert _one(user, "action:accept:why").visible
-        assert _one(user, "action:rerun").enabled
+        assert _one(user, "action:enqueue").enabled
 
 
 _RUN_LINES = ("strip-text", "plots:count", "tree:summary", "var-target")
@@ -2312,7 +2336,7 @@ async def test_an_unfinished_run_says_no_result_on_every_line(tmp_path):
         assert page.badge._style["background-color"] == "var(--dstf-not-run-fill)"
         said = {m: _one(user, m).text for m in _RUN_LINES}
         assert said == {
-            "strip-text": "No result yet — rerun to simulate it.",
+            "strip-text": "No result yet — queue it to simulate it.",
             "plots:count": "no plots: this test has no result",
             "tree:summary": "nothing scored: this test has no result",
             "var-target": "No plot yet: + new plot adds one",
@@ -2363,7 +2387,9 @@ async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):
         assert shell.session.project.results.get(C) is None
         assert page.run_state() == "none"
         assert page.badge.text == "NOT RUN"  # D145
-        assert _one(user, "strip-text").text == "No result yet — rerun to simulate it."
+        assert (
+            _one(user, "strip-text").text == "No result yet — queue it to simulate it."
+        )
         assert _one(user, "plots:count").text == "no plots: this test has no result"
         assert _one(user, "tree:summary").text == (
             "nothing scored: this test has no result"
@@ -2371,25 +2397,21 @@ async def test_a_test_never_run_says_no_result_not_the_run_failed(tmp_path):
         assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
 
 
-async def test_a_result_held_while_its_run_is_pending_reads_as_that_result(shell):
-    """The tool's own Rerun locks D and stamps its manifest entry pending; a
-    reload meanwhile (an Accept of another test) keeps D's result in memory
-    (`_reload_results`), and a Rerun that fails reloads nothing after it.
-    The page reads the result it holds, never the manifest: the badge and
-    the strip agree on D's verdict, and no line says it has no result."""
-    from dstf.authoring.session import RunningJob
-
+async def test_a_result_held_beside_a_pending_manifest_entry_reads_as_that_result(
+    shell,
+):
+    """A run started outside the tool (a `dstf run` in a terminal, over the
+    same work dir) stamps D's manifest entry pending while the Session still
+    holds D's last result. The page reads the result it holds, never the
+    manifest: the badge and the strip agree on D's verdict, and no line
+    says it has no result."""
     session = shell.session
     path = session.project.config.work_dir / "batch_manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     assert manifest["test_0004"]["model_id"] == D
     manifest["test_0004"]["last_run_status"] = "pending"
     path.write_text(json.dumps(manifest), encoding="utf-8")
-    held = session.project.results[D]
-    session.running = RunningJob(label="Rerun", models=frozenset({D}))
-    session._reload_results()
-    assert session.project.results[D] is held
-    session.running = None  # the Rerun failed: `_finish_job` reloads nothing
+    assert session.project.results[D].success
     async with user_simulation(root=shell.index) as user:
         page = await _drawer(shell, user, D)
         assert page.run_state() == "ok"
@@ -2866,7 +2888,7 @@ async def test_a_watch_cards_plus_adds_a_seeded_range_on_untracked_w(extras_shel
     criterion on it — the picker preselects w, the leaf is seeded from the
     result FILE's series (`Session.view` falls back to it), and the watch
     plot becomes w's derived plot. The file holds w (the JSON driver), so
-    the stage re-reads it and it scores at once: no rerun (the owner's
+    the stage re-reads it and it scores at once: no new run (the owner's
     O2)."""
     shell = extras_shell
     async with user_simulation(root=shell.index) as user:
@@ -3214,11 +3236,15 @@ async def test_a_leaf_that_changes_variable_moves_to_the_other_card(shell):
         assert page.cards[0].resolved.subject == ("y",)
 
 
-async def test_the_plots_plus_follows_the_job_that_locked_the_test(shell):
+async def test_the_plots_plus_follows_a_refusal_that_comes_and_goes(no_tree_shell):
     """The criteria header is painted, not rebuilt, so what its `+` MAY do
-    has to be re-read on every Session event: a rerun takes it and says
-    why, and the end of the job brings it back."""
-    gate = _Gate()
+    has to be re-read on every Session event: the Session's refusal to
+    materialize the tree takes it and says why, and an override that lifts
+    the refusal brings it back."""
+    from dstf.authoring.session import NO_TREE
+
+    shell = no_tree_shell
+    shell.session.stage([SHADOW_X])
     header = "criteria-header:0"
 
     def why(user) -> str:
@@ -3228,10 +3254,10 @@ async def test_the_plots_plus_follows_the_job_that_locked_the_test(shell):
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
         assert why(user) == "" and _inside(user, "add-for:x", header)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await _settled(lambda: why(user) == f"rerun is running on {A}")
+        shell.session.discard()
+        await _settled(lambda: why(user) == NO_TREE)
         assert _inside(user, "add-for:x", header) == []
-        gate.release.set()
+        shell.session.stage([SHADOW_X])
         await _settled(lambda: why(user) == "")
         assert _inside(user, "add-for:x", header)
 
@@ -4341,26 +4367,33 @@ async def test_a_shape_change_closes_the_editor(shell):
         assert _none(user, f"editor:0:{T1}")
 
 
-async def test_an_open_editors_panels_follow_the_job_that_locked_the_test(shell):
+async def test_an_open_editors_panels_follow_a_refusal_that_comes_and_goes(
+    no_tree_shell,
+):
     """The editor is not rebuilt while it is open, so what its capabilities
-    MAY do has to be re-read: a rerun greys them and says so, and the end of
-    the job brings them back."""
-    _stage_tree(shell)
-    gate = _Gate()
+    MAY do has to be re-read: the Session's refusal to materialize the tree
+    takes their panels and says so, and an override that lifts the refusal
+    brings them back. The editor is y's: the override is on x, so the leaf
+    under it does not move and nothing but `follow` reaches its panels."""
+    from dstf.authoring.session import NO_TREE
+
+    shell = no_tree_shell
+    shell.session.stage([SHADOW_X])
     async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user, D)
-        user.find(marker=f"criterion:0:{T0}").click()
-        await _settled(lambda: page.open == (0, T0))
-        editor = f"editor:0:{T0}"
+        page = await _test_page(shell, user)
+        user.find(marker=f"criterion:1:{T1}").click()
+        await _settled(lambda: page.open == (1, T1))
+        editor = f"editor:1:{T1}"
         assert _inside(user, "panel:edit-criteria", editor)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
+        shell.session.discard()
         await _settled(lambda: _inside(user, "panel:edit-criteria", editor) == [])
         (why,) = _inside(user, "why:edit-criteria", editor)
-        assert why.text == f"rerun is running on {D}"
-        # Edit on plot is locked out too, and says nothing more: one line.
+        assert why.text == NO_TREE
+        # Edit on plot is refused too, and says nothing more: one line.
         texts = [getattr(e, "text", "") for e in _one(user, editor).descendants()]
-        assert texts.count(f"rerun is running on {D}") == 1
-        gate.release.set()
+        assert texts.count(NO_TREE) == 1
+        assert page.open == (1, T1)
+        shell.session.stage([SHADOW_X])
         await _settled(lambda: bool(_inside(user, "panel:edit-criteria", editor)))
 
 
@@ -4861,9 +4894,9 @@ async def test_the_first_edit_of_a_flat_test_keeps_the_field(shell):
 
 async def test_another_models_edit_leaves_a_half_typed_row_alone(shell):
     """`pending` is the WHOLE document's: an edit to another model moved it
-    and the next event that was D's — any `job` — rebuilt D's editor, which
-    threw away a cleared table cell nobody had retyped yet. The editor
-    follows its OWN leaf."""
+    and the next event that was D's (here, its place in the queue moving)
+    rebuilt D's editor, which threw away a cleared table cell nobody had
+    retyped yet. The editor follows its OWN leaf."""
     _stage_tree(shell)  # D: TREE (tube on T0, range on T1)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
@@ -4877,7 +4910,7 @@ async def test_another_models_edit_leaves_a_half_typed_row_alone(shell):
         shell.session.stage([LOOSEN])  # ANOTHER model (A), e.g. from another tab
         await asyncio.sleep(0.3)
         with page.client:
-            page.handle({"event": "job", "state": "finished"})
+            page.handle({"event": "queue", "state": "queued", "models": {D}})
         await asyncio.sleep(0.3)
         assert _one(user, f"{T0}:tube_points:0:time") is cell
         assert cell.value is None
@@ -4899,18 +4932,21 @@ async def test_a_combinator_edit_that_moves_no_leaf_leaves_the_editor_alone(shel
         assert page.open == (0, T1)
 
 
-async def test_a_job_event_leaves_the_editors_own_control_alone(shell):
-    """A job that staged nothing and locked nothing: the editor was opened
-    on the leaf it still shows, so nothing is rebuilt."""
+async def test_a_queue_event_leaves_the_editors_own_control_alone(shell):
+    """The test's place in the queue moved and nothing was staged: the
+    editor was opened on the leaf it still shows, so nothing is rebuilt —
+    a queued test stays editable (D150), and what is being typed stays."""
     _stage_tree(shell)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
         with page.client:
             page.open_criterion(T1)
         (lower,) = _numbers(page, "Lower bound (optional)")
-        with page.client:
-            page.handle({"event": "job", "state": "finished"})
-        assert _numbers(page, "Lower bound (optional)") == [lower]
+        for state in ("queued", "started", "ended"):
+            with page.client:
+                page.handle({"event": "queue", "state": state, "models": {D}})
+            assert _numbers(page, "Lower bound (optional)") == [lower], state
+        assert page.open == (0, T1)
 
 
 async def test_an_open_tube_editor_follows_a_point_staged_elsewhere(tubed_shell):
@@ -4996,14 +5032,14 @@ async def test_a_plot_that_could_not_draw_is_retried_by_the_next_sync(
             page.cards[0].show()
         assert page.cards[0].plot is None
         with page.client:  # still failing: ONE label, never a stack of them
-            page.handle({"event": "job", "state": "started"})
+            page.handle({"event": "queue", "state": "queued", "models": {A}})
         slot = page.cards[0].slot.default_slot.children
         assert [c.text for c in slot] == [
             "RuntimeError: result file is being rewritten"
         ]
         boom["on"] = False
         with page.client:
-            page.handle({"event": "job", "state": "finished"})
+            page.handle({"event": "queue", "state": "removed", "models": {A}})
         assert page.cards[0].plot is not None
         assert page.cards[1].plot is None  # a card nobody asked for stays a slot
 
@@ -5048,26 +5084,41 @@ async def test_a_plot_that_keeps_failing_is_logged_once_per_error(shell, monkeyp
         assert page.cards[0].plot is not None and page.cards[1].plot is not None
 
 
-async def test_only_a_job_that_moved_the_data_re_sends_the_plots(shell):
-    """Decision 10 is a FINISHED job; the rest of a Rerun's states move no
-    trajectory. Forcing on every one of them re-sent every drawn plot five
-    times per Rerun (the 3b review)."""
-    from dstf.authoring.session import RunningJob
-
+async def test_only_an_event_that_moved_the_data_re_sends_the_plots(shell):
+    """Decision 10: a run that STARTED took this test's trajectories with
+    it, one that ENDED brought new ones, and a store write's notice reloaded
+    every result — no leaf's signature sees any of the three, so each
+    re-sends every drawn plot. The queue's other states move the strip and
+    no trajectory, and re-send none: a force on every event of a run would
+    re-send every drawn plot once per event."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         with page.client:
             page.cards[0].show()
         sent = _counted(page.cards[0])
-        job = RunningJob(label="rerun", models=frozenset({A}))
-        for state in ("started", "artifact"):
+        synced: list[bool] = []
+        sync = page.sync
+        page.sync = lambda force=False: (synced.append(force), sync(force))[1]
+
+        def hear(event: str, **payload) -> None:
             with page.client:
-                page.handle({"event": "job", "state": state, "job": job})
-        assert sent[0] == 0
-        for state in ("written", "finished", "failed"):
-            with page.client:
-                page.handle({"event": "job", "state": state, "job": job})
-        assert sent[0] == 3
+                page.handle({"event": event, **payload})
+
+        for state in ("queued", "removed", "cleared", "stopped"):
+            hear("queue", state=state, models={A})
+        assert synced == [False] * 4 and sent[0] == 0
+        for state in ("started", "ended"):
+            hear("queue", state=state, models={A})
+        assert synced[4:] == [True, True] and sent[0] == 2
+        hear("notice", message="Accepted 1 baseline")
+        assert synced[6:] == [True] and sent[0] == 3
+        # Another test's place in the queue, the worker count, and a notice
+        # that carries an artifact are not this page's to sync on.
+        for state in ("queued", "started", "ended", "removed"):
+            hear("queue", state=state, models={D})
+        hear("queue", state="workers", models=set())
+        hear("notice", artifact=OUTCOME)
+        assert len(synced) == 7 and sent[0] == 3
 
 
 async def test_a_row_click_reads_the_tree_once_however_many_plots_are_drawn(
@@ -5134,12 +5185,11 @@ async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
         assert _one(user, "gone").text == f"{A} is not a test of this project"
         assert _none(user, "tree:summary")
         # The sub-header went with them. It stayed LIVE and STALE: the last
-        # project's verdict, its baseline's name, and buttons whose Rerun
-        # started a job for a model this project does not have (the final
-        # review).
+        # project's verdict, its baseline's name, and buttons that ran a
+        # model this project does not have (the final review).
         assert page.badge.text == "" and page.meta.text == ""
         assert page.actions.dialog.value is not True
-        assert page.actions.actions == {} and _none(user, "action:rerun")
+        assert page.actions.actions == {} and _none(user, "action:enqueue")
         assert page.actions.container.visible is False
         # And no later event brings them back while the test is gone.
         shell.session.apply(Artifact(paths=[], label="probe again"))
@@ -5149,15 +5199,15 @@ async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
 
 async def test_a_closed_session_leaves_the_page_saying_so(shell, caplog):
     """`Session.close()` emits a `spec` naming NO model: a page that read an
-    empty `models` as "not mine" never heard, and the next job event raised
-    "no project is open"."""
+    empty `models` as "not mine" never heard, and the next event it synced
+    on raised "no project is open"."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         with caplog.at_level(logging.ERROR, logger="dstf"):
             shell.session.close()
             await _settled(lambda: page.gone)
             with page.client:
-                page.handle({"event": "job", "state": "finished"})
+                page.handle({"event": "notice", "message": "Accepted 1 baseline"})
         assert [r for r in caplog.records if "a page failed" in r.getMessage()] == []
         assert _one(user, "gone").text == f"{A} is not a test of this project"
 
@@ -5176,7 +5226,7 @@ async def test_a_test_that_comes_back_is_drawn_again(shell, tmp_path):
         assert _none(user, "gone")
         assert page.badge.text == "FAIL" and page.meta.text.startswith("Python · ")
         assert page.actions.container.visible is True
-        assert "rerun" in page.actions.actions
+        assert "enqueue" in page.actions.actions
 
 
 async def test_a_page_built_while_its_test_is_missing_comes_back(shell, tmp_path):
@@ -5410,16 +5460,16 @@ async def test_a_shape_change_rebuilds_the_cards_and_redraws_what_was_shown(shel
         assert page.tree.rows.visible
 
 
-async def test_a_finished_job_redraws_every_shown_plot(shell):
-    """Decision 10: a rerun changes the trajectories under every plot, and
-    no leaf's signature sees that."""
+async def test_a_run_that_ended_redraws_every_shown_plot(shell):
+    """Decision 10: a new run changes the trajectories under every plot,
+    and no leaf's signature sees that."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         with page.client:
             page.cards[0].show()
         sent = _counted(page.cards[0])
         with page.client:
-            page.handle({"event": "job", "state": "finished"})
+            page.handle({"event": "queue", "state": "ended", "models": {A}})
         assert sent[0] == 1
         assert page.cards[1].plot is None  # still nothing draws an unshown plot
 
@@ -6331,39 +6381,36 @@ async def test_a_refused_add_reveals_nothing(page_shell):
 # -- a form row lives only as long as its host (Task 5's review) ------------
 
 
-class _LockedRowProbe(_RowProbe):
-    """`_RowProbe` whose `available` follows the job lock, the way Edit
-    tree's does: under a rerun its host is rebuilt to the sentence."""
+class _HeldRowProbe(_RowProbe):
+    """`_RowProbe` whose `available` follows the simulation queue, the way
+    Accept's does: while the queue holds the test its host is rebuilt to
+    the sentence."""
 
     def available(self, s):
         model = next(iter(s.selection.tests))
-        if s.running is not None and s.is_locked(model):
-            return f"{s.running.label} is running on {model}"
+        if s.queue_state(model) in (ItemState.WAITING, ItemState.RUNNING):
+            return f"{model} is in the queue"
         return True
 
 
-async def test_a_form_row_goes_when_its_host_is_rebuilt_under_a_lock(page_shell):
-    """Under a job lock the host said "rerun is running on …" while its row
-    stayed open with live buttons, and an act from it staged nothing and
-    showed nothing: the error label had gone with the host's rebuild."""
+async def test_a_form_row_goes_when_its_host_is_rebuilt_to_a_why_line(page_shell):
+    """A host rebuilt to its why-line — its capability no longer available —
+    takes the row its panel opened with it: left open with live buttons, an
+    act from the row stages nothing and shows nothing, its error label
+    having gone with the host's rebuild."""
     shell = page_shell
-    _only(_LockedRowProbe())
-    gate = _Gate()
+    _only(_HeldRowProbe())
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)
         _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
         await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        try:
-            await _settled(
-                lambda: bool(_inside(user, "why:row-probe", f"node:0:{RANGE_X}"))
-            )
-            assert page.form is None
-            assert _none(user, f"form-row:crit:0:{RANGE_X}")
-            row = page.cards[0].rows[RANGE_X].row
-            assert "dstf-row-open" not in row.classes
-        finally:
-            gate.release.set()
+        _hold(shell, A)
+        (why,) = _inside(user, "why:row-probe", f"node:0:{RANGE_X}")
+        assert why.text == f"{A} is in the queue"
+        assert page.form is None
+        assert _none(user, f"form-row:crit:0:{RANGE_X}")
+        row = page.cards[0].rows[RANGE_X].row
+        assert "dstf-row-open" not in row.classes
 
 
 async def test_hide_tree_closes_a_tree_rows_form(page_shell):
@@ -7077,7 +7124,7 @@ class TestTestsDrawerControls:
     ):
         """The kept set is cached on the needle, its toggles and the ids: a
         pathological pattern cost 0.79 s of CPU per pass over 331 ids, and
-        a job's poll repainted the rows every second."""
+        the queue's events repaint the rows as its tests end."""
         from dstf.authoring.shell import rail as rail_module
 
         asked: list[str] = []
@@ -7427,10 +7474,10 @@ class TestLayoutControls:
     async def test_a_refused_layout_edit_is_said_and_changes_nothing(
         self, page_shell, monkeypatch
     ):
-        from dstf.authoring.session import LockedError
+        from dstf.discovery.patch_apply import PatchError
 
         shell = page_shell
-        error = LockedError([A], "Rerun")
+        error = PatchError("the document refused it")
 
         def refuse(ops):
             raise error
@@ -7494,10 +7541,10 @@ class TestLayoutControls:
     async def test_a_refused_reset_is_said_and_changes_nothing(
         self, page_shell, monkeypatch
     ):
-        from dstf.authoring.session import LockedError
+        from dstf.discovery.patch_apply import PatchError
 
         shell = page_shell
-        error = LockedError([A], "Rerun")
+        error = PatchError("the document refused it")
 
         def refuse(ops):
             raise error
@@ -8112,9 +8159,9 @@ class TestVariablesDrawer:
     async def test_the_open_drawer_rebuilds_only_when_what_it_draws_moved(
         self, drawer_shell
     ):
-        """`TestPage.sync` ends by refreshing the rail, and a Rerun's five
-        job events rebuilt an open drawer five times over rows that had not
-        moved. A build clears the body first: that is what is counted."""
+        """`TestPage.sync` ends by refreshing the rail, and a run's events
+        rebuilt an open drawer each time over rows that had not moved. A
+        build clears the body first: that is what is counted."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
@@ -8123,10 +8170,13 @@ class TestVariablesDrawer:
             built = []
             clear = drawer.body.clear
             drawer.body.clear = lambda: (built.append(1), clear())[1]
+            synced: list[bool] = []
+            sync = page.sync
+            page.sync = lambda force=False: (synced.append(force), sync(force))[1]
             with page.client:
-                for state in ("started", "running", "finished"):
-                    page.handle({"event": "job", "state": state})
-            assert built == []
+                for state in ("queued", "started", "ended"):
+                    page.handle({"event": "queue", "state": state, "models": {A}})
+            assert synced == [False, True, True] and built == []
             shell.session.stage([PatchOp(A, "add", "/plots", [_ctx("x", "z")])])
             await _settled(lambda: _checked(user, ROW_Z) == "true")
             await asyncio.sleep(0.3)  # the rescore the stage started, and its events
@@ -8462,7 +8512,7 @@ def _strip_buttons(user) -> dict[str, str]:
     """Each TEST-placement action in the strip: ``filled`` / ``quiet`` for a
     button, ``menu`` for an item of the ⋮."""
     out: dict[str, str] = {}
-    for name in ("accept", "rerun"):
+    for name in ("accept", "enqueue"):
         if not _none(user, f"action:{name}"):
             props = _one(user, f"action:{name}").props
             out[name] = "filled" if "unelevated" in props else "quiet"
@@ -8480,7 +8530,7 @@ async def test_the_strip_says_a_failing_test_and_fills_accept(shell):
             "Fails 2 of 2 criteria. If the new behaviour is right, accept it as "
             "the baseline."
         )
-        assert _strip_buttons(user) == {"accept": "filled", "rerun": "quiet"}
+        assert _strip_buttons(user) == {"accept": "filled", "enqueue": "quiet"}
         assert _none(user, "action-more")
         # In the header, below the sub-header; the sub-header holds no bar.
         header = _one(user, "subheader").parent_slot.parent
@@ -8499,7 +8549,7 @@ async def test_the_strip_on_a_passing_test_tucks_accept_into_its_menu(shell):
         await _test_page(shell, user, D)
         assert "dstf-strip-grey" in _one(user, "strip").classes
         assert _one(user, "strip-text").text == "Passes against its baseline."
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "quiet"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "quiet"}
         _one(user, "action-more")
         user.find(marker="menu-action:accept").click()
         await user.should_see(marker="panel:accept", retries=20)
@@ -8515,17 +8565,17 @@ async def test_the_strip_on_a_test_with_no_baseline_fills_accept(shell):
         assert _strip_buttons(user)["accept"] == "filled"
 
 
-async def test_the_strip_on_an_unfinished_run_fills_rerun(shell):
+async def test_the_strip_on_an_unfinished_run_fills_queue(shell):
     """C's last run never finished it (its manifest entry is still pending):
     there is no result to read, and the reader hands in none (D145)."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, C)
         assert shell.session.project.results.get(C) is None
         assert _one(user, "strip-text").text == (
-            "No result yet — rerun to simulate it."
+            "No result yet — queue it to simulate it."
         )
         assert "dstf-strip-grey" in _one(user, "strip").classes
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "filled"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
         assert page.strip.situation.value == "no_result"
 
 
@@ -8542,7 +8592,7 @@ async def test_the_strip_says_a_simulate_only_test_runs(shell):
             "Simulate-only: it runs, and nothing is compared."
         )
         assert "dstf-strip-grey" in _one(user, "strip").classes
-        assert _strip_buttons(user) == {"accept": "quiet", "rerun": "quiet"}
+        assert _strip_buttons(user) == {"accept": "quiet", "enqueue": "quiet"}
 
 
 async def test_the_strip_with_an_edit_offers_preview_and_its_discard(shell):
@@ -8560,7 +8610,7 @@ async def test_the_strip_with_an_edit_offers_preview_and_its_discard(shell):
         assert preview.text == "Preview and save"
         assert discard.visible and "flat" in discard.props
         assert discard.text == "Discard" and discard.enabled
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
         assert page.strip.situation.value == "edits"
         user.find(marker="strip-preview").click()
         assert page.header.drawer.element.value is True
@@ -8601,10 +8651,10 @@ async def test_the_strip_asks_the_saved_verdict_once_per_paint_and_only_with_edi
         assert len(calls) == n + 1
 
 
-async def test_the_strip_asks_for_a_rerun_for_a_criterions_new_variable(shell):
+async def test_the_strip_asks_to_queue_the_test_for_a_criterions_new_variable(shell):
     """A criterion staged on a variable the result FILE lacks (D's holds x
-    only) scores "not found in the result" until a rerun: the strip says so
-    and fills Rerun alone — Preview and save goes quiet (the owner's O1).
+    only) scores "not found in the result" until a new run: the strip says
+    so and fills Queue alone — Preview and save goes quiet (the owner's O1).
     Saved, it still asks: accepting now would store a baseline without the
     variable."""
     async with user_simulation(root=shell.index) as user:
@@ -8614,9 +8664,9 @@ async def test_the_strip_asks_for_a_rerun_for_a_criterions_new_variable(shell):
         await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
         assert _one(user, "strip-text").text == (
             "2 unsaved edits · verdict would change PASS → FAIL"
-            " · 1 new variable: rerun to score it"
+            " · 1 new variable: queue the test to score it"
         )
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "filled"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
         preview, discard = _one(user, "strip-preview"), _one(user, "strip-discard")
         assert preview.visible and "unelevated" not in preview.props
         assert "flat" in preview.props
@@ -8627,10 +8677,10 @@ async def test_the_strip_asks_for_a_rerun_for_a_criterions_new_variable(shell):
         with page.client:
             page.sync()
         assert _one(user, "strip-text").text == (
-            "1 new variable the last run did not record: rerun to score it."
+            "1 new variable the last run did not record: queue the test to score it."
         )
         assert page.strip.situation.value == "new_variables"
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "filled"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
         assert _none(user, "strip-preview")
         # An edit that names nothing new: Preview and save is filled again.
         shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1.0})])
@@ -8641,7 +8691,7 @@ async def test_the_strip_asks_for_a_rerun_for_a_criterions_new_variable(shell):
         )
         await _settled(lambda: page.strip.situation.value == "edits")
         assert "unelevated" in _one(user, "strip-preview").props
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
 
 
 async def test_the_strip_counts_nothing_new_for_a_tracked_variable(shell):
@@ -8651,15 +8701,15 @@ async def test_the_strip_counts_nothing_new_for_a_tracked_variable(shell):
         shell.session.stage([PatchOp(D, "add", "/metrics/children/-", leaf)])
         await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
         assert "new variable" not in _one(user, "strip-text").text
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
 
 
-async def test_a_criterion_on_a_variable_the_file_has_is_scored_without_a_rerun(
+async def test_a_criterion_on_a_variable_the_file_has_is_scored_without_a_new_run(
     shell,
 ):
     """The owner's O2: where the result FILE holds the variable (the Python
     backend records everything), staging re-reads the model and scores it
-    at once — the strip asks for no rerun."""
+    at once — the strip does not ask for the test to be queued."""
     path = shell.session.project.config.work_dir / "test_0004" / "result.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["variables"]["w"] = [0.5 for _ in payload["time"]]
@@ -8671,41 +8721,186 @@ async def test_a_criterion_on_a_variable_the_file_has_is_scored_without_a_rerun(
         await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
         assert _one(user, "strip-text").text == ("2 unsaved edits · verdict stays PASS")
         assert page.strip.situation.value == "edits"
-        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
 
 
-async def test_the_strips_discard_is_refused_while_a_job_runs(shell):
-    gate = _Gate()
+async def test_the_strips_discard_works_while_the_queue_runs_another_test(shell):
+    """Nothing of an edit is refused because the queue is busy (D150): the
+    strip's Discard stays live while another test runs, and drops this
+    test's edits."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
         shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({B}), reloads_results=False)
-        )
-        await _settled(lambda: shell.session.running is not None)
+        await _settled(lambda: page.strip.situation is Situation.EDITS)
+        _hold(shell, B, ItemState.RUNNING)
+        assert shell.running() and shell.busy_reason() is None
         button = page.strip.discard.button
-        await _settled(lambda: not button.enabled)
-        with page.client:
-            page.strip._discard()  # a click in the tick the job started in
-        assert len(shell.session.spec.pending) == 1
-        gate.release.set()
-        await _settled(lambda: shell.session.running is None)
-        await _settled(lambda: button.enabled)
+        assert button.enabled and page.strip.situation is Situation.EDITS
+        user.find(marker="strip-discard").click()
+        await _settled(lambda: shell.session.spec.pending == [])
+        await _settled(lambda: page.strip.situation is Situation.PASS)
 
 
-async def test_the_strip_says_a_running_job_on_this_test(shell):
-    gate = _Gate()
+def _started(shell, model):
+    """``model`` running, its start taken in as the Session takes one: the
+    last result goes, the test is rescored and the pages are told."""
+    item = fake_item(shell.session, model, ItemState.RUNNING)
+    shell.session._item_started(item)
+    shell.tick()
+    return item
+
+
+def _ended(shell, item, state: ItemState, *, result=None, message=None) -> None:
+    """``item`` ended in ``state``, taken in as the Session takes an end."""
+    item.state, item.result, item.message = state, result, message
+    if item.started_at is not None:
+        item.ended_at = item.started_at + 9.0
+    shell.session._item_ended(item)
+    shell.tick()
+
+
+async def test_the_strip_follows_a_test_through_the_queue(shell):
+    """Queued, running, ended: the strip says the test's place in the queue
+    in grey, offers Remove and then Cancel as its own next action with
+    Accept and Queue in the ⋮, and goes back to the verdict of the result
+    the run brought."""
     async with user_simulation(root=shell.index) as user:
-        await _test_page(shell, user, A)
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({A}), reloads_results=False)
-        )
-        await _settled(
-            lambda: _one(user, "strip-text").text == "Probe is running on this test."
-        )
+        page = await _test_page(shell, user, A)
+        strip, session = page.strip, shell.session
+        held = session.project.results[A]
+        assert (strip.remove.visible, strip.cancel.visible) == (False, False)
+
+        item = _hold(shell, A)
+        assert strip.situation is Situation.QUEUED
+        assert _one(user, "strip-text").text == "Queued — waiting · next"
         assert "dstf-strip-grey" in _one(user, "strip").classes
-        gate.release.set()
-        await _settled(lambda: "dstf-strip-red" in _one(user, "strip").classes)
+        assert (strip.remove.visible, strip.cancel.visible) == (True, False)
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
+        assert page.badge.text == "FAIL"  # its last result stands while it waits
+
+        item.state, item.started_at, item.worker_id = ItemState.RUNNING, time.time(), 0
+        session._item_started(item)
+        shell.tick()
+        assert strip.situation is Situation.RUNNING
+        text = _one(user, "strip-text").text
+        assert text.startswith("Running on worker 1 — ") and text.endswith(" s")
+        assert "dstf-strip-grey" in _one(user, "strip").classes
+        assert (strip.remove.visible, strip.cancel.visible) == (False, True)
+        assert strip.cancel_why.visible is False
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
+        # Its run dropped the last result: nothing is drawn until its own.
+        assert page.badge.text == "NOT RUN" and page.cards == []
+
+        _ended(shell, item, ItemState.FINISHED, result=held)
+        assert strip.situation is Situation.FAIL
+        assert "dstf-strip-red" in _one(user, "strip").classes
+        assert (strip.remove.visible, strip.cancel.visible) == (False, False)
+        assert _strip_buttons(user) == {"accept": "filled", "enqueue": "quiet"}
+        assert page.badge.text == "FAIL"
+        assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
+
+
+async def test_the_strip_of_a_cancelled_run_fills_queue_again(shell):
+    """A cancelled run leaves no result — its start dropped the last one —
+    and the strip says so; Queue is the next action, and says "again"."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        item = _started(shell, D)
+        _ended(shell, item, ItemState.CANCELLED)
+        assert page.strip.situation is Situation.CANCELLED
+        assert _one(user, "strip-text").text == CANCELLED_SENTENCE
+        assert "dstf-strip-grey" in _one(user, "strip").classes
+        assert (page.strip.remove.visible, page.strip.cancel.visible) == (False, False)
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
+        assert _one(user, "action:enqueue").text == "Queue again"
+        assert page.badge.text == "NOT RUN"
+        # Its row cleared, the test is one with no result.
+        shell.session.clear_finished()
+        shell.tick()
+        assert page.strip.situation is Situation.NO_RESULT
+        assert _one(user, "action:enqueue").text == "Queue 1"
+
+
+async def test_the_strip_of_a_test_no_worker_could_start_says_the_backends_message(
+    shell,
+):
+    """No worker could start: the test never ran, its last result stands,
+    and the strip says the backend's message in red with Queue filled."""
+    message = "No Python worker could start — worker 0: licence server unreachable"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        item = _hold(shell, D)
+        _ended(shell, item, ItemState.FAILED, message=message)
+        assert page.strip.situation is Situation.START_FAILED
+        assert _one(user, "strip-text").text == message
+        assert "dstf-strip-red" in _one(user, "strip").classes
+        assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
+        assert _one(user, "action:enqueue").text == "Queue again"
+        assert page.badge.text == "PASS"  # nothing ran: the result stands
+        assert [c.resolved.series for c in page.cards] == [("x",)]
+
+
+async def test_a_running_strip_says_why_it_has_no_cancel(shell, monkeypatch):
+    """On a backend that cannot stop a test the strip draws the sentence
+    saying so where Cancel would be."""
+    why = "Stub cannot stop a running simulation: it runs to its end, or to its timeout"
+    monkeypatch.setattr(
+        type(shell.session), "cannot_cancel", property(lambda self: why)
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        _started(shell, D)
+        assert page.strip.situation is Situation.RUNNING
+        assert page.strip.cancel.visible is False
+        assert _one(user, "strip-cancel:why").text == why
+        assert _none(user, "strip-cancel")  # hidden: the simulation finds none
+
+
+async def test_the_poll_moves_a_running_strips_seconds_and_nothing_else(shell):
+    """Once a second while a test runs the shell says `poll`: the running
+    test's strip says its seconds again, and the page syncs nothing."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        other = await _test_page(shell, user, A)  # a second tab, on another test
+        item = _started(shell, D)
+        synced: list[str] = []
+
+        def watch(p: TestPage) -> None:
+            sync = p.sync
+            p.sync = lambda force=False: (synced.append(p.model_id), sync(force))[1]
+
+        watch(page)
+        watch(other)
+        waiting = other.strip.text.text
+        item.started_at = time.time() - 42
+        for _ in range(10):  # a second of ticks: one poll
+            shell.tick()
+        assert page.strip.text.text in (
+            "Running on worker 1 — 42 s",
+            "Running on worker 1 — 43 s",
+        )
+        assert other.strip.text.text == waiting
+        assert synced == []
+
+
+async def test_a_queue_event_for_another_test_leaves_this_page_alone(shell):
+    """A `queue` event names the tests whose place moved: another test's
+    start and end repaint nothing of this page but its bar."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        synced: list[bool] = []
+        sync = page.sync
+        page.sync = lambda force=False: (synced.append(force), sync(force))[1]
+        held = shell.session.project.results[B]
+        item = _hold(shell, B)
+        item.state, item.started_at, item.worker_id = ItemState.RUNNING, time.time(), 0
+        shell.session._item_started(item)
+        shell.tick()
+        assert _one(user, "strip-text").text == "Passes against its baseline."
+        assert page.strip.situation is Situation.PASS
+        _ended(shell, item, ItemState.FINISHED, result=held)
+        assert synced == []
+        assert _one(user, "strip-text").text == "Passes against its baseline."
 
 
 async def test_a_gone_test_leaves_the_strip_blank_and_a_returning_one_fills_it(
@@ -8717,27 +8912,12 @@ async def test_a_gone_test_leaves_the_strip_blank_and_a_returning_one_fills_it(
         await _settled(lambda: page.gone)
         assert _one(user, "strip-text").text == ""
         assert page.strip.situation is None
-        assert _none(user, "action:accept") and _none(user, "action:rerun")
+        assert _none(user, "action:accept") and _none(user, "action:enqueue")
         cfg, work = _two_var_project(tmp_path / "again")
         shell.session.open(cfg, work_dir=work)
         await _settled(lambda: not page.gone)
         assert "dstf-strip-red" in _one(user, "strip").classes
-        assert _strip_buttons(user) == {"accept": "filled", "rerun": "quiet"}
-
-
-async def test_a_job_on_another_test_leaves_this_strip_alone(shell):
-    gate = _Gate()
-    async with user_simulation(root=shell.index) as user:
-        await _test_page(shell, user, D)
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({B}), reloads_results=False)
-        )
-        await _settled(lambda: shell.session.running is not None)
-        await asyncio.sleep(0.3)
-        text = _one(user, "strip-text").text
-        gate.release.set()
-        await _settled(lambda: shell.session.running is None)
-        assert text == "Passes against its baseline."
+        assert _strip_buttons(user) == {"accept": "filled", "enqueue": "quiet"}
 
 
 def _save_tree(shell, tree):
@@ -8825,8 +9005,8 @@ async def test_a_saved_verdict_that_raises_does_not_stop_the_page(
 
 
 async def test_scoring_that_raised_after_the_open_is_not_waiting(shell, monkeypatch):
-    """A reload after the open (a Rerun's, an Accept's) whose scoring of D
-    raises: the load is done, so D is not waiting to be scored."""
+    """A reload after the open (an Accept's) whose scoring of D raises: the
+    load is done, so D is not waiting to be scored."""
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, D)
         _scoring_raises_for_d(monkeypatch)
@@ -8904,26 +9084,16 @@ async def test_a_bar_that_raises_does_not_stop_the_sync(shell, monkeypatch, capl
         assert "a page failed" not in caplog.text
 
 
-async def test_a_strip_that_raises_still_locks_the_bar(shell, monkeypatch):
+async def test_a_strip_that_raises_still_refreshes_the_bar(shell, monkeypatch):
     """The strip's paint refreshes the bar; when it raises, the bar is
-    refreshed anyway: a job on this test greys its Rerun."""
-    from dstf.authoring.shell import shell as shell_mod
-
-    gate = _Gate()
+    refreshed anyway: a test the queue took greys its Queue."""
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, D)
-        assert _one(user, "action:rerun").enabled
-        # No 1 s poll during the job: its refresh of the bar would hide the
-        # one the paint owes (the timer's interval was set at mount).
-        monkeypatch.setattr(shell_mod, "TICK", 1e-6)
+        assert _one(user, "action:enqueue").enabled
         _strip_raises(monkeypatch)
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({D}), reloads_results=False)
-        )
-        await _settled(lambda: shell.session.running is not None)
-        await _settled(lambda: not _one(user, "action:rerun").enabled)
-        gate.release.set()
-        await _settled(lambda: shell.session.running is None)
+        _hold(shell, D)
+        assert not _one(user, "action:enqueue").enabled
+        assert _one(user, "action:enqueue:why").text == f"{D} is already queued"
 
 
 async def test_one_results_event_refreshes_the_strips_bar_once(shell, monkeypatch):
@@ -9123,24 +9293,26 @@ async def test_the_weighted_forms_threshold_hint_follows_direction(page_shell):
         )
 
 
-async def test_a_locked_test_reads_its_kind_in_the_row_text(page_shell):
-    """A host that cannot draw (Edit tree under a job's lock) leaves the
-    lead empty, and the row reads the kind: it never disappears."""
-    shell = page_shell
-    gate = _Gate()
+async def test_a_row_whose_host_cannot_draw_reads_its_kind_in_the_row_text(
+    no_tree_shell,
+):
+    """A host that cannot draw (Edit tree on a test whose tree the Session
+    will not materialize) leaves the lead empty, and the row reads the
+    kind: it never disappears."""
+    shell = no_tree_shell
+    shell.session.stage([SHADOW_X])
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, A)
         await _open_tree(user)
-        assert _one(user, "tree-text:/metrics").text == "3 criteria"
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({A}), reloads_results=False)
-        )
+        assert _one(user, "tree-text:/metrics").text == "2 criteria"
+        assert not _none(user, "kind:/metrics")
+        shell.session.discard()
         await _settled(
-            lambda: _one(user, "tree-text:/metrics").text == "and · 3 criteria"
+            lambda: _one(user, "tree-text:/metrics").text == "and · 2 criteria"
         )
         assert _none(user, "kind:/metrics")
-        gate.release.set()
-        await _settled(lambda: _one(user, "tree-text:/metrics").text == "3 criteria")
+        shell.session.stage([SHADOW_X])
+        await _settled(lambda: _one(user, "tree-text:/metrics").text == "2 criteria")
         assert not _none(user, "kind:/metrics")
 
 
@@ -9375,23 +9547,17 @@ async def test_a_tree_rows_icons_are_named_by_their_tooltips(page_shell):
         assert _none(user, "edit:/metrics")  # its row's click opens its fields
 
 
-async def test_the_criteria_header_wraps_a_long_why(page_shell):
-    """Under a lock the header's `+` gives way to "… is running on <model>",
-    which a long model id makes longer than a card beside a drawer at
-    900 px: the header wraps rather than push the card sideways."""
-    shell = page_shell
-    gate = _Gate()
+async def test_the_criteria_header_wraps_a_long_why(no_tree_shell):
+    """Where nothing can be added the header's `+` gives way to the reason,
+    and the Session's for a tree it will not materialize is longer than a
+    card beside a drawer at 900 px: the header wraps rather than push the
+    card sideways."""
+    shell = no_tree_shell
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, A)
         header = _one(user, "criteria-header:0")
+        assert _inside(user, "why:edit-tree", "criteria-header:0")
         assert "no-wrap" not in header.classes
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({A}), reloads_results=False)
-        )
-        await _settled(
-            lambda: bool(_inside(user, "why:edit-tree", "criteria-header:0"))
-        )
-        gate.release.set()
 
 
 def test_the_drawers_controls_are_the_tabs():
@@ -10416,6 +10582,22 @@ def _ref_override_project(tmp_path, on="x"):
     return cfg, work
 
 
+#: The spec override that shadows `_ref_override_project`'s reference one:
+#: staged, the Session materializes A's tree again; discarded, it refuses —
+#: and the tree's shape moves neither way. What a host that is never
+#: rebuilt has to FOLLOW.
+SHADOW_X = PatchOp(
+    A, "add", "/comparison", {"variable_overrides": {"x": {"tolerance": 0.5}}}
+)
+
+
+@pytest.fixture
+def no_tree_shell(tmp_path):
+    """A shell over `_ref_override_project`: A is compared and drawn, and
+    the Session will not materialize its tree until `SHADOW_X` is staged."""
+    return _opened(*_ref_override_project(tmp_path))
+
+
 async def test_a_plot_editor_on_a_test_with_no_tree_says_why(tmp_path):
     """A is compared (its leaves are on its plots, with verdicts), but the
     Session refuses to materialize its tree — a baseline override the spec
@@ -10585,37 +10767,6 @@ async def test_the_card_editor_follows_an_edit_staged_elsewhere_with_no_view(
         assert page.open == (STATS, leaf)
 
 
-def _plus_state(user, marker: str) -> bool | None:
-    """The `+` marked ``marker``: enabled or not, None while it is not drawn."""
-    if _none(user, marker):
-        return None
-    return _one(user, marker).enabled
-
-
-async def test_a_job_lock_greys_the_plus_with_no_why_line(stats_shell):
-    """Under a job's lock every `+` greys with the lock as its tooltip — a
-    why-line in place of each said the same thing on every row (57 lines
-    on a TRANSFORM card) — and follows the lock back, the rows repainted,
-    not rebuilt."""
-    from dstf.authoring.capabilities import Job
-
-    shell = stats_shell
-    gate = _Gate()
-    plus = f"add-statistic:{NONLINEAR}"
-    async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user)
-        page.stats.toggle()
-        row = _one(user, f"stats:row:{NONLINEAR}")
-        assert _plus_state(user, plus) is True
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await _settled(lambda: _plus_state(user, plus) is False)
-        assert _one(user, plus).props["aria-label"] == f"rerun is running on {A}"
-        assert not [m for m in _marks(page.stats.rows) if m.startswith("why:")]
-        gate.release.set()
-        await _settled(lambda: _plus_state(user, plus) is True)
-        assert _one(user, f"stats:row:{NONLINEAR}") is row
-
-
 # -- the mutation review's survivors (U3 Part B) ------------------------------
 
 
@@ -10653,8 +10804,8 @@ def test_only_a_final_folds_onto_its_statistics_row():
 
 
 async def test_a_row_that_stops_changing_loses_its_tint(stats_shell):
-    """The tint repaints in place both ways (an accept or a rerun makes the
-    run match; the row stands)."""
+    """The tint repaints in place both ways (an accept or a new run makes
+    the run match; the row stands)."""
     shell = stats_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
@@ -10865,9 +11016,9 @@ async def test_a_reduce_scalar_on_a_plotted_variable_is_a_row_of_its_plot(
         assert "/metrics/children/1" in page.cards[0].rows
 
 
-async def test_a_sync_with_no_lock_moved_keeps_the_plus(stats_shell):
-    """The `+`s are redrawn only when a job's lock comes or goes; a sync
-    with nothing moved follows them in place — the same element."""
+async def test_a_sync_with_nothing_moved_keeps_the_plus(stats_shell):
+    """The `+`s are redrawn only when what one MAY do moved; a sync with
+    nothing moved follows them in place — the same element."""
     shell = stats_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
@@ -10877,26 +11028,6 @@ async def test_a_sync_with_no_lock_moved_keeps_the_plus(stats_shell):
             page.sync()
             page.sync()
         assert _one(user, f"add-statistic:{NONLINEAR}") is plus
-
-
-async def test_the_lock_is_the_pluss_reason_before_simulate_only(stats_shell):
-    """Both apply: the `+` names the job holding the test — the add form's
-    `available` puts the lock first too."""
-    from dstf.authoring.capabilities import Job
-
-    shell = stats_shell
-    shell.session.project.test(A).simulate_only = True
-    gate = _Gate()
-    plus = f"add-statistic:{NONLINEAR}"
-    async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user)
-        page.stats.toggle()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await _settled(
-            lambda: _one(user, plus).props["aria-label"] == f"rerun is running on {A}"
-        )
-        assert not _one(user, plus).enabled
-        gate.release.set()
 
 
 async def test_a_side_with_no_value_reads_a_dash(stats_shell):
@@ -11172,22 +11303,25 @@ async def test_only_the_tree_rows_take_a_drag(nested_shell):
             assert row.target.zones is None
 
 
-async def test_a_locked_rows_handle_goes_with_its_controls(nested_shell):
-    """A job's lock rebuilds every row's host to its why-line: the row
-    takes no drop and offers no handle until the job ends."""
-    shell = nested_shell
-    gate = _Gate()
+async def test_a_rows_handle_goes_with_its_controls(no_tree_shell):
+    """A host rebuilt to its why-line — Edit tree's, once the Session will
+    not materialize the tree — takes what its panel registered with it: the
+    row takes no drop and offers no handle until the refusal goes."""
+    shell = no_tree_shell
+    shell.session.stage([SHADOW_X])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         await _open_tree(user)
-        grip = _one(user, f"grip:{N_Y}")
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        grip = _one(user, f"grip:{T1}")
+        assert "dstf-grip-off" not in grip.classes
+        assert page.tree.targets[T1].on_drop is not None
+        shell.session.discard()
         await _settled(lambda: "dstf-grip-off" in grip.classes)
-        assert page.tree.targets[N_Y].on_drop is None
-        assert page.tree.targets[N_Y].zones is None
-        gate.release.set()
+        assert page.tree.targets[T1].on_drop is None
+        assert page.tree.targets[T1].zones is None
+        shell.session.stage([SHADOW_X])
         await _settled(lambda: "dstf-grip-off" not in grip.classes)
-        assert page.tree.targets[N_Y].zones is not None
+        assert page.tree.targets[T1].zones is not None
 
 
 # -- move a subtree (U4): after a move -------------------------------------
@@ -11426,10 +11560,10 @@ async def test_a_move_by_the_menu_says_it_too(nested_shell):
 async def test_a_move_the_submit_refuses_says_nothing_and_closes_nothing(
     nested_shell, monkeypatch
 ):
-    """The move planned, its submit refused (a lock that raced the drop):
+    """The move planned, its submit refused (an edit that raced the drop):
     no "Moved." line, and the open editor stays open — only a move that
     went through closes what is open."""
-    from dstf.authoring.session import LockedError
+    from dstf.discovery.patch_apply import PatchError
 
     shell = nested_shell
     async with user_simulation(root=shell.index) as user:
@@ -11439,7 +11573,7 @@ async def test_a_move_the_submit_refuses_says_nothing_and_closes_nothing(
         await _settled(lambda: page.open is not None)
 
         def refuse(outcome):
-            raise LockedError([A], "rerun")
+            raise PatchError("the document refused it")
 
         monkeypatch.setattr(shell.session, "apply", refuse)
         _drop(page, N_Y, N_T2, "before")
@@ -11906,25 +12040,6 @@ async def test_a_plot_rebuild_keeps_the_tree_editor(nested_shell):
         assert not _none(user, f"tree-editor:{N_X2}")
 
 
-async def test_a_locked_k_of_n_rows_click_opens_nothing(nested_shell):
-    """The click a panel registered goes with its host: rebuilt to its
-    why-line under a job's lock, the row's click opens no form."""
-    shell = nested_shell
-    _stage_tree(shell, A, GROUPS)
-    gate = _Gate()
-    async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user)
-        await _open_tree(user)
-        assert page.tree.targets[G_K].click is not None
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await _settled(lambda: page.tree.targets[G_K].click is None)
-        _tree_click(user, G_K)
-        await asyncio.sleep(0.1)
-        assert page.form is None
-        gate.release.set()
-        await _settled(lambda: page.tree.targets[G_K].click is not None)
-
-
 async def test_a_rebuild_of_the_tree_rows_closes_the_tree_editor(shell):
     """An add staged elsewhere moves the tree's shape: the rows are rebuilt
     and the editor under one of them goes with them — the page's one
@@ -11958,10 +12073,9 @@ async def test_a_row_with_a_click_is_a_button_that_says_what_is_open(nested_shel
     """F5: a criterion's row and a k-of-n's or a weighted's are buttons to
     the keyboard — a tab stop, and whether its editor or its fields are
     open under it — and an and / or / warn row, whose click opens nothing,
-    is neither; a k-of-n locked by a job stops being one."""
+    is neither."""
     shell = nested_shell
     _stage_tree(shell, A, GROUPS)
-    gate = _Gate()
     leaf = f"{G_K}/children/0"
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
@@ -11978,11 +12092,6 @@ async def test_a_row_with_a_click_is_a_button_that_says_what_is_open(nested_shel
         assert _clicks(page)[leaf][2] == "false"
         _tree_click(user, G_K)
         await _settled(lambda: _clicks(page)[G_K][2] == "false")
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await _settled(lambda: _clicks(page)[G_K] == (None, None, None))
-        assert _clicks(page)[leaf][:2] == ("button", "0")  # its editor says why
-        gate.release.set()
-        await _settled(lambda: _clicks(page)[G_K] == ("button", "0", "false"))
 
 
 async def test_a_tree_editor_opens_the_path_to_it_and_a_fold_over_it_closes_it(

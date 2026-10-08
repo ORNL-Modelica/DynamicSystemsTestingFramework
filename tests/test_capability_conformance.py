@@ -32,7 +32,7 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import (  # noqa: E402
     Artifact,
-    Job,
+    Enqueue,
     OpenProject,
     Patch,
     Placement,
@@ -43,8 +43,10 @@ from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from test_handles import TREE  # noqa: E402
-from test_session import LOOSEN, A, B, D, _Gate, _project, _snapshot  # noqa: E402
+from test_session import LOOSEN, A, B, D, _project, _snapshot  # noqa: E402
+from test_session_queue import gated_project  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 SHELL = REPO / "src" / "dstf" / "authoring" / "shell"
@@ -230,7 +232,7 @@ def _effects(shell: Shell, tmp_path: Path) -> dict:
     project = session.project
     return {
         "pending": [op.path for op in session.spec.pending],
-        "running": session.running.label if session.running else None,
+        "queue": [(i.model_id, session.item_state(i).name) for i in session.queue],
         "artifacts": [a.label for a in session.artifacts],
         "project": project.config.library_name if project else None,
         "files": _snapshot(tmp_path),
@@ -420,28 +422,56 @@ async def test_store_write_runs_against_the_store_and_nothing_else(shell, tmp_pa
     assert _changed(before, after) == []  # the write is the whole effect
 
 
-async def test_job_runs_on_a_thread_and_the_runs_card_says_so(shell, tmp_path):
-    gate = _Gate()
-    cap = _Dummy(
-        "rerun",
-        {Placement.SUITE},
-        outcome=Job(run=gate, label="conformance rerun", models=frozenset({A})),
-    )
+async def test_enqueue_reaches_the_queue_and_the_queue_panel_says_so(tmp_path):
+    """The one outcome whose effect is a real run: over `gated_project`, so
+    the test is held while it is read as running and its simulation is a
+    script that returns five samples."""
+    cfg, examples = gated_project(tmp_path)
+    work = tmp_path / "work"
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    hold = examples / "A.hold"
+    hold.write_text("", encoding="utf-8")
+    cap = _Dummy("queue", {Placement.SUITE}, outcome=Enqueue(models=(A,)))
     only(cap)
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        await user.should_see("no job running")
-        await _check(shell, user, A)
-        before = _effects(shell, tmp_path)
-        await _submit(user, cap)
-        await user.should_see("running: conformance rerun", retries=20)
-        assert _changed(before, _effects(shell, tmp_path)) == ["running"]
-        gate.release.set()
-        await user.should_see("no job running", retries=50)
-        after = _effects(shell, tmp_path)
-    assert gate.seen is not None and gate.seen.models == frozenset({A})
+
+    def status() -> str:
+        shell.tick()  # the pool's callbacks are posted to the shell
+        return _one(user, f"queue-status:{A}").text
+
+    try:
+        async with user_simulation(root=shell.index) as user:
+            await _open(user)
+            assert _one(user, "queue-counts").text == "queue empty"
+            await _check(shell, user, A)
+            before = _effects(shell, tmp_path)
+            await _submit(user, cap)
+            await _settled(lambda: status() == "RUNNING", tries=200)
+            assert _one(user, "queue-indicator").text == "1 running"
+            during = _effects(shell, tmp_path)
+            assert during["queue"] == [(A, "RUNNING")]
+            hold.unlink()
+            await _settled(
+                lambda: (
+                    status() != "RUNNING"
+                    and shell.session.queue_state(A) is ItemState.FINISHED
+                ),
+                tries=200,
+            )
+            assert _one(user, "queue-indicator").text == "idle"
+            after = _effects(shell, tmp_path)
+    finally:
+        hold.unlink(missing_ok=True)
+        shell.session.stop_queue()
+        assert shell.session.wait_background(30)
+    assert cap.inputs == [{"who": "queue"}]
     assert _suite(shell, user).actions.errors == {}
-    assert _changed(before, after) == []
+    # The run's own files apart — it writes into the work dir — the queue
+    # is all the outcome reached, while it ran and once it ended.
+    assert [k for k in _changed(before, during) if k != "files"] == ["queue"]
+    assert _changed(before, after) == ["queue", "files"]
+    assert after["queue"] == [(A, "FINISHED")]
 
 
 async def test_artifact_is_shown_as_a_link_and_nothing_else(shell, tmp_path):
@@ -782,8 +812,8 @@ def _capability_words() -> set[str]:
 
 def _docstrings(tree: ast.Module) -> set[int]:
     """The ``id()`` of every string constant that IS a docstring. Prose in a
-    docstring is exempt — `shell.py` and `actions.py` say "Rerun" and
-    "rerun" about the capability they must not reach for by name — and a
+    docstring is exempt — `suite.py` says "the Accept path" about the
+    capability it must not reach for by name — and a
     docstring is a string constant in the AST, so it has to be excluded by
     node, not by content."""
     out: set[int] = set()
@@ -830,7 +860,7 @@ def _identifiers(node: ast.AST):
 def test_the_shell_names_no_capability():
     """§4.6, D129: the shell hosts capabilities BY PLACEMENT and knows none
     of them by name. Read as an AST, never as text: a comment may say
-    "Rerun" and a docstring may explain what Edit tree does, but no string
+    "Accept" and a docstring may explain what Edit tree does, but no string
     the page builds with and no identifier it binds may be a capability's
     `name` or its class."""
     words = _capability_words()

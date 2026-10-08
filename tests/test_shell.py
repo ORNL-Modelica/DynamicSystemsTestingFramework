@@ -1,8 +1,10 @@
 """The new shell (roadmap §2; D129) in NiceGUI's in-process user simulation,
 no browser: the process (`Shell`), the header, Save / Discard / Export, Stop
 server, the pending drawer, the dashboard route, the progressive open and
-the runs card. The Suite list is tests/test_suite_page.py; the buttons at a
-placement tests/test_capability_conformance.py."""
+the simulation queue as the shell carries it — the bridge from the pool's
+threads to the page, the shutdown, the notices. The queue panel's rows are
+tests/test_queue_panel.py; the Suite list is tests/test_suite_page.py; the
+buttons at a placement tests/test_capability_conformance.py."""
 
 from __future__ import annotations
 
@@ -22,11 +24,13 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Job  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.reporting.status import FAIL, classify  # noqa: E402
-from test_session import LOOSEN, A, B, C, D, G, _Gate, _project  # noqa: E402
+from test_queue_panel import _has, _hold  # noqa: E402
+from test_session import LOOSEN, A, B, C, D, G, _project  # noqa: E402
+from test_session_queue import gated_project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -106,7 +110,7 @@ async def test_the_header_names_the_product_the_library_and_the_backend(shell):
         assert _one(user, "backend-name").text == f"Python · {os_name}"
         backend = _one(user, "backend")
         assert backend.value == "Python" and backend.options == ["Python"]
-        assert _one(user, "runs").text == "idle"
+        assert _one(user, "queue-indicator").text == "idle"
 
 
 def _last_run(work, **metadata) -> None:
@@ -289,27 +293,26 @@ async def test_save_refused_on_a_changed_file_offers_reload(shell):
 async def test_stop_server_confirms_with_its_reasons_and_stops_on_the_second_word(
     shell, monkeypatch
 ):
-    """Brief §3.3: Stop server confirms when edits are pending or a run is in
-    flight, naming both."""
-    stopped: list[bool] = []
-    monkeypatch.setattr(app, "shutdown", lambda: stopped.append(True))
+    """Brief §3.3: Stop server confirms when edits are pending or the queue
+    holds a test, naming both; stopping ends the queue first, then the
+    server."""
+    stopped: list[str] = []
+    monkeypatch.setattr(shell.session, "stop_queue", lambda: stopped.append("queue"))
+    monkeypatch.setattr(app, "shutdown", lambda: stopped.append("server"))
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         shell.session.stage([LOOSEN])
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
+        _hold(shell, D, ItemState.RUNNING)
         await _settled(lambda: _one(user, "pending").text == "2 pending edits")
         user.find(marker="stop").click()
         await user.should_see("2 unsaved edits will be lost")
-        await user.should_see("rerun is still running")
+        await user.should_see("1 test is queued or running — stop anyway?")
         assert stopped == []
         user.find("Keep running").click()
         user.find(marker="stop").click()
         await user.should_see("Stop anyway")
         user.find(marker="stop-anyway").click()
-        assert stopped == [True]
-        gate.release.set()
-        await _settled(lambda: shell.session.running is None)
+        assert stopped == ["queue", "server"]
 
 
 async def test_stop_server_stops_at_once_with_nothing_to_lose(shell, monkeypatch):
@@ -521,7 +524,7 @@ async def test_discard_these_empties_the_drawer(shell):
 
 async def test_the_preview_is_built_only_while_the_drawer_is_open(shell, monkeypatch):
     """A closed drawer scores nothing; an event that moved nothing it shows
-    — the 1 s poll during a job — builds nothing again."""
+    — the 1 s poll while a test runs — builds nothing again."""
     calls: list[set] = []
     real = type(shell.session).saved_comparisons
 
@@ -549,8 +552,8 @@ async def test_the_preview_is_built_only_while_the_drawer_is_open(shell, monkeyp
 
 
 async def test_the_open_drawer_follows_a_rescore_that_moved_the_verdict(shell):
-    """A rerun's reload rescores A with nothing pending moved: the drawer's
-    key holds the comparison, and the verdict line follows it."""
+    """A run's result arriving rescores A with nothing pending moved: the
+    drawer's key holds the comparison, and the verdict line follows it."""
     import numpy as np
 
     async with user_simulation(root=shell.index) as user:
@@ -560,8 +563,8 @@ async def test_the_open_drawer_follows_a_rescore_that_moved_the_verdict(shell):
         await user.should_see(marker="drawer-verdict", retries=20)
         assert _one(user, "drawer-verdict").text == "verdict would change FAIL → PASS"
         for v in shell.session.project.results[A].variables:
-            v.values = np.asarray(v.values) * 10.0  # a rerun's result, far off
-        shell.session._score_all({A})  # the reload's rescore: one `results` event
+            v.values = np.asarray(v.values) * 10.0  # a new run's result, far off
+        shell.session._score_all({A})  # its rescore: one `results` event
         await _settled(
             lambda: _one(user, "drawer-verdict").text == "verdict stays FAIL"
         )
@@ -657,8 +660,9 @@ async def test_edits_that_cancel_out_leave_nothing_to_preview(tmp_path):
 
 async def test_the_drawers_save_and_discard_wait_like_the_headers(shell):
     """ "Save these" / "Discard these" are the header's Save and Discard:
-    greyed with the same sentence while a job runs or the project is still
-    being read — and a click then writes nothing."""
+    left enabled while the queue runs the edited test — a queued or running
+    test stays editable — and greyed with the same sentence while the
+    project is still being read, when a click writes nothing."""
     path = shell.session.spec.path
     async with user_simulation(root=shell.index) as user:
         await _open(user)
@@ -667,16 +671,9 @@ async def test_the_drawers_save_and_discard_wait_like_the_headers(shell):
         await user.should_see(marker=f"drawer-test:{A}", retries=20)
         await _settled(lambda: _one(user, "drawer-save").enabled)
         assert _one(user, "drawer-discard").enabled
-        gate = _Gate()
-        shell.session.apply(
-            Job(run=gate, label="Probe", models=frozenset({B}), reloads_results=False)
-        )
-        await _settled(lambda: not _one(user, "drawer-save").enabled)
-        assert not _one(user, "drawer-discard").enabled
-        assert _one(user, "drawer-save:why").text == "Probe is running"
-        gate.release.set()
-        await _settled(lambda: shell.session.running is None)
-        await _settled(lambda: _one(user, "drawer-save").enabled)
+        _hold(shell, A, ItemState.RUNNING)
+        for marker in ("save", "discard", "drawer-save", "drawer-discard"):
+            assert _one(user, marker).enabled, marker
         shell.load.phase = "results"
         shell._events.put({"event": "poll"})
         await _settled(lambda: not _one(user, "drawer-save").enabled)
@@ -864,60 +861,38 @@ async def test_a_partial_scoring_failure_opens_the_project_with_a_warning(
         )
 
 
-# -- the runs card --------------------------------------------------------
+# -- the simulation queue ----------------------------------------------------
 
 
-async def test_a_thread_posted_completion_reaches_the_page(shell):
-    """The bridge: Session(post=shell.post) queues the worker's completion;
-    the page's timer drains it inside the page's context."""
-    from dstf.authoring.capabilities import Job
-
+async def test_a_thread_posted_callback_reaches_the_page(tmp_path):
+    """The bridge: Session(post=shell.post) queues what the pool's threads
+    have for it — a test started, a test ended; the page's timer runs them
+    inside the page's context. A real run of D, held (`gated_project`) so
+    the running state is seen."""
+    cfg, examples = gated_project(tmp_path)
+    work = tmp_path / "work"
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    hold = examples / "D.hold"
+    hold.write_text("", encoding="utf-8")
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await user.should_see("running: rerun", retries=20)
-        gate.release.set()
-        # the drained completion cleared it
-        await user.should_see("no job running", retries=20)
-
-
-async def test_a_discard_clicked_as_a_job_starts_is_a_notification(shell):
-    """The header disables Discard on the tick after a job starts; a click
-    within that tick reaches a Session that refuses it, and the refusal is
-    a notification, not a traceback."""
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.stage([LOOSEN])
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
         try:
-            _suite(shell, user).header._discard()  # the click within the tick
-            await user.should_see("rerun is still running", retries=20)
-            assert len(shell.session.spec.pending) == 2
+            shell.session.enqueue([D])
+            # The test ticks nothing: the page's timer runs the posts.
+            await _settled(
+                lambda: _one(user, "queue-indicator").text == "1 running", tries=600
+            )
+            assert _one(user, f"queue-status:{D}").text == "RUNNING"
+            hold.unlink()
+            await _settled(lambda: _has(user, f"queue-open:{D}"), tries=600)
+            assert _one(user, f"queue-status:{D}").text == "PASS"
+            assert _one(user, "queue-indicator").text == "idle"
         finally:
-            gate.release.set()
-
-
-async def test_a_reload_clicked_while_a_job_runs_is_a_notification(shell):
-    """The Reload a refused Save offers is refused while a job runs, as
-    Discard is — a notification, the dialog left open."""
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.stage([LOOSEN])
-        p = shell.session.spec.path
-        p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-        header = _suite(shell, user).header
-        header._save()
-        await user.should_see("Keep my edits", retries=20)
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        try:
-            user.find("Reload").click()
-            await user.should_see("rerun is still running", retries=20)
-            assert len(shell.session.spec.pending) == 2
-        finally:
-            gate.release.set()
+            hold.unlink(missing_ok=True)
+            shell.session.stop_queue()
+            shell.session.wait_background(30)
 
 
 def _failure_records(caplog) -> list:
@@ -927,21 +902,12 @@ def _failure_records(caplog) -> list:
 async def test_a_discard_that_fails_on_a_bug_is_logged_and_notified(
     shell, monkeypatch, caplog
 ):
-    """Discard's refusal is a person's (a job running): notified, never
-    logged. Anything else it raises is a bug: notified AND logged, by the
-    rule the action bars use (`log_unless_users`)."""
+    """A Discard that raises is a bug's: notified AND logged, by the rule
+    the action bars use (`log_unless_users`)."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         shell.session.stage([LOOSEN])
         header = _suite(shell, user).header
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        try:
-            header._discard()
-            await user.should_see("rerun is still running", retries=20)
-            assert _failure_records(caplog) == []
-        finally:
-            gate.release.set()
 
         def broken() -> None:
             raise KeyError("a bug's")
@@ -956,9 +922,8 @@ async def test_a_discard_that_fails_on_a_bug_is_logged_and_notified(
 async def test_a_dialog_reload_that_fails_on_a_bug_is_logged_and_notified(
     shell, monkeypatch, caplog
 ):
-    """The Reload a refused Save offers: a JobRunningError is notified only
-    (`test_a_reload_clicked_while_a_job_runs_is_a_notification`); a bug is
-    notified and logged."""
+    """The Reload a refused Save offers: a bug in it is notified and
+    logged."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         shell.session.stage([LOOSEN])
@@ -967,15 +932,6 @@ async def test_a_dialog_reload_that_fails_on_a_bug_is_logged_and_notified(
         header = _suite(shell, user).header
         header._save()
         await user.should_see("Keep my edits", retries=20)
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        try:
-            user.find("Reload").click()
-            await user.should_see("rerun is still running", retries=20)
-            assert _failure_records(caplog) == []
-        finally:
-            gate.release.set()
-        await _settled(lambda: shell.session.running is None)
 
         def broken() -> None:
             raise KeyError("a bug's")
@@ -987,36 +943,41 @@ async def test_a_dialog_reload_that_fails_on_a_bug_is_logged_and_notified(
         assert isinstance(record.exc_info[1], KeyError)
 
 
-def test_shutdown_waits_for_a_rerun_render_still_queued(shell):
-    """A Rerun's dashboard render runs on a daemon thread after the job has
-    finished: a Stop server or a Ctrl-C right after the rerun must not end
-    the process under it — the shutdown waits for it."""
+def test_shutdown_waits_for_a_drained_queues_render_still_running(
+    tmp_path, monkeypatch
+):
+    """A drained queue's dashboard render runs on a daemon thread after its
+    last test has ended: a Stop server or a Ctrl-C right after must not end
+    the process under it — the shutdown ends the queue's pool, then waits
+    for the render. A real run of D."""
+    import dstf.reporting.dashboard_render as render_mod
+
     landed = threading.Event()
 
-    def slow(project, comparisons):
+    def slow(work_dir, **kwargs):
         time.sleep(0.5)
         landed.set()
 
-    jobs: list = []
-    shell.session.on(
-        "job", lambda e: jobs.append(e["job"]) if e["state"] == "started" else None
-    )
-    shell.session.apply(
-        Job(
-            run=lambda ctx: None,
-            label="rerun",
-            models=frozenset({A}),
-            after_reload=slow,
-        )
-    )
-    for _ in range(250):  # the completion is posted to the UI loop's tick
-        shell.tick()
-        if jobs[0].done.is_set():
-            break
-        time.sleep(0.02)
-    assert jobs[0].done.is_set() and not landed.is_set()
-    shell.shutdown()
-    assert landed.is_set()
+    monkeypatch.setattr(render_mod, "render_final", slow)
+    cfg, _examples = gated_project(tmp_path)
+    work = tmp_path / "work"
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    session = shell.session
+    try:
+        session.enqueue([D])
+        for _ in range(1500):  # the pool's callbacks are posted to the UI loop's tick
+            shell.tick()
+            if session.queue_state(D) is ItemState.FINISHED:
+                break
+            time.sleep(0.02)
+        assert session.queue_state(D) is ItemState.FINISHED and not landed.is_set()
+        shell.shutdown()
+        assert landed.is_set()
+        assert session._pool is None
+        assert not [t for t in threading.enumerate() if "-pool-" in t.name]
+    finally:
+        session.stop_queue()
 
 
 def test_the_app_runs_the_shells_shutdown(tmp_path, monkeypatch):
@@ -1033,151 +994,14 @@ def test_the_app_runs_the_shells_shutdown(tmp_path, monkeypatch):
     assert handler.__func__ is Shell.shutdown
 
 
-async def test_a_rescore_after_the_open_does_not_put_the_shell_back_to_loading(shell):
+async def test_a_reload_after_the_open_does_not_put_the_shell_back_to_loading(shell):
     """`Session._reload_results` announces `loading(phase="results")` per
-    model on EVERY rescore — a finished job's, a store write's — and only
-    `open` closes with `done`. The shell reads those announcements only
-    while an open is in progress: read after it, the first Rerun or Accept
-    left `load` at "scoring results… 5 of 5" for good, and Save, Discard and
-    the backend select stayed disabled with "the project is still loading"
-    (found by the Task 5 review's probe)."""
-    from dstf.authoring.capabilities import Job, StoreWrite
-
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        gate = _Gate()
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await user.should_see("running: rerun", retries=20)
-        gate.release.set()
-        await user.should_see("no job running", retries=20)
-        assert not shell.load.in_progress and shell.busy_reason() is None
-        assert shell.load.failed_models == []
-        shell.session.apply(
-            StoreWrite(run=lambda store: "stored 1", models=frozenset({B}))
-        )
-        await user.should_see("stored 1", retries=20)
-        assert not shell.load.in_progress and shell.busy_reason() is None
-        change = _one(user, "change-backend")
-        await _settled(lambda: change.enabled)
-        shell.session.stage([LOOSEN])  # a backend change then waits on the edits
-        save = _one(user, "save")
-        await _settled(lambda: save.enabled)
-
-
-def _write_status(work, *, start_wall, rows) -> None:
-    """A ``status.json`` in ProgressReporter's shape. The poll reads it
-    through ``progress.read_status``, as the live dashboard does."""
-    (work / "status.json").write_text(
-        json.dumps(
-            {
-                "total": len(rows),
-                "counts": {"running": sum(r.get("status") == "running" for r in rows)},
-                "tests": rows,
-                "start_wall": start_wall,
-                "updated_at": time.time(),
-                "metadata": {"backend_name": "Python"},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
-async def test_the_job_panel_shows_per_test_rows_from_the_running_status(shell):
-    """§4.7: progress is the ``status.json`` the pipeline already writes,
-    polled — no log tail. The idle label stays; the outcome is a second line."""
-    from dstf.authoring.capabilities import Job
-
-    work = shell.session.project.config.work_dir
-    gate = _Gate()
-
-    def write_status_then_wait(ctx):
-        _write_status(
-            work,
-            start_wall=time.time(),
-            rows=[
-                {
-                    "test_key": "test_0001",
-                    "model_id": A,
-                    "status": "running",
-                    "phase": "simulating",
-                    "elapsed": 0.5,
-                    "detail": None,
-                }
-            ],
-        )
-        gate(ctx)
-
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.apply(
-            Job(run=write_status_then_wait, label="rerun", models=frozenset({A}))
-        )
-        await user.should_see("running: rerun", retries=20)
-        # The poll is 1 s; should_see's default budget is 0.3 s.
-        await user.should_see("simulating", retries=20)
-        gate.release.set()
-        await user.should_see("finished: rerun", retries=20)
-        await user.should_see("no job running", retries=20)
-        await user.should_not_see("simulating", retries=20)
-        assert shell.session.running is None
-        last = shell.session.last_job
-        assert last is not None and last.error is None
-
-
-async def test_a_status_from_an_older_run_is_not_this_jobs_progress(shell):
-    """``RunningJob.started_wall`` against the snapshot's ``start_wall``: the
-    previous run's rows are never shown as this job's."""
-    from dstf.authoring.capabilities import Job
-
-    work = shell.session.project.config.work_dir
-    _write_status(
-        work,
-        start_wall=time.time() - 3600,
-        rows=[
-            {
-                "test_key": "test_0001",
-                "model_id": A,
-                "status": "failed",
-                "phase": None,
-                "elapsed": 2.0,
-            }
-        ],
-    )
-    gate = _Gate()
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        # The `started` event refreshes `jobs`, so `_progress_rows` has
-        # already run against the stale file by the time this returns: the
-        # absence is the guard's doing, not a timer that has yet to fire.
-        await user.should_see("running: rerun", retries=20)
-        await user.should_not_see("failed", retries=20)
-        # Still the stale file: the gated job wrote no snapshot of its own.
-        assert (
-            json.loads((work / "status.json").read_text(encoding="utf-8"))["start_wall"]
-            < shell.session.running.started_wall
-        )
-        gate.release.set()
-        await user.should_see("no job running", retries=20)
-
-
-async def test_a_job_that_raises_shows_its_failure_and_the_message(shell):
-    """§4.7 "Failure handling": the runs card carries the message."""
-    from dstf.authoring.capabilities import Job
-
-    def boom(ctx):
-        raise RuntimeError("no omc")
-
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
-        await user.should_see("failed: rerun", retries=20)
-        await user.should_see("no omc", retries=20)
-        assert shell.session.last_job is not None
-        assert isinstance(shell.session.last_job.error, RuntimeError)
-
-
-async def test_a_store_writes_line_is_shown_in_the_runs_card(shell):
+    model on EVERY reload — a store write's — and only `open` closes with
+    `done`. The shell reads those announcements only while an open is in
+    progress: read after it, the first Accept left `load` at "scoring
+    results… 5 of 5" for good, and Save, Discard and the backend select
+    stayed disabled with "the project is still loading" (found by the Task 5
+    review's probe)."""
     from dstf.authoring.capabilities import StoreWrite
 
     async with user_simulation(root=shell.index) as user:
@@ -1186,169 +1010,54 @@ async def test_a_store_writes_line_is_shown_in_the_runs_card(shell):
             StoreWrite(run=lambda store: "stored 1", models=frozenset({B}))
         )
         await user.should_see("stored 1", retries=20)
-        assert shell.session.notices == ["stored 1"]
+        assert not shell.load.in_progress and shell.busy_reason() is None
+        assert shell.load.failed_models == []
+        change = _one(user, "change-backend")
+        await _settled(lambda: change.enabled)
+        shell.session.stage([LOOSEN])  # a backend change then waits on the edits
+        save = _one(user, "save")
+        await _settled(lambda: save.enabled)
 
 
-async def test_a_finished_jobs_failed_result_shows_its_error_message(shell):
-    """§4.7: "the backend's failure message from the results" — reloaded by
-    the job's completion, one row per model the job ran."""
-    from dstf.authoring.capabilities import Job
-
-    work = shell.session.project.config.work_dir
-    gate = _Gate()
-
-    def fail_a_then_wait(ctx):
-        # The Python driver's failing shape; read_result maps it to error_message.
-        (work / "test_0001" / "result.json").write_text(
-            json.dumps({"success": False, "error": "division by zero"}),
-            encoding="utf-8",
-        )
-        gate(ctx)
+async def test_a_store_writes_line_is_shown_in_the_queue_panel(shell):
+    from dstf.authoring.capabilities import StoreWrite
 
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        shell.session.apply(
-            Job(run=fail_a_then_wait, label="rerun", models=frozenset({A}))
-        )
-        await user.should_see("running: rerun", retries=20)
-        gate.release.set()
-        await user.should_see("finished: rerun", retries=20)
-        await user.should_see("division by zero", retries=20)
-        assert shell.session.project.results[A].error_message == "division by zero"
-
-
-async def test_a_failed_job_shows_no_result_rows_from_before_it(tmp_path):
-    """A failed job reloads nothing, so the results under it are the ones
-    that were already there — an old failure (or a bare model id, reading as
-    "ran fine") would sit under `failed:` as if this job had produced it."""
-    from dstf.authoring.capabilities import Job
-
-    cfg, work = _project(tmp_path)
-    (work / "test_0001" / "result.json").write_text(
-        json.dumps({"success": False, "error": "OLD FAILURE"}), encoding="utf-8"
-    )
-    shell = Shell(cfg, work_dir=work)
-    shell.session.open(cfg, work_dir=work)
-    shell.load.phase = "done"
-    assert shell.session.project.results[A].error_message == "OLD FAILURE"
-
-    def boom(ctx):
-        raise RuntimeError("no omc")
-
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
-        await user.should_see("failed: rerun", retries=20)
-        await user.should_not_see("OLD FAILURE", retries=20)
-        # The result itself is untouched: what changed is whose outcome it is.
-        assert shell.session.project.results[A].error_message == "OLD FAILURE"
-
-
-async def test_a_job_that_reloads_nothing_shows_no_result_rows(tmp_path):
-    """The same defect as the failed job's, on the succeeding path: a job
-    that asked for no reload leaves the previous run's results in place, so
-    its `finished:` line must not stand over them either. The gate is the
-    reload, not the outcome."""
-    from dstf.authoring.capabilities import Job
-
-    cfg, work = _project(tmp_path)
-    (work / "test_0001" / "result.json").write_text(
-        json.dumps({"success": False, "error": "OLD FAILURE"}), encoding="utf-8"
-    )
-    shell = Shell(cfg, work_dir=work)
-    shell.session.open(cfg, work_dir=work)
-    shell.load.phase = "done"
-    assert shell.session.project.results[A].error_message == "OLD FAILURE"
-
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        shell.session.apply(
-            Job(
-                run=lambda ctx: None,
-                label="export",
-                models=frozenset({A}),
-                reloads_results=False,
-            )
-        )
-        await user.should_see("finished: export", retries=20)
-        await user.should_not_see("OLD FAILURE", retries=20)
-        with pytest.raises(AssertionError):  # every row a rebuild would draw
-            user.find(marker="job-row")
-        last = shell.session.last_job
-        assert last is not None and last.error is None and last.reloaded is False
-
-
-async def test_a_malformed_status_snapshot_renders_what_it_has(shell):
-    """`_jobs` may not raise: ``status.json`` is a file, and its shapes are
-    whatever wrote it. Each bad shape drops the rows and leaves the rest of
-    the runs card standing — the notice BELOW the rows is what proves a raise
-    would have been caught here, since a partial rebuild would lose it.
-
-    Every snapshot's ``start_wall`` is sampled at WRITE time (the job is
-    already running by then, so it is never stale): a timestamp taken before
-    the page opened would fall outside the staleness guard's 0.1 s slack and
-    that guard, not the shape guard under test, would be what dropped the
-    rows."""
-    from dstf.authoring.capabilities import Job, StoreWrite
-
-    work = shell.session.project.config.work_dir
-    good_row = {
-        "test_key": "test_0001",
-        "model_id": A,
-        "status": "running",
-        "phase": "simulating",
-        "elapsed": 0.5,
-    }
-    malformed = [
-        lambda now: {"start_wall": "abc", "tests": [good_row]},
-        lambda now: {"start_wall": now, "tests": 5},
-        lambda now: {"start_wall": now, "tests": [{"model_id": ["x"]}]},
-        # `json.dumps` writes the literal `NaN` and `json.loads` reads it back:
-        # a float that passes the isinstance check and loses every comparison.
-        lambda now: {"start_wall": float("nan"), "tests": [good_row]},
-    ]
-    gate = _Gate()
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
+        assert not _has(user, "notice")
         shell.session.apply(
             StoreWrite(run=lambda store: "stored 1", models=frozenset({B}))
         )
-        await user.should_see("stored 1", retries=20)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await user.should_see("running: rerun", retries=20)
-        for make_status in malformed:
-            # A good snapshot first, so the row's disappearance proves the
-            # card was rebuilt against the bad one and not left as it was.
-            _write_status(work, start_wall=time.time(), rows=[good_row])
-            _suite(shell, user).runs.refresh()
-            await user.should_see("simulating", retries=20)
-            (work / "status.json").write_text(
-                json.dumps(make_status(time.time())), encoding="utf-8"
-            )
-            _suite(shell, user).runs.refresh()
-            await user.should_not_see("simulating", retries=20)
-            await user.should_see("running: rerun", retries=20)
-            await user.should_see("stored 1", retries=20)  # nothing below was lost
-        gate.release.set()
-        await user.should_see("no job running", retries=20)
+        await user.should_see(marker="notice", retries=20)
+        notice = _one(user, "notice")
+        assert notice.text == "stored 1"
+        assert _suite(shell, user).queue.card in list(_ancestors(notice))
+        assert shell.session.notices == ["stored 1"]
 
 
-async def test_the_last_jobs_outcome_is_the_projects_and_goes_with_it(shell):
-    """The last job is the Session's, not the shell's: LibA's `finished:`
-    line must not sit under "no project open" (nor under LibB after a swap)."""
-    from dstf.authoring.capabilities import Job
+async def test_the_queues_rows_and_notices_are_the_projects_and_go_with_it(shell):
+    """The queue and the notices are the Session's, not the shell's, and the
+    open project's: LibA's ended row and its "stored 1" must not sit under
+    "no project" (nor under LibB after a swap)."""
+    from dstf.authoring.capabilities import StoreWrite
 
-    gate = _Gate()
+    session = shell.session
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await user.should_see("running: rerun", retries=20)
-        gate.release.set()
-        await user.should_see("finished: rerun", retries=20)
-        shell.session.close()
-        await user.should_see("no project open", retries=20)
-        await user.should_not_see("finished: rerun", retries=20)
-        assert shell.session.last_job is None
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        item = _hold(shell, D, ItemState.RUNNING)
+        # ended, as the pool ends a cancelled item and the Session takes it in
+        item.state, item.ended_at = ItemState.CANCELLED, item.started_at
+        del session._live[D]
+        session._emit("queue", state="ended", models={D})
+        shell.tick()
+        assert _has(user, f"queue-row:{D}") and _has(user, "notice")
+        session.close()
+        shell.tick()
+        assert _one(user, "project").text == "no project"
+        assert not _has(user, f"queue-row:{D}") and not _has(user, "notice")
+        assert _one(user, "queue-counts").text == "queue empty"
+        assert session.queue == [] and session.notices == []
 
 
 # -- the backend -----------------------------------------------------------
@@ -1519,7 +1228,14 @@ async def test_the_header_is_one_row_unless_a_page_asks_for_a_second(shell):
             m
             for m in marks
             if m
-            in ("wordmark", "project", "backend-name", "runs", "pending", "header-menu")
+            in (
+                "wordmark",
+                "project",
+                "backend-name",
+                "queue-indicator",
+                "pending",
+                "header-menu",
+            )
         ]
         # Stop server is in the menu at the row's end (3c); the backend is
         # text, its select in the menu's Change backend dialog (Q13 A).
@@ -1527,7 +1243,7 @@ async def test_the_header_is_one_row_unless_a_page_asks_for_a_second(shell):
             "wordmark",
             "project",
             "backend-name",
-            "runs",
+            "queue-indicator",
             "pending",
             "header-menu",
         ]

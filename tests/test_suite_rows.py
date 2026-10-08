@@ -7,9 +7,11 @@ from dataclasses import replace
 
 import pytest
 
-from dstf.authoring.session import RunningJob, Session
+from dstf.authoring.session import Session
 from dstf.authoring.suite_rows import suite_row, suite_rows
+from dstf.backends.pool import ItemState
 from test_session import LOOSEN, A, B, C, D, _project
+from test_session_queue import drop_item, fake_item
 
 
 @pytest.fixture
@@ -73,9 +75,18 @@ def test_a_staged_edit_counts_and_rescores(session):
     assert row.status == "PASS"
 
 
-def test_running_beats_everything(session):
-    session.running = RunningJob(label="rerun", models=frozenset({A}))
+def test_queued_and_running_beat_everything(session):
+    """A test the queue holds reads QUEUED while it waits and RUNNING while
+    it runs, over its verdict and over a scoring failure; out of the queue
+    it reads its verdict again."""
+    running = fake_item(session, A, ItemState.RUNNING)
+    waiting = fake_item(session, D, ItemState.WAITING)
     assert suite_row(session, A, failed={A}).status == "RUNNING"
+    assert suite_row(session, D, failed={D}).status == "QUEUED"
+    drop_item(session, running)
+    drop_item(session, waiting)
+    assert suite_row(session, A).status == "FAIL"
+    assert suite_row(session, D).status == "PASS"
 
 
 def test_a_failed_scoring(session):

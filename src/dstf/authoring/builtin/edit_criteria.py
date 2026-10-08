@@ -122,9 +122,6 @@ class EditCriteria:
         model_id = next(iter(sel.tests)) if len(sel.tests) == 1 else None
         if model_id is None or sel.leaf_path is None:
             return "select one leaf"
-        running = s.running
-        if running is not None and s.is_locked(model_id):
-            return f"{running.label} is running on {model_id}"
         # A compared test whose tree the Session will not materialize: its
         # leaves are on the plots, but every edit is refused — the Session's
         # reason, as the editor's why-line, not the view's leaf as if

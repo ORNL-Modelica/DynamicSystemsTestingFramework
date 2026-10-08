@@ -27,6 +27,7 @@ from ...reporting.status import (
     NO_REF,
     NOT_RUN,
     PASS,
+    QUEUED,
     RUNNING,
     SIM_FAIL,
     STATUS_CLASSES,
@@ -41,8 +42,8 @@ ASSETS = "/_dstf"
 #: A per-viewer key for the table's view (localStorage), per project.
 STORAGE = "dstf-suite-v1"
 
-#: A live run's columns (the runs card shows a running job): always "—" in
-#: the tool, so not even the column chooser offers them.
+#: A live run's columns (the queue panel shows a running test's): always
+#: "—" in the tool, so not even the column chooser offers them.
 LIVE_RUN = ("test", "worker", "elapsed")
 TOOL_COLUMNS: tuple[Column, ...] = (
     *(c for c in COLUMNS if c.key not in LIVE_RUN),
@@ -60,8 +61,8 @@ ORDER = (*VISIBLE, "ref", "resolution", "translate", "total")
 FILTER_NOTE = {"model": "Reads the full test name. "}
 #: The count pills, ``[key, word]`` in the order the toolbar draws them: a
 #: status by its class (a row's ``status_class``), EDITED (a row with
-#: staged edits, whatever its status) and RUNNING (drawn only while a job
-#: runs or it filters). The words are ``reporting.status``'s: the script
+#: staged edits, whatever its status), then QUEUED and RUNNING (each drawn
+#: only while the queue holds such a test, or it filters). The words are ``reporting.status``'s: the script
 #: reads this table (``window.DstfSuitePills``) and spells none of them.
 PILLS: tuple[tuple[str, str], ...] = (
     *(
@@ -69,6 +70,7 @@ PILLS: tuple[tuple[str, str], ...] = (
         for s in (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN)
     ),
     ("edited", "EDITED"),
+    (STATUS_CLASSES[QUEUED], STATUS_LABELS[QUEUED]),
     (STATUS_CLASSES[RUNNING], STATUS_LABELS[RUNNING]),
 )
 

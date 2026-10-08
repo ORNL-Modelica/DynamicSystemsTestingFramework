@@ -3,8 +3,8 @@ the test is in, the tone the strip is drawn in, and the one sentence that
 says it. Pure — no Session, no UI: the page reads the inputs, this decides.
 
 The situations are checked in :class:`Situation`'s order; the first that
-applies wins (a running job before pending edits, edits before anything
-the last scoring said).
+applies wins (a test the queue holds before pending edits, edits before
+anything the last scoring said).
 
 There is no state for edits to the simulation settings (the owner's ruling
 Q2 A drew one): ``/simulation`` is not stageable — `patch_apply`'s default
@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from ..backends.pool import ItemState
 from ..comparison.tree_spec import tree_variables
 from ..reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL
 from .capabilities import plural
@@ -26,16 +27,25 @@ from .capabilities import plural
 if TYPE_CHECKING:
     from ..backends.types import TestResult
     from ..discovery.test_registry import TestModel
+    from .queue_rows import QueueRow
 
 
 class Situation(Enum):
+    #: the simulation queue holds the test, waiting (D150)
+    QUEUED = "queued"
     RUNNING = "running"
     EDITS = "edits"
     #: pending edits whose criteria name a variable the last run did not
-    #: record: Rerun is the one next action, Save is quiet (the owner's O1)
+    #: record: Queue is the one next action, Save is quiet (the owner's O1)
     EDITS_NEW = "edits_new"
     SCORING_FAILED = "scoring_failed"
     WAITING = "waiting"
+    #: its last run in the queue was stopped: it has no result, and the
+    #: one before was replaced when that run started
+    CANCELLED = "cancelled"
+    #: the queue could not start it — no worker could start: the
+    #: backend's message; its last result stands
+    START_FAILED = "start_failed"
     NO_RESULT = "no_result"
     SIM_FAIL = "sim_fail"
     #: saved criteria name a variable the last run did not record: a
@@ -59,6 +69,11 @@ class Strip:
 
 
 _ACCEPT_IT = "If the new behaviour is right, accept it as the baseline."
+
+#: The strip of a test whose run was cancelled (D150).
+CANCELLED_SENTENCE = (
+    "Cancelled — no result (its earlier result was replaced when the run started)."
+)
 
 #: Between the EDITS count and what the edits do to the verdict — in the
 #: strip's sentence and on the pending drawer's line under each test.
@@ -106,13 +121,13 @@ def new_variables(
     return len(unrecorded_variables(test, result, diagnostics))
 
 
-def _rerun(n: int) -> str:
-    return f"rerun to score {'it' if n == 1 else 'them'}"
+def _queue_it(n: int) -> str:
+    return f"queue the test to score {'it' if n == 1 else 'them'}"
 
 
 def strip_for(
     *,
-    running: str | None = None,
+    queue: QueueRow | None = None,
     edits: int = 0,
     status: str | None = None,
     saved_status: str | None = None,
@@ -126,8 +141,9 @@ def strip_for(
     new_variables: int = 0,
     refused: str | None = None,
 ) -> Strip:
-    """The strip for one test. ``running`` is the label of the job that
-    locks it; ``edits`` its pending ops; ``status`` / ``saved_status`` the
+    """The strip for one test. ``queue`` is its row in the simulation
+    queue (`queue_rows.queue_row`), None when the queue lists no item of
+    it; ``edits`` its pending ops; ``status`` / ``saved_status`` the
     classifier's word for the comparison as edited / as saved (None while
     unscored, or — saved — for an entry the loaded spec does not have;
     ``reporting.status.SCORING_FAILED`` — saved — when scoring the saved
@@ -140,28 +156,35 @@ def strip_for(
     the last run did not record (:func:`new_variables`); ``refused`` why
     the comparison refused the test (`reporting.status.refusal`), or None."""
     S = Situation
-    if running is not None:
-        return Strip(S.RUNNING, "grey", f"{running} is running on this test.")
+    if queue is not None and queue.state is ItemState.WAITING:
+        return Strip(S.QUEUED, "grey", f"Queued — {queue.words}")
+    if queue is not None and queue.state is ItemState.RUNNING:
+        where = f" on worker {queue.worker}" if queue.worker is not None else ""
+        return Strip(S.RUNNING, "grey", f"Running{where} — {queue.elapsed or 0:.0f} s")
     if edits:
         sentence = f"{plural(edits, 'unsaved edit')}{SEP}{verdict_phrase(status, saved_status)}"
         if new_variables:
-            new = f"{plural(new_variables, 'new variable')}: {_rerun(new_variables)}"
+            new = f"{plural(new_variables, 'new variable')}: {_queue_it(new_variables)}"
             return Strip(S.EDITS_NEW, "amber", f"{sentence}{SEP}{new}")
         return Strip(S.EDITS, "amber", sentence)
     if scoring_failed:
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")
     if status is None and (has_result or loading):
         return Strip(S.WAITING, "grey", "Scoring…")
+    if queue is not None and queue.state is ItemState.CANCELLED:
+        return Strip(S.CANCELLED, "grey", CANCELLED_SENTENCE)
+    if queue is not None and queue.state is ItemState.FAILED and not queue.started:
+        return Strip(S.START_FAILED, "red", queue.message or queue.words)
     # NOT RUN is the classifier's word for this situation (D145): the
     # header's badge and the strip say one thing. A SIM_FAIL is a run that
     # reached a verdict, and reads as one below.
     if status == NOT_RUN or (not has_result and status is None):
-        return Strip(S.NO_RESULT, "grey", "No result yet — rerun to simulate it.")
+        return Strip(S.NO_RESULT, "grey", "No result yet — queue it to simulate it.")
     if status == SIM_FAIL:
         return Strip(
             S.SIM_FAIL,
             "red",
-            "The simulation failed. Fix the model or its settings, then rerun.",
+            "The simulation failed. Fix the model or its settings, then queue it again.",
         )
     if refused and status == FAIL:
         # Before NEW_VARIABLES: a rerun records the variable, and the test
@@ -173,7 +196,7 @@ def strip_for(
             S.NEW_VARIABLES,
             "amber",
             f"{plural(new_variables, 'new variable')} the last run did not "
-            f"record: {_rerun(new_variables)}.",
+            f"record: {_queue_it(new_variables)}.",
         )
     if status == NO_REF:
         return Strip(

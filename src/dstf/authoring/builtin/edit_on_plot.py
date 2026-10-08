@@ -293,9 +293,6 @@ class EditOnPlot:
         if selected is None:
             return "open one criterion"
         model_id, variable, leaf_path = selected
-        running = s.running
-        if running is not None and s.is_locked(model_id):
-            return f"{running.label} is running on {model_id}"
         # The handles are drawn from the comparison's tree; every edit of
         # one goes through the Session's, which may have none.
         tree, why = s.tree_or_reason(model_id)

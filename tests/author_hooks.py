@@ -135,32 +135,54 @@ async def _touch() -> list[str]:
     return out
 
 
-#: The gates of the jobs `/__lock` started, opened by `/__unlock`.
-_GATES: list = []
+@app.get("/__stage_tolerance")
+async def _stage_tolerance(model: str = "FakeLib.A", value: float = 0.5) -> dict:
+    """The test-level tolerance of ``model`` staged at ``value``: an edit a
+    test with no result takes, so a RUNNING one does."""
+    from dstf.authoring.spec_document import PatchOp
+
+    session = _shell().session
+    session.stage([PatchOp(model, "add", "/comparison/tolerance", value)])
+    return {"pending": len(session.spec.pending)}
 
 
-@app.get("/__lock")
-async def _lock(model: str = "FakeLib.A") -> dict:
-    """A job holding ``model`` until `/__unlock`: its rows rebuilt under
-    the lock, as a Rerun's are. It reloads nothing when it ends."""
-    import threading
+@app.get("/__no_workers")
+async def _no_workers(message: str = "licence server unreachable") -> dict:
+    """From now on the queue's backend is one whose worker cannot start: it
+    raises ``message``. The Python backend has no worker to fail."""
+    from types import SimpleNamespace
 
-    from dstf.authoring.capabilities import Job
+    import dstf.authoring.session as session_module
+    from dstf.backends.persistent import PersistentBackendBase, Worker
+    from dstf.backends.types import Capability
 
-    gate = threading.Event()
-    _GATES.append(gate)
-    job = Job(
-        run=lambda _ctx: gate.wait(30),
-        label="rerun",
-        models=frozenset({model}),
-        reloads_results=False,
-    )
-    _shell().session.apply(job)
-    return {"locked": model}
+    class NoStart(Worker):
+        def start(self):
+            raise RuntimeError(message)
 
+        def is_alive(self):
+            return False
 
-@app.get("/__unlock")
-async def _unlock() -> dict:
-    for gate in _GATES:
-        gate.set()
-    return {"released": len(_GATES)}
+        def run_test(self, test, test_key, progress=None):
+            raise AssertionError("a worker that never started ran a test")
+
+    class Stub(PersistentBackendBase):
+        backend_label = "Stub"
+        restart_retry_backoff_seconds = 0.01
+        capabilities = frozenset({Capability.PERSISTENT_WORKERS, Capability.CANCEL})
+
+        def make_worker(self, worker_id):
+            return NoStart(worker_id, self.config)
+
+        def read_result(self, test, test_key, run_result):
+            raise AssertionError("nothing ran: there is no result to read")
+
+    def stub(config, *, persistent):
+        return Stub(
+            SimpleNamespace(
+                work_dir=config.work_dir, timeout=30.0, backend="Stub", parallel=1
+            )
+        )
+
+    session_module.select_backend = stub
+    return {"backend": "Stub"}

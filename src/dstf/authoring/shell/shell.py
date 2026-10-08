@@ -23,17 +23,19 @@ from urllib.parse import unquote
 from fastapi.responses import FileResponse, JSONResponse
 from nicegui import app, ui
 
+from ...backends.pool import ItemState
 from ...cli.common import _filter_tests
 from ...reporting.theme import css_variables, level_variables, quasar_palette
 from ..capabilities import Capability, Placement, plural, registered_capabilities
+from ..queue_rows import stop_reason
 from ..session import Selection, Session, SessionView
 from .style import STYLE
 
 logger = logging.getLogger(__name__)
 
 TICK = 0.1  # seconds; a Session event reaches every page within one
-#: How long the shutdown waits for a Rerun's dashboard render still running
-#: (1.6 s over TRANSFORM's work dir with --report sidecars).
+#: How long the shutdown waits for a drained queue's dashboard render still
+#: running (1.6 s over TRANSFORM's work dir with --report sidecars).
 SHUTDOWN_WAIT = 5.0
 
 
@@ -101,8 +103,9 @@ class Shell:
         self.work_dir = work_dir
         self.filter, self.package = filter, package
         self.show_browser = show_browser
-        # What worker threads post — a job's completion, the rescan's merge:
-        # Session mutations that must run on the UI loop. `tick` runs them.
+        # What other threads post — the simulation pool's callbacks, the
+        # rescan's merge: Session mutations that must run on the UI loop.
+        # `tick` runs them.
         self._posted: queue.Queue[Callable[[], None]] = queue.Queue()
         self.session = Session(post=self._posted.put)
         # Every Session event, from whichever thread emitted it, crosses here
@@ -112,7 +115,15 @@ class Shell:
         #: event), until the merge's `spec` event: the tests while an open
         #: is under way.
         self.known: list[str] = []
-        for event in ("spec", "results", "job", "loading", "known", "overlays"):
+        for event in (
+            "spec",
+            "results",
+            "queue",
+            "notice",
+            "loading",
+            "known",
+            "overlays",
+        ):
             self.session.on(event, self._events.put)
         self.pages: list[Page] = []
         self.load = LoadState()
@@ -131,8 +142,8 @@ class Shell:
         """Open the project — or reopen it on `backend` (brief §3.6) — on a
         thread; the pages follow the `loading` events and the `opened`
         event this shell adds at the end. Refused while an open runs.
-        `Session.open` itself refuses while edits are pending or a job runs,
-        and that refusal arrives as the `opened` event's error."""
+        `Session.open` itself refuses while edits are pending or the queue
+        holds a test, and that refusal arrives as the `opened` event's error."""
         if self._open_thread is not None and self._open_thread.is_alive():
             raise RuntimeError("the project is still opening")
         self.load = LoadState(phase="scan")
@@ -167,8 +178,9 @@ class Shell:
         """Run what worker threads posted, then hand every queued Session
         event to every live page, then let each flush what it coalesced — a
         page whose client is gone is dropped.
-        Once a second while a job runs, a `poll` event, so the runs card
-        re-reads `status.json` (§4.7)."""
+        Once a second while a test runs, a `poll` event: the clock a running
+        row's elapsed seconds are repainted by. It reads no file — the
+        queue's callbacks are the live signal (D150)."""
         while True:
             try:
                 fn = self._posted.get_nowait()
@@ -183,7 +195,7 @@ class Shell:
                 break
         self._ticks += 1
         every = max(1, round(1.0 / TICK))  # once a second, whatever the tick
-        if self.session.running is not None and self._ticks % every == 0:
+        if self._ticks % every == 0 and self.running():
             events.append({"event": "poll"})
         # `is_deleted` is set by the browser's disconnect (after NiceGUI's
         # reconnect timeout); a page navigated away from in the user
@@ -226,10 +238,10 @@ class Shell:
                 load.total = int(event.get("total", 0))
             elif phase == "results":
                 if not load.in_progress:
-                    # A rescore after the open — a finished job's, a store
-                    # write's — announces the same events, and no `done`
-                    # follows them: read here, the first Rerun left the shell
-                    # "still loading" for good (the Task 5 review's probe).
+                    # A reload after the open — a store write's — announces
+                    # the same events, and no `done` follows them: read
+                    # here, it left the shell "still loading" for good (the
+                    # Task 5 review's probe).
                     return
                 load.phase = "results"
                 load.done, load.total = int(event["done"]), int(event["total"])
@@ -306,41 +318,49 @@ class Shell:
             return []
         return [t.model_id for t in _filter_tests(tests, self.filter, self.package)]
 
+    def running(self) -> bool:
+        """Whether the queue is running a test now."""
+        session = self.session
+        return any(session.item_state(i) is ItemState.RUNNING for i in session.queue)
+
     def busy_reason(self) -> str | None:
         """Why a Save, a Discard or a backend change is refused now, or None:
-        the open thread is still writing, or a job holds models."""
+        the open thread is still writing. The queue refuses none of the
+        first two (D150): a queued or running test stays editable."""
         if self.load.in_progress:
             return "the project is still loading"
-        running = self.session.running
-        if running is not None:
-            return f"{running.label} is running"
         return None
 
     def stop_reasons(self) -> list[str]:
-        """What Stop server would lose (brief §3.3): pending edits, a running
-        job — sub-project 5 adds the queue."""
+        """What Stop server would lose (brief §3.3, §3.6): pending edits, and
+        the tests the queue still holds."""
         reasons: list[str] = []
         n = len(self.session.spec.pending)
         if n:
             reasons.append(f"{plural(n, 'unsaved edit')} will be lost")
-        running = self.session.running
-        if running is not None:
-            reasons.append(f"{running.label} is still running")
+        held = stop_reason(self.session)
+        if held is not None:
+            reasons.append(f"{held} — stop anyway?")
         return reasons
 
     def stop(self) -> None:
-        """Stop server: the children first (decision 7), then NiceGUI."""
+        """Stop server: the queue first — its waiting tests removed, its
+        running ones stopped, every worker's simulator process ended — then
+        the children (decision 7), then NiceGUI."""
+        self.session.stop_queue()
         self.terminate_children()
         app.shutdown()
 
     def shutdown(self) -> None:
-        """NiceGUI's shutdown (Stop server, a Ctrl-C): a Rerun's dashboard
-        render still running off the UI loop lands first — it is on a daemon
-        thread the process's exit would end mid-write — then the children
-        end (decision 7)."""
+        """NiceGUI's shutdown (Stop server, a Ctrl-C): the queue's pool ends
+        — a Ctrl-C leaves no simulator process behind either — then a
+        drained queue's dashboard render still running off the UI loop
+        lands (it is on a daemon thread the process's exit would end
+        mid-write), then the children end (decision 7)."""
+        self.session.stop_queue()
         if not self.session.wait_background(SHUTDOWN_WAIT):
             logger.warning(
-                "exiting with a job's after_reload still running after %.0f s",
+                "exiting with the queue's dashboard render still running after %.0f s",
                 SHUTDOWN_WAIT,
             )
         self.terminate_children()

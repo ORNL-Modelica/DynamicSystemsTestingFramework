@@ -3,7 +3,9 @@
 Opens a project, scores its tests from the last run on disk, holds the
 spec with the ops staged against it, and applies the outcomes capabilities
 return. It writes only through ``save`` (the spec) and through the outcomes
-it applies (the store, a job's work dir). Nothing here imports a UI.
+it applies (the store, the queue's work dir). It owns the simulation queue
+(D150): one per process, over a worker pool that lives until the tool
+stops. Nothing here imports a UI.
 """
 
 from __future__ import annotations
@@ -11,17 +13,19 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.common.result_variables import tracked_results
+from ..backends.pool import ItemState, QueueItem, Refused
 from ..backends.progress import recorded_backend
 from ..backends.types import (
     DatasetType,
@@ -62,12 +66,12 @@ from ..storage.baseline import PRIMARY_BASELINE
 from ..storage.reference_store import ReferenceStore
 from .capabilities import (
     Artifact,
-    Job,
-    JobContext,
+    Enqueue,
     OpenProject,
     Outcome,
     Patch,
     StoreWrite,
+    plural,
 )
 from .situation import unrecorded_variables
 from .spec_document import PatchOp, SpecDocument, json_equal
@@ -75,20 +79,20 @@ from .spec_document import PatchOp, SpecDocument, json_equal
 if TYPE_CHECKING:
     import numpy as np
 
+    from ..backends.pool import SimulationPool
     from ..comparison.tree_spec import LeafSpec, SpecNode
     from ..comparison.validator import BaselineRoleLookup
     from ..figures.plotly import Visibility
+    from ..pipeline import ItemRun
     from ..reporting.stats_rows import StatRow
 
-Event = Literal["spec", "results", "job", "loading", "known", "overlays"]
+Event = Literal["spec", "results", "queue", "notice", "loading", "known", "overlays"]
 Listener = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
 
-#: How long a job waits, before its run, for an earlier job's
-#: ``after_reload`` (a Rerun's dashboard render: 1.6 s over TRANSFORM's work
-#: dir with --report sidecars). Past it the run starts and one line says so.
-BACKGROUND_WAIT = 60.0
+#: The states of a queue item that is still to end.
+ACTIVE = (ItemState.WAITING, ItemState.RUNNING)
 
 # Why a test has no tree to edit — `Session.tree_or_reason`, from
 # `_materialization`'s refusal. Each is one short line: a Statistics row's
@@ -101,7 +105,7 @@ SIMULATE_ONLY = "simulate-only: nothing is scored"
 #: A scored name the loaded result does not carry: the comparison is from
 #: a run the results no longer match, and a leaf on it would resolve to
 #: nothing.
-STALE = "its last run no longer holds what it scored — rerun it"
+STALE = "its last run no longer holds what it scored — queue it again"
 #: Every other refusal: a flat setting of the spec or the baseline that a
 #: tree would score differently.
 NO_TREE = (
@@ -212,22 +216,6 @@ def _scored_key(comp: TestComparison | None) -> tuple[tuple[str | None, int], ..
     return tuple((vc.name, vc.index) for vc in comp.variables)
 
 
-@dataclass
-class RunningJob:
-    label: str
-    models: frozenset[str]
-    done: threading.Event = field(default_factory=threading.Event)
-    error: BaseException | None = None
-    #: Epoch seconds at start. The job panel ignores a ``status.json`` whose
-    #: ``start_wall`` is older, so the previous run's snapshot is never shown
-    #: as this job's progress.
-    started_wall: float = field(default_factory=time.time)
-    #: Set once ``_finish_job``'s reload has run. The job panel shows the
-    #: results' rows only then: a job that asked for no reload, or one that
-    #: failed, would otherwise show the previous run's rows as its own.
-    reloaded: bool = False
-
-
 def no_tree_error(model_id: str, why: str) -> PatchError:
     """The refusal of an edit that needs ``model_id``'s tree where there is
     none (`Session.tree_or_reason`'s ``why``): a patch the Session will not
@@ -236,13 +224,9 @@ def no_tree_error(model_id: str, why: str) -> PatchError:
     return PatchError(f"{model_id}: {why}", reason=why)
 
 
-class LockedError(RuntimeError):
-    def __init__(self, models: Iterable[str], label: str):
-        self.models = frozenset(models)
-        super().__init__(
-            f"{', '.join(sorted(self.models))}: {label} is running on them — the run "
-            "pipeline clears their simulation directories and rewrites the batch manifest"
-        )
+class QueueError(RuntimeError):
+    """The simulation queue did not do what was asked, or stands in the way
+    of what was; ``str()`` is the sentence why."""
 
 
 class StaleSpecError(RuntimeError):
@@ -251,10 +235,6 @@ class StaleSpecError(RuntimeError):
         super().__init__(
             f"{path} changed on disk since it was loaded; reload before saving"
         )
-
-
-class JobRunningError(RuntimeError):
-    pass
 
 
 class PendingEditsError(RuntimeError):
@@ -267,8 +247,8 @@ class PendingEditsError(RuntimeError):
 
 class _Background:
     """One daemon thread that runs what the Session hands it off the UI
-    loop — a job's ``after_reload`` — one at a time and in the order
-    handed. Started when there is work, ended when there is none. What it
+    loop — the drained queue's ``status.json`` and dashboard — one at a
+    time and in the order handed. Started when there is work, ended when there is none. What it
     runs is logged when it raises, whatever it raises (a hook's SystemExit
     too), never re-raised: it writes files beside a reload that already
     stands, and a thread that died would leave ``wait`` hanging on it."""
@@ -308,16 +288,37 @@ class _Background:
 
 class Session:
     def __init__(self, post: Callable[[Callable[[], None]], None] | None = None):
-        """``post`` hands a job's completion to the UI loop; without one the
-        completion runs on the worker thread (tests wait on ``RunningJob.done``)."""
+        """``post`` hands what another thread has for the Session — the
+        pool's callbacks, the rescan's merge — to the UI loop, where every
+        mutation happens; without one it runs on the thread that has it."""
         self.project: Project | None = None
         self.spec: SpecDocument = SpecDocument(
             Path("test_spec.json"), {"tests": []}, None
         )
-        self.running: RunningJob | None = None
-        #: The job that ran last, whatever its outcome — the job panel's
-        #: outcome line. Project-scoped: LibA's outcome is not LibB's.
-        self.last_job: RunningJob | None = None
+        #: The simulation queue (D150): every item queued and not cleared
+        #: since, in run order — first in, first out. Read it; `enqueue`,
+        #: `remove`, `cancel` and `clear_finished` change it.
+        self.queue: list[QueueItem] = []
+        #: The pool the queue runs on: opened at the first `enqueue`, alive
+        #: — its workers with it — until `stop_queue`.
+        self._pool: SimulationPool | None = None
+        #: The queue's items still to end, by model: what the pool's
+        #: callbacks are matched against, so one for an item the Session
+        #: has already dealt with (a close's, a replaced pool's) is nothing.
+        self._live: dict[str, QueueItem] = {}
+        #: The items that ran since ``status.json`` was last written.
+        self._unwritten: list[QueueItem] = []
+        #: The workers the user asked for; None is ``Config.parallel``.
+        self._workers: int | None = None
+        #: The pool's ``write_status`` (`pipeline.ItemRun`), kept past the
+        #: pool: the last items' snapshot is written after it closed.
+        self._write_status: Callable[[Iterable[QueueItem]], None] | None = None
+        #: Why this project's backend cannot be queued on, once an
+        #: `enqueue` found out; None while nothing says so.
+        self.queue_refusal: str | None = None
+        #: The message the pool stopped with (no worker could start), until
+        #: `clear_finished` or the next item that starts.
+        self.queue_stopped: str | None = None
         self.comparisons: dict[str, TestComparison] = {}
         self.artifacts: list[Artifact] = []
         self.notices: list[str] = []
@@ -342,8 +343,8 @@ class Session:
     ) -> None:
         """Open the project ``config_path`` describes. Without an explicit
         ``backend`` the one the last run recorded wins, as ``compare`` does.
-        Refused while a job runs or while edits are pending — save or
-        discard first; a swap must never drop them silently."""
+        Refused while the queue holds a test or while edits are pending —
+        save or discard first; a swap must never drop them silently."""
         self._refuse_if_busy()
         config_path = Path(config_path)
         config = Config(
@@ -358,7 +359,7 @@ class Session:
                     config_file=config_path, backend_name=recorded, work_dir=work_dir
                 )
         try:
-            # The Session's backend reads results; it is not the rerun
+            # The Session's backend reads results; it is not the queue's
             # backend, so the batch class is what it wants. `select_backend`
             # is the seam that turns every "this machine can't build it"
             # failure — an unregistered name, a missing executable, an
@@ -400,6 +401,10 @@ class Session:
                 )
                 store_scan(config, scanned)
             tests = self._merge(config, scanned, spec.effective())
+            # The queue is the open project's, and its workers the open
+            # backend's: both end here, at the commit point (nothing is
+            # queued or running — refused above).
+            self._reset_queue()
             self.project = Project(
                 config=config,
                 store=store,
@@ -417,10 +422,9 @@ class Session:
             # carry either into LibB's panel. Assigned here, at the commit point,
             # and not on entry: an open that fails leaves the live project's panel
             # as it was. The recorded-backend warning is this project's first
-            # notice, so the job panel shows it.
+            # notice, so the queue panel shows it.
             self.notices = [warning] if warning else []
             self.artifacts = []
-            self.last_job = None
             # Started at the commit point, not after the reload: the warm reads the
             # SIBLING backends' reference trees and the reload reads this one's, so
             # neither waits on the other and the warm gets its head start inside
@@ -490,7 +494,7 @@ class Session:
         (`_reads_for`) in ONE ``overlays`` event, so a page redraws them
         and their next read gains the sibling-backend overlays. The reads
         are kept, not dropped: they hold what was read from the result file,
-        which a model a job holds cannot read again until the job's reload.
+        which a running model cannot read again until its run ends.
         Nothing for a project no longer open."""
         if self.project is not project:
             return
@@ -530,18 +534,17 @@ class Session:
                 if changed_models and self.project is project:
                     # Only what changed is rescored: a one-file edit over
                     # TRANSFORM must not run 331 comparisons on the UI loop.
-                    # A model a running job has locked is left to that job's
-                    # completion reload, as `stage` and `rescore` leave it.
+                    # A running model is not re-read: its directory is being
+                    # rewritten, and its result arrives when it ends.
                     # The changed models' results are re-read with their new
                     # TestModels before they are rescored: a model the cache
                     # did not name was read as "not found in discovery"
                     # (SIM_FAIL where a cold open says NO_REF), and a model
                     # whose tracked variables changed was read with the old
                     # list.
-                    locked = (
-                        self.running.models if self.running is not None else frozenset()
+                    self._rebuild_tests(
+                        changed_models - self._running_models(), scanned=fresh
                     )
-                    self._rebuild_tests(changed_models - locked, scanned=fresh)
                 self._emit("loading", phase="rescan", changed=bool(changed_models))
             finally:
                 done.set()
@@ -550,8 +553,8 @@ class Session:
 
     def _post_or_run(self, fn: Callable[[], None]) -> None:
         """Hand ``fn`` to the UI loop; when the loop is gone (``post``
-        raises — the case ``_start_job`` handles the same way) run it here,
-        so a waiter on the Event is never left hanging."""
+        raises) run it here, so a waiter on the Event is never left
+        hanging."""
         try:
             self._post(fn)
         except BaseException:
@@ -559,10 +562,10 @@ class Session:
 
     def close(self) -> None:
         self._refuse_if_busy()
+        self._reset_queue()
         self.project = None
         self.artifacts = []
         self.notices = []
-        self.last_job = None
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
         self._reads = {}
@@ -570,16 +573,15 @@ class Session:
 
     def reload(self) -> None:
         """Re-read the spec from disk, dropping pending ops (what a refused
-        save offers). Refused while a job runs, as Discard is: the job's
-        reload scores the spec."""
+        save offers)."""
         project = self._require_project()
-        self._refuse_if_running()
         self.spec = SpecDocument.load(project.config.spec_path)
         self._rebuild_tests(set(self.comparisons))
 
     def wait_background(self, timeout: float | None = None) -> bool:
-        """Wait until every ``after_reload`` hook the Session ran off the UI
-        loop has finished; False on a timeout."""
+        """Wait until what the Session runs off the UI loop — a drained
+        queue's ``status.json`` and dashboard — has finished; False on a
+        timeout."""
         return self._background.wait(timeout)
 
     def on(self, event: Event, cb: Listener) -> None:
@@ -598,7 +600,6 @@ class Session:
         is pending: an entry's own tree written out is no edit of it
         (`stage`). It stays where a pending op edited the overrides it is
         built from."""
-        self._refuse_if_locked([model_id])
         op, _why = self._materialization(model_id)
         if op is not None:
             # Marked as `stage` marks its own: the drawer previews it as
@@ -799,10 +800,10 @@ class Session:
     def _file_names(self, model_id: str) -> tuple[str, ...]:
         """Every name in the last result FILE, listed once and kept with the
         model's reads; ``()`` when the backend keeps no file it can list, or
-        a job has the model locked and it was not listed before."""
+        the model is running and it was not listed before."""
         project = self._require_project()
         reads = self._reads_for(model_id)
-        if not reads.names_read and not self._is_locked(model_id):
+        if not reads.names_read and not self._is_running(model_id):
             test_dir = self._test_dir(model_id)
             listed = (
                 type(project.backend).result_names(test_dir)
@@ -836,19 +837,25 @@ class Session:
                 out.add(model_id)
         return out
 
-    def _is_locked(self, model_id: str) -> bool:
-        """A job holds this model: its work dir is being rewritten, so the
-        file reads serve what they already hold and open nothing — as `view`
-        and `figure` always have, from memory."""
-        return self.running is not None and model_id in self.running.models
+    def _is_running(self, model_id: str) -> bool:
+        """The queue is running this model: its work dir is being rewritten,
+        so the file reads serve what they already hold and open nothing —
+        as `view` and `figure` always have, from memory. Read off the item
+        itself, which the pool marks RUNNING before it clears the
+        directory: the Session hears of the start a tick later."""
+        item = self._live.get(model_id)
+        return item is not None and item.state is ItemState.RUNNING
+
+    def _running_models(self) -> frozenset[str]:
+        return frozenset(m for m in self._live if self._is_running(m))
 
     def _file_series(
         self, model_id: str, variable: str
     ) -> tuple[np.ndarray, np.ndarray] | None:
         reads = self._reads_for(model_id)
         if variable not in reads.series:
-            if self._is_locked(model_id):
-                return None  # not cached: the job's reload answers it
+            if self._is_running(model_id):
+                return None  # not cached: the run's end answers it
             test_dir = self._test_dir(model_id)
             got = (
                 type(self._require_project().backend).result_series(
@@ -896,8 +903,8 @@ class Session:
         leaves come from the tree SPEC with pending ops applied — never
         :meth:`tree`, which materializes the tree and reads the baseline;
         no tree is one plot per tracked name or array. A UnitTests element
-        never folds (O3); a failed run has none. While a job holds a model
-        whose names were never read, nothing is missing."""
+        never folds (O3); a failed run has none. While a model runs whose
+        names were never read, nothing is missing."""
         project = self._require_project()
         test = project.test(model_id)
         if test is None:
@@ -913,9 +920,9 @@ class Session:
         )
         if reads.names_read:
             return plots
-        # A job holds the model and its names were never read: a listing
+        # The model is running and its names were never read: a listing
         # not taken is not a file without the context and watch series, so
-        # nothing is missing until the job's reload lists it.
+        # nothing is missing until its run has ended and the file is listed.
         return tuple(replace(plot, missing=()) for plot in plots)
 
     def plot_figure(
@@ -986,7 +993,7 @@ class Session:
         The base traces are decimated once per model and variable and
         cached until the model's scored list moves (`_ModelReads.scored`);
         only the leaves' geometry is decimated per call. The exception is a
-        model a job holds: nothing is cached for it, so every call there
+        running model: nothing is cached for it, so every call there
         re-decimates the base."""
         from ..figures.view import build_view, decimate_view
 
@@ -1002,11 +1009,10 @@ class Session:
             base = decimate_view(
                 replace(self.view(model_id, variable), leaves=()), budget
             )
-            # Not cached under a lock, for `_file_series`' reason: it answers
-            # None there and caches nothing, so an untracked series' base is
-            # EMPTY — and a job that ends without dropping `_reads` (a
-            # successful `Job(reloads_results=False)`) would leave it behind.
-            if not self._is_locked(model_id):
+            # Not cached while the model runs, for `_file_series`' reason: it
+            # answers None there and caches nothing, so an untracked series'
+            # base is EMPTY.
+            if not self._is_running(model_id):
                 reads.bases[variable] = base
         comp = self.comparisons.get(model_id)
         leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
@@ -1124,10 +1130,18 @@ class Session:
         """Stage ``ops`` and rescore their models. Materializes the implicit
         tree where a per-leaf op needs one; validates each touched entry
         (paths, the parsed tree, the D66 roles). On any error the Session
-        is unchanged."""
+        is unchanged. A queued test takes every edit, and runs with the spec
+        as it stands when it starts; a running one takes its criteria's —
+        scored when its result arrives — and none of its simulation
+        settings', which its run has already taken (D150)."""
         project = self._require_project()
         models = {op.model_id for op in ops}
-        self._refuse_if_locked(models)
+        for op in ops:
+            if self._is_running(op.model_id) and _in_simulation(op.path):
+                raise QueueError(
+                    f"{op.model_id} is running: its simulation settings are "
+                    "locked until its run ends"
+                )
         staged: list[PatchOp] = []
         for model_id in _in_order(op.model_id for op in ops):
             raw = [op.raw() for op in ops if op.model_id == model_id]
@@ -1253,6 +1267,7 @@ class Session:
         fresh = self._read_again(reread, tests) if reread else {}
         self.spec = candidate
         project.tests = tests
+        self._update_waiting()
         if reread:
             self._keep_read(reread, fresh)
         self._emit_spec(models)
@@ -1261,10 +1276,8 @@ class Session:
     def discard(self, models: set[str] | None = None) -> None:
         """Drop the pending ops of ``models`` — every pending op when
         ``None`` — and restore their loaded verdicts; the other models' ops
-        stay, in order. Refused while a job runs, as Save is: the job's
-        reload scores the spec. ``models`` none of which has a pending op
-        change nothing, and emit nothing."""
-        self._refuse_if_running()
+        stay, in order. ``models`` none of which has a pending op change
+        nothing, and emit nothing."""
         pending = self.spec.pending
         gone = {op.model_id for op in pending}
         if models is not None:
@@ -1312,10 +1325,8 @@ class Session:
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s
         read-modify-write, then reload. Refuses when the file changed on
-        disk since it was loaded, and while a job runs: a rerun runs the
-        spec with the pending ops applied, and its reload scores it."""
+        disk since it was loaded."""
         project = self._require_project()
-        self._refuse_if_running()
         if self.spec.on_disk_changed():
             raise StaleSpecError(self.spec.path)
         groups = self.spec.grouped()
@@ -1348,103 +1359,334 @@ class Session:
             # `stage` and `rescore` know the tree they built scores the same.
             self.stage([replace(op, materializes=False) for op in outcome.ops])
         elif isinstance(outcome, StoreWrite):
-            self._refuse_if_locked(outcome.models)
+            # A queued or running test's result is about to be replaced:
+            # a baseline written from the one in memory would be the last
+            # run's, stored under the next one's settings.
+            for model_id in sorted(outcome.models):
+                item = self._live.get(model_id)
+                if item is not None:
+                    raise QueueError(
+                        f"{model_id} is {_doing(item)}: accept it when its run "
+                        "has ended"
+                    )
             message = outcome.run(self._require_project().store)
             self._reload_results()
             # The reload first, so a listener that reads verdicts on
-            # ``written`` sees what the write did to them.
+            # the notice sees what the write did to them.
             if message:
                 self.notices.append(message)
-                self._emit("job", state="written", message=message)
-        elif isinstance(outcome, Job):
-            self._start_job(outcome)
+                self._emit("notice", message=message)
+        elif isinstance(outcome, Enqueue):
+            self.enqueue(outcome.models)
         elif isinstance(outcome, Artifact):
             self.artifacts.append(outcome)
-            self._emit("job", state="artifact", artifact=outcome)
+            self._emit("notice", artifact=outcome)
         elif isinstance(outcome, OpenProject):
             self.open(outcome.config_path, work_dir=outcome.work_dir)
         else:
             raise TypeError(f"not an Outcome: {outcome!r}")
 
-    def _start_job(self, outcome: Job) -> None:
+    # -- the simulation queue ----------------------------------------------
+
+    @property
+    def workers(self) -> int:
+        """How many tests the queue runs at once: what `set_workers` was
+        given, else ``Config.parallel``."""
+        if self._workers is not None:
+            return self._workers
+        project = self.project
+        return max(1, int(project.config.parallel)) if project is not None else 1
+
+    def set_workers(self, count: int) -> None:
+        """Run ``count`` tests at once from now on, between 1 and the
+        machine's cores. Workers already started stay: more start as items
+        need them, and a surplus one leaves when its item ends."""
+        self._workers = max(1, min(int(count), os.cpu_count() or 1))
+        if self._pool is not None:
+            self._pool.workers = self._workers
+        self._emit("queue", state="workers", models=set())
+
+    def queue_item(self, model_id: str) -> QueueItem | None:
+        """The model's item in the queue — the last one listed — or None."""
+        return next((i for i in reversed(self.queue) if i.model_id == model_id), None)
+
+    def item_state(self, item: QueueItem) -> ItemState:
+        """``item``'s state as the Session has taken it in. The pool ends an
+        item on its own thread; until the Session has read its result
+        (`_item_ended`, a tick later) it is still in the queue here."""
+        if self._live.get(item.model_id) is item and item.state not in ACTIVE:
+            return (
+                ItemState.RUNNING if item.started_at is not None else ItemState.WAITING
+            )
+        return item.state
+
+    def queue_state(self, model_id: str) -> ItemState | None:
+        """Where ``model_id`` stands in the queue (`item_state` of its
+        item): WAITING or RUNNING while it is in it, how its last run there
+        ended until `clear_finished`, else None."""
+        item = self.queue_item(model_id)
+        return self.item_state(item) if item is not None else None
+
+    @property
+    def cannot_cancel(self) -> str | None:
+        """Why a running test cannot be stopped on the pool's backend, or
+        None where it can (and before there is a pool)."""
+        pool = self._pool
+        if pool is None or pool.can_cancel:
+            return None
+        return (
+            f"{pool.backend.label} cannot stop a running simulation: it runs "
+            "to its end, or to its timeout"
+        )
+
+    def enqueue(self, model_ids: Sequence[str]) -> list[QueueItem]:
+        """Append ``model_ids`` to the queue, in that order; returns their
+        items. A test already queued or running is skipped (the pool's
+        refusal: a test is never queued twice); when that leaves nothing to
+        add, the refusals are raised as one :class:`QueueError`. The first
+        call opens the pool — on a backend that cannot run one test at a
+        time, or cannot be built here, a :class:`QueueError` with that
+        backend's sentence, kept as `queue_refusal`."""
         project = self._require_project()
-        self._refuse_if_running()
-        job = RunningJob(label=outcome.label, models=outcome.models)
-        self.running = job
-        self._emit("job", state="started", job=job)
-        ctx = JobContext(project=project, models=outcome.models)
-
-        def work() -> None:
+        tests = []
+        for model_id in model_ids:
+            test = project.test(model_id)
+            if test is None:
+                raise KeyError(model_id)
+            tests.append(test)
+        pool = self._open_pool()
+        added: list[QueueItem] = []
+        refused: list[str] = []
+        for test in tests:
             try:
-                # A job's `after_reload` still queued (the last Rerun's
-                # dashboard render) lands before this run starts, never on
-                # its live page. Waited here, off the UI loop.
-                if not self._background.wait(BACKGROUND_WAIT):
-                    logger.warning(
-                        "%s: starting with an earlier job's after_reload still "
-                        "running after %.0f s",
-                        outcome.label,
-                        BACKGROUND_WAIT,
-                    )
-                outcome.run(ctx)
-            except (
-                BaseException
-            ) as e:  # a job's failure is reported, not raised on its thread
-                job.error = e
-            finally:
-                finish = lambda: self._finish_job(job, outcome)  # noqa: E731
-                try:
-                    self._post(finish)
-                except BaseException as e:  # the loop is gone: finish here, never wedge
-                    job.error = job.error or e
-                    finish()
+                item = pool.submit(test)
+            except Refused as e:
+                refused.append(str(e))
+                continue
+            self._live[test.model_id] = item
+            self.queue.append(item)
+            added.append(item)
+        if not added:
+            if refused:
+                raise QueueError("; ".join(refused))
+            return []
+        self._emit("queue", state="queued", models={i.model_id for i in added})
+        return added
 
-        threading.Thread(
-            target=work, name=f"dstf-job-{outcome.label}", daemon=True
-        ).start()
+    def remove(self, item: QueueItem) -> bool:
+        """Take a waiting ``item`` out of the queue, its row with it.
+        ``False`` once it has started: nothing is changed."""
+        pool = self._pool
+        if pool is None or not pool.remove(item):
+            return False
+        self._forget(item)
+        self._emit("queue", state="removed", models={item.model_id})
+        self._drained()
+        return True
 
-    def _finish_job(self, job: RunningJob, outcome: Job) -> None:
-        """Release the lock, record the job as this project's last, reload if
-        the job asked and succeeded, tell the listeners, mark done — the last
-        two whatever the reload or a listener does, so a waiting shell never
-        sees a job that neither finished nor failed."""
-        self.running = None
-        self.last_job = job
-        if job.error is not None:
-            # No reload follows a failed job, and its half-run rewrote its
-            # models' work dirs: what was read of them is no longer the file.
-            for model_id in job.models:
-                self._reads.pop(model_id, None)
-        try:
-            if (
-                outcome.reloads_results
-                and job.error is None
-                and self.project is not None
-            ):
-                self._reload_results()
-                job.reloaded = True
-                hook = outcome.after_reload
-                if hook is not None:
-                    # Off the UI loop (Rerun's writes the dashboard), in the
-                    # order the jobs finished; on a snapshot of the
-                    # comparisons this reload scored. A hook that raises is
-                    # logged: the reload stands.
-                    project, comparisons = self.project, dict(self.comparisons)
-                    self._background.submit(
-                        f"{job.label}: after_reload",
-                        lambda: hook(project, comparisons),
-                    )
-        except BaseException as e:
-            job.error = e
-        finally:
+    def cancel(self, item: QueueItem) -> bool:
+        """Stop a running ``item``'s simulation; it ends CANCELLED once its
+        thread says so. ``False`` when it is not running; the pool's
+        ``Refused``, a sentence, on a backend that cannot stop a test."""
+        pool = self._pool
+        return pool is not None and pool.cancel(item)
+
+    def clear_finished(self) -> None:
+        """Drop the rows of the items that ended — finished, failed or
+        cancelled — and the stopped pool's message. Their results stay."""
+        gone = {i.model_id for i in self.queue if self._live.get(i.model_id) is not i}
+        self.queue = [i for i in self.queue if self._live.get(i.model_id) is i]
+        self.queue_stopped = None
+        self._emit("queue", state="cleared", models=gone)
+
+    def stop_workers(self) -> None:
+        """Close the pool: its workers end and their licence seats are
+        free; the next `enqueue` starts new ones. Tests still waiting leave
+        the queue. Refused while a test runs."""
+        count = len(self._running_models())
+        if count:
+            raise QueueError(
+                f"{plural(count, 'test')} {'is' if count == 1 else 'are'} running — "
+                f"cancel {'it' if count == 1 else 'them'} or wait, then stop the "
+                "workers"
+            )
+        self.stop_queue()
+
+    def stop_queue(self) -> None:
+        """End the queue's pool, whatever it holds — what the tool does
+        when it stops: waiting tests are taken out, running ones stopped
+        (CANCELLED, where the backend can; else it finishes them first),
+        every worker closed and every pool thread joined. The rows of what
+        ended stay until `clear_finished`."""
+        pool, self._pool = self._pool, None
+        if pool is None:
+            return
+        pool.close()
+        gone = set(self._live)
+        for item in list(self._live.values()):
+            if item.state is ItemState.REMOVED:
+                self._forget(item)
+            else:
+                # Stopped by the close, or ended while it closed: taken in
+                # here. Its callback is still on its way, and finds nothing.
+                self._item_ended(item)
+        self._emit("queue", state="stopped", models=gone)
+        self._drained()
+
+    def _reset_queue(self) -> None:
+        """The queue of a project that is closing: its pool ended, its rows
+        and everything said about it gone."""
+        self.stop_queue()
+        self.queue, self._unwritten = [], []
+        self._workers = self.queue_refusal = self.queue_stopped = None
+        self._write_status = None
+
+    def _open_pool(self) -> SimulationPool:
+        from ..pipeline import open_pool
+
+        project = self._require_project()
+        if self.queue_refusal is not None:
+            raise QueueError(self.queue_refusal)
+        if self._pool is not None and self._pool.stopped is not None:
+            # A stopped pool takes nothing more: a new one is the retry.
+            self.stop_queue()
+        if self._pool is None:
             try:
-                self._emit(
-                    "job",
-                    state="failed" if job.error is not None else "finished",
-                    job=job,
+                # The pool's OWN backend, the persistent variant a CLI run
+                # would choose — the instance `open` holds is the batch
+                # class it reads results through — and silenced: the tool's
+                # process never narrates a run to the console it was
+                # started from.
+                backend = select_backend(project.config, persistent=True)
+                backend.quiet = True
+                self._pool = open_pool(
+                    project.config,
+                    backend=backend,
+                    store=project.store,
+                    # On the POOL's threads: nothing of the Session is
+                    # touched there. Each is handed to the UI loop.
+                    on_start=lambda item: self._post(lambda: self._item_started(item)),
+                    on_end=lambda item: self._post(lambda: self._item_ended(item)),
+                    workers=self.workers,
                 )
-            finally:
-                job.done.set()
+            except RuntimeError as e:
+                # A backend that runs whole batches only, or cannot be
+                # built here (`BackendUnavailableError` is a RuntimeError):
+                # the Queue action carries the sentence from now on.
+                self.queue_refusal = str(e)
+                raise QueueError(self.queue_refusal) from e
+            self._write_status = cast("ItemRun", self._pool.path).write_status
+        return self._pool
+
+    def _forget(self, item: QueueItem) -> None:
+        if self._live.get(item.model_id) is item:
+            del self._live[item.model_id]
+        self.queue.remove(item)
+
+    def _update_waiting(self) -> None:
+        """The waiting items follow the spec: a queued test runs with its
+        test as it stands when it STARTS (D150), so every re-merge hands
+        the pool the new one. A running item's is its run's."""
+        pool, project = self._pool, self.project
+        if pool is None or project is None:
+            return
+        for item in self._live.values():
+            test = project.test(item.model_id)
+            if test is not None and test != item.test:
+                pool.update(item, test)
+
+    def _item_started(self, item: QueueItem) -> None:
+        """On the UI loop, once the pool's thread said ``item`` started. Its
+        run cleared what the last one left on disk, so the result in memory
+        is no file's any more: it goes, and the test reads NOT RUN until
+        this run's arrives."""
+        model_id, project = item.model_id, self.project
+        if self._live.get(model_id) is not item or project is None:
+            return
+        # A worker took an item: whatever stopped the pool before is over.
+        self.queue_stopped = None
+        project.results.pop(model_id, None)
+        self._reads.pop(model_id, None)
+        self._score_one(model_id)
+        self._emit("queue", state="started", models={model_id})
+
+    def _item_ended(self, item: QueueItem) -> None:
+        """On the UI loop, once the pool's thread said ``item`` ended: THAT
+        test's result is taken from the item and it alone is rescored — with
+        the criteria as they are now, pending edits included. Nothing else
+        is read: a reload per item read TRANSFORM's 331 results for each."""
+        model_id = item.model_id
+        if self._live.get(model_id) is not item:
+            return
+        del self._live[model_id]
+        if item.run_result is not None:
+            self._unwritten.append(item)
+        pool = self._pool
+        if pool is not None and pool.stopped is not None:
+            self.queue_stopped = pool.stopped
+        # An item that never started is one the pool failed (no worker
+        # could start): nothing ran, and the test's last result stands.
+        if item.started_at is not None and self.project is not None:
+            self._take_result(item)
+        self._emit("queue", state="ended", models={model_id})
+        self._drained()
+
+    def _take_result(self, item: QueueItem) -> None:
+        project = self._require_project()
+        model_id = item.model_id
+        self._reads.pop(model_id, None)
+        if item.result is None:
+            # Cancelled, or its run raised: what it left on disk is no result.
+            project.results.pop(model_id, None)
+        else:
+            project.results[model_id] = item.result
+            # The result was read for the test as it started. A criterion
+            # added while it ran may name a variable the file holds and
+            # that read did not extract: read again, this test only.
+            reread = self._unread_in_file({model_id}, project.tests)
+            if reread:
+                self._keep_read(reread, self._read_again(reread, project.tests))
+        self._score_one(model_id)
+
+    def _score_one(self, model_id: str) -> None:
+        """Rescore ``model_id`` and say so; a scoring that raises is logged
+        and leaves the model without a verdict, as a reload does."""
+        project = self._require_project()
+        try:
+            if project.test(model_id) is not None:
+                self._score(model_id)
+        except Exception:
+            logger.exception("scoring %s failed", model_id)
+            self.comparisons.pop(model_id, None)
+        self._emit("results", models={model_id})
+
+    def _drained(self) -> None:
+        """``status.json`` and the dashboard, once nothing is queued or
+        running, for the items that ran since they were last written — not
+        per item: both are one run's snapshot, and the queue's live view is
+        the tool's own pages. Off the UI loop (the dashboard's render is
+        1.6 s over TRANSFORM's work dir with --report sidecars), on a
+        snapshot of the verdicts as they stand."""
+        if self._live:
+            return
+        items, self._unwritten = self._unwritten, []
+        write, project = self._write_status, self.project
+        if not items or write is None or project is None:
+            return
+        work_dir = project.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        comparisons = list(self.comparisons.values())
+        results = dict(project.results)
+
+        def run() -> None:
+            from ..reporting.dashboard_render import render_final
+
+            write(items)
+            # The page lists every test the Session scored, with its
+            # verdict — not the queue's items alone.
+            render_final(work_dir, comparisons=comparisons, results=results)
+
+        self._background.submit("the queue's status.json and dashboard", run)
 
     # -- internals ---------------------------------------------------------
 
@@ -1482,6 +1724,7 @@ class Session:
         reread = models & current if scanned is not None else set()
         fresh = self._read_again(reread, tests) if reread else {}
         project.scanned, project.tests = scan, tests
+        self._update_waiting()
         gone = set(self.comparisons) - current
         new = current - set(self.comparisons)
         for model_id in gone:
@@ -1563,22 +1806,21 @@ class Session:
         self._emit("results", models=wanted)
 
     def _reload_results(self) -> None:
-        """Re-read the last run and rescore — every model except the ones a
-        running job has locked (their directories are being rewritten, so
-        their in-memory result and verdict stand until that job's own
-        completion reload). Each result is scored as it is read and
+        """Re-read the last run and rescore — every model except the ones
+        the queue is running (their directories are being rewritten, so
+        their in-memory result and verdict stand until their run ends).
+        Each result is scored as it is read and
         announced as ``loading(phase="results")``; tests with no result are
         scored and announced after the read, so the last announcement is
         ``done == total``; ONE ``results`` event follows for the batch. A
         model whose scoring raises does not abort the read: the results stay
         complete, its stale verdict is dropped, and the first failure is
-        raised after the batch event — ``_finish_job`` records it as the
-        job's error (no rows shown for a failed job); ``open`` propagates
-        it after its ``done`` event. Each announcement carries ``error``:
+        raised after the batch event; ``open`` propagates it after its
+        ``done`` event. Each announcement carries ``error``:
         True for a model whose scoring raised (its verdict is absent),
         False otherwise."""
         project = self._require_project()
-        locked = self.running.models if self.running is not None else frozenset()
+        locked = self._running_models()
         to_read = [t for t in project.tests if t.model_id not in locked]
         project.results = {m: r for m, r in project.results.items() if m in locked}
         for model_id in list(self._reads):
@@ -1609,10 +1851,10 @@ class Session:
 
         def on_result(model_id: str, result: TestResult) -> None:
             if model_id in locked:
-                # `read_results` reports every manifest entry, and a locked
+                # `read_results` reports every manifest entry, and a running
                 # model — excluded from `to_read` — comes back as "not found
                 # in discovery": storing it would rescore the model to
-                # SIM_FAIL in the middle of its own job.
+                # SIM_FAIL in the middle of its own run.
                 return
             project.results[model_id] = result
             if project.test(model_id) is not None:
@@ -1785,20 +2027,12 @@ class Session:
         return implicit_tree_op(entry, variables=names), None
 
     def _refuse_if_busy(self) -> None:
-        self._refuse_if_running()
+        if self._live:
+            raise QueueError(
+                f"{_queued_or_running(len(self._live))}; remove or cancel them, or wait"
+            )
         if self.spec.pending:
             raise PendingEditsError(len(self.spec.pending))
-
-    def _refuse_if_running(self) -> None:
-        if self.running is not None:
-            raise JobRunningError(f"{self.running.label} is still running")
-
-    def _refuse_if_locked(self, models: Iterable[str]) -> None:
-        if self.running is None:
-            return
-        locked = set(models) & self.running.models
-        if locked:
-            raise LockedError(locked, self.running.label)
 
     def _emit_spec(self, models: set[str]) -> None:
         """The `spec` event for ``models``, numbered one up from the last
@@ -1809,7 +2043,7 @@ class Session:
     def _emit(self, event: Event, **payload: Any) -> None:
         """Every listener hears every event: one that raises (a deleted UI
         element, say) is logged and skipped, never allowed to stop the
-        others or to unwind a job's completion."""
+        others or to unwind what emitted it."""
         for cb in list(self._listeners.get(event, [])):
             try:
                 cb({"event": event, **payload})
@@ -1891,15 +2125,6 @@ class SessionView:
         return self._selection
 
     @property
-    def running(self) -> RunningJob | None:
-        return self._session.running
-
-    @property
-    def last_job(self) -> RunningJob | None:
-        """The job that ran last in THIS project, whatever its outcome."""
-        return self._session.last_job
-
-    @property
     def comparisons(self) -> Mapping[str, TestComparison]:
         return MappingProxyType(self._session.comparisons)
 
@@ -1909,13 +2134,21 @@ class SessionView:
 
     @property
     def notices(self) -> tuple[str, ...]:
-        """The lines the job panel shows, oldest first: what each store write
+        """The lines the queue panel shows, oldest first: what each store write
         applied so far reported, plus the open-time warning if there was one."""
         return tuple(self._session.notices)
 
-    def is_locked(self, model_id: str) -> bool:
-        running = self._session.running
-        return running is not None and model_id in running.models
+    def queue_state(self, model_id: str) -> ItemState | None:
+        """Where the test stands in the simulation queue
+        (:meth:`Session.queue_state`): WAITING or RUNNING while it is in
+        it, how its last run there ended until that row is cleared, else
+        ``None``."""
+        return self._session.queue_state(model_id)
+
+    @property
+    def queue_refusal(self) -> str | None:
+        """Why nothing can be queued on this project's backend, or ``None``."""
+        return self._session.queue_refusal
 
     def rescore(self, model_id: str) -> TestComparison:
         return self._session.rescore(model_id)
@@ -1998,6 +2231,19 @@ def _known_models(config: Config, document: object) -> list[str]:
             if isinstance(entry, dict) and isinstance(entry.get("model_id"), str):
                 ids.append(entry["model_id"])
     return list(dict.fromkeys(ids))
+
+
+def _in_simulation(path: str) -> bool:
+    """Whether a patch path names a test's simulation settings."""
+    return path == "/simulation" or path.startswith("/simulation/")
+
+
+def _doing(item: QueueItem) -> str:
+    return "running" if item.state is ItemState.RUNNING else "queued"
+
+
+def _queued_or_running(count: int) -> str:
+    return f"{plural(count, 'test')} {'is' if count == 1 else 'are'} queued or running"
 
 
 def _in_order(ids: Iterable[str]) -> list[str]:

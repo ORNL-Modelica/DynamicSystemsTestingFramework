@@ -429,8 +429,8 @@ class _Row:
                 self.chevron.update()
         self.pill.set(node_status(node))
         # A lead holding the kind (a combinator's dropdown) leaves the text
-        # the count; an empty one — a host that cannot draw, under a job's
-        # lock — leaves the kind in the text, so it never disappears.
+        # the count; an empty one — a host that drew only its why-line —
+        # leaves the kind in the text, so it never disappears.
         led = self.lead is not None and bool(self.lead.default_slot.children)
         self.text.set_text(count_text(node) if led else node_text(node))
         if self.show is not None:
@@ -719,10 +719,10 @@ class TreeCard:
             self._build_rows(view)
             return
         for host in self.hosts:
-            # The rows stand; what a node's controls MAY do does not (a
-            # job's lock comes and goes without the shape moving). Before
-            # the paint: a host rebuilt under a lock empties its row's
-            # lead, and the paint then reads the kind into the text.
+            # The rows stand; what a node's controls MAY do does not (an
+            # `available` answer can move without the shape moving).
+            # Before the paint: a host rebuilt to its why-line empties its
+            # row's lead, and the paint then reads the kind into the text.
             host.follow()
         for node in nodes_of(view):
             self.painters[str(node.get("path"))].paint(node)
@@ -730,7 +730,7 @@ class TreeCard:
         # not move (twin groups trading places, the U5 review): it is drawn
         # on the rows standing, not left on the ones it was folded on.
         self._apply_folds()
-        # A host rebuilt under a job's lock takes its row's click away.
+        # A host rebuilt to its why-line takes its row's click away.
         self.paint_clicks()
         self._follow_editor()
 

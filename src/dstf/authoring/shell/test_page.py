@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...backends.pool import ItemState
 from ...comparison.tree_spec import reads_a_statistic
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
@@ -34,8 +35,8 @@ from ...storage.ref_index import RefIndex
 from ..capabilities import Outcome, plural
 from ..errors import user_text
 from ..layout import layout_op, remove_context, remove_watch, reset_op
-from ..session import JobRunningError, LockedError
-from ..situation import Strip, new_variables, strip_for
+from ..queue_rows import queue_row
+from ..situation import Situation, Strip, new_variables, strip_for
 from ..tree_pointer import node_or_none
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
@@ -217,7 +218,7 @@ class TestPage:
         """The test's own header, drawn inside the shared one (decision 8):
         the way back, the test, its verdict and where it was scored. Its
         TEST-placement buttons are the strip's, under it."""
-        # One line: beside a long model id and Rerun's caption with an edit
+        # One line: beside a long model id and Queue's caption with an edit
         # pending, "← Suite" broke after the arrow at 1280 px.
         ui.link("← Suite", "/").classes("text-no-wrap").mark("back")
         ui.label(self.model_id).classes("dstf-model text-subtitle1 dstf-mono").mark(
@@ -629,8 +630,8 @@ class TestPage:
     def _own(self, act: Callable[[], None]) -> None:
         """Run ``act``, one of this page's own edits, and note the `spec`
         revisions it produced in the TAB's record (`TabState.own_revisions`):
-        all of them, a sequence of outcomes stages once per patch. A job's
-        or a scan's work is posted to the UI loop (`Session._post`) and
+        all of them, a sequence of outcomes stages once per patch. The
+        queue's or a scan's work is posted to the UI loop (`Session._post`) and
         cannot stage while ``act`` runs on it. The open is not:
         `Shell.open_async` runs `Session.open` on a thread of its own, whose
         merge emits a `spec` event (`Session._emit_spec`); one emitted
@@ -903,7 +904,7 @@ class TestPage:
             self.selected, self.follow = select, None
         try:
             self._own(lambda: session.stage([op]))
-        except (LockedError, PatchError, ConfigError, JobRunningError) as e:
+        except (PatchError, ConfigError) as e:
             self.selected, self.follow = before
             ui.notify(user_text(e), type="warning")
             return False
@@ -938,7 +939,7 @@ class TestPage:
         like any layout edit."""
         try:
             self._own(lambda: self.shell.session.stage([reset_op(self.model_id)]))
-        except (LockedError, PatchError, ConfigError, JobRunningError) as e:
+        except (PatchError, ConfigError) as e:
             ui.notify(user_text(e), type="warning")
 
     # -- Focus -----------------------------------------------------------------
@@ -1091,16 +1092,11 @@ class TestPage:
                 saved_status = SCORING_FAILED
             else:
                 saved_status = classify(saved) if saved is not None else None
-        running = session.running
         loading = self.shell.load.in_progress
         has_result = self.run_state() != "none"
         statuses = [leaf_status(leaf) for leaf in leaves_of(view)]
         return strip_for(
-            running=(
-                running.label
-                if running is not None and model_id in running.models
-                else None
-            ),
+            queue=queue_row(session, model_id),
             edits=edits,
             status=classify(comp) if comp is not None else None,
             saved_status=saved_status,
@@ -1108,7 +1104,8 @@ class TestPage:
             loading=loading,
             # The load names the models whose scoring raised while it read
             # them; after it, a result with no comparison is one whose
-            # scoring raised later (a Rerun's or an Accept's reload).
+            # scoring raised later (a finished run's rescore, an Accept's
+            # reload).
             scoring_failed=comp is None
             and (
                 model_id in self.shell.load.failed_models
@@ -1133,8 +1130,8 @@ class TestPage:
         and to every plot card. A moved shape rebuilds the cards; otherwise
         each card is painted in place and re-sent only when what it DRAWS
         moved — ``force`` re-sends every drawn plot whether it moved or not,
-        which is what a finished job needs (decision 10: a rerun changes the
-        trajectories, and no leaf's signature sees that)."""
+        which is what a run that started or ended needs (decision 10: it
+        changes the trajectories, and no leaf's signature sees that)."""
         if not self._known():
             self._gone()
             return
@@ -1188,8 +1185,8 @@ class TestPage:
 
         The sub-header and the strip go with the cards: they stayed live
         and stale — the last project's verdict, its baseline's name, and
-        buttons whose Rerun started a job for a model this project does not
-        have (the final review). `_paint` brings them back."""
+        buttons that queued a run of a model this project does not have
+        (the final review). `_paint` brings them back."""
         if self.gone or self.column is None:
             return
         self.gone = True
@@ -1232,26 +1229,40 @@ class TestPage:
         """Nothing coalesced: every event is handled as it comes."""
 
     def handle(self, event: dict[str, Any]) -> None:
+        kind = event["event"]
+        if kind == "poll":
+            # Once a second while a test runs: THIS test's seconds in the
+            # strip, where the queue is running it. Nothing else moved.
+            self._tick()
+            return
         self.header.handle(event)
         self.rail.handle(event)
         known = self._known()
-        syncs = event["event"] == "job" or (
-            event["event"] in ("results", "spec", "loading", "opened", "overlays")
-            and self._mine(event)
-        )
+        if kind == "queue":
+            # It names the tests whose place in the queue moved.
+            syncs = self.model_id in event.get("models", ())
+        else:
+            # A notice with a message is a store write's: it reloaded
+            # every result.
+            syncs = (kind == "notice" and "message" in event) or (
+                kind in ("results", "spec", "loading", "opened", "overlays")
+                and self._mine(event)
+            )
         if self.actions is not None and known and not syncs:
             # A sync's paint refreshes the bar; an event that does not sync
             # (another test's) still moves its availability.
             self.actions.refresh()
         if event["event"] == "spec":
             heard_spec(self.state, event)
-        if event["event"] == "job":
-            # A finished job reloaded the trajectories under every plot and
-            # no leaf's signature sees that (decision 10). The other states
-            # move no data: they still sync — a lock has to reach the
-            # panels — but they re-send no figure. Five job events per
-            # Rerun re-sent every drawn plot five times (the 3b review).
-            self.sync(force=event.get("state") in ("finished", "failed", "written"))
+        if kind == "notice" and syncs:
+            # A store write reloaded the trajectories under every plot and
+            # no leaf's signature sees that (decision 10).
+            self.sync(force=True)
+        elif kind == "queue" and syncs:
+            # A run that started took this test's trajectories with it and
+            # one that ended brought new ones — no leaf's signature sees
+            # either. The other states move the strip and re-send no figure.
+            self.sync(force=event.get("state") in ("started", "ended"))
         elif syncs and event["event"] == "overlays":
             # The sibling-backend overlays arrived after the plots were
             # drawn without them (`Session._overlays_ready`); no leaf's
@@ -1266,6 +1277,13 @@ class TestPage:
                 # line is said by this sync, or was by an event before it.
                 self._unsay()
             self.sync()
+
+    def _tick(self) -> None:
+        if self.strip is None or self.strip.situation is not Situation.RUNNING:
+            return
+        row = queue_row(self.shell.session, self.model_id)
+        if row is not None and row.state is ItemState.RUNNING:
+            self.strip.say(strip_for(queue=row))
 
     def _mine(self, event: dict[str, Any]) -> bool:
         """Whether an event says anything about THIS test. `results` and

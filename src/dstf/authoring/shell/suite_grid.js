@@ -285,9 +285,10 @@
     for (const [k, word] of PILLS) {
       const n = D.counts[k] || 0;
       const on = S.pills.includes(k);
-      // Shown while a job runs — and while it filters, reading 0, so a
-      // pill switched on can be switched off once the job has ended.
-      if (k === 'running' && !n && !on) continue;
+      // The queue's two are shown while it holds such a test — and while
+      // they filter, reading 0, so a pill switched on can be switched off
+      // once the queue has emptied.
+      if ((k === 'queued' || k === 'running') && !n && !on) continue;
       const b = btn('pill:' + k, 'txt:' + word + ' ' + n, (on ? 'Stop showing only ' : 'Show only ') + word, on, () => {
         const i = S.pills.indexOf(k);
         if (i >= 0) S.pills.splice(i, 1); else S.pills.push(k);

@@ -21,9 +21,10 @@ from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import Accept  # noqa: E402
 from dstf.authoring.builtin.edit_criteria import EditCriteria  # noqa: E402
 from dstf.authoring.builtin.edit_tree import EditTree, seed_data  # noqa: E402
-from dstf.authoring.builtin.rerun import Rerun  # noqa: E402
+from dstf.authoring.builtin.enqueue import EnqueueTests  # noqa: E402
 from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.comparison.seeds import seeded_leaf  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import (  # noqa: E402
@@ -32,11 +33,11 @@ from test_session import (  # noqa: E402
     B,
     C,
     D,
-    _Gate,
     _project,
     _session_with_entry,
     _two_var_project,
 )
+from test_session_queue import drop_item, fake_item  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -183,20 +184,6 @@ async def test_a_list_field_takes_its_own_line_of_the_editors_row(session):
         from dstf.authoring.shell.style import STYLE
 
         assert ".dstf-fields .dstf-field-wide { order: 1; }" in STYLE
-
-
-def test_edit_criteria_is_greyed_while_the_test_is_locked(session):
-    from dstf.authoring.capabilities import Job
-
-    view = SessionView(session, LEAF0)
-    gate = _Gate()
-    session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-    job = session.running
-    assert job is not None
-    assert EditCriteria().available(view) == f"rerun is running on {A}"
-    gate.release.set()
-    assert job.done.wait(5)
-    assert EditCriteria().available(view) is True
 
 
 async def test_a_mode_switch_starts_from_the_new_modes_seed(session):
@@ -1144,25 +1131,11 @@ def test_edit_tree_needs_one_test_and_a_node_or_a_variable(session):
     )
 
 
-def test_available_answers_the_lock_and_the_missing_tree_first(session):
-    """Both hold with nothing selected in the tree: a page whose selection is
+def test_available_answers_the_missing_tree_first(session):
+    """It holds with nothing selected in the tree: a page whose selection is
     only a test must read why it cannot edit, not "select a tree node"."""
-    from dstf.authoring.capabilities import Job
-
-    cap = EditTree()
     only_b = SessionView(session, Selection(tests=frozenset({B})))
-    assert cap.available(only_b) == "nothing is scored"
-    gate = _Gate()
-    session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
-    try:
-        assert cap.available(SessionView(session, Selection(tests=frozenset({D})))) == (
-            f"rerun is running on {D}"
-        )
-        assert cap.available(SessionView(session, _node(D, ROOT))) == (
-            f"rerun is running on {D}"
-        )
-    finally:
-        gate.release.set()
+    assert EditTree().available(only_b) == "nothing is scored"
 
 
 async def test_the_plot_plus_reads_the_scope_the_selection_carries(two_var_session):
@@ -2416,20 +2389,28 @@ def test_accept_act_returns_a_store_write_over_the_selection(session):
     assert session.project.store.index.get_id(B) == "0004"
 
 
-def test_accept_is_greyed_while_a_selected_test_is_locked(session):
-    from dstf.authoring.capabilities import Job
-
+def test_accept_is_greyed_while_the_queue_holds_a_selected_test(session):
+    """The result in memory is about to be replaced by its run's: the
+    button says so, for a test waiting and for one running, and for a
+    selection that only includes one."""
     view = SessionView(session, Selection(tests=frozenset({A})))
-    gate = _Gate()
-    session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-    job = session.running
-    assert job is not None
-    assert Accept().available(view) == f"rerun is running on {A}"
-    gate.release.set()
-    assert job.done.wait(5)
-    # The lock is the Session's, not the page's: it is gone with the job.
-    assert session.running is None
-    assert Accept().available(view) is True
+    both = SessionView(session, Selection(tests=frozenset({A, D})))
+    item = fake_item(session, A, ItemState.WAITING)
+    queued = f"{A} is queued: accept it when its run has ended"
+    assert Accept().available(view) == queued
+    assert Accept().available(both) == queued
+    drop_item(session, item)
+    item = fake_item(session, A, ItemState.RUNNING)
+    assert Accept().available(view) == (
+        f"{A} is running: accept it when its run has ended"
+    )
+    # A test the queue does not hold is not greyed by one it does.
+    assert (
+        Accept().available(SessionView(session, Selection(tests=frozenset({D}))))
+        is True
+    )
+    drop_item(session, item)
+    assert Accept().available(view) is True and Accept().available(both) is True
 
 
 async def test_accept_is_greyed_when_the_selection_is_a_pending_test(tmp_path):
@@ -2535,23 +2516,34 @@ def test_accept_is_the_next_action_where_the_result_differs_or_has_no_baseline()
         S.NEW_VARIABLES: Emphasis.MENU,
         S.SIM_FAIL: Emphasis.MENU,
         S.NO_RESULT: Emphasis.MENU,
+        # the queue holds it, or its last run there left no result
+        S.QUEUED: Emphasis.MENU,
+        S.RUNNING: Emphasis.MENU,
+        S.CANCELLED: Emphasis.MENU,
+        S.START_FAILED: Emphasis.MENU,
     }
 
 
-# -- Rerun (§4.6 table, §4.7) ---------------------------------------------
+# -- Queue (D150; brief §3.6) ----------------------------------------------
 
 
-def test_rerun_is_the_next_action_where_there_is_no_result_to_read():
+def test_queue_is_the_next_action_where_there_is_no_result_to_read():
     from dstf.authoring.capabilities import Emphasis
     from dstf.authoring.situation import Situation as S
 
-    assert Rerun.emphasis == {
+    assert EnqueueTests.emphasis == {
         S.SIM_FAIL: Emphasis.NEXT,
         S.NO_RESULT: Emphasis.NEXT,
+        # its last run in the queue was cancelled, or could not start
+        S.CANCELLED: Emphasis.NEXT,
+        S.START_FAILED: Emphasis.NEXT,
         S.EDITS: Emphasis.MENU,
         # a criterion names a variable the last run did not record
         S.EDITS_NEW: Emphasis.NEXT,
         S.NEW_VARIABLES: Emphasis.NEXT,
+        # the strip's own Remove or Cancel is the action while it is held
+        S.QUEUED: Emphasis.MENU,
+        S.RUNNING: Emphasis.MENU,
     }
 
 
@@ -2560,126 +2552,85 @@ def test_the_builtins_register_in_order():
         "Edit criteria",
         "Edit tree",
         "Accept",
-        "Rerun",
+        "Queue",
         "Edit on plot",
     ]
 
 
-def test_rerun_act_returns_a_job_over_the_selection(session, monkeypatch):
-    """`act` is pure: the Job names the selection, and its `run` builds a
-    fresh quiet persistent-preferring backend and hands the selected tests,
-    in project order, to the run callable."""
-    from dstf.authoring.builtin import rerun as rerun_mod
-    from dstf.authoring.capabilities import Job, JobContext
+def test_queue_act_returns_an_enqueue_of_the_selection_in_project_order(session):
+    """`act` is pure: the Enqueue names the selected tests the queue does
+    not hold, in project order — the order they run in — and starts
+    nothing. The Session owns the queue and the pool it runs on."""
+    from dstf.authoring.capabilities import Enqueue
 
-    view = SessionView(session, Selection(tests=frozenset({A, D})))
-    job = Rerun().act(view)
-    assert isinstance(job, Job)
-    assert job.label == "rerun" and job.models == {A, D} and job.reloads_results
+    view = SessionView(session, Selection(tests=frozenset({D, B, A})))
+    assert EnqueueTests().act(view) == Enqueue(models=(A, B, D))
+    assert session.queue == [] and session._pool is None
 
-    class _Backend:
-        quiet = False
+    item = fake_item(session, B, ItemState.WAITING)
+    assert EnqueueTests().act(view) == Enqueue(models=(A, D))
+    drop_item(session, item)
+    item = fake_item(session, A, ItemState.RUNNING)
+    assert EnqueueTests().act(view) == Enqueue(models=(B, D))
+    drop_item(session, item)
 
-    built = _Backend()
-    calls: dict = {}
-
-    def _select_backend(config, *, persistent):
-        calls["select"] = (config, persistent)
-        return built
-
-    def _run_pipeline(config, tests, *, backend, store, **kwargs):
-        calls["pipeline"] = (config, list(tests), backend, store, kwargs)
-
-    monkeypatch.setattr(rerun_mod, "select_backend", _select_backend)
-    monkeypatch.setattr(rerun_mod, "run_pipeline", _run_pipeline)
-
-    project = session.project
-    job.run(JobContext(project=project, models=frozenset({A, D})))
-
-    assert calls["select"] == (project.config, True)
-    assert built.quiet is True  # the tool's process never narrates
-    config, tests, backend, store, kwargs = calls["pipeline"]
-    assert config is project.config
-    assert backend is built and store is project.store
-    assert [t.model_id for t in tests] == [A, D]  # project order
-    assert kwargs == {}  # no merge, no candidates: the scope is the run
+    with pytest.raises(ValueError, match="no project open"):
+        EnqueueTests().act(SessionView(Session(), Selection(tests=frozenset({A}))))
 
 
-def test_a_rerun_that_raises_still_ends_on_a_static_page(session, monkeypatch):
-    """The backend leaves the work dir's page live; a run that raises after
-    it did (a worker died) still ends on a static one, and the error
-    reaches the job."""
-    from dstf.authoring.builtin import rerun as rerun_mod
-    from dstf.authoring.capabilities import JobContext
-    from dstf.reporting.dashboard_render import render_live
+def test_queue_is_greyed_for_a_selection_the_queue_already_holds(session):
+    """A test is never queued twice: one test says which and how, several
+    say how many, and a selection with one test left to queue is offered."""
+    cap = EnqueueTests()
+    one = SessionView(session, Selection(tests=frozenset({A})))
+    two = SessionView(session, Selection(tests=frozenset({A, D})))
+    three = SessionView(session, Selection(tests=frozenset({A, B, D})))
+    assert cap.available(one) is True and cap.available(three) is True
 
-    work_dir = session.project.config.work_dir
-
-    def _run_pipeline(config, tests, *, backend, store):
-        render_live(work_dir)
-        raise RuntimeError("worker died")
-
-    monkeypatch.setattr(
-        rerun_mod, "select_backend", lambda c, *, persistent: SimpleNamespace()
+    a = fake_item(session, A, ItemState.RUNNING)
+    assert cap.available(one) == f"{A} is already running"
+    assert cap.available(two) is True  # D is left
+    d = fake_item(session, D, ItemState.WAITING)
+    assert cap.available(SessionView(session, Selection(tests=frozenset({D})))) == (
+        f"{D} is already queued"
     )
-    monkeypatch.setattr(rerun_mod, "run_pipeline", _run_pipeline)
+    assert cap.available(two) == "all 2 selected tests are already queued or running"
+    assert cap.available(three) is True  # B is left
+    drop_item(session, a)
+    drop_item(session, d)
+    assert cap.available(one) is True and cap.available(two) is True
 
-    view = SessionView(session, Selection(tests=frozenset({A})))
-    job = Rerun().act(view)
-    with pytest.raises(RuntimeError, match="worker died"):
-        job.run(JobContext(project=session.project, models=frozenset({A})))
-    page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
-    assert '<meta http-equiv="refresh"' not in page
-
-
-def test_rerun_job_run_propagates_an_unbuildable_backend(session, monkeypatch):
-    """`run` has no `try`: a backend that cannot be built on this machine
-    raises out of the job. That is what the Session's thread body catches
-    into `job.error` (tests/test_session.py) rather than the tool reporting
-    a rerun that did nothing."""
-    from dstf.authoring.builtin import rerun as rerun_mod
-    from dstf.authoring.capabilities import JobContext
-    from dstf.backends import BackendUnavailableError
-
-    def _unavailable(config, *, persistent):
-        raise BackendUnavailableError("no omc")
-
-    monkeypatch.setattr(rerun_mod, "select_backend", _unavailable)
-
-    view = SessionView(session, Selection(tests=frozenset({A})))
-    job = Rerun().act(view)
-    ctx = JobContext(project=session.project, models=frozenset({A}))
-    with pytest.raises(BackendUnavailableError, match="no omc"):
-        job.run(ctx)
+    assert cap.available(SessionView(session, Selection())) == (
+        "Queue needs a selection"
+    )
+    closed = SessionView(Session(), Selection(tests=frozenset({A})))
+    assert cap.available(closed) == "no project open"
 
 
-async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(session):
-    from dstf.authoring.capabilities import Job
-
-    selection = Selection(tests=frozenset({A}))
-    view = SessionView(session, selection)
-    async with host(session, Rerun(), selection) as (user, errors, _):
-        await user.should_see("Rerun 1")
+async def test_queue_names_the_backend_and_the_tests_it_leaves_out(session):
+    selection = Selection(tests=frozenset({A, D}))
+    async with host(session, EnqueueTests(), selection) as (user, errors, _):
+        await user.should_see("Queue 2")
         # Via the MARKER: a header elsewhere reads `backend: Python`, so a
         # `should_see("Python")` would pass without the panel's label.
-        (label,) = user.find(marker="rerun-backend").elements
+        (label,) = user.find(marker="queue-backend").elements
         assert label.text == "runs through Python"
-    gate = _Gate()
-    session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-    job = session.running
-    assert job is not None
-    assert Rerun().available(view) == "rerun is running"
-    gate.release.set()
-    assert job.done.wait(5)
-    assert Rerun().available(view) is True
+        await user.should_see(A)
+        await user.should_see(D)
+        await user.should_not_see("already in the queue")
+    item = fake_item(session, D, ItemState.WAITING)
+    async with host(session, EnqueueTests(), selection) as (user, errors, _):
+        await user.should_see("Queue 1 (1 already queued)")
+        await user.should_see(f"{D} · already in the queue")
+    drop_item(session, item)
 
 
 def test_the_builtins_declare_their_placements():
-    """Brief §3.2: Accept and Rerun at suite and test; Edit tree as a tree
+    """Brief §3.2: Accept and Queue at suite and test; Edit tree as a tree
     node's controls, a variable's "Add a criterion for x" and a Statistics
     row's `+` (U3); Edit on plot
     and Edit criteria at the open criterion — the two that read as ONE
-    editor. Nothing built-in is left at TEST but Accept and Rerun."""
+    editor. Nothing built-in is left at TEST but Accept and Queue."""
     from dstf.authoring.builtin.edit_on_plot import EditOnPlot
     from dstf.authoring.capabilities import Placement
 
@@ -2689,7 +2640,7 @@ def test_the_builtins_declare_their_placements():
         Placement.VARIABLE,
         Placement.CRITERION,
     )
-    assert Accept.placements == {S, T} and Rerun.placements == {S, T}
+    assert Accept.placements == {S, T} and EnqueueTests.placements == {S, T}
     assert EditTree.placements == {Placement.NODE, V, Placement.STATISTIC}
     assert EditOnPlot.placements == {C_}
     assert EditCriteria.placements == {
@@ -2698,7 +2649,7 @@ def test_the_builtins_declare_their_placements():
         Placement.TREE_CRITERION,
     }
     at_test = {c.name for c in caps.registered_capabilities() if T in c.placements}
-    assert at_test == {"accept", "rerun"}
+    assert at_test == {"accept", "enqueue"}
 
 
 def test_accept_caption_counts_what_it_will_store_and_needs_a_selection(session):
@@ -2713,21 +2664,69 @@ def test_accept_caption_counts_what_it_will_store_and_needs_a_selection(session)
     assert Accept().available(none) == "Accept needs a selection"
 
 
-def test_rerun_caption_names_count_and_the_selections_unsaved_edits_not_the_backend(
+def test_queue_caption_counts_what_it_queues_what_is_held_and_the_unsaved_edits(
     session,
 ):
     # No backend: the header shows it; the panel names it.
+    cap = EnqueueTests()
     one = SessionView(session, Selection(tests=frozenset({A})))
-    assert Rerun().caption(one) == "Rerun 1 selected test"
-    assert (
-        Rerun().available(SessionView(session, Selection()))
-        == "Rerun needs a selection"
-    )
+    two = SessionView(session, Selection(tests=frozenset({A, D})))
+    three = SessionView(session, Selection(tests=frozenset({A, B, D})))
+    assert cap.caption(one) == "Queue 1"
+    assert cap.caption(three) == "Queue 3"
+    assert cap.caption(SessionView(session, Selection())) == "Queue 0"
+
+    # The tests the queue already holds are left out, and counted.
+    held = [fake_item(session, B, ItemState.WAITING)]
+    held.append(fake_item(session, D, ItemState.RUNNING))
+    assert cap.caption(three) == "Queue 1 (2 already queued)"
+
+    # A run uses the spec with the pending edits applied, as they stand
+    # when its test starts; an edit of a test the click does not queue is
+    # not this click's.
+    session.stage([PatchOp(D, "add", "/comparison/tolerance", 0.5)])
+    assert cap.caption(three) == "Queue 1 (2 already queued)"
     session.stage([LOOSEN])  # two ops on A: the materialization and the edit
-    assert Rerun().caption(one) == "Rerun 1 selected test (with 2 unsaved edits)"
-    # Another model's edits are not this selection's.
+    assert cap.caption(three) == (
+        "Queue 1 (2 already queued; with 2 unsaved edits, as they stand when "
+        "each starts)"
+    )
+    for item in held:
+        drop_item(session, item)
+    assert cap.caption(two) == (
+        "Queue 2 (with 3 unsaved edits, as they stand when each starts)"
+    )
     other = SessionView(session, Selection(tests=frozenset({D})))
-    assert Rerun().caption(other) == "Rerun 1 selected test"
+    assert cap.caption(other) == (
+        "Queue 1 (with 1 unsaved edit, as they stand when each starts)"
+    )
+    # Another model's edits are not this selection's.
+    session.discard({A})
+    assert cap.caption(one) == "Queue 1"
+
+
+@pytest.mark.parametrize("ended", [ItemState.CANCELLED, ItemState.FAILED])
+def test_queue_caption_says_again_for_one_test_whose_last_run_was_cancelled_or_failed(
+    session, ended
+):
+    """One test whose last item in the queue was cancelled or failed; a
+    finished one, and a selection of several, keep the count."""
+    cap = EnqueueTests()
+    one = SessionView(session, Selection(tests=frozenset({A})))
+    two = SessionView(session, Selection(tests=frozenset({A, D})))
+    item = fake_item(session, A, ItemState.RUNNING)
+    # ended, as the pool ends an item and the Session takes it in
+    item.state, item.ended_at = ended, item.started_at
+    del session._live[A]
+
+    assert session.queue_state(A) is ended
+    assert cap.available(one) is True
+    assert cap.caption(one) == "Queue again"
+    assert cap.caption(two) == "Queue 2"
+    item.state = ItemState.FINISHED
+    assert cap.caption(one) == "Queue 1"
+    session.clear_finished()
+    assert session.queue == [] and cap.caption(one) == "Queue 1"
 
 
 async def test_a_refused_form_keeps_its_row_and_what_was_typed(session):
@@ -4120,24 +4119,6 @@ def test_a_move_that_changes_nothing_is_no_outcome(two_var_session):
     from dstf.authoring.tree_move import Dest
 
     assert _move(two_var_session, "/metrics/children/1", Dest("at", ROOT, None)) is None
-
-
-def test_a_locked_test_refuses_a_move(two_var_session):
-    from dstf.authoring.capabilities import Job
-    from dstf.authoring.session import LockedError
-    from dstf.authoring.tree_move import Dest
-
-    s = two_var_session
-    gate = _Gate()
-    s.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-    try:
-        view = SessionView(s, _node(A, "/metrics/children/1"))
-        assert EditTree().available(view) == f"rerun is running on {A}"
-        with pytest.raises(LockedError):
-            s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
-        assert s.spec.pending == []
-    finally:
-        gate.release.set()
 
 
 def test_the_planned_move_says_where_it_landed_and_what_changed(session):

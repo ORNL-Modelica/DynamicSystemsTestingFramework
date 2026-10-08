@@ -25,11 +25,13 @@ import time
 import pytest
 
 from dstf.authoring.session import Session
+from dstf.backends.pool import ItemState
 from dstf.config import Config
 from dstf.reporting import overlay_loader as ol
 from dstf.storage.ref_index import RefIndex
 from dstf.storage.reference_store import ReferenceStore
 from test_session import A, D, _project
+from test_session_queue import fake_item
 
 
 def _with_sibling(tmp_path):
@@ -188,12 +190,12 @@ def test_a_warm_of_a_project_no_longer_open_names_nothing(tmp_path, monkeypatch)
             gate.set()
 
 
-def test_the_ready_index_keeps_a_job_held_models_file_reads(tmp_path, gated_warm):
-    """A model a job holds reads nothing from its result file — the file
-    is being rewritten; the job's reload answers it. The ready index used
-    to drop every read taken without it, and with it what was cached from
-    the file: a held model's untracked series and its names were gone
-    until the job ended."""
+def test_the_ready_index_keeps_a_running_models_file_reads(tmp_path, gated_warm):
+    """A model the queue is running reads nothing from its result file —
+    the file is being rewritten; its run's end answers it. The ready index
+    used to drop every read taken without it, and with it what was cached
+    from the file: a running model's untracked series and its names were
+    gone until its run ended."""
     cfg, work = _project(tmp_path)
     result = work / "test_0001" / "result.json"
     data = json.loads(result.read_text())
@@ -205,12 +207,7 @@ def test_the_ready_index_keeps_a_job_held_models_file_reads(tmp_path, gated_warm
     assert s._file_series(A, "y") is not None
     assert "y" in s.variable_names(A)
     reads = s._reads[A]
-
-    class Held:
-        models = frozenset({A})
-        label = "rerun"
-
-    s.running = Held()  # type: ignore[assignment]
+    fake_item(s, A, ItemState.RUNNING)
     gated_warm.set()
     assert s.overlay_index_ready.wait(5.0)
     assert _eventually(lambda: posted)

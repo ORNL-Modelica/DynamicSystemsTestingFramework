@@ -12,8 +12,7 @@ from dstf.authoring import capabilities as caps
 from dstf.authoring.capabilities import (
     Artifact,
     Capability,
-    Job,
-    JobContext,
+    Enqueue,
     OpenProject,
     Patch,
     Placement,
@@ -135,10 +134,12 @@ def test_plural_takes_an_irregular_plural():
 
 
 def test_outcomes_take_keywords_only():
-    """`models` was inserted between the spec's positional fields; a caller
-    following the spec's order would silently swap it with reloads_results."""
+    """An outcome's fields are named where it is built: by position, a field
+    added to one later would shift a caller's arguments without a word."""
     with pytest.raises(TypeError):
-        Job(lambda ctx: None, "rerun", frozenset())  # type: ignore[misc]
+        StoreWrite(lambda store: None, frozenset())  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        Enqueue(("M",))  # type: ignore[misc]
 
 
 def test_a_plugin_registers_through_the_entry_point_group(monkeypatch):
@@ -168,15 +169,14 @@ def test_a_plugin_registers_through_the_entry_point_group(monkeypatch):
 def test_outcomes_are_frozen_and_carry_their_models():
     sw = StoreWrite(run=lambda store: None, models=frozenset({"M"}))
     assert sw.models == frozenset({"M"})
-    job = Job(run=lambda ctx: None, label="rerun", models=frozenset({"M"}))
-    assert job.reloads_results is True
+    queued = Enqueue(models=("M", "N"))
+    assert queued.models == ("M", "N")  # a tuple: the order to run them in
     with pytest.raises(dataclasses.FrozenInstanceError):
-        job.label = "x"
+        queued.models = ()
     assert Patch(ops=[]).ops == [] and Artifact(paths=[], label="png").label == "png"
     assert (
         OpenProject(config_path=__import__("pathlib").Path("x")).config_path.name == "x"
     )
-    assert JobContext.__dataclass_fields__.keys() >= {"project", "models"}
 
 
 def test_the_session_imports_without_the_ui_extra():

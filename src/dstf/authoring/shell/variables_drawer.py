@@ -211,8 +211,8 @@ class VariablesDrawer:
     def refresh(self) -> None:
         """The page moved (`Rail.refresh`: a select, a sync): build again
         only when what the rows are drawn from did. `TestPage.sync` ends
-        here, and a Rerun's five job events rebuilt every row of an open
-        drawer five times over a list that had not changed."""
+        here, and a run's events rebuilt every row of an open drawer each
+        time over a list that had not changed."""
         reads = self._read()
         if self._signature(reads) != self.drawn:
             self._draw(reads)

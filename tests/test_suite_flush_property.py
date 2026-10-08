@@ -1,10 +1,11 @@
 """The Suite grid holds the truth after every tick (`SuitePage.flush`): over
 hand-built and seeded random sequences of Session events — opens, closes,
-`known` rows, staged edits, discards, jobs, rescores and a spec changed on
-disk — the rows a fake grid holds after the tick's ONE transaction equal
-the rows the page would build now, and no transaction adds a row the grid
-holds, updates one it lacks or removes one it never had. Adopted from the
-S2a review's harness; `NSEEDS` widens the random sweep."""
+`known` rows, staged edits, discards, tests joining, starting in and leaving
+the simulation queue, rescores and a spec changed on disk — the rows a fake
+grid holds after the tick's ONE transaction equal the rows the page would
+build now, and no transaction adds a row the grid holds, updates one it
+lacks or removes one it never had. Adopted from the S2a review's harness;
+`NSEEDS` widens the random sweep."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import json
 import logging
 import os
 import random
+import time
 
 import pytest
 
@@ -21,11 +23,12 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.session import RunningJob  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
 from dstf.authoring.shell.suite_grid import SuiteGrid, row_json  # noqa: E402
+from dstf.backends.pool import ItemState  # noqa: E402
 from test_session import LOOSEN, A, B, C, D, G, _project  # noqa: E402
+from test_session_queue import drop_item, fake_item  # noqa: E402
 
 ALL = [A, B, C, D, G]
 
@@ -110,6 +113,11 @@ def _init(page, grid):
 # -- actions -------------------------------------------------------------------
 
 
+def _held(shell) -> bool:
+    """Whether the queue holds a test: an open and a close are refused then."""
+    return bool(shell.session.queue)
+
+
 def act_known_subset(shell, rng):
     k = rng.sample(ALL, rng.randint(0, 5))
     shell._events.put({"event": "known", "models": k})
@@ -120,26 +128,28 @@ def act_known_clear(shell, rng):
 
 
 def act_close_open(shell, rng):
-    if shell.session.running is not None or shell.session.spec.pending:
+    if _held(shell) or shell.session.spec.pending:
         return
     shell.session.close()
     shell.session.open(shell.config_path, work_dir=shell.work_dir)
 
 
 def act_close(shell, rng):
-    if shell.session.running is not None or shell.session.spec.pending:
+    if _held(shell) or shell.session.spec.pending:
         return
     shell.session.close()
 
 
 def act_open(shell, rng):
-    if shell.session.running is not None or shell.session.spec.pending:
+    if _held(shell) or shell.session.spec.pending:
         return
     shell.session.open(shell.config_path, work_dir=shell.work_dir)
 
 
 def act_stage(shell, rng):
-    if shell.session.project is None or shell.session.running is not None:
+    # Not refused while the queue holds its test: a queued or running test
+    # stays editable.
+    if shell.session.project is None:
         return
     try:
         shell.session.stage([LOOSEN])
@@ -148,28 +158,43 @@ def act_stage(shell, rng):
 
 
 def act_discard(shell, rng):
-    # Refused while a job runs, as the header's busy_reason refuses it.
-    if shell.session.project is None or shell.session.running is not None:
+    if shell.session.project is None:
         return
     shell.session.discard()
 
 
-def act_job_start(shell, rng):
-    if shell.session.project is None or shell.session.running is not None:
+def act_queue(shell, rng):
+    """One to three tests join the queue, waiting; one it holds is skipped."""
+    session = shell.session
+    if session.project is None:
         return
-    job = RunningJob(
-        label="rerun", models=frozenset(rng.sample(ALL, rng.randint(1, 3)))
-    )
-    shell.session.running = job
-    shell._events.put({"event": "job", "state": "started", "job": job})
+    models = [
+        m for m in rng.sample(ALL, rng.randint(1, 3)) if session.queue_state(m) is None
+    ]
+    if not models:
+        return
+    for m in models:
+        fake_item(session, m, ItemState.WAITING)
+    shell._events.put({"event": "queue", "state": "queued", "models": set(models)})
 
 
-def act_job_finish(shell, rng):
-    job = shell.session.running
-    if job is None:
+def act_start(shell, rng):
+    """The first waiting test starts."""
+    item = next((i for i in shell.session.queue if i.state is ItemState.WAITING), None)
+    if item is None:
         return
-    shell.session.running = None
-    shell._events.put({"event": "job", "state": "finished", "job": job})
+    item.state, item.started_at, item.worker_id = ItemState.RUNNING, time.time(), 0
+    shell._events.put({"event": "queue", "state": "started", "models": {item.model_id}})
+
+
+def act_leave(shell, rng):
+    """One of the tests the queue holds leaves it."""
+    session = shell.session
+    if not session.queue:
+        return
+    item = rng.choice(session.queue)
+    drop_item(session, item)
+    shell._events.put({"event": "queue", "state": "removed", "models": {item.model_id}})
 
 
 def act_results(shell, rng):
@@ -179,11 +204,7 @@ def act_results(shell, rng):
 def act_spec_change_disk(shell, rng):
     """Change A's tolerance on disk, then close+open in one tick: A's row
     is dropped and named again with CHANGED data."""
-    if (
-        shell.session.running is not None
-        or shell.session.spec.pending
-        or shell.session.project is None
-    ):
+    if _held(shell) or shell.session.spec.pending or shell.session.project is None:
         return
     p = shell.session.spec.path
     spec = json.loads(p.read_text(encoding="utf-8"))
@@ -204,8 +225,9 @@ ACTIONS = [
     act_open,
     act_stage,
     act_discard,
-    act_job_start,
-    act_job_finish,
+    act_queue,
+    act_start,
+    act_leave,
     act_results,
     act_spec_change_disk,
 ]
@@ -223,7 +245,7 @@ def _pick(shell, rng):
         return rng.choice([act_known_clear, act_open_force])
     a = rng.choice(ACTIONS)
     if a is act_known_subset:
-        if shell.session.running is not None or shell.session.spec.pending:
+        if _held(shell) or shell.session.spec.pending:
             return act_results
         _OPENING["on"] = True
     return a
@@ -246,8 +268,11 @@ async def test_named_sequences(shell, grid):
             [act_stage, act_discard],
             [act_close, act_open],
             [act_spec_change_disk],
-            [act_job_start],
-            [act_job_finish],
+            [act_queue],
+            [act_start],
+            [act_stage],  # while the queue holds a test
+            [act_discard],
+            [act_leave, act_leave, act_leave],  # the queue is empty again
             [act_close],
             [act_known_subset, act_open],
             [act_open],

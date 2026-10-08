@@ -1564,8 +1564,8 @@ def test_a_live_page_lists_only_status_rows(tmp_path):
 
 
 def test_a_final_page_without_comparisons_lists_status_rows(tmp_path):
-    """A run that scored nothing (`run --accept`, an abort, the tool's
-    Rerun before its reload) lists its own rows, reading SIMULATED."""
+    """A run that scored nothing (`run --accept`, an abort) lists its own
+    rows, reading SIMULATED."""
     _scoped_run(tmp_path)
     rows = build_dashboard_context(tmp_path, mode="final")["tests"]
     assert [r.model_id for r in rows] == ["Lib.B"]

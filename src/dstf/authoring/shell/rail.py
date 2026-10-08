@@ -338,8 +338,8 @@ class TestsDrawer:
         """The ids the filter keeps, and the sentence under the box — every
         id, and why, for a bad pattern or one that ran out of time: the
         drawer hides nothing then. Cached on the needle, its toggles and
-        the SET of ids, never their order: events repaint the rows every
-        second during a job, a rescore under the status sort reorders them,
+        the SET of ids, never their order: events repaint the rows as a
+        queue's tests end, a rescore under the status sort reorders them,
         and a pathological pattern cost 0.79 s of CPU per pass over 331 ids
         (the plan's executing review)."""
         state = self.page.state
