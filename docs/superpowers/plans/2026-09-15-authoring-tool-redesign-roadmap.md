@@ -52,9 +52,16 @@ TRANSFORM gate:
 | U4 | Moving a subtree: drag in the tree card and "Move to…", auto-wrapped in `and`; a refused drop says why | Q4, Q9 | BUILT (`2026-09-30-move-a-subtree.md`; D144; 4bafd71..77f5c81, other fixes' commits interleaved); its TRANSFORM gate is the controller's |
 | U5 | The tree card's structure: a bar per level and a `root` tag; groups fold (the tab's, per test; Expand / Collapse all); a click on a row opens its criterion's editor or a k-of-n's / weighted's fields under it; a ⤓ shows a criterion where it is drawn | Q1-Q13, R1, R2 (the tree-card grill, 2026-10-01) | BUILT (`2026-10-01-tree-card-structure.md`; D146; c5e9cd7..3e72142, its fix batches included); its TRANSFORM gate is the controller's |
 
-Then 3d (the slice field, save-time expansion, the folded criteria row), 5
-(the queue), 6 (live results) and 7 (themes), as below. Sub-project 4's
-brief §3.5 items are re-scoped into T and E when those are planned.
+3d (the slice field, the folded criteria row) is BUILT (D152; `13155f6..0fb1687`
+on its own branch, with no written plan — from the owner's two rulings of
+2026-10-08 on mock-ups and the controller's eight calls): the Indices field
+is in the ADD FORM and in the folded row's editor, not on the Variables
+drawer's row the brief drew; Add writes one literal leaf per chosen element
+as it stages, so nothing is expanded at Save; and under a family's plot
+identical criteria fold into one row whose editor changes them all. Its
+TRANSFORM gate is the controller's. Then 5 (the queue), 6 (live results) and
+7 (themes), as below. Sub-project 4's brief §3.5 items are re-scoped into T
+and E when those are planned.
 
 
 ---
@@ -424,7 +431,9 @@ folded tracked array in the drawer and none starts greyed. The gate found
 one defect the fixture's short names had hidden: at 900 px with a drawer
 open the page scrolled sideways, fixed in batch 9 (card headers and
 criteria rows wrap). Residuals are in `docs/ideas.md` (2026-09-25 entry);
-3d (the slice field, save-time expansion, the folded criteria row) is next.
+3d (the slice field, the folded criteria row) followed the steps of the
+2026-09-26 reorder and is BUILT (D152; see the paragraph under that
+reorder's table).
 
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
@@ -432,7 +441,8 @@ criteria rows wrap). Residuals are in `docs/ideas.md` (2026-09-25 entry);
 
 **Acceptance predicates.** A test with N tracked variables shows N plots by
 default; a `plots` entry with two series on one plot draws both on both
-tiers; a folded array row expands to literal leaves on Save; the tree's
+tiers; a folded array row is literal leaves in the spec (as built, D152:
+literal from the moment Add stages them, written on Save); the tree's
 +/−/wrap stage the same ops Edit tree staged; a criterion row opens its
 editor inline and the plot's handles follow.
 

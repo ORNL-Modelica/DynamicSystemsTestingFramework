@@ -690,8 +690,8 @@ mutated, a store is written, or a job is launched.
 The contract lives in `dstf.authoring.capabilities`: the `Capability` protocol
 (`name`, `label`, `placements`, and `available` / `caption` / `panel` / `act`),
 the `Placement` enum (`SUITE`, `TEST`, `VARIABLE`, `CRITERION`, `NODE`,
-`STATISTIC`, `STATISTIC_CRITERION` — where the capability attaches; a capability
-names a frozenset of them), and the
+`STATISTIC`, `STATISTIC_CRITERION`, `TREE_CRITERION`, `FAMILY_CRITERION` —
+where the capability attaches; a capability names a frozenset of them), and the
 five outcomes `act` may return — `Patch` (ops for the Session to stage),
 `StoreWrite`, `Job`, `Artifact`, `OpenProject` — or `None`, or a sequence of
 them. `Job` and `StoreWrite` each carry `models: frozenset[str]`, the models
@@ -717,9 +717,11 @@ or belongs in the status strip's ⋮ menu.
 | `NODE` | a tree node's row, and a criteria row under a plot | inline: the panel alone, no button, no heading | `tests` (one), `node_path` (a leaf OR a combinator), and `variable` on a criteria row | raises on `on` |
 | `STATISTIC` | the end of a Statistics-card row no criterion reads (D143) | inline: the panel alone (Edit tree's `+`), no button, no heading | `tests` (one), `quantity` (the row's quantity path, e.g. `translation.nonlinear_count`) | raises on `on` |
 | `STATISTIC_CRITERION` | the editor of a criterion scored through a statistic, under its Statistics row (D143) | inline: the panel alone, no button, no heading — CRITERION's editor with no plot, so a capability that needs one is not offered there | `tests` (one), `leaf_path` | raises on `on` |
+| `TREE_CRITERION` | the editor of any criterion opened under its row in the criteria tree (D146) | inline: the panel alone, no button, no heading — CRITERION's editor with no plot, like `STATISTIC_CRITERION`'s | `tests` (one), `leaf_path` | raises on `on` |
+| `FAMILY_CRITERION` | the editor of a folded criteria row under a family's plot: one criterion on several elements of an array (D152) | inline: the panel alone, no button, no heading — CRITERION's editor for every member at once, with no plot (nothing of twenty criteria is dragged), so a capability that edits ONE leaf is not offered there | `tests` (one), `leaf_paths` (every member, in tree order), `leaf_path` (the first) and its `variable` | raises on `on` |
 
 An inline panel (`VARIABLE`, `CRITERION`, `NODE`, `STATISTIC`,
-`STATISTIC_CRITERION`) draws no heading and no button
+`STATISTIC_CRITERION`, `TREE_CRITERION`, `FAMILY_CRITERION`) draws no heading and no button
 of its own frame: the row it sits in already names it — the criterion's row above
 the editor, the plot's "Criteria" header — and a second name there makes one
 editor read as two panels. Its `caption` is never read. Where a

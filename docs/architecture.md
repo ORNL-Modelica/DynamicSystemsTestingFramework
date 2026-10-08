@@ -126,6 +126,9 @@ src/dstf/
 │   ├── tree_pointer.py       # node_at / node_or_none — a raw tree node by its /metrics pointer (UI-free)
 │   ├── tree_text.py          # What a tree node reads as (leaf_name, node_text): the rows and Edit tree's
 │   │                         #   form titles say the same thing (UI-free)
+│   ├── family_rows.py        # A criterion over an array family as data (D152): which criteria rows fold,
+│   │                         #   the elements an Indices text names, an edit of a fold as one whole-tree op;
+│   │                         #   shell/family_fold.py draws the folded rows (UI-free)
 │   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
 │   │                         #   suite.py + test_page.py (one object per browser tab; the one open editor
 │   │                         #   or form row), tree_card.py (the criteria tree), plot_card.py (one plot,
@@ -135,7 +138,7 @@ src/dstf/
 │   │                         #   a RowTarget to open a form row under their row),
 │   │                         #   runs.py, tabstate.py, figure_hook.py (one hook per plot)
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
-│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
+│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_family.py, edit_tree.py,
 │                             #   accept.py (the shared accept function), rerun.py (run_pipeline),
 │                             #   edit_on_plot.py (drag a handle or edit a list's table)
 └── reporting/

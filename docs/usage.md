@@ -1069,6 +1069,30 @@ in its MIDDLE — its head, an ellipsis, its index (`cat(1, pipe2.mediums.T, …
 or its last 12 characters when it has no index that near its end — with the
 whole label as its tooltip; a model id is cut at its start.
 
+Under an array family's plot, the elements whose criterion is one and the
+same — children of one node, with the same metric, parameters, window and
+baseline — are ONE folded row: a chevron, the worst of their verdicts as its
+pill, `metric · <the family with its indices>` (`nrmse · pipe.T[1:20]`) and a
+count by verdict (`18 pass · 2 fail`, with an advisory and an unscored count
+when either is non-zero). The chevron unfolds it to its members, each the
+criterion's own row indented under it, with its own swatch, editor, handles
+and node controls; which rows are unfolded is the browser tab's. Clicking the
+folded row opens its editor: one member's fields, showing the value they
+share, and every change is applied to ALL of them as one pending edit. It
+draws no handles — "These fields change all 20 criteria. Unfold to drag one
+on the plot." Its **Indices** field holds the elements the criterion is on, in
+the add form's syntax (see Edit tree); Enter or Apply removes the criterion of
+each element left out and adds one, with the same parameters, for each new
+one, right after the fold's last. An index the last result does not have is
+refused ("pipe.T[1:20] has 20 elements; 21 is not one of them."), and an empty
+field says to unfold the row and remove its criteria instead. A member whose
+criterion is edited on its own stands as its own row from then on, and the
+fold's label shows the gap (`pipe.T[1,2,4:20]`); edited back, it folds again.
+Two groups of one family are two folded rows, and a `UnitTests` element never
+folds. None of this is stored: `test_spec.json` holds one literal leaf per
+element, the tree card shows one line per leaf, and the report lists every
+leaf.
+
 A plot's legend holds its signals only — actual, reference, any overlays and
 its context series —
 on a line above the plot area, so it never sits on the trace or on a ring.
@@ -1239,6 +1263,19 @@ row, a click chooses a row and moves the ring to it; the line under the list, "C
 choice even when the filter hides it. The **Metric** select follows the
 choice: a diagnostic offers `scalar` only, anything else every metric that
 scores a time series (and the one chosen before a diagnostic comes back).
+When the variable chosen is an element of an array the result holds more of
+(`pipe.T[12]` of `pipe.T[1]` … `pipe.T[20]`), an **Indices** field shows under
+the picker, filled with every element (`1:20`). It takes an index (`3`), a
+range with its end included (`1:5`), a stepped range written start:step:end as
+Modelica writes it (`1:5:20` is 1, 6, 11, 16) and a comma list of those
+(`1:3,7,10:2:20`), the indices as the result file names them; an index the
+family lacks is refused. Add — or Enter in the field — writes one criterion
+per chosen element where a single one would have landed, all with the same
+parameters (seeded once, from the first chosen element), as ONE pending edit
+— the whole tree, as a move stages; `3` alone adds the one. Under the family's
+plot they read as one folded row (above). A family behind a multi-dimensional
+index (`port[2, 1].C[3]`) is indexed by its last index; a `UnitTests` element
+gets no field.
 A criterion on a variable the test did not track is what tracks it: every
 backend records, stores and scores a criterion's variables after the test's
 `UnitTests` variables and `variables` patterns, with no change to `variables`

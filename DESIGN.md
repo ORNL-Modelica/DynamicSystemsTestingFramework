@@ -198,8 +198,10 @@ brackets literal because `T[1]` is a name; regex (`.*`) and match-case (`Aa`)
 toggles at the right of the box, off by default. A checkbox per row means
 "on the selected plot"; hovering a row offers "new plot"; small text names
 the other plots a variable is on. The selected plot carries the 2px accent
-inset ring. Indexed names fold into one row, `pipe.T[1..20]`, with an
-indices field in Modelica slice syntax (`1:5:20`) or a list.
+inset ring. Indexed names fold into one row, `pipe.T[1..20]`. The indices
+field in Modelica slice syntax (`1:5:20`) or a list, first drawn on this row,
+is the add form's and the folded criteria row's (the owner's ruling of
+2026-10-08, D152).
 
 *As built:* the rail is 40px of labelled buttons, "Tests" and "Vars" (its
 tooltip "Variables"); the open drawer's button sits on the selection tint.
@@ -245,8 +247,9 @@ matched against the whole text with brackets literal, as a spec's `variables`
 list reads it, and matched without backtracking; with `.*` on, a Python
 regular expression that may match anywhere, and a bad one is said under the
 box. At most 200 rows are drawn, an opened family's members aside, then
-"Showing 200 of 1,843 rows — narrow the filter". The indices field comes with
-the folded criteria row, in 3d.
+"Showing 200 of 1,843 rows — narrow the filter". The drawer's row has no
+indices field: it is in the add form and in the folded criteria row's editor
+(D152).
 
 **Array families on a plot.** Series from one array share a hue and ramp in
 lightness by index, low to high (`#90caf9` `#42a5f5` `#1976D2` `#0d47a1` for

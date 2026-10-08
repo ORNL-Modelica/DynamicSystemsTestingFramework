@@ -353,8 +353,10 @@ figure layer's colours. The owner ruled:
   `*` and `?` and literal `[ ]`; regex and match-case toggles off by default.
   Checkbox = on the selected plot; "new plot" on hover; the selected plot has
   the accent ring. Drag-to-plot later on the same drawer.
-- **Arrays:** indexed names fold by index into one row with an indices field
-  in Modelica slice syntax; a family draws as one hue ramped by index with a
+- **Arrays:** indexed names fold by index into one row; the indices field
+  in Modelica slice syntax is the add form's and the folded criteria row's,
+  not this row's (the owner's ruling of 2026-10-08, D152, which replaces the
+  field drawn here); a family draws as one hue ramped by index with a
   folded legend. Later: a profile plot kind (index on the x axis at chosen
   times), and a glob-named criterion (`pipe.T[*]`) scoring every index under
   one leaf, if the plan finds the spec's leaves accept globs.
@@ -373,13 +375,14 @@ whose reasoning is recorded here so the plan does not reopen them:
   the key once set. Shape: `{"kind": "time", "series": [{"var": ...}, ...]}`
   per plot; `kind` reserved for later plot kinds, `series` entries later grow
   an expression and unit label.
-- **Glob variables expand at save time; leaves stay literal.** The drawer's
-  folded row (`pipe.T[1..20]`, a slice field) writes one concrete leaf per
-  index into the spec; the tool shows them folded. Why: a glob leaf changes
-  what is scored, which is registry-gated with negative tests (mind 12) and a
-  scoring sub-project of its own; the redesign is a layout project. A resized
-  array is re-expanded from the same folded row. A true glob leaf stays
-  deferred (§5).
+- **Glob variables expand at save time; leaves stay literal.** The add
+  form's Indices field (a slice over `pipe.T[1..20]`; drawn on the drawer's
+  folded row until the owner's ruling of 2026-10-08, D152) writes one
+  concrete leaf per chosen index into the spec; the tool shows them folded.
+  Why: a glob leaf changes what is scored, which is registry-gated with
+  negative tests (mind 12) and a scoring sub-project of its own; the redesign
+  is a layout project. A resized array is re-expanded from the folded
+  criteria row's own Indices field. A true glob leaf stays deferred (§5).
 - **`theme` is a name from a bundled set** (`"theme": "default"` or
   `"dark"`), switchable for the session in the tool. Why: extracting one
   shared stylesheet with the DESIGN.md tokens as variables is the whole
