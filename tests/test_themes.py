@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import re
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -315,6 +316,173 @@ class TestFigurePalette:
             p = palette_of(name)
             r, g, b = (int(p.ring[i : i + 2], 16) for i in (1, 3, 5))
             assert p.ring_fill == f"rgba({r},{g},{b},0.25)", name
+
+
+def _figure_cases() -> dict:
+    """A figure of every kind both tiers draw: each mode's golden view as
+    the report draws it, each view with grips and the handle view as the
+    tool draws them, a soft-check overlay beside a context series, and
+    three families of four — every stop of every ramp."""
+    from dstf.figures.plotly import plot_figure, variable_figure
+    from test_figure_goldens import VIEWS
+    from test_figures import GRIP_VIEWS, _handle_view
+    from test_plot_figure import _labelled, _one_with_overlay, _view
+
+    cases = {
+        f"report:{mode}": partial(variable_figure, make(), 200)
+        for mode, make in VIEWS.items()
+    }
+    for mode, make in GRIP_VIEWS.items():
+        cases[f"tool:{mode}"] = partial(variable_figure, make(), editable=True)
+    cases["tool:handles"] = partial(variable_figure, _handle_view(), editable=True)
+    cases["overlay+context"] = partial(
+        plot_figure, [_one_with_overlay()], context=[_labelled("z", "a.Q", 2.0)]
+    )
+    families = [
+        _view(f"{name}[{i}]", i, ref=True) for name in "abc" for i in range(1, 5)
+    ]
+    cases["families"] = partial(plot_figure, families)
+    return cases
+
+
+def _differences(a, b, at="") -> dict[str, tuple]:
+    """``{path: (a's value, b's)}`` wherever two figures differ."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out: dict[str, tuple] = {}
+        for key in a.keys() | b.keys():
+            if key not in a or key not in b:
+                out[f"{at}/{key}"] = (a.get(key), b.get(key))
+            else:
+                out.update(_differences(a[key], b[key], f"{at}/{key}"))
+        return out
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        out = {}
+        for i, (x, y) in enumerate(zip(a, b)):
+            out.update(_differences(x, y, f"{at}/{i}"))
+        return out
+    return {} if a == b else {at: (a, b)}
+
+
+def _line_colours(figure: dict) -> set[str]:
+    """Every colour the figure draws a LINE or a marker in: its series,
+    its guide lines, its rings and arrows. Not a region's fill."""
+    found: set[str] = set()
+    for item in (*figure["data"], *figure["layout"].get("shapes", [])):
+        for part in (item.get("line"), item.get("marker")):
+            colour = (part or {}).get("color")
+            found.update(colour if isinstance(colour, list) else [colour])
+    return {c for c in found if isinstance(c, str)}
+
+
+class TestFigures:
+    @pytest.mark.parametrize("case", list(_figure_cases()))
+    def test_the_default_theme_is_the_figure_as_it_was(self, case):
+        """No template key at all, and the same dict as a figure built
+        without naming a theme: the goldens hold for both."""
+        build = _figure_cases()[case]
+        figure = build(theme="default")
+        assert figure == build()
+        assert "template" not in figure["layout"]
+
+    @pytest.mark.parametrize("case", list(_figure_cases()))
+    def test_a_dark_figure_differs_by_its_template_and_its_palette_only(self, case):
+        build = _figure_cases()[case]
+        default, dark = palette_of("default"), palette_of("dark")
+        swaps = {
+            (default.reference_event, dark.reference_event),
+            (default.ring, dark.ring),
+            (default.ring_fill, dark.ring_fill),
+            (default.context, dark.context),
+            (default.soft_check, dark.soft_check),
+            *zip(sum(default.hues, ()), sum(dark.hues, ())),
+        }
+        diffs = _differences(build(), build(theme="dark"))
+        assert diffs.pop("/layout/template") == (None, {"layout": dark.template})
+        assert set(diffs.values()) <= swaps, diffs
+
+    def test_each_part_of_the_palette_reaches_a_figure(self):
+        """Read off the figures, part by part: a palette entry nothing
+        draws would pass the test above."""
+        cases = _figure_cases()
+        dark = palette_of("dark")
+
+        def swapped(case):
+            diffs = _differences(cases[case](), cases[case](theme="dark"))
+            diffs.pop("/layout/template")
+            return {now for _, now in diffs.values()}
+
+        assert swapped("report:event-timing") == {dark.reference_event}
+        assert swapped("tool:handles") == {dark.ring, dark.ring_fill}
+        assert swapped("overlay+context") == {dark.soft_check, dark.context}
+        assert swapped("families") == {
+            dark.hues[0][3],
+            dark.hues[1][3],
+            dark.hues[2][2],
+            dark.hues[2][3],
+        }
+        assert swapped("report:nrmse") == set()
+
+    def test_the_template_in_a_figure_is_a_copy(self):
+        build = _figure_cases()["report:nrmse"]
+        figure = build(theme="dark")
+        figure["layout"]["template"]["layout"]["xaxis"]["gridcolor"] = "#ff0000"
+        figure["layout"]["template"]["layout"]["font"]["color"] = "#ff0000"
+        again = build(theme="dark")["layout"]["template"]["layout"]
+        assert again == palette_of("dark").template
+        assert again["xaxis"]["gridcolor"] == theme.DARK_THEME["border-hairline"]
+        assert again["xaxis"] is not again["yaxis"]
+
+    def test_a_dark_figure_is_json(self):
+        import json
+
+        for case, build in _figure_cases().items():
+            figure = build(theme="dark")
+            assert json.loads(json.dumps(figure)) == figure, case
+
+    def test_every_line_a_dark_figure_draws_reads_on_the_dark_plot(self):
+        """3:1 for every series, guide line, ring and arrow, over every
+        kind of figure — the literals the theme leaves alone too."""
+        ground = theme.DARK_THEME["surface"]
+        seen: set[str] = set()
+        for build in _figure_cases().values():
+            seen |= _line_colours(build(theme="dark"))
+        opaque = {c for c in seen if HEX.match(c)}
+        # What is left out, by name: a marker's white outline, the band's
+        # invisible edge, and the translucent pass / fail / muted /
+        # window lines, which mark a REGION's edge.
+        assert seen - opaque <= {
+            "white",
+            "rgba(0,0,0,0)",
+            "rgba(76,175,80,0.6)",
+            "rgba(244,67,54,0.8)",
+            "rgba(117,117,117,0.35)",
+            "rgba(33,150,243,0.4)",
+        }
+        assert len(opaque) >= 20, sorted(opaque)
+        low = {c: round(contrast(c, ground), 2) for c in opaque}
+        assert {c: v for c, v in low.items() if v < 3} == {}
+
+    def test_the_default_figures_dark_lines_would_not_all_read(self):
+        """The control for the test above: the same scan over the DEFAULT
+        figures finds the five colours the dark palette replaces."""
+        ground = theme.DARK_THEME["surface"]
+        seen: set[str] = set()
+        for build in _figure_cases().values():
+            seen |= _line_colours(build())
+        sunk = {c for c in seen if HEX.match(c) and contrast(c, ground) < 3}
+        assert sunk == {"#7B1FA2", "#0d47a1", "#1b5e20", "#7b1fa2", "#4a148c"}
+
+    def test_an_unknown_theme_is_refused_by_the_builders(self):
+        from dstf.figures.plotly import plot_figure, variable_figure
+        from test_plot_figure import _view
+
+        for build in (
+            partial(variable_figure, _view("x")),
+            partial(plot_figure, [_view("x")]),
+            partial(plot_figure, [_view("x"), _view("y")]),
+        ):
+            with pytest.raises(ValueError, match="default, dark"):
+                build(theme="solarized")
 
 
 #: What renders a page, and so takes the project's theme: a call in `src`

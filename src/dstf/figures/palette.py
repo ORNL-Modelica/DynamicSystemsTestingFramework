@@ -51,17 +51,6 @@ class Palette:
     template: dict | None = None
 
 
-def _axis(*, grid: str, line: str, text: str) -> dict:
-    return {
-        "gridcolor": grid,
-        "zerolinecolor": line,
-        "linecolor": line,
-        "tickcolor": line,
-        "tickfont": {"color": text},
-        "title": {"font": {"color": text}},
-    }
-
-
 #: The dark theme's neutrals, as its token table names them.
 _DARK = MappingProxyType(
     {
@@ -75,9 +64,19 @@ _DARK = MappingProxyType(
     }
 )
 
-_DARK_AXIS = _axis(
-    grid=_DARK["border-hairline"], line=_DARK["border"], text=_DARK["text-secondary"]
-)
+
+def _dark_axis() -> dict:
+    """One dict per axis letter: a copy of the template keeps whatever two
+    keys share, and a figure's x axis must not be its y axis."""
+    return {
+        "gridcolor": _DARK["border-hairline"],
+        "zerolinecolor": _DARK["border"],
+        "linecolor": _DARK["border"],
+        "tickcolor": _DARK["border"],
+        "tickfont": {"color": _DARK["text-secondary"]},
+        "title": {"font": {"color": _DARK["text-secondary"]}},
+    }
+
 
 PALETTES: Mapping[str, Palette] = MappingProxyType(
     {
@@ -111,8 +110,8 @@ PALETTES: Mapping[str, Palette] = MappingProxyType(
                 "paper_bgcolor": _DARK["surface"],
                 "plot_bgcolor": _DARK["surface"],
                 "font": {"color": _DARK["text"]},
-                "xaxis": _DARK_AXIS,
-                "yaxis": _DARK_AXIS,
+                "xaxis": _dark_axis(),
+                "yaxis": _dark_axis(),
                 "legend": {"font": {"color": _DARK["text"]}},
                 "hoverlabel": {
                     "bgcolor": _DARK["surface-hover"],
