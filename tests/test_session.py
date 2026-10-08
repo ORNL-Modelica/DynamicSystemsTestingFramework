@@ -3954,31 +3954,6 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         assert [op.path for op in s.spec.pending] == ["/plots", self.LEAF]
         assert s.spec.entry(A)["metrics"]["children"] == [default]
 
-    def test_the_trees_ops_go_only_where_the_others_alone_give_the_rest(
-        self, session, monkeypatch
-    ):
-        """What is dropped is checked by doing it: the ops that stay,
-        applied to the saved entry, must give the entry as edited but for
-        its ``metrics``. No op the patch whitelist admits can make that
-        false (a pointer under ``/comparison`` or ``/plots`` reads nothing
-        under ``/metrics``), so the replay is given a wrong answer here —
-        and then nothing is dropped."""
-        import dstf.authoring.session as session_module
-
-        real = session_module.apply_patch_to_document
-
-        def replay(data, model_id, ops, **kw):
-            real(data, model_id, ops, **kw)
-            data["tests"][0]["plots"] = []
-            return data
-
-        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
-        session.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
-        monkeypatch.setattr(session_module, "apply_patch_to_document", replay)
-        session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
-        assert len(session.spec.pending) == 4
-        assert "metrics" in session.spec.entry(A)
-
     def test_a_leaf_removed_from_the_tree_written_out_is_an_edit(self, tmp_path):
         """Not "any tree of default leaves": the tree the SAVED entry scores
         — a tree short of one of its variables is a change."""

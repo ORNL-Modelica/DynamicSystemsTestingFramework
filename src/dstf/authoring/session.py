@@ -31,7 +31,7 @@ from ..backends.types import (
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
-from ..discovery.patch_apply import PatchError, apply_patch_to_document
+from ..discovery.patch_apply import PatchError
 from ..discovery.plots import (
     PlotExtra,
     ResolvedPlot,
@@ -47,7 +47,6 @@ from ..discovery.spec_update import (
     implicit_tree_op,
     is_literal_variable,
     needs_materialization,
-    spec_entry,
     unknown_override_modes,
     validate_entry_metric_tree,
 )
@@ -1646,10 +1645,14 @@ class Session:
           a flat entry's tree is built from its ``variable_overrides``
           (`_saved_scoring_tree`), so those are as saved. With an override
           edited, the entry the other ops leave scores by another tree, and
-          taking this one away would change its verdict;
-        - the other ops alone, applied to the saved entry, give the entry
-          as edited but for its ``metrics`` — done, not argued, so that
-          what is kept is what was there.
+          taking this one away would change its verdict.
+
+        What is kept is then the entry as edited but for its ``metrics``,
+        and nothing checks it: an op the applier admits is an add, a replace
+        or a remove whose path is at or under exactly one of
+        ``/comparison``, ``/metrics`` and ``/plots``
+        (``patch_apply.DEFAULT_WHITELIST``), so the ops under ``/metrics``
+        neither read nor write another member, nor the others ``metrics``.
 
         The other members need not be as saved: a watch plot added beside a
         tolerance typed and cleared is one pending edit, the plot's. It was
@@ -1669,7 +1672,6 @@ class Session:
         other way is for a tree no op of the Session's wrote — a move or a
         wrap stages the whole tree (`edit_tree`), and moved back it is the
         implicit one again, unmarked."""
-        saved = candidate.saved_entry(model_id) or {"model": model_id}
         entry = candidate.entry(model_id)
         if entry is None or not has_metrics(entry):
             return []
@@ -1686,21 +1688,11 @@ class Session:
             tree = op["value"]
         if not json_equal(entry["metrics"], tree):
             return []
-
-        def writes_the_tree(op: PatchOp) -> bool:
-            return op.path == "/metrics" or op.path.startswith("/metrics/")
-
-        def rest(of: dict) -> dict:
-            return {k: v for k, v in of.items() if k != "metrics"}
-
-        kept = [op.raw() for op in mine if not writes_the_tree(op)]
-        try:
-            alone = apply_patch_to_document({"tests": [saved]}, model_id, kept)
-        except PatchError:
-            return []
-        if not json_equal(rest(spec_entry(alone, model_id) or {}), rest(entry)):
-            return []
-        return [op for op in mine if writes_the_tree(op)]
+        return [
+            op
+            for op in mine
+            if op.path == "/metrics" or op.path.startswith("/metrics/")
+        ]
 
     def _saved_scoring_tree(self, spec: SpecDocument, model_id: str) -> bool:
         """Whether the tree `_materialization` builds for the model's entry
