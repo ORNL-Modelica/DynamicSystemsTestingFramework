@@ -141,6 +141,11 @@ class ShellPanel:
             raise RuntimeError("no row at this placement")
         self._row(title, build)
 
+    def retitle(self, title: str) -> None:
+        # Quiet where there is no page's row (a dialog): the contract's no-op.
+        if self._target is not None:
+            self._target.page.retitle(self._target, title)
+
     def lead(self, build: Callable[[], None]) -> None:
         # Loud, like `row`: a placement with no lead place asked for one.
         if self._lead is None:

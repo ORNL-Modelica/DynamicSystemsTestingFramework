@@ -8,14 +8,19 @@ it.
 
 The fold is DERIVED from the tree at every paint, and nothing remembers it:
 a member whose criterion is edited is its own row at the next paint, and
-one edited back folds again. So nothing here is rebuilt for it. The
-criteria's rows stand where the card drew them, flat and in tree order; a
-fold's row is put in before its first member's, and a member is that same
-row with two attributes — ``data-member`` (its indent) and ``hidden``
-(while its fold is closed). Attributes, never classes: a server repaint of
-a row's classes writes its whole class attribute (the U5 spike), and both
-survive every repaint. An editor being typed in is therefore never
-re-parented or redrawn by a row joining or leaving a fold.
+one edited back folds again. So nothing here is rebuilt for it, and no row
+is moved. The criteria's rows stand where the card drew them, flat and in
+tree order; a fold's row is put in before its first member's, and a member
+is that same row with two attributes — ``data-member`` (its indent) and
+``hidden`` (while its fold is closed). Attributes, never classes: a server
+repaint of a row's classes writes its whole class attribute (the U5 spike),
+and both survive every repaint. Where a row is SHOWN is its CSS ``order``
+in the column: a fold's row, then its members as one block, then — a
+sibling of the fold, never between two of its members — the row of an
+element with a criterion of its own. An editor being typed in is therefore
+never re-parented, moved or redrawn by a row joining or leaving a fold (a
+row moved in the document loses the focus inside it); the cost is that Tab
+goes through the rows in tree order, not in the order shown.
 
 Which folds are open is the browser tab's (`TabState.family_unfolded`),
 kept as their members' paths so it follows the members — a fold whose first
@@ -29,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
-from ...discovery.unit_tests import is_unit_test_variable
 from ...reporting.tree_rows import criteria_rows
 from ..capabilities import Placement
 from ..family_rows import Fold, criterion_of, fold_rows, is_fold, leaf_of, tally
@@ -224,14 +228,25 @@ class FoldRow:
         return True
 
 
+def _show_at(element: ui.element, order: int) -> None:
+    """Where ``element`` is shown in its column (its CSS ``order``), sent
+    only when it moved."""
+    if element.style.get("order") != str(order):
+        element.style(f"order: {order}")
+
+
 class Folding:
-    """One card's folds: `PlotCard` builds it after its criteria rows and
-    calls `paint` wherever it paints them."""
+    """One card's folds: `PlotCard` builds it after its criteria rows,
+    calls `paint` wherever it paints them, and `released` when its editor
+    closes."""
 
     def __init__(self, card: PlotCard, column: ui.column, crumb_ch: int) -> None:
         self.card, self.column, self.crumb_ch = card, column, crumb_ch
         #: Each member's fold, by the member's path, as last painted.
         self.fold_of: dict[str, Fold] = {}
+        #: Whether the last paint held an open fold's members together
+        #: (`fold_rows`' ``pinned``): what `released` has to undo.
+        self.held = False
 
     @property
     def rows(self) -> dict[str, Any]:
@@ -265,54 +280,44 @@ class Folding:
             return None
         return is_open[1]
 
-    def _held(self) -> set[str]:
-        """The member rows something is open under — the page's editor or
-        its form row: their fold is shown, or what is open under them is
-        open under nothing."""
-        held = set()
+    def _under(self) -> set[str]:
+        """The criteria rows something is open under — the page's editor or
+        its form row. A fold such a row is a member of is shown unfolded,
+        or what is open under it is open under nothing: a criterion typed
+        to its fold's value while that fold is shut joins it, and its
+        editor would go on staging edits from a row nobody can see."""
+        under = set()
         opened = self._open()
         if opened is not None and not is_fold(opened):
-            held.add(opened)
+            under.add(opened)
         form = self.card.page.form
         if form is not None:
-            held |= {
+            under |= {
                 path
                 for path, row in self.rows.items()
                 if row.target is form[0] and not is_fold(path)
             }
-        return held
+        return under
 
     # -- painting -----------------------------------------------------------------
 
-    def _derive(self, view: dict | None, pinned: tuple[str, ...]) -> list[Fold]:
-        page = self.card.page
-        project = page.shell.session.project
-        test = project.test(page.model_id) if project is not None else None
-        subject = self.card.subject
-        return [
-            entry
-            for entry in fold_rows(
-                criteria_rows(view, subject),
-                # D140: an element of the test's UnitTests component is a
-                # test quantity of its own.
-                unit_tests=[
-                    n
-                    for n in subject
-                    if test is not None and is_unit_test_variable(test, n)
-                ],
-                pinned=pinned,
-            )
-            if isinstance(entry, Fold)
-        ]
-
     def paint(self, view: dict | None) -> None:
         """The folds as the tree has them now, into the rows standing: a
-        fold's row comes, goes or is repainted, and every criterion's row
-        is a member of one or its own."""
+        fold's row comes, goes or is repainted, every criterion's row is a
+        member of one or its own, and each is shown in its place."""
         card, rows = self.card, self.rows
         if len(card.subject) < 2:
             # One variable is no family: nothing on this card can fold, and
-            # most cards are this one — asked on every sync.
+            # most cards are this one — asked on every sync. It is also
+            # what keeps a UnitTests element out of every fold: each is a
+            # plot of its own (D140, `derive_plots`).
+            return
+        criteria = criteria_rows(view, card.subject)
+        standing = {path for path in rows if not is_fold(path)}
+        if {str(row["leaf"]["path"]) for row in criteria} != standing:
+            # The rows standing are another tree's — a leaf came or went,
+            # and the rebuild that draws the new ones follows. Reached when
+            # an editor closes on the way into that rebuild (`released`).
             return
         opened = self._open()
         pinned: tuple[str, ...] = ()
@@ -323,18 +328,19 @@ class Folding:
                 # group's must not merge the two under the typing hand.
                 pinned = rows[opened].fold.paths
             else:
+                self.held = False  # the close below has nothing to release
                 card.page.drop_editor()
-        folds = {fold.key: fold for fold in self._derive(view, pinned)}
+        self.held = bool(pinned)
+        entries = fold_rows(criteria, pinned=pinned)
+        folds = {entry.key: entry for entry in entries if isinstance(entry, Fold)}
         for key in [key for key in rows if is_fold(key) and key not in folds]:
-            if self._open() == key:
-                card.page.drop_editor()
             gone = rows.pop(key)
             gone.slot.delete()
             gone.row.delete()
         self.fold_of = {path: fold for fold in folds.values() for path in fold.paths}
         # A fold holding something open is unfolded, and stays so.
         unfolded = self.unfolded
-        for path in self._held():
+        for path in self._under():
             fold = self.fold_of.get(path)
             if fold is not None and not unfolded & set(fold.paths):
                 unfolded |= set(fold.paths)
@@ -355,9 +361,27 @@ class Folding:
                 row.row.update()
             if _set_prop(row.slot, "hidden", True if shut else None):
                 row.slot.update()
+        self._lay_out(entries)
+
+    def _lay_out(self, entries: list[dict | Fold]) -> None:
+        """Where each row is shown: `fold_rows`' order — a fold where its
+        first member's row was, a criterion's own row where it was — with
+        each fold's members as one block right under it, and every row's
+        slot (its editor's place) right under the row."""
+        shown: list[Any] = []
+        for entry in entries:
+            if isinstance(entry, Fold):
+                shown.append(self.rows[entry.key])
+                shown += [self.rows[path] for path in entry.paths]
+            else:
+                shown.append(self.rows[str(entry["leaf"]["path"])])
+        for k, row in enumerate(shown):
+            _show_at(row.row, 2 * k)
+            _show_at(row.slot, 2 * k + 1)
 
     def _add(self, fold: Fold) -> FoldRow:
-        """A fold's row and its slot, put in before its first member's row."""
+        """A fold's row and its slot, put in before its first member's row
+        — in the document too, so Tab reaches its chevron before them."""
         with self.column:
             row = FoldRow(self, fold, self.crumb_ch)
         first = self.rows[fold.paths[0]].row
@@ -366,6 +390,18 @@ class Folding:
         row.slot.move(target_index=at + 1)
         self.rows[fold.key] = row
         return row
+
+    def released(self) -> None:
+        """An editor on this card closed (`PlotCard.close_editor`'s last
+        word): if it was a fold's, its members are no longer held together,
+        and the rows are repainted from the tree — at once, since no event
+        follows a close. Left as they were, a fold typed to its neighbour's
+        value read as two rows of one criterion, and its Indices then
+        staged a second leaf on an element that had one (the executing
+        review's H1)."""
+        if self.held:
+            self.held = False
+            self.paint(self.card._view())
 
     # -- folding ------------------------------------------------------------------
 

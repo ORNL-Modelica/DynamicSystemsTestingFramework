@@ -121,6 +121,9 @@ class TestPage:
         #: The one open form row: its target, its title, its build, its
         #: column, and the node's raw JSON it was last built from.
         self.form: tuple[RowTarget, str, RowBuild, ui.column, str] | None = None
+        #: The open form row's title, which its form may say again
+        #: (`retitle`).
+        self.form_title: ui.label | None = None
         #: A criterion to open at the end of the next sync, and the plot
         #: it was asked from (`reveal`).
         self.pending_reveal: tuple[str, int | None] | None = None
@@ -367,8 +370,23 @@ class TestPage:
         target, title, build, column, _ = self.form
         column.clear()
         with column:
-            ui.label(title).classes("text-subtitle2").mark(f"form-title:{target.key}")
+            self.form_title = (
+                ui.label(title)
+                .classes("text-subtitle2")
+                .mark(f"form-title:{target.key}")
+            )
             build(self._close_row)
+
+    def retitle(self, target: RowTarget, title: str) -> None:
+        """`Panel.retitle`: the open form row under ``target`` reads
+        ``title`` from now on — a later rebuild of the row starts from it.
+        Nothing for a row that is not the open one."""
+        if self.form is None or self.form[0] is not target:
+            return
+        _, _, build, column, built = self.form
+        self.form = (target, title, build, column, built)
+        if self.form_title is not None and not self.form_title.is_deleted:
+            self.form_title.set_text(title)
 
     def _close_row(self) -> None:
         """Take the open form row away, if there is one; nothing is redrawn

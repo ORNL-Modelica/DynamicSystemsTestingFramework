@@ -43,6 +43,13 @@ M = "Lib.M"
         ("7,1:3", [1, 2, 3, 7]),  # any order between the parts
         (" 1 : 3 , 7 ", [1, 2, 3, 7]),
         ("4:4", [4]),
+        # The indices are the result file's: a zero-based array has a 0.
+        ("0", [0]),
+        ("0:4", [0, 1, 2, 3, 4]),
+        ("0:2:4,7", [0, 2, 4, 7]),
+        # start:step:end — read the other way round it is ONE element, which
+        # is why an Indices field counts what it names beside it
+        ("1:20:5", [1]),
     ],
 )
 def test_an_indices_text_names_its_indices_ascending(text, indices):
@@ -67,10 +74,13 @@ def test_a_ranges_end_is_included():
         ("9:2:1", "9:2:1 ends before it starts."),
         ("1:3,2", "2 is written twice."),
         ("4,4", "4 is written twice."),
-        ("0", "0: indices start at 1."),
-        ("0:3", "0:3: indices start at 1."),
-        ("-1", "-1: indices start at 1."),
+        ("-1", "-1: an index is not negative."),
+        ("-2:3", "-2:3: an index is not negative."),
         ("1:0:5", "1:0:5: the step is at least 1."),
+        # only ASCII digits are an index, whatever else Unicode calls a digit
+        ("１:３", "'１:３' is not an index or a range"),
+        ("٣", "'٣' is not an index or a range"),
+        ("²", "'²' is not an index or a range"),
         ("1:-1:5", "1:-1:5: the step is at least 1."),
         ("a", "'a' is not an index or a range"),
         ("1:", "'1:' is not an index or a range"),
@@ -281,15 +291,6 @@ def test_two_families_fold_apart():
     ]
 
 
-def test_a_unit_tests_element_never_folds():
-    """D140: each is a test quantity of its own, whatever its name's shape."""
-    names = ["unitTests.x[1]", "unitTests.x[2]", "unitTests.x[3]"]
-    tree = _and(*({"metric": "nrmse", "variable": n} for n in names))
-    assert _shape(fold_rows(_all_rows(tree), unit_tests=names)) == names
-    # ... and by its name alone it would have: this is the rule, not a shape.
-    assert len(fold_rows(_all_rows(tree))) == 1
-
-
 def test_a_name_that_is_no_element_never_folds():
     tree = _and(
         {"metric": "nrmse", "variable": "x[2,3]"},
@@ -388,9 +389,10 @@ def test_a_family_is_every_element_the_file_has():
 def test_no_family_no_indices_field():
     assert family_in(NAMES, "x") is None  # no element of an array
     assert family_in(NAMES, "m[1]") is None  # the only element there is
-    # D140: a UnitTests element is a test quantity of its own
-    assert family_in(NAMES, "unitTests.x[1]", unit_tests=NAMES[-2:]) is None
-    assert family_in(NAMES, "unitTests.x[1]") is not None  # ... by that rule alone
+    # By its NAME a UnitTests element is one of an array: that it is a test
+    # quantity of its own (D140) is said by who knows the test — the add
+    # form (`edit_tree._family`) and the plots, one per element.
+    assert family_in(NAMES, "unitTests.x[1]") is not None
 
 
 def test_an_index_the_family_lacks_is_refused_naming_its_size():
@@ -404,6 +406,24 @@ def test_an_index_the_family_lacks_is_refused_naming_its_size():
     assert str(e.value) == "pipe.T[1:20] has 20 elements; 21:22 are not among them."
     with pytest.raises(ValueError, match="Indices is empty"):
         family.chosen("")
+
+
+def test_a_zero_based_family_takes_its_own_text():
+    """The executing review's M1: `y[0]` … `y[4]` prefilled `0:4` and was
+    told "indices start at 1". The check is membership, not a floor."""
+    family = family_in([f"y[{i}]" for i in range(5)], "y[2]")
+    assert family is not None
+    assert (family.label, family.text) == ("y[0:4]", "0:4")
+    assert family.chosen(family.text) == [f"y[{i}]" for i in range(5)]
+    assert family.chosen("0") == ["y[0]"]
+    with pytest.raises(ValueError) as e:
+        family.chosen("0:5")
+    assert str(e.value) == "y[0:4] has 5 elements; 5 is not one of them."
+    one_based = family_in(NAMES, "pipe.T[1]")
+    assert one_based is not None
+    with pytest.raises(ValueError) as e:
+        one_based.chosen("0:3")
+    assert str(e.value) == "pipe.T[1:20] has 20 elements; 0 is not one of them."
 
 
 def test_a_family_with_a_gap_in_the_file_says_what_it_has():
@@ -453,7 +473,7 @@ def test_ops_as_one_are_the_tree_they_give_and_leave_the_tree_read_alone():
 MEMBERS = [f"/metrics/children/{i}" for i in range(1, 5)]
 
 
-def test_indices_grow_adds_after_the_last_member_with_the_folds_criterion():
+def test_indices_grow_adds_in_index_order_with_the_folds_criterion():
     tree = _tree6()
     names = [f"pipe.T[{i}]" for i in (1, 2, 3, 4, 6, 7)]
     plan = reindex(M, tree, MEMBERS, names)
@@ -488,6 +508,7 @@ def test_indices_shrink_removes_those_leaves_and_nothing_else():
     ]
     assert plan.paths == ("/metrics/children/1", "/metrics/children/2")
     assert all(op.op == "remove" for op in plan.ops)
+    assert (plan.added, plan.removed) == ((), ("pipe.T[1]", "pipe.T[3]"))
 
 
 def test_indices_swap_adds_and_removes_in_one_plan():
@@ -511,7 +532,146 @@ def test_indices_unchanged_is_no_op():
     assert plan.paths == tuple(MEMBERS)
 
 
-def test_members_apart_keep_their_places_and_the_new_one_follows_the_last():
+def test_the_groups_leaves_stay_in_index_order():
+    """A new element goes right after the member with the next smaller
+    index — before the first, when it is smaller than all — so `1:20`,
+    `1:5:20`, `1:20` leaves the leaves as they were (decided 6): after the
+    last member they came back 1, 6, 11, 16, 2, 3, …, and Save rewrote a
+    tree nobody had changed."""
+    stepped = _and(
+        {"metric": "nrmse", "variable": "m"},
+        *(_leaf(i, tolerance=0.1) for i in (1, 6, 11, 16)),
+        {"metric": "nrmse", "variable": "z"},
+    )
+    names = [f"pipe.T[{i}]" for i in range(1, 21)]
+    plan = reindex(M, stepped, MEMBERS, names)
+    new = _apply(stepped, plan.ops)
+    assert [c["variable"] for c in new["children"]] == ["m", *names, "z"]
+    assert plan.paths == tuple(f"/metrics/children/{i}" for i in range(1, 21))
+    assert all(op.op == "add" for op in plan.ops)
+    assert plan.added == tuple(
+        n for n in names if n[7:-1] not in ("1", "6", "11", "16")
+    )
+    # smaller than every member: before the first
+    tree = _and({"metric": "nrmse", "variable": "m"}, _leaf(3), _leaf(4))
+    plan = reindex(M, tree, ["/metrics/children/1", "/metrics/children/2"], names[:4])
+    assert [c["variable"] for c in _apply(tree, plan.ops)["children"]] == [
+        "m",
+        *names[:4],
+    ]
+    # no member left to stand beside: where the group was
+    plan = reindex(M, tree, ["/metrics/children/1", "/metrics/children/2"], names[6:8])
+    assert [c["variable"] for c in _apply(tree, plan.ops)["children"]] == [
+        "m",
+        *names[6:8],
+    ]
+    assert plan.paths == ("/metrics/children/1", "/metrics/children/2")
+    # members the tree holds out of order stay where they are
+    tree = _and(_leaf(5), _leaf(2), {"metric": "nrmse", "variable": "m"})
+    plan = reindex(
+        M,
+        tree,
+        ["/metrics/children/0", "/metrics/children/1"],
+        [names[i] for i in (1, 2, 4, 5)],
+    )
+    assert [c["variable"] for c in _apply(tree, plan.ops)["children"]] == [
+        "pipe.T[5]",
+        "pipe.T[6]",
+        "pipe.T[2]",
+        "pipe.T[3]",
+        "m",
+    ]
+
+
+GAP = ["/metrics/children/1", "/metrics/children/2", "/metrics/children/4"]
+
+
+def _gap_tree(third: dict) -> dict:
+    """`and[m, T1, T2, <third>, T4, z]`: the fold is T1, T2, T4."""
+    return _and(
+        {"metric": "nrmse", "variable": "m"},
+        _leaf(1),
+        _leaf(2),
+        third,
+        _leaf(4),
+        {"metric": "nrmse", "variable": "z"},
+    )
+
+
+@pytest.mark.parametrize(
+    "third",
+    [
+        _leaf(3, tolerance=0.5),
+        {"combinator": "warn", "children": [_leaf(3)]},
+        {"combinator": "warn", "children": [_leaf(3, tolerance=0.5)]},
+    ],
+)
+def test_indices_over_an_element_with_its_own_criterion_are_refused(third):
+    """The executing review's M2: Indices 1:4 over the gap added a SECOND
+    nrmse on pipe.T[3] beside its own — a warn(T3) became a hard criterion,
+    a PASS a FAIL. Refused, naming the element; nothing is planned."""
+    tree = _gap_tree(third)
+    with pytest.raises(ValueError) as e:
+        reindex(M, tree, GAP, [f"pipe.T[{i}]" for i in (1, 2, 3, 4)])
+    assert str(e.value) == (
+        "pipe.T[3] already has its own nrmse criterion under this group — "
+        "edit or remove that one, or leave 3 out"
+    )
+    # left out, the edit goes through
+    plan = reindex(M, tree, GAP, ["pipe.T[1]", "pipe.T[2]"])
+    assert [op.op for op in plan.ops] == ["remove"]
+
+
+def test_several_elements_with_their_own_criteria_are_named_together():
+    tree = _and(_leaf(1), _leaf(2), _leaf(3, tolerance=0.5), _leaf(5, tolerance=0.7))
+    with pytest.raises(ValueError) as e:
+        reindex(
+            M,
+            tree,
+            ["/metrics/children/0", "/metrics/children/1"],
+            [f"pipe.T[{i}]" for i in range(1, 6)],
+        )
+    assert str(e.value) == (
+        "pipe.T[3] and pipe.T[5] already have their own nrmse criteria under this "
+        "group — edit or remove those, or leave 3,5 out"
+    )
+
+
+def test_another_metric_on_the_element_is_not_its_own_criterion_of_this_kind():
+    """A range on pipe.T[3] beside an nrmse fold: the fold's nrmse is a
+    second, different criterion there, and is added."""
+    tree = _gap_tree({"metric": "range", "variable": "pipe.T[3]", "min_value": 0})
+    plan = reindex(M, tree, GAP, [f"pipe.T[{i}]" for i in (1, 2, 3, 4)])
+    new = _apply(tree, plan.ops)
+    assert [(c["metric"], c["variable"]) for c in new["children"]][1:6] == [
+        ("nrmse", "pipe.T[1]"),
+        ("nrmse", "pipe.T[2]"),
+        ("nrmse", "pipe.T[3]"),
+        ("range", "pipe.T[3]"),
+        ("nrmse", "pipe.T[4]"),
+    ]
+
+
+@pytest.mark.parametrize("third", [_leaf(3), _leaf(3, against="primary", window={})])
+def test_an_identical_leaf_beside_the_fold_is_taken_in_never_doubled(third):
+    """From below, whatever the page showed: an element that already has
+    the fold's very criterion under that node gets no second one — it is a
+    member (the executing review's H1 staged the duplicate)."""
+    tree = _gap_tree(third)
+    plan = reindex(M, tree, GAP, [f"pipe.T[{i}]" for i in (1, 2, 3, 4)])
+    assert plan.ops == () and plan.added == ()
+    assert plan.paths == tuple(f"/metrics/children/{i}" for i in (1, 2, 3, 4))
+    # ... and beside an add of another element
+    plan = reindex(M, tree, GAP, [f"pipe.T[{i}]" for i in (1, 2, 3, 4, 5)])
+    new = _apply(tree, plan.ops)
+    assert [c["variable"] for c in new["children"]] == [
+        "m",
+        *(f"pipe.T[{i}]" for i in (1, 2, 3, 4, 5)),
+        "z",
+    ]
+
+
+def test_members_apart_keep_their_places_and_the_new_one_follows_its_neighbour():
     tree = _and(
         _leaf(1), {"metric": "nrmse", "variable": "m"}, _leaf(2), _leaf(3, tolerance=9)
     )

@@ -238,6 +238,14 @@ class Panel(Protocol):
         editor — raises."""
         ...
 
+    def retitle(self, title: str) -> None:
+        """Say the title of the form row this panel opened again — a form
+        whose subject follows a choice made in it (the add form's `Add a
+        criterion for pipe.T[1:20]` follows its Indices). The row keeps it
+        when the page builds it again. A no-op while no row of this
+        panel's is open, and where a form is drawn in a dialog."""
+        ...
+
     def lead(self, build: Callable[[], None]) -> None:
         """Draw ``build()`` in the node's lead place — beside its status,
         where its kind is read (a combinator's kind dropdown). The place is

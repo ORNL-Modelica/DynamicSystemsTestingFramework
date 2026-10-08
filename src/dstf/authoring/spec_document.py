@@ -36,6 +36,19 @@ class PatchOp:
     #: (`Session.stage`). Not part of the op: not in `raw()`, not in its
     #: equality.
     materializes: bool = field(default=False, compare=False)
+    #: An ``add /metrics`` that is an EDIT of the tree its entry scores by,
+    #: given whole — one gesture on a folded criteria row (D152,
+    #: `family_rows.as_one`) — rather than a new tree: `Session.stage`
+    #: writes a flat entry's implicit tree out first, marked, exactly as
+    #: for a per-leaf op, so the preview diffs the edit against that tree
+    #: and says Save writes it. Not part of the op, as ``materializes``.
+    edits_tree: bool = field(default=False, compare=False)
+    #: What the op did, in words, for the preview to say above its entry's
+    #: diff — ``(key, sentence)`` pairs: where a later op replaces this one
+    #: (`Session.stage`), a sentence under the same key replaces its
+    #: sentence and any other is kept, so a value typed over is one line
+    #: and two gestures are two. Not part of the op.
+    notes: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
     def raw(self) -> dict:
         """The op as ``apply_patch`` and the envelope carry it."""

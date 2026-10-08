@@ -63,6 +63,8 @@ class HostPanel:
         self.moves: list[tuple[str, str, dict[str, str]]] = []
         #: What `on_click` registered: the row's click, or None.
         self.click: Callable[[], None] | None = None
+        #: The open row's title label, which `retitle` says again.
+        self.title: ui.label | None = None
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -77,8 +79,12 @@ class HostPanel:
 
         slot.clear()
         with slot:
-            ui.label(title).mark("host-row:title")
+            self.title = ui.label(title).mark("host-row:title")
             build(close)
+
+    def retitle(self, title: str) -> None:
+        if self.title is not None and not self.title.is_deleted:
+            self.title.set_text(title)
 
     def lead(self, build: Callable[[], None]) -> None:
         if self.lead_slot is None:

@@ -30,6 +30,7 @@ def family_project(
     tracked: Sequence[int] | None = None,
     fail: Sequence[int] = (3,),
     tree: dict | None = None,
+    first: int = 1,
 ) -> tuple[Path, Path]:
     """`test_session._project` with A's result holding ``x`` (PASS against
     its baseline) and ``pipe.T[1]`` … ``pipe.T[n]``: element ``i`` is
@@ -40,13 +41,18 @@ def family_project(
     default), so an untracked element is in the result FILE and the
     baseline and scores as soon as a criterion names it. ``tree`` is A's
     ``metrics``; without one its tree is the implicit ``and`` of one nrmse
-    per tracked variable."""
+    per tracked variable. ``first`` is the array's first index: 0 for a
+    zero-based one, ``pipe.T[0]`` … ``pipe.T[n - 1]``, whose values are
+    those of the one-based array's elements in the same places."""
     cfg, work = _project(tmp_path)
     t = [i / 4 for i in range(5)]
-    indices = list(range(1, n + 1))
+    indices = list(range(first, first + n))
+    scale = {i: i - first + 1 for i in indices}  # never a flat zero signal
     variables = {"x": [v * 1.001 for v in t]}
     for i in indices:
-        variables[element(i)] = [i * v * (1.25 if i in fail else 1.001) for v in t]
+        variables[element(i)] = [
+            scale[i] * v * (1.25 if i in fail else 1.001) for v in t
+        ]
     (work / "test_0001" / "result.json").write_text(
         json.dumps({"success": True, "time": t, "variables": variables}),
         encoding="utf-8",

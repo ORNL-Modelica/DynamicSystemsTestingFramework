@@ -16,6 +16,7 @@ from dstf.authoring.builtin.edit_tree import EditTree
 from dstf.authoring.family_rows import Fold, fold_rows, tally
 from dstf.authoring.session import Selection, Session, SessionView
 from dstf.authoring.spec_document import PatchOp
+from dstf.authoring.tree_pointer import node_or_none
 from dstf.discovery.patch_apply import PatchError
 from dstf.reporting.status import FAIL, PASS, classify
 from dstf.reporting.tree_rows import criteria_rows
@@ -103,7 +104,8 @@ def test_add_with_indices_stages_one_criterion_per_chosen_element_in_order(bare)
     assert all(
         leaf == {"metric": "nrmse", "variable": leaf["variable"]} for leaf in leaves
     )
-    assert len(bare.spec.pending) == 1
+    # the flat test's own tree written out, and the ONE op of the gesture
+    assert [op.materializes for op in bare.spec.pending] == [True, False]
     # scored at once: the file holds them, and so does the baseline
     by_name = {vc.name: vc.passed for vc in bare.comparisons[A].variables}
     assert by_name == {
@@ -194,14 +196,28 @@ def test_a_unit_tests_element_takes_no_indices(tmp_path):
 # -- the folded row's editor (R2) ----------------------------------------------------
 
 
+def _named(session, paths) -> tuple[str, ...]:
+    """The variables at ``paths``, as a panel reads them when it is built."""
+    tree = session.tree(A)
+    return tuple((node_or_none(tree, path) or {}).get("variable", "") for path in paths)
+
+
 def _edit(
-    session, paths, *, metric="nrmse", params=None, window=None, against="primary"
+    session,
+    paths,
+    *,
+    metric="nrmse",
+    params=None,
+    window=None,
+    against="primary",
+    variables=None,
 ):
     return EditCriteria().act(
         _view(session, leaf_path=paths[0], leaf_paths=paths),
         model_id=A,
         path=paths[0],
         paths=paths,
+        variables=_named(session, paths) if variables is None else variables,
         metric=metric,
         variable=element(1),
         params=params or {},
@@ -237,17 +253,59 @@ def test_a_folded_edit_of_some_members_leaves_the_others(six):
     ]
 
 
-def test_one_gesture_on_a_fold_is_one_pending_edit(six):
-    """D4: what the header counts. A flat test materializes nothing first —
-    the op is the whole tree, as a move's is — and a second edit in a row
-    replaces the first: a value typed into a folded field is one edit, not
-    one per key and not one per element."""
+def test_one_gesture_on_a_fold_is_one_pending_edit(tmp_path):
+    """D4: what the header counts — ONE op for the gesture, the whole tree
+    it leaves, and a second edit in a row replaces the first: a value typed
+    into a folded field is one edit, not one per key and not one per
+    element."""
+    session = _session(*family_project(tmp_path, 6, tree=_saved_six()))
+    members = _members(session, range(1, 7))
+    session.apply(_edit(session, members, params={"tolerance": 0.5}))
+    assert [(op.op, op.path) for op in session.spec.pending] == [("add", ROOT)]
+    session.apply(_edit(session, members, params={"tolerance": 0.25}))
+    assert [(op.op, op.path) for op in session.spec.pending] == [("add", ROOT)]
+    assert {leaf["tolerance"] for leaf in session.tree(A)["children"][1:]} == {0.25}
+
+
+def test_on_a_flat_test_the_tree_is_written_out_first_as_for_one_criterion(six):
+    """The executing review's M5: a fold edit on a FLAT test staged the
+    whole tree as one unmarked add — the preview showed every line of it
+    as added, with no note, and an Indices removal showed nothing deleted.
+    It is staged as a per-leaf edit is: the implicit tree written out
+    first, marked, and then the gesture's one op, so the preview diffs
+    against that tree."""
+    from dstf.authoring.spec_preview import entry_lines
+
     members = _members(six, range(1, 7))
     six.apply(_edit(six, members, params={"tolerance": 0.5}))
-    assert [(op.op, op.path) for op in six.spec.pending] == [("add", ROOT)]
+    assert [(op.op, op.path, op.materializes) for op in six.spec.pending] == [
+        ("add", ROOT, True),
+        ("add", ROOT, False),
+    ]
+    lines = entry_lines(six.spec.preview_base(A), six.spec.entry(A))
+    kinds = [line.kind for line in lines]
+    # six tolerance lines came, and nothing else is news (JSON's comma on
+    # the line before each is rewritten: six more pairs)
+    assert (
+        sum('"tolerance": 0.5' in line.text for line in lines if line.kind == "add")
+        == 6
+    )
+    assert kinds.count("add") == 12 and kinds.count("del") == 6
+    # typed over: still those two ops
     six.apply(_edit(six, members, params={"tolerance": 0.25}))
-    assert [(op.op, op.path) for op in six.spec.pending] == [("add", ROOT)]
-    assert {leaf["tolerance"] for leaf in six.tree(A)["children"][1:]} == {0.25}
+    assert [op.materializes for op in six.spec.pending] == [True, False]
+    # an Indices removal on a flat test shows what it removed
+    six.discard()
+    six.apply(_reindex(six, _members(six, range(1, 7)), "1:5"))
+    assert [op.materializes for op in six.spec.pending] == [True, False]
+    lines = entry_lines(six.spec.preview_base(A), six.spec.entry(A))
+    removed = [line.text for line in lines if line.kind == "del"]
+    assert any("pipe.T[6]" in text for text in removed)
+    assert not any("pipe.T[" in line.text for line in lines if line.kind == "add")
+    # ... and an add over a slice is the tree and the add
+    six.discard()
+    six.apply(_add(six, metric="tube", indices="1:2"))
+    assert [op.materializes for op in six.spec.pending] == [True, False]
 
 
 def test_a_value_typed_and_cleared_on_a_folded_field_leaves_nothing_pending(six):
@@ -255,7 +313,7 @@ def test_a_value_typed_and_cleared_on_a_folded_field_leaves_nothing_pending(six)
     back is the one the saved entry already scores by, and is no edit."""
     members = _members(six, range(1, 7))
     six.apply(_edit(six, members, params={"tolerance": 0.5}))
-    assert len(six.spec.pending) == 1
+    assert len(six.spec.pending) == 2  # the flat test's tree, and the edit
     six.apply(_edit(six, members))
     assert six.spec.pending == []
     assert classify(six.comparisons[A]) == FAIL  # as saved
@@ -296,7 +354,7 @@ def test_a_refused_folded_edit_stages_nothing_for_any_member(six, more, error, s
 
 def test_a_member_that_is_gone_refuses_the_whole_edit(six):
     members = (*_members(six, (1, 2)), f"{ROOT}/children/40")
-    with pytest.raises(ValueError, match="names no criterion"):
+    with pytest.raises(ValueError, match="no longer one folded row"):
         _edit(six, members, params={"tolerance": 0.5})
     assert six.spec.pending == []
 
@@ -304,11 +362,12 @@ def test_a_member_that_is_gone_refuses_the_whole_edit(six):
 # -- the folded editor's Indices (D5) -------------------------------------------------
 
 
-def _reindex(session, paths, text):
+def _reindex(session, paths, text, variables=None):
     return EditFamily().act(
         _view(session, leaf_path=paths[0], leaf_paths=paths),
         model_id=A,
         paths=paths,
+        variables=_named(session, paths) if variables is None else variables,
         indices=text,
     )
 
@@ -455,3 +514,294 @@ def test_the_report_goes_on_listing_one_criteria_row_per_leaf(tmp_path):
     session = _session(cfg, work)
     rows = criteria_rows(session.tree_view(A), [element(i) for i in range(1, 7)])
     assert [row["variable"] for row in rows] == [element(i) for i in range(1, 7)]
+
+
+# -- the fix batch of the executing review -------------------------------------------
+
+
+def _saved_six() -> dict:
+    """`and[x, nrmse pipe.T[1..6]]`, written in the spec."""
+    return {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *({"metric": "nrmse", "variable": element(i)} for i in range(1, 7)),
+        ],
+    }
+
+
+def _leaves_at(session) -> list[tuple[str, dict]]:
+    out = []
+
+    def walk(node, path):
+        if "metric" in node:
+            out.append((path, node))
+        for i, child in enumerate(node.get("children") or []):
+            walk(child, f"{path}/children/{i}")
+
+    walk(session.tree(A), ROOT)
+    return out
+
+
+def _family_paths(session) -> tuple[str, ...]:
+    """Every pipe.T leaf of the tree, wherever it is, in tree order."""
+    return tuple(
+        path
+        for path, leaf in _leaves_at(session)
+        if leaf["variable"].startswith("pipe.T[")
+    )
+
+
+def _rest(tree):
+    """``tree`` without its pipe.T leaves: what a gesture on the fold must
+    leave exactly as it was."""
+    if "metric" in tree:
+        return None if tree["variable"].startswith("pipe.T[") else tree
+    kids = [_rest(child) for child in tree.get("children") or []]
+    return {**tree, "children": [kid for kid in kids if kid is not None]}
+
+
+def test_a_zero_based_family_adds_and_edits_by_its_own_indices(tmp_path):
+    """M1: `pipe.T[0]` … `pipe.T[4]` prefilled `0:4`, and Add answered
+    "0:4: indices start at 1"; its fold refused its own text, and `1:4`
+    was the only way on — which removed pipe.T[0] for good."""
+    from dstf.authoring.builtin.edit_tree import _family
+
+    session = _session(*family_project(tmp_path, 5, tracked=(), fail=(), first=0))
+    family = _family(_view(session), A, element(2))
+    assert family is not None and family.text == "0:4"
+    session.apply(_add(session, variable=element(2), indices=family.text))
+    assert _variables(session) == ["x", *(element(i) for i in range(5))]
+    assert classify(session.comparisons[A]) == PASS
+    members = _family_paths(session)
+    assert _reindex(session, members, "0:4") is None  # its own text: no edit
+    session.apply(_reindex(session, members, "0,2:4"))
+    assert _variables(session) == ["x", *(element(i) for i in (0, 2, 3, 4))]
+    with pytest.raises(ValueError) as e:
+        _reindex(session, _family_paths(session), "0:5")
+    assert str(e.value) == "pipe.T[0:4] has 5 elements; 5 is not one of them."
+    with pytest.raises(ValueError, match="an index is not negative"):
+        _add(session, variable=element(2), indices="-1:2")
+
+
+@pytest.mark.parametrize(
+    "third",
+    [
+        {
+            "combinator": "warn",
+            "children": [{"metric": "nrmse", "variable": "pipe.T[3]"}],
+        },
+        {"metric": "nrmse", "variable": "pipe.T[3]", "tolerance": 0.5},
+    ],
+)
+def test_indices_never_give_an_element_a_second_criterion_beside_its_own(
+    tmp_path, third
+):
+    """M2: pipe.T[3] fails, and is a warning (or has its own tolerance) —
+    the test PASSES. Indices 1:6 on the fold of the others added a second,
+    hard nrmse on it: FAIL. Refused, naming it; nothing is staged."""
+    tree = _saved_six()
+    tree["children"][3] = third
+    session = _session(*family_project(tmp_path, 6, tree=tree))
+    assert classify(session.comparisons[A]) == PASS
+    members = _members(session, (1, 2, 4, 5, 6))
+    with pytest.raises(ValueError) as e:
+        _reindex(session, members, "1:6")
+    assert str(e.value) == (
+        "pipe.T[3] already has its own nrmse criterion under this group — "
+        "edit or remove that one, or leave 3 out"
+    )
+    assert session.spec.pending == []
+    assert classify(session.comparisons[A]) == PASS
+
+
+def test_an_element_that_has_the_folds_criterion_is_never_given_it_twice(tmp_path):
+    """H1 from below: asked to add pipe.T[3] to a fold beside an identical
+    leaf on it — a page that showed a stale fold did — nothing is staged,
+    and never a second leaf."""
+    session = _session(*family_project(tmp_path, 6, tree=_saved_six()))
+    members = _members(session, (1, 2, 4, 5, 6))
+    assert _reindex(session, members, "1:6") is None
+    assert session.spec.pending == []
+
+
+SHAPES = {
+    "a sibling leaf": lambda family: {
+        "combinator": "and",
+        "children": [
+            {"metric": "range", "variable": "x", "min_value": -5, "max_value": 5},
+            *family,
+            {"metric": "nrmse", "variable": "x", "tolerance": 0.3},
+        ],
+    },
+    "a sibling combinator": lambda family: {
+        "combinator": "and",
+        "children": [
+            {
+                "combinator": "k-of-n",
+                "k": 1,
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {"metric": "range", "variable": "x", "min_value": 0}
+                        ],
+                    },
+                ],
+            },
+            *family,
+            {"combinator": "or", "children": [{"metric": "nrmse", "variable": "x"}]},
+        ],
+    },
+    "the family in a nested combinator": lambda family: {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {
+                "combinator": "or",
+                "children": [
+                    {"metric": "range", "variable": "x", "max_value": 9},
+                    {"combinator": "and", "children": [*family]},
+                ],
+            },
+            {"metric": "nrmse", "variable": "x", "tolerance": 0.2},
+        ],
+    },
+}
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_a_gesture_on_a_fold_leaves_the_rest_of_the_tree_as_it_was(tmp_path, shape):
+    """M3: the gesture is staged as the WHOLE tree, so everything it does
+    not name rides in the op — a sibling criterion, a sibling group and its
+    children, the groups around the family. Each as it was, after a folded
+    field's edit, an Indices change and an add over a slice."""
+    family = [{"metric": "nrmse", "variable": element(i)} for i in (1, 2, 3, 4)]
+    tree = SHAPES[shape](family)
+    session = _session(*family_project(tmp_path, 8, tracked=(1, 2, 3, 4), tree=tree))
+    rest = _rest(session.tree(A))
+    assert rest != session.tree(A) and json.dumps(rest).count('"variable": "x"') >= 2
+
+    session.apply(_edit(session, _family_paths(session), params={"tolerance": 0.5}))
+    assert _rest(session.tree(A)) == rest
+    assert [
+        leaf.get("tolerance")
+        for _, leaf in _leaves_at(session)
+        if leaf["variable"].startswith("pipe.T[")
+    ] == [0.5] * 4
+
+    session.apply(_reindex(session, _family_paths(session), "2:3,6"))
+    assert _rest(session.tree(A)) == rest
+    assert [
+        leaf["variable"]
+        for _, leaf in _leaves_at(session)
+        if leaf["variable"].startswith("pipe.T[")
+    ] == [element(i) for i in (2, 3, 6)]
+
+    parent = _family_paths(session)[0].rsplit("/children/", 1)[0]
+    session.apply(
+        _add(session, path=parent, variable=element(7), metric="range", indices="7:8")
+    )
+    assert _rest(session.tree(A)) == rest
+    assert len(_family_paths(session)) == 5
+    # the bytes Save writes hold the rest as the file held it
+    session.save()
+    assert _rest(session.tree(A)) == rest
+
+
+def test_a_folded_edit_whose_paths_went_stale_is_refused(tmp_path):
+    """M4: an edit staged elsewhere moved the tree under the fold's paths —
+    x's range now stands where pipe.T[1] stood — and the edit of "every
+    member" overwrote x's criterion with nrmse 0.5. A path whose leaf is
+    not the member it was read as refuses the whole edit."""
+    session = _session(*family_project(tmp_path, 6, tree=_saved_six()))
+    members = _members(session, range(1, 7))
+    named = _named(session, members)
+    session.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                f"{ROOT}/children/1",
+                {"metric": "range", "variable": "x", "min_value": -5, "max_value": 5},
+            )
+        ]
+    )
+    before = session.tree(A)
+    pending = list(session.spec.pending)
+    with pytest.raises(ValueError, match="no longer one folded row"):
+        _edit(session, members, params={"tolerance": 0.5}, variables=named)
+    with pytest.raises(ValueError, match="no longer one folded row"):
+        _reindex(session, members, "1:3", variables=named)
+    # ... and one that names its members by nothing is refused too
+    with pytest.raises(ValueError, match="no longer one folded row"):
+        _edit(session, members, params={"tolerance": 0.5}, variables=())
+    assert session.tree(A) == before and session.spec.pending == pending
+
+
+def test_the_same_indices_put_back_are_no_edit(tmp_path):
+    """Decided 6: `1:20`, `1:5:20`, `1:20` left the leaves 1, 6, 11, 16, 2,
+    3, … and Save rewrote a tree nobody had changed. The group stays in
+    index order, so the tree is as saved and nothing is pending."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *({"metric": "nrmse", "variable": element(i)} for i in range(1, 21)),
+        ],
+    }
+    cfg, work = family_project(tmp_path, 20, fail=(6,), tree=tree)
+    session = _session(cfg, work)
+    saved = (cfg.parent / "test_spec.json").read_bytes()
+    session.apply(_reindex(session, _family_paths(session), "1:5:20"))
+    assert len(session.spec.pending) == 1
+    session.apply(_reindex(session, _family_paths(session), "1:20"))
+    assert _variables(session) == ["x", *(element(i) for i in range(1, 21))]
+    assert session.spec.pending == []
+    session.save()
+    assert (cfg.parent / "test_spec.json").read_bytes() == saved
+
+
+def _notes(session) -> list[str]:
+    return [text for op in session.spec.pending for _, text in op.notes]
+
+
+def test_each_gesture_says_what_it_did_for_the_preview(tmp_path):
+    """M5: one line per gesture above the entry's diff, in words."""
+    cfg, work = family_project(tmp_path, 20, tracked=range(1, 7), fail=())
+    session = _session(cfg, work)
+    members = _members(session, range(1, 7))
+    session.apply(_edit(session, members, params={"tolerance": 0.05}))
+    assert _notes(session) == ["tolerance → 0.05 on 6 criteria of pipe.T[1:6]"]
+    # typed over: the line follows, it does not pile up
+    session.apply(_edit(session, members, params={"tolerance": 0.5}))
+    assert _notes(session) == ["tolerance → 0.5 on 6 criteria of pipe.T[1:6]"]
+    session.apply(
+        _edit(session, members, params={"tolerance": 0.5}, window={"start": 0.2})
+    )
+    assert _notes(session) == [
+        "tolerance → 0.5 on 6 criteria of pipe.T[1:6]",
+        "window start → 0.2 on 6 criteria of pipe.T[1:6]",
+    ]
+    session.apply(_reindex(session, members, "1:5,9"))
+    assert _notes(session)[2:] == [
+        "Indices: removed pipe.T[6]",
+        "Indices: added pipe.T[9]",
+    ]
+    session.apply(_add(session, metric="range", indices="1:5:20"))
+    assert _notes(session)[4:] == ["added 4 criteria: pipe.T[1:5:16]"]
+    # ONE op holds the gestures (and the flat test's tree before it)
+    assert [(op.op, op.path, op.materializes) for op in session.spec.pending] == [
+        ("add", ROOT, True),
+        ("add", ROOT, False),
+    ]
+    session.discard()
+    members = _members(session, range(1, 7))
+    session.apply(_edit(session, members, metric="range", params={"min_value": 0}))
+    assert _notes(session) == ["mode → range on 6 criteria of pipe.T[1:6]"]
+    session.apply(_edit(session, members, metric="range", params={}))
+    assert _notes(session) == [
+        "mode → range on 6 criteria of pipe.T[1:6]",
+        "min_value cleared on 6 criteria of pipe.T[1:6]",
+    ]

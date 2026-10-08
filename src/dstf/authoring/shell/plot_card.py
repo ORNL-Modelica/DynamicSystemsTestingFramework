@@ -1013,6 +1013,7 @@ class PlotCard:
             row.row.classes(remove="dstf-crit-open")
         self.editor, self.editor_box, self.hint = None, None, None
         self.open_path, self._edited = None, None
+        self.folding.released()
 
     def _applied(self, name: str) -> None:
         """What a successful submit from the editor leaves to do. A drag

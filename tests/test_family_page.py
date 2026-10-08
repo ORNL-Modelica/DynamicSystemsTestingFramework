@@ -5,6 +5,8 @@ rows are repainted — never rebuilt — when the fold moves."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 pytest.importorskip("nicegui")
@@ -75,12 +77,23 @@ def _fold_rows(card) -> dict[str, FoldRow]:
     return {k: r for k, r in card.rows.items() if isinstance(r, FoldRow)}
 
 
-def _drawn_order(card) -> list[str]:
-    """The rows' markers in the order the criteria column holds them."""
+def _row_marks(children) -> list[str]:
     out = []
-    for child in card.folding.column.default_slot.children:
+    for child in children:
         out.extend(m for m in child._markers if m.startswith(("family:", "criterion:")))
     return out
+
+
+def _dom_order(card) -> list[str]:
+    """The rows' markers in the order the criteria column HOLDS them."""
+    return _row_marks(card.folding.column.default_slot.children)
+
+
+def _drawn_order(card) -> list[str]:
+    """The rows' markers in the order the column SHOWS them: by each
+    element's CSS `order`, the column's own order among equals."""
+    children = card.folding.column.default_slot.children
+    return _row_marks(sorted(children, key=lambda c: int(c.style.get("order", 0))))
 
 
 def _tolerances(shell) -> list:
@@ -202,18 +215,21 @@ async def test_a_folded_field_changes_every_member_and_the_count_follows(six):
         with page.client:
             field.set_value(0.5)
         assert _tolerances(six) == [None, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-        # D4: one gesture, one pending edit
-        assert [(op.op, op.path) for op in six.session.spec.pending] == [("add", ROOT)]
+        # D4: one gesture, one op — after the flat test's own tree, written
+        # out first as for any criterion's edit
+        assert [
+            (op.op, op.path, op.materializes) for op in six.session.spec.pending
+        ] == [("add", ROOT, True), ("add", ROOT, False)]
         await _settled(lambda: _one(user, f"family-count:1:{FOLD}").text == "6 pass")
         assert _one(user, f"family-pill:1:{FOLD}").text == "pass"
-        assert _one(user, "pending").text == "1 pending edit"
+        assert _one(user, "pending").text == "2 pending edits"
         # the editor being typed in is not rebuilt, nor closed
         assert _numbers(page, "Tolerance") == [field]
         assert page.open == (1, FOLD)
         # typed over: still one edit
         with page.client:
             field.set_value(0.25)
-        assert len(six.session.spec.pending) == 1
+        assert len(six.session.spec.pending) == 2
         assert _tolerances(six)[1:] == [0.25] * 6
 
 
@@ -239,7 +255,7 @@ async def test_a_member_edited_leaves_the_fold_and_stands_as_its_own_row(six):
         _click(user, _one(user, f"criterion:1:{leaf(3)}"))
         assert page.open == (1, leaf(3))
         (field,) = _numbers(page, "Tolerance")
-        before = _drawn_order(card)
+        before = _dom_order(card)
         ids = {p: row.row.id for p, row in card.rows.items()}
         with page.client:
             field.set_value(0.5)
@@ -248,10 +264,16 @@ async def test_a_member_edited_leaves_the_fold_and_stands_as_its_own_row(six):
         assert _members(card) == [leaf(i) for i in (1, 2, 4, 5, 6)]
         assert _hidden(card) == []
         assert _one(user, f"family-count:1:{FOLD}").text == "5 pass"
-        # REPAINTED: every row is the element it was, where it was, and the
-        # field being typed in is still the field
-        assert _drawn_order(card) == before
+        # REPAINTED: every row is the element it was, where the column
+        # holds it, and the field being typed in is still the field ...
+        assert _dom_order(card) == before
         assert {p: row.row.id for p, row in card.rows.items()} == ids
+        # ... and it is SHOWN after the fold's block, a sibling of the fold
+        assert _drawn_order(card) == [
+            f"family:1:{FOLD}",
+            *(f"criterion:1:{leaf(i)}" for i in (1, 2, 4, 5, 6)),
+            f"criterion:1:{leaf(3)}",
+        ]
         assert _numbers(page, "Tolerance") == [field]
         assert page.open == (1, leaf(3))
         # ... and typed back, it folds again
@@ -346,13 +368,83 @@ async def test_a_value_on_its_way_through_another_groups_does_not_merge_them(tmp
         with page.client:
             field.set_value(0.55)
         assert _tolerances(shell)[1:] == [0.55, 0.55, 0.5, 0.5]
-        # ... and closed at one value they ARE one criterion, and one fold
+        # ... and closed at one value they ARE one criterion, and one fold:
+        # Done releases the hold and repaints the rows from the tree — no
+        # other event comes to do it.
         with page.client:
             field.set_value(0.5)
-            page.close_editor()
-            page.sync()
+        await _settled(lambda: _tolerances(shell)[1:] == [0.5] * 4)
+        await asyncio.sleep(0.5)  # every event of the edit heard
+        _click(user, _one(user, f"editor-done:1:{FOLD}"))
+        assert page.open is None
         assert list(_fold_rows(card)) == [FOLD]
         assert card.rows[FOLD].name.text == "nrmse · pipe.T[1:4]"
+
+
+def _t3_apart() -> dict:
+    """`and[x, nrmse pipe.T[1..6]]` with pipe.T[3] at its own tolerance."""
+    return {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *(
+                {
+                    "metric": "nrmse",
+                    "variable": element(i),
+                    **({"tolerance": 0.5} if i == 3 else {}),
+                }
+                for i in range(1, 7)
+            ),
+        ],
+    }
+
+
+async def test_done_releases_the_hold_and_the_rows_are_the_trees_again(tmp_path):
+    """The executing review's H1: the fold pipe.T[1,2,4:6] typed to T3's own
+    value and closed with Done still read pipe.T[1,2,4:6] beside T3's row —
+    nothing repainted once the hold was gone — and its Indices, grown over
+    the "gap", staged a second identical criterion on pipe.T[3]."""
+    shell = _shell(*family_project(tmp_path, 6, tree=_t3_apart()))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        assert card.rows[FOLD].name.text == "nrmse · pipe.T[1,2,4:6]"
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        (field,) = _numbers(page, "Tolerance")
+        with page.client:
+            field.set_value(0.5)
+        await _settled(lambda: _tolerances(shell)[1:] == [0.5] * 6)
+        await asyncio.sleep(0.5)  # every event of the edit heard
+        assert card.rows[FOLD].name.text == "nrmse · pipe.T[1,2,4:6]"  # held
+        _click(user, _one(user, f"editor-done:1:{FOLD}"))
+        assert card.rows[FOLD].name.text == "nrmse · pipe.T[1:6]"
+        assert _members(card) == [leaf(i) for i in range(1, 7)]
+        # reopened, it is the fold of all six, and its Indices as they are
+        # stage nothing
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        assert _one(user, f"editor-hint:1:{FOLD}").text == HINT.format(n=6) + STAGED
+        assert _one(user, "edit-family:indices").value == "1:6"
+        pending = len(shell.session.spec.pending)
+        _enter(user, "edit-family:indices")
+        assert len(shell.session.spec.pending) == pending
+        names = [c["variable"] for c in shell.session.tree(A)["children"]]
+        assert names == ["x", *(element(i) for i in range(1, 7))]
+
+
+async def test_switching_to_another_criterion_releases_the_hold_too(tmp_path):
+    shell = _shell(*family_project(tmp_path, 6, tree=_t3_apart()))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        (field,) = _numbers(page, "Tolerance")
+        with page.client:
+            field.set_value(0.5)
+        await _settled(lambda: _tolerances(shell)[1:] == [0.5] * 6)
+        await asyncio.sleep(0.5)
+        _click(user, _one(user, f"criterion:0:{leaf(0)}"))  # x's row, on plot 0
+        assert page.open == (0, leaf(0))
+        assert card.rows[FOLD].name.text == "nrmse · pipe.T[1:6]"
 
 
 async def test_an_edit_from_elsewhere_rebuilds_the_fields_or_closes_the_editor(six):
@@ -417,7 +509,7 @@ async def test_indices_in_the_folded_editor_add_and_remove_and_reopen_it(some):
         _enter(user, "edit-family:indices")  # Enter applies
         names = [c["variable"] for c in some.session.tree(A)["children"]]
         assert names == ["x", element(2), element(3), element(4), element(8)]
-        assert len(some.session.spec.pending) == 1
+        assert len(some.session.spec.pending) == 2
         # pipe.T[2] is child 1 now: the same key, on rows drawn anew
         new = fold_key(leaf(1))
         await _settled(
@@ -446,6 +538,13 @@ async def test_indices_down_to_one_element_opens_that_criterions_own_editor(some
         _click(user, _one(user, f"family:1:{FOLD}"))
         with page.client:
             _one(user, "edit-family:indices").set_value("3")
+        assert _one(user, "edit-family:count").text == "→ 1 element (removes 3)"
+        _enter(user, "edit-family:indices")
+        # three of four would go: asked once, inline, and nothing is staged
+        assert _one(user, "edit-family:count").text == (
+            "Removes 3 of 4 criteria — Apply again to confirm"
+        )
+        assert some.session.spec.pending == []
         _enter(user, "edit-family:indices")
         await _settled(lambda: page.open == (1, leaf(1)))
         assert _fold_rows(page.cards[1]) == {}
@@ -539,7 +638,7 @@ async def test_add_over_a_slice_draws_one_folded_row_and_opens_its_editor(tmp_pa
         card = page.cards[1]
         assert card.rows[key].name.text == "nrmse · pipe.T[1:5:16]"
         assert _one(user, f"family-count:1:{key}").text == "3 pass · 1 fail"
-        assert _one(user, "pending").text == "1 pending edit"
+        assert _one(user, "pending").text == "2 pending edits"
         assert _hidden(card) == [leaf(i) for i in range(1, 5)]
 
 
@@ -647,3 +746,340 @@ async def test_an_add_from_a_tree_row_reveals_the_fold_on_its_plot(tmp_path):
         key = fold_key(leaf(1))
         await _settled(lambda: page.open == (1, key))
         assert page.cards[1].rows[key].name.text == "nrmse · pipe.T[4:6]"
+
+
+async def test_unfolded_members_are_one_block_and_a_differing_row_follows_it(tmp_path):
+    """A fold's members stand together under it; an element with its own
+    criterion comes AFTER the block, a sibling of the fold's row — between
+    two members, with a 14 px outdent, it read as one of them. Two folds
+    whose members alternate in the tree are two blocks."""
+    shell = _shell(*family_project(tmp_path, 6, tree=_t3_apart()))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        expected = [
+            f"family:1:{FOLD}",
+            *(f"criterion:1:{leaf(i)}" for i in (1, 2, 4, 5, 6)),
+            f"criterion:1:{leaf(3)}",
+        ]
+        assert _drawn_order(card) == expected  # folded shut
+        _click(user, _one(user, f"family-chev:1:{FOLD}"))
+        assert _drawn_order(card) == expected  # and unfolded
+        assert _members(card) == [leaf(i) for i in (1, 2, 4, 5, 6)]
+        # every row's slot — its editor's place — follows its row
+        children = sorted(
+            card.folding.column.default_slot.children,
+            key=lambda c: int(c.style.get("order", 0)),
+        )
+        for path, row in card.rows.items():
+            assert children[children.index(row.row) + 1] is row.slot, path
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *(
+                {"metric": "nrmse", "variable": element(i), "tolerance": 0.1 + i % 2}
+                for i in range(1, 7)
+            ),
+        ],
+    }
+    shell = _shell(*family_project(tmp_path / "two", 6, fail=(), tree=tree))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        odd, even = fold_key(leaf(1)), fold_key(leaf(2))
+        assert _drawn_order(page.cards[1]) == [
+            f"family:1:{odd}",
+            *(f"criterion:1:{leaf(i)}" for i in (1, 3, 5)),
+            f"family:1:{even}",
+            *(f"criterion:1:{leaf(i)}" for i in (2, 4, 6)),
+        ]
+
+
+async def test_a_criterion_typed_to_a_shut_folds_value_unfolds_it(tmp_path):
+    """pipe.T[3] has its own row beside the SHUT fold of the rest; typed to
+    their value it joins them — and the fold opens, or its editor would go
+    on staging edits from a row nobody can see."""
+    shell = _shell(*family_project(tmp_path, 6, tree=_t3_apart()))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        assert _hidden(card) == [leaf(i) for i in (1, 2, 4, 5, 6)]
+        _click(user, _one(user, f"criterion:1:{leaf(3)}"))
+        (field,) = _numbers(page, "Tolerance")
+        with page.client:
+            field.set_value(None)
+        await _settled(lambda: card.rows[FOLD].name.text == "nrmse · pipe.T[1:6]")
+        assert _hidden(card) == []
+        assert page.open == (1, leaf(3))
+        assert _numbers(page, "Tolerance") == [field]
+        # ... and it stays open once the editor is closed: the tab's record
+        _click(user, _one(user, f"editor-done:1:{leaf(3)}"))
+        assert _hidden(card) == []
+
+
+async def test_a_form_under_a_row_that_joins_a_shut_fold_keeps_it_open(tmp_path):
+    from test_test_page import _open_form
+
+    shell = _shell(*family_project(tmp_path, 6, tree=_t3_apart()))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        await _open_form(user, f"wrap:{leaf(3)}", f"criterion:1:{leaf(3)}")
+        assert page.form is not None
+        # another tab puts pipe.T[3] back with the rest
+        shell.session.stage(
+            [
+                PatchOp(
+                    A, "replace", leaf(3), {"metric": "nrmse", "variable": element(3)}
+                )
+            ]
+        )
+        await _settled(lambda: card.rows[FOLD].name.text == "nrmse · pipe.T[1:6]")
+        assert page.form is not None
+        assert _hidden(card) == []
+
+
+async def test_unit_tests_elements_are_never_one_folded_row(tmp_path):
+    """D140 on the page: each UnitTests element is a plot of its own, so no
+    card holds two of them and nothing folds — whatever their names' shape
+    — and the add form offers no Indices for one."""
+    from test_session import UT1, UT2, _unit_tests_project
+
+    shell = _shell(*_unit_tests_project(tmp_path))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [tuple(card.subject) for card in page.cards] == [(UT1,), (UT2,)]
+        for card in page.cards:
+            assert _fold_rows(card) == {}
+            assert _hidden(card) == [] and _members(card) == []
+        await _open_add(user, page, f"add-for:{UT1}")
+        assert not _none(user, f"apply-add:{UT1}:variable")
+        assert _none(user, f"apply-add:{UT1}:indices")  # there, and not shown
+
+
+# -- the fix batch: the add form ------------------------------------------------------
+
+
+async def test_a_rows_plus_starts_at_its_own_element_and_the_plots_at_all(tmp_path):
+    """Decided 1: the `+` on the row of ONE element is asked for a second
+    criterion on it — Indices starts at that element's index. The plot's
+    `+` and a group's start at every element."""
+    from test_test_page import _click_in, _open_form
+
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *({"metric": "nrmse", "variable": element(i)} for i in (1, 2, 3)),
+        ],
+    }
+    shell = _shell(*family_project(tmp_path, 10, tracked=(1, 2, 3), fail=(), tree=tree))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        _click(user, _one(user, f"family-chev:1:{FOLD}"))
+        # a member's own row, under the family's plot
+        await _open_form(user, f"add:{leaf(3)}", f"criterion:1:{leaf(3)}")
+        mark = f"apply-add:{leaf(3)}"
+        assert _one(user, f"{mark}:indices").value == "3"
+        assert _one(user, f"{mark}:count").text == "1 element"
+        assert _one(user, mark).text == "Add 1 criterion"
+        # ... another element picked in that form: every element again
+        with page.client:
+            _one(user, f"{mark}:variable").set_value(element(7))
+        assert _one(user, f"{mark}:indices").value == "1:10"
+        _click(user, _one(user, f"cancel:{leaf(3)}"))
+        # the same row in the tree
+        _click(user, _one(user, "tree:toggle"))
+        await _settled(lambda: page.tree.rows.visible)
+        await _open_form(user, f"add:{leaf(2)}", f"tree-row:{leaf(2)}")
+        assert _one(user, f"apply-add:{leaf(2)}:indices").value == "2"
+        _click_in(user, f"cancel:{leaf(2)}", "tree")
+        # the plot's `+`, and a group's: all
+        await _open_add(user, page, f"add-for:{element(1)}")
+        assert _one(user, f"apply-add:{element(1)}:indices").value == "1:10"
+
+
+async def test_the_add_form_counts_what_indices_name_as_they_are_typed(some):
+    """Decided 2 and 3: beside Indices a count, on the button the same,
+    and in the row's title what is being added to — `1:10:5` is
+    start:step:end, ONE element, and reads as five."""
+    async with user_simulation(root=some.index) as user:
+        page = await _test_page(some, user)
+        await _open_add(user, page, f"add-for:{element(1)}")
+        mark = f"apply-add:{element(1)}"
+        indices, count, add = (
+            _one(user, f"{mark}:indices"),
+            _one(user, f"{mark}:count"),
+            _one(user, mark),
+        )
+        title = _one(user, "form-title:plot:1")
+        assert (indices.value, count.text, add.text) == (
+            "1:10",
+            "10 elements",
+            "Add 10 criteria",
+        )
+        assert title.text == "Add a criterion for pipe.T[1:10]"
+        with page.client:
+            indices.set_value("1:10:5")
+        assert (count.text, add.text) == ("1 element", "Add 1 criterion")
+        assert title.text == "Add a criterion for pipe.T[1]"
+        with page.client:
+            indices.set_value("1:5:10")
+        assert (count.text, add.text) == ("2 elements", "Add 2 criteria")
+        assert title.text == "Add a criterion for pipe.T[1:5:6]"
+        # a text that names nothing yet says why, and the title waits
+        with page.client:
+            indices.set_value("1:")
+        assert "is not an index or a range" in count.text
+        assert add.text == "Add"
+        assert title.text == "Add a criterion for pipe.T[1:5:6]"
+        with page.client:
+            indices.set_value("12")
+        assert count.text == "pipe.T[1:10] has 10 elements; 12 is not one of them."
+        # a variable that is no element: no count, the plain button, its name
+        with page.client:
+            _one(user, f"{mark}:variable").set_value("x")
+        assert _none(user, f"{mark}:count")
+        assert add.text == "Add"
+        assert title.text == "Add a criterion for x"
+
+
+async def test_the_folded_editor_counts_what_enter_would_do(some):
+    """Decided 2 and 7: the count beside the fold's Indices, and Esc."""
+    async with user_simulation(root=some.index) as user:
+        page = await _test_page(some, user)
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        field, count = (
+            _one(user, "edit-family:indices"),
+            _one(user, "edit-family:count"),
+        )
+        assert count.text == "→ 4 elements (no change)"
+        for text, says in (
+            ("1:6", "→ 6 elements (adds 2)"),
+            ("2:4", "→ 3 elements (removes 1)"),
+            ("3:6", "→ 4 elements (removes 2, adds 2)"),
+            ("1:4:1", "→ 1 element (removes 3)"),
+            ("1:", "'1:' is not an index or a range: write 3, 1:5 or 1:5:20."),
+        ):
+            with page.client:
+                field.set_value(text)
+            assert count.text == says, text
+        # Esc puts the applied text back, and nothing was staged by typing
+        from nicegui.testing.user_interaction import UserInteraction
+
+        UserInteraction(user, {field}, None).trigger("keydown.escape")
+        assert field.value == "1:4"
+        assert count.text == "→ 4 elements (no change)"
+        assert some.session.spec.pending == []
+
+
+async def test_a_large_removal_is_asked_once_and_a_changed_text_asks_again(some):
+    async with user_simulation(root=some.index) as user:
+        page = await _test_page(some, user)
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        field, count = (
+            _one(user, "edit-family:indices"),
+            _one(user, "edit-family:count"),
+        )
+        with page.client:
+            field.set_value("1:4:1")  # meant 1:1:4, every element
+        _enter(user, "edit-family:indices")
+        assert count.text == "Removes 3 of 4 criteria — Apply again to confirm"
+        assert some.session.spec.pending == []
+        # typed on: the question is gone, and another large removal asks anew
+        with page.client:
+            field.set_value("2")
+        assert count.text == "→ 1 element (removes 3)"
+        _click(user, _one(user, "edit-family:apply"))
+        assert count.text == "Removes 3 of 4 criteria — Apply again to confirm"
+        assert some.session.spec.pending == []
+        # half is not "more than half": no question
+        with page.client:
+            field.set_value("1:2")
+        _enter(user, "edit-family:indices")
+        assert [c["variable"] for c in some.session.tree(A)["children"]] == [
+            "x",
+            element(1),
+            element(2),
+        ]
+
+
+# -- the fix batch: the preview --------------------------------------------------------
+
+
+async def test_the_preview_says_what_a_fold_gesture_did_and_that_save_writes_the_tree(
+    six,
+):
+    """M5: on a flat test the note a single criterion's edit gets, and one
+    line per gesture above the diff."""
+    async with user_simulation(root=six.index) as user:
+        page = await _test_page(six, user)
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        (field,) = _numbers(page, "Tolerance")
+        with page.client:
+            field.set_value(0.05)
+            _one(user, "edit-family:indices").set_value("1:5")
+        _enter(user, "edit-family:indices")
+        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        _click(user, _one(user, "pending"))
+        await user.should_see(marker=f"drawer-test:{A}", retries=20)
+        assert _one(user, "drawer-note").text == (
+            "Save also writes this test's 7 criteria out as a tree; they score "
+            "the same."
+        )
+        # (`elements` is a set: in the order they were drawn, by id)
+        said = sorted(user.find(marker="drawer-gesture").elements, key=lambda e: e.id)
+        assert [e.text for e in said] == [
+            "tolerance → 0.05 on 6 criteria of pipe.T[1:6]",
+            "Indices: removed pipe.T[6]",
+        ]
+        removed = [
+            "".join(c.text for c in e.default_slot.children)
+            for e in user.find(marker="diff-del").elements
+        ]
+        assert any("pipe.T[6]" in line for line in removed)
+
+
+# -- the fix batch: what an Indices change tells the page ------------------------------
+
+
+async def test_an_indices_change_moves_what_the_page_keys_by_path(tmp_path):
+    """M44: the nodes after the fold shift when its leaves come and go, and
+    the page is told where each went (`Panel.edited`): a group folded in
+    the tree card stays folded where it now is, and the record of unfolded
+    family rows does not land on another fold."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            *({"metric": "nrmse", "variable": element(i)} for i in (1, 2)),
+            *(
+                {"metric": "nrmse", "variable": element(i), "tolerance": 0.5}
+                for i in (3, 4)
+            ),
+            {"combinator": "or", "children": [{"metric": "nrmse", "variable": "x"}]},
+        ],
+    }
+    shell = _shell(
+        *family_project(tmp_path, 6, tracked=(1, 2, 3, 4), fail=(), tree=tree)
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        second = fold_key(leaf(3))
+        assert list(_fold_rows(card)) == [FOLD, second]
+        page.state.tree_folded[A] = [leaf(5)]  # the `or`, folded in the tree
+        _click(user, _one(user, f"family-chev:1:{FOLD}"))  # the first, unfolded
+        assert page.state.family_unfolded[A] == [leaf(1), leaf(2)]
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        with page.client:
+            _one(user, "edit-family:indices").set_value("1")
+        _enter(user, "edit-family:indices")
+        await _settled(lambda: page.open == (1, leaf(1)))
+        # pipe.T[2] went: the second fold is at children 2 and 3 now, the
+        # `or` at 4
+        assert page.state.tree_folded[A] == [leaf(4)]
+        assert page.state.family_unfolded.get(A) == [leaf(1)]
+        card = page.cards[1]
+        assert list(_fold_rows(card)) == [fold_key(leaf(2))]
+        assert _hidden(card) == [leaf(2), leaf(3)]  # still shut

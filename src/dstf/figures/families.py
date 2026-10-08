@@ -194,7 +194,9 @@ def slice_text(indices: Sequence[int]) -> str:
 #: refused before it is a list.
 MAX_INDICES = 100_000
 
-_INT = re.compile(r"[+-]?\d+")
+#: ASCII digits and nothing else Unicode calls one (``１``, ``٣``): `\d`
+#: takes those, and an index typed with them is a slip of the keyboard.
+_INT = re.compile(r"[+-]?[0-9]+")
 
 
 def parse_slice(text: str) -> list[int]:
@@ -203,10 +205,12 @@ def parse_slice(text: str) -> list[int]:
     with its end INCLUDED (``1:5``), a stepped one (``1:5:20`` is 1, 6, 11,
     16 — start:step:end, as Modelica writes it), and a comma list of those
     in any order (``1:3,7,10:2:20``); spaces anywhere. The indices are the
-    result file's: they start at 1.
+    result file's — any whole number from 0 — and which of them an array
+    HAS is its caller's to check: a zero-based array (``y[0]``) has a 0,
+    and a floor of 1 here refused the very text its field was filled with.
 
     ``ValueError`` with the sentence to show for anything else: nothing
-    written, a part that is no index or range, an index below 1, a step
+    written, a part that is no index or range, a negative index, a step
     below 1, a range that ends before it starts, an index written twice."""
     parts = [part.strip() for part in text.split(",")]
     if not any(parts):
@@ -224,8 +228,8 @@ def parse_slice(text: str) -> list[int]:
         values = [int(n) for n in numbers]
         first, last = values[0], values[-1]
         step = values[1] if len(values) == 3 else 1
-        if first < 1 or last < 1:
-            raise ValueError(f"{part}: indices start at 1.")
+        if first < 0 or last < 0:
+            raise ValueError(f"{part}: an index is not negative.")
         if step < 1:
             raise ValueError(f"{part}: the step is at least 1.")
         if last < first:

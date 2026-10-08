@@ -34,8 +34,9 @@ from ...comparison.seeds import (
 )
 from ...comparison.sides import parse_sides, signed_sides
 from ...discovery.unit_tests import is_unit_test_variable
-from ..capabilities import Panel, Patch, Placement
-from ..family_rows import Family, as_one, family_in, fold_key
+from ...figures.families import family_of
+from ..capabilities import Panel, Patch, Placement, plural
+from ..family_rows import Family, as_one, elements_text, family_in, fold_key
 from ..session import SIMULATE_ONLY, no_tree_error
 
 if TYPE_CHECKING:
@@ -283,7 +284,9 @@ class EditTree:
         if action == "add" and patch is not None and len(patch.ops) > 1:
             # One criterion per chosen element of a family (D152): one
             # gesture, one pending edit — the tree those adds give.
-            return Patch(ops=[as_one(model_id, tree, patch.ops)])
+            added = [op.value["variable"] for op in patch.ops]
+            said = f"added {len(added)} criteria: {elements_text(added)}"
+            return Patch(ops=[as_one(model_id, tree, patch.ops, [(said, said)])])
         return patch
 
 
@@ -532,6 +535,8 @@ def _add_form(
     mark: str,
     close: Callable[[], None],
     added: str,
+    own: bool = False,
+    title: Callable[[str], str] | None = None,
 ) -> None:
     """A form row's variable picker and metric select, the sentence, Cancel
     and Add (marked ``mark``), which stages and, once that went through,
@@ -550,7 +555,15 @@ def _add_form(
     (`_family`), an Indices field (D152, the owner's R1): filled with every
     element the result has (``1:20``), it takes a range, a stepped range
     and a list (`families.parse_slice`), and Add writes one criterion per
-    chosen element. Enter in it is Add."""
+    chosen element. Enter in it is Add. ``own``: the form was opened from
+    the row of ONE element (a criterion's `+`), and the field starts at
+    that element's own index — a second criterion on `pipe.T[3]` is what
+    its `+` is asked for, and "all twenty" there added nineteen nobody
+    meant. Beside the field a count of what it names, as it is typed, and
+    Add says the same (`Add 20 criteria`): `1:20:5` is start:step:end, one
+    element, and reads as five. ``title`` is the row's heading for what is
+    being added to — the plot's `+` says `Add a criterion for
+    pipe.T[1:20]`, following the pick and the Indices (`Panel.retitle`)."""
     from ..picker_rows import picker_rows
     from ..shell.picker import VariablePicker
 
@@ -567,18 +580,47 @@ def _add_form(
     #: chosen again, not the first metric of the list.
     kept: dict[str, str] = {}
 
-    def offer_indices(name: str) -> None:
-        """The Indices field follows the pick: every element of its family,
-        or no field."""
+    #: The picked variable's family, read once per pick: the count below
+    #: asks it on every key.
+    picked: dict[str, Family | None] = {"family": None}
+
+    def offer_indices(name: str, only: bool = False) -> None:
+        """The Indices field follows the pick: every element of its family
+        — the picked element's own index with ``only`` — or no field."""
         family = None if name in diagnostics else _family(s, model_id, name, names)
+        picked["family"] = family
         indices.set_visibility(family is not None)
+        counted.set_visibility(family is not None)
         if family is not None:
-            indices.set_value(family.text)
+            own_index = family_of(name)
+            text = family.text if not only or own_index is None else str(own_index[1])
             indices.props["hint"] = (
                 f"Elements of {family.label} to add the criterion for: a range "
                 "(1:5), a stepped range (1:5:20, start:step:end) or a list (1:3,7)."
             )
             indices.update()
+            indices.set_value(text)
+        count()
+
+    def count() -> None:
+        """What Add would add, said beside Indices and on the button, and
+        in the row's title, as the text is typed."""
+        family, name = picked["family"], var.value
+        what = texts[name].text if name in texts else name
+        if family is None:
+            add.set_text("Add")
+        else:
+            try:
+                chosen = family.chosen(str(indices.value or ""))
+            except ValueError as e:
+                counted.set_text(str(e))
+                add.set_text("Add")
+                return  # the title keeps the last text that named something
+            counted.set_text(plural(len(chosen), "element"))
+            add.set_text(f"Add {plural(len(chosen), 'criterion', 'criteria')}")
+            what = elements_text(chosen)
+        if title is not None:
+            ui_panel.retitle(title(what))
 
     def follow(name: str) -> None:
         """The Metric select offers what can score ``name`` (Q2)."""
@@ -606,12 +648,12 @@ def _add_form(
         marker=f"{mark}:variable",
     )
     indices = (
-        ui.input(label="Indices")
+        ui.input(label="Indices", on_change=lambda _e: count())
         .props("dense")
         .classes("w-full")
         .mark(f"{mark}:indices")
     )
-    offer_indices(first)
+    counted = ui.label().classes("dstf-why").mark(f"{mark}:count")
     options = _metrics_for(diagnostic=first in diagnostics)
     met = (
         ui.select(
@@ -661,6 +703,8 @@ def _add_form(
             if simulate_only:
                 add.disable()
                 ui.tooltip(SIMULATE_ONLY)
+    # Once Add stands: the count is said on it too.
+    offer_indices(first, only=own)
 
 
 def _family(
@@ -872,6 +916,8 @@ def _cluster(
             close=close,
             # From the tree as it is NOW, before the add moves the count.
             added=_added_path(s.tree(model_id), path),
+            # A criterion's `+` is its ONE element's.
+            own=not is_combinator,
         )
 
     def build_wrap(close: Callable[[], None]) -> None:
@@ -1024,6 +1070,7 @@ def _variable_plus(
             close=close,
             # From the tree as it is NOW, before the add moves the count.
             added=_added_path(s.tree(model_id), ROOT),
+            title=lambda what: f"Add a criterion for {what}",
         )
 
     button = ui.button(
