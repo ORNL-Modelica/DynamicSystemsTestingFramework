@@ -53,6 +53,9 @@ def _ok(test, test_key) -> TestRunResult:
     return TestRunResult(model_id=test.model_id, test_key=test_key, success=True)
 
 
+_SLEEP = "import time; time.sleep(120)"
+
+
 class _Worker(Worker):
     """A template worker whose `run_test` blocks on a gate, and whose start
     is scripted."""
@@ -60,6 +63,7 @@ class _Worker(Worker):
     _START_POLL_SECONDS = 0.02
     _CHILD_WATCH_SECONDS = 0.05
     cancel_grace = 2.0
+    launch_grace = 0.0  # these starts launch nothing, unless a test says so
 
     def __init__(self, worker_id, config, *, start=None, soft_cancel=None):
         super().__init__(worker_id, config)
@@ -216,6 +220,110 @@ class TestBoundedStart:
         with pytest.raises(WorkerStartError, match="never returned"):
             worker.start_within(5.0)
         assert worker.n_started == 1
+
+    def test_a_given_up_start_kills_the_process_it_had_launched(self, tmp_path):
+        """The tool is up and the start still waits on it when the bound
+        passes: the worker is closed, and the tool goes with it."""
+        release = threading.Event()
+        launched: list[subprocess.Popen] = []
+
+        def start(worker):
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            worker._track_launch(proc.pid)
+            release.wait(30)  # the tool's first answer, which never comes
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        try:
+            with pytest.raises(WorkerStartError, match="did not start within"):
+                worker.start_within(0.3)
+
+            assert launched, "the start never launched its tool"
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert not worker.is_alive() and worker.pids == set()
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_a_process_launched_after_the_give_up_is_killed_at_its_birth(
+        self, tmp_path
+    ):
+        """Given up before the tool existed: nobody is left to kill it, so
+        the launch does — and the start ends there."""
+        release, ended = threading.Event(), threading.Event()
+        launched: list[subprocess.Popen] = []
+        raised: list[BaseException] = []
+
+        def start(worker):
+            release.wait(30)  # e.g. the launch waiting for a free port
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            try:
+                worker._track_launch(proc.pid)
+            except WorkerStartError as exc:
+                raised.append(exc)
+                raise
+            finally:
+                ended.set()
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        try:
+            with pytest.raises(WorkerStartError):
+                worker.start_within(0.1)
+            assert launched == []
+
+            release.set()
+            assert ended.wait(10)
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert [str(exc) for exc in raised] == ["its start was given up"]
+            assert not worker.is_alive()
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_the_launch_itself_kills_what_an_abandoned_start_brought_up(self, tmp_path):
+        """Before the start returns, not after: the give-up waits only for
+        that return, and its caller may be gone a moment later."""
+        proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        worker = _Worker(0, _config(tmp_path))
+        worker._start_abandoned = True
+        try:
+            with pytest.raises(WorkerStartError, match="its start was given up"):
+                worker._track_launch(proc.pid)
+            assert proc.wait(10) is not None
+        finally:
+            proc.kill()
+
+    def test_the_give_up_waits_for_a_launch_in_flight(self, tmp_path):
+        """A launch call that hands its process over only when it returns
+        (OMPython's): the give-up does not return before that — a caller
+        that exits right after it would leave the tool running."""
+        release = threading.Event()
+        launched: list[subprocess.Popen] = []
+
+        def start(worker):
+            release.wait(30)  # inside the launch call
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            worker._track_launch(proc.pid)
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        worker.launch_grace = 20.0
+        threading.Timer(0.4, release.set).start()
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(WorkerStartError, match="did not start within 0.1 s"):
+                worker.start_within(0.1)
+
+            # Launched, and killed, by the time the give-up returned.
+            assert len(launched) == 1 and launched[0].wait(5) is not None
+            assert time.monotonic() - t0 < 10.0  # the launch's return, not the grace
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
 
     def test_a_start_whose_process_died_fails_at_once(self, tmp_path):
         """Not at the bound: the moment the tracked process is gone."""
@@ -650,6 +758,106 @@ class TestDymolaStop:
 
         assert Capability.CANCEL in PersistentDymolaBackend.capabilities
         assert Capability.CANCEL not in DymolaBackend.capabilities
+
+
+@posix_only
+class TestDymolaLaunch:
+    """Dymola is on record from the moment its process exists — not from the
+    moment the interface's constructor, which then waits for it to answer,
+    hands back a finished session."""
+
+    def _interface(self, gate_before_launch: threading.Event | None = None):
+        launched: list[subprocess.Popen] = []
+        answered = threading.Event()
+
+        class _Interface:
+            """DymolaInterface's shape where the launch is concerned."""
+
+            def __init__(self, showwindow=False, dymolapath=None):
+                self._dymola_process = None
+                if gate_before_launch is not None:
+                    gate_before_launch.wait(30)
+                self._start_dymola(dymolapath)
+                answered.wait(30)  # ping ... ping ... until Dymola answers
+
+            def _start_dymola(self, dymolapath):
+                self._dymola_process = subprocess.Popen([dymolapath, "120"])
+                launched.append(self._dymola_process)
+
+        return _Interface, launched, answered
+
+    def _worker(self, tmp_path, interface_cls, bound: float):
+        import shutil
+
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
+
+        exe = tmp_path / "bin" / "dymola"  # the name the kill guard asks for
+        exe.parent.mkdir()
+        shutil.copy(shutil.which("sleep"), exe)
+        worker = DymolaWorker(
+            0,
+            SimpleNamespace(
+                work_dir=tmp_path, backend_path=exe, worker_startup_timeout=bound
+            ),
+            SimpleNamespace(show_ide=False, backend_setup=[]),
+            interface_cls,
+        )
+        worker._START_POLL_SECONDS = 0.02
+        return worker
+
+    def test_a_start_given_up_during_the_launch_kills_dymola(self, tmp_path):
+        interface_cls, launched, answered = self._interface()
+        worker = self._worker(tmp_path, interface_cls, 0.3)
+        try:
+            with pytest.raises(WorkerStartError, match="did not start within 0.3 s"):
+                worker.start_within()
+
+            assert len(launched) == 1, "the constructor never launched"
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert worker.dymola is None and worker.pids == set()
+        finally:
+            answered.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_a_dymola_launched_after_the_give_up_is_killed_at_once(self, tmp_path):
+        gate = threading.Event()
+        interface_cls, launched, answered = self._interface(gate)
+        worker = self._worker(tmp_path, interface_cls, 0.1)
+        try:
+            with pytest.raises(WorkerStartError):
+                worker.start_within()
+            assert launched == []
+
+            gate.set()  # the launch goes ahead on the thread nobody waits for
+            _wait_until(lambda: len(launched) == 1)
+            _wait_until(lambda: launched[0].poll() is not None)
+            assert worker.dymola is None
+        finally:
+            gate.set()
+            answered.set()
+            for proc in launched:
+                proc.kill()
+
+    def test_a_started_worker_tracks_the_launched_process(self, tmp_path):
+        interface_cls, launched, answered = self._interface()
+        answered.set()
+        worker = self._worker(tmp_path, interface_cls, 5.0)
+        interface_cls.cd = lambda self, path: None
+        interface_cls.openModel = lambda self, path: True
+        interface_cls.ExecuteCommand = lambda self, cmd: True
+        interface_cls.getLastErrorLog = lambda self: ""
+        interface_cls.close = lambda self: None
+        worker.config.dependencies = []
+        worker.config.library_dir = tmp_path
+        try:
+            worker.start_within()
+            assert worker.is_alive() and worker.pids == {launched[0].pid}
+            worker.close(grace=0.5)
+            _wait_until(lambda: launched[0].poll() is not None)
+        finally:
+            for proc in launched:
+                proc.kill()
 
 
 class TestOpenModelicaStop:

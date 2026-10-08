@@ -140,6 +140,13 @@ class Worker(ABC):
     startup_timeout: float = 600.0
     #: How often :meth:`start_within` looks at a start in flight.
     _START_POLL_SECONDS: float = 0.25
+    #: A start given up with NO process on record may be inside its launch
+    #: call (OMPython launches omc and waits for its port file in one call,
+    #: ~0.1 s): how long the give-up waits for that call to hand the process
+    #: over — to :meth:`_track_launch`, which kills it — before it returns.
+    #: Without the wait, a caller that exits right after the give-up takes
+    #: the start's thread with it and leaves the tool running.
+    launch_grace: float = 2.0
     #: How often the watchdog looks at the tracked process while a test runs:
     #: is it still there, and which children does it have. A walk of the
     #: process table per tick and worker (tens of ms on Windows), so not the
@@ -303,7 +310,10 @@ class Worker(ABC):
 
         ``start()`` runs on a daemon thread. One given up on is closed again
         if it ever returns, and this object is not started a second time: a
-        thread still inside ``start()`` writes its state.
+        thread still inside ``start()`` writes its state. The process it
+        launched is killed at the give-up when it is on record by then, by
+        :meth:`_track_launch` when it comes on record later — which the
+        give-up waits for, :attr:`launch_grace` at most.
         """
         if self._start_abandoned:
             raise WorkerStartError("its previous start never returned")
@@ -367,7 +377,10 @@ class Worker(ABC):
                 abandoned[0] = not done.is_set()
             if abandoned[0]:
                 self._start_abandoned = True
+                launched = bool(self.pids)
                 self._close_quietly()
+                if not launched:
+                    done.wait(self.launch_grace)
                 raise WorkerStartError(reason)
             # It returned in the same instant: judged by its own outcome.
         exc = box.get("exc")
@@ -381,6 +394,28 @@ class Worker(ABC):
         if not isinstance(exc, Exception):
             raise exc
         raise WorkerStartError(str(exc)) from exc
+
+    def _track_launch(self, pid: int | None) -> None:
+        """The process this start launched EXISTS: record it. ``start()``
+        calls this the moment it does — before the first wait on the tool,
+        not when the launch call hands back a finished session — because a
+        start is given up from another thread, and the give-up can only
+        kill what is on record.
+
+        And the other way round: when the start was given up BEFORE the
+        process existed, nobody is left to kill it, so this kills it and
+        raises :class:`WorkerStartError`. (``_start_abandoned`` is set
+        before the give-up reads ``pids``, and ``pids`` is written here
+        before the flag is read: one of the two always sees the process.)
+        *pid* is ``None`` when the backend could not learn it.
+        """
+        self.pids = {int(pid)} if pid else set()
+        if self._start_abandoned:
+            if pid:
+                # No name guard: the launch call handed this PID over a
+                # moment ago and still holds its handle — it is not reused.
+                kill_process_tree(int(pid))
+            raise WorkerStartError("its start was given up")
 
     def abandon_start(self) -> None:
         """Give up this worker's :meth:`start_within`, from another thread

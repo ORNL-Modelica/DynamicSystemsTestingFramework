@@ -346,7 +346,7 @@ Three more things the base does for every worker, each with a hook for what only
 | Method / attribute | Required | Contract |
 |---|---|---|
 | `__init__(worker_id, config, ...)` | yes | Subclass extends with backend-specific args (e.g. `DymolaConfig`, an interface class). MUST call `super().__init__(worker_id, config)`. |
-| `start()` | abstract | Bring the process up, apply startup (library loads, framework settings), record the process PID in `self.pids` as soon as it exists, and name the call in flight in `self._step`. Raise on failure. May block: `start_within` is what bounds it. |
+| `start()` | abstract | Bring the process up, apply startup (library loads, framework settings), hand the process's PID to `self._track_launch(pid)` the moment the process exists — before the first wait on the tool, since a start is given up from another thread and the give-up kills only what is on record (a launch call that returns the PID late gets `launch_grace`, 2 s, to do so) — and name the call in flight in `self._step`. Raise on failure. May block: `start_within` is what bounds it. |
 | `startup_timeout` (class attr) | hook | Seconds a start gets when `testing.json` sets no `worker_startup_timeout`. Default `600.0`; no backend sets another. |
 | `process_detail()` | hook | What the backend can say about its process when a start or a test did not come back (exit code, step, log tail), read before the kill. Default `""`. |
 | `cancel_running(test_key)` | hook | Stop only the running simulation and leave the tool alive: `True` when asked and `run_test` will return on its own within `cancel_grace` (default 10 s). Default `False` — the watchdog kills the worker. |

@@ -68,6 +68,7 @@ class _FakeWorker(Worker):
 
     _START_POLL_SECONDS = 0.02
     _CHILD_WATCH_SECONDS = 0.05
+    launch_grace = 0.0  # these starts launch nothing
 
     def __init__(self, worker_id, config, backend):
         super().__init__(worker_id, config)

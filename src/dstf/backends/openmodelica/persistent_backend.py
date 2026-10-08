@@ -273,9 +273,10 @@ class OpenModelicaWorker(Worker):
                 "neither getpid() nor a reachable Popen handle.",
                 self.worker_id,
             )
-            self.pids = set()
-        else:
-            self.pids = {pid}
+        # OMPython launches omc and waits for its port file inside one call
+        # (well under a second on a healthy install, 10 s at its own bound),
+        # so this is the first moment the PID can be read.
+        self._track_launch(pid)
 
         self._exec(f'setCommandLineOptions("--std={self.om_config.std_version}")')
 

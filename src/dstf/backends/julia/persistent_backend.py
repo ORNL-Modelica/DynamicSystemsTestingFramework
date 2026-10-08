@@ -117,7 +117,7 @@ class JuliaWorker(Worker):
             bufsize=1,  # line-buffered
             cwd=str(self.julia_cfg.project_dir),
         )
-        self.pids = {self.proc.pid}
+        self._track_launch(self.proc.pid)
         # MTK + OrdinaryDiffEq: ~15-40 s from the precompiled cache, minutes
         # on a first run.
         self._step = "its package load"

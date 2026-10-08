@@ -231,14 +231,7 @@ class DymolaWorker(Worker):
             # time once we have a Linux-aware backend-path validator.
             kwargs["dymolapath"] = str(self.config.backend_path)
 
-        self.dymola = self._DI(**kwargs)
-        # DymolaInterfaceInternal stores its subprocess as `_dymola_process`
-        # (a subprocess.Popen). Fall back to an empty set if the attribute
-        # ever moves — kill-by-pid just becomes best-effort in that case.
-        proc = getattr(self.dymola, "_dymola_process", None)
-        self.pids = (
-            {proc.pid} if proc is not None and getattr(proc, "pid", None) else set()
-        )
+        self.dymola = self._launch(kwargs)
 
         # Establish working directory
         self.dymola.cd(str(self.config.work_dir))
@@ -278,6 +271,42 @@ class DymolaWorker(Worker):
                 cmd += ";"
             self._exec_setting(cmd)
         self._step = ""
+
+    def _launch(self, kwargs: dict):
+        """Construct the DymolaInterface, tracking the Dymola it launches
+        from the moment the process exists.
+
+        The constructor launches Dymola and then waits for it to answer —
+        seconds. Read off the finished interface, the PID arrives after
+        that wait, and a start given up DURING it (the bound, the pool
+        closing) had nothing to kill: Dymola stayed up for minutes, holding
+        its licence seat. So the launch step itself — ``_start_dymola``,
+        which stores the ``subprocess.Popen`` as ``_dymola_process`` — is
+        wrapped on the instance before ``__init__`` runs.
+
+        Should that step ever move, the PID is still read once the
+        constructor returns, as it used to be: the kill is then late for a
+        start given up mid-launch, and best-effort without the attribute.
+        """
+        interface = self._DI.__new__(self._DI)
+
+        def _pid() -> int | None:
+            proc = getattr(interface, "_dymola_process", None)
+            return getattr(proc, "pid", None)
+
+        launch = getattr(interface, "_start_dymola", None)
+        if callable(launch):
+
+            def _tracked_launch(*args, **kw):
+                try:
+                    return launch(*args, **kw)
+                finally:
+                    self._track_launch(_pid())
+
+            interface._start_dymola = _tracked_launch
+        interface.__init__(**kwargs)
+        self._track_launch(_pid())
+        return interface
 
     def process_detail(self) -> str:
         proc = getattr(self.dymola, "_dymola_process", None)
