@@ -1144,6 +1144,28 @@ class TestOpenModelicaStop:
         process.poll = lambda: None
         assert worker.process_detail().startswith("omc is still running during")
 
+    def test_the_detail_leaves_out_omc_s_startup_notices(self, tmp_path):
+        """A slow `loadFile` in a live omc: the log holds what omc wrote as
+        it came up and nothing since — not a word about the load."""
+        log = ["Created ZeroMQ Server.\nDumped server port in file: /tmp/om.port.1f\n"]
+        session = SimpleNamespace(
+            omc_process=SimpleNamespace(
+                _omc_process=SimpleNamespace(poll=lambda: None),
+                get_log=lambda: log[0],
+            )
+        )
+        worker = self._worker(tmp_path, session)
+        worker._step = 'loadFile("/lib/package.mo")'
+
+        assert worker.process_detail() == (
+            'omc is still running during loadFile("/lib/package.mo")'
+        )
+        log[0] += "Error: out of memory\n\n"  # ...and the last line that is one
+        assert worker.process_detail() == (
+            'omc is still running during loadFile("/lib/package.mo"); '
+            "omc log: Error: out of memory"
+        )
+
     def test_the_backend_that_holds_the_worker_declares_cancel(self):
         from dstf.backends.openmodelica.backend import OpenModelicaBackend
         from dstf.backends.openmodelica.persistent_backend import (
