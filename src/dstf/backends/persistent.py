@@ -2,10 +2,14 @@
 orchestration that drives it.
 
 :class:`Worker` is one simulator subprocess wrapped as a test-running unit —
-it owns the watchdog, the timeout kill and the disk rescue as template
-methods, so a backend supplies hooks rather than a copy of the loop.
-:class:`PersistentBackendBase` owns the pool: parallel startup, the shared
-queue + sentinel dispatch, and per-worker restart accounting.
+it owns the bounded start, the watchdog, the timeout kill, the cancel and
+the disk rescue as template methods, so a backend supplies hooks rather than
+a copy of the loop. :class:`WorkerRunner` is what one dispatch thread does
+with a worker for each test: the restart and its accounting.
+:class:`PersistentBackendBase` owns ``run_tests``' dispatch of a fixed list:
+parallel startup, the shared queue + sentinel dispatch. The simulation pool
+(:mod:`dstf.backends.pool`) is that dispatch kept open, over the same
+runners.
 
 Split out of :mod:`dstf.backends.base` — the batch lane and the persistent
 lane share only :class:`Backend` and the progress printers, both
