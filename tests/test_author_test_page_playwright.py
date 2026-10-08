@@ -22,9 +22,11 @@ import math
 import os
 import re
 import shutil
+import struct
 import time
 import urllib.parse
 import urllib.request
+import zlib
 from collections.abc import Callable
 from contextlib import contextmanager
 from functools import partial
@@ -8054,8 +8056,9 @@ def test_a_constant_tubes_arrows_are_hidden_at_rest(tmp_path, playwright_browser
 #: Resolve at the first frame in which plot 0 holds a path for the shape
 #: whose name ends ``tail`` that it did not hold when the watch began — a
 #: shape a redraw adds, or one it draws anew: its group mark, whether it
-#: is displayed and the clip of its group; and of the box whose name ends
-#: ``box``, the pointer and the clip of its group.
+#: is displayed and the clip IN EFFECT on its group (the computed
+#: `clip-path`: the stylesheet's rule over Plotly's attribute); and of the
+#: box whose name ends ``box``, the pointer and the clip of its group.
 WATCH_FOR = """
 ([tail, box]) => {
   const gd = document.querySelectorAll('.js-plotly-plot')[0];
@@ -8072,9 +8075,9 @@ WATCH_FOR = """
       resolve({
         grip: el.getAttribute('data-grip'),
         display: getComputedStyle(el).display,
-        clip: el.parentNode.getAttribute('clip-path'),
+        clip: getComputedStyle(el.parentNode).clipPath,
         box: boxEl ? getComputedStyle(boxEl).pointerEvents : null,
-        boxClip: boxEl ? boxEl.parentNode.getAttribute('clip-path') : null,
+        boxClip: boxEl ? getComputedStyle(boxEl.parentNode).clipPath : null,
       });
     };
     read();
@@ -8336,11 +8339,14 @@ def test_opening_a_criterion_on_a_split_plot_keeps_its_trace_as_tall(
 # -- an arrow is not clipped to the plot area ------------------------------------
 
 #: The shape of plot ``card`` whose name ends ``tail``, as it is PAINTED:
-#: its path's box, and what of that box is left by every clip above it —
-#: the `clip-path` of an ancestor (Plotly's is a rect: the plot area) and
-#: the svg's own edge — or None where nothing is; the `clip-path` of its
-#: group; and whether its middle is under itself (a hit test honours a
-#: clip). Read off the DOM.
+#: its path's box, and what of that box is left by every clip IN EFFECT on
+#: it and above it — the computed `clip-path` of the path and of each
+#: ancestor (Plotly's is a rect: the plot area; it writes the ATTRIBUTE, on
+#: a shape's group as drawn and on the path itself while it is held, and a
+#: rule of the stylesheet overrides either) and the svg's own edge — or
+#: None where nothing is; the clip in effect on its group and on itself;
+#: and whether its middle is under itself (a hit test honours a clip).
+#: Read off the DOM.
 PAINTED = """
 ([card, tail]) => {
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
@@ -8355,7 +8361,7 @@ PAINTED = """
     left.bottom = Math.min(left.bottom, r.bottom);
   };
   for (let n = el; n && n !== gd; n = n.parentNode) {
-    const m = /#([^)"']+)/.exec(n.getAttribute('clip-path') || '');
+    const m = /#([^)"']+)/.exec(getComputedStyle(n).clipPath || '');
     if (m) {
       const r = document.getElementById(m[1]).querySelector('rect');
       const x = +r.getAttribute('x') || 0, y = +r.getAttribute('y') || 0;
@@ -8374,12 +8380,80 @@ PAINTED = """
          x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2}
       : null,
     painted: left.right > left.left && left.bottom > left.top ? left : null,
-    clip: el.parentNode.getAttribute('clip-path'),
+    clip: getComputedStyle(el.parentNode).clipPath,
+    held: getComputedStyle(el).clipPath,
     hit: under === el,
     under: under ? under.tagName + '.' + (under.getAttribute('class') || '') : null,
   };
 }
 """
+
+
+def _pixels(png: bytes) -> list[tuple[int, int, int]]:
+    """The pixels of a screenshot, read from its bytes: an 8-bit RGB or
+    RGBA PNG, not interlaced — what Chromium writes. (Pillow is no
+    dependency of the project.)"""
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    at, packed, head = 8, b"", None
+    while at < len(png):
+        (length,) = struct.unpack(">I", png[at : at + 4])
+        kind, body = png[at + 4 : at + 8], png[at + 8 : at + 8 + length]
+        if kind == b"IHDR":
+            head = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            packed += body
+        at += 12 + length
+    assert head is not None
+    width, height, depth, colour, _, _, interlace = head
+    assert depth == 8 and colour in (2, 6) and interlace == 0, head
+    n = 3 if colour == 2 else 4
+    stride = width * n
+    raw = zlib.decompress(packed)
+    assert len(raw) == height * (stride + 1), (len(raw), head)
+    above = bytearray(stride)
+    pixels = []
+    for row in range(height):
+        start = row * (stride + 1)
+        kind, line = raw[start], bytearray(raw[start + 1 : start + 1 + stride])
+        for i in range(stride):
+            a = line[i - n] if i >= n else 0
+            b = above[i]
+            c = above[i - n] if i >= n else 0
+            if kind == 1:
+                line[i] = (line[i] + a) & 255
+            elif kind == 2:
+                line[i] = (line[i] + b) & 255
+            elif kind == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif kind == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                near = a if pa <= pb and pa <= pc else b if pb <= pc else c
+                line[i] = (line[i] + near) & 255
+            else:
+                assert kind == 0, kind
+        pixels += [tuple(line[i : i + 3]) for i in range(0, stride, n)]
+        above = line
+    return pixels
+
+
+def _orange(page, box: dict) -> int:
+    """How many pixels of the screen are the grips' orange within 6 px of
+    ``box`` — a small screenshot, its pixels counted from its bytes: what a
+    person sees there, whatever the DOM says."""
+    png = page.screenshot(
+        clip={
+            "x": box["left"] - 6,
+            "y": box["top"] - 6,
+            "width": box["right"] - box["left"] + 12,
+            "height": box["bottom"] - box["top"] + 12,
+        }
+    )
+    want = tuple(int(GRIP[i : i + 2], 16) for i in (1, 3, 5))
+    return sum(
+        all(abs(got - to) <= 28 for got, to in zip(pixel, want, strict=True))
+        for pixel in _pixels(png)
+    )
 
 
 def _painted(page, tail: str, near: str | None = None) -> dict:
@@ -8422,21 +8496,21 @@ def test_an_arrow_whose_edge_is_the_plots_top_is_drawn_in_the_margin_and_dragged
     """An arrow stands 10 to 17 px OUTSIDE its tolerance edge, and Plotly
     clips every shape to the plot area: zoomed so the edge is the top of
     the plot, the arrow was all in the margin — not painted, and a press
-    where it belonged landed on the page under it. A grip's group loses
-    the clip: the arrow is drawn whole above the plot, it is what is under
-    the pointer there, and dragged 15 px down it stages that row's upper
-    side. A box keeps its clip."""
+    where it belonged landed on the page under it. No clip is in effect
+    on a grip's group: the arrow is drawn whole above the plot, it is what
+    is under the pointer there, and dragged 15 px down it stages that row's
+    upper side. A box keeps its clip, and a ring."""
     with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
         area = _zoom_upper_edge_to_the_top(page)
         arrow = _painted(page, "/points/upper/1", near="/points/target/1")
         assert _whole(arrow) and arrow["box"]["bottom"] <= area["top"], (arrow, area)
-        assert arrow["clip"] is None, arrow
+        assert arrow["clip"] == "none", arrow
         box = _painted(page, "/points/box/1")
-        assert (box["clip"] or "").startswith("url(#clip"), box
+        assert "#clip" in box["clip"], box
         ring = _painted(page, "/points/target/1")
-        assert (ring["clip"] or "").startswith("url(#clip"), ring
+        assert "#clip" in ring["clip"], ring
         x, y = arrow["box"]["x"], arrow["box"]["y"]
         page.mouse.move(x, y, steps=3)
         page.wait_for_timeout(150)
@@ -8502,10 +8576,9 @@ def test_an_arrow_dragged_into_the_margin_stays_painted_and_is_redrawn_unclipped
 ):
     """An outermost arrow of an autoranged plot stands at the plot's edge.
     Dragged 20 px outward it is painted whole at every step, above the
-    plot — Plotly clips a held shape to no autoranged axis, and its group
-    has lost the clip. The release redraws every shape as a new node,
-    clipped: in the first frame the new arrow exists its group has lost
-    the clip again, and a box has kept its own."""
+    plot. The release redraws every shape as a new node, its group
+    clipped by Plotly: in the first frame the new arrow exists no clip is
+    in effect on its group, and a box has kept its own."""
     with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
@@ -8530,15 +8603,74 @@ def test_an_arrow_dragged_into_the_margin_stays_painted_and_is_redrawn_unclipped
         page.mouse.up()
         seen = page.evaluate("() => window.__dstfSeen")
         assert seen["grip"] is not None and seen["grip"].endswith("/points/1"), seen
-        assert seen["clip"] is None, seen
-        assert (seen["boxClip"] or "").startswith("url(#clip"), seen
+        assert seen["clip"] == "none", seen
+        assert "#clip" in seen["boxClip"], seen
         # And after the server's own redraw that answers the release.
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
         page.wait_for_timeout(500)
         again = _painted(page, "/points/upper/1", near="/points/target/1")
-        assert _whole(again) and again["clip"] is None, again
+        assert _whole(again) and again["clip"] == "none", again
+
+
+def test_an_arrow_pressed_in_the_margin_of_a_zoomed_plot_stays_painted_while_held(
+    tmp_path, playwright_browser
+):
+    """From a press to its release Plotly clips the held PATH itself to
+    every axis whose range is set — any zoom sets them. An arrow whose edge
+    is the top of a zoomed plot stands in the margin: pressed there it was
+    not painted for as long as it was held, though the drag went through.
+    It is painted whole from the press on and at every 4 px of 20 px
+    further outward — by the clips in effect, and by the orange on the
+    screen — and the release, off the plot, stages that row's upper side
+    on the plot's top."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area = _zoom_upper_edge_to_the_top(page)
+        top = page.evaluate(
+            "() => document.querySelectorAll('.js-plotly-plot')[0]"
+            "._fullLayout.yaxis.range[1]"
+        )
+        arrow = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert _whole(arrow) and arrow["box"]["bottom"] <= area["top"], (arrow, area)
+        shown = _orange(page, arrow["box"])
+        assert shown >= 30, shown
+        _rest(page)
+        assert _orange(page, arrow["box"]) == 0  # nothing else there is orange
+        ring = _shape(page, "/points/target/1")
+        page.mouse.move(ring["x"], ring["y"], steps=5)
+        x, y = arrow["box"]["x"], arrow["box"]["y"]
+        ppy = _shape(page, "/points/upper/1")["ppy"]
+        page.mouse.move(x, y, steps=3)
+        page.mouse.down()
+        for px in range(0, 21, 4):
+            page.mouse.move(x, y - px)
+            page.wait_for_timeout(60)
+            held = page.evaluate(PAINTED, [0, "/points/upper/1"])
+            assert _whole(held), (px, held)
+            # It is the held arrow, following the pointer (Plotly moves
+            # nothing under 8 px).
+            if px >= 8:
+                assert abs(held["box"]["y"] - (y - px)) <= 1, (px, held)
+            if px in (0, 12, 20):
+                assert _orange(page, held["box"]) >= 0.8 * shown, (px, shown)
+            if px == 12:
+                _shot(page, tmp_path, "arrow-held-12px-into-the-top-margin")
+        assert held["box"]["bottom"] < area["top"] - 20, (held, area)
+        page.mouse.up()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(_table_cell(page, 1, "+ tolerance")).not_to_have_value(
+            "0.3", timeout=EXPECT_TIMEOUT
+        )
+        # Let go 20 px above the plot, it lands on the plot's top
+        # (`grips.js` `released`): the checkpoint's value is 1.2.
+        upper = float(_table_cell(page, 1, "+ tolerance").input_value())
+        assert abs(upper - (top - 1.2)) * ppy < 0.5, (upper, top, ppy)
+        assert _table_cell(page, 0, "+ tolerance").input_value() == "0.3"
 
 
 # -- a refused drag's reason, under the plot ------------------------------------

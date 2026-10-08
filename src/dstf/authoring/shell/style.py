@@ -246,6 +246,27 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    shape, so a grip hidden either way was still grabbed where nothing
    showed. Without a hover — a touch screen — they are always shown. */
 .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) { display: none; }
+/* And a grip is not clipped to the plot area. Plotly clips every shape to
+   it, and an arrow stands 10 to 17 px OUTSIDE its edge: with that edge at
+   the plot's edge, where any zoom can put it, the arrow was all in the
+   margin — not painted, and a press where it belonged landed on the axis
+   under it. Unclipped it is drawn whole in the margin, over the tick
+   labels, and takes the press: the shape layer lies above the axes' drag
+   layer. Only the svg's own edge cuts it. Every other shape keeps its clip
+   — a ring too: centred on its point, its inner half is drawn and pressed
+   while the point is on the plot.
+   Plotly writes the clip as the `clip-path` ATTRIBUTE, in two places: on
+   a shape's GROUP as it is drawn — every redraw draws new groups — and,
+   from a press to its release, on the held PATH itself, for every axis
+   whose range is set (any zoom sets them). A property of a stylesheet
+   beats a presentation attribute wherever it is written and whenever, so
+   these two rules are the whole mechanism: nothing takes an attribute
+   off, and an arrow pressed in the margin of a zoomed plot stays painted
+   while it is held. Two rules, never one selector list: a browser
+   without `:has` (Firefox before 121) drops the whole rule that names it,
+   and keeps the path's. */
+.js-plotly-plot .shapelayer path[data-grip] { clip-path: none; }
+.js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]) { clip-path: none; }
 /* The cursor over an arrow is the way it moves — up and down for a value
    side, left and right for a time or a frequency side — by the axis
    `grips.js` marks it with. Plotly's own for a draggable shape is `move`,

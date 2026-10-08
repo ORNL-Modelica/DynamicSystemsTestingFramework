@@ -12391,6 +12391,30 @@ def test_the_stylesheet_hides_a_grip_at_rest_by_display_and_shows_it_on_touch():
     )
 
 
+def test_the_stylesheet_alone_takes_plotlys_clip_off_a_grip_in_two_rules():
+    """Plotly clips a shape to the plot area by the `clip-path` ATTRIBUTE —
+    on its group as drawn, on the path itself while it is held — and a
+    grip's arrow stands outside its edge. ONE mechanism un-clips it: the
+    stylesheet, whose property beats the attribute wherever and whenever
+    it is written; `grips.js` takes no attribute off. The path's rule and
+    the group's are two rules, not one selector list: a browser without
+    `:has` drops the whole rule that names it. (What a person gets is read
+    in the browser: `test_an_arrow_pressed_in_the_margin_of_a_zoomed_plot_
+    stays_painted_while_held`.)"""
+    import re
+
+    from dstf.authoring.shell.plot_card import GRIPS_JS
+    from dstf.authoring.shell.style import STYLE
+
+    css = re.sub(r"\s+", " ", STYLE)
+    assert " .js-plotly-plot .shapelayer path[data-grip] { clip-path: none; }" in css
+    assert (
+        " .js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip])"
+        " { clip-path: none; }"
+    ) in css
+    assert not re.search(r"Attribute\(\s*[\"']clip-path", GRIPS_JS.read_text("utf-8"))
+
+
 def test_an_arrows_cursor_rule_carries_no_important_and_the_inert_rule_does():
     """plotly.js sets a draggable shape's cursor by CLASS — `setCursor` adds
     `cursor-move`, styled by `.js-plotly-plot .plotly .cursor-move`
