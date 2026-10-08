@@ -370,6 +370,7 @@ class PlotCard:
         #: A refused drag's reason, directly under the plot (`_said`); None
         #: on a card with no plot.
         self.refusal: ui.label | None = None
+        self.armed_line: ui.label | None = None
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
         #: Whether this card has been asked to draw. A plot that raised is
@@ -494,6 +495,10 @@ class PlotCard:
                     "dstf-plot-refusal text-negative text-xs"
                 )
                 self.refusal.mark(f"plot-refusal:{index}").set_visibility(False)
+                # And what an ARMED field's next click does (D149), where
+                # the hand is: the ⌖ itself can be a screen below the plot.
+                self.armed_line = ui.label("").classes("dstf-plot-armed text-xs")
+                self.armed_line.mark(f"plot-armed:{index}").set_visibility(False)
             self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
             takers = parent_kinds(view)
@@ -1002,15 +1007,22 @@ class PlotCard:
         return ADDS.format(noun) if noun else ""
 
     def _armed_moved(self) -> None:
-        """The armed field changed (`Placing`): the hint says it, and the
-        plot's own element — an attribute the stylesheet reads — shows the
-        pointer as one that places."""
+        """The armed field changed (`Placing`): the editor's hint says it,
+        and so does the plot's own card — the ⌖ and the hint can be a
+        screen below the plot the click is made on. The card carries an
+        ATTRIBUTE the stylesheet reads (an accent outline about the plot),
+        and the line under the plot says what the next click sets."""
         self._say_hint()
-        if self.slot is not None and not self.slot.is_deleted:
-            if self.placing.armed is not None:
-                self.slot.props("data-armed")
-            else:
-                self.slot.props(remove="data-armed")
+        armed = self.placing.armed
+        if self.card.is_deleted:
+            return
+        if armed is not None:
+            self.card.props("data-armed")
+        else:
+            self.card.props(remove="data-armed")
+        if self.armed_line is not None and not self.armed_line.is_deleted:
+            self.armed_line.set_text("" if armed is None else ARMED.format(armed.label))
+            self.armed_line.set_visibility(armed is not None)
 
     def clicked(self, click: Any) -> None:
         """A click on this card's plot, as the page reports it (`grips.js`,

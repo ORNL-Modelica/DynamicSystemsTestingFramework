@@ -51,7 +51,7 @@ from .algorithms import (
 )
 from .geometry import Primitive, Series, VLine
 from .sides import parse_sides
-from .snap import snapped
+from .snap import snap_step, snapped
 from .types import _EPS
 
 
@@ -1044,6 +1044,33 @@ def _place_edit(place: RowPlace, panel: str, noun: str) -> HandleEdit:
     return edit
 
 
+def _refuse_standing(
+    edit: HandleEdit, rows: list, key: str, at: float, noun: str, where: str
+) -> None:
+    """Refuse a row placed ON one that stands there — the one rule for all
+    four tables: a row of the table already holds ``key`` within ONE snap
+    step of ``at`` (the step of what the x axis showed; with no span, the
+    same number), or, for a peak, ``at`` lies inside that row's own window.
+    Two Ctrl+clicks on one spot left two rows, and a click a few pixels
+    beside a checkpoint a second one a step away. ``where`` says the place
+    (``"t={}"``); the sentence names the row as the table numbers it."""
+    step = snap_step(edit.visible[0]) or 0.0
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict) or not _is_number(row.get(key)):
+            continue
+        low = high = float(row[key])
+        if key == "freq":
+            try:
+                low, high, _sides, _mode = _peak_window(row, i)
+            except ValueError:
+                pass  # a window that cannot be read: the frequency alone
+        else:
+            low, high = low - step * (1 + 1e-9), high + step * (1 + 1e-9)
+        if low <= at <= high:
+            stands = where.format(_num(row[key]))
+            raise _refuse(edit, f"{noun} already stands at {stands} (row {i + 1})")
+
+
 def place_points_row(place: RowPlace) -> dict:
     """A checkpoint at the clicked TIME — snapped, and held to where a
     checkpoint is scored and drawn, as a dragged one is — with no value of
@@ -1057,21 +1084,24 @@ def place_points_row(place: RowPlace) -> dict:
     row = copy.deepcopy(dict(place.blanks["points"]))
     follows = _reference(edit) is not None
     row["time"] = _checkpoint_time(edit, leaf, _placed(edit, "x", place.x), follows)
+    rows = list(leaf.get("points") or [])
+    _refuse_standing(edit, rows, "time", row["time"], "a checkpoint", "t={}")
     row.pop("value", None)
     if not follows:
         actual = place.actual
         if actual is None or len(actual[0]) == 0:
             raise _refuse(edit, "there is no signal to place a point on")
         row["value"] = _written(float(np.interp(row["time"], actual[0], actual[1])))
-    leaf["points"] = [*(leaf.get("points") or []), row]
+    leaf["points"] = [*rows, row]
     return leaf
 
 
 def place_events_row(place: RowPlace) -> dict:
     """A declared event at the run's event NEAREST the click — the actual
     events the plot draws for the leaf — at that event's own time. Refused
-    where the run has none, and where that event is already declared: a
-    second row on it would say nothing more."""
+    where the run has none, and where a declared event already stands
+    there (:func:`_refuse_standing`): a second row on it would say nothing
+    more."""
     edit = _place_edit(place, "time", "an event")
     leaf = copy.deepcopy(place.leaf)
     actual = [
@@ -1083,8 +1113,7 @@ def place_events_row(place: RowPlace) -> dict:
         raise _refuse(edit, "the run has no event to place one on")
     t = _written(min(actual, key=lambda at: abs(at - place.x)))
     rows = list(leaf.get("events") or [])
-    if any(isinstance(r, dict) and r.get("time") == t for r in rows):
-        raise _refuse(edit, f"the nearest event, at t={_num(t)}, is already declared")
+    _refuse_standing(edit, rows, "time", t, "an event", "t={}")
     row = copy.deepcopy(dict(place.blanks["events"]))
     row["time"] = t
     leaf["events"] = [*rows, row]
@@ -1121,10 +1150,7 @@ def place_peaks_row(place: RowPlace) -> dict:
         raise _refuse(edit, "the run's spectrum has no peak to place one on")
     freq = _written(min(peaks, key=lambda f: abs(f - place.x)))
     rows = list(leaf.get("peaks") or [])
-    if any(isinstance(r, dict) and r.get("freq") == freq for r in rows):
-        raise _refuse(
-            edit, f"the nearest peak, at {_num(freq)} Hz, is already declared"
-        )
+    _refuse_standing(edit, rows, "freq", freq, "a peak", "{} Hz")
     row = copy.deepcopy(dict(place.blanks["peaks"]))
     row["freq"] = freq
     leaf["peaks"] = [*rows, row]
@@ -1147,8 +1173,7 @@ def place_tube_row(place: RowPlace) -> dict:
     _refuse_other_baseline(edit, leaf, "its time")
     x = _placed(edit, "x", place.x)
     t = _written(_clamped_time(edit, leaf, x, _reference(edit)))
-    if any(isinstance(r, dict) and r.get("time") == t for r in rows):
-        raise _refuse(edit, f"a control point already stands at t={_num(t)}")
+    _refuse_standing(edit, rows, "time", t, "a control point", "t={}")
     try:
         upper, lower = _interpolate_tube_widths(
             np.array([t]), rows, leaf.get("tube_interpolation", "linear")

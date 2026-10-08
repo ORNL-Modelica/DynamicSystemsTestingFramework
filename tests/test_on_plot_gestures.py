@@ -6,6 +6,7 @@ handle's preview is its release; a move that arrives late is dropped."""
 from __future__ import annotations
 
 import copy
+import math
 
 import numpy as np
 import pytest
@@ -20,11 +21,13 @@ from dstf.authoring.builtin.edit_on_plot import (  # noqa: E402
     EditOnPlot,
     clicked_row,
     dragged,
+    placeable,
     placed,
 )
 from dstf.authoring.capabilities import Patch  # noqa: E402
 from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
+from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.comparison.geometry import Series, VLine  # noqa: E402
 from dstf.comparison.handles import (  # noqa: E402
     HandleEdit,
@@ -37,6 +40,7 @@ from dstf.comparison.handles import (  # noqa: E402
     place_tube_row,
 )
 from dstf.comparison.registry import metric  # noqa: E402
+from dstf.comparison.snap import snap_step, snapped  # noqa: E402
 from on_plot_project import (  # noqa: E402
     CONSTANT_TUBE,
     EVENT_TIMING,
@@ -428,8 +432,14 @@ def test_a_clicked_event_snaps_to_the_nearest_actual_event():
     # The run's event, at its own time — not the click's, not snapped, and
     # not the reference event nearer the click.
     assert new["events"] == [*EVENTS["events"], {"time": 0.8123456}]
-    with pytest.raises(HandleEditError, match="already declared"):
+    with pytest.raises(
+        HandleEditError, match=r"an event already stands at t=0.4 \(row 1\)"
+    ):
         _place(EVENTS, "events", 0.45, geometry=drawn)
+    # Within a snap step of a declared one (0.001 here) is on it too.
+    near = [*_events(0.8004), *_events(0.4)]
+    with pytest.raises(HandleEditError, match=r"already stands at t=0.8 \(row 2\)"):
+        _place(EVENTS, "events", 0.79, geometry=near)
     with pytest.raises(HandleEditError, match="the run has no event"):
         _place(EVENTS, "events", 0.45, geometry=[])
 
@@ -450,8 +460,15 @@ def test_a_clicked_peak_snaps_to_the_nearest_spectral_peak():
     # click on it settles on the nearest real one.
     far = _place(lone, "peaks", 15.0, panel="spectrum", geometry=_spectrum())
     assert far["peaks"][1]["freq"] == 8.0
-    with pytest.raises(HandleEditError, match="already declared"):
+    with pytest.raises(
+        HandleEditError, match=r"a peak already stands at 3 Hz \(row 1\)"
+    ):
         _place(lone, "peaks", 3.4, panel="spectrum", geometry=_spectrum())
+    # The run's peak a bin beside a hand-declared one is that peak: inside
+    # its own window (3 Hz ± 20 %), whatever the snap step.
+    beside = {**SPECTRUM, "peaks": [{**SPECTRUM["peaks"][0], "freq": 3.4}]}
+    with pytest.raises(HandleEditError, match=r"already stands at 3.4 Hz \(row 1\)"):
+        _place(beside, "peaks", 3.1, panel="spectrum", geometry=_spectrum())
     with pytest.raises(HandleEditError, match="on the spectrum"):
         _place(SPECTRUM, "peaks", 0.5, geometry=_spectrum())
     with pytest.raises(HandleEditError, match="no peak"):
@@ -466,8 +483,44 @@ def test_a_clicked_control_point_takes_the_tubes_own_widths_there(mode):
     new = _place(leaf, "tube_points", 0.50049)
     assert new["tube_points"][:2] == leaf["tube_points"]
     assert new["tube_points"][2] == {"time": 0.5, "upper": 0.2, "lower": 0.15}
-    with pytest.raises(HandleEditError, match="already stands at t=0.2"):
+    with pytest.raises(
+        HandleEditError, match=r"a control point already stands at t=0.2 \(row 1\)"
+    ):
         _place(leaf, "tube_points", 0.2001)
+    with pytest.raises(HandleEditError, match=r"already stands at t=0.8 \(row 2\)"):
+        _place(leaf, "tube_points", 0.7992)  # a snap step beside it
+
+
+def test_a_clicked_checkpoint_beside_one_that_stands_there_is_refused():
+    """Two Ctrl+clicks on one spot left two rows; 3 px beside a checkpoint
+    left a second one a step away. Within ONE snap step of a row is on it
+    — and a click past the run's end, clamped onto a row at its end, too."""
+    with pytest.raises(
+        HandleEditError, match=r"a checkpoint already stands at t=0.5 \(row 2\)"
+    ):
+        _place(CHECKS, "points", 0.5012)
+    assert _place(CHECKS, "points", 0.5021)["points"][3]["time"] == 0.502
+    once = _place(CHECKS, "points", 1.7)
+    assert once["points"][3]["time"] == 1.0
+    with pytest.raises(HandleEditError, match=r"already stands at t=1 \(row 4\)"):
+        _place(once, "points", 1.9)
+
+
+def test_a_clicked_checkpoint_does_not_take_the_last_rows_value():
+    """`Add row` copies the last row; a row placed by a click follows the
+    baseline, whatever value the row it was copied from holds."""
+    valued = {**CHECKS, "points": CHECKS["points"][:1]}
+    new = _place(valued, "points", 0.61234, y=99.0)
+    assert new["points"][1] == {"time": 0.612, "tolerance": 0.1, "time_tolerance": 0.05}
+
+
+@pytest.mark.parametrize("span", [0, 0.0, -1.0, math.inf, math.nan, 1e-301, 5e-324])
+def test_a_span_that_is_none_snaps_to_the_smallest_step(span):
+    """Zero, negative, not finite, or too small for a thousandth of it to
+    be a number: the smallest step there is — nothing is rounded away —
+    and never an error (`log10` of an underflowed zero raised one)."""
+    assert snap_step(span) == 1e-300
+    assert snapped(0.123456789012, span) == 0.123456789012
 
 
 def test_a_click_adds_nothing_to_a_tube_of_constant_width():
@@ -606,15 +659,7 @@ def test_an_armed_bound_is_set_through_its_line(session):
 def test_an_armed_side_puts_its_edge_at_the_click(session):
     """Whatever the side is measured from, its EDGE passes through the
     click, to the snapped step (0.01 over a y span of 4)."""
-    # A row's own tolerance: from its value, -1.0.
-    new = _set(session, POINTS, ("points", 0, "tolerance", "upper"), _click(0.9, -0.5))
-    assert new["points"][0]["tolerance"] == 0.5
-    # A row's time tolerance: from its time, 0.25.
-    new = _set(
-        session, POINTS, ("points", 0, "time_tolerance", "lower"), _click(0.18, 9.0)
-    )
-    assert new["points"][0]["time_tolerance"] == 0.07
-    # The criterion's, which row 1 defers to: from the reference at ITS time.
+    # The criterion's, which row 2 defers to: from the reference at ITS time.
     target = 0.95 * wave(0.6)
     new = _set(session, POINTS, ("tolerance", "upper"), _click(0.9, target + 0.4321))
     assert new["tolerance"] == 0.43
@@ -622,59 +667,141 @@ def test_an_armed_side_puts_its_edge_at_the_click(session):
     # A constant tube's: from the reference at the CLICK's time (y = 2.1 t).
     new = _set(session, CONSTANT_TUBE, ("tube_abs", "upper"), _click(0.5, 1.5), "y")
     assert new["tube_abs"] == 0.45
-    # A scalar's, on its baseline scalar; an event's window; a peak's.
+    # A scalar's, on its baseline scalar.
     reference = max(0.95 * wave(i / 200) for i in range(201))
     new = _set(session, SCALAR, ("tolerance", "lower"), _click(0.5, reference - 0.25))
     assert new["tolerance"] == 0.25
-    new = _set(session, EVENT_TIMING, ("events", 0, "tolerance", "upper"), _click(0.47))
-    assert new["events"][0]["tolerance"] == 0.07
-    new = _set(
-        session, FREQUENCY, ("peaks", 0, "tolerance", "lower"), _click(2.1, 0.1, "x2")
-    )
-    assert new["peaks"][0]["tolerance"] == 0.3  # 0.9 Hz under 3 Hz, rel
 
 
-def test_an_armed_row_field_is_set_through_its_ring(session):
-    new = _set(session, POINTS, ("points", 0, "time"), _click(0.33333, 9.0))
-    assert new["points"][0] == {**_leaf(session, POINTS)["points"][0], "time": 0.333}
-    new = _set(session, POINTS, ("points", 0, "value"), _click(0.9, 0.5678))
-    assert new["points"][0] == {**_leaf(session, POINTS)["points"][0], "value": 0.57}
-    new = _set(session, FREQUENCY, ("peaks", 0, "freq"), _click(7.7777, 0.1, "x2"))
-    assert new["peaks"][0]["freq"] == 7.78
-    new = _set(session, TUBE, ("tube_points", 1, "time"), _click(0.71234, 9.0))
+def test_an_armed_row_is_placed_as_its_ring_dragged_to_the_click(session):
+    """A row has ONE ⌖: the click is its ring let go there. Its time (a
+    peak's frequency) from the click's x; its value from the click's y
+    only where the row HOLDS one — a checkpoint that follows the baseline
+    goes on following it."""
+    row = _leaf(session, POINTS)["points"][0]
+    new = _set(session, POINTS, ("points", 0), _click(0.33333, 0.5678))
+    assert new["points"][0] == {**row, "time": 0.333, "value": 0.57}
+    new = _set(session, POINTS, ("points", 1), _click(0.71234, 0.5678))
+    assert new["points"][1] == {"time": 0.712}
+    new = _set(session, FREQUENCY, ("peaks", 0), _click(7.7777, 0.1, "x2"))
+    assert new["peaks"][0] == {**_leaf(session, FREQUENCY)["peaks"][0], "freq": 7.78}
+    # A control point's widths are its two rings' own: the click moves it
+    # in time alone.
+    new = _set(session, TUBE, ("tube_points", 1), _click(0.71234, 9.0))
     assert new["tube_points"][1] == {"time": 0.712, "upper": 0.6, "lower": 0.4}
     # The ring's own refusal: two control points cannot share a time.
     with pytest.raises(HandleEditError, match="share time"):
-        _set(session, TUBE, ("tube_points", 1, "time"), _click(0.1, 0.0))
+        _set(session, TUBE, ("tube_points", 1), _click(0.1, 0.0))
+    # A declared event has no ring: its time is the click's x.
+    new = _set(session, EVENT_TIMING, ("events", 0), _click(0.81234))
+    assert new["events"][0] == {"time": 0.812, "tolerance": 0.05}
 
 
-def test_an_armed_field_with_no_handle_is_set_from_the_click(session):
-    # A window's ends and an event's time have no handle: the click's x.
+def test_a_window_and_a_blank_bound_are_set_from_the_click(session):
     new = _set(session, NRMSE, ("window", "start"), _click(0.21234, 0.7))
     assert new == {**_leaf(session, NRMSE), "window": {"start": 0.212}}
-    new = _set(session, EVENT_TIMING, ("events", 0, "time"), _click(0.81234))
-    assert new["events"][0] == {"time": 0.812, "tolerance": 0.05}
-    # A checkpoint that follows the baseline has no value to drag: armed,
-    # its value field takes the click's y.
-    new = _set(session, POINTS, ("points", 1, "value"), _click(0.9, 0.5678))
-    assert new["points"][1] == {"time": 0.6, "value": 0.57}
-    # A row with no tolerance of its own takes one first, from what it
-    # deferred to, and the clicked side is set on it.
-    target = 0.95 * wave(0.6)
-    new = _set(
-        session, POINTS, ("points", 1, "tolerance", "lower"), _click(0.9, target - 0.3)
+    # A range with one bound: the blank one has no line to drag, and the
+    # click's y becomes it — then the bounds' own refusal.
+    leaf = {"metric": "range", "variable": "x", "min_value": -2.0}
+    session.stage([PatchOp(A, "replace", RANGE, leaf)])
+    new = _set(session, RANGE, ("max_value",), _click(0.5, 1.23456))
+    assert new == {**leaf, "max_value": 1.23}
+    with pytest.raises(ValueError, match="exceeds max_value"):
+        _set(session, RANGE, ("max_value",), _click(0.5, -2.5))
+
+
+def _can(session, path, variable="x"):
+    return placeable(
+        _view(session, path, variable), model_id=A, variable=variable, path=path
     )
-    assert new["points"][1] == {"time": 0.6, "tolerance": 0.3}
+
+
+def test_a_field_is_placeable_only_where_a_click_can_set_it(session):
+    """ONE rule for the ⌖ and for the click: what is not placeable in the
+    criterion's CURRENT state is refused by `placed`, and has no ⌖."""
+    cases = {
+        (NRMSE, "x"): {("window", "end"): True, ("tolerance",): False},
+        (POINTS, "x"): {
+            ("tolerance", "upper"): True,  # row 2 defers to it
+            ("points", 0): True,
+            ("points", 0, "time"): False,  # a cell is no place: its row is
+            ("points", 0, "tolerance", "upper"): False,
+            ("points", 7): False,
+        },
+        # Its one row holds its own tolerance: nothing defers.
+        (EVENT_TIMING, "x"): {("time_tolerance", "upper"): False, ("events", 0): True},
+        (TUBE, "x"): {
+            ("tube_abs", "upper"): False,  # control points: no constant width
+            ("tube_rel", "lower"): False,
+            ("tube_min_width",): False,
+            ("tube_points", 0): True,
+        },
+        (CONSTANT_TUBE, "y"): {
+            ("tube_abs", "upper"): True,
+            ("tube_rel", "upper"): False,
+        },
+        # Scored by its tolerance: its bounds are not on the plot.
+        (SCALAR, "x"): {("tolerance", "upper"): True, ("min_value",): False},
+        (RANGE, "x"): {("min_value",): True, ("max_value",): True},
+    }
+    for (path, variable), fields in cases.items():
+        can = _can(session, path, variable)
+        for pointer, want in fields.items():
+            assert can(pointer) is want, (path, pointer)
+            if not want:
+                with pytest.raises(ValueError, match="nothing on this plot sets"):
+                    _set(session, path, pointer, _click(0.5, 0.5), variable)
+    # A scalar scored by its BOUNDS: both are placeable — the blank one
+    # too — and its tolerance is not.
+    bounds = {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}}
+    session.stage([PatchOp(A, "replace", SCALAR, {**bounds, "min_value": 0.0})])
+    can = _can(session, SCALAR)
+    assert [
+        can(p) for p in (("min_value",), ("max_value",), ("tolerance", "upper"))
+    ] == [
+        True,
+        True,
+        False,
+    ]
+
+
+def test_an_armed_field_is_set_only_on_its_own_panel(session):
+    """Every placeable field belongs to one panel. A click on the other is
+    refused in words — it wrote a magnitude of 76 as a bound and a
+    frequency as a time — and names where to click."""
+    spectrum = {**_click(6.7, 76.0, "x2"), "label": "Upper bound"}
+    with pytest.raises(HandleEditError, match="Upper bound is set on the time plot"):
+        _set(session, RANGE, ("max_value",), spectrum)
+    for path, pointer in ((POINTS, ("points", 0)), (NRMSE, ("window", "start"))):
+        with pytest.raises(HandleEditError, match="is set on the time plot"):
+            _set(session, path, pointer, _click(6.7, 76.0, "x2"))
+    with pytest.raises(HandleEditError, match="row 1 is set on the spectrum") as err:
+        _set(session, FREQUENCY, ("peaks", 0), {**_click(0.5, 0.3), "label": "row 1"})
+    assert err.value.reason == "row 1 is set on the spectrum"
+
+
+def test_of_several_handles_that_write_a_field_the_nearest_is_used(session):
+    """Two rows defer to the criterion's tolerance: the side is measured
+    from the row NEAREST the click, not from the first."""
+    leaf = {
+        "metric": "points",
+        "variable": "x",
+        "tolerance": 0.1,
+        "points": [{"time": 0.2}, {"time": 0.7}],
+    }
+    session.stage([PatchOp(A, "replace", POINTS, leaf)])
+    first, second = 0.95 * wave(0.2), 0.95 * wave(0.7)
+    assert abs(first - second) > 0.5
+    new = _set(session, POINTS, ("tolerance", "upper"), _click(0.72, second + 0.3))
+    assert new["tolerance"] == 0.3
+    new = _set(session, POINTS, ("tolerance", "upper"), _click(0.15, first + 0.2))
     assert new["tolerance"] == 0.2
-    new = _set(session, POINTS, ("points", 1, "time_tolerance", "upper"), _click(0.66))
-    assert new["points"][1] == {"time": 0.6, "time_tolerance": 0.06}
-    with pytest.raises(ValueError, match="nothing on this plot sets that field"):
-        _set(session, NRMSE, ("tolerance",), _click(0.5, 0.5))
 
 
 def test_a_refused_armed_click_is_the_handles_own_refusal(session):
+    target = 0.95 * wave(0.6)
     with pytest.raises(HandleEditError, match="would cross its target") as err:
-        _set(session, POINTS, ("points", 0, "tolerance", "upper"), _click(0.9, -1.5))
+        _set(session, POINTS, ("tolerance", "upper"), _click(0.9, target - 0.5))
     assert str(err.value).startswith(POINTS + ": ")
     assert err.value.reason == "the upper side would cross its target"
 

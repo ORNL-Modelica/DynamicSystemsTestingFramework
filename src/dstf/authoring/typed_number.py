@@ -41,6 +41,9 @@ class TypedNumber(ui.number, component="typed_number.js"):
         component = type(self).component
         assert component is not None  # the class statement registered it
         self.tag = component.tag
+        #: The preview the browser was last told to show, and of which drag.
+        self.previewed: float | None = None
+        self.preview_revision = 0
 
     def preview(self, value: float | None, revision: int = 0) -> None:
         """Show ``value`` in the field in place of what it holds — a handle
@@ -48,15 +51,19 @@ class TypedNumber(ui.number, component="typed_number.js"):
         what it holds again. The field's value does not change, so nothing
         is handed to ``on_change`` and nothing is staged. ``revision`` is
         the number of the drag the preview is of: the component shows a
-        preview whatever its typing state — a field typed in and then left
-        for the plot keeps the focus — but not in a field typed in since
-        THAT drag began (``typed_number.js``)."""
-        props = self.props
-        same = props.get("preview") == value
-        if same and (value is None or props.get("revision") == revision):
-            return  # every write of a prop resends the field
-        props["preview"], props["revision"] = value, revision
-        self.update()
+        preview whatever its typing state, but not in a field typed in
+        since THAT drag began (``typed_number.js``).
+
+        A METHOD CALL on the component, not a prop: a prop write resends
+        the element, and the browser then renders the page's whole tree
+        again — a long task per move of the handle on an editor of thirty
+        rows. ``previewed`` and ``preview_revision`` are what was last
+        sent."""
+        same = self.previewed == value
+        if same and (value is None or self.preview_revision == revision):
+            return
+        self.previewed, self.preview_revision = value, revision
+        self.run_method("preview", value, revision)
 
     def _event_args_to_value(self, e: GenericEventArguments) -> float | None:
         """What was typed, as the number it is — and a negative zero as

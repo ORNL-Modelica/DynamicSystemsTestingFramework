@@ -64,17 +64,10 @@ LINK_NAMES = {
     False: "Unlinked: each side of {label} is set on its own",
 }
 _OTHER = {"lower": "upper", "upper": "lower"}
-#: The one-number fields that name a place on the plot — a bound is a line
-#: there — and so carry a ⌖ (D149); a two-sided tolerance always does, each
-#: side its edge. A mode, a minimum width, nrmse's one ceiling name none.
-PLACED = ("min_value", "max_value")
-#: The room a ⌖ takes at a field's right end, px — a dense round `xs`
-#: button and the 4 px the stylesheet leaves before it — which a field
-#: sized to show its label uncut has to add.
-PLACE_PX = 24
-#: `render_form`'s ``place``: draw the ⌖ of the field at this pointer (its
-#: keys into the leaf), with this label, into the current slot.
-Place = Callable[[tuple, str], None]
+#: `render_form`'s ``place``: offered every number field and each side of
+#: a tolerance — its pointer (its keys into the leaf), its label and the
+#: field itself — to draw a ⌖ in where a click on the plot can set it.
+Place = Callable[[tuple, str, ui.element], None]
 
 
 def in_effect_hint(entry: dict) -> str:
@@ -159,10 +152,11 @@ def render_form(
     and ``shown()`` — and ``shown[name]`` is the half pair that field's
     two fields show, while ``values[name]`` is still what the leaf holds.
 
-    ``place`` draws a ⌖ in every field that names a place on the plot
-    (:data:`PLACED`, and each side of a tolerance): called in the field's
-    own ``append`` slot with the field's pointer — ``(name,)``, or
-    ``(name, "lower")`` — and its label.
+    ``place`` is offered every number field and each side of a tolerance
+    — ``place(pointer, label, field)``, the pointer ``(name,)`` or
+    ``(name, "lower")`` — and draws a ⌖ in the field's ``append`` slot
+    where a click on the plot can set it (D149); which fields those are is
+    the caller's to say, not a list here.
     """
     in_effect = in_effect or {}
     form = Form()
@@ -207,8 +201,7 @@ def render_form(
                 if spec.help:
                     side.tooltip(spec.help)
                 if place is not None:
-                    with side.add_slot("append"):
-                        place((spec.name, end), side.props["label"])
+                    place((spec.name, end), side.props["label"], side)
             form.controls[spec.name] = group
             continue
         control = _control(
@@ -232,9 +225,8 @@ def render_form(
             control.classes(classes)
         if spec.help:
             control.tooltip(spec.help)
-        if place is not None and spec.name in PLACED:
-            with control.add_slot("append"):
-                place((spec.name,), spec.label or spec.name)
+        if place is not None and spec.type in ("float", "int"):
+            place((spec.name,), spec.label or spec.name, control)
         form.controls[spec.name] = control
     return form
 

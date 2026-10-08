@@ -41,6 +41,7 @@ pytestmark = pytest.mark.playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
+from dstf.comparison.snap import snapped  # noqa: E402
 from dstf.figures.plotly import GRIP, RING_PATH  # noqa: E402
 from test_author_suite_playwright import (  # noqa: E402
     EXPECT_TIMEOUT,
@@ -4492,8 +4493,8 @@ def _tables_project(tmp_path: Path) -> tuple[Path, Path]:
 #: clientWidth, left, right of what it shows]`) and, per row, every control
 #: in document order — a field's label, box, input line and its label's
 #: `[scrollWidth, clientWidth]` (cut where the first is the larger); a
-#: button's label and box. A field's ⌖ (D149) stands inside its field and
-#: is part of it: it is no control of the row's own.
+#: button's label and box. A row's ⌖ (D149) stands inside its first field
+#: and is part of it: it is no control of the row's own.
 READ_TABLE = """() => {
   const t = document.querySelector('.dstf-editor .dstf-table-scroll');
   const r = t.getBoundingClientRect();
@@ -4648,11 +4649,8 @@ def test_a_tables_row_wraps_inside_the_row_and_nothing_is_clipped(
         # (where every control on its own line took 296 px). A fourth, not
         # three: the time tolerance's two cells are as wide as their labels
         # (328 px with the toggle), and the button no longer fits beside
-        # them in that row's 415 px. At 1280 with the drawer shut the row
-        # was one line until each field took a ⌖ (D149): the two time
-        # tolerance cells are 24 px wider for theirs, and `Remove row` is
-        # on a second line of its own there too (40 + 8 + 38).
-        tall = {(1280, False): 86, (1280, True): 88, (900, False): 88, (900, True): 182}
+        # them in that row's 415 px.
+        tall = {(1280, False): 40, (1280, True): 88, (900, False): 88, (900, True): 182}
         assert heights["points · x"] == pytest.approx(tall[(width, drawer)], abs=2)
         assert heights["event-timing · x"] <= 40 * 2 + 8 + 2
         assert levelled >= 2  # an event-timing row is one line at every width
@@ -9787,12 +9785,10 @@ def test_an_arrow_let_go_outside_the_plot_lands_on_the_plots_edge(
         )
         upper = float(_table_cell(page, 0, "+ tolerance").input_value())
         top = max(ranges["yaxis"])
-        # The row's value is 0.3: the edge is the axis's end — to the step
-        # a placed value is snapped to (D149), the power of ten nearest a
-        # thousandth of what the axis shows.
+        # The row's value is 0.3: the edge is the axis's end, and the side
+        # written is that distance SNAPPED (D149) by what the axis showed.
         shows = top - min(ranges["yaxis"])
-        step = 10.0 ** round(math.log10(shows / 1000))
-        assert upper == pytest.approx(top - 0.3, abs=step / 2 + 1e-9), (upper, ranges)
+        assert upper == snapped(top - 0.3, shows), (upper, ranges)
         _settled_at(page, "/points/upper/0", "yanchor", 0.3 + upper)
 
         # A time side, let go 200 px left of the plot: the axis's start.
@@ -12254,13 +12250,9 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
         print("LET GO", case, written(), ranges)
         assert written() != (was["points"][0] if "points" in tail else was)[key]
         if key != "time":
-            # The end of the axis, to the step a placed value is snapped to
-            # (D149): the power of ten nearest a thousandth of what it shows.
+            # The end of the axis, SNAPPED (D149) by what the axis showed.
             shows = max(ranges["yaxis"]) - min(ranges["yaxis"])
-            step = 10.0 ** round(math.log10(shows / 1000))
-            assert written() == pytest.approx(
-                landed(ranges["yaxis"]), abs=step / 2 + 1e-9
-            ), ranges
+            assert written() == snapped(landed(ranges["yaxis"]), shows), ranges
             return
         # The axis the release was held to runs past the run on that side.
         assert min(ranges["xaxis"]) < 0.0 and max(ranges["xaxis"]) > 1.0, ranges

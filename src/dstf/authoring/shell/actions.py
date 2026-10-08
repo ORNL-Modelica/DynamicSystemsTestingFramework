@@ -48,7 +48,8 @@ LOADING = "batch actions unlock when loading finishes"
 def log_unless_users(e: BaseException, name: str) -> None:
     """Log a failed act unless a person's own edit raised it: `user_text`
     shows a ValueError's text alone, and a JSONDecodeError or a numpy shape
-    error from a bug is one — it must still reach the log."""
+    error from a bug is one — it must still reach the log. A value an
+    editor REFUSES is a person's own (`unscorable.Refused`)."""
     if not isinstance(e, USER_ERRORS):
         logger.exception("%s failed", name)
 
@@ -143,9 +144,17 @@ class ShellPanel:
 
     # Quiet where there is no plot (a dialog, a tree row, a Statistics
     # row): the contract's no-ops.
+    @property
+    def can_place(self) -> bool:
+        return self._placing is not None
+
     def place_button(self, pointer: Hashable, label: str) -> None:
         if self._placing is not None:
             self._placing.button(self._name, pointer, label)
+
+    def disarm(self) -> None:
+        if self._placing is not None:
+            self._placing.disarm()
 
     def on_place(self, handler: Callable[[Hashable, dict], bool]) -> None:
         placing, name = self._placing, self._name
@@ -156,7 +165,7 @@ class ShellPanel:
             armed = placing.armed
             if armed is None or armed.owner != name:
                 return  # another panel's field, or none
-            if handler(armed.pointer, click):
+            if handler(armed.pointer, {**click, "label": armed.label}):
                 placing.disarm()
 
         self.figure.on(PLACE, placed)

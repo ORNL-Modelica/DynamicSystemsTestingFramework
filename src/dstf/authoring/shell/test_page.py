@@ -1266,6 +1266,12 @@ class TestPage:
             self.actions.refresh()
         if event["event"] == "spec":
             heard_spec(self.state, event)
+            if self._mine(event):
+                # Any edit of the test disarms (D149): a ⌖ names a row by
+                # its index and a field by its keys, and an edit — a row
+                # added by a click, a Discard, a Save, another tab's — can
+                # put another row or another leaf under that name.
+                self.disarm()
         if event["event"] == "job":
             # A finished job reloaded the trajectories under every plot and
             # no leaf's signature sees that (decision 10). The other states

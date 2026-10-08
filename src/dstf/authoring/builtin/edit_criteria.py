@@ -40,6 +40,7 @@ from ..unscorable import (
 if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
+from .edit_on_plot import _replace, placeable, placed
 from .edit_tree import seed_data
 
 # NO module-level `nicegui` or `..forms` import: `import dstf.authoring` runs
@@ -237,6 +238,15 @@ class EditCriteria:
         #: The form as last built, and the window's two fields: what a
         #: preview is shown in.
         built: dict[str, Any] = {"form": None, "window": {}}
+        # A ⌖ only where a click on the plot can set the field as the
+        # criterion now is (`edit_on_plot.placeable`, the rule the click
+        # itself acts by) — and none beside no plot, or on a statistic.
+        can = placeable(s, model_id=model_id, variable=leaf["variable"], path=path)
+
+        def place(pointer: tuple, label: str, field: Any) -> None:
+            if ui_panel.can_place and not statistic and can(pointer):
+                with field.add_slot("append"):
+                    ui_panel.place_button(pointer, label)
 
         def build_form() -> None:
             form_slot.clear()
@@ -261,9 +271,7 @@ class EditCriteria:
                     classes="dstf-field",
                     shown={name: cell["shown"] for name, cell in kept.items()},
                     on_edit=remember,
-                    # A statistic is on no plot: none of its fields is
-                    # set by a click on one.
-                    place=None if statistic else ui_panel.place_button,
+                    place=place,
                     # The mode the leaf was scored in: a switched mode's
                     # fields were never applied, so nothing is in effect.
                     in_effect=(
@@ -288,6 +296,7 @@ class EditCriteria:
             emit("params:" + ",".join(changed))
 
         def set_metric(name: str) -> None:
+            ui_panel.disarm()  # another mode's fields are other fields
             state["metric"] = name
             # A new mode starts from its seed, else its defaults: a range
             # switched to with no bound does not resolve. The window stays,
@@ -352,8 +361,7 @@ class EditCriteria:
                         .props(f"dense {BOTTOM}")
                         .classes("dstf-field")
                     )
-                    with field.add_slot("append"):
-                        ui_panel.place_button(("window", end), f"window {end}")
+                    place(("window", end), f"window {end}", field)
                     built["window"][end] = field
             ui.select(
                 names or ["primary"],
@@ -398,8 +406,6 @@ class EditCriteria:
 
     def act(self, s: SessionView, **inputs: Any) -> Patch | None:
         if inputs.get("kind") == "place":
-            from .edit_on_plot import _replace, placed
-
             new = placed(
                 s,
                 model_id=inputs["model_id"],

@@ -208,7 +208,9 @@ def test_a_ctrl_click_on_the_spectrum_adds_the_nearest_spectral_peak(
         freq = _staged_tree(page)["children"][2]["peaks"][1]["freq"]
         # The run's own peak — a bin of its spectrum — not the click's 7.2.
         assert abs(freq - PEAKS[1]) < 0.2 and freq != 7.2, freq
-        assert _pending(page) == "1 pending edit"
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
         ring = _shape(page, "/peaks/declared/1")
         assert ring["xanchor"] == freq
         assert at["xspan"] == 12
@@ -296,96 +298,191 @@ def test_clicks_that_are_not_an_edit_change_nothing(tmp_path, playwright_browser
         nothing("a double-click", 2, said=1)
 
 
-def test_an_armed_value_field_takes_the_snapped_click(tmp_path, playwright_browser):
-    """Press a field's ⌖: the hint says what the next click sets, the
-    pointer over the plot is a crosshair; the click writes the SNAPPED
-    value, stages one edit and disarms. Esc disarms without a click."""
+#: What says a field is armed ON THE PLOT of card 0: the card's attribute,
+#: the outline the stylesheet draws about the plot by it, the accent that
+#: outline should be, and the line under the plot.
+ARMED_CUE = """
+() => {
+  const card = document.querySelectorAll('.dstf-plot')[0];
+  const slot = card.querySelector('.dstf-plot-slot');
+  const probe = document.createElement('span');
+  probe.style.color = 'var(--dstf-accent)';
+  card.appendChild(probe);
+  const accent = getComputedStyle(probe).color;
+  probe.remove();
+  const style = getComputedStyle(slot);
+  const line = card.querySelector('.dstf-plot-armed');
+  const shown = line && line.getBoundingClientRect().height > 0;
+  return {
+    armed: card.hasAttribute('data-armed'), accent,
+    outline: style.outlineStyle === 'none' ? null : style.outlineColor,
+    width: style.outlineWidth,
+    line: shown ? line.innerText : null,
+    colour: shown ? getComputedStyle(line).color : null,
+  };
+}
+"""
+
+
+def _row_button(page, row: int):
+    """The ⌖ of table row ``row``: in its first cell."""
+    return page.locator(".dstf-editor .dstf-table-row").nth(row).locator(".dstf-arm")
+
+
+def _arm_row(page, row: int):
+    button = _row_button(page, row)
+    expect(button).to_have_count(1)
+    button.scroll_into_view_if_needed()
+    button.click()
+    expect(button).to_have_attribute("aria-pressed", "true", timeout=EXPECT_TIMEOUT)
+    return button
+
+
+def test_an_armed_row_says_so_on_its_plot_and_takes_the_snapped_click(
+    tmp_path, playwright_browser
+):
+    """Press a row's ⌖: the editor's hint says what the next click sets —
+    and so does the PLOT, where the click is made and the ⌖ may be a
+    screen away: an accent outline about it and the same sentence under
+    it. The click writes the SNAPPED place, stages one edit and disarms.
+    Esc disarms without a click."""
     with _served(tmp_path, playwright_browser, project=_wave, hooks=True) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
-        value = _table_cell(page, 0, "value")
-        expect(value).to_have_value("-1")
+        # One ⌖ a row, and none in any other cell.
+        assert page.locator(".dstf-editor .dstf-table-row .dstf-arm").count() == 2
+        expect(_table_cell(page, 0, "value")).to_have_value("-1")
         rest = _hint(page).inner_text()
-        button = _arm(page, value)
-        expect(_hint(page)).to_have_text(ARMED_HINT.format("value of row 1"))
-        value.evaluate("e => e.scrollIntoView({block: 'end'})")
-        page.wait_for_timeout(300)
-        _shot(page, tmp_path, "onplot-armed")
+        cue = page.evaluate(ARMED_CUE)
+        assert (cue["armed"], cue["outline"], cue["line"]) == (False, None, None), cue
+        button = _arm_row(page, 0)
+        said = ARMED_HINT.format("row 1")
+        expect(_hint(page)).to_have_text(said)
         _plot_on_top(page)
-        at = _at(page, 0.9, -0.4567)
-        page.mouse.move(at["x"], at["y"], steps=3)
-        cursor = page.evaluate(
-            "([x, y]) => getComputedStyle(document.elementFromPoint(x, y)).cursor",
-            [at["x"], at["y"]],
-        )
-        assert cursor == "crosshair", cursor
+        cue = page.evaluate(ARMED_CUE)
+        assert cue["armed"] and cue["line"] == said, cue
+        assert cue["outline"] == cue["accent"] == cue["colour"], cue
+        assert cue["width"] == "2px", cue
+        _shot(page, tmp_path, "onplot-armed")
+        at = _at(page, 0.3333, -0.4567)
         # Esc: nothing armed, and the click that follows is nothing.
         page.keyboard.press("Escape")
         expect(button).to_have_attribute("aria-pressed", "false")
         expect(_hint(page)).to_have_text(rest)
+        cue = page.evaluate(ARMED_CUE)
+        assert (cue["armed"], cue["outline"], cue["line"]) == (False, None, None), cue
         _click_at(page, at)
         _nothing_staged(page, 2)
-        # Armed again, and clicked.
-        button = _arm(page, _table_cell(page, 0, "value"))
+        # Armed again, and clicked: the row holds a value of its own, so
+        # the click is its place — time and value.
+        _arm_row(page, 0)
         _plot_on_top(page)
-        at = _at(page, 0.9, -0.4567)
+        at = _at(page, 0.3333, -0.4567)
         _click_at(page, at)
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
-        step = _step(at["yspan"])
+        xstep, ystep = _step(at["xspan"]), _step(at["yspan"])
         staged = _staged_tree(page)["children"][0]["points"][0]
-        # A multiple of the step, within half a step of the click; the
-        # click's x is not read: the time stays.
-        assert abs(staged["value"] + 0.4567) <= step / 2 + 1 / at["ppy"], (staged, step)
-        assert abs(staged["value"] / step - round(staged["value"] / step)) < 1e-6
-        assert staged["time"] == 0.25
+        assert abs(staged["value"] + 0.4567) <= ystep / 2 + 1 / at["ppy"], (staged, at)
+        assert abs(staged["time"] - 0.3333) <= xstep / 2 + 1 / at["ppx"], (staged, at)
+        assert _on_grid(staged["value"], ystep) and _on_grid(staged["time"], xstep)
         expect(_table_cell(page, 0, "value")).to_have_value(f"{staged['value']:g}")
         expect(_hint(page)).to_have_text(rest)
         expect(page.locator('.dstf-arm[aria-pressed="true"]')).to_have_count(0)
-        _note(tmp_path, "armed-value", {"step": step, "value": staged["value"]})
+        assert page.evaluate(ARMED_CUE)["armed"] is False
+        _note(tmp_path, "armed-row", {"steps": [xstep, ystep], "row": staged})
+
+
+def test_an_armed_click_on_the_other_panel_is_refused_and_stays_armed(
+    tmp_path, playwright_browser
+):
+    """A row of checkpoints is set on the time plot. Armed, a click on the
+    spectrum under it wrote a magnitude as its value and 1.0 as its time:
+    it is refused in words, nothing is staged, the row stays armed — and
+    the click on the time plot that follows sets it. And a click on the
+    legend or the toolbar is no click on the plot at all."""
+    with _served(tmp_path, playwright_browser, project=_wave, hooks=True) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        page.evaluate(TAP)
+        _arm_row(page, 0)
+        _plot_on_top(page)
+        top = _at(page, 2.0, 0.0, "x2y2")["yrange"][1]
+        _click_at(page, _at(page, 2.0, top / 2, "x2y2"))
+        refusal = page.locator(".dstf-plot-refusal").first
+        expect(refusal).to_have_text(
+            "row 1 is set on the time plot", timeout=EXPECT_TIMEOUT
+        )
+        assert _pending(page) == "0 pending edits"
+        expect(page.locator('.dstf-arm[aria-pressed="true"]')).to_have_count(1)
+        assert page.evaluate(ARMED_CUE)["armed"] is True
+        assert len(page.evaluate("() => window.__clicks.splice(0)")) == 1
+        # The legend's entries and the toolbar's buttons are theirs.
+        page.locator(".js-plotly-plot").first.locator(".legend .traces").first.click()
+        page.mouse.move(*[_at(page, 0.9, 0.0)[k] for k in ("x", "y")])
+        page.locator(".js-plotly-plot").first.locator(
+            ".modebar-btn[data-title='Zoom in']"
+        ).click()
+        page.wait_for_timeout(400)
+        assert page.evaluate("() => window.__clicks.splice(0)") == []
+        assert _pending(page) == "0 pending edits"
+        expect(page.locator('.dstf-arm[aria-pressed="true"]')).to_have_count(1)
+        _click_at(page, _at(page, 0.33, -0.5))
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        expect(refusal).to_be_hidden()
+        expect(page.locator('.dstf-arm[aria-pressed="true"]')).to_have_count(0)
+        assert abs(_staged_tree(page)["children"][0]["points"][0]["time"] - 0.33) < 0.01
 
 
 def test_an_armed_tolerance_side_puts_its_edge_on_the_click(
     tmp_path, playwright_browser
 ):
-    """The click is where the box's edge goes — within one snapped step —
-    and a click across the target is the arrow's own refusal: said under
-    the plot, the field still armed."""
+    """The criterion's default tolerance, which row 2 defers to: the click
+    is where that row's box edge goes — within one snapped step — and a
+    click across the target is the arrow's own refusal: said under the
+    plot, the field still armed. A row's own tolerance has no ⌖: it has
+    its arrows."""
     with _served(tmp_path, playwright_browser, project=_wave, hooks=True) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
-        upper = _table_cell(page, 0, "+ tolerance")
-        expect(upper).to_have_value("0.3")
+        upper = page.locator(".dstf-editor").get_by_label(
+            "+ Default tolerance", exact=True
+        )
+        expect(upper).to_have_value("0.2")
         _arm(page, upper)
-        expect(_hint(page)).to_have_text(ARMED_HINT.format("+ tolerance of row 1"))
+        expect(_hint(page)).to_have_text(ARMED_HINT.format("+ Default tolerance"))
         _plot_on_top(page)
-        # Under the target (-1.0): the upper side would cross it.
-        _click_at(page, _at(page, 0.9, -1.4))
+        target = float(np.interp(0.6, times(), [0.95 * wave(t) for t in times()]))
+        # Under row 2's target: the upper side would cross it.
+        _click_at(page, _at(page, 0.62, target - 0.4))
         refusal = page.locator(".dstf-plot-refusal").first
         expect(refusal).to_contain_text(
             "the upper side would cross its target", timeout=EXPECT_TIMEOUT
         )
         assert _pending(page) == "0 pending edits"
         expect(page.locator('.dstf-arm[aria-pressed="true"]')).to_have_count(1)
-        at = _at(page, 0.9, -0.4321)
+        at = _at(page, 0.62, target + 0.4321)
         _click_at(page, at)
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
         expect(refusal).to_be_hidden()
+        expect(page.locator('.dstf-arm[aria-pressed="true"]')).to_have_count(0)
         step = _step(at["yspan"])
-        box = _shape(page, "/points/box/0")
+        tolerance = _staged_tree(page)["children"][0]["tolerance"]
+        assert abs(tolerance - 0.4321) <= step / 2 + 1 / at["ppy"], (tolerance, step)
         page.wait_for_function(
-            """() => !document.querySelector('.dstf-arm[aria-pressed="true"]')""",
+            """([tail, want]) => { const gd = document.querySelectorAll('.js-plotly-plot')[0];
+              const s = gd.layout.shapes.find(x => (x.name || '').endsWith(tail));
+              return s && Math.abs(s.y1 - want) < 1e-9; }""",
+            arg=["/points/box/1", target + tolerance],
             timeout=EXPECT_TIMEOUT,
         )
-        box = _shape(page, "/points/box/0")
-        assert abs(box["y1"] - (-0.4321)) <= step + 1 / at["ppy"], (box, step)
-        tolerance = _staged_tree(page)["children"][0]["points"][0]["tolerance"]
-        assert tolerance == pytest.approx(box["y1"] + 1.0)
-        # A number: linked, both sides.
-        expect(_table_cell(page, 0, "− tolerance")).to_have_value(f"{tolerance:g}")
+        box = _shape(page, "/points/box/1")
+        assert abs(box["y1"] - (target + 0.4321)) <= step + 1 / at["ppy"], (box, step)
 
 
 def _hold(page, tail: str) -> dict:
@@ -601,7 +698,9 @@ def test_a_move_that_arrives_after_its_release_changes_nothing(
         page.wait_for_timeout(800)
         expect(_table_cell(page, 0, "+ tolerance")).to_have_value(f"{staged:g}")
         expect(_table_cell(page, 0, "− tolerance")).to_have_value(f"{staged:g}")
-        assert _pending(page) == "1 pending edit"
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
         assert _staged_tree(page)["children"][0]["points"][0]["tolerance"] == staged
         _note(tmp_path, "moves-per-second", {"sent": len(sent), "seconds": lasted})
         # And the arrow still drags.
@@ -609,3 +708,68 @@ def test_a_move_that_arrives_after_its_release_changes_nothing(
         expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
             f"{staged:g}", timeout=EXPECT_TIMEOUT
         )
+
+
+def test_what_a_held_handle_shows_is_what_its_release_writes(
+    tmp_path, playwright_browser
+):
+    """Three ways the preview could say another number than the release.
+    An axis the pointer went under 8 px along is not moved, in the preview
+    as in the release. A handle held past the plot's edge is held to it.
+    And where it is let go is said once more before the release: the last
+    move the fields were shown is the release's own position."""
+    with _served(tmp_path, playwright_browser, project=_wave, hooks=True) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _plot_on_top(page)
+        time_cell, value = _table_cell(page, 0, "time"), _table_cell(page, 0, "value")
+        held = _hold(page, "/points/target/0")
+        # 30 px along x, 5 px along y: the value does not follow.
+        page.mouse.move(held["px"] + 30, held["py"] + 5, steps=3)
+        _shows(page, time_cell, 0.25 + 30 / held["ppx"], 2 / held["ppx"])
+        page.wait_for_timeout(200)
+        assert value.input_value() == "-1"
+        page.mouse.up()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        assert _staged_tree(page)["children"][0]["points"][0]["value"] == -1.0
+
+        # Held 250 px above the plot: the edge of what the axis shows.
+        _plot_on_top(page)
+        upper = _table_cell(page, 0, "+ tolerance")
+        top = _at(page, 0.5, 0.0)["yrange"][1]
+        held = _hold(page, "/points/upper/0")
+        page.mouse.move(held["px"], 30, steps=6)
+        shown, _ = _shows(page, upper, top + 1.0, _step(_at(page, 0.5, 0.0)["yspan"]))
+        page.mouse.up()
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(500)
+        staged = _staged_tree(page)["children"][0]["points"][0]["tolerance"]
+        assert f"{staged:g}" == shown, (staged, shown)
+
+        # Let go straight after the last move: the page says where, once
+        # more, before the release — the last move the fields were shown
+        # is the release's own position, not one a frame short of it.
+        page.evaluate(RELAYOUT, [0, {"yaxis.range": [-2.5, 2.5]}])
+        page.wait_for_timeout(400)
+        page.evaluate(TAP)
+        held = _hold(page, "/points/upper/0")
+        page.mouse.move(held["px"], held["py"] + 12, steps=2)
+        page.wait_for_timeout(200)
+        page.mouse.move(held["px"], held["py"] + 40)
+        page.mouse.up()
+        moves = page.evaluate("() => window.__moves.map(m => m.arg)")
+        last = [m for m in moves if not m.get("end")][-1]["update"]
+        (anchor,) = [v for k, v in last.items() if k.endswith(".yanchor")]
+        assert abs(anchor - (held["yanchor"] - 40 / held["ppy"])) * held["ppy"] < 1.5, (
+            anchor,
+            held,
+        )
+        want = anchor + 1.0  # the row's value is -1.0
+        shown, _ = _shows(page, upper, want, 0.01 / 2 + 1e-9)
+        page.wait_for_timeout(600)
+        staged = _staged_tree(page)["children"][0]["points"][0]["tolerance"]
+        assert f"{staged:g}" == shown, (staged, shown)

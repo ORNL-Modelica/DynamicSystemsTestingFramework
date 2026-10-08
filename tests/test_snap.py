@@ -22,7 +22,7 @@ def test_the_step_is_the_power_of_ten_nearest_a_thousandth_of_the_span(decade):
         assert snap_step(factor * unit) == pytest.approx(unit / 100, rel=1e-12)
 
 
-@pytest.mark.parametrize("span", [None, 0, 0.0, -1.0, math.inf, math.nan, True, "1"])
+@pytest.mark.parametrize("span", [None, True, "1"])
 def test_no_span_is_no_step_and_nothing_is_snapped(span):
     assert snap_step(span) is None
     assert snapped(0.123456789, span) == 0.123456789

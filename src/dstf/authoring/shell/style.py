@@ -446,8 +446,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-sides > .q-btn[aria-pressed="false"] { color: var(--dstf-text-muted); }
 /* A field's ⌖ (D149): muted at rest, the accent on a fill while its field
    is ARMED — the next click on the plot sets it. Read off `aria-pressed`,
-   which the server renders. And over an armed criterion's plot the pointer
-   is one that places. */
+   which the server renders. And the armed criterion's PLOT says so where
+   the click is made: its card carries `data-armed`, the plot an accent
+   outline, the line under it what the click sets. */
 .dstf-arm { color: var(--dstf-text-muted); }
 /* Close to its field's end: Quasar's 12 px before an appended control made
    a points row, ten controls and eight of these, a line taller at 1280. */
@@ -456,7 +457,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   color: var(--dstf-accent);
   background: color-mix(in srgb, var(--dstf-accent) 18%, transparent);
 }
-.dstf-plot-slot[data-armed] .nsewdrag { cursor: crosshair !important; }
+.dstf-plot[data-armed] .dstf-plot-slot {
+  outline: 2px solid var(--dstf-accent); outline-offset: -2px;
+}
+.dstf-plot-armed { color: var(--dstf-accent); }
 .dstf-sides-hinted > .q-field:first-child {
   min-width: min(var(--dstf-hint-width), calc(100cqw - 180px));
 }

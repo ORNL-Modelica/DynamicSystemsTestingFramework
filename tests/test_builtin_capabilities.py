@@ -596,7 +596,7 @@ async def test_a_negative_tolerance_typed_puts_the_leaf_back(session):
         assert "tolerance" not in session.tree(A)  # the `-`, accepted
         _keys(user, tol, "-0", "-0.", "-0.5")
         assert errors["edit-criteria"] == (
-            "ValueError: tolerance must not be negative; got −0.5"
+            "Refused: tolerance must not be negative; got −0.5"
         )
         assert session.tree(A) == NRMSE_ROOT
         assert tol.value == -0.5
@@ -643,7 +643,7 @@ async def test_a_negative_tube_width_typed_puts_the_leaf_back(session):
         width = _number(user, "− Tube abs")
         _keys(user, width, "", "-0", "-0.", "-0.3")
         assert errors["edit-criteria"] == (
-            "ValueError: tube_abs must not be negative; got −0.3"
+            "Refused: tube_abs must not be negative; got −0.3"
         )
         assert session.tree(A) == leaf
         assert width.value == -0.3
@@ -668,7 +668,7 @@ async def test_a_negative_min_width_typed_puts_the_leaf_back(tmp_path):
         floor = _number(user, "Min width")
         _keys(user, floor, "-0.3")
         assert errors["edit-criteria"] == (
-            "ValueError: tube_min_width must not be negative; got −0.3"
+            "Refused: tube_min_width must not be negative; got −0.3"
         )
         assert s.tree(A) == leaf and s.spec.pending == []
         assert floor.value == -0.3
@@ -700,8 +700,7 @@ async def test_a_tube_pair_typed_to_leave_nothing_inside_puts_the_leaf_back(sess
         assert "edit-criteria" not in errors
         _keys(user, upper, "-0.5")
         assert errors["edit-criteria"] == (
-            "ValueError: tube_abs sides must not sum below zero; "
-            "got lower 0.1, upper −0.5"
+            "Refused: tube_abs sides must not sum below zero; got lower 0.1, upper −0.5"
         )
         assert session.tree(A) == leaf
         assert upper.value == -0.5
@@ -733,7 +732,7 @@ async def test_a_negative_side_of_a_pair_typed_puts_the_pair_back(session):
         lower = _number(user, "− Default tolerance")
         _keys(user, lower, "0", "-0.2")
         assert errors["edit-criteria"] == (
-            "ValueError: tolerance (lower side) must not be negative; got −0.2"
+            "Refused: tolerance (lower side) must not be negative; got −0.2"
         )
         assert session.tree(A) == leaf
         assert lower.value == -0.2
@@ -749,9 +748,7 @@ async def test_bounds_typed_out_of_order_put_the_leaf_back(session):
         _keys(user, lower, "2")
         assert session.tree(A)["min_value"] == 2.0
         _keys(user, lower, "25")
-        assert errors["edit-criteria"] == (
-            "ValueError: min_value 25 exceeds max_value 2"
-        )
+        assert errors["edit-criteria"] == ("Refused: min_value 25 exceeds max_value 2")
         assert session.tree(A) == WINDOWED
         assert lower.value == 25
 

@@ -17,6 +17,7 @@ from ..config import ConfigError
 from ..discovery.patch_apply import PatchError
 from .session import JobRunningError, LockedError
 from .tree_move import MoveRefused
+from .unscorable import Refused
 
 #: What a person's own edit raises. Shown as its reason and never logged.
 USER_ERRORS: tuple[type[BaseException], ...] = (
@@ -28,6 +29,8 @@ USER_ERRORS: tuple[type[BaseException], ...] = (
     # A move the tree refuses — a Move to… menu or a drag map gone stale
     # under an edit staged since offers one — is said, not a bug.
     MoveRefused,
+    # A value an editor will not stage: typed on the way to a good one.
+    Refused,
 )
 
 

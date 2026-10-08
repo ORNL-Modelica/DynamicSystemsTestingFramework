@@ -15,6 +15,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeGuard
 
+
+class Refused(ValueError):
+    """A value an editor will not stage, said as its reason. A person's own
+    — a negative tolerance on the way to a good one, bounds out of order,
+    a required cell left blank — so it is shown and never logged
+    (`errors.USER_ERRORS`): as a plain `ValueError`, which a bug's also
+    is, each keystroke of one logged a traceback."""
+
+
 #: The keys that hold a tolerance, on a criterion and in a row of its tables.
 TOLERANCES = ("tolerance", "time_tolerance")
 
@@ -51,7 +60,7 @@ def refuse_negative(
     side_names: tuple[str, str] | None = None,
     where: str = "",
 ) -> None:
-    """Raise ``ValueError`` when the tolerance ``value`` held under ``key``
+    """Raise :class:`Refused` when the tolerance ``value`` held under ``key``
     is negative: ``tolerance must not be negative; got −0.5`` for a number,
     ``tolerance (lower side) must not be negative; got −0.5`` for a side of
     a pair — named as its fields are where they have words for it
@@ -65,11 +74,11 @@ def refuse_negative(
         sides = [(key, value)]
     for what, side in sides:
         if _is_number(side) and side < 0:
-            raise ValueError(f"{where}{what} must not be negative; got {_num(side)}")
+            raise Refused(f"{where}{what} must not be negative; got {_num(side)}")
 
 
 def refuse_negative_width(key: str, value: object) -> None:
-    """Raise ``ValueError`` when the tube width ``value`` held under ``key``
+    """Raise :class:`Refused` when the tube width ``value`` held under ``key``
     puts the tube's upper bound under its lower one, so that nothing is
     ever inside it (it was staged, and read "0.0% inside tube"): a negative
     NUMBER — both sides — ``tube_abs must not be negative; got −0.3``, and
@@ -85,14 +94,14 @@ def refuse_negative_width(key: str, value: object) -> None:
         return
     lower, upper = value.get("lower"), value.get("upper")
     if _is_number(lower) and _is_number(upper) and lower + upper < 0:
-        raise ValueError(
+        raise Refused(
             f"{key} sides must not sum below zero; "
             f"got lower {_num(lower)}, upper {_num(upper)}"
         )
 
 
 def refuse_negative_floor(key: str, value: object) -> None:
-    """Raise ``ValueError`` when the tube's minimum width ``value`` held
+    """Raise :class:`Refused` when the tube's minimum width ``value`` held
     under ``key`` is a negative number: ``tube_min_width must not be
     negative; got −0.3``. A floor below zero is under every width: it
     floors nothing, and the criterion scores as if the field were empty —
@@ -104,16 +113,16 @@ def refuse_negative_floor(key: str, value: object) -> None:
 
 
 def refuse_bounds(metric: str, params: Mapping[str, object]) -> None:
-    """Raise ``ValueError`` when ``params`` holds both bounds out of order:
+    """Raise :class:`Refused` when ``params`` holds both bounds out of order:
     ``min_value 9 exceeds max_value 2`` — and, for a metric of
     :data:`STRICT_BOUNDS`, when they are equal."""
     lo, hi = params.get("min_value"), params.get("max_value")
     if not _is_number(lo) or not _is_number(hi):
         return
     if lo > hi:
-        raise ValueError(f"min_value {_num(lo)} exceeds max_value {_num(hi)}")
+        raise Refused(f"min_value {_num(lo)} exceeds max_value {_num(hi)}")
     if lo == hi and metric in STRICT_BOUNDS:
-        raise ValueError(
+        raise Refused(
             f"min_value {_num(lo)} equals max_value {_num(hi)}; "
             f"a {metric} leaf needs min_value < max_value"
         )

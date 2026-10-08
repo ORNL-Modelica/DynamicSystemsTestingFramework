@@ -70,12 +70,19 @@ class HostPanel:
         #: What `on_click` registered: the row's click, or None.
         self.click: Callable[[], None] | None = None
         self.places: list[tuple[Any, str]] = []
+        self.disarmed = 0
         self.place: Callable[[Any, dict], bool] | None = None
         self.previews: list[tuple[dict | None, int]] = []
         self.previewers: list[Callable[[dict | None, int], None]] = []
 
+    #: The host stands for a panel beside a plot.
+    can_place = True
+
     def place_button(self, pointer: Any, label: str) -> None:
         self.places.append((pointer, label))
+
+    def disarm(self) -> None:
+        self.disarmed += 1
 
     def on_place(self, handler: Callable[[Any, dict], bool]) -> None:
         self.place = handler
