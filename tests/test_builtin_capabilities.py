@@ -418,6 +418,11 @@ def _criteria_act(session, metric: str, params: dict):
             "tube_rel sides must not sum below zero; got lower 0.02, upper −0.05",
         ),
         (
+            "tube",
+            {"tube_width_mode": "band", "tube_abs": 0.3, "tube_min_width": -0.3},
+            "tube_min_width must not be negative; got −0.3",
+        ),
+        (
             "range",
             {"min_value": 9, "max_value": 2},
             "min_value 9 exceeds max_value 2",
@@ -445,9 +450,10 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
     """A negative tolerance — a number or either side of a pair, a value's
     or a time's — a tube's width whose two sides leave nothing between
     them, and bounds out of order were staged as typed, and the criterion
-    could only ever fail (a scalar with equal bounds: never score). Refused
-    by `act`, in a sentence naming the field and the value, before anything
-    is staged."""
+    could only ever fail (a scalar with equal bounds: never score); a
+    tube's minimum width below zero was staged too, a floor under nothing.
+    Refused by `act`, in a sentence naming the field and the value, before
+    anything is staged."""
     with pytest.raises(ValueError) as box:
         _criteria_act(session, metric, params)
     assert str(box.value) == sentence
@@ -483,6 +489,8 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
             {"tube_width_mode": "rel", "tube_rel": {"lower": 0.05, "upper": -0.05}},
         ),
         ("tube", {"tube_width_mode": "band", "tube_abs": {"lower": 0, "upper": 0}}),
+        ("tube", {"tube_width_mode": "rel", "tube_rel": 0.1, "tube_min_width": 0}),
+        ("tube", {"tube_width_mode": "rel", "tube_rel": 0.1, "tube_min_width": 0.3}),
         ("range", {"min_value": -9}),
         ("range", {"min_value": 2, "max_value": 2}),  # equal bounds score
         ("scalar", {**MAX, "min_value": 1, "max_value": 2}),
@@ -642,6 +650,31 @@ async def test_a_negative_tube_width_typed_puts_the_leaf_back(session):
         _keys(user, width, "0.2")
         assert session.tree(A)["tube_abs"] == 0.2
         assert "edit-criteria" not in errors
+
+
+async def test_a_negative_min_width_typed_puts_the_leaf_back(tmp_path):
+    """`-0.3` typed into a tube's Min width was staged, one pending edit: a
+    floor below zero is under every width and floors nothing. Refused, the
+    leaf is the saved one again and nothing is pending; the field keeps
+    what was typed."""
+    leaf = {
+        "metric": "tube",
+        "variable": "x",
+        "tube_width_mode": "rel",
+        "tube_rel": 0.1,
+    }
+    s = _session_with_entry(tmp_path, {"metrics": leaf})
+    async with host(s, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        floor = _number(user, "Min width")
+        _keys(user, floor, "-0.3")
+        assert errors["edit-criteria"] == (
+            "ValueError: tube_min_width must not be negative; got −0.3"
+        )
+        assert s.tree(A) == leaf and s.spec.pending == []
+        assert floor.value == -0.3
+        _keys(user, floor, "0.3")
+        assert s.tree(A) == {**leaf, "tube_min_width": 0.3}
+        assert len(s.spec.pending) == 1 and "edit-criteria" not in errors
 
 
 async def test_a_tube_pair_typed_to_leave_nothing_inside_puts_the_leaf_back(session):

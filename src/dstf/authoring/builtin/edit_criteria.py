@@ -28,10 +28,12 @@ from ...comparison.tree_spec import (
 from ..capabilities import Panel, Patch, Placement
 from ..tree_pointer import node_or_none
 from ..unscorable import (
+    MIN_WIDTH,
     TOLERANCES,
     WIDTHS,
     refuse_bounds,
     refuse_negative,
+    refuse_negative_floor,
     refuse_negative_width,
 )
 
@@ -81,7 +83,8 @@ def refuse_unscorable(name: str, params: dict) -> None:
     """Raise ``ValueError`` for a criterion of metric ``name`` whose
     ``params`` can never score (`..unscorable`): a negative tolerance, its
     sides named as the mode's own fields name them, a tube's width whose
-    sides sum below zero, or bounds out of order."""
+    sides sum below zero, or bounds out of order — and a tube's minimum
+    width below zero, which floors nothing."""
     desc = metric(name)
     sides: dict[str, Any] = {}
     if desc is not None and dataclasses.is_dataclass(desc.config_cls):
@@ -93,6 +96,7 @@ def refuse_unscorable(name: str, params: dict) -> None:
         refuse_negative(key, params.get(key), sides.get(key))
     for key in WIDTHS:
         refuse_negative_width(key, params.get(key))
+    refuse_negative_floor(MIN_WIDTH, params.get(MIN_WIDTH))
     refuse_bounds(name, params)
 
 

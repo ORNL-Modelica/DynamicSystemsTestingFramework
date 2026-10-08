@@ -2,7 +2,8 @@
 tolerance — a number, or either side of a pair; a value's or a time's; the
 criterion's or a table row's — a tube's constant width whose sides sum
 below zero (a negative number, or a pair that leaves nothing between its
-bounds), and bounds out of order.
+bounds), and bounds out of order. And one value that scores but says
+nothing: a tube's minimum width below zero, a floor under no width.
 
 The EDITOR's rule, raised from a capability's ``act`` before anything is
 staged, the way a window that ends before it starts is refused. It is not
@@ -19,6 +20,10 @@ TOLERANCES = ("tolerance", "time_tolerance")
 
 #: The keys that hold a tube's constant width (``TubeConfig``).
 WIDTHS = ("tube_abs", "tube_rel")
+
+#: The key that holds a tube's minimum width: ONE number, a floor under
+#: both sides.
+MIN_WIDTH = "tube_min_width"
 
 #: The metrics whose two bounds may not be EQUAL either: the scorer refuses
 #: a scalar leaf with ``min_value >= max_value`` when it is built
@@ -84,6 +89,18 @@ def refuse_negative_width(key: str, value: object) -> None:
             f"{key} sides must not sum below zero; "
             f"got lower {_num(lower)}, upper {_num(upper)}"
         )
+
+
+def refuse_negative_floor(key: str, value: object) -> None:
+    """Raise ``ValueError`` when the tube's minimum width ``value`` held
+    under ``key`` is a negative number: ``tube_min_width must not be
+    negative; got −0.3``. A floor below zero is under every width: it
+    floors nothing, and the criterion scores as if the field were empty —
+    which is what the field should then be. Only a NUMBER is this rule's:
+    the floor takes one, and anything else is the leaf's config error,
+    said by its row (``comparison.sides.parse_number``)."""
+    if _is_number(value):
+        refuse_negative(key, value)
 
 
 def refuse_bounds(metric: str, params: Mapping[str, object]) -> None:
