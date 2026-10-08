@@ -476,11 +476,11 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Observed symptoms** (pre-existing, not regression):
   - *Port race*: `Worker N: start FAILED — The port XXXXX is already in use. Please use another port.` Occurs ~1/20 worker starts under `--parallel 20`. Framework auto-recovers via worker-restart logic (`persistent_runner.py:723`).
   - *RPC ID mismatch*: `DymolaInterface error: Mismatch request/response ID in JSON-RPC call.` Dymola's internal RPC got confused — usually a timed-out request whose late response collided with the next request's ID.
-  - *Remote end closed*: `Remote end closed connection without response.` Dymola subprocess died or the HTTP channel dropped. Not currently in `_NOISE_PATTERNS`.
+  - *Remote end closed*: `Remote end closed connection without response.` Dymola subprocess died or the HTTP channel dropped. Not printed for a Dymola a worker closed itself (the log filter mutes a closed interface's connection errors); one that died by itself prints it until the watchdog finds the process gone and closes the worker.
 - **Possible mitigations**:
   - *Port race*: after `_find_available_port`, try a brief `socket.bind(port)` probe inside the lock; if it fails, loop to next candidate. Closes the find-to-bind window.
   - *RPC mismatch*: on this exception, force a worker restart rather than propagating (one-shot retry at the test level). Existing watchdog already does this via timeout — make the exception path symmetric.
-  - *Remote end closed*: add to `_NOISE_PATTERNS` to suppress noise; treat as worker death and restart.
+  - *Remote end closed*: treat as worker death and restart — done where the process is gone (found dead before a test: restarted first; died during one: that test fails and the next restarts it).
 - **Diagnostic telemetry**: emit a per-worker `resilience_events.json` sidecar in `work_dir` counting start-failures, RPC-mismatches, and worker-restarts so users can see whether parallelism is healthy.
 - **When to work on**: watch for frequency in real-world use. If it's 1-in-20 starts and the rescue always works, leave it. If it grows or masks real failures, promote to Phase 2 work.
 

@@ -35,6 +35,7 @@ import json
 import os
 import shutil
 import signal
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -318,6 +319,45 @@ def test_dymola_cancel_during_translation(tmp_path, no_tool_left):
     finally:
         pool.close()
     assert _manifest(config) == {"Slow": "cancelled", "Fast": "passed"}
+
+
+@pytest.mark.dymola
+def test_dymola_killed_under_a_call_prints_no_connection_noise(
+    tmp_path, no_tool_left, capfd
+):
+    """A cancel during translation kills Dymola under `translateModel`. The
+    thread left in that call retries it against nothing — and then its next
+    call — and Dymola's interface prints every refused attempt into
+    whatever the user is reading. None is printed for a Dymola this process
+    closed."""
+    config, tests, backend = _project(tmp_path, "Dymola", "pool")
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=1)
+    try:
+        slow = pool.submit(tests["Slow"])
+        _wait_until(lambda: slow.test_key is not None, 120, "the item on its worker")
+        time.sleep(0.3)
+        assert pool.cancel(slow) is True
+        _wait_until(lambda: _ended(slow), 60, "the cancelled item ended")
+        assert slow.run_result.worker_killed is True  # Dymola killed, mid-call
+        abandoned = [t for t in threading.enumerate() if t.name == "dym-exec-0"]
+        assert abandoned, "the call was over before the kill"
+    finally:
+        pool.close()
+    t0 = time.monotonic()
+    for thread in abandoned:
+        thread.join(60)  # until it has given up every retry
+    assert not any(thread.is_alive() for thread in abandoned)
+    out = capfd.readouterr().out
+    noise = [
+        line
+        for line in out.splitlines()
+        if "Connection refused" in line or "Remote end closed" in line
+    ]
+    print(
+        f"\nDymola killed under translateModel: its thread retried for "
+        f"{time.monotonic() - t0:.1f} s after the close; {len(noise)} line(s) printed"
+    )
+    assert noise == []
 
 
 def _tool_killed_mid_simulation(

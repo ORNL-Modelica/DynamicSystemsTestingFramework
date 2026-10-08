@@ -16,10 +16,12 @@ with fake workers (and real OS processes where the claim is about processes):
 
 from __future__ import annotations
 
+import http.client
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
 from types import SimpleNamespace
 
 import psutil
@@ -1258,6 +1260,111 @@ class TestDymolaLaunch:
         finally:
             for proc in launched:
                 proc.kill()
+
+
+class TestDymolaCloseNoise:
+    """Dymola's interface retries a request ten times, a second apart, and
+    prints every failed attempt. A thread still inside a call when its
+    Dymola is killed prints that for the rest of the call and through the
+    next: the noise of a Dymola this process closed is not printed — and
+    nothing else is hidden."""
+
+    #: The request in flight when the tool is killed, then every retry.
+    LOST = [
+        http.client.RemoteDisconnected("Remote end closed connection without response"),
+        *(
+            urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+            for _ in range(3)
+        ),
+    ]
+
+    @pytest.fixture
+    def dymola(self, monkeypatch):
+        """`dymola.dymola_interface_internal`'s shape where a request is
+        concerned — a static logger that prints, and a request method that
+        logs each failed attempt — installed as that module. Returns
+        `(the interface class, what the logger printed)`."""
+        import types
+
+        from dstf.backends.dymola import persistent_backend
+
+        printed: list[object] = []
+
+        class DymolaLogger:
+            @staticmethod
+            def Error(msg):
+                DymolaLogger._PrintMessage("error", msg)
+
+            @staticmethod
+            def _PrintMessage(level, msg):
+                printed.append(msg)
+
+        class DymolaInterfaceInternal:
+            def _make_rpc_call(self, attempts, ignoreExceptions=False):
+                for failure in attempts:
+                    if not ignoreExceptions:
+                        DymolaLogger.Error(failure)
+                return ""
+
+        module = types.ModuleType("dymola.dymola_interface_internal")
+        module.DymolaLogger = DymolaLogger
+        module.DymolaInterfaceInternal = DymolaInterfaceInternal
+        package = types.ModuleType("dymola")
+        package.dymola_interface_internal = module
+        monkeypatch.setitem(sys.modules, "dymola", package)
+        monkeypatch.setitem(sys.modules, "dymola.dymola_interface_internal", module)
+        # The filter is installed once per process: again, on this module.
+        monkeypatch.setattr(persistent_backend, "_dymola_logger_patched", False)
+        return DymolaInterfaceInternal, printed
+
+    def _closing(self, tmp_path, interface):
+        """A worker on *interface*, entered into its teardown."""
+        worker = _dymola_worker(tmp_path)
+        worker.dymola = interface
+        return worker._quiet()
+
+    def test_a_closed_dymola_s_lost_connection_is_not_printed(
+        self, tmp_path, dymola, monkeypatch
+    ):
+        interface_cls, printed = dymola
+        interface = interface_cls()
+        with self._closing(tmp_path, interface):
+            interface._make_rpc_call(self.LOST)  # the call in flight at the kill
+        interface._make_rpc_call(self.LOST)  # the abandoned thread's next call
+        assert printed == []
+
+        # Not for a while: for good. The call after the next still retries.
+        now = time.monotonic()
+        monkeypatch.setattr(time, "monotonic", lambda: now + 3600.0)
+        interface._make_rpc_call(self.LOST)
+        assert printed == []
+
+    def test_another_dymola_s_lost_connection_is_still_printed(self, tmp_path, dymola):
+        """A second worker's Dymola that stops answering while the first is
+        being closed is a finding: its lines are not the first's."""
+        interface_cls, printed = dymola
+        closed, live = interface_cls(), interface_cls()
+        with self._closing(tmp_path, closed):
+            live._make_rpc_call(self.LOST)
+            assert printed == self.LOST
+        live._make_rpc_call(self.LOST[:1])
+        assert printed == [*self.LOST, self.LOST[0]]
+
+    def test_what_a_closed_dymola_says_beside_that_is_still_printed(
+        self, tmp_path, dymola
+    ):
+        interface_cls, printed = dymola
+        interface = interface_cls()
+        said = ['Error when calling Dymola function "savelog".', ValueError("no JSON")]
+        with self._closing(tmp_path, interface):
+            interface._make_rpc_call([self.LOST[0], *said])
+        assert printed == said
+
+    def test_a_close_that_raises_is_not_swallowed(self, tmp_path, dymola):
+        interface_cls, _printed = dymola
+        with pytest.raises(RuntimeError, match="the close itself failed"):
+            with self._closing(tmp_path, interface_cls()):
+                raise RuntimeError("the close itself failed")
 
 
 @posix_only
