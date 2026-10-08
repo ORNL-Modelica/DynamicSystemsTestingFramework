@@ -219,10 +219,13 @@ def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
     }
 
 
-def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:
+def plot_page_keys(
+    context, plots, extra_series, metric_tree, max_samples, theme: str = "default"
+) -> dict:
     """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
     and ``plot_sections`` from a render context, one of each per plot of
-    ``plots`` (:func:`plot_inputs`), in order.
+    ``plots`` (:func:`plot_inputs`), in order. The figures are drawn in the
+    bundled theme ``theme`` — baked into the page, as its stylesheet is.
 
     THREE sources answer a series name, in order: the scored variables
     (``variables_by_name``), the no-baseline trajectories — a test with no
@@ -318,6 +321,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 [subject_view(n) for n in subject],
                 budget,
                 context=[context_view(n) for n in context_names],
+                theme=theme,
             )
             if subject
             else None
@@ -408,8 +412,9 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     }
 
 
-def _build_figures(context: dict, max_samples: int | None) -> dict:
-    """The page's diagnostic figures; the plots' are :func:`plot_page_keys`'.
+def _build_figures(context: dict, max_samples: int | None, theme: str) -> dict:
+    """The page's diagnostic figures, in the theme the page is generated
+    in; the plots' are :func:`plot_page_keys`'.
     Built from the FULL-resolution context — the view decimates under
     ``max_samples`` — and after the sidecar write, so
     ``comparison_data.json`` keeps its trajectory shape and no figure."""
@@ -427,6 +432,7 @@ def _build_figures(context: dict, max_samples: int | None) -> dict:
                 ref_values=t.get("ref_values"),
             ),
             budget,
+            theme=theme,
         )
         for t in context.get("diag_trajectories") or []
     ]
@@ -513,7 +519,7 @@ def generate_comparison_plots(
     # LAYOUT — names, no arrays — joins the sidecar; the figures are popped
     # out and put back after the dump, where _build_figures is called.
     page_keys = plot_page_keys(
-        context, plots, extra_series, metric_tree, max_embedded_samples
+        context, plots, extra_series, metric_tree, max_embedded_samples, theme=theme
     )
     context["plots"] = page_keys.pop("plots")
 
@@ -569,7 +575,7 @@ def generate_comparison_plots(
     # they are added AFTER the sidecar write so the sidecar's shape (the
     # handoff artifact dashboard_render reads) does not change.
     context.update(page_keys)
-    context.update(_build_figures(context, max_embedded_samples))
+    context.update(_build_figures(context, max_embedded_samples, theme))
     # Why the comparison refused the test, for the summary line: the page's
     # own flags read a test with no scored variable as one with no baseline.
     context["refused"] = refusal(comparison) if comparison is not None else None

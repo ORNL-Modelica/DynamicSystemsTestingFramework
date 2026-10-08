@@ -6,6 +6,7 @@ a number copied from a measurement would pass whatever the table says."""
 from __future__ import annotations
 
 import ast
+import json
 import re
 from functools import partial
 from pathlib import Path
@@ -556,3 +557,110 @@ class TestTheThemeIsHandedDown:
         reporter.register("test_0001", "Lib.A")
         html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
         assert "--dstf-page: #121212;" in html
+
+
+def themed_project(tmp_path: Path, name: str | None) -> tuple[Path, Path]:
+    """`test_session._page_project` with ``"theme": name`` in its
+    testing.json (no key at all for ``None``)."""
+    from test_session import _page_project
+
+    cfg, work = _page_project(tmp_path)
+    if name is not None:
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        cfg.write_text(json.dumps({**data, "theme": name}), encoding="utf-8")
+    return cfg, work
+
+
+#: Every ground the light theme lays behind text: none belongs on a dark
+#: page, in its stylesheet or in a figure.
+LIGHT_GROUNDS = sorted(
+    {
+        *(theme.DEFAULT_THEME[t] for t in ("page", "surface", "surface-hover")),
+        *(theme.DEFAULT_THEME[t] for t in ("surface-active", "selection")),
+        *(parts[part] for parts in theme.STATUS.values() for part in ("tint", "pill")),
+    }
+)
+
+
+def _root_block(html: str) -> str:
+    (block,) = re.findall(r":root \{\n(.*?)\n\}", html, re.S)
+    return block
+
+
+def _page_figures(html: str) -> list[dict]:
+    """The figures a report page embeds, plots then diagnostics."""
+    (plots,) = re.findall(r"^\s*PLOT_FIGURES: (\[.*\]),$", html, re.M)
+    (diag,) = re.findall(r"^\s*DIAG_FIGURES: (\[.*\]),$", html, re.M)
+    return [f for f in (*json.loads(plots), *json.loads(diag)) if f is not None]
+
+
+class TestGeneratedPages:
+    """`dstf compare --report` over a project whose testing.json names a
+    theme: the dashboard and every per-test page are generated in it —
+    baked, with no switch in the page."""
+
+    def _generate(self, tmp_path, monkeypatch, name) -> list[str]:
+        """The dashboard, then every per-test page."""
+        from dstf.cli import main
+
+        monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: 0)
+        cfg, work = themed_project(tmp_path, name)
+        main(["--config", str(cfg), "compare", "--work-dir", str(work), "--report"])
+        pages = sorted(work.glob("reports/*/interactive.html"))
+        assert len(pages) >= 2, pages
+        return [
+            p.read_text(encoding="utf-8") for p in (work / "dashboard.html", *pages)
+        ]
+
+    def test_dark_pages_carry_the_dark_variables(self, tmp_path, monkeypatch):
+        for html in self._generate(tmp_path, monkeypatch, "dark"):
+            root = _root_block(html)
+            assert root == _root_block(theme.css_variables("dark"))
+            for token, value in theme.DARK_THEME.items():
+                assert f"--dstf-{token}: {value};" in root, token
+            assert "color-scheme: dark;" in root
+
+    def test_dark_pages_hold_no_light_ground_anywhere(self, tmp_path, monkeypatch):
+        """In the whole file — stylesheet, markup, scripts, figures."""
+        for html in self._generate(tmp_path, monkeypatch, "dark"):
+            lowered = html.lower()
+            found = [c for c in LIGHT_GROUNDS if c.lower() in lowered]
+            assert found == []
+            # The short spellings a hand-written rule would use.
+            assert not re.search(r"#fff\b|#fafafa\b|background[^;}]*white", lowered)
+
+    def test_the_control_a_default_page_does_hold_them(self, tmp_path, monkeypatch):
+        """The scan above finds what it looks for on a default page."""
+        for html in self._generate(tmp_path, monkeypatch, None):
+            assert "#ffffff" in html.lower() and "#fafafa" in html.lower()
+            assert "color-scheme" not in html
+
+    def test_a_dark_report_pages_figures_are_drawn_dark(self, tmp_path, monkeypatch):
+        _, *pages = self._generate(tmp_path, monkeypatch, "dark")
+        figures = [f for page in pages for f in _page_figures(page)]
+        assert len(figures) >= 7  # A's alone: x, y and the five watch plots
+        template = palette_of("dark").template
+        for figure in figures:
+            assert figure["layout"]["template"] == {"layout": template}
+
+    def test_a_default_report_pages_figures_carry_no_template(
+        self, tmp_path, monkeypatch
+    ):
+        _, *pages = self._generate(tmp_path, monkeypatch, "default")
+        figures = [f for page in pages for f in _page_figures(page)]
+        assert len(figures) >= 7
+        assert all("template" not in figure["layout"] for figure in figures)
+        for page in pages:
+            assert "--dstf-page: #fafafa;" in _root_block(page)
+
+    def test_the_filled_buttons_text_is_the_token(self):
+        """White on the dark accent is 2.2:1; the one rule that wrote
+        `white` on an accent fill reads `on-accent` instead. A badge keeps
+        `white`: it sits on a status fill, the same in every theme."""
+        html = (SRC / "reporting" / "templates" / "dashboard.html").read_text(
+            encoding="utf-8"
+        )
+        rule = re.search(r"^\.sel-footer button\.btn-primary \{[^}]*\}", html, re.M)
+        assert rule and "color: var(--dstf-on-accent);" in rule.group(0)
+        whites = re.findall(r"^([^{\n]+)\{[^}]*color: white;", html, re.M)
+        assert [w.strip() for w in whites] == [".status-badge"]
