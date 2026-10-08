@@ -375,17 +375,21 @@ The same keys take a pair in a `comparison.variable_overrides` entry. These
 stay ONE number: `nrmse`'s `tolerance` (NRMSE has one ceiling: a pair whose
 sides differ is that criterion's config error, "nrmse has one ceiling:
 tolerance must be a number"), a tube's `tube_min_width` (a floor under both
-sides) and the `upper` / `lower` of a tube control point, which is a side
-already; and every base tolerance (below).
+sides: a pair, a string, `true`, `NaN` or an infinity there is that
+criterion's config error, `tube_min_width must be one number, got …`; `null`
+is no floor) and the `upper` / `lower` of a tube control point, which is a
+side already; and every base tolerance (below).
 
 The pair's keys are exactly `lower` and `upper`, each a finite number.
 Anything else in a field of the table — one side missing, a third key, a
 string such as `"0.01"`, `true` — is that criterion's config error, naming
 the field (`points[0].tolerance must be a number or {"lower": …, "upper": …},
 got …`): the criterion fails with that reason and the rest of the test is
-scored. No sign is checked: a negative number can never be met, and a pair
-with one negative side is a band that does not hold its target. (The
-authoring tool refuses to write a negative tolerance.)
+scored. No sign is checked: a negative number can never be met, a pair
+with one negative side is a band that does not hold its target, and a
+negative `tube_min_width` floors nothing. (The authoring tool refuses to
+write a negative tolerance, a tube width whose sides sum below zero and a
+negative minimum width.)
 
 One example per metric:
 
@@ -1198,10 +1202,17 @@ arrow keys still step it.
 A value that can never score is refused where it is typed, before anything is
 staged: a negative tolerance — a number or either side of a pair, "tolerance
 must not be negative; got −0.5", "time_tolerance (early side) must not be
-negative; got −0.5" — a tube's `tube_abs` / `tube_rel` as a negative number
-(a pair with one negative side is a band shifted off its reference, and is
-taken), a lower bound above the upper one ("min_value 9 exceeds max_value
-2"), and a scalar's two bounds equal. Zero is a tolerance. The field keeps
+negative; got −0.5" — a tube's `tube_abs` / `tube_rel` whose two sides sum
+below zero, which puts the tube's upper bound under its lower one: a negative
+number ("tube_abs must not be negative; got −0.3") or a pair ("tube_abs sides
+must not sum below zero; got lower −0.1, upper −0.5"; a pair with one
+negative side and a sum above zero is a band shifted off its reference, and
+is taken, and so is one whose sides sum to exactly zero), a lower bound above
+the upper one ("min_value 9 exceeds max_value 2"), and a scalar's two bounds
+equal. A tube's Min width below zero is refused with them
+("tube_min_width must not be negative; got −0.3"): it scores, but as a floor
+under no width it says nothing. Zero is a tolerance, and a typed `-0` is
+staged as 0. The field keeps
 what was typed and the editor says the sentence; the leaf goes back to what
 it held when the field was entered, so a value passed through on the way
 (`-0` on the way to `-0.5`) is not left staged. This is the editor's rule

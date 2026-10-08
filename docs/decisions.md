@@ -6603,7 +6603,12 @@ plan held; what follows is the contract as built.
    The same keys in `comparison.variable_overrides`. NOT `nrmse`'s
    `tolerance` — one ceiling: an unequal pair is that leaf's config error,
    "nrmse has one ceiling: tolerance must be a number" — and not
-   `tube_min_width`, a floor under both sides.
+   `tube_min_width`, a floor under both sides: anything there but one
+   finite number is that leaf's config error too, "tube_min_width must be
+   one number, got …" (`sides.parse_number`, read where the widths are:
+   when the mode is built and by the scorer). It was compared with zero as
+   it came, and a pair or a string raised a `TypeError` out of
+   `compare_test`.
 3. *What the sides mean.* `d = actual − target`; a check passes iff
    `−lower ≤ d ≤ upper`. In a `rel` mode each side is that fraction of
    `|target|`. In time, `lower` is how much EARLIER and `upper` how much
@@ -6620,7 +6625,8 @@ plan held; what follows is the contract as built.
 4. *No sign check in the scorer.* A negative number was never refused and
    is not refused in a pair: a negative number can never be met, and a
    band inverted by a negative side holds nothing and is crossed by
-   nothing. The EDITOR refuses to write one (item 12).
+   nothing. A negative `tube_min_width` is no floor at all. The EDITOR
+   refuses to write these (item 12).
 5. *Identity.* A spec holding only numbers scores bit for bit as it did,
    and `v` and `{"lower": v, "upper": v}` give the same verdict, score
    fields and geometry coordinates, for every mode and field. So the pass
@@ -6731,12 +6737,17 @@ plan held; what follows is the contract as built.
 12. *What the editor refuses, and how typing behaves.* A value that can
     never score is refused where it is typed, before the stage
     (`authoring/unscorable.py`): a negative tolerance — a number or either
-    side of a pair, the criterion's or a row's — a tube width as a
-    negative number, bounds out of order, a scalar's bounds equal. A
-    refused edit puts the leaf (or the row) back as the field found it,
-    and the field keeps what was typed. It is the editor's rule alone: the
-    Session, the parser and the scorer take a hand-written negative as
-    they always did. Every number field is a `TypedNumber`
+    side of a pair, the criterion's or a row's — a tube width whose sides
+    sum below zero (a negative number, or a pair: the upper bound is under
+    the lower one; a pair with one negative side and a sum of zero or more
+    is taken), bounds out of order, a scalar's bounds equal. With them, a
+    tube's minimum width below zero: it scores, as no floor, and says
+    nothing. A refused edit puts the leaf (or the row) back as the field
+    found it, and the field keeps what was typed. It is the editor's rule
+    alone: the Session, the parser and the scorer take a hand-written
+    negative as they always did. A typed negative zero is a zero
+    (`TypedNumber`: `-0`, on the way to every negative number, was staged
+    as `-0.0`). Every number field is a `TypedNumber`
     (`authoring/typed_number.py` + `.js`): it shows what was typed until it
     is left and takes a server value only while it is not being typed in —
     a stage outlasts the gap between two keys, and the answer to one key
