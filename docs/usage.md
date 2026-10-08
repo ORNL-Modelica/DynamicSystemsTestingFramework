@@ -387,8 +387,11 @@ the field (`points[0].tolerance must be a number or {"lower": …, "upper": …}
 got …`): the criterion fails with that reason and the rest of the test is
 scored. No sign is checked: a negative number can never be met, a pair
 with one negative side is a band that does not hold its target, and a
-negative `tube_min_width` floors nothing. (The authoring tool refuses to
-write a negative tolerance, a tube width whose sides sum below zero and a
+negative `tube_min_width` floors nothing. A positive one widens both sides
+of a tube to itself, a negative width's too: `"tube_abs": -0.3` over
+`"tube_min_width": 0.2` is a tube 0.2 either side of its reference. (The
+authoring tool refuses to write a negative tolerance, a tube width whose
+sides sum below zero with no positive minimum width under it, and a
 negative minimum width.)
 
 One example per metric:
@@ -1209,7 +1212,12 @@ must not sum below zero; got lower −0.1, upper −0.5"; a pair with one
 negative side and a sum above zero is a band shifted off its reference, and
 is taken, and so is one whose sides sum to exactly zero), a lower bound above
 the upper one ("min_value 9 exceeds max_value 2"), and a scalar's two bounds
-equal. A tube's Min width below zero is refused with them
+equal. A tube's width is refused only while its Min width is empty, zero or
+below: a positive Min width widens both sides to itself, so no width over it
+leaves nothing inside, and a width that sums below zero is taken there — as
+is a Min width typed under such a width written by hand. Clearing the Min
+width from under one is then what is refused, with the width's sentence. A
+tube's Min width below zero is refused with them
 ("tube_min_width must not be negative; got −0.3"): it scores, but as a floor
 under no width it says nothing. Zero is a tolerance, and a typed `-0` is
 staged as 0. The field keeps

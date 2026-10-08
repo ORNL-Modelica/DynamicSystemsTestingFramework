@@ -422,6 +422,33 @@ def _criteria_act(session, metric: str, params: dict):
             {"tube_width_mode": "band", "tube_abs": 0.3, "tube_min_width": -0.3},
             "tube_min_width must not be negative; got −0.3",
         ),
+        # A minimum width that is no positive number floors nothing, and
+        # the width under it is refused as one with no floor is: a zero, a
+        # negative one, and what is no number at all.
+        (
+            "tube",
+            {
+                "tube_width_mode": "band",
+                "tube_abs": {"lower": -0.1, "upper": -0.5},
+                "tube_min_width": 0,
+            },
+            "tube_abs sides must not sum below zero; got lower −0.1, upper −0.5",
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "band", "tube_abs": -0.3, "tube_min_width": -0.2},
+            "tube_abs must not be negative; got −0.3",
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "rel", "tube_rel": -0.02, "tube_min_width": True},
+            "tube_rel must not be negative; got −0.02",
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "rel", "tube_rel": -0.02, "tube_min_width": "0.2"},
+            "tube_rel must not be negative; got −0.02",
+        ),
         (
             "range",
             {"min_value": 9, "max_value": 2},
@@ -491,6 +518,26 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
         ("tube", {"tube_width_mode": "band", "tube_abs": {"lower": 0, "upper": 0}}),
         ("tube", {"tube_width_mode": "rel", "tube_rel": 0.1, "tube_min_width": 0}),
         ("tube", {"tube_width_mode": "rel", "tube_rel": 0.1, "tube_min_width": 0.3}),
+        # Over a POSITIVE minimum width no width leaves nothing inside: the
+        # floor widens both sides to itself, whatever the width says.
+        (
+            "tube",
+            {
+                "tube_width_mode": "band",
+                "tube_abs": {"lower": -0.1, "upper": -0.5},
+                "tube_min_width": 0.2,
+            },
+        ),
+        ("tube", {"tube_width_mode": "band", "tube_abs": -0.3, "tube_min_width": 0.2}),
+        (
+            "tube",
+            {
+                "tube_width_mode": "rel",
+                "tube_rel": {"lower": 0.02, "upper": -0.05},
+                "tube_min_width": 1e-9,
+            },
+        ),
+        ("tube", {"tube_width_mode": "rel", "tube_rel": -0.02, "tube_min_width": 5}),
         ("range", {"min_value": -9}),
         ("range", {"min_value": 2, "max_value": 2}),  # equal bounds score
         ("scalar", {**MAX, "min_value": 1, "max_value": 2}),
@@ -564,6 +611,38 @@ def test_a_negative_tube_width_never_scores_and_a_shifted_band_can(key):
     assert not scored(shifted, ref).passed  # the reference itself is outside
     line = {"lower": -0.1, "upper": 0.1}  # no width, 0.1 above the reference
     assert scored(line, off(0.1)).passed
+
+
+@pytest.mark.parametrize("key", ["tube_abs", "tube_rel"])
+def test_a_negative_tube_width_over_a_positive_min_width_holds_its_reference(key):
+    """Why a positive minimum width lifts the refusal: the scorer raises
+    BOTH sides to it, so the widths that hold nothing alone — a negative
+    number, a pair summing below zero — are a tube of that half-width, and
+    a run on its reference is 100 % inside. A floor of zero or below is no
+    floor: the same widths hold nothing, as with none."""
+    import numpy as np
+
+    from dstf.comparison.modes import resolve_mode
+
+    mode = "band" if key == "tube_abs" else "rel"
+    t = np.linspace(0.0, 1.0, 11)
+    ref = 1.0 + t
+
+    def scored(width, floor, act):
+        override = {"mode": "tube", "tube_width_mode": mode, key: width}
+        if floor is not None:
+            override["tube_min_width"] = floor
+        return resolve_mode(override, 0.01).compare(t, ref, t, act)
+
+    for width in (-0.2, {"lower": -0.1, "upper": -0.5}, {"lower": 0.2, "upper": -0.3}):
+        for floor in (0.2, 1e-9):
+            result = scored(width, floor, ref)
+            assert result.passed and result.tube_points_inside == 1, (width, floor)
+        assert scored(width, 0.2, ref + 0.19).passed  # ... and the floor is its width
+        assert not scored(width, 0.2, ref + 0.21).passed
+        for floor in (None, 0, 0.0, -0.2):
+            result = scored(width, floor, ref)
+            assert not result.passed and result.tube_points_inside == 0, (width, floor)
 
 
 def test_a_hand_written_negative_tolerance_is_staged_and_scored_as_it_was(session):
@@ -708,6 +787,73 @@ async def test_a_tube_pair_typed_to_leave_nothing_inside_puts_the_leaf_back(sess
         _keys(user, upper, "-0.1")
         assert session.tree(A)["tube_abs"] == {"lower": 0.1, "upper": -0.1}
         assert "edit-criteria" not in errors
+
+
+FLOORED = {
+    "metric": "tube",
+    "variable": "x",
+    "tube_width_mode": "band",
+    "tube_abs": {"lower": -0.1, "upper": -0.5},
+    "tube_min_width": 0.2,
+}
+
+
+async def test_a_negative_tube_width_over_a_positive_min_width_is_edited(tmp_path):
+    """A leaf written by hand: sides that sum below zero over a minimum
+    width of 0.2, which floors both — a tube 0.2 either side. Every edit of
+    it was refused with the width's sentence, a window end typed beside it
+    too. It is taken. Its floor cleared, or typed to zero, IS refused, and
+    with that sentence: the width then holds nothing; the leaf keeps the
+    floor the field had when it was entered."""
+    refused = (
+        "ValueError: tube_abs sides must not sum below zero; got lower −0.1, upper −0.5"
+    )
+    s = _session_with_entry(tmp_path, {"metrics": FLOORED})
+    async with host(s, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        _keys(user, _number(user, "window end"), "0.9")
+        windowed = {**FLOORED, "window": {"end": 0.9}}
+        assert s.tree(A) == windowed and "edit-criteria" not in errors
+        upper = _number(user, "+ Tube abs")
+        _keys(user, upper, "-0.6")  # further below zero still, and taken
+        wider = {**windowed, "tube_abs": {"lower": -0.1, "upper": -0.6}}
+        assert s.tree(A) == wider and "edit-criteria" not in errors
+        _keys(user, upper, "-0.5")
+        floor = _number(user, "Min width")
+        for typed in ("", "0"):
+            _keys(user, floor, typed)
+            assert errors["edit-criteria"] == refused, typed
+            assert s.tree(A) == windowed, typed
+        _keys(user, floor, "0.25")
+        assert s.tree(A) == {**windowed, "tube_min_width": 0.25}
+        assert "edit-criteria" not in errors
+
+
+async def test_a_min_width_typed_under_a_negative_tube_width_is_staged(tmp_path):
+    """A leaf written by hand whose sides sum below zero, no floor: nothing
+    is inside it. `0.5` typed into Min width is what repairs it, and was
+    refused — "tube_abs sides must not sum below zero" — like every other
+    edit of the leaf. The `0` on the way is refused still, a floor of zero
+    being none; `0.5` is staged, and the sentence goes."""
+    leaf = {
+        "metric": "tube",
+        "variable": "x",
+        "tube_width_mode": "band",
+        "tube_abs": {"lower": 0.2, "upper": -0.3},
+    }
+    s = _session_with_entry(tmp_path, {"metrics": leaf})
+    assert s.comparisons[A].variables[0].tube_points_inside == 0
+    async with host(s, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        floor = _number(user, "Min width")
+        _keys(user, floor, "0", "0.")
+        assert errors["edit-criteria"] == (
+            "ValueError: tube_abs sides must not sum below zero; "
+            "got lower 0.2, upper −0.3"
+        )
+        assert s.tree(A) == leaf and s.spec.pending == []
+        _keys(user, floor, "0.5")
+        assert s.tree(A) == {**leaf, "tube_min_width": 0.5}
+        assert len(s.spec.pending) == 1 and "edit-criteria" not in errors
+        assert s.comparisons[A].variables[0].tube_points_inside > 0
 
 
 async def test_arrow_down_twice_from_an_empty_tolerance_stages_nothing(session):

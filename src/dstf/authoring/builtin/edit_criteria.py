@@ -83,8 +83,8 @@ def refuse_unscorable(name: str, params: dict) -> None:
     """Raise ``ValueError`` for a criterion of metric ``name`` whose
     ``params`` can never score (`..unscorable`): a negative tolerance, its
     sides named as the mode's own fields name them, a tube's width whose
-    sides sum below zero, or bounds out of order — and a tube's minimum
-    width below zero, which floors nothing."""
+    sides sum below zero over no positive minimum width, or bounds out of
+    order — and a tube's minimum width below zero, which floors nothing."""
     desc = metric(name)
     sides: dict[str, Any] = {}
     if desc is not None and dataclasses.is_dataclass(desc.config_cls):
@@ -95,7 +95,7 @@ def refuse_unscorable(name: str, params: dict) -> None:
     for key in TOLERANCES:
         refuse_negative(key, params.get(key), sides.get(key))
     for key in WIDTHS:
-        refuse_negative_width(key, params.get(key))
+        refuse_negative_width(key, params.get(key), params.get(MIN_WIDTH))
     refuse_negative_floor(MIN_WIDTH, params.get(MIN_WIDTH))
     refuse_bounds(name, params)
 

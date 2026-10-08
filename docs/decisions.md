@@ -6625,8 +6625,9 @@ plan held; what follows is the contract as built.
 4. *No sign check in the scorer.* A negative number was never refused and
    is not refused in a pair: a negative number can never be met, and a
    band inverted by a negative side holds nothing and is crossed by
-   nothing. A negative `tube_min_width` is no floor at all. The EDITOR
-   refuses to write these (item 12).
+   nothing. A negative `tube_min_width` is no floor at all; a positive
+   one floors a negative tube width as it does any other, and that tube
+   holds its reference. The EDITOR refuses to write these (item 12).
 5. *Identity.* A spec holding only numbers scores bit for bit as it did,
    and `v` and `{"lower": v, "upper": v}` give the same verdict, score
    fields and geometry coordinates, for every mode and field. So the pass
@@ -6740,7 +6741,11 @@ plan held; what follows is the contract as built.
     side of a pair, the criterion's or a row's — a tube width whose sides
     sum below zero (a negative number, or a pair: the upper bound is under
     the lower one; a pair with one negative side and a sum of zero or more
-    is taken), bounds out of order, a scalar's bounds equal. With them, a
+    is taken) while the leaf's minimum width is no positive number — a
+    positive one widens both sides to itself, so the width over it holds
+    its reference, and the first build refused every edit of such a leaf,
+    the Min width that would repair one included — bounds out of order, a
+    scalar's bounds equal. With them, a
     tube's minimum width below zero: it scores, as no floor, and says
     nothing. A refused edit puts the leaf (or the row) back as the field
     found it, and the field keeps what was typed. It is the editor's rule

@@ -2,8 +2,9 @@
 tolerance — a number, or either side of a pair; a value's or a time's; the
 criterion's or a table row's — a tube's constant width whose sides sum
 below zero (a negative number, or a pair that leaves nothing between its
-bounds), and bounds out of order. And one value that scores but says
-nothing: a tube's minimum width below zero, a floor under no width.
+bounds) with no positive minimum width under it, and bounds out of order.
+And one value that scores but says nothing: a tube's minimum width below
+zero, a floor under no width.
 
 The EDITOR's rule, raised from a capability's ``act`` before anything is
 staged, the way a window that ends before it starts is refused. It is not
@@ -68,7 +69,7 @@ def refuse_negative(
             raise ValueError(f"{where}{what} must not be negative; got {_num(side)}")
 
 
-def refuse_negative_width(key: str, value: object) -> None:
+def refuse_negative_width(key: str, value: object, floor: object) -> None:
     """Raise ``ValueError`` when the tube width ``value`` held under ``key``
     puts the tube's upper bound under its lower one, so that nothing is
     ever inside it (it was staged, and read "0.0% inside tube"): a negative
@@ -77,7 +78,19 @@ def refuse_negative_width(key: str, value: object) -> None:
     sum below zero; got lower −0.1, upper −0.5``. The sum, not either
     side: a pair with one side negative and a sum above zero is a band
     shifted off its reference, which a run can lie in, and one whose sides
-    sum to exactly zero is a band of no width — a zero is a tolerance."""
+    sum to exactly zero is a band of no width — a zero is a tolerance.
+
+    Only where ``floor``, the leaf's minimum width, is no positive number.
+    A positive one widens BOTH sides to itself
+    (``algorithms._tube_bounds``), so no width over it leaves nothing
+    inside: ``{"lower": -0.1, "upper": -0.5}`` over a floor of 0.2 is a
+    tube 0.2 either side of its reference. Such a leaf, written by hand,
+    was refused every edit — a window end, and the Min width that would
+    repair one with no floor — with the width's sentence. A floor that is
+    absent, zero, negative or no number floors nothing, and the width is
+    refused as it was: the floor cleared from such a leaf too."""
+    if _is_number(floor) and floor > 0:
+        return
     if _is_number(value):
         refuse_negative(key, value)
         return
