@@ -338,6 +338,7 @@ class TestSimulateOnlyClassification:
             config=SimpleNamespace(
                 work_dir=tmp_path,
                 max_embedded_samples=1000,
+                theme="default",
                 reference_root=tmp_path,
             ),
             manifest_meta_by_model={},
@@ -369,7 +370,10 @@ class TestSimulateOnlyClassification:
                 ref_dir=Path("."),
             ),
             config=SimpleNamespace(
-                work_dir=Path("."), max_embedded_samples=1000, reference_root=Path(".")
+                work_dir=Path("."),
+                max_embedded_samples=1000,
+                theme="default",
+                reference_root=Path("."),
             ),
             manifest_meta_by_model={},
         )

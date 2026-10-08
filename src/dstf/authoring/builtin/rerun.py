@@ -113,7 +113,7 @@ class Rerun:
                 # ends on a static one, unscored: the Session scores the
                 # results it reloads. A run that fails before the reload
                 # ends here.
-                render_final(work_dir)
+                render_final(work_dir, theme=config.theme)
 
         def scored(project: Project, comparisons: dict[str, TestComparison]) -> None:
             # Once the Session has rescored the reload: the same static page,
@@ -127,6 +127,7 @@ class Rerun:
                 work_dir,
                 comparisons=list(comparisons.values()),
                 results=project.results,
+                theme=project.config.theme,
             )
 
         return Job(label="rerun", models=selection, run=run, after_reload=scored)

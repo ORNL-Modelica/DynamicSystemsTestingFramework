@@ -449,6 +449,9 @@ def generate_comparison_plots(
     # Must track Config.max_embedded_samples — both production callers pass
     # it explicitly, so this default only fires for direct callers (tests).
     max_embedded_samples: int = 1000,
+    # Config.theme, said by both production callers as the budget is: the
+    # bundled theme the page is generated in (D148).
+    theme: str = "default",
     overlays: list | None = None,
     comparison: TestComparison | None = None,
     ref_id: str | None = None,
@@ -589,7 +592,7 @@ def generate_comparison_plots(
     # page linked only to interactive.html; the per-variable PNGs still
     # render next to it for direct reference.
     interactive_path = plot_dir / "interactive.html"
-    _render_template("interactive.html", page_context, interactive_path)
+    _render_template("interactive.html", page_context, interactive_path, theme)
 
     # Write the standalone interactive.js beside the HTML and the vendored
     # Plotly one level up (shared by the suite) so the `<script src=...>`
@@ -720,22 +723,25 @@ def _decimated_traces(context: dict) -> list[dict]:
     return out
 
 
-def jinja_env():
+def jinja_env(theme: str = "default"):
     """The per-test report's Jinja environment: the templates dir, autoescape,
-    and the token block every page starts its stylesheet with. One
-    constructor, so a test that renders a page gets the same globals."""
+    and the token block every page starts its stylesheet with, in the
+    bundled theme ``theme``. One constructor, so a test that renders a page
+    gets the same globals."""
     from jinja2 import Environment, FileSystemLoader
 
     from .theme import css_variables
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
-    env.globals["dstf_css"] = css_variables()
+    env.globals["dstf_css"] = css_variables(theme)
     return env
 
 
-def _render_template(template_name: str, context: dict, output_path: Path) -> None:
+def _render_template(
+    template_name: str, context: dict, output_path: Path, theme: str
+) -> None:
     """Render a Jinja2 template with the given context."""
-    template = jinja_env().get_template(template_name)
+    template = jinja_env(theme).get_template(template_name)
     html = template.render(**context)
     output_path.write_text(html, encoding="utf-8")
 
@@ -814,6 +820,7 @@ def _build_per_test_args(
         "metric_tree": comp.metric_tree,
         "artifact_files": artifact_files,
         "max_embedded_samples": config.max_embedded_samples,
+        "theme": config.theme,
         "overlays": overlays,
         "plots": plots,
         "extra_series": extra_series,
@@ -840,6 +847,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         metric_tree=args.get("metric_tree"),
         artifact_files=args.get("artifact_files", ()),
         max_embedded_samples=args["max_embedded_samples"],
+        theme=args["theme"],
         overlays=args.get("overlays"),
         comparison=args.get("comparison"),
         ref_id=args.get("ref_id"),

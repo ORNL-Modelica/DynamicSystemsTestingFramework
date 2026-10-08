@@ -318,6 +318,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         metric_tree=comp.metric_tree,
         artifact_files=artifact_files,
         max_embedded_samples=config.max_embedded_samples,
+        theme=config.theme,
         plots=plots,
         extra_series=extra_series,
     )

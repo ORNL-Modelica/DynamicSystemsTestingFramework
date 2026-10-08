@@ -5,15 +5,19 @@ a number copied from a measurement would pass whatever the table says."""
 
 from __future__ import annotations
 
+import ast
 import re
+from pathlib import Path
 
 import pytest
 
+import dstf
 from dstf.figures.families import HUES
 from dstf.figures.palette import PALETTES, palette_of
 from dstf.reporting import theme
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+SRC = Path(dstf.__file__).parent
 
 
 def _linear(channel: int) -> float:
@@ -311,3 +315,76 @@ class TestFigurePalette:
             p = palette_of(name)
             r, g, b = (int(p.ring[i : i + 2], 16) for i in (1, 3, 5))
             assert p.ring_fill == f"rgba({r},{g},{b},0.25)", name
+
+
+#: What renders a page, and so takes the project's theme: a call in `src`
+#: that leaves `theme=` out renders the default theme whatever testing.json
+#: says, and nothing else would fail.
+RENDERERS = frozenset(
+    {
+        "render_live",
+        "render_final",
+        "render_final_to",
+        "generate_comparison_plots",
+        "ProgressReporter",
+    }
+)
+
+
+def _render_calls() -> list[tuple[str, int, ast.Call]]:
+    found = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name in RENDERERS:
+                found.append((str(path.relative_to(SRC)), node.lineno, node))
+    return found
+
+
+class TestTheThemeIsHandedDown:
+    """The theme is the project's (`Config.theme`) and reaches a renderer as
+    an argument — no process-wide setting a `Config` writes."""
+
+    def test_every_render_call_in_src_says_the_theme(self):
+        calls = _render_calls()
+        # The eight of `cli/run_cmds.py`, the tool's two, the pipeline's,
+        # the reporter's own and its construction, the suite's and the
+        # review's page: fewer means the scan stopped finding them.
+        assert len(calls) >= 15, [(p, n) for p, n, _ in calls]
+        silent = [
+            (path, line)
+            for path, line, call in calls
+            if not any(kw.arg == "theme" for kw in call.keywords)
+        ]
+        assert silent == []
+
+    def test_the_dashboards_environment_holds_no_stylesheet(self):
+        """It was set at import, from the default theme, before any
+        `Config` was read."""
+        from dstf.reporting import dashboard_render
+
+        assert "dstf_css" not in dashboard_render._env.globals
+
+    def test_the_dashboard_is_rendered_in_the_theme_it_is_handed(self, tmp_path):
+        from dstf.reporting.dashboard_render import render_final, render_live
+        from test_dashboard_render import _write_status_json
+
+        _write_status_json(tmp_path, {"total": 0, "counts": {}, "tests": []})
+        page = tmp_path / "dashboard.html"
+        for render in (render_live, render_final):
+            render(tmp_path)
+            assert "--dstf-page: #fafafa;" in page.read_text(encoding="utf-8")
+            render(tmp_path, theme="dark")
+            assert "--dstf-page: #121212;" in page.read_text(encoding="utf-8")
+
+    def test_the_live_page_takes_the_reporters_theme(self, tmp_path):
+        from dstf.backends.progress import ProgressReporter
+
+        reporter = ProgressReporter(tmp_path, 1, theme="dark")
+        reporter.register("test_0001", "Lib.A")
+        html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+        assert "--dstf-page: #121212;" in html

@@ -286,7 +286,10 @@ def test_the_suite_writes_each_sidecar_with_its_tests_verdict(
             ref_dir=tmp_path,
         ),
         config=SimpleNamespace(
-            work_dir=tmp_path, max_embedded_samples=1000, reference_root=tmp_path
+            work_dir=tmp_path,
+            max_embedded_samples=1000,
+            theme="default",
+            reference_root=tmp_path,
         ),
         manifest_meta_by_model={},
     )
