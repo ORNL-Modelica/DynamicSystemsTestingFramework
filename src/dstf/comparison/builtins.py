@@ -17,6 +17,11 @@ from .handles import (
     edit_range_handle,
     edit_scalar_handle,
     edit_tube_handle,
+    place_events_row,
+    place_peaks_row,
+    place_points_row,
+    place_tube_row,
+    tube_row_noun,
 )
 from .metric_tree import (
     AndCombinator,
@@ -179,6 +184,8 @@ def register_builtins() -> None:
             summarize=summarize_tube,
             edit_handle=edit_tube_handle,
             seed=seed_tube,
+            place_row=place_tube_row,
+            row_noun=tube_row_noun,
         )
     )
     register_metric(
@@ -189,6 +196,8 @@ def register_builtins() -> None:
             score_direction="lower",
             summarize=summarize_points,
             edit_handle=edit_points_handle,
+            place_row=place_points_row,
+            row_noun=lambda _leaf: "a point",
         )
     )
     register_metric(
@@ -211,6 +220,8 @@ def register_builtins() -> None:
             score_direction="lower",
             summarize=summarize_event_timing,
             edit_handle=edit_events_handle,
+            place_row=place_events_row,
+            row_noun=lambda _leaf: "an event",
         )
     )
     register_metric(
@@ -222,6 +233,8 @@ def register_builtins() -> None:
             summarize=summarize_dominant_frequency,
             edit_handle=edit_peaks_handle,
             seed=seed_dominant_frequency,
+            place_row=place_peaks_row,
+            row_noun=lambda _leaf: "a peak",
         )
     )
     register_metric(
