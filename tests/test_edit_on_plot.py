@@ -1913,6 +1913,78 @@ async def test_two_negatives_the_file_holds_are_named_as_the_rows_show_them(sess
         assert "edit-on-plot" not in errors
 
 
+async def test_a_refusal_above_another_is_the_one_named_after_its_put_back(session):
+    """Row 1 shows a refused −0.3 and row 0 is typed over with −0.7: the
+    put-back of row 0 is refused by row 1 ("row 1: … got −0.3"), and that is
+    not the list as shown — whose first refusal is row 0's −0.7. The rows as
+    shown are handed over once more after a put-back, refused or not."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"].append({"time": 0.75, "value": 0.5, "tolerance": 0.1})
+    _root_leaf_on_a(session, leaf)
+    held = copy.deepcopy(leaf["points"])
+    cell = "/metrics:points:{}:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        _keys(user, cell.format(1), "-0.3")
+        await _settled(lambda: "row 1" in errors.get("edit-on-plot", ""))
+        user.find(marker="/metrics:points").trigger("focusin")
+        _keys(user, cell.format(0), "", "-0", "-0.", "-0.7")
+        await _settled(lambda: "row 0" in errors.get("edit-on-plot", ""))
+        await asyncio.sleep(0.25)
+        assert errors["edit-on-plot"] == (
+            "ValueError: row 0: tolerance must not be negative; got −0.7"
+        )
+        assert _a_rows(session, "points") == held
+        assert session.spec.pending == pending
+
+
+async def test_a_refused_cell_goes_back_to_its_own_rows_staged_value(session):
+    """The staged value a cell goes back to is its OWN row's: row 1 of two
+    rows that differ, typed over with a negative by way of blank and `-0`
+    (both staged), goes back to row 1's 0.1 — not row 0's 0.05 — the first
+    time and entered again."""
+    leaf = copy.deepcopy(SIDED["points"][0])
+    leaf["points"][0]["tolerance"] = 0.05
+    leaf["points"].append({"time": 0.75, "value": 0.5, "tolerance": 0.1})
+    _root_leaf_on_a(session, leaf)
+    held = copy.deepcopy(leaf["points"])
+    lower = "/metrics:points:1:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        pending = list(session.spec.pending)
+        for typed in ("-0.5", "-0.7"):
+            user.find(marker="/metrics:points").trigger("focusin")
+            _keys(user, lower, "", "-0", "-0.", typed)
+            sentence = (
+                f"ValueError: row 1: tolerance must not be negative; got −{typed[1:]}"
+            )
+            await _settled(lambda s=sentence: errors.get("edit-on-plot") == s)
+            await _settled(lambda: _a_rows(session, "points") == held)
+            assert session.spec.pending == pending
+
+
+async def test_a_cell_of_a_row_the_spec_does_not_hold_takes_its_first_key(session):
+    """A row added while the list is refused has no row in the staged list
+    to start from — and its cell's FIRST key is taken like any other: with
+    row 0's refused value fixed, the list staged holds what was typed in
+    the new row, not the value it was added with."""
+    leaf = copy.deepcopy(SIDED["events"][0])
+    _root_leaf_on_a(session, leaf)
+    first = "/metrics:events:0:tolerance:lower"
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        _keys(user, first, "-0.5")
+        await _settled(lambda: "row 0" in errors.get("edit-on-plot", ""))
+        user.find(marker="/metrics:events:add").click()
+        await asyncio.sleep(0.25)
+        _keys(user, "/metrics:events:1:tolerance:lower", "0.3")
+        await asyncio.sleep(0.25)
+        assert _a_rows(session, "events") == leaf["events"]
+        user.find(marker="/metrics:events").trigger("focusin")
+        _keys(user, first, "0.2")
+        await _settled(lambda: len(_a_rows(session, "events")) == 2)
+        assert [r["tolerance"] for r in _a_rows(session, "events")] == [0.2, 0.3]
+        assert "edit-on-plot" not in errors
+
+
 def test_a_rows_edit_takes_a_pair_and_a_number_and_drops_a_blank(session):
     _root_leaf_on_a(session, SIDED["points"][0])
     rows = [
