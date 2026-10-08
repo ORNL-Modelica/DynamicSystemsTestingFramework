@@ -477,6 +477,18 @@ class Backend(ABC):
         """``{name: (time, values)}`` for the ``names`` the file has."""
         return {}
 
+    @classmethod
+    def live_result_path(cls, test_dir: Path) -> Path | None:
+        """The result file of the test run in ``test_dir``
+        (``work_dir/<test_key>``) that GROWS while the run is in progress —
+        the path a :class:`~.common.live_mat.LiveMatReader` is built for.
+        ``None`` for a backend that writes its result once, at the end.
+
+        Overridden by exactly the backends that declare
+        ``Capability.LIVE_RESULTS``. The file need not exist yet: a
+        persistent worker wipes the directory before each run."""
+        return None
+
     def _prepare_run(self, tests: list[TestModel]) -> RunSetup:
         """Shared ``run_tests`` prologue: work dir, provenance, progress
         reporter, test keys and the saved batch manifest.

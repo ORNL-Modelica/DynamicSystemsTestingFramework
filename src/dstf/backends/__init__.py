@@ -49,7 +49,7 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
     registration. We catch this drift at import time so the typo or
     copy-paste-and-forget can't survive past `pytest --collect-only`.
 
-    Every capability has a load-bearing method, and all three are checked:
+    Every capability has a load-bearing method, and all four are checked:
 
     - ``FMU_EXPORT`` → ``export_fmu`` must be overridden.
     - ``BATCH_FALLBACK`` → either ``run_tests`` or ``run_single_test`` must
@@ -57,6 +57,7 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
       use the default per-test loop).
     - ``PERSISTENT_WORKERS`` → ``persistent_backend_cls`` must be overridden
       to return a non-None class.
+    - ``LIVE_RESULTS`` → ``live_result_path`` must be overridden.
 
     Only ``@register``-decorated classes are checked. Persistent variants
     are reached via ``persistent_backend_cls``, not the registry, so their
@@ -94,6 +95,16 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
             f"Capability.PERSISTENT_WORKERS but does not override "
             f"persistent_backend_cls(). Return your persistent-backend "
             f"class (lazy-imported) or drop the capability flag."
+        )
+    if (
+        Capability.LIVE_RESULTS in caps
+        and cls.live_result_path.__func__ is Backend.live_result_path.__func__
+    ):
+        raise TypeError(
+            f"@register('{name}'): {cls.__name__} declares "
+            f"Capability.LIVE_RESULTS but does not override "
+            f"live_result_path(). Return the file that grows during a run "
+            f"or drop the capability flag."
         )
 
 

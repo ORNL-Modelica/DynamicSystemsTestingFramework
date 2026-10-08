@@ -74,6 +74,7 @@ class DymolaBackend(Backend):
         {
             Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
             Capability.BATCH_FALLBACK,  # .mos script backend (--batch flag)
+            Capability.LIVE_RESULTS,  # dymosim appends dsres.mat as it goes
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -577,6 +578,10 @@ class DymolaBackend(Backend):
     @classmethod
     def result_series(cls, test_dir, names):
         return result_files.mat_series(test_dir / "dsres.mat", names)
+
+    @classmethod
+    def live_result_path(cls, test_dir: Path) -> Path:
+        return test_dir / "dsres.mat"
 
 
 # ---------------------------------------------------------------------------

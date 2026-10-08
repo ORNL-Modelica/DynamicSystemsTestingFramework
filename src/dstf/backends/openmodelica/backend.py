@@ -82,6 +82,9 @@ class OpenModelicaBackend(Backend):
         {
             Capability.BATCH_FALLBACK,
             Capability.PERSISTENT_WORKERS,
+            # The simulation executable appends result_res.mat as it goes:
+            # in blocks, or a row at a time under `-mat_sync=1`.
+            Capability.LIVE_RESULTS,
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -348,3 +351,7 @@ class OpenModelicaBackend(Backend):
     @classmethod
     def result_series(cls, test_dir, names):
         return result_files.mat_series(test_dir / cls.RESULT_MAT_FILENAME, names)
+
+    @classmethod
+    def live_result_path(cls, test_dir: Path) -> Path:
+        return test_dir / cls.RESULT_MAT_FILENAME

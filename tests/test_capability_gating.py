@@ -396,3 +396,118 @@ class TestCapabilityHonesty:
 
         assert Capability.PERSISTENT_WORKERS not in FmpyBackend.capabilities
         assert FmpyBackend.persistent_backend_cls() is None
+
+
+# ---------------------------------------------------------------------------
+# LIVE_RESULTS — the result file can be read while the run writes it
+# ---------------------------------------------------------------------------
+
+
+class TestLiveResultsGate:
+    """Which backends a run in progress can be watched on, and where.
+
+    `LIVE_RESULTS` and `live_result_path` are one promise: the flag says the
+    result file grows during the run, the method says which file. The
+    authoring tool gates its live view on the flag and builds a
+    `LiveMatReader` for the path.
+    """
+
+    LIVE = {"Dymola": "dsres.mat", "OpenModelica": "result_res.mat"}
+
+    def _classes(self):
+        """Every registered backend and the persistent variant it selects —
+        the tool holds an instance of either."""
+        for name, cls in _all_registered_backends().items():
+            yield name, cls
+            persistent = cls.persistent_backend_cls()
+            if persistent is not None:
+                yield name, persistent
+
+    def test_the_flag_and_the_path_go_together_on_every_builtin(self, tmp_path):
+        seen = set()
+        for name, cls in self._classes():
+            path = cls.live_result_path(tmp_path)
+            declared = Capability.LIVE_RESULTS in cls.capabilities
+            assert declared is (path is not None), cls.__name__
+            assert declared is (name in self.LIVE), cls.__name__
+            if declared:
+                assert path == tmp_path / self.LIVE[name], cls.__name__
+                seen.add(cls.__name__)
+        assert seen == {
+            "DymolaBackend",
+            "PersistentDymolaBackend",
+            "OpenModelicaBackend",
+            "PersistentOpenModelicaBackend",
+        }
+
+    def test_backends_that_write_their_result_once_do_not_declare_it(self, tmp_path):
+        """Python and Julia return a result at the end; FMPy saves its
+        ``.npz`` after the simulation. None has a file to follow."""
+        undeclared = {
+            cls.__name__
+            for _, cls in self._classes()
+            if Capability.LIVE_RESULTS not in cls.capabilities
+        }
+        assert undeclared == {
+            "FmpyBackend",
+            "JuliaBackend",
+            "PersistentJuliaBackend",
+            "PythonBackend",
+        }
+
+    def test_the_live_path_is_the_file_the_result_is_read_from(self, tmp_path):
+        """The growing file and the finished result are one file: what the
+        live reader follows is what `result_names` lists afterwards."""
+        import numpy as np
+
+        from dstf.backends.common.live_mat import LiveMatReader
+        from mat4_files import write_result_mat
+
+        for name, cls in self._classes():
+            if name not in self.LIVE:
+                continue
+            test_dir = tmp_path / cls.__name__
+            test_dir.mkdir()
+            t = np.linspace(0.0, 1.0, 5)
+            write_result_mat(
+                cls.live_result_path(test_dir), time=t, trajectories={"x": 2 * t}
+            )
+            assert cls.result_names(test_dir) == ["x"], cls.__name__
+            snap = LiveMatReader(cls.live_result_path(test_dir)).poll(["x"])
+            assert snap.rows == 5 and len(snap.series["x"].time) == 5
+
+    def test_declaring_it_without_a_path_trips_at_registration(self):
+        from dstf.backends import _REGISTRY, register
+
+        try:
+            with pytest.raises(TypeError, match="LIVE_RESULTS"):
+
+                @register("BogusLiveBackend")
+                class Bogus(Backend):
+                    capabilities = frozenset({Capability.LIVE_RESULTS})
+
+                    def read_result(self, test, test_key, run_result):
+                        raise NotImplementedError
+
+        finally:
+            _REGISTRY.pop("BogusLiveBackend", None)
+
+    def test_declaring_it_with_a_path_registers(self):
+        from dstf.backends import _REGISTRY, register
+
+        try:
+
+            @register("HonestLiveBackend")
+            class Honest(Backend):
+                capabilities = frozenset({Capability.LIVE_RESULTS})
+
+                @classmethod
+                def live_result_path(cls, test_dir):
+                    return test_dir / "growing.mat"
+
+                def read_result(self, test, test_key, run_result):
+                    raise NotImplementedError
+
+            assert _REGISTRY["HonestLiveBackend"] is Honest
+        finally:
+            _REGISTRY.pop("HonestLiveBackend", None)
