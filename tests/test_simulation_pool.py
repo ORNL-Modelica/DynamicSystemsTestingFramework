@@ -92,7 +92,7 @@ class _FakeWorker(Worker):
         self.handle = object()
 
     def is_alive(self):
-        return self.handle is not None
+        return self.handle is not None and not self.tool_gone()
 
     def _detach_interface(self):
         handle, self.handle = self.handle, None
@@ -908,6 +908,53 @@ class TestWorkerDeath:
                     proc.kill()
                 except (psutil.Error, OSError):
                     pass
+
+    def test_a_tool_that_died_while_idle_fails_nothing(self, stub):
+        """One item done, none waiting, and the worker's tool is killed. The
+        item queued next is not failed for a death it had no part in: the
+        worker is restarted — listed as `starting` meanwhile — and runs it.
+        The item that had finished keeps its verdict."""
+        backend, pool, events = stub
+        tools: list[subprocess.Popen] = []
+        restart = threading.Event()
+
+        def launch(worker):
+            if tools:
+                restart.wait(30)
+            tools.append(
+                subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            )
+            worker.pids = {tools[-1].pid}
+
+        backend.start_script = launch
+        try:
+            a = pool.submit(_t("A"))
+            _wait_until(lambda: _ended(a))
+            assert a.state is ItemState.FINISHED
+            tools[0].kill()
+            tools[0].wait()
+
+            b = pool.submit(_t("B"))
+            _wait_until(lambda: pool.starting != (), what="the restart in flight")
+            (starting,) = pool.starting
+            assert starting.worker_id == 0 and b.state is ItemState.RUNNING
+            assert backend.ran == [("Lib.A", 0)]  # B waits for the new tool
+            restart.set()
+            _wait_until(lambda: _ended(b))
+
+            assert b.state is ItemState.FINISHED and b.message is None
+            assert backend.ran == [("Lib.A", 0), ("Lib.B", 0)]
+            assert backend.starts == [0, 0] and backend.closes == [0]
+            assert pool.starting == () and pool.stopped is None
+            assert events.states == {
+                "Lib.A": ItemState.FINISHED,
+                "Lib.B": ItemState.FINISHED,
+            }
+            assert _manifest(backend.config) == {"Lib.A": "passed", "Lib.B": "passed"}
+        finally:
+            restart.set()
+            for tool in tools:
+                tool.kill()
 
     def test_the_stopped_queue_names_the_failures_that_stand(self, tmp_path):
         """Worker 0 could not start, was started again later and worked,

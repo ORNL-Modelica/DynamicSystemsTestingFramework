@@ -657,7 +657,7 @@ class DymolaWorker(Worker):
         return _suppress_stderr_noise()
 
     def is_alive(self) -> bool:
-        return self.dymola is not None
+        return self.dymola is not None and not self.tool_gone()
 
     # -----------------------------------------------------------------
     def _exec_setting(self, cmd: str) -> None:

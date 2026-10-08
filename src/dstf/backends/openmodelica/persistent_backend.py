@@ -679,7 +679,7 @@ class OpenModelicaWorker(Worker):
             )
 
     def is_alive(self) -> bool:
-        return self.session is not None
+        return self.session is not None and not self.tool_gone()
 
 
 # ---------------------------------------------------------------------------

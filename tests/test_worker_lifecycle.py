@@ -7,7 +7,8 @@ with fake workers (and real OS processes where the claim is about processes):
 * `start_within` — `start()` against `worker_startup_timeout`, failing at
   once when the worker's process has died, with the backend's own words;
 * the watchdog's death watch — the tracked process gone mid-test ends the
-  test, and the children recorded while it was alive are killed;
+  test, and the children recorded while it was alive are killed; gone while
+  the worker sat idle, it fails no test — the worker is restarted first;
 * `request_cancel` — the backend's soft stop (`cancel_running`) with the
   worker reused, else the kill-and-restart path, and a cancelled result
   either way.
@@ -83,7 +84,7 @@ class _Worker(Worker):
         self.handle = object()
 
     def is_alive(self):
-        return self.handle is not None
+        return self.handle is not None and not self.tool_gone()
 
     def _detach_interface(self):
         handle, self.handle = self.handle, None
@@ -554,8 +555,8 @@ class TestWorkerDeath:
         real_gone = persistent.process_gone
         died: list[bool] = []
 
-        def dies_right_after_the_look(pids):
-            gone = real_gone(pids)
+        def dies_right_after_the_look(pids, name_hint=None):
+            gone = real_gone(pids, name_hint)
             if not gone and not died and _on_record(worker, child):
                 died.append(True)
                 parent.kill()
@@ -653,6 +654,180 @@ class TestWorkerDeath:
             _wait_until(lambda: _gone(child), 30)
         finally:
             _kill_quietly(child, parent)
+
+
+class _Stepping(_Worker):
+    """Says its step as Dymola and omc do — the call in flight, named after
+    the test — for the models in `names_its_step`, and its exit with it."""
+
+    names_its_step: frozenset = frozenset()
+
+    def start(self):
+        super().start()
+        self.tool = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        self.pids = {self.tool.pid}
+
+    def run_test(self, test, test_key, progress=None):
+        if test.model_id in self.names_its_step:
+            self._step = f"simulate({test.model_id})"
+        return super().run_test(test, test_key, progress)
+
+    def process_detail(self):
+        return "tool exited" + (f" during {self._step}" if self._step else "")
+
+
+class _Progress:
+    """`Backend.progress`, calling `between` once the first test has been
+    recorded — the moment between two tests of a run."""
+
+    def __init__(self, between):
+        self._between = between
+
+    def on_start(self, test_key, worker_id=None):
+        pass
+
+    def on_finish(self, test_key, **kw):
+        between, self._between = self._between, None
+        if between is not None:
+            between()
+
+
+class TestIdleDeath:
+    """The tool gone while its worker waited for a test: that test is run,
+    on a restarted worker. Only a death DURING a test fails it."""
+
+    def _runner(self, tmp_path, *, quiet=True, names_its_step=()):
+        backend = _Backend(_config(tmp_path))
+        backend.quiet = quiet
+        worker = _Stepping(0, backend.config)
+        worker.names_its_step = frozenset(names_its_step)
+        worker.start()
+        worker.gate.set()
+        return backend, worker, WorkerRunner(backend, worker)
+
+    def _kill_tool(self, worker):
+        worker.tool.kill()
+        worker.tool.wait()
+
+    def test_the_next_test_runs_on_a_restarted_worker(self, tmp_path):
+        backend, worker, runner = self._runner(tmp_path)
+        try:
+            assert runner.run(make_test_model("Lib.A"), "test_0001").success
+            first_tool = worker.tool
+            self._kill_tool(worker)
+            # Dead, and nobody has closed it: it still holds its handle.
+            assert worker.handle is not None and not worker.is_alive()
+
+            second = runner.run(make_test_model("Lib.B"), "test_0002")
+
+            assert second.success and second.model_id == "Lib.B"
+            assert second.error_message is None
+            assert worker.n_started == 2 and worker.n_closed == 1
+            assert worker.tool is not first_tool and worker.is_alive()
+            # Charged like any death nobody ordered, and paid back by the pass.
+            assert worker._n_restarts == 0
+        finally:
+            _kill_quietly(worker.tool)
+
+    def test_the_restart_is_charged_to_the_worker_s_budget(self, tmp_path):
+        """A tool that dies whenever it is left alone is a broken worker:
+        the restarts add up, and at the budget it is retired."""
+        backend, worker, runner = self._runner(tmp_path)
+        backend.max_restarts_per_worker = 1
+        try:
+            self._kill_tool(worker)
+            worker.inner_success = False  # no pass pays the charge back
+            first = runner.run(make_test_model("Lib.A"), "test_0001")
+            assert first.model_id == "Lib.A" and worker._n_restarts == 1
+            self._kill_tool(worker)
+
+            second = runner.run(make_test_model("Lib.B"), "test_0002")
+
+            assert second.error_message == "Worker dead; restart exhausted"
+            assert runner.retired == "Worker dead; restart exhausted"
+        finally:
+            _kill_quietly(worker.tool)
+
+    def test_the_restart_shows_as_a_start_in_flight(self, tmp_path):
+        """What the queue lists as `starting`: the worker coming back."""
+        backend, worker, runner = self._runner(tmp_path)
+        seen: list = []
+        worker._start_script = lambda w: seen.append(runner.starting())
+        try:
+            self._kill_tool(worker)
+            assert runner.run(make_test_model("Lib.A"), "test_0001").success
+            ((phase, seconds),) = seen
+            assert phase == "" and seconds >= 0.0
+            assert runner.starting() is None
+        finally:
+            _kill_quietly(worker.tool)
+
+    def test_a_run_s_dispatch_restarts_between_two_tests(self, tmp_path, capsys):
+        """`run_tests` drives the same step: a tool gone between two tests
+        of a run costs neither. The line it prints names no test the tool
+        was not in — it sat idle."""
+        from dstf.storage.batch_manifest import BatchManifest
+
+        backend, worker, _ = self._runner(
+            tmp_path, quiet=False, names_its_step=["Lib.A", "Lib.B"]
+        )
+        backend.progress = _Progress(between=lambda: self._kill_tool(worker))
+        items = [(make_test_model(f"Lib.{n}"), f"test_{n}") for n in "AB"]
+        manifest = BatchManifest(
+            work_dir=tmp_path,
+            manifest={tk: {"model_id": t.model_id, "ref_id": None} for t, tk in items},
+        )
+        try:
+            results = backend._dispatch_with_restart([worker], items, 2, manifest)
+
+            assert [(r.model_id, r.success) for r in results] == [
+                ("Lib.A", True),
+                ("Lib.B", True),
+            ]
+            assert worker.n_started == 2
+            err = capsys.readouterr().err
+            assert (
+                "  Worker 0: its process was gone before Lib.B — tool exited\n"
+            ) in err
+            assert "Worker 0: restarted (" in err
+        finally:
+            _kill_quietly(worker.tool)
+
+    def test_a_death_during_a_test_fails_that_test_in_its_own_name(self, tmp_path):
+        """Lib.A named its step and passed. The tool then dies during Lib.B,
+        before Lib.B's first call: the message must not say Lib.A's."""
+        backend, worker, runner = self._runner(tmp_path, names_its_step=["Lib.A"])
+        try:
+            assert runner.run(make_test_model("Lib.A"), "test_0001").success
+            worker.gate.clear()
+            worker.entered.clear()
+            threading.Thread(
+                target=lambda: (worker.entered.wait(30), self._kill_tool(worker))
+            ).start()
+
+            second = runner.run(make_test_model("Lib.B"), "test_0002")
+
+            assert second.model_id == "Lib.B" and not second.success
+            assert second.error_message == (
+                "Worker process exited during the test — tool exited"
+            )
+        finally:
+            _kill_quietly(worker.tool)
+
+    def test_a_death_during_a_test_names_the_call_it_was_in(self, tmp_path):
+        backend, worker, runner = self._runner(tmp_path, names_its_step=["Lib.A"])
+        worker.gate.clear()
+        threading.Thread(
+            target=lambda: (worker.entered.wait(30), self._kill_tool(worker))
+        ).start()
+        try:
+            first = runner.run(make_test_model("Lib.A"), "test_0001")
+            assert first.error_message == (
+                "Worker process exited during the test — tool exited during "
+                "simulate(Lib.A)"
+            )
+        finally:
+            _kill_quietly(worker.tool)
 
 
 # ---------------------------------------------------------------------------
@@ -1175,6 +1350,127 @@ class TestOpenModelicaStop:
 
         assert Capability.CANCEL in PersistentOpenModelicaBackend.capabilities
         assert Capability.CANCEL not in OpenModelicaBackend.capabilities
+
+
+def _dymola_worker(tmp_path):
+    from dstf.backends.dymola.persistent_backend import DymolaWorker
+
+    worker = DymolaWorker(
+        0,
+        SimpleNamespace(work_dir=tmp_path, backend_path=None),
+        SimpleNamespace(show_ide=False, backend_setup=[]),
+        object,
+    )
+    worker.dymola = object()
+    return worker
+
+
+def _omc_worker(tmp_path):
+    from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+    worker = OpenModelicaWorker(
+        0,
+        SimpleNamespace(work_dir=tmp_path),
+        SimpleNamespace(std_version="3.3", diagnostic_variables=[]),
+        lambda: None,
+    )
+    worker.session = object()
+    return worker
+
+
+@posix_only
+@pytest.mark.parametrize(
+    "make, name", [(_dymola_worker, "dymola"), (_omc_worker, "omc")]
+)
+class TestAliveMeansTheToolRuns:
+    """A worker that holds its handle is alive only while the process it
+    tracks is still its tool — what the dispatch step asks before every
+    test, so a tool that died while idle is restarted, not handed one."""
+
+    def test_while_the_tool_runs_and_not_after_it_died(self, tmp_path, make, name):
+        tool, _ = _spawn_tool(tmp_path, [], name=name)
+        try:
+            worker = make(tmp_path)
+            worker.pids = {tool.pid}
+            assert worker.is_alive() and not worker.tool_gone()
+
+            tool.kill()
+            tool.wait()
+
+            assert worker.tool_gone() and not worker.is_alive()
+        finally:
+            _kill_all(tool, [])
+
+    def test_a_pid_that_is_another_process_s_by_now_is_not_the_tool(
+        self, tmp_path, make, name
+    ):
+        stranger = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        try:
+            worker = make(tmp_path)
+            worker.pids = {stranger.pid}
+            assert worker.tool_gone() and not worker.is_alive()
+        finally:
+            _kill_all(stranger, [])
+
+    def test_without_a_pid_the_handle_is_all_there_is(self, tmp_path, make, name):
+        """omc's PID could not be resolved; or the worker was closed."""
+        worker = make(tmp_path)
+        assert worker.pids == set() and not worker.tool_gone()
+        assert worker.is_alive()
+        worker._detach_interface()
+        assert not worker.is_alive()
+
+
+def test_a_julia_worker_whose_process_died_idle_is_restarted(tmp_path, monkeypatch):
+    """Julia's worker owns its `Popen`, so its `is_alive` always asked the
+    process; what the dispatch step adds is closing what the dead one left
+    (its pipes) before the start replaces it."""
+    from pathlib import Path
+
+    from dstf.backends.julia import persistent_backend as jpr
+
+    launched: list[subprocess.Popen] = []
+    real_popen = subprocess.Popen
+
+    def popen(cmd, **kw):
+        launched.append(real_popen([sys.executable, "-c", _SLEEP], **kw))
+        return launched[-1]
+
+    monkeypatch.setattr(jpr.subprocess, "Popen", popen)
+    monkeypatch.setattr(jpr.JuliaWorker, "_wait_for_ready", lambda self, timeout: True)
+    monkeypatch.setattr(jpr.JuliaWorker, "kill_name_hint", None)  # a python stand-in
+    ran: list[tuple[str, int]] = []
+
+    def run(self, test, test_key, timeout, progress=None):
+        ran.append((test.model_id, self.proc.pid))
+        return _ok(test, test_key)
+
+    monkeypatch.setattr(jpr.JuliaWorker, "run_test_with_timeout", run)
+    backend = _Backend(_config(tmp_path))
+    backend.quiet = True
+    worker = jpr.JuliaWorker(
+        0,
+        backend.config,
+        SimpleNamespace(julia_binary=Path("julia"), project_dir=tmp_path),
+    )
+    runner = WorkerRunner(backend, worker)
+    try:
+        worker.start()
+        assert runner.run(make_test_model("Lib.A"), "test_0001").success
+        first = launched[0]
+        first.kill()
+        first.wait()
+        assert not worker.is_alive() and worker.tool_gone()
+
+        assert runner.run(make_test_model("Lib.B"), "test_0002").success
+
+        assert ran == [("Lib.A", first.pid), ("Lib.B", launched[1].pid)]
+        assert len(launched) == 2 and worker.is_alive()
+        assert first.stdin.closed and first.stdout.closed  # the dead one's pipes
+    finally:
+        worker.close(grace=0.5)
+        for proc in launched:
+            _kill_quietly(proc)
 
 
 def test_every_cancel_flag_has_a_stop_behind_it():

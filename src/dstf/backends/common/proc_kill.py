@@ -180,13 +180,16 @@ def created_at(pids: set[int]) -> float | None:
         return None
 
 
-def process_gone(pids: set[int]) -> bool:
+def process_gone(pids: set[int], name_hint: str | None = None) -> bool:
     """True when *pids* names at least one process and none of them is
-    running any more — exited, or a zombie nobody has reaped yet.
+    running any more — exited, or a zombie nobody has reaped yet. With
+    ``name_hint``, a PID that is no longer the tool's is not running
+    either: the process under it has another name (the guard of
+    :func:`kill_process_tree`, for a PID recorded long ago).
 
-    How a worker's watchdog tells "the tool died" from "the tool is slow".
-    Errs towards alive: no PIDs, no psutil, or a process it cannot inspect
-    all read as not gone, since the answer triggers a kill and a restart.
+    How a worker tells "the tool died" from "the tool is slow". Errs
+    towards alive: no PIDs, no psutil, or a process it cannot inspect all
+    read as not gone, since the answer triggers a kill and a restart.
     """
     if not pids:
         return False
@@ -195,8 +198,12 @@ def process_gone(pids: set[int]) -> bool:
 
         for pid in list(pids):
             try:
-                if psutil.Process(pid).status() != psutil.STATUS_ZOMBIE:
-                    return False
+                proc = psutil.Process(pid)
+                if proc.status() == psutil.STATUS_ZOMBIE:
+                    continue
+                if name_hint and name_hint not in (proc.name() or "").lower():
+                    continue
+                return False
             except psutil.NoSuchProcess:
                 continue
         return True
