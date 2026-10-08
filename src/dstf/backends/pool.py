@@ -63,8 +63,9 @@ class Refused(RuntimeError):
 
 @dataclass(eq=False)
 class QueueItem:
-    """One submitted test and what became of it. The pool writes the fields;
-    a caller reads them — after ``on_end``, all of them are final."""
+    """One submitted test and what became of it. The pool writes the fields
+    (``test`` too: :meth:`SimulationPool.update`); a caller reads them —
+    after ``on_end``, all of them are final."""
 
     test: TestModel
     state: ItemState = ItemState.WAITING
@@ -123,9 +124,10 @@ class _Slot:
 class SimulationPool:
     """A FIFO queue of tests over a backend's runners.
 
-    ``submit`` appends and returns the item; ``remove`` takes a waiting item
-    back; ``cancel`` stops a running one where the backend can
-    (:attr:`Capability.CANCEL`); ``close`` ends everything. All four are
+    ``submit`` appends and returns the item; ``update`` hands a waiting item
+    its test as it stands now; ``remove`` takes a waiting item back;
+    ``cancel`` stops a running one where the backend can
+    (:attr:`Capability.CANCEL`); ``close`` ends everything. All five are
     safe from any thread and return promptly (``close`` waits for the
     threads).
 
@@ -246,6 +248,19 @@ class SimulationPool:
             self._spawn_slots()
             self._cond.notify()
         return item
+
+    def update(self, item: QueueItem, test: TestModel) -> bool:
+        """Hand a waiting *item* the test as it stands now — the same model,
+        its settings as they are at this call — keeping its place: an item
+        runs with the last test it was given before it started. ``False``
+        once it has started (or ended): nothing is changed."""
+        if test.model_id != item.model_id:
+            raise ValueError(f"{test.model_id} is not {item.model_id}")
+        with self._cond:
+            if item.state is not ItemState.WAITING:
+                return False
+            item.test = test
+        return True
 
     def remove(self, item: QueueItem) -> bool:
         """Take a waiting *item* out. ``False`` once it has started (or

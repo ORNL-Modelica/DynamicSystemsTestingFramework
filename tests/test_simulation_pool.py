@@ -272,6 +272,41 @@ class TestQueue:
         assert "Lib.B" not in _manifest(backend.config)
         pool.submit(_t("B"))  # removed: it may be queued again
 
+    def test_a_waiting_item_s_test_is_replaced_until_it_starts(self, stub):
+        """`update` hands a waiting item the test as it stands now — the
+        tool's queued test runs with the spec as it is when it STARTS — and
+        keeps its place. Once it runs, or has ended, nothing is changed."""
+        backend, pool, _ = stub
+        backend.gate("Lib.A", "Lib.B")
+        ran_with: list[float] = []
+        run_test = _FakeWorker.run_test
+
+        def recording(worker, test, test_key, progress=None):
+            ran_with.append(test.stop_time)
+            return run_test(worker, test, test_key, progress)
+
+        _FakeWorker.run_test = recording
+        try:
+            a, b, c = (pool.submit(_t(name)) for name in "ABC")
+            _wait_until(lambda: a.state is ItemState.RUNNING)
+
+            later = make_test_model("Lib.B", stop_time=7.0)
+            assert pool.update(b, later) is True and b.test is later
+            assert pool.waiting == (b, c)  # its place is kept
+            assert pool.update(a, make_test_model("Lib.A", stop_time=7.0)) is False
+            with pytest.raises(ValueError, match="Lib.C is not Lib.B"):
+                pool.update(b, _t("C"))
+
+            backend.gates["Lib.A"].set()
+            _wait_until(lambda: b.state is ItemState.RUNNING)
+            assert pool.update(b, _t("B")) is False and b.test is later
+            backend.gates["Lib.B"].set()
+            _wait_until(lambda: _ended(a, b, c))
+            assert pool.update(c, _t("C")) is False
+        finally:
+            _FakeWorker.run_test = run_test
+        assert ran_with == [1.0, 7.0, 1.0]
+
     def test_a_failed_simulation_is_failed_with_the_backend_s_message(self, stub):
         backend, pool, _ = stub
         backend.fails.add("Lib.A")

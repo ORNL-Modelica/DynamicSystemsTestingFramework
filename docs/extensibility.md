@@ -412,6 +412,7 @@ Worked example: `backends/openmodelica/persistent_backend.py` has the most compa
 | Call | Does |
 |---|---|
 | `submit(test) -> QueueItem` | Appends. `Refused` when the test is already waiting or running, or the pool is closed or stopped. |
+| `update(item, test) -> bool` | Hands a waiting item the test as it stands now, keeping its place — an item runs with the last test it was given before it started; `False` once it has started. |
 | `remove(item) -> bool` | Takes a waiting item out (`REMOVED`); `False` once it has started. |
 | `cancel(item) -> bool` | Stops a running item (it ends `CANCELLED`); `False` when it is not running; `Refused`, with a sentence, on a backend without `Capability.CANCEL`. |
 | `workers` (get / set) | How many run at once; `Config.parallel` unless given. Raised: more start as items need them. Lowered: the surplus leave as each finishes its item. |
