@@ -484,7 +484,29 @@ def _tool_with_child():
 
 
 def _gone(proc: psutil.Process) -> bool:
-    return not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE
+    try:
+        return not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True  # reaped between the two looks
+
+
+def _on_record(worker, child: psutil.Process) -> bool:
+    """A watch tick has recorded *child* among the tool's children."""
+    return any(pid == child.pid for pid, _ in tuple(worker._orphan_children))
+
+
+def _kill_quietly(*procs) -> None:
+    for proc in procs:
+        try:
+            proc.kill()
+        except (psutil.Error, OSError):
+            pass
+
+
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="an orphan is found by its working directory and its parent",
+)
 
 
 class TestWorkerDeath:
@@ -502,10 +524,10 @@ class TestWorkerDeath:
             )
             th.start()
             worker.entered.wait(10)
-            time.sleep(0.3)  # several watch ticks: the child is on record
+            _wait_until(lambda: _on_record(worker, child), 30)
             parent.kill()  # the tool dies by itself; its child is orphaned
             parent.wait()
-            th.join(20)
+            th.join(60)
 
             assert not th.is_alive(), "the watchdog never noticed the death"
             result = box["r"]
@@ -514,13 +536,93 @@ class TestWorkerDeath:
             # Charged against the restart budget: nobody killed it on purpose.
             assert result.worker_killed is False and result.timed_out is False
             assert not worker.is_alive()
-            _wait_until(lambda: _gone(child))
+            _wait_until(lambda: _gone(child), 30)
         finally:
-            for proc in (child, parent):
-                try:
-                    proc.kill()
-                except (psutil.Error, OSError):
-                    pass
+            _kill_quietly(child, parent)
+
+    def test_a_tool_that_dies_between_two_looks_still_loses_its_children(
+        self, tmp_path, monkeypatch
+    ):
+        """The tick walks the tool's tree and looks whether the tool is
+        there. A death between the two used to leave the child on no
+        record: the look said "alive", the walk that followed found nothing
+        and replaced the record of the tick before."""
+        import dstf.backends.persistent as persistent
+
+        parent, child = _tool_with_child()
+        worker = _Worker(0, _config(tmp_path))
+        real_gone = persistent.process_gone
+        died: list[bool] = []
+
+        def dies_right_after_the_look(pids):
+            gone = real_gone(pids)
+            if not gone and not died and _on_record(worker, child):
+                died.append(True)
+                parent.kill()
+                parent.wait()
+            return gone
+
+        monkeypatch.setattr(persistent, "process_gone", dies_right_after_the_look)
+        try:
+            worker.start()
+            worker.pids = {parent.pid}
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert died and "exited during the test" in result.error_message
+            _wait_until(lambda: _gone(child), 30)
+        finally:
+            _kill_quietly(child, parent)
+
+    @linux_only
+    def test_a_child_no_tick_saw_is_found_by_its_mark_and_no_stranger_is(
+        self, tmp_path
+    ):
+        """dymosim appears and the tool is killed within one tick: the
+        record is empty. What the tool left is found by all of — parentless,
+        born after the tool, in this test's directory — and a process that
+        fails one of the three is never touched."""
+        test_dir, sibling = tmp_path / "test_0001", tmp_path / "test_0002"
+        test_dir.mkdir()
+        sibling.mkdir()
+        sleeper = [sys.executable, "-c", _SLEEP]
+        # Born before the tool, orphaned, in the test's directory.
+        launcher, (older,) = _spawn_tool(tmp_path, [(sleeper, str(test_dir))])
+        launcher.kill()
+        launcher.wait()
+        time.sleep(0.1)
+        # The tool's own: one in the test's directory, one in a sibling's.
+        tool, (left_behind, elsewhere) = _spawn_tool(
+            tmp_path, [(sleeper, str(test_dir)), (sleeper, str(sibling))]
+        )
+        # Not an orphan: this process's child, in the test's directory.
+        ours = subprocess.Popen(sleeper, cwd=test_dir)
+        strangers = {
+            "born before the tool": older,
+            "running in another test's directory": elsewhere,
+            "that is somebody's live child": psutil.Process(ours.pid),
+        }
+
+        class _Blind(_Worker):
+            def _live_descendants(self):
+                return set()  # no tick ever saw a child
+
+        worker = _Blind(0, _config(tmp_path))
+        try:
+            worker.start()
+            worker.pids = {tool.pid}
+            threading.Thread(
+                target=lambda: (worker.entered.wait(30), tool.kill(), tool.wait())
+            ).start()
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert "exited during the test" in result.error_message
+            _wait_until(lambda: _gone(left_behind), 30)
+            time.sleep(0.3)  # a kill of a stranger would have landed by now
+            for why, proc in strangers.items():
+                assert not _gone(proc), f"killed a process {why}"
+        finally:
+            _kill_quietly(left_behind, tool, ours, *strangers.values())
+            ours.wait()
 
     def test_the_dispatch_step_restarts_after_a_death(self, tmp_path):
         """Failed, then the next test restarts the worker — as a worker
@@ -533,7 +635,13 @@ class TestWorkerDeath:
             worker.start()
             worker.pids = {parent.pid}
             runner = WorkerRunner(backend, worker)
-            threading.Timer(0.3, lambda: (parent.kill(), parent.wait())).start()
+
+            def die_once_on_record():
+                _wait_until(lambda: _on_record(worker, child), 30)
+                parent.kill()
+                parent.wait()
+
+            threading.Thread(target=die_once_on_record).start()
 
             first = runner.run(make_test_model("Lib.A"), "test_0001")
             assert not first.success and not worker.is_alive()
@@ -542,13 +650,9 @@ class TestWorkerDeath:
             second = runner.run(make_test_model("Lib.B"), "test_0002")
             assert second.success
             assert worker.n_started == 2 and worker._n_restarts == 0
-            _wait_until(lambda: _gone(child))
+            _wait_until(lambda: _gone(child), 30)
         finally:
-            for proc in (child, parent):
-                try:
-                    proc.kill()
-                except (psutil.Error, OSError):
-                    pass
+            _kill_quietly(child, parent)
 
 
 # ---------------------------------------------------------------------------

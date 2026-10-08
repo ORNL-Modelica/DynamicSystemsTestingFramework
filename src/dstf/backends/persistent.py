@@ -38,7 +38,13 @@ from .base import (
     _print_run_header,
     no_worker_message,
 )
-from .common.proc_kill import kill_process_tree, process_gone, snapshot_children
+from .common.proc_kill import (
+    created_at,
+    kill_process_tree,
+    orphans_in,
+    process_gone,
+    snapshot_children,
+)
 from .types import TestRunResult, timeout_message
 
 logger = logging.getLogger(__name__)
@@ -150,8 +156,10 @@ class Worker(ABC):
     #: How often the watchdog looks at the tracked process while a test runs:
     #: is it still there, and which children does it have. A walk of the
     #: process table per tick and worker (tens of ms on Windows), so not the
-    #: 0.25 s of the close path; a death is noticed within one tick.
-    _CHILD_WATCH_SECONDS: float = 2.0
+    #: 0.25 s of the close path; a death is noticed within one tick, and a
+    #: child born after the last one is on no record (see
+    #: :meth:`_record_orphans` for what finds it all the same).
+    _CHILD_WATCH_SECONDS: float = 0.5
     #: After :meth:`cancel_running` said the tool will come back on its own:
     #: how long it gets before the worker is killed instead.
     cancel_grace: float = 10.0
@@ -552,10 +560,33 @@ class Worker(ABC):
 
     def _snapshot_orphan_children(self) -> None:
         """Record the tracked processes' current descendants for later."""
+        self._orphan_children |= self._live_descendants()
+
+    def _live_descendants(self) -> set[tuple[int, float]]:
+        found: set[tuple[int, float]] = set()
         for pid in list(self.pids):
-            self._orphan_children |= snapshot_children(
-                pid, name_hint=self.kill_name_hint
-            )
+            found |= snapshot_children(pid, name_hint=self.kill_name_hint)
+        return found
+
+    def _record_orphans(self, test_key: str, tool_born: float | None) -> None:
+        """The tool died by itself while it ran *test_key*: add what it left
+        behind to the record :meth:`_kill_tracked_pids` kills.
+
+        The ticks' record misses a child born after the last one — dymosim
+        appears and the tool is killed within the same half second. On
+        Linux such a child is still found, by the mark of
+        :func:`~.common.proc_kill.orphans_in`: parentless, born after this
+        worker's tool (*tool_born*), running in this test's own directory.
+        A process that fails any part is never touched.
+
+        What remains out of reach: on Linux, a child born after the last
+        tick that has left the test's directory; elsewhere, any child born
+        after the last tick (:attr:`_CHILD_WATCH_SECONDS`).
+        """
+        work_dir = getattr(self.config, "work_dir", None)
+        if tool_born is None or work_dir is None:
+            return
+        self._orphan_children |= orphans_in(str(Path(work_dir) / test_key), tool_born)
 
     def _kill_tracked_pids(self) -> None:
         """Force-kill the process trees attributed to this worker.
@@ -606,7 +637,9 @@ class Worker(ABC):
         :attr:`_CHILD_WATCH_SECONDS`) fails the test and closes the worker,
         which kills the children recorded while it was alive: a tool that
         dies by itself orphans its simulation process, and nothing reaches
-        an orphan through a parent that no longer exists.
+        an orphan through a parent that no longer exists. A child born
+        after the last look is found by its mark where the platform allows
+        (:meth:`_record_orphans`, which also says what stays out of reach).
         """
         result_box: list[TestRunResult | None] = [None]
         exc_box: list[BaseException | None] = [None]
@@ -643,10 +676,22 @@ class Worker(ABC):
             daemon=True,
             name=f"{self.exec_thread_prefix}-exec-{self.worker_id}",
         )
+        # Read while the tool is certain to be there: what it leaves behind
+        # if it dies is told by having been born after it.
+        tool_born = created_at(self.pids)
         t.start()
         try:
             return self._watch_test(
-                test, test_key, timeout, start_ts, t, done, wake, result_box, exc_box
+                test,
+                test_key,
+                timeout,
+                start_ts,
+                t,
+                done,
+                wake,
+                result_box,
+                exc_box,
+                tool_born,
             )
         finally:
             self.disarm()
@@ -662,6 +707,7 @@ class Worker(ABC):
         wake: threading.Event,
         result_box: list,
         exc_box: list,
+        tool_born: float | None,
     ) -> "TestRunResult":
         """The watchdog's wait, and what each way out of it returns."""
 
@@ -685,14 +731,19 @@ class Worker(ABC):
             wake.wait(min(self._CHILD_WATCH_SECONDS, remaining))
             if done.is_set() or self._cancel is not None:
                 break
+            # Walk first, look second: a tool that dies between the two
+            # leaves an empty walk, which must not replace the record of
+            # the tick before — that record is all there is of its
+            # children.
+            children = self._live_descendants()
             if process_gone(self.pids):
+                self._orphan_children |= children
                 gone = True
                 break
             # The tree as it is NOW, not accumulated: a test spawns and
             # reaps compilers for minutes, and only what is alive when the
             # parent dies is worth a kill.
-            self._orphan_children = set()
-            self._snapshot_orphan_children()
+            self._orphan_children = children
 
         if self._cancel is not None and not done.is_set():
             if self._cancel == "soft" and self._soft_cancel(test_key):
@@ -711,6 +762,7 @@ class Worker(ABC):
             # backend's, and close() drops the handle they hang off.
             detail = self._safe_detail()
             elapsed = time.monotonic() - start_ts
+            self._record_orphans(test_key, tool_born)
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             with self._quiet():
                 self.close(grace=1.0)
@@ -755,6 +807,8 @@ class Worker(ABC):
             # simulation may still have completed before the interface died,
             # so disk gets its chance here too.
             elapsed = time.monotonic() - start_ts
+            if process_gone(self.pids):
+                self._record_orphans(test_key, tool_born)
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             with self._quiet():
                 self.close(grace=1.0)
@@ -777,6 +831,7 @@ class Worker(ABC):
             # turns a lost connection into a failed result): close, so the
             # next test restarts the worker instead of failing against a
             # dead process, and the recorded children go with it.
+            self._record_orphans(test_key, tool_born)
             self._close_quietly()
         if self._cancel is not None and not result.success:
             # What a stopped simulation reports ("stopped early", a failed

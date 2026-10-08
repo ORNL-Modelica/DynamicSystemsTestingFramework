@@ -51,6 +51,13 @@ def _wait_until(pred, timeout: float = 15.0, what: str = "condition") -> None:
     raise AssertionError(f"{what} not reached")
 
 
+def _gone(proc: psutil.Process) -> bool:
+    try:
+        return not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True  # reaped between the two looks
+
+
 def _ended(*items: QueueItem) -> bool:
     return all(
         item.state not in (ItemState.WAITING, ItemState.RUNNING) for item in items
@@ -687,20 +694,22 @@ class TestWorkerDeath:
         try:
             a, b = pool.submit(_t("A")), pool.submit(_t("B"))
             _wait_until(lambda: ("Lib.A", 0) in backend.ran)
-            time.sleep(0.3)  # several watch ticks: the child is on record
+            _wait_until(
+                lambda: any(
+                    pid == child.pid
+                    for pid, _ in tuple(backend.workers[0]._orphan_children)
+                ),
+                30,
+                what="a watch tick recording the child",
+            )
             tool.kill()
             tool.wait()
-            _wait_until(lambda: _ended(a, b))
+            _wait_until(lambda: _ended(a, b), 30)
 
             assert a.state is ItemState.FAILED
             assert a.message == "Worker process exited during the test"
             assert b.state is ItemState.FINISHED and backend.starts == [0, 0]
-            _wait_until(
-                lambda: (
-                    not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
-                ),
-                what="the orphaned child killed",
-            )
+            _wait_until(lambda: _gone(child), 30, what="the orphaned child killed")
         finally:
             for proc in (child, tool):
                 try:
@@ -1003,7 +1012,7 @@ def test_the_python_backend_through_the_pool_equals_run_pipeline(tmp_path):
         pool.close()
 
     assert slow.state is ItemState.CANCELLED and cancel_seconds < 10.0
-    assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
+    assert _gone(child)
     assert removed.state is ItemState.REMOVED and removed.test_key is None
     assert [item.state for item in finished] == [ItemState.FINISHED] * 3
     assert [model for what, model in events.log if what == "start"] == [

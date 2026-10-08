@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
 
 def kill_process_tree(
     pid: int,
@@ -116,6 +119,65 @@ def snapshot_children(
             # a PID without its create time is not safe to kill later.
             continue
     return snapshot
+
+
+def orphans_in(directory: str, born_after: float) -> set[tuple[int, float]]:
+    """Linux only: the processes a dead tool left behind in *directory*, as
+    ``(pid, create_time)`` pairs for :func:`kill_process_tree`.
+
+    A tool that dies by itself orphans its children, and a child nobody
+    recorded while the tool was alive cannot be found through it any more.
+    What it left is told from everything else on the machine by a mark of
+    three parts, ALL required:
+
+    * it runs in *directory* or below — the scratch directory of the one
+      test the dead tool was running, which the tool was told to work in
+      and no other worker uses;
+    * it was created no earlier than *born_after*, the tool's own creation
+      time on the same clock (a child cannot predate its parent);
+    * it has no parent of its own left: it hangs under init, or under a
+      reaper among this process's ancestors — where the kernel puts the
+      orphans of our descendants. A child of this process is not one, and
+      neither is a child of anybody else's live process.
+
+    Unreadable means unmarked: a process whose directory or parent cannot
+    be read is left alone. Other platforms report no working directory for
+    a foreign process without privileges, or do not reparent: ``set()``.
+    """
+    if not sys.platform.startswith("linux"):
+        return set()
+    try:
+        import psutil
+
+        reapers = {1} | {parent.pid for parent in psutil.Process().parents()}
+        root = os.path.realpath(directory)
+    except Exception:
+        return set()
+    found: set[tuple[int, float]] = set()
+    for proc in psutil.process_iter():
+        try:
+            if proc.ppid() not in reapers or proc.pid in reapers | {os.getpid()}:
+                continue
+            created = proc.create_time()
+            if created < born_after or proc.status() == psutil.STATUS_ZOMBIE:
+                continue
+            cwd = proc.cwd()
+            if cwd == root or cwd.startswith(root + os.sep):
+                found.add((proc.pid, created))
+        except Exception:
+            continue
+    return found
+
+
+def created_at(pids: set[int]) -> float | None:
+    """When the earliest of *pids* was created (the clock of
+    :func:`orphans_in`), or ``None`` when that cannot be read."""
+    try:
+        import psutil
+
+        return min(psutil.Process(pid).create_time() for pid in pids)
+    except Exception:
+        return None
 
 
 def process_gone(pids: set[int]) -> bool:

@@ -17,7 +17,9 @@ What they pin, measured where a number is printed (run with `-s`):
   waiting items with omc's own words instead of hanging.
 * Both: a start given up — its bound passed, or the pool closed — while the
   tool is still coming up leaves no tool process, launched before the
-  give-up or after it.
+  give-up or after it. And the tool killed from outside a moment after its
+  simulation process appeared takes that process with it: the item fails,
+  the worker is restarted for the next.
 
 "No tool process is left" is asked of the whole machine, not of pytest's
 descendants: a tool whose worker lost track of it is an orphan, and an
@@ -82,7 +84,8 @@ package QueueLib "Scratch models for the simulation pool's hardware tests"
 end QueueLib;
 """
 
-_TOOLS = ("dymola", "dymosim", "omc")
+#: `result` is the model omc compiled, named after its result-file prefix.
+_TOOLS = ("dymola", "dymosim", "omc", "result")
 #: The environment variable `no_tool_left` sets for the length of a test.
 _MARK = "DSTF_POOL_TEST_MARK"
 
@@ -313,6 +316,56 @@ def test_dymola_cancel_during_translation(tmp_path, no_tool_left):
     finally:
         pool.close()
     assert _manifest(config) == {"Slow": "cancelled", "Fast": "passed"}
+
+
+def _tool_killed_mid_simulation(
+    tmp_path, backend_name: str, tool: str, simulation: str, delay: float
+):
+    """*tool* is killed from outside *delay* seconds after its *simulation*
+    process appeared — within one watch tick for a short delay, so no tick
+    recorded that process. It must not outlive the tool."""
+    config, tests, backend = _project(tmp_path, backend_name, "pool")
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=1)
+    try:
+        slow, fast = pool.submit(tests["Slow"]), pool.submit(tests["Fast"])
+        _wait_until(lambda: _named(simulation) != [], 300, f"{simulation} running")
+        (tool_pid,) = _named(tool)
+        time.sleep(delay)
+        simulations = _named(simulation)
+        assert simulations and slow.state is ItemState.RUNNING
+        os.kill(tool_pid, signal.SIGKILL)
+
+        _wait_until(lambda: _ended(slow), 60, "the item failed")
+        assert slow.state is ItemState.FAILED, slow.state
+        _wait_until(
+            lambda: not set(simulations) & set(_named(simulation)),
+            10,
+            f"the orphaned {simulation} killed",
+        )
+        _wait_until(lambda: _ended(fast), 300, "the next item finished")
+        assert fast.state is ItemState.FINISHED, fast.message
+        assert tool_pid not in _named(tool)  # a NEW tool ran it
+    finally:
+        pool.close()
+    return slow
+
+
+@pytest.mark.dymola
+@pytest.mark.parametrize("delay", [0.0, 0.2, 1.0])
+def test_dymola_killed_as_dymosim_appears_takes_dymosim_with_it(
+    tmp_path, no_tool_left, delay
+):
+    slow = _tool_killed_mid_simulation(tmp_path, "Dymola", "dymola", "dymosim", delay)
+    print(f"\nDymola killed {delay} s after dymosim appeared: {slow.message}")
+
+
+@pytest.mark.ompython
+@pytest.mark.parametrize("delay", [0.0, 1.0])
+def test_omc_killed_as_the_model_starts_takes_the_model_with_it(
+    tmp_path, no_tool_left, delay
+):
+    slow = _tool_killed_mid_simulation(tmp_path, "OpenModelica", "omc", "result", delay)
+    print(f"\nomc killed {delay} s after the model started: {slow.message}")
 
 
 def _start_given_up(tmp_path, backend_name: str, bound: float):
