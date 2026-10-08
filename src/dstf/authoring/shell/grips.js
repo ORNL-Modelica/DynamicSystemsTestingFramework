@@ -95,7 +95,7 @@
   function create(gd) {
     const st = {
       gd, clusters: [], on: null, latched: false, xy: null, ranges: {}, press: null,
-      travel: null, failed: false,
+      travel: null, failed: false, frame: 0,
     };
 
     // An arrow says what it sets — a tooltip, the SVG `title` child — in
@@ -425,6 +425,21 @@
       st.latched = false;
       here(null);
     });
+    // A scroll moves the plot under a pointer at rest, and no mouse event
+    // says so: the arrows of a checkpoint wheeled out from under the
+    // pointer stayed shown until it moved, and one wheeled under it showed
+    // none. The pointer is where it was on the screen (`st.xy`, viewport
+    // px) and the plot is not: the same test as a move, against the plot
+    // where it is now. Once per frame, however many scroll events one
+    // brings.
+    const rehere = guarded(() => here(st.xy));
+    const scrolled = () => {
+      if (st.frame) return;
+      st.frame = requestAnimationFrame(() => {
+        st.frame = 0;
+        rehere();
+      });
+    };
 
     // What a release sends of the shapes it moved: `update` is a relayout's
     // (`shapes[N].xanchor`, `shapes[N].y0`, ...), read against the figure
@@ -483,6 +498,9 @@
     document.addEventListener("mousedown", down, true);
     document.addEventListener("mouseup", up, true);
     window.addEventListener("blur", blur);
+    // On the window, as it is captured: a scroll does not bubble, and
+    // whichever ancestor of the plot scrolls is heard on the way down.
+    window.addEventListener("scroll", scrolled, { capture: true, passive: true });
 
     // The marks, the clusters, and which of them the pointer is in: after
     // every redraw — the one after a release too, shown if the pointer is
@@ -521,6 +539,8 @@
       document.removeEventListener("mousedown", down, true);
       document.removeEventListener("mouseup", up, true);
       window.removeEventListener("blur", blur);
+      window.removeEventListener("scroll", scrolled, true);
+      cancelAnimationFrame(st.frame);
       observer.disconnect();
       unmark();
     };

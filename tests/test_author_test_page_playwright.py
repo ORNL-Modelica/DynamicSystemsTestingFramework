@@ -8049,6 +8049,80 @@ def test_a_window_blur_ends_a_drags_latch(tmp_path, playwright_browser):
         page.mouse.up()
 
 
+#: Record IN THE PAGE what plot ``card`` displays (`_SEEN`) in the frame
+#: after each `scroll` the window hears, beside how far the page is then
+#: scrolled. Asked for in the scroll event itself, after the hover module's
+#: own listener (installed with the plot): what the module does about a
+#: scroll within a frame of it is done by the time this is read.
+SCROLL_WATCH = """
+(card) => {
+  const seen = __SEEN__;
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const watch = window.__dstfScrolls = {log: []};
+  window.addEventListener('scroll', () => requestAnimationFrame(() => {
+    const shapes = gd.layout.shapes || [];
+    watch.log.push([window.scrollY,
+      [...gd.querySelectorAll('.shapelayer path[data-grip]')]
+        .filter(el => seen(el, gd))
+        .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
+        .sort()]);
+  }), {capture: true, passive: true});
+}
+""".replace("__SEEN__", _SEEN)
+
+
+def _wheel_to(page, by: int) -> list:
+    """Turn the wheel ``by`` px with the pointer at rest, wait for the page
+    to have scrolled that far, and return what `SCROLL_WATCH` read in the
+    frame after its last scroll: ``[scrollY, the arrows displayed]``."""
+    start = page.evaluate("() => window.scrollY")
+    page.evaluate("() => window.__dstfScrolls.log.splice(0)")
+    page.mouse.wheel(0, by)
+    page.wait_for_function(
+        f"() => window.scrollY === {start + by}", timeout=EXPECT_TIMEOUT
+    )
+    page.wait_for_function(
+        f"() => window.__dstfScrolls.log.some(e => e[0] === {start + by})",
+        timeout=EXPECT_TIMEOUT,
+    )
+    return page.evaluate("() => window.__dstfScrolls.log.splice(0)")[-1]
+
+
+def test_a_scroll_under_a_resting_pointer_shows_and_hides_as_a_move_does(
+    tmp_path, playwright_browser
+):
+    """The wheel moves the plot under a pointer at rest, and no mouse event
+    says so: with the pointer on a checkpoint's ring its four arrows show,
+    and a 60 px scroll takes the checkpoint — its area reaches 45 px below
+    the ring — from under the pointer. The arrows stayed shown, for as long
+    as the pointer did not move, about a pointer that was nowhere near
+    them. They are hidden in the frame after the scroll; and scrolled back
+    under the pointer, the checkpoint shows them again in that frame."""
+    project = partial(_checkpoints_project, places=((500, 0.5),))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        four = _group("points", 0, FOUR)
+        (ring,) = _areas(page)["points/0"]["rings"]
+        start, below = page.evaluate(
+            "() => [window.scrollY, document.documentElement.scrollHeight"
+            " - window.innerHeight - window.scrollY]"
+        )
+        assert below >= 60, below  # the page scrolls 60 px further, and back
+        _rest(page)
+        page.mouse.move(ring[0], ring[1] - 30)
+        page.mouse.move(*ring, steps=5)
+        assert _displayed(page) == four
+        page.evaluate(SCROLL_WATCH, 0)
+
+        assert _wheel_to(page, 60) == [start + 60, []]
+        page.wait_for_timeout(300)
+        assert _displayed(page) == []  # ... and they stay hidden
+        assert _wheel_to(page, -60) == [start, four]
+        page.wait_for_timeout(300)
+        assert _displayed(page) == four
+
+
 # -- a shape no editor moves takes no pointer ----------------------------------
 
 
