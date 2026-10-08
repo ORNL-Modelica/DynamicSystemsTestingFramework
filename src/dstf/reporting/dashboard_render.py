@@ -55,7 +55,6 @@ _env = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
     autoescape=select_autoescape(["html"]),
 )
-_env.globals["dstf_css"] = css_variables()
 # A column filter's placeholder and tooltip, by kind — the Suite table's too.
 _env.globals["filter_hints"] = FILTER_HINTS
 # A sort value as a data-sort-* attribute: None is the empty string, which
@@ -439,6 +438,7 @@ def _render(
     output_path: Path | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
+    theme: str = "default",
 ) -> None:
     ctx = build_dashboard_context(
         work_dir,
@@ -448,15 +448,20 @@ def _render(
         results=results,
     )
     template = _env.get_template("dashboard.html")
-    html = template.render(**ctx)
+    # The token block per render, never at import: the theme is the
+    # project's (`Config.theme`), and every caller in `src` says it —
+    # `tests/test_themes.py` reads the call sites.
+    html = template.render(**ctx, dstf_css=css_variables(theme))
     dest = output_path or (work_dir / "dashboard.html")
     dest.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(dest, html)
 
 
-def render_live(work_dir: Path, rerun_prefix: str | None = None) -> None:
+def render_live(
+    work_dir: Path, rerun_prefix: str | None = None, theme: str = "default"
+) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
-    _render(work_dir, mode="live", rerun_prefix=rerun_prefix)
+    _render(work_dir, mode="live", rerun_prefix=rerun_prefix, theme=theme)
 
 
 def render_final(
@@ -464,6 +469,7 @@ def render_final(
     rerun_prefix: str | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
+    theme: str = "default",
 ) -> None:
     """Render dashboard.html in final mode (refresh stripped, the
     comparisons' verdicts and the sidecars merged; the results' CPU
@@ -474,6 +480,7 @@ def render_final(
         rerun_prefix=rerun_prefix,
         comparisons=comparisons,
         results=results,
+        theme=theme,
     )
 
 
@@ -483,6 +490,7 @@ def render_final_to(
     rerun_prefix: str | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
+    theme: str = "default",
 ) -> None:
     """Render the final-mode dashboard page to a caller-chosen path.
 
@@ -498,4 +506,5 @@ def render_final_to(
         output_path=output_path,
         comparisons=comparisons,
         results=results,
+        theme=theme,
     )

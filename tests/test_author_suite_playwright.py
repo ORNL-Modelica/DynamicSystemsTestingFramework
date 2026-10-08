@@ -1432,11 +1432,13 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
         expect(item).to_be_visible(timeout=EXPECT_TIMEOUT)
         expect(more).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
         expect(menu).to_have_attribute("role", "menu")
+        # Export, Change backend…, Open in another backend…, dashboard, the
+        # other theme, Stop server.
         items = menu.locator(".q-item")
-        expect(items).to_have_count(5)
+        expect(items).to_have_count(6)
         assert (
             items.evaluate_all("es => es.map(e => e.getAttribute('role'))")
-            == ["menuitem"] * 5
+            == ["menuitem"] * 6
         )
         with context.expect_page(timeout=EXPECT_TIMEOUT) as opened:
             item.click()

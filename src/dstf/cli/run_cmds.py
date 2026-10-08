@@ -123,6 +123,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             render_final(
                 config.work_dir,
                 rerun_prefix=build_rerun_prefix(config),
+                theme=config.theme,
                 comparisons=prior_comps,
                 results=prior_results,
             )
@@ -155,7 +156,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     from ..reporting.report_suite import open_in_browser
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
-    render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+    render_live(
+        config.work_dir, rerun_prefix=build_rerun_prefix(config), theme=config.theme
+    )
     # A path that scores renders the final page itself, with its
     # comparisons, before the work that follows (the review, the report
     # suite), and sets ``final_rendered``. Every other way out ends in the
@@ -214,6 +217,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             render_final(
                 config.work_dir,
                 rerun_prefix=build_rerun_prefix(config),
+                theme=config.theme,
                 comparisons=comparisons,
                 results=results,
             )
@@ -247,6 +251,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             render_final(
                 config.work_dir,
                 rerun_prefix=build_rerun_prefix(config),
+                theme=config.theme,
                 comparisons=comparisons,
                 results=results,
             )
@@ -266,6 +271,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 render_final(
                     config.work_dir,
                     rerun_prefix=build_rerun_prefix(config),
+                    theme=config.theme,
                     comparisons=comparisons or (),
                     results=results,
                 )
@@ -376,6 +382,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     render_final(
         config.work_dir,
         rerun_prefix=build_rerun_prefix(config),
+        theme=config.theme,
         comparisons=comparisons,
         results=results,
     )
@@ -401,6 +408,7 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     render_final(
         config.work_dir,
         rerun_prefix=build_rerun_prefix(config),
+        theme=config.theme,
         comparisons=comparisons,
         results=results,
     )
@@ -437,6 +445,7 @@ def _output_report(
             config.work_dir,
             out,
             rerun_prefix=build_rerun_prefix(config),
+            theme=config.theme,
             comparisons=comparisons,
             results=results,
         )

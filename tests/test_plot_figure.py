@@ -8,12 +8,8 @@ import numpy as np
 import pytest
 
 from dstf.figures.families import HUES, family_of, group_families, ramp, slice_text
-from dstf.figures.plotly import (
-    CONTEXT_COLOR,
-    PLOT_CONFIG,
-    plot_figure,
-    variable_figure,
-)
+from dstf.figures.palette import palette_of
+from dstf.figures.plotly import PLOT_CONFIG, plot_figure, variable_figure
 from dstf.figures.view import build_view
 
 T = np.linspace(0.0, 1.0, 5)
@@ -821,7 +817,8 @@ def test_a_one_variable_subject_keeps_its_overlays_and_errors_beside_context():
     assert ctx["yaxis"] == "y" and ctx["xaxis"] == "x"
     assert ctx["name"] == "a.Q · context"
     assert ctx["meta"]["id"] == "context/z"
-    assert ctx["line"]["color"] == CONTEXT_COLOR and ctx["line"]["width"] < 1.5
+    assert ctx["line"]["color"] == palette_of("default").context
+    assert ctx["line"]["width"] < 1.5
     assert ctx["y"] == (T * 2.0).tolist()
     kinds = {tr["meta"]["kind"] for tr in fig["data"]}
     assert {"error", "overlay"} <= kinds
@@ -866,12 +863,6 @@ def test_context_is_decimated_by_the_budget():
 def test_a_context_series_the_result_lacks_draws_nothing():
     fig = plot_figure([_view("x")], context=[build_view("gone")])
     assert _contexts(fig) == []
-
-
-def test_the_context_colour_is_the_themes_muted_text():
-    from dstf.reporting.theme import DEFAULT_THEME
-
-    assert CONTEXT_COLOR == DEFAULT_THEME["text-muted"]
 
 
 def test_grips_reach_every_view_of_a_multi_series_plot():

@@ -57,7 +57,9 @@ _DER_CALL = re.compile(r"^der\((.*)\)(?:\[\d+\])*$")
 
 #: Four stops per hue, light to dark (Material 200 / 400 / 700 / 900). The
 #: first is DESIGN.md's accent ramp; a second family on a plot takes the
-#: next hue, and the list cycles.
+#: next hue, and the list cycles. These are the default theme's: a figure
+#: reads its theme's ramps (`palette.py`), and a dark theme's lighten the
+#: four stops that sink into a dark plot.
 HUES: tuple[tuple[str, str, str, str], ...] = (
     ("#90caf9", "#42a5f5", "#1976d2", "#0d47a1"),
     ("#a5d6a7", "#66bb6a", "#388e3c", "#1b5e20"),

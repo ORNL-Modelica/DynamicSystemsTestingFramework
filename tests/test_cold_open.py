@@ -375,7 +375,7 @@ async def test_a_client_that_never_connects_builds_nothing(tmp_path, caplog, pat
     shell.session.open(cfg, work_dir=work)
     shell.load.phase = "done"
     setups: list[int] = []
-    shell.page_setup = lambda: setups.append(1)  # type: ignore[method-assign]
+    shell.page_setup = lambda *_: setups.append(1)  # type: ignore[method-assign]
     with caplog.at_level(logging.ERROR):
         async with user_simulation(root=shell.index) as user:
             shell.mount()

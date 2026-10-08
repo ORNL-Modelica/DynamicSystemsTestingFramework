@@ -2,7 +2,7 @@
 library and the backend's name on the left; the queue indicator in the
 centre; the pending count with Save and Discard on the right, and a ⋮ menu
 at the end holding the rarely used actions — Export, Change backend…, Open
-in another backend…, the dashboard and Stop server, each with its full
+in another backend…, the dashboard, the other theme and Stop server, each with its full
 label. At 900 px the row cut off "dashboard" and "Stop server", and the
 owner chose one layout at every width (3c, Q10 A) over a row that changes
 with it. The backend was a select in the row until a rerun running, an
@@ -45,6 +45,7 @@ from .widgets import Action
 
 if TYPE_CHECKING:
     from .shell import Shell
+    from .tab_theme import TabTheme
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +110,12 @@ class Header:
     def __init__(
         self,
         shell: Shell,
+        theme: TabTheme,
         below: Callable[[], None] | None = None,
         strip: Callable[[], None] | None = None,
     ) -> None:
         self.shell = shell
+        self.theme = theme
         self.drawer = PendingDrawer(shell, save=self._save, discard=self._discard)
         self.dialog = ui.dialog()  # the header's dialogs, one element rebuilt per use
         # The backend's own dialog, built once: `refresh` keeps its select's
@@ -212,6 +215,15 @@ class Header:
                 ui.menu_item("dashboard").props(
                     f'href="/dashboard/dashboard.html" target="_blank" {MENUITEM}'
                 ).mark("dashboard")
+                # The session switch (D148): the item names the theme it
+                # goes TO, for this tab; the dashboard and the report pages
+                # keep the project's.
+                with (
+                    ui.menu_item(on_click=self._switch_theme)
+                    .props(MENUITEM)
+                    .mark("theme")
+                ):
+                    self.theme_text = ui.item_label(self._theme_offer())
                 self.stop = (
                     ui.menu_item("Stop server", on_click=self._stop)
                     .props(MENUITEM)
@@ -238,6 +250,13 @@ class Header:
 
     def _menu_toggled(self, e: Any) -> None:
         self.more.props(f'aria-expanded="{"true" if e.value else "false"}"')
+
+    def _theme_offer(self) -> str:
+        return f"{self.theme.other.capitalize()} theme"
+
+    def _switch_theme(self) -> None:
+        self.theme.switch()
+        self.theme_text.set_text(self._theme_offer())
 
     def refresh(self) -> None:
         shell, s = self.shell, self.shell.session

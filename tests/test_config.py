@@ -942,3 +942,61 @@ def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
         "Python": ["python3"],
         "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
     }
+
+
+class TestTheme:
+    """``theme`` in testing.json names a bundled theme (D148): a name, never
+    a path or a table of colours, and any other value is the config error
+    every other bad testing.json value is."""
+
+    def _config(self, tmp_path: Path, raw: str | None) -> Path:
+        cfg = {"source_type": "python", "source_path": ".", "backend": "Python"}
+        text = json.dumps({**cfg, "theme": 0} if raw is not None else cfg)
+        path = tmp_path / "testing.json"
+        path.write_text(text.replace('"theme": 0', f'"theme": {raw}'), encoding="utf-8")
+        return path
+
+    def test_the_default_is_default(self, tmp_path):
+        assert Config(config_file=self._config(tmp_path, None)).theme == "default"
+
+    @pytest.mark.parametrize("name", ["default", "dark"])
+    def test_a_bundled_name_is_read(self, tmp_path, name):
+        path = self._config(tmp_path, json.dumps(name))
+        assert Config(config_file=path).theme == name
+
+    @pytest.mark.parametrize(
+        "raw",
+        ['"solarized"', '"Dark"', '""', '"themes/mine.css"', "null", "1", "[]", "{}"],
+    )
+    def test_anything_else_is_a_config_error_naming_the_bundled_ones(
+        self, tmp_path, raw
+    ):
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=self._config(tmp_path, raw))
+        assert str(exc.value) == (
+            f"testing.json theme is {raw}: the bundled themes are default, dark"
+        )
+
+    def test_one_set_in_code_is_judged_too(self, tmp_path):
+        with pytest.raises(ConfigError, match="the bundled themes are default, dark"):
+            Config(config_file=self._config(tmp_path, None), theme="solarized")
+
+    def test_the_cli_says_it_in_one_line_and_exits_2(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        from dstf.cli import main
+
+        monkeypatch.chdir(tmp_path)
+        path = self._config(tmp_path, '"solarized"')
+        work = tmp_path / "work"
+        assert main(["--config", str(path), "compare", "--work-dir", str(work)]) == 2
+        err = capsys.readouterr().err
+        assert 'Config error: testing.json theme is "solarized"' in err
+        assert "Traceback" not in err
+
+    def test_there_is_no_flag_for_it(self):
+        """The theme is the project's, and the tab's in the tool: a run
+        takes it from testing.json."""
+        from dstf.cli.main import build_arg_parser
+
+        assert "--theme" not in build_arg_parser().format_help()

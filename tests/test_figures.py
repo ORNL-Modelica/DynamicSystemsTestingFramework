@@ -1437,13 +1437,15 @@ def test_a_grip_of_an_unknown_shape_raises():
 
 
 def test_the_grip_colour_is_a_token_of_the_theme_table():
-    """An orange apart from the rings' green; a literal in the figure layer
-    (a figure's shapes follow no page theme), pinned to the table."""
-    from dstf.figures.plotly import GRIP, HANDLE_RING
+    """An orange apart from the rings' green in every theme; a literal in
+    the figure layer, pinned to the default table and the same on a dark
+    plot."""
+    from dstf.figures.palette import PALETTES
+    from dstf.figures.plotly import GRIP
     from dstf.reporting.theme import STATUS
 
     assert GRIP == STATUS["no-ref"]["dark"] == "#E65100"
-    assert GRIP != HANDLE_RING
+    assert GRIP not in {palette.ring for palette in PALETTES.values()}
 
 
 # -- which shapes take the pointer (the page's inert shapes) --------------------

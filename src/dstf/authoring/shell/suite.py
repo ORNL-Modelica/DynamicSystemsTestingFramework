@@ -21,6 +21,7 @@ from .actions import ActionBar
 from .header import Header
 from .queue_panel import ANCHOR, QueuePanel
 from .suite_grid import GRID_CSS, STORAGE, SuiteGrid, scripts_html
+from .tab_theme import first_paint
 from .tabstate import TabState, caught_up, connected_tab_state, heard_spec
 
 if TYPE_CHECKING:
@@ -66,14 +67,17 @@ class SuitePage:
         # default 256 px, drew the first 15 rows of a 710 px table and left
         # the rest blank until a scroll or a resize.
         ui.add_css(GRID_CSS)
+        first_paint(self.shell)
         state = await connected_tab_state(self.client)
         if state is None:
             return
         self.state: TabState = state
         caught_up(state, self.shell.session.spec_revision)
-        self.shell.page_setup()
+        # The grid takes a switch by itself: its colours are the tokens, and
+        # NiceGUI turns its scheme with `body--dark`.
+        self.theme = self.shell.page_setup(state)
         ui.page_title("DSTF")
-        self.header = Header(self.shell)
+        self.header = Header(self.shell, self.theme)
         with ui.column().classes("dstf-suite w-full q-pa-md gap-3"):
             self.progress = ui.label().classes("dstf-progress").mark("progress")
             with ui.column().classes("gap-1") as self.hint:

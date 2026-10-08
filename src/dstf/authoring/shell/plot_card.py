@@ -758,6 +758,7 @@ class PlotCard:
             self.index,
             editing=self.page.editing_for(self.index),
             visibility=self.visibility(view),
+            theme=self.page.theme.name,
         )
         self.drawable = self._drawable(figure, view)
         self._revision += 1

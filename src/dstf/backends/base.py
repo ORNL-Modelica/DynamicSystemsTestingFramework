@@ -704,6 +704,7 @@ class Backend(ABC):
             total,
             rerun_prefix=build_rerun_prefix(self.config),
             metadata=run_metadata,
+            theme=self.config.theme,
         )
         self.progress = progress
 

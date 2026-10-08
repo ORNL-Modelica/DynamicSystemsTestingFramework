@@ -41,6 +41,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `tolerance` | No | The project's comparison tolerance (default: `1e-4`): what a test with no `comparison.tolerance` of its own, in its spec entry or its baseline, is scored with. One finite number — anything else is a config error (see "Tolerances with two sides"). `--tolerance` overrides it. |
 | `worker_startup_timeout` | No | Seconds a persistent worker (Dymola, OpenModelica, Julia) may take to start before the run fails with the backend's message. One positive number; default 600 on every backend. The bound is for a tool that hangs — a tool that died fails the start at once — so raise it only for a library whose load takes longer (a large library is minutes of `loadFile` in OpenModelica); the message of a start that ran out names this key and the step the tool was in. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
+| `theme` | No | The bundled theme the pages are drawn in: `"default"` (the default) or `"dark"`. The dashboard and the per-test report pages are generated in it — set it and re-run or `compare` to regenerate them — and `dstf author` opens in it. A name only: any other value, a path included, is a config error that lists the two. There is no flag for it. |
 
 All relative paths resolve from where `testing.json` is located.
 
@@ -913,6 +914,21 @@ thread as the project opens, so a click normally finds it already built.
 **The layout.** Two pages under one header. The header carries the library, the
 backend, the open's progress, the pending-op count (click it for the preview,
 below), Save, Discard, Export, a link to the dashboard and Stop server.
+
+**The theme.** The tool opens in the project's theme (`"theme"` in
+`testing.json`: `default` or `dark`). The header's ⋮ menu holds an item named
+for the other one — **Dark theme** or **Default theme** — which switches this
+browser tab at once: the page and its plots (a zoom, an open criterion's rings
+and arrows and a staged edit stay as they are). The tab's other page opens in
+the same theme, and a reload of the tab keeps its choice; another tab, and the
+next start of the tool, begin in the project's theme again. The switch touches nothing on disk: the dashboard
+and the report pages stay in the theme they were generated in. On `dark`, a
+status row and a status pill are dimmed — the status's colour laid thin over
+the dark surface, with its light shade as the text — while a filled badge is
+the same in both themes; a plot's background, grid, axes, legend and hover
+label follow the theme, and its series keep their colours except five that
+would not read on a dark plot (the soft-check overlay's purple and the darkest
+shades of an array's colour ramp), which are lighter there.
 
 **The preview** is the pending-op count's drawer: per edited test, in staging
 order, its entry before and after its edits as `test_spec.json` will hold it

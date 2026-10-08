@@ -54,8 +54,9 @@ class TestTable:
         assert theme.MONO_STACK.split(",")[-1].strip() == "monospace"
 
     def test_status_and_roles_are_not_part_of_a_theme(self):
-        """A theme swaps neutrals and accent; status fills, role chips and
-        plot series carry meaning and never change (DESIGN.md "Themes")."""
+        """A theme's table is neutrals and accent; a status and a role chip
+        are not tokens of it (DESIGN.md "Themes"; what a dark theme does to
+        a status is `tests/test_themes.py`)."""
         assert not set(theme.DEFAULT_THEME) & {"pass", "fail", "soft_check"}
         with pytest.raises(TypeError):
             theme.DEFAULT_THEME["page"] = "#000000"  # type: ignore[index]

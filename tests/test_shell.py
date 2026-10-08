@@ -1304,9 +1304,9 @@ def _ancestors(element):
 
 
 async def test_the_header_menu_holds_the_rarely_used_actions(shell):
-    """Export, Change backend…, Open in another backend…, dashboard and Stop
-    server are in the ⋮ menu at the row's end (the owner's rulings, Q10 A
-    and Q13 A); Save and
+    """Export, Change backend…, Open in another backend…, dashboard, the
+    other theme (D148) and Stop server are in the ⋮ menu at the row's end
+    (the owner's rulings, Q10 A and Q13 A); Save and
     Discard stay in the row. Asked through the element tree, this is what
     sees Export left in the row (the 900 px browser test did not: the
     row's buttons wrapped their text and still fitted)."""
@@ -1323,12 +1323,19 @@ async def test_the_header_menu_holds_the_rarely_used_actions(shell):
             if isinstance(e, ui.menu)
         ]
         assert not menu.value
-        for m in ("export", "change-backend", "other-backend", "dashboard", "stop"):
-            assert menu in list(_ancestors(_one(user, m))), m
-        # Change backend… sits directly above Open in another backend….
         items = [next(iter(c._markers), None) for c in menu.default_slot.children]
-        at = items.index("change-backend")
-        assert items[at + 1] == "other-backend", items
+        # In this order: Change backend… directly above Open in another
+        # backend…, the theme between the dashboard and Stop server.
+        assert items == [
+            "export",
+            "change-backend",
+            "other-backend",
+            "dashboard",
+            "theme",
+            "stop",
+        ]
+        for m in items:
+            assert menu in list(_ancestors(_one(user, m))), m
         assert not _one(user, "export").enabled
         assert _one(user, "export:why").text == "no pending edits"
         # The ⋮ button says what it holds and that it opens a menu.

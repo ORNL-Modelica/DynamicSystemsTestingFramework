@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D150 the simulation queue). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D150 the simulation queue). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -53,13 +53,14 @@ DynamicSystemsTestingFramework/
 │   │                             #      picker.py (the add form's variable picker over picker_rows),
 │   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
 │   │                             #      grips.js (a plot's tolerance arrows: which show, which shapes take the pointer, what a release sends),
-│   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
+│   │                             #      the header, tab_theme.py (the tab's theme and its live switch),
+│   │                             #      actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + enqueue + edit on plot)
-│   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
+│   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + palette.py (what a figure takes from a theme, by name) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py (the classifier + every status word and class) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
-│       │                         #      + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
+│       │                         #      + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
@@ -158,6 +159,8 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # away. Both drawers carry one control set: filter with .* / Aa; Tests has sort and names menus,
 # a group toggle and status pills (a Full name is cut at its start); Variables has sort, group
 # and names menus. A drawer resizes by its right edge (drag, or ←/→ on the focused grip).
+# The tool opens in testing.json's `theme`; the header's ⋮ names the other one (Dark theme /
+# Default theme) and switches this browser tab, live — its plots keep their zoom and edits.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs
@@ -241,6 +244,7 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `worker_startup_timeout` — seconds a persistent worker may take to start before the run fails with the backend's message, which names this key (default: 600 on every backend — the bound is for a tool that hangs; one that died fails at once)
 - `max_embedded_samples` — LTTB decimation cap per variable in `interactive.html` (default: 1000)
 - `diagnostic_variables` — variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`)
+- `theme` — the bundled theme the dashboard and the report pages are generated in and `dstf author` opens in: `"default"` (the default) or `"dark"`; a name only, anything else is a config error (D148)
 
 Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola backend.
 

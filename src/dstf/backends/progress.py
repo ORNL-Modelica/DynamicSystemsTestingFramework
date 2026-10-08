@@ -56,9 +56,12 @@ class ProgressReporter:
         total: int,
         rerun_prefix: str | None = None,
         metadata: dict | None = None,
+        theme: str = "default",
     ):
         self.work_dir = work_dir
         self.total = total
+        # The bundled theme the live page is rendered in (Config.theme).
+        self.theme = theme
         # Stashed for inclusion in status.json so the dashboard's rerun-
         # command builder produces an absolute-path command that works
         # from any CWD. Computed by callers via dashboard_render.build_
@@ -241,7 +244,7 @@ class ProgressReporter:
         """
         from ..reporting.dashboard_render import render_live
 
-        render_live(self.work_dir)
+        render_live(self.work_dir, theme=self.theme)
 
     def finalize(self) -> None:
         """Write the last status.json and render dashboard.html — LIVE.

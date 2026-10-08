@@ -20,10 +20,16 @@ rings are what an editor attaches to, since Plotly drags shapes, not trace
 points. So the editable figure also SAYS which of its shapes an editor
 moves, in ``layout.meta`` (:data:`POINTER`): the page takes the pointer off
 every other one.
+
+Both builders take a ``theme`` — the name of a bundled theme (D148) — and
+read its :class:`~.palette.Palette`: the figure's chrome, the few series
+colours that sink into a dark plot, and the layout template. The colours
+that are literals HERE carry meaning and are the same in every theme.
 """
 
 from __future__ import annotations
 
+import copy
 import html
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -45,7 +51,8 @@ from ..comparison.geometry import (
     grip_label,
     grip_outward,
 )
-from .families import HUES, family_label, group_families, ramp
+from .families import family_label, group_families, ramp
+from .palette import Palette, palette_of
 from .view import LeafView, VariableView, decimate_view
 
 PLOT_CONFIG = {"responsive": True, "displaylogo": False, "scrollZoom": True}
@@ -151,6 +158,8 @@ class _Ctx:
     has_spectrum: bool
     #: Pre-decimation sample counts by primitive id (see ``decimate_view``).
     full_samples: dict[str, int]
+    #: What the figure takes from its theme.
+    palette: Palette
     #: The spectrum panel's x range where the layout SETS one
     #: (:func:`_spectrum_range`), else None: what :func:`_grip_way` reads.
     spectrum_range: tuple[float, float] | None = None
@@ -376,7 +385,7 @@ def _vline(prim: VLine, leaf: LeafView, window: Window | None, ctx: _Ctx):
             "y0": y0,
             "y1": y1,
             "line": {
-                "color": "#757575" if ref else "#1976D2",
+                "color": ctx.palette.reference_event if ref else "#1976D2",
                 "width": 1 if ref else 1.5,
                 "dash": "dash" if ref else "solid",
             },
@@ -446,7 +455,9 @@ TRACE_BUILDERS: dict[type, Builder] = {
 }
 
 
-def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
+def _marker_traces(
+    markers: list[Marker], leaf: LeafView, palette: Palette
+) -> list[dict]:
     by_family: dict[str, list[Marker]] = {}
     for m in markers:
         by_family.setdefault(family(m, leaf), []).append(m)
@@ -455,7 +466,7 @@ def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
         # One colour PER marker: a leaf with one passed and one failed
         # checkpoint must not paint both red (the boxes beside them carry
         # their own verdicts, and the two would contradict).
-        ok_colour = HANDLE_RING if group[0].kind == "handle" else ACTUAL
+        ok_colour = palette.ring if group[0].kind == "handle" else ACTUAL
         traces.append(
             {
                 "type": "scatter",
@@ -481,10 +492,6 @@ def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
     return traces
 
 
-HANDLE_RING = "#2e7d32"
-HANDLE_RING_FILL = "rgba(46,125,50,0.25)"
-
-
 #: A ring, in pixels about its anchor: a circle of radius 7 as four cubic
 #: arcs. A ``path``, not a ``circle``: plotly.js gives a pixel-sized circle
 #: or rect larger than 10 px in both dimensions RESIZE zones, so a ring
@@ -497,8 +504,9 @@ RING_PATH = (
 )
 
 
-def _handle_rings(markers: list[Marker]) -> list[dict]:
-    """One draggable ring per handle marker, named with the marker's id.
+def _handle_rings(markers: list[Marker], palette: Palette) -> list[dict]:
+    """One draggable ring per handle marker, named with the marker's id, in
+    the theme's ring colour.
 
     The fill is visible on purpose: a shape drags by its painted area, and a
     transparent fill is not guaranteed to receive the pointer.
@@ -513,8 +521,8 @@ def _handle_rings(markers: list[Marker]) -> list[dict]:
             "xanchor": m.x,
             "yanchor": m.y,
             "path": RING_PATH,
-            "line": {"color": HANDLE_RING, "width": 2},
-            "fillcolor": HANDLE_RING_FILL,
+            "line": {"color": palette.ring, "width": 2},
+            "fillcolor": palette.ring_fill,
             "name": m.id,
         }
         for m in markers
@@ -522,9 +530,10 @@ def _handle_rings(markers: list[Marker]) -> list[dict]:
     ]
 
 
-#: A grip's colour: an orange apart from the rings' green — the theme table's
-#: ``no-ref`` dark, as a literal (a figure's shapes follow no page theme;
-#: `test_the_grip_colour_is_a_token_of_the_theme_table` pins the two equal).
+#: A grip's colour: an orange apart from the rings' green — the default
+#: theme's ``no-ref`` dark, as a literal, and the same on a dark plot, where
+#: it reads 4.4:1 (`test_the_grip_colour_is_a_token_of_the_theme_table`
+#: pins it to the table).
 GRIP = "#E65100"
 
 #: A grip, in pixels about its anchor (positive y is UP), by the axis it
@@ -622,7 +631,7 @@ def _grip_shapes(grips: list[Primitive], ctx: _Ctx) -> list[dict]:
     return shapes
 
 
-def _base_traces(view: VariableView) -> list[dict]:
+def _base_traces(view: VariableView, palette: Palette) -> list[dict]:
     traces = []
 
     # A one-variable plot names its traces "Actual" / "Reference" — the
@@ -682,7 +691,7 @@ def _base_traces(view: VariableView) -> list[dict]:
         )
     for ov in view.overlays:
         if ov.role == "soft_check":
-            color, dash = "#7B1FA2", "dot"
+            color, dash = palette.soft_check, "dot"
         elif ov.kind == "sibling-backend":
             color, dash = "#1976D2", "dash"
         else:
@@ -810,7 +819,9 @@ def _set_spectrum_range(view: VariableView) -> tuple[float, float] | None:
     return None if found is None else (found[0], found[1])
 
 
-def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
+def _layout(
+    view: VariableView, shapes: list[dict], has_errors: bool, palette: Palette
+) -> dict:
     # Area shapes under lines: under `edits.shapePosition` every shape takes
     # a drag and plotly.js has no per-shape switch that works (`layer` only
     # restacks — measured in Chromium on 3.1.1, 2026-09-26), so the one that
@@ -842,6 +853,12 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
         "shapes": shapes,
         "uirevision": "keep",
     }
+    if palette.template is not None:
+        # The theme's ground, grid, axes, legend, hover label and toolbar,
+        # through Plotly's own template: read for whatever the layout
+        # above does not set. The default theme has none — its plot is
+        # plotly.js's defaults, and its figure is the one it always was.
+        layout["template"] = {"layout": copy.deepcopy(palette.template)}
     if view.has_spectrum:
         layout["yaxis"]["domain"] = list(TIME_DOMAIN)
         layout["xaxis2"] = {
@@ -1010,9 +1027,13 @@ def _leaf_traces(
             leaf_shapes.extend(new_shapes)
             if isinstance(prim, HLine) and prim.kind == "handle":
                 lines.extend(s["name"] for s in new_shapes)
-        leaf_data.extend(_marker_traces(markers, leaf))
+        leaf_data.extend(_marker_traces(markers, leaf, ctx.palette))
         ringed = editable and (rings_for is None or leaf.path in rings_for)
-        leaf_rings = _handle_rings(markers) + _grip_shapes(grips, ctx) if ringed else []
+        leaf_rings = (
+            _handle_rings(markers, ctx.palette) + _grip_shapes(grips, ctx)
+            if ringed
+            else []
+        )
         if ringed:
             for grip in grips:
                 assert isinstance(grip, (Marker, VLine))  # `_grip_shapes`
@@ -1064,8 +1085,13 @@ def variable_figure(
     editable: bool = False,
     rings_for: Collection[str] | None = None,
     visibility: Visibility | None = None,
+    theme: str = "default",
 ) -> dict:
     """The one figure both tiers draw. ``max_samples`` decimates the view first.
+
+    ``theme``: the bundled theme the figure is drawn in (:mod:`.palette`) —
+    the project's for a report page, the tab's in the tool. The default
+    theme's figure carries no template.
 
     ``editable`` adds a draggable ring per handle marker, an arrow per grip
     and ``config.edits.shapePosition``; the report's figure never passes it.
@@ -1082,15 +1108,17 @@ def variable_figure(
     """
     if max_samples:
         view = decimate_view(view, max_samples)
+    palette = palette_of(theme)
     x_min, x_max = _time_span(view)
     ctx = _Ctx(
         x_min=x_min,
         x_max=x_max,
         has_spectrum=view.has_spectrum,
         full_samples=view.full_samples,
+        palette=palette,
         spectrum_range=_set_spectrum_range(view),
     )
-    data: list[dict] = _base_traces(view)
+    data: list[dict] = _base_traces(view, palette)
     leaf_data, shapes, rings, pointer = _leaf_traces(
         view, ctx, editable=editable, rings_for=rings_for, visibility=visibility
     )
@@ -1098,7 +1126,7 @@ def variable_figure(
     for s in view.errors:
         data.append(_error_trace(s, ctx, visibility))
     config: dict = _config(editable)
-    layout = _layout(view, shapes + rings, bool(view.errors))
+    layout = _layout(view, shapes + rings, bool(view.errors), palette)
     if editable:
         layout["meta"] = {POINTER: pointer}
     if visibility is not None and view.errors:
@@ -1126,16 +1154,11 @@ def variable_figure(
     return {"data": data, "layout": layout, "config": config}
 
 
-#: A context series' line colour: the theme table's ``text-muted``, as a
-#: literal — a figure's traces are data, and follow no page theme.
-#: `test_the_context_colour_is_the_themes_muted_text` pins the two equal.
-CONTEXT_COLOR = "#888888"
-
-
-def _context_trace(view: VariableView) -> dict | None:
-    """One context series: grey and thinner, on the subject's axes, with no
-    reference and no criteria geometry — drawn beside the plot's subject,
-    never scored there. ``None`` for a series the result lacks."""
+def _context_trace(view: VariableView, palette: Palette) -> dict | None:
+    """One context series: grey — the theme's ``text-muted`` — and thinner,
+    on the subject's axes, with no reference and no criteria geometry —
+    drawn beside the plot's subject, never scored there. ``None`` for a
+    series the result lacks."""
     if not _draws_actual(view):
         return None
     assert view.act_time is not None and view.act_values is not None
@@ -1148,7 +1171,7 @@ def _context_trace(view: VariableView) -> dict | None:
             "yaxis": "y",
             "x": view.act_time.tolist(),
             "y": view.act_values.tolist(),
-            "line": {"color": CONTEXT_COLOR, "width": 1.0},
+            "line": {"color": palette.context, "width": 1.0},
             "meta": {
                 "id": f"context/{view.name}",
                 "kind": "context",
@@ -1169,13 +1192,15 @@ def plot_figure(
     labels: Mapping[str, str] | None = None,
     rings_for: Collection[str] | None = None,
     visibility: Visibility | None = None,
+    theme: str = "default",
 ) -> dict:
     """The figure for one plot of a test: ``views`` are its SUBJECT (one
     variable, or the members of one array family), ``context`` the grey
     series drawn beside it on the same y axis (:func:`_context_trace`).
     Context changes nothing the subject draws — a one-variable subject
     keeps its overlays and error traces — and brings no leaves: a context
-    variable's criteria are on its own plot."""
+    variable's criteria are on its own plot. ``theme`` as in
+    :func:`variable_figure`."""
     figure = _subject_figure(
         views,
         max_samples,
@@ -1183,11 +1208,13 @@ def plot_figure(
         labels=labels,
         rings_for=rings_for,
         visibility=visibility,
+        theme=theme,
     )
+    palette = palette_of(theme)
     for view in context:
         if max_samples:
             view = decimate_view(view, max_samples)
-        trace = _context_trace(view)
+        trace = _context_trace(view, palette)
         if trace is not None:
             figure["data"].append(trace)
     return figure
@@ -1201,11 +1228,12 @@ def _subject_figure(
     labels: Mapping[str, str] | None = None,
     rings_for: Collection[str] | None = None,
     visibility: Visibility | None = None,
+    theme: str = "default",
 ) -> dict:
     """The figure of a plot's subject (DESIGN.md "Plots are modular").
 
     One view is :func:`variable_figure`, unchanged. Several draw every
-    series in its family's hue (:mod:`.families`) — actual solid, reference
+    series in its family's hue (the theme's ramps) — actual solid, reference
     dashed in the same colour and out of the legend, a family folded to one
     legend entry — with the geometry of every leaf of every series, and NO
     overlays or error traces: both are per-variable pickers keyed by trace
@@ -1221,7 +1249,9 @@ def _subject_figure(
             editable=editable,
             rings_for=rings_for,
             visibility=visibility,
+            theme=theme,
         )
+    palette = palette_of(theme)
     if max_samples:
         views = [decimate_view(v, max_samples) for v in views]
     by_name = {v.name: v for v in views}
@@ -1243,7 +1273,7 @@ def _subject_figure(
     # (:func:`series_texts`), which belongs to no family either, so they
     # stay two legend entries and two hues.
     for h, (key, members) in enumerate(group_families(list(by_name), texts)):
-        colors = ramp(HUES[h % len(HUES)], len(members))
+        colors = ramp(palette.hues[h % len(palette.hues)], len(members))
         label = (labels or {}).get(key) or family_label(key, members, texts)
         # The legend entry rides on the first member that DRAWS: a family whose
         # lowest index has no result would otherwise have none.
@@ -1273,6 +1303,7 @@ def _subject_figure(
             x_max=x_max,
             has_spectrum=has_spectrum,
             full_samples=view.full_samples,
+            palette=palette,
             spectrum_range=spectrum_range,
         )
         leaf_data, leaf_shapes, leaf_rings, leaf_pointer = _leaf_traces(
@@ -1285,7 +1316,7 @@ def _subject_figure(
         pointer["targets"].update(leaf_pointer["targets"])
         pointer["draggable"] += leaf_pointer["draggable"]
     config: dict = _config(editable)
-    layout = _layout(layout_view, shapes + rings, False)
+    layout = _layout(layout_view, shapes + rings, False, palette)
     if editable:
         layout["meta"] = {POINTER: pointer}
     return {"data": data, "layout": layout, "config": config}

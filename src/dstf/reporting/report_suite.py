@@ -219,10 +219,13 @@ def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
     }
 
 
-def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:
+def plot_page_keys(
+    context, plots, extra_series, metric_tree, max_samples, theme: str = "default"
+) -> dict:
     """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
     and ``plot_sections`` from a render context, one of each per plot of
-    ``plots`` (:func:`plot_inputs`), in order.
+    ``plots`` (:func:`plot_inputs`), in order. The figures are drawn in the
+    bundled theme ``theme`` — baked into the page, as its stylesheet is.
 
     THREE sources answer a series name, in order: the scored variables
     (``variables_by_name``), the no-baseline trajectories — a test with no
@@ -318,6 +321,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 [subject_view(n) for n in subject],
                 budget,
                 context=[context_view(n) for n in context_names],
+                theme=theme,
             )
             if subject
             else None
@@ -408,8 +412,9 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
     }
 
 
-def _build_figures(context: dict, max_samples: int | None) -> dict:
-    """The page's diagnostic figures; the plots' are :func:`plot_page_keys`'.
+def _build_figures(context: dict, max_samples: int | None, theme: str) -> dict:
+    """The page's diagnostic figures, in the theme the page is generated
+    in; the plots' are :func:`plot_page_keys`'.
     Built from the FULL-resolution context — the view decimates under
     ``max_samples`` — and after the sidecar write, so
     ``comparison_data.json`` keeps its trajectory shape and no figure."""
@@ -427,6 +432,7 @@ def _build_figures(context: dict, max_samples: int | None) -> dict:
                 ref_values=t.get("ref_values"),
             ),
             budget,
+            theme=theme,
         )
         for t in context.get("diag_trajectories") or []
     ]
@@ -449,6 +455,9 @@ def generate_comparison_plots(
     # Must track Config.max_embedded_samples — both production callers pass
     # it explicitly, so this default only fires for direct callers (tests).
     max_embedded_samples: int = 1000,
+    # Config.theme, said by both production callers as the budget is: the
+    # bundled theme the page is generated in (D148).
+    theme: str = "default",
     overlays: list | None = None,
     comparison: TestComparison | None = None,
     ref_id: str | None = None,
@@ -510,7 +519,7 @@ def generate_comparison_plots(
     # LAYOUT — names, no arrays — joins the sidecar; the figures are popped
     # out and put back after the dump, where _build_figures is called.
     page_keys = plot_page_keys(
-        context, plots, extra_series, metric_tree, max_embedded_samples
+        context, plots, extra_series, metric_tree, max_embedded_samples, theme=theme
     )
     context["plots"] = page_keys.pop("plots")
 
@@ -566,7 +575,7 @@ def generate_comparison_plots(
     # they are added AFTER the sidecar write so the sidecar's shape (the
     # handoff artifact dashboard_render reads) does not change.
     context.update(page_keys)
-    context.update(_build_figures(context, max_embedded_samples))
+    context.update(_build_figures(context, max_embedded_samples, theme))
     # Why the comparison refused the test, for the summary line: the page's
     # own flags read a test with no scored variable as one with no baseline.
     context["refused"] = refusal(comparison) if comparison is not None else None
@@ -589,7 +598,7 @@ def generate_comparison_plots(
     # page linked only to interactive.html; the per-variable PNGs still
     # render next to it for direct reference.
     interactive_path = plot_dir / "interactive.html"
-    _render_template("interactive.html", page_context, interactive_path)
+    _render_template("interactive.html", page_context, interactive_path, theme)
 
     # Write the standalone interactive.js beside the HTML and the vendored
     # Plotly one level up (shared by the suite) so the `<script src=...>`
@@ -720,22 +729,25 @@ def _decimated_traces(context: dict) -> list[dict]:
     return out
 
 
-def jinja_env():
+def jinja_env(theme: str = "default"):
     """The per-test report's Jinja environment: the templates dir, autoescape,
-    and the token block every page starts its stylesheet with. One
-    constructor, so a test that renders a page gets the same globals."""
+    and the token block every page starts its stylesheet with, in the
+    bundled theme ``theme``. One constructor, so a test that renders a page
+    gets the same globals."""
     from jinja2 import Environment, FileSystemLoader
 
     from .theme import css_variables
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
-    env.globals["dstf_css"] = css_variables()
+    env.globals["dstf_css"] = css_variables(theme)
     return env
 
 
-def _render_template(template_name: str, context: dict, output_path: Path) -> None:
+def _render_template(
+    template_name: str, context: dict, output_path: Path, theme: str
+) -> None:
     """Render a Jinja2 template with the given context."""
-    template = jinja_env().get_template(template_name)
+    template = jinja_env(theme).get_template(template_name)
     html = template.render(**context)
     output_path.write_text(html, encoding="utf-8")
 
@@ -814,6 +826,7 @@ def _build_per_test_args(
         "metric_tree": comp.metric_tree,
         "artifact_files": artifact_files,
         "max_embedded_samples": config.max_embedded_samples,
+        "theme": config.theme,
         "overlays": overlays,
         "plots": plots,
         "extra_series": extra_series,
@@ -840,6 +853,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         metric_tree=args.get("metric_tree"),
         artifact_files=args.get("artifact_files", ()),
         max_embedded_samples=args["max_embedded_samples"],
+        theme=args["theme"],
         overlays=args.get("overlays"),
         comparison=args.get("comparison"),
         ref_id=args.get("ref_id"),

@@ -44,6 +44,7 @@ from .plot_card import GRIPS_URL, UNREAD, PlotCard, folded
 from .rail import Rail
 from .stats_card import StatsCard
 from .strip import StatusStrip
+from .tab_theme import first_paint
 from .tabstate import caught_up, connected_tab_state, heard_spec
 from .tree_card import TreeCard, leaf_status
 
@@ -154,12 +155,13 @@ class TestPage:
         # `add_head_html` inserts through insertAdjacentHTML, which never
         # runs a <script> (the Suite page's rule).
         ui.add_head_html(f'<script src="{GRIPS_URL}"></script>')
+        first_paint(self.shell)
         state = await connected_tab_state(self.client)
         if state is None:
             return
         self.state = state  # the tab's, shared with its Suite page
         caught_up(state, self.shell.session.spec_revision)
-        self.shell.page_setup()
+        self.theme = self.shell.page_setup(state, self._rethemed)
         self.model_id = model_id
         ui.page_title(f"DSTF — {model_id.rsplit('.', 1)[-1]}")
         # The frame is built whatever the Session holds at this moment: a
@@ -168,7 +170,9 @@ class TestPage:
         # frame to fill — `sync` returned early for ever and the test never
         # came back however many events arrived (the final review). `sync`
         # below fills it, or `_gone` writes the sentence into it.
-        self.header = Header(self.shell, below=self._subheader, strip=self._strip)
+        self.header = Header(
+            self.shell, self.theme, below=self._subheader, strip=self._strip
+        )
         self.rail = Rail(self)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
             # Above the tree (the plot-model board): what the run recorded,
@@ -220,7 +224,8 @@ class TestPage:
         TEST-placement buttons are the strip's, under it."""
         # One line: beside a long model id and Queue's caption with an edit
         # pending, "← Suite" broke after the arrow at 1280 px.
-        ui.link("← Suite", "/").classes("text-no-wrap").mark("back")
+        # The accent, in every theme (D148): a link's own blue is NiceGUI's.
+        ui.link("← Suite", "/").classes("text-no-wrap text-primary").mark("back")
         ui.label(self.model_id).classes("dstf-model text-subtitle1 dstf-mono").mark(
             "model"
         )
@@ -684,6 +689,15 @@ class TestPage:
         """Take a move's line away: the next form, editor or edit."""
         if self.tree is not None:
             self.tree.unsay()
+
+    def _rethemed(self) -> None:
+        """The tab switched theme (`TabTheme.switch`): every DRAWN plot is
+        re-sent in it — a `Plotly.react` on the same node, so its zoom, its
+        arrows' map and a staged edit stay. A card not drawn yet takes the
+        tab's theme when it is."""
+        for card in self.cards:
+            if card.plot is not None:
+                card.redraw()
 
     def _redraw_moved(self, view: Any) -> None:
         """The signature is the one thing that decides a redraw: only the

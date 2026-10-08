@@ -16,32 +16,61 @@ design canvas on 2026-09-15 (brief §3.9). It is the default theme.
 
 Every neutral, the accent and the status tints are CSS variables named as in
 the tables below, on `:root` in the shared stylesheet and mirrored in the
-tool's Quasar palette. A theme is one file that sets those variables; the
-default theme is this document. Dark mode is a theme. The status fills and
-darks, the baseline-role chips and the plot series keep their values in every
-theme, because they carry meaning; a theme may only change what sits behind
-them, and each plot layout template (background, grid, text) follows the
-theme. The theme is chosen in `testing.json` (`"theme"`) and can be switched
-in the tool for the session.
+tool's Quasar palette. A theme is a NAME of a bundled table that sets the
+fifteen tokens below (`reporting/theme.py`); there are two, `default` — this
+document's values — and `dark` (D148). No theme file, no inline colours.
+
+What a theme may change is what sits BEHIND meaning. The status fills, the
+filled badge (white on the fill), the baseline-role chips and the plot series
+keep their values in every theme, with two exceptions on `dark`, both because
+the light value does not read there:
+
+- A status's tint, pill, pill border and the text on them are DIMMED: the
+  fill laid at 14 % (tint), 24 % (pill) and 60 % (border) over the dark
+  surface, and the status's pastel — the light table's pill border; for
+  warnings the lighter amber `#ffd54f` — as the text. The light tints would
+  be light islands on a dark page.
+- Five plot colours under 2.2:1 on the dark plot are lightened ("Plot series"
+  below). No other series colour moves.
+
+Each theme has one plot layout template in the figure layer
+(`figures/palette.py`): the plot's ground, grid, zero line, axis lines, ticks
+and titles, legend, hover label and toolbar. `default` has none — its plot is
+plotly.js's own. The figure's chrome follows the theme too: a reference
+event's guide line, an open criterion's ring and handle markers, the grey of a
+context series.
+
+The theme is chosen in `testing.json` (`"theme"`): the dashboard and the
+report pages are generated in it, with no switch in those pages, and the tool
+opens in it. In the tool it can be switched per browser tab, for the session,
+from the header's ⋮.
 
 ## Colors
 
-Neutrals (page and text)
+Tokens (neutrals, accent, selection)
 
-| Token | Value | Use |
-|---|---|---|
-| page | `#fafafa` | page background, sticky chrome |
-| surface | `#ffffff` | cards, tables, plots, panels |
-| surface-hover | `#f5f5f5` | hover on rows and counters; table headers |
-| border | `#dddddd` | cards, tables, chrome dividers |
-| border-hairline | `#eeeeee` | inside cards; plot frames |
-| text | `#333333` | body |
-| text-secondary | `#666666` | status bar, detail cells, hints |
-| text-muted | `#888888` | labels, unscored, queued |
-| text-disabled | `#999999` | reference values |
+| Token | default | dark | Use |
+|---|---|---|---|
+| page | `#fafafa` | `#121212` | page background, sticky chrome |
+| surface | `#ffffff` | `#1e1e1e` | cards, tables, plots, panels |
+| surface-hover | `#f5f5f5` | `#2a2a2a` | hover on rows and counters; table headers |
+| surface-active | `#ececec` | `#353535` | hover on a control that rests on surface-hover |
+| border | `#dddddd` | `#484848` | cards, tables, chrome dividers |
+| border-hairline | `#eeeeee` | `#303030` | inside cards; plot frames; the dark plot's grid |
+| text | `#333333` | `#e4e4e4` | body |
+| text-secondary | `#666666` | `#b8b8b8` | status bar, detail cells, hints |
+| text-muted | `#888888` | `#9e9e9e` | labels, unscored, queued; a context series |
+| text-disabled | `#999999` | `#7d7d7d` | reference values |
+| accent | `#1976D2` | `#64b5f6` | links, sort markers, selection ring, the primary button |
+| accent-hover | `#1565C0` | `#90caf9` | the accent, hovered |
+| selection | `#e3f2fd` | `#1d3a57` | the selection tint |
+| shadow | `rgba(0,0,0,0.1)` | `rgba(0,0,0,0.5)` | elevation |
+| on-accent | `#ffffff` | `#0b1a2b` | text on a FILLED accent (the primary button) |
 
-Accent, one only: `#1976D2` (links, sort markers, selection ring, the primary
-button). Hover `#1565C0`. Selection tint `#e3f2fd`. Never a second accent.
+One accent only; never a second. The dark neutrals are neutral grey, not
+blue-tinted, and the dark page is Quasar's own dark page. `on-accent` is a
+token of its own because on a dark surface no one blue both reads as link
+text and carries white text: white on the dark accent is 2.2:1.
 
 Status. The words are the classifier's (`reporting/status.py`), the colours the
 dashboard's. Each status has a **fill** (filled badge, bar segment), a **dark**
@@ -60,7 +89,10 @@ text colour, and a **tint** row background.
 | pending / info | `#607D8B` | `#607D8B` | `#eceff1` | `#b0bec5` |
 
 The tinted pill's border is the fill's Material 200 shade; the dashboard
-ships only pass and fail, the rest are derived the same way.
+ships only pass and fail, the rest are derived the same way. These are the
+`default` values; on `dark` the fill column is the same and the other three
+are dimmed as "Themes" says (pass: tint `#243225`, pill `#29412a`, text
+`#a5d6a7`).
 
 Baseline roles (chips in the overlay picker): soft_check `#e8d8f3` on
 `#5e3a80`, border `#c4a8df`; companion `#d8f3e4` on `#2b6b48`, border
@@ -80,6 +112,23 @@ Plot series (the figure layer; literal hex in figures, never CSS variables)
 | drag handle | ring `#2e7d32`, fill `rgba(46,125,50,0.25)` |
 | scalar lines | `#7B1FA2` dot · `#1976D2` dash · `#388E3C` dashdot |
 | live (running) trace | actual colour; the unfinished end carries a marker in `#2196F3` |
+
+On `dark` (`figures/palette.py`; contrast on the dark plot `#1e1e1e`):
+
+| What | default | dark |
+|---|---|---|
+| soft-check overlay (the dotted line above) | `#7B1FA2` (2.0) | `#ba68c8` (4.7) |
+| blue ramp, darkest stop | `#0d47a1` (1.9) | `#1264e2` (3.1) |
+| green ramp, darkest stop | `#1b5e20` (2.1) | `#237b2a` (3.1) |
+| purple ramp, third stop | `#7b1fa2` (2.0) | `#a631d8` (3.2) |
+| purple ramp, darkest stop | `#4a148c` (1.4) | `#8a40e4` (3.1) |
+| drag handle (chrome) | ring `#2e7d32` | ring `#66bb6a`, fill `rgba(102,187,106,0.25)` |
+| reference event line (chrome) | `#757575` | `#a8a8a8` |
+| context series (chrome) | `#888888` | `#9e9e9e` — the theme's text-muted |
+
+A ramp stop is lightened at its own hue and saturation until it clears 3:1 and
+still stands darker than the stop before it; the eight other stops are the
+same in both themes.
 
 ## Typography
 

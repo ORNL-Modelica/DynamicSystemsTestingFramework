@@ -227,7 +227,7 @@ def run_pipeline(
     # it a moment earlier too, before opening a browser tab on it.
     from .reporting.dashboard_render import build_rerun_prefix, render_live
 
-    render_live(work_dir, rerun_prefix=build_rerun_prefix(config))
+    render_live(work_dir, rerun_prefix=build_rerun_prefix(config), theme=config.theme)
 
     manifests = backend.run_tests(tests)
 
@@ -365,6 +365,7 @@ class ItemRun:
             len(rows),
             rerun_prefix=build_rerun_prefix(self.config),
             metadata=self.backend._build_run_metadata(**self.backend.run_versions()),
+            theme=self.config.theme,
         )
         progress.load(rows)
         progress.finalize()

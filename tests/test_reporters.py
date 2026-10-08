@@ -368,9 +368,13 @@ class TestConsoleReport:
 
 
 def _fake_config(work_dir: Path):
-    """The two attributes `_output_report`'s html branch reads off Config."""
+    """What `_output_report`'s html branch reads off Config."""
     return types.SimpleNamespace(
-        work_dir=work_dir, config_file=None, source_path=None, reference_root=None
+        work_dir=work_dir,
+        config_file=None,
+        source_path=None,
+        reference_root=None,
+        theme="default",
     )
 
 

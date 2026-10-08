@@ -932,13 +932,14 @@ class Session:
         *,
         editing: Collection[str] | None = None,
         visibility: Visibility | None = None,
+        theme: str = "default",
     ) -> dict:
         """The editable figure of plot ``index`` (IndexError past the end).
         A subject of one variable with no context is :meth:`figure`; a
         family, or context, is drawn over the same cached bases. A context
         view draws as a trace only — a context variable scored on another
-        plot signs no leaf onto this one. ``editing`` and ``visibility`` as
-        in :meth:`figure`."""
+        plot signs no leaf onto this one. ``editing``, ``visibility`` and
+        ``theme`` as in :meth:`figure`."""
         from ..figures.plotly import plot_figure
 
         if index < 0:
@@ -946,7 +947,11 @@ class Session:
         plot = self.plots(model_id)[index]
         if len(plot.subject) == 1 and not plot.context:
             return self.figure(
-                model_id, plot.subject[0], editing=editing, visibility=visibility
+                model_id,
+                plot.subject[0],
+                editing=editing,
+                visibility=visibility,
+                theme=theme,
             )
         return plot_figure(
             [self._editable_view(model_id, name) for name in plot.subject],
@@ -959,6 +964,7 @@ class Session:
             editable=True,
             rings_for=editing,
             visibility=visibility,
+            theme=theme,
         )
 
     def figure(
@@ -968,13 +974,16 @@ class Session:
         *,
         editing: Collection[str] | None = None,
         visibility: Visibility | None = None,
+        theme: str = "default",
     ) -> dict:
         """The tool's figure is the editable one — handle rings a user can
         drag (``variable_figure(..., editable=True)``); the report's is not.
         ``editing``: the leaf paths whose handles get a ring, ``None`` meaning
         every leaf; the Plotly ``config`` never depends on it. ``visibility``:
         what the page chose to show (legend b); the cached base does not
-        depend on it."""
+        depend on it. ``theme``: the bundled theme the figure is drawn in —
+        the TAB's (D148), which is why it is an argument and nothing the
+        Session holds; the cached base does not depend on it either."""
         from ..figures.plotly import variable_figure
 
         if self._require_project().test(model_id) is None:
@@ -985,6 +994,7 @@ class Session:
             editable=True,
             rings_for=editing,
             visibility=visibility,
+            theme=theme,
         )
 
     def _editable_view(self, model_id: str, variable: str) -> VariableView:
@@ -1677,6 +1687,7 @@ class Session:
         assert work_dir is not None  # resolved in Config.__post_init__
         comparisons = list(self.comparisons.values())
         results = dict(project.results)
+        theme = project.config.theme
 
         def run() -> None:
             from ..reporting.dashboard_render import render_final
@@ -1684,7 +1695,9 @@ class Session:
             write(items)
             # The page lists every test the Session scored, with its
             # verdict — not the queue's items alone.
-            render_final(work_dir, comparisons=comparisons, results=results)
+            render_final(
+                work_dir, comparisons=comparisons, results=results, theme=theme
+            )
 
         self._background.submit("the queue's status.json and dashboard", run)
 
@@ -2163,9 +2176,10 @@ class SessionView:
         *,
         editing: Collection[str] | None = None,
         visibility: Visibility | None = None,
+        theme: str = "default",
     ) -> dict:
         return self._session.figure(
-            model_id, variable, editing=editing, visibility=visibility
+            model_id, variable, editing=editing, visibility=visibility, theme=theme
         )
 
     def variable_names(self, model_id: str) -> list[str]:
@@ -2194,9 +2208,10 @@ class SessionView:
         *,
         editing: Collection[str] | None = None,
         visibility: Visibility | None = None,
+        theme: str = "default",
     ) -> dict:
         return self._session.plot_figure(
-            model_id, index, editing=editing, visibility=visibility
+            model_id, index, editing=editing, visibility=visibility, theme=theme
         )
 
     def tree_view(self, model_id: str) -> dict | None:
