@@ -402,6 +402,23 @@ def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
         return None
 
 
+def read_mat_last_time(mat_path: Path) -> float | None:
+    """The time of the last whole time point ``mat_path`` HOLDS, finished
+    or not: how far a killed run got. ``None`` for a file that is
+    unreadable or holds no point. Never a verdict —
+    :func:`read_mat_time_extents` is, and answers only a finished file."""
+    try:
+        with open(mat_path, "rb") as f:
+            scan = _scan_mat4_headers(f)
+            _raise_if_binnormal(f, scan.blocks, mat_path)
+            block = scan.blocks.get(_TRAJECTORY)
+            if block is None or block[3] == 0:
+                return None
+            return _time_at(f, block, block[3] - 1)
+    except Exception:
+        return None
+
+
 def mat_reaches_time(
     mat_path: Path,
     target_time: float,

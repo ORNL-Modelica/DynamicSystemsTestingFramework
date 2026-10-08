@@ -2229,6 +2229,7 @@ class TestSessionView:
             "project",
             "spec_path",
             "pending",
+            "partial",
             "selection",
             "comparisons",
             "artifacts",

@@ -24,7 +24,7 @@ from dstf.authoring.shell.shell import TICK, Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.situation import Situation  # noqa: E402
-from dstf.backends.pool import ItemState  # noqa: E402
+from dstf.backends.pool import ItemState, StartingWorker  # noqa: E402
 from test_session import A, B, D, _project  # noqa: E402
 from test_session_queue import fake_item  # noqa: E402
 
@@ -214,8 +214,8 @@ async def test_the_tick_moves_a_running_row_s_seconds_and_nothing_else(shell):
         item = _hold(shell, A, ItemState.RUNNING)
         _hold(shell, B, ItemState.WAITING)
         panel = _suite(shell, user).queue
-        row_a, waiting = panel._running[A], _one(user, f"queue-words:{B}")
-        assert set(panel._running) == {A}
+        row_a, waiting = panel._moving[A][1], _one(user, f"queue-words:{B}")
+        assert set(panel._moving) == {A, B}
 
         item.started_at -= 42.0
         for page in shell.pages:
@@ -225,7 +225,7 @@ async def test_the_tick_moves_a_running_row_s_seconds_and_nothing_else(shell):
             "running · 43 s"
         )
         # the rows were not rebuilt: the same labels stand
-        assert panel._running[A] is row_a
+        assert panel._moving[A][1] is row_a
         assert _one(user, f"queue-words:{B}") is waiting
 
 
@@ -256,6 +256,61 @@ async def test_the_shell_polls_only_while_a_test_runs(shell):
     for _ in range(3 * every):
         shell.tick()
     assert seen.count("poll") == 3
+
+
+class _StartingPool:
+    """A pool that is bringing its workers up, and nothing else of one."""
+
+    can_cancel = True
+    stopped = None
+
+    def __init__(self, *workers: StartingWorker) -> None:
+        self.starting = workers
+
+
+async def test_a_starting_worker_is_listed_and_the_next_row_says_so(shell):
+    """A library's load is minutes: a bare "waiting · next" for that long
+    reads as a hang (item 8 of D151)."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        panel = _suite(shell, user).queue
+        assert panel.starting.visible is False
+        _hold(shell, A, ItemState.WAITING)
+        _hold(shell, B, ItemState.WAITING)
+        assert _one(user, f"queue-words:{A}").text == "waiting · next"
+
+        pool = shell.session._pool = _StartingPool(
+            StartingWorker(0, 'loadFile("/libs/Big/package.mo")', 85.2)
+        )
+        try:
+            assert shell.clocked() and not shell.running()
+            for page in shell.pages:
+                page.handle({"event": "poll"})
+            assert _one(user, "queue-starting-worker").text == (
+                'starting worker 1 — loadFile("…/package.mo") · 85 s'
+            )
+            assert panel.starting.visible
+            assert _one(user, f"queue-words:{A}").text == "waiting · worker starting"
+            assert _one(user, f"queue-words:{B}").text == "waiting · 1 ahead"
+
+            # the seconds move on the tick, on the label that stands
+            line = _one(user, "queue-starting-worker")
+            pool.starting = (StartingWorker(0, "its launch", 86.0),)
+            for page in shell.pages:
+                page.handle({"event": "poll"})
+            assert line.text == "starting worker 1 — its launch · 86 s"
+            assert _one(user, "queue-starting-worker") is line
+
+            # up: the line goes, and the row is next again
+            pool.starting = ()
+            for page in shell.pages:
+                page.handle({"event": "poll"})
+            assert panel.starting.visible is False
+            assert not _has(user, "queue-starting-worker")
+            assert _one(user, f"queue-words:{A}").text == "waiting · next"
+            assert not shell.clocked()
+        finally:
+            shell.session._pool = None
 
 
 async def test_a_store_write_s_line_is_shown_in_the_panel(shell):

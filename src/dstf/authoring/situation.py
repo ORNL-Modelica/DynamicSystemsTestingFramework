@@ -23,10 +23,12 @@ from ..backends.pool import ItemState
 from ..comparison.tree_spec import tree_variables
 from ..reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL
 from .capabilities import plural
+from .live_rows import CANCELLED, NOT_AVAILABLE
 
 if TYPE_CHECKING:
     from ..backends.types import TestResult
     from ..discovery.test_registry import TestModel
+    from .live_rows import Partial
     from .queue_rows import QueueRow
 
 
@@ -66,6 +68,9 @@ class Strip:
     situation: Situation
     tone: str  # "grey" | "red" | "amber"
     sentence: str
+    #: A line under the strip, said once: why a running test's page shows
+    #: no growing trace (D151). Empty for every other strip.
+    note: str = ""
 
 
 _ACCEPT_IT = "If the new behaviour is right, accept it as the baseline."
@@ -140,6 +145,7 @@ def strip_for(
     advisory: int = 0,
     new_variables: int = 0,
     refused: str | None = None,
+    partial: Partial | None = None,
 ) -> Strip:
     """The strip for one test. ``queue`` is its row in the simulation
     queue (`queue_rows.queue_row`), None when the queue lists no item of
@@ -154,13 +160,24 @@ def strip_for(
     ``criteria`` / ``advisory`` its leaves failing, in all, and failing
     inside a warn; ``new_variables`` the variables its criteria name that
     the last run did not record (:func:`new_variables`); ``refused`` why
-    the comparison refused the test (`reporting.status.refusal`), or None."""
+    the comparison refused the test (`reporting.status.refusal`), or None;
+    ``partial`` what its last run left when it did not finish
+    (`Session.partial`), or None."""
     S = Situation
     if queue is not None and queue.state is ItemState.WAITING:
         return Strip(S.QUEUED, "grey", f"Queued — {queue.words}")
     if queue is not None and queue.state is ItemState.RUNNING:
         where = f" on worker {queue.worker}" if queue.worker is not None else ""
-        return Strip(S.RUNNING, "grey", f"Running{where} — {queue.elapsed or 0:.0f} s")
+        # How far its result file has got, where the backend has a live
+        # view (D151); its seconds, and the line that says why, where not.
+        if queue.progress is not None:
+            return Strip(S.RUNNING, "grey", f"Running{where} — {queue.progress}")
+        return Strip(
+            S.RUNNING,
+            "grey",
+            f"Running{where} — {queue.elapsed or 0:.0f} s",
+            note=NOT_AVAILABLE,
+        )
     if edits:
         sentence = f"{plural(edits, 'unsaved edit')}{SEP}{verdict_phrase(status, saved_status)}"
         if new_variables:
@@ -171,6 +188,13 @@ def strip_for(
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")
     if status is None and (has_result or loading):
         return Strip(S.WAITING, "grey", "Scoring…")
+    if partial is not None and status in (None, NOT_RUN, SIM_FAIL):
+        # Its last run did not finish and left a partial result (D151):
+        # where it stopped, and that nothing of it is scored. A cancel is
+        # nobody's failure; a timeout and a crash are the test's.
+        if partial.how == CANCELLED:
+            return Strip(S.CANCELLED, "grey", partial.sentence)
+        return Strip(S.SIM_FAIL, "red", partial.sentence)
     if queue is not None and queue.state is ItemState.CANCELLED:
         return Strip(S.CANCELLED, "grey", CANCELLED_SENTENCE)
     if queue is not None and queue.state is ItemState.FAILED and not queue.started:

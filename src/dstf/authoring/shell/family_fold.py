@@ -127,7 +127,9 @@ class FoldRow:
         statuses = [leaf_status(leaf) for leaf in fold.leaves]
         self.pill.set(worst(statuses))
         self.name.set_text(fold.name)
-        self.count.set_text(tally(statuses))
+        # A family with nothing scored because of a run says the word its
+        # members' rows say (D151), not a count of verdicts it has none of.
+        self.count.set_text(str(fold.leaves[0].get("unscored") or tally(statuses)))
         if _set_prop(self.row, "data-folded", "1" if shut else None):
             self.row.update()
         moved = _set_prop(self.chevron, "aria-expanded", "false" if shut else "true")

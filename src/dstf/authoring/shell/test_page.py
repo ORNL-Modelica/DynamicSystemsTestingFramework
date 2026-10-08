@@ -42,6 +42,7 @@ from ..tree_pointer import node_or_none
 from .actions import ActionBar, RowBuild, RowTarget
 from .family_fold import Folding
 from .header import Header
+from .live_view import LIVE_CSS, LiveView
 from .plot_card import GRIPS_URL, UNREAD, PlotCard, folded
 from .rail import Rail
 from .stats_card import StatsCard
@@ -112,6 +113,10 @@ class TestPage:
         self.cards: list[PlotCard] = []
         self.count: ui.label | None = None
         self.column: ui.column | None = None
+        #: The page's body, which says whether its criteria have verdicts
+        #: (`LiveView.mark`), and the running test's live view (D151).
+        self.body: ui.column | None = None
+        self.live = LiveView(self)
         self._shape: Any = None
         #: Whether the page is showing "… is not a test of this project"
         #: instead of a test (`_gone`).
@@ -160,6 +165,7 @@ class TestPage:
         # `add_head_html` inserts through insertAdjacentHTML, which never
         # runs a <script> (the Suite page's rule).
         ui.add_head_html(f'<script src="{GRIPS_URL}"></script>')
+        ui.add_css(LIVE_CSS)
         first_paint(self.shell)
         state = await connected_tab_state(self.client)
         if state is None:
@@ -179,7 +185,7 @@ class TestPage:
             self.shell, self.theme, below=self._subheader, strip=self._strip
         )
         self.rail = Rail(self)
-        with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
+        with ui.column().classes("dstf-test w-full q-pa-md gap-3") as self.body:
             # Above the tree (the plot-model board): what the run recorded,
             # and the `+` that makes a statistic a criterion.
             self.stats = StatsCard(self)
@@ -1168,6 +1174,7 @@ class TestPage:
                 project.config.diagnostic_variables,
             ),
             refused=refusal(comp) if comp is not None else None,
+            partial=session.partial(model_id),
         )
 
     def sync(self, force: bool = False) -> None:
@@ -1182,6 +1189,7 @@ class TestPage:
             return
         view = self._view()
         self._paint(view)
+        self.live.mark(view)
         if self.stats is not None:
             self.stats.refresh(view)
         if self.tree is not None:
@@ -1241,6 +1249,7 @@ class TestPage:
         self.move_revision = None
         if self.strip is not None:
             self.strip.forget()
+        self.live.mark(None)
         if self.badge is not None:
             self.badge.set_text("")
             self.badge.style("background-color: transparent")
@@ -1276,8 +1285,9 @@ class TestPage:
     def handle(self, event: dict[str, Any]) -> None:
         kind = event["event"]
         if kind == "poll":
-            # Once a second while a test runs: THIS test's seconds in the
-            # strip, where the queue is running it. Nothing else moved.
+            # Once a second while the queue runs or starts: THIS test's
+            # seconds in the strip — or how far its result file has got —
+            # and the samples its drawn plots gained (D151).
             self._tick()
             return
         self.header.handle(event)
@@ -1324,11 +1334,15 @@ class TestPage:
             self.sync()
 
     def _tick(self) -> None:
-        if self.strip is None or self.strip.situation is not Situation.RUNNING:
+        if self.strip is None or self.strip.situation not in (
+            Situation.QUEUED,  # "waiting · worker starting" comes and goes
+            Situation.RUNNING,
+        ):
             return
         row = queue_row(self.shell.session, self.model_id)
-        if row is not None and row.state is ItemState.RUNNING:
+        if row is not None and row.state in (ItemState.WAITING, ItemState.RUNNING):
             self.strip.say(strip_for(queue=row))
+        self.live.tick()
 
     def _mine(self, event: dict[str, Any]) -> bool:
         """Whether an event says anything about THIS test. `results` and

@@ -25,6 +25,7 @@ from dstf.backends.common.mat_reader import (
     list_result_mat_variables,
     mat_reaches_time,
     mat_shortfall,
+    read_mat_last_time,
     read_mat_time_extents,
     read_result_mat,
 )
@@ -362,6 +363,21 @@ def test_a_shortfall_says_how_far_the_rows_go(tmp_path):
         "its header counts 0 — the run did not finish writing it"
     )
     assert mat_shortfall(tmp_path / "missing.mat") == "missing.mat unreadable"
+
+
+def test_the_last_time_is_how_far_the_rows_go_finished_or_not(tmp_path):
+    """Where a killed run stopped — read for a partial file too, which is
+    why it is never the verdict's reading (`read_mat_time_extents`)."""
+    whole = _synthetic(tmp_path / "w.mat", "dymola", "<f4", 7)
+    assert read_mat_last_time(whole.path) == float(whole.time[-1])
+    cut = _synthetic(tmp_path / "c.mat", "openmodelica", "<f8", 7, points=4, declared=0)
+    assert read_mat_last_time(cut.path) == float(cut.time[3]) == 1.0
+    assert read_mat_time_extents(cut.path) is None
+    empty = _synthetic(tmp_path / "e.mat", "dymola", "<f8", 7, points=0)
+    assert read_mat_last_time(empty.path) is None
+    assert read_mat_last_time(tmp_path / "missing.mat") is None
+    (tmp_path / "junk.mat").write_bytes(b"not a result")
+    assert read_mat_last_time(tmp_path / "junk.mat") is None
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,10 @@ class StatusStrip:
                         self.situation
                     ),
                 )
+        #: One line under the strip (`Strip.note`): why a running test's
+        #: page shows no growing trace (D151). Hidden while there is none.
+        self.note = ui.label().classes("dstf-strip-note w-full").mark("strip-note")
+        self.note.set_visibility(False)
         self._show_edit_buttons(False)
         self._show_queue_buttons(None)
 
@@ -108,6 +112,8 @@ class StatusStrip:
     def paint(self, strip: Strip) -> None:
         self._tone(strip.tone)
         self.text.set_text(strip.sentence)
+        self.note.set_text(strip.note)
+        self.note.set_visibility(bool(strip.note))
         # Before the bar's refresh: its emphasis reads the situation.
         self.situation = strip.situation
         self._show_edit_buttons(
@@ -120,8 +126,9 @@ class StatusStrip:
         self.actions.refresh()
 
     def say(self, strip: Strip) -> None:
-        """The sentence alone: a running test's seconds move once a second,
-        and nothing else of the strip does."""
+        """The sentence alone: a running test's seconds — or how far its
+        result file has got — move once a second, and nothing else of the
+        strip does."""
         self.text.set_text(strip.sentence)
 
     def _show_queue_buttons(self, situation: Situation | None) -> None:
@@ -136,6 +143,7 @@ class StatusStrip:
         """No test: no sentence, no buttons (the page's `_gone`)."""
         self.situation = None
         self.text.set_text("")
+        self.note.set_visibility(False)
         self._tone("grey")
         self._show_edit_buttons(False)
         self._show_queue_buttons(None)

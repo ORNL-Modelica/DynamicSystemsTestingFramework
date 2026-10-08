@@ -8788,8 +8788,11 @@ async def test_the_strip_follows_a_test_through_the_queue(shell):
         assert (strip.remove.visible, strip.cancel.visible) == (False, True)
         assert strip.cancel_why.visible is False
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
-        # Its run dropped the last result: nothing is drawn until its own.
-        assert page.badge.text == "NOT RUN" and page.cards == []
+        # Its run dropped the last result and every verdict with it — not
+        # the page's layout (D151): its plots stay until its own arrives.
+        assert page.badge.text == "NOT RUN"
+        assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
+        assert page.body.props["data-unscored"] == "waiting for result"
 
         _ended(shell, item, ItemState.FINISHED, result=held)
         assert strip.situation is Situation.FAIL

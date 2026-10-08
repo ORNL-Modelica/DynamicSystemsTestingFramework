@@ -55,16 +55,17 @@ _WITH_HOOKS = (
 
 
 def _start(
-    cfg: Path, work: Path, log: Path, *, hooks: bool = False
+    cfg: Path, work: Path, log: Path, *, hooks: bool | Path = False
 ) -> tuple[subprocess.Popen, str]:
     """`dstf author` as a plain process: NiceGUI's `ui.run` treats an
     inherited PYTEST_CURRENT_TEST as "I am a screen test" and demands
     NICEGUI_SCREEN_TEST_PORT, ignoring --port. ``hooks`` adds
-    `author_hooks.py`'s routes."""
+    `author_hooks.py`'s routes — or runs the file given in their place."""
     port = _free_port()
     env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
     sink = log.open("wb")
-    launcher = ["-c", _WITH_HOOKS, str(HOOKS)] if hooks else ["-m", "dstf"]
+    script = HOOKS if hooks is True else hooks
+    launcher = ["-c", _WITH_HOOKS, str(script)] if script else ["-m", "dstf"]
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -284,7 +285,7 @@ def _served(
     tmp_path,
     playwright_browser,
     *,
-    hooks: bool = False,
+    hooks: bool | Path = False,
     width: int = 1280,
     setup=None,
     init_script: str | None = None,

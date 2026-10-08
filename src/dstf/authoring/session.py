@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.common.result_variables import tracked_results
-from ..backends.pool import ItemState, QueueItem, Refused
+from ..backends.pool import ItemState, QueueItem, Refused, StartingWorker
 from ..backends.progress import recorded_backend
 from ..backends.types import (
     DatasetType,
@@ -61,7 +61,7 @@ from ..discovery.test_registry import (
     spec_tests_by_model,
 )
 from ..figures.assemble import leaves_by_variable, view_from_trajectory
-from ..figures.view import VariableView
+from ..figures.view import VariableView, error_series
 from ..storage.baseline import PRIMARY_BASELINE
 from ..storage.reference_store import ReferenceStore
 from .capabilities import (
@@ -73,6 +73,8 @@ from .capabilities import (
     StoreWrite,
     plural,
 )
+from .live_rows import Partial, unscored_view
+from .live_runs import LiveRuns
 from .situation import unrecorded_variables
 from .spec_document import PatchOp, SpecDocument, json_equal
 
@@ -180,6 +182,10 @@ class _ModelReads:
     ref: dict | None
     overlays: list
     bases: dict[str, VariableView] = field(default_factory=dict)
+    #: Per variable, the decimated view with no Actual — the baseline's
+    #: trace and the overlays — that a run in progress, or one that left no
+    #: result, is drawn over (D151); dropped with the bases.
+    references: dict[str, VariableView] = field(default_factory=dict)
     #: The scored list the bases were built from (`_scored_key`). A rescore
     #: that changes it — a staged edit that starts or stops scoring a
     #: variable, a discard, a save, the background rescan — may leave any
@@ -335,6 +341,12 @@ class Session:
         self.rescan_done = threading.Event()
         self._reads: dict[str, _ModelReads] = {}
         self._background = _Background()
+        #: The runs whose result the Session does not have (D151): the
+        #: tests the queue is running, and the partial results of runs
+        #: that did not finish.
+        self.live_runs = LiveRuns(
+            self, lambda state, models: self._emit("queue", state=state, models=models)
+        )
 
     # -- project -----------------------------------------------------------
 
@@ -634,6 +646,9 @@ class Session:
         project = self._require_project()
         if project.test(model_id) is None:
             raise KeyError(model_id)
+        shown = self.live_runs.series(model_id, variable)
+        if shown is not None:
+            return self._unfinished_view(model_id, variable, *shown)
         comp = self.comparisons.get(model_id)
         result = project.results.get(model_id)
         reads = self._reads_for(model_id)
@@ -675,6 +690,82 @@ class Session:
         )
         return view_from_trajectory(variable, traj, leaves)
 
+    def _unfinished_view(
+        self,
+        model_id: str,
+        variable: str,
+        series: tuple[np.ndarray, np.ndarray] | None,
+        samples: int,
+    ) -> VariableView:
+        """The view of a variable whose test has no result because of a
+        run (D151): the baseline's trace and the overlays as always, and as
+        the Actual ``series`` — the samples read so far of a run in
+        progress, a partial file's after one that did not finish — or none.
+        No leaf: nothing of it is scored. ``samples`` is how many the series
+        was decimated from, 0 for one handed in whole."""
+        from ..figures.view import decimate_view
+        from ..reporting.overlay_loader import attach_overlays_to_trajectories
+
+        reads = self._reads_for(model_id)
+        reference = reads.references.get(variable)
+        if reference is None:
+            texts = self.variable_texts(model_id)
+            ref = reads.ref or {}
+            _comp, kept = self._layout_source(model_id)
+            ref_var = next(
+                (v for v in ref.get("variables", []) if v.get("name") == variable),
+                None,
+            )
+            traj = {
+                "name": variable,
+                # What an unmapped companion is matched by (D132).
+                "expression": next(
+                    (
+                        v.expression
+                        for v in (kept.variables if kept is not None else ())
+                        if v.name == variable
+                    ),
+                    "",
+                ),
+                "text": texts[variable].text if variable in texts else variable,
+                "ref_time": ref.get("time", []) if ref_var else [],
+                "ref_values": ref_var["values"] if ref_var else [],
+            }
+            attach_overlays_to_trajectories([traj], reads.overlays)
+            reference = reads.references[variable] = decimate_view(
+                view_from_trajectory(variable, traj, []),
+                self._require_project().config.max_embedded_samples,
+            )
+        if series is None:
+            return reference
+        time, values = series
+        return replace(
+            reference,
+            act_time=time,
+            act_values=values,
+            # Nothing to compare before the run's first sample.
+            errors=error_series(reference.ref_time, reference.ref_values, time, values)
+            if len(time)
+            else (),
+            full_samples={**reference.full_samples, "act": samples or len(time)},
+        )
+
+    def _layout_source(
+        self, model_id: str
+    ) -> tuple[TestComparison | None, TestResult | None]:
+        """The comparison and the result ``model_id``'s LAYOUT is read from
+        — the scored names its plots derive from, its tracked names, its
+        labels: the Session's own, or, while a run has taken them (in
+        progress, or ended with no result), the ones that run replaced
+        (D151). Never a verdict's or a trajectory's source."""
+        kept = self.live_runs.kept(model_id)
+        if kept is not None:
+            return kept
+        return (
+            self.comparisons.get(model_id),
+            self._require_project().results.get(model_id),
+        )
+
     def _reads_for(self, model_id: str) -> _ModelReads:
         from ..reporting.overlay_loader import load_overlays
 
@@ -689,6 +780,7 @@ class Session:
             )
             reads.siblings = True
             reads.bases.clear()
+            reads.references.clear()
         if reads is None:
             # Never wait on the sibling-backend index: while the open's warm
             # thread builds it, it holds the index's lock, and a read on the
@@ -730,7 +822,7 @@ class Session:
         from ..comparison.tree_spec import collect_variables, tree_variables
 
         project = self._require_project()
-        comp = self.comparisons.get(model_id)
+        comp, result = self._layout_source(model_id)
         # A statistics leaf scores a stored number: its parsed `variable`
         # (its quantity path, or a diagnostic's name) is no variable, and
         # listed here the add form's picker offered `translation.*` paths
@@ -744,7 +836,6 @@ class Session:
             if comp is not None
             else []
         )
-        result = project.results.get(model_id)
         test = project.test(model_id)
         if result is not None and test is not None:
             result = replace(result, variables=tracked_results(test, result))
@@ -770,10 +861,10 @@ class Session:
         project = self._require_project()
         if project.test(model_id) is None:
             return {}
-        comp = self.comparisons.get(model_id)
+        comp, result = self._layout_source(model_id)
         return test_texts(
             list(comp.variables) if comp is not None else [],
-            project.results.get(model_id),
+            result,
             [name for plot in self.plots(model_id) for name in plot.series],
         )
 
@@ -807,15 +898,24 @@ class Session:
         the model is running and it was not listed before."""
         project = self._require_project()
         reads = self._reads_for(model_id)
-        if not reads.names_read and not self._is_running(model_id):
-            test_dir = self._test_dir(model_id)
-            listed = (
-                type(project.backend).result_names(test_dir)
-                if test_dir is not None
-                else None
-            )
-            reads.names = None if listed is None else tuple(listed)
-            reads.names_read = True
+        if reads.names_read:
+            return reads.names or ()
+        if self._is_running(model_id):
+            # The file its run is writing, once that can be listed (D151):
+            # kept with reads that go when the run ends, so the finished
+            # file is listed again.
+            live = self.live_runs.names(model_id)
+            if live is not None:
+                reads.names, reads.names_read = live, True
+            return reads.names or ()
+        test_dir = self._test_dir(model_id)
+        listed = (
+            type(project.backend).result_names(test_dir)
+            if test_dir is not None
+            else None
+        )
+        reads.names = None if listed is None else tuple(listed)
+        reads.names_read = True
         return reads.names or ()
 
     def _unread_in_file(
@@ -887,7 +987,7 @@ class Session:
         test = self._require_project().test(model_id)
         if test is None:
             raise KeyError(model_id)
-        comp = self.comparisons.get(model_id)
+        comp, _result = self._layout_source(model_id)
         compared = [vc.name for vc in comp.variables] if comp is not None else []
         return plot_leaves(test, compared)
 
@@ -915,11 +1015,11 @@ class Session:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
         reads = self._reads_for(model_id)
-        comp = self.comparisons.get(model_id)
+        comp, result = self._layout_source(model_id)
         plots = plots_of_test(
             test,
             [vc.name for vc in comp.variables] if comp is not None else [],
-            project.results.get(model_id),
+            result,
             listed=reads.names,
         )
         if reads.names_read:
@@ -957,19 +1057,31 @@ class Session:
                 visibility=visibility,
                 theme=theme,
             )
-        return plot_figure(
-            [self._editable_view(model_id, name) for name in plot.subject],
-            None,
-            context=[
-                self._editable_view(model_id, name)
-                for name in plot.context
-                if name not in plot.missing
-            ],
-            editable=True,
-            rings_for=editing,
-            visibility=visibility,
-            theme=theme,
+        return self._dressed(
+            model_id,
+            plot_figure(
+                [self._editable_view(model_id, name) for name in plot.subject],
+                None,
+                context=[
+                    self._editable_view(model_id, name)
+                    for name in plot.context
+                    if name not in plot.missing
+                ],
+                editable=True,
+                rings_for=editing,
+                visibility=visibility,
+                theme=theme,
+            ),
+            theme,
         )
+
+    def _dressed(self, model_id: str, figure: dict, theme: str) -> dict:
+        """``figure`` with what a run without a result adds to it
+        (`LiveRuns.dress`), in the theme's muted text; as it is for every
+        other model."""
+        from ..figures.palette import palette_of
+
+        return self.live_runs.dress(model_id, figure, palette_of(theme).context)
 
     def figure(
         self,
@@ -992,13 +1104,17 @@ class Session:
 
         if self._require_project().test(model_id) is None:
             raise KeyError(model_id)  # before the cache: never cache a read for it
-        return variable_figure(
-            self._editable_view(model_id, variable),
-            None,
-            editable=True,
-            rings_for=editing,
-            visibility=visibility,
-            theme=theme,
+        return self._dressed(
+            model_id,
+            variable_figure(
+                self._editable_view(model_id, variable),
+                None,
+                editable=True,
+                rings_for=editing,
+                visibility=visibility,
+                theme=theme,
+            ),
+            theme,
         )
 
     def _editable_view(self, model_id: str, variable: str) -> VariableView:
@@ -1017,6 +1133,7 @@ class Session:
         scored = _scored_key(self.comparisons.get(model_id))
         if reads.scored != scored:
             reads.bases.clear()
+            reads.references.clear()
             reads.scored = scored
         base = reads.bases.get(variable)
         if base is None:
@@ -1053,7 +1170,7 @@ class Session:
             raise KeyError(model_id)
         comp = self.comparisons.get(model_id)
         if comp is None or not comp.evaluated:
-            return None
+            return self._unscored_view(test)
         base = (
             (comp.base_tolerance, comp.tolerance_source)
             if comp.base_tolerance is not None and comp.tolerance_source is not None
@@ -1067,6 +1184,36 @@ class Session:
             # the editor's "in effect" hints (K3); the report shows none
             base,
         )
+
+    def _unscored_view(self, test: TestModel) -> dict | None:
+        """The criteria of a test with nothing scored BECAUSE OF A RUN —
+        in progress, or ended without finishing (D151) — as a tree view
+        with a word in place of every verdict (`live_rows.unscored_view`):
+        the tree as authored, pending edits included, else the implicit
+        tree of what its last result scored. None for any other test, and
+        for one with neither."""
+        from ..comparison.tree_spec import synthesize_implicit_tree
+
+        model_id = test.model_id
+        word = self.live_runs.word(model_id)
+        if word is None:
+            return None
+        spec = test.metric_tree_spec
+        if spec is None:
+            comp, _result = self._layout_source(model_id)
+            compared = [vc.name for vc in comp.variables] if comp is not None else []
+            if not compared:
+                return None
+            spec = synthesize_implicit_tree(
+                compared, variable_overrides=test.variable_overrides
+            )
+        return unscored_view(spec, self.variable_texts(model_id), word)
+
+    def partial(self, model_id: str) -> Partial | None:
+        """What ``model_id``'s last run left when it did not finish — how
+        it ended and the time its file reached — or None. Shown on its
+        page; never scored, never a baseline."""
+        return self.live_runs.partial(model_id)
 
     def statistics(self, model_id: str) -> list[StatRow]:
         """The test's Statistics rows (:func:`~dstf.reporting.stats_rows.
@@ -1434,6 +1581,13 @@ class Session:
             self._pool.workers = self._workers
         self._emit("queue", state="workers", models=set())
 
+    @property
+    def starting_workers(self) -> tuple[StartingWorker, ...]:
+        """The queue's workers being brought up right now (`pool.starting`):
+        a large library is minutes of load, and its tests wait meanwhile."""
+        pool = self._pool
+        return pool.starting if pool is not None else ()
+
     def queue_item(self, model_id: str) -> QueueItem | None:
         """The model's item in the queue — the last one listed — or None."""
         return next((i for i in reversed(self.queue) if i.model_id == model_id), None)
@@ -1565,6 +1719,7 @@ class Session:
         """The queue of a project that is closing: its pool ended, its rows
         and everything said about it gone."""
         self.stop_queue()
+        self.live_runs.clear()
         self.queue, self._unwritten = [], []
         self._workers = self.queue_refusal = self.queue_stopped = None
         self._write_status = None
@@ -1579,6 +1734,10 @@ class Session:
             # A stopped pool takes nothing more: a new one is the retry.
             self.stop_queue()
         if self._pool is None:
+            # The tool reads a run's result WHILE it is in progress (D151): a
+            # backend that would otherwise write it late writes it promptly
+            # for this pool. Set here and nowhere else — no CLI run is.
+            project.config.live_results = True
             try:
                 # The pool's OWN backend, the persistent variant a CLI run
                 # would choose — the instance `open` holds is the batch
@@ -1633,6 +1792,8 @@ class Session:
             return
         # A worker took an item: whatever stopped the pool before is over.
         self.queue_stopped = None
+        # Before the result goes: the page stays laid out by it (D151).
+        self.live_runs.started(item)
         project.results.pop(model_id, None)
         self._reads.pop(model_id, None)
         self._score_one(model_id)
@@ -1654,6 +1815,9 @@ class Session:
             self.queue_stopped = pool.stopped
         # An item that never started is one the pool failed (no worker
         # could start): nothing ran, and the test's last result stands.
+        # The queue says it ended, whatever its file reads as: the live
+        # view goes, and what an unfinished run wrote is kept to be shown.
+        self.live_runs.ended(item)
         if item.started_at is not None and self.project is not None:
             self._take_result(item)
         self._emit("queue", state="ended", models={model_id})
@@ -2180,6 +2344,11 @@ class SessionView:
     def queue_refusal(self) -> str | None:
         """Why nothing can be queued on this project's backend, or ``None``."""
         return self._session.queue_refusal
+
+    def partial(self, model_id: str) -> Partial | None:
+        """What the test's last run left when it did not finish
+        (:meth:`Session.partial`), or ``None``."""
+        return self._session.partial(model_id)
 
     def rescore(self, model_id: str) -> TestComparison:
         return self._session.rescore(model_id)

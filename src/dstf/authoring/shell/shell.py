@@ -180,9 +180,12 @@ class Shell:
         """Run what worker threads posted, then hand every queued Session
         event to every live page, then let each flush what it coalesced — a
         page whose client is gone is dropped.
-        Once a second while a test runs, a `poll` event: the clock a running
-        row's elapsed seconds are repainted by. It reads no file — the
-        queue's callbacks are the live signal (D150)."""
+        Once a second while a test runs or a worker is being started, the
+        running tests' growing result files are read (`Session.live_runs`,
+        D151) and a `poll` event follows: the clock a running row's words
+        and a starting worker's seconds are repainted by, and a running
+        test's page draws what was read by. A run's start and end are the queue's callbacks,
+        never a file's (D150)."""
         while True:
             try:
                 fn = self._posted.get_nowait()
@@ -197,7 +200,11 @@ class Shell:
                 break
         self._ticks += 1
         every = max(1, round(1.0 / TICK))  # once a second, whatever the tick
-        if self._ticks % every == 0 and self.running():
+        if self._ticks % every == 0 and self.clocked():
+            try:
+                self.session.live_runs.poll()
+            except Exception:  # a read that failed is not the tick's end
+                logger.exception("the live poll failed")
             events.append({"event": "poll"})
         # `is_deleted` is set by the browser's disconnect (after NiceGUI's
         # reconnect timeout); a page navigated away from in the user
@@ -324,6 +331,12 @@ class Shell:
         """Whether the queue is running a test now."""
         session = self.session
         return any(session.item_state(i) is ItemState.RUNNING for i in session.queue)
+
+    def clocked(self) -> bool:
+        """Whether anything of the queue moves by the second — what the
+        `poll` is for: a test is running, or a worker is being started for
+        one that waits (a library's load is minutes)."""
+        return self.running() or bool(self.session.starting_workers)
 
     def busy_reason(self) -> str | None:
         """Why a Save, a Discard or a backend change is refused now, or None:

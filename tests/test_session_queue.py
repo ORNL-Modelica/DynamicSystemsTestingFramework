@@ -381,7 +381,9 @@ def test_a_running_test_has_no_result_until_its_own_arrives(h):
 
     assert A not in h.session.project.results
     assert classify(h.session.comparisons[A]) == NOT_RUN
-    assert h.session.variable_names(A) == []  # the file is not read mid-run
+    # Its tracked names stay with its page's layout (D151); the file — it
+    # holds a `y` nothing tracks — is not read mid-run on this backend.
+    assert h.session.variable_names(A) == ["x"]
     h.release(A)
     h.ended(A)
     assert classify(h.session.comparisons[A]) == FAIL

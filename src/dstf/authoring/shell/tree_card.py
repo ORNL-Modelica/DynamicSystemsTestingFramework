@@ -329,6 +329,9 @@ def summary_text(view: dict) -> tuple[str, list[dict], int]:
     `NAMED` of them — and how many failures are left over for "+k more".
     Board 1A draws each failure's name once, and it is the thing that
     jumps, so the tally does not repeat the names."""
+    if view.get("unscored"):
+        # Nothing scored because of a run (D151): the word, and no tally.
+        return str(view["unscored"]), [], 0
     leaves = leaves_of(view)
     statuses = [leaf_status(leaf) for leaf in leaves]
     hard = [leaf for leaf, st in zip(leaves, statuses) if st == "fail"]

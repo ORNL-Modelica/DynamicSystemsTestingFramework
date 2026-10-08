@@ -6,7 +6,8 @@ replaced did beside the job: the store writes' lines and the artifacts.
 
 Nothing here reads a file or a clock of its own: the rows are the Session's
 queue as data, repainted on its `queue` events, and the shell's `poll` —
-once a second while a test runs — moves only the running rows' seconds."""
+once a second while a test runs or a worker starts — moves only the words of the
+rows still to end and the lines of the workers being started."""
 
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from ..queue_rows import (
     counts_text,
     indicator,
     queue_rows,
+    starting_texts,
 )
 from ..session import Selection
 from ..typed_number import TypedNumber
@@ -68,6 +70,7 @@ QUEUE_CSS = """
 .dstf-queue-what > * { max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .dstf-queue-words { font-size: 12px; color: var(--dstf-text-secondary); }
+.dstf-queue-starting > * { padding: 2px 12px; overflow-wrap: anywhere; }
 .dstf-queue-acts { flex: none; }
 .dstf-queue-error { margin: 0 12px; padding: 4px 8px; border-radius: 4px; font-size: 12px;
   color: var(--dstf-fail-dark); background: var(--dstf-fail-tint);
@@ -116,8 +119,11 @@ class QueuePanel:
         #: The test a row's capability button was clicked on: the selection
         #: the panel's one dialog acts over.
         self.row_model: str | None = None
-        #: The running rows' words, repainted by `tick`.
-        self._running: dict[str, ui.label] = {}
+        #: The words of the rows still to end — waiting or running — and
+        #: the state each was drawn in, repainted by `tick`.
+        self._moving: dict[str, tuple[ItemState, ui.label]] = {}
+        #: One line per worker being started (`_paint_starting`).
+        self._starting: list[ui.label] = []
         cores = os.cpu_count() or 1
         with (
             ui.column()
@@ -165,6 +171,11 @@ class QueuePanel:
                 ):
                     ui.tooltip(STOP_WORKERS_HINT)
             self.error = ui.label().classes("dstf-queue-error").mark("queue-error")
+            # The workers being brought up, one line each: a library's
+            # load is minutes, and its tests wait meanwhile.
+            self.starting = (
+                ui.column().classes("dstf-queue-starting w-full gap-0")
+            ).mark("queue-starting")
             self.rows = ui.column().classes("w-full gap-0").mark("queue-rows")
             self.notes = ui.column().classes("dstf-queue-notes w-full gap-1")
         # The rows' capability buttons open ONE dialog, the panel's — a
@@ -195,12 +206,28 @@ class QueuePanel:
             self.refresh()
 
     def tick(self) -> None:
-        """The running rows' seconds; nothing else moved."""
+        """The words of the rows still to end — a running row's seconds or
+        how far its result file has got (D151), a waiting row's "worker
+        starting" — and the starting workers' lines; nothing else moved."""
         rows = {r.model_id: r for r in queue_rows(self.shell.session)}
-        for model_id, label in self._running.items():
+        for model_id, (state, label) in self._moving.items():
             row = rows.get(model_id)
-            if row is not None and row.state is ItemState.RUNNING:
+            if row is not None and row.state is state:
                 label.set_text(_words(row))
+        self._paint_starting()
+
+    def _paint_starting(self) -> None:
+        texts = starting_texts(self.shell.session)
+        if len(self._starting) != len(texts):
+            self.starting.clear()
+            with self.starting:
+                self._starting = [
+                    ui.label().classes("dstf-queue-words").mark("queue-starting-worker")
+                    for _ in texts
+                ]
+        for label, text in zip(self._starting, texts):
+            label.set_text(text)
+        self.starting.set_visibility(bool(texts))
 
     def refresh(self) -> None:
         session = self.shell.session
@@ -222,8 +249,9 @@ class QueuePanel:
         self.clear.set_visibility(ended or stopped is not None)
         self.error.set_text(stopped or "")
         self.error.set_visibility(stopped is not None)
+        self._paint_starting()
         self.rows.clear()
-        self._running = {}
+        self._moving = {}
         with self.rows:
             for row in rows:
                 self._row(row)
@@ -270,8 +298,8 @@ class QueuePanel:
                     # The backend's message in full; the row says its first line.
                     with words:
                         ui.tooltip(row.message).mark(f"queue-words:{model_id}:tip")
-                if row.state is ItemState.RUNNING:
-                    self._running[model_id] = words
+                if row.state in (ItemState.WAITING, ItemState.RUNNING):
+                    self._moving[model_id] = (row.state, words)
             with ui.row().classes("dstf-queue-acts items-center gap-1 no-wrap"):
                 self._actions(row)
 

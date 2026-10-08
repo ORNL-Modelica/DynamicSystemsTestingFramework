@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 #: what it stores. ``WILL_STORE`` is the one truth the button's count, its
 #: availability and this forecast share.
 REFUSED = "re-run before accepting"
+#: A run that did not finish left a partial result (D151): it is shown on
+#: the test's page, and is no baseline.
+PARTIAL = "a partial result is never a baseline: queue it again"
 NO_RESULT = "no simulation result"
 SIM_FAILED = "simulation failed"
 SIMULATE_ONLY = "simulate-only: no baseline"
@@ -68,7 +71,9 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
         comp = s.comparisons.get(model_id)
         status = classify(comp) if comp is not None else ""
         result = project.results.get(model_id)
-        if model_id in unfinished:
+        if s.partial(model_id) is not None:
+            action = PARTIAL  # what its page draws is not a result
+        elif model_id in unfinished:
             action = REFUSED  # the guard runs before the result is looked at
         elif result is None:
             action = NO_RESULT
