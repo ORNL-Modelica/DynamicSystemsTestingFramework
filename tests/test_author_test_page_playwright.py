@@ -9310,6 +9310,11 @@ def test_the_hover_label_gives_way_to_no_arrow_that_is_not_drawn(
         assert near and seen["seen"] == 0, (near, seen)
 
 
+#: `_past_the_data_project`'s second checkpoint with room on every side of
+#: its box: 1285 px a unit of time, 146 a unit of value.
+ROOMY = {"xaxis": [0.55, 1285.0], "yaxis": [0.4, 146.0]}
+
+
 def test_an_arrow_beside_a_border_its_checkpoint_is_past_paints_nothing(
     tmp_path, playwright_browser
 ):
@@ -9323,7 +9328,7 @@ def test_an_arrow_beside_a_border_its_checkpoint_is_past_paints_nothing(
     with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
-        _scale(page, {"xaxis": [0.55, 1285.0], "yaxis": [0.4, 146.0]})
+        _scale(page, ROOMY)
         _put_outside(page, "/points/upper/1", "left", 2.0)
         assert _off(page) == sorted(
             _group("points", 0, FOUR)
@@ -9367,7 +9372,7 @@ def test_a_ring_partly_on_the_plot_shows_its_groups_arrows(
     with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
         page.wait_for_timeout(700)
         _open_for_grips(page, 0, "points · x")
-        _scale(page, {"xaxis": [0.55, 1285.0], "yaxis": [0.4, 146.0]})
+        _scale(page, ROOMY)
 
         def on_what_is_left(px: float, inside: float) -> tuple[list[str], dict]:
             """The ring's centre ``px`` outside the left border: the arrows
@@ -9421,6 +9426,43 @@ def test_a_ring_partly_on_the_plot_shows_its_groups_arrows(
         assert shown == ["points/after/1"], (shown, under)
         shown, under = on_what_is_left(7.6, 0.4)
         assert shown == [], (shown, under)
+
+
+def test_each_arrow_is_on_the_plot_to_half_a_pixel_past_each_border_and_off_beyond(
+    tmp_path, playwright_browser
+):
+    """ON the plot is the plot area and half a pixel around it, on all
+    four sides alike and on both axes of every arrow — the one it moves
+    on, and the other. Each of a checkpoint's four arrows, its anchor put
+    0.3 px outside the left, the right, the top and the bottom border in
+    turn: on the plot, and displayed with the pointer by it. Put 2 px
+    outside: off, and displayed nowhere."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _plot_under_the_mouse(page)
+        wrong = []
+        for edge in FOUR:
+            tail = f"points/{edge}/1"
+            for side in ("left", "right", "top", "bottom"):
+                for px, off in ((0.3, False), (2.0, True)):
+                    _scale(page, ROOMY)
+                    _put_outside(page, f"/{tail}", side, px)
+                    arrow = page.evaluate(ARROW_AT, [0, f"/{tail}"])
+                    # By its anchor, a pixel inside the plot.
+                    at = (
+                        min(max(arrow["x"], arrow["left"] + 1), arrow["right"] - 1),
+                        min(max(arrow["y"], arrow["top"] + 1), arrow["bottom"] - 1),
+                    )
+                    page.mouse.move(at[0], at[1] - 3)
+                    page.mouse.move(*at)
+                    got = (
+                        _grip_marks(page)[tail]["off"],
+                        tail in _grips_on(page)["shown"],
+                    )
+                    if got != (off, not off):
+                        wrong.append((edge, side, px, got))
+        assert wrong == []
 
 
 # -- a refused drag's reason, under the plot ------------------------------------
@@ -11686,6 +11728,70 @@ def test_windows_that_overlap_or_stand_close_show_together_and_an_isolated_one_a
                     was[cell], timeout=EXPECT_TIMEOUT
                 )
         _shot(page, tmp_path, f"clusters-{family}")
+
+
+#: Per window family (`WINDOWS`), the edges put past a border of their own
+#: panel — the outermost of the plot, each way — and the arrows of the
+#: cluster each belongs to.
+WINDOW_EDGES = {
+    "events": (
+        ("events/early/2", "left", ["events/early/2", "events/late/2"]),
+        ("events/late/2", "right", ["events/early/2", "events/late/2"]),
+    ),
+    "peaks": (
+        (
+            "peaks/lower/0",
+            "left",
+            _group("peaks", 0, ("lower", "upper"))
+            + _group("peaks", 1, ("lower", "upper")),
+        ),
+        (
+            "peaks/upper/1",
+            "right",
+            _group("peaks", 0, ("lower", "upper"))
+            + _group("peaks", 1, ("lower", "upper")),
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("family", WINDOWS)
+def test_a_windows_edge_past_its_own_panels_border_is_off_and_gives_no_area(
+    tmp_path, playwright_browser, family
+):
+    """A window's arrow is anchored to the PAPER in y: it is on or off the
+    plot by its edge's x alone, against the panel it is drawn in — a
+    peak's against the SPECTRUM's axis, not the time panel's. An event's
+    edge and a peak's, 0.3 px outside the left or the right border of
+    their own panel: on the plot, and 2 px inside that border — 25 px and
+    more from every other edge and ring of the cluster — the pointer is
+    in that edge's hover area: the cluster's arrows show. Put 2 px
+    outside, the edge is off: its arrow is not displayed, and it gives no
+    area — nothing shows there."""
+    name, axes, _, _ = WINDOWS[family]
+    with _served(tmp_path, playwright_browser, project=_close_windows_project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, name, axes)
+        for tail, side, cluster in WINDOW_EDGES[family]:
+            for px, off in ((0.3, False), (2.0, True)):
+                _scale(page, axes)
+                put = _put_outside(page, f"/{tail}", side, px)
+                assert put["axis"] == ("xaxis2" if family == "peaks" else "xaxis"), put
+                arrow = page.evaluate(ARROW_AT, [0, f"/{tail}"])
+                assert arrow["paper"], arrow
+                border = arrow["left"] + 2 if side == "left" else arrow["right"] - 2
+                at = (border, arrow["top"] + (arrow["bottom"] - arrow["top"]) / 4)
+                _rest(page)
+                page.mouse.move(at[0], at[1] - 3)
+                page.mouse.move(*at)
+                shown = _grips_on(page)["shown"]
+                assert (tail in _off(page)) == off, (tail, side, px, _off(page))
+                assert shown == ([] if off else sorted(cluster)), (
+                    tail,
+                    side,
+                    px,
+                    shown,
+                )
 
 
 # -- an arrow that would leave a set axis range is drawn inward -----------------
