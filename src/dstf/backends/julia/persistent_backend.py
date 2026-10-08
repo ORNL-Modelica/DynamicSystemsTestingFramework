@@ -49,10 +49,6 @@ logger = logging.getLogger(__name__)
 
 _PERSISTENT_DRIVER_PATH = Path(__file__).resolve().parent / "run_persistent.jl"
 
-# Max seconds to wait for a worker's startup "ready" pulse. MTK +
-# OrdinaryDiffEq precompiled-cache load takes ~15-40s; allow plenty.
-_WORKER_READY_TIMEOUT = 240.0
-
 # Max seconds to wait for a hard-killed worker to actually exit before we
 # stop caring — the handle is dropped either way.
 _KILL_EXIT_TIMEOUT = 5.0
@@ -79,6 +75,10 @@ class JuliaWorker(Worker):
     """
 
     kill_name_hint = "julia"
+    # Max seconds to wait for a worker's startup "ready" pulse when
+    # testing.json sets no worker_startup_timeout. MTK + OrdinaryDiffEq
+    # precompiled-cache load takes ~15-40s, a first run minutes; allow plenty.
+    startup_timeout = 240.0
 
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
         super().__init__(worker_id, config)
@@ -139,13 +139,14 @@ class JuliaWorker(Worker):
         # Wait for the 'ready' event. This is the worker's warmup —
         # `using` is finishing. Dispatching tests before this point would
         # queue them behind the package load and bill it to the first test.
-        ready = self._wait_for_ready(timeout=_WORKER_READY_TIMEOUT)
+        bound = self.startup_bound()
+        ready = self._wait_for_ready(timeout=bound)
         if not ready:
             # Leave the stderr buffer around so the caller can surface it.
             self.close(grace=0.5)
             raise RuntimeError(
                 f"Julia worker {self.worker_id} did not emit ready within "
-                f"{_WORKER_READY_TIMEOUT}s. stderr tail: "
+                f"{bound}s. stderr tail: "
                 f"{self._stderr_tail(6)}"
             )
 

@@ -27,8 +27,14 @@ from typing import Optional
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import BatchManifest
-from .base import Backend, _print_progress, _print_run_header
-from .common.proc_kill import kill_process_tree, snapshot_children
+from .base import (
+    Backend,
+    ItemRunner,
+    _print_progress,
+    _print_run_header,
+    no_worker_message,
+)
+from .common.proc_kill import kill_process_tree, process_gone, snapshot_children
 from .types import TestRunResult, timeout_message
 
 logger = logging.getLogger(__name__)
@@ -37,6 +43,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Abstract persistent-worker interface
 # ---------------------------------------------------------------------------
+
+
+class WorkerStartError(RuntimeError):
+    """A worker could not start. ``str()`` is the reason in the backend's own
+    words — what its ``start()`` raised, or what :meth:`Worker.start_within`
+    saw (the process gone, the bound passed) with
+    :meth:`Worker.process_detail` beside it."""
 
 
 class Worker(ABC):
@@ -56,8 +69,11 @@ class Worker(ABC):
     the watchdog and the dispatch loop) hold.
 
     Lifecycle contract:
-        ``__init__`` → ``start()`` → ``run_test_with_timeout()`` × N
+        ``__init__`` → ``start_within()`` → ``run_test_with_timeout()`` × N
             → ``close()``
+    ``start_within`` is ``start()`` bounded (``worker_startup_timeout``): the
+    pool never calls ``start()`` bare, since a tool that died or stopped
+    answering while loading would be waited on for good.
     ``close()`` MUST be idempotent — :class:`PersistentBackendBase`'s teardown
     calls it on every worker including ones that never started successfully.
 
@@ -91,6 +107,20 @@ class Worker(ABC):
     #: How often ``close()`` re-walks the process tree while the graceful
     #: shutdown runs, looking for children spawned inside that window.
     _ORPHAN_POLL_SECONDS: float = 0.25
+    #: Seconds a start gets when ``testing.json`` sets no
+    #: ``worker_startup_timeout``. A backend whose first start is slow by
+    #: nature raises it (Julia compiles its packages).
+    startup_timeout: float = 60.0
+    #: How often :meth:`start_within` looks at a start in flight.
+    _START_POLL_SECONDS: float = 0.25
+    #: How often the watchdog looks at the tracked process while a test runs:
+    #: is it still there, and which children does it have. A walk of the
+    #: process table per tick and worker (tens of ms on Windows), so not the
+    #: 0.25 s of the close path; a death is noticed within one tick.
+    _CHILD_WATCH_SECONDS: float = 2.0
+    #: After :meth:`cancel_running` said the tool will come back on its own:
+    #: how long it gets before the worker is killed instead.
+    cancel_grace: float = 10.0
 
     def __init__(self, worker_id: int, config: Config):
         self.worker_id = worker_id
@@ -105,6 +135,22 @@ class Worker(ABC):
         #: Consecutive restarts charged against this worker by the dispatch
         #: loop's budget; reset when a test succeeds without a kill.
         self._n_restarts: int = 0
+        #: The test the watchdog is running, the cancel asked of it ("soft" /
+        #: "hard") and the event that wakes the watchdog — one lock, since
+        #: :meth:`request_cancel` comes from another thread.
+        self._run_lock = threading.Lock()
+        self._running_key: str | None = None
+        self._cancel: str | None = None
+        self._wake: threading.Event | None = None
+        #: Set once a start was given up while its thread was still inside
+        #: ``start()``: that thread may still write this object's state, so
+        #: it is never started again.
+        self._start_abandoned = False
+        self._start_abort = threading.Event()
+        #: The tool call in flight, in the tool's own spelling
+        #: (``loadModel(Modelica)``) — what :meth:`process_detail` says the
+        #: process died or stalled during. A backend sets it as it goes.
+        self._step: str = ""
 
     @abstractmethod
     def start(self) -> None:
@@ -189,7 +235,150 @@ class Worker(ABC):
         """
         return contextlib.nullcontext()
 
+    def process_detail(self) -> str:
+        """What the backend itself can say about its process when a start or
+        a test did not come back: its exit code or that it still runs, the
+        step it was in, its log's tail. Read BEFORE the kill. ``""`` when it
+        has nothing to add.
+        """
+        return ""
+
+    def cancel_running(self, test_key: str) -> bool:
+        """Stop only the simulation of the running test, leaving the tool
+        alive: ``True`` when that was asked of it and ``run_test`` will
+        return on its own (the watchdog gives it :attr:`cancel_grace`),
+        ``False`` when there is no such stop right now — the watchdog then
+        kills the worker, and the dispatch loop restarts it uncharged.
+
+        Called on the watchdog's thread while ``run_test`` is parked on the
+        exec thread. Only reached on a backend that declares
+        :attr:`Capability.CANCEL`.
+        """
+        return False
+
     # -- template methods ---------------------------------------------
+
+    def startup_bound(self) -> float:
+        """Seconds a start of this worker gets: ``worker_startup_timeout``
+        from ``testing.json``, else the class's :attr:`startup_timeout`."""
+        configured = getattr(self.config, "worker_startup_timeout", None)
+        return float(configured) if configured is not None else self.startup_timeout
+
+    def start_within(self, timeout: float | None = None) -> None:
+        """:meth:`start`, bounded by *timeout* seconds (default
+        :meth:`startup_bound`). Raises :class:`WorkerStartError` — and leaves
+        the worker closed — when ``start()`` raises, when the tracked process
+        is gone while ``start()`` still waits on it (at once, not at the
+        bound), or when the bound passes.
+
+        ``start()`` runs on a daemon thread. One given up on is closed again
+        if it ever returns, and this object is not started a second time: a
+        thread still inside ``start()`` writes its state.
+        """
+        if self._start_abandoned:
+            raise WorkerStartError("its previous start never returned")
+        bound = self.startup_bound() if timeout is None else float(timeout)
+        done = threading.Event()
+        lock = threading.Lock()
+        box: dict[str, BaseException] = {}
+        abandoned = [False]
+        self._start_abort.clear()
+
+        def _body() -> None:
+            try:
+                self.start()
+            except BaseException as exc:
+                box["exc"] = exc
+            finally:
+                with lock:
+                    done.set()
+                    orphaned = abandoned[0]
+                if orphaned:
+                    # Nobody waits for this start any more: whatever it
+                    # brought up is nobody's.
+                    self._close_quietly()
+
+        threading.Thread(
+            target=_body,
+            daemon=True,
+            name=f"{self.exec_thread_prefix}-start-{self.worker_id}",
+        ).start()
+        deadline = time.monotonic() + bound
+        reason: str | None = None
+        while reason is None:
+            remaining = deadline - time.monotonic()
+            if done.wait(max(0.0, min(self._START_POLL_SECONDS, remaining))):
+                break
+            if self._start_abort.is_set():
+                reason = "its start was abandoned"
+            elif process_gone(self.pids):
+                reason = self._safe_detail() or "its process exited during start"
+            elif remaining <= 0:
+                detail = self._safe_detail()
+                reason = f"did not start within {bound:.0f} s" + (
+                    f" — {detail}" if detail else ""
+                )
+        if reason is not None:
+            with lock:
+                abandoned[0] = not done.is_set()
+            if abandoned[0]:
+                self._start_abandoned = True
+                self._close_quietly()
+                raise WorkerStartError(reason)
+            # It returned in the same instant: judged by its own outcome.
+        exc = box.get("exc")
+        if exc is None:
+            return
+        # review 2026-07-06 (finding 24): a worker that failed mid-start may
+        # already have spawned its subprocess; close it so the process (and
+        # its license seat) doesn't leak. close() is contractually
+        # idempotent + safe on never-started workers.
+        self._close_quietly()
+        if not isinstance(exc, Exception):
+            raise exc
+        raise WorkerStartError(str(exc)) from exc
+
+    def abandon_start(self) -> None:
+        """Give up a :meth:`start_within` in flight, from another thread (the
+        pool closing while a worker starts). No-op when none is."""
+        self._start_abort.set()
+
+    def _safe_detail(self) -> str:
+        try:
+            return self.process_detail()
+        except Exception:
+            logger.debug("process_detail raised", exc_info=True)
+            return ""
+
+    def _close_quietly(self) -> None:
+        """:meth:`close` for a worker being given up on: short grace, the
+        teardown noise muted, and a raise logged rather than passed on."""
+        try:
+            with self._quiet():
+                self.close(grace=1.0)
+        except Exception:
+            logger.debug(
+                "Worker %s: close() of a given-up worker raised",
+                self.worker_id,
+                exc_info=True,
+            )
+
+    def request_cancel(self, test_key: str, *, hard: bool = False) -> bool:
+        """Ask the watchdog to stop *test_key*, from any thread. ``False``
+        when this worker is not running it (nothing is asked). *hard* skips
+        :meth:`cancel_running` and kills the worker.
+
+        The test's result then comes back ``cancelled`` from
+        :meth:`run_test_with_timeout` — unless the simulation finished
+        anyway, which stays the result it is.
+        """
+        with self._run_lock:
+            if self._running_key != test_key or self._wake is None:
+                return False
+            if self._cancel != "hard":
+                self._cancel = "hard" if hard else "soft"
+            self._wake.set()
+            return True
 
     def close(self, grace: float = 5.0) -> None:
         """Tear the worker down: graceful first, then kill tracked PIDs.
@@ -314,16 +503,34 @@ class Worker(ABC):
         the result carries ``worker_killed=True``: the dispatch loop keys
         its benign-restart accounting on ``timed_out or worker_killed``,
         and we killed a *healthy* worker because the test was slow.
+
+        Two more things end the wait. A cancel (:meth:`request_cancel`)
+        returns a ``cancelled`` result: after :meth:`cancel_running` and the
+        tool's own return when the backend has a soft stop (the worker is
+        reused), else after the same kill as a timeout's — with no disk
+        rescue, since a cancelled run is not a result whatever it left. And
+        the tracked process being gone (looked at every
+        :attr:`_CHILD_WATCH_SECONDS`) fails the test and closes the worker,
+        which kills the children recorded while it was alive: a tool that
+        dies by itself orphans its simulation process, and nothing reaches
+        an orphan through a parent that no longer exists.
         """
         result_box: list[TestRunResult | None] = [None]
         exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
+        done = threading.Event()
+        wake = threading.Event()
+        with self._run_lock:
+            self._running_key, self._cancel, self._wake = test_key, None, wake
 
         def _worker_body():
             try:
                 result_box[0] = self.run_test(test, test_key, progress=progress)
             except BaseException as e:
                 exc_box[0] = e
+            finally:
+                done.set()
+                wake.set()
 
         t = threading.Thread(
             target=_worker_body,
@@ -331,9 +538,92 @@ class Worker(ABC):
             name=f"{self.exec_thread_prefix}-exec-{self.worker_id}",
         )
         t.start()
-        t.join(timeout)
+        try:
+            return self._watch_test(
+                test, test_key, timeout, start_ts, t, done, wake, result_box, exc_box
+            )
+        finally:
+            with self._run_lock:
+                self._running_key = self._wake = None
 
-        if t.is_alive():
+    def _watch_test(
+        self,
+        test: TestModel,
+        test_key: str,
+        timeout: float,
+        start_ts: float,
+        t: threading.Thread,
+        done: threading.Event,
+        wake: threading.Event,
+        result_box: list,
+        exc_box: list,
+    ) -> "TestRunResult":
+        """The watchdog's wait, and what each way out of it returns."""
+
+        def _cancelled(worker_killed: bool) -> TestRunResult:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=time.monotonic() - start_ts,
+                error_message="Cancelled",
+                cancelled=True,
+                worker_killed=worker_killed,
+            )
+
+        deadline = start_ts + timeout
+        gone = False
+        while not done.is_set() and self._cancel is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            wake.wait(min(self._CHILD_WATCH_SECONDS, remaining))
+            if done.is_set() or self._cancel is not None:
+                break
+            if process_gone(self.pids):
+                gone = True
+                break
+            # The tree as it is NOW, not accumulated: a test spawns and
+            # reaps compilers for minutes, and only what is alive when the
+            # parent dies is worth a kill.
+            self._orphan_children = set()
+            self._snapshot_orphan_children()
+
+        if self._cancel is not None and not done.is_set():
+            if self._cancel == "soft" and self._soft_cancel(test_key):
+                grace_end = time.monotonic() + self.cancel_grace
+                while self._cancel == "soft" and time.monotonic() < grace_end:
+                    if done.wait(0.05):
+                        break
+            if not done.is_set():
+                with self._quiet():
+                    self.close(grace=1.0)
+                    t.join(0.5)
+                return _cancelled(worker_killed=True)
+
+        if gone and not done.is_set():
+            # Read before the kill: the exit code and the log are the
+            # backend's, and close() drops the handle they hang off.
+            detail = self._safe_detail()
+            elapsed = time.monotonic() - start_ts
+            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
+            with self._quiet():
+                self.close(grace=1.0)
+                t.join(0.5)
+            if disk_result is not None and disk_result.success:
+                return disk_result
+            # worker_killed stays False: nobody killed it on purpose, so the
+            # restart is charged like any other worker-side malfunction.
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                error_message="Worker process exited during the test"
+                + (f" — {detail}" if detail else ""),
+            )
+
+        if not done.is_set():
             with self._quiet():
                 self.close(grace=self.timeout_kill_grace)
                 t.join(0.5)
@@ -365,6 +655,8 @@ class Worker(ABC):
                 self.close(grace=1.0)
             if disk_result is not None and disk_result.success:
                 return disk_result
+            if self._cancel is not None:
+                return _cancelled(worker_killed=True)
             exc = exc_box[0]
             return TestRunResult(
                 model_id=test.model_id,
@@ -374,7 +666,25 @@ class Worker(ABC):
                 error_message=f"Worker exception: {type(exc).__name__}: {exc}",
             )
 
-        return result_box[0]  # type: ignore[return-value]
+        result: TestRunResult = result_box[0]
+        if self.is_alive() and process_gone(self.pids):
+            # The tool died and run_test still returned (an interface that
+            # turns a lost connection into a failed result): close, so the
+            # next test restarts the worker instead of failing against a
+            # dead process, and the recorded children go with it.
+            self._close_quietly()
+        if self._cancel is not None and not result.success:
+            # What a stopped simulation reports ("stopped early", a failed
+            # record) is the cancel's doing, not a failure of the test.
+            return _cancelled(worker_killed=not self.is_alive())
+        return result
+
+    def _soft_cancel(self, test_key: str) -> bool:
+        try:
+            return bool(self.cancel_running(test_key))
+        except Exception:
+            logger.exception("Worker %s: cancel_running raised", self.worker_id)
+            return False
 
     def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
         """Export *test*'s model as an FMU into *output_dir*.
@@ -395,18 +705,23 @@ class Worker(ABC):
 # ---------------------------------------------------------------------------
 
 
-class WorkerRunner:
+class WorkerRunner(ItemRunner):
     """What a dispatch thread does for each test it takes: bring a dead worker
     back within its restart budget, run the test under the watchdog, keep the
     restart accounting.
 
-    One per worker, living as long as its dispatch thread. ``retired`` is the
-    sentence the worker was given up with; the test in hand has already been
-    failed with it, and the thread holding this runner takes no more tests.
+    One per worker, living as long as its dispatch thread — a thread of
+    ``run_tests``' fixed-list dispatch or of the simulation pool, which is
+    what makes a test fail, retry and restart the same way in both.
+    ``retired`` is the sentence the worker was given up with; the test in
+    hand has already been failed with it, and the thread holding this runner
+    takes no more tests.
     """
 
+    backend: "PersistentBackendBase"
+
     def __init__(self, backend: "PersistentBackendBase", worker: "Worker"):
-        self.backend = backend
+        super().__init__(backend, worker.worker_id)
         self.worker = worker
         # Whether the previous test left the worker dead for a benign reason
         # (we deliberately hard-killed it after a per-test timeout, or it was
@@ -414,7 +729,24 @@ class WorkerRunner:
         # the worker's permanent-broken budget — the worker was healthy, the
         # test was slow.
         self._prev_killed_worker = False
-        self.retired: str | None = None
+
+    def start(self) -> None:
+        self.worker.start_within()
+        self.backend.note_versions([self.worker])
+
+    def cancel(self, test_key: str) -> bool:
+        return self.worker.request_cancel(test_key)
+
+    def stop(self, test_key: str | None) -> None:
+        if test_key is None:
+            self.worker.abandon_start()
+        elif not self.worker.request_cancel(test_key, hard=True):
+            # A worker with its own watchdog (Julia) hears no cancel: take
+            # its process away, and its wait ends on the dead pipe.
+            self.worker._close_quietly()
+
+    def close(self) -> None:
+        self.worker.close()
 
     def run(self, test: TestModel, test_key: str) -> TestRunResult:
         """Run *test* on this worker. Never raises: a worker that cannot be
@@ -520,7 +852,7 @@ class WorkerRunner:
                 time.sleep(backoff)
                 t0 = time.monotonic()
             try:
-                w.start()
+                w.start_within()
             except Exception as exc:
                 last_exc = exc
                 if not backend.quiet:
@@ -528,6 +860,16 @@ class WorkerRunner:
                         f"  Worker {w.worker_id}: restart FAILED — {exc}",
                         file=sys.stderr,
                     )
+                if w._start_abandoned:
+                    # Not a blip: its start is still parked somewhere, and
+                    # this object cannot be started again.
+                    if not backend.quiet:
+                        print(
+                            f"  Worker {w.worker_id}: its start never "
+                            f"returned — retiring the worker",
+                            file=sys.stderr,
+                        )
+                    return False
                 continue
             if not backend.quiet:
                 if count_against_budget:
@@ -613,6 +955,10 @@ class PersistentBackendBase(Backend):
     #: broken backend into a long stall.
     restart_retry_backoff_seconds: float = 5.0
 
+    #: What a live worker named for run provenance (:meth:`note_versions`).
+    #: On the class so a subclass with its own ``__init__`` chain reads one.
+    _worker_versions: dict = {}
+
     @classmethod
     def persistent_backend_cls(cls):
         return cls  # we ARE the persistent variant; stop recursing
@@ -646,6 +992,30 @@ class PersistentBackendBase(Backend):
         JIT compilation. Default uses :attr:`backend_label`.
         """
         return f"Starting {n_workers} {self.backend_label} worker(s)..."
+
+    def prepare_item_runners(self) -> None:
+        self.setup_before_workers()
+
+    def item_runner(self, worker_id: int) -> WorkerRunner:
+        return WorkerRunner(self, self.make_worker(worker_id))
+
+    def note_versions(self, live_workers: list["Worker"]) -> dict:
+        """Ask a live, idle worker for the tool and library versions and
+        keep what it names for :meth:`run_versions`; returns what was new.
+        Best-effort — a failed probe leaves the configured backend label as
+        the shown version and omits the library line."""
+        updates: dict = {}
+        version = self._safe_probe_worker_version(live_workers)
+        if version:
+            updates["tool_version"] = version
+        libs = self._safe_probe_library_versions(live_workers)
+        if libs:
+            updates["library_versions"] = libs
+        self._worker_versions = {**self._worker_versions, **updates}
+        return updates
+
+    def run_versions(self) -> dict:
+        return {**super().run_versions(), **self._worker_versions}
 
     def _probe_worker_version(self, live_workers: list["Worker"]) -> str | None:
         """Best-effort actual tool version, asked of a live worker.
@@ -726,11 +1096,11 @@ class PersistentBackendBase(Backend):
         if not self.quiet:
             print(self.starting_workers_message(n_workers), file=sys.stderr)
 
-        live_workers = self._start_workers_parallel(workers)
+        live_workers, start_failures = self._start_workers_parallel(workers)
         if not live_workers:
             # review 2026-07-06 (finding 24): close every worker before the
-            # raise — start()-failed workers already close themselves in the
-            # startup handler, but close() is idempotent and this guarantees
+            # raise — start()-failed workers already close themselves in
+            # start_within, but close() is idempotent and this guarantees
             # no orphaned simulator process (license seat) survives the abort.
             for w in workers:
                 try:
@@ -741,11 +1111,25 @@ class PersistentBackendBase(Backend):
                         w.worker_id,
                         exc_info=True,
                     )
+            # Every test fails with the backend's own words: the run is
+            # over, and a test left "queued" with the reason printed above
+            # — or not printed at all, under ``quiet`` — says nothing.
+            message = no_worker_message(self.backend_label, start_failures)
+            for test, test_key in test_items:
+                manifest.record_result(
+                    TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        elapsed=0.0,
+                        error_message=message,
+                    )
+                )
+                setup.progress.on_finish(
+                    test_key, success=False, elapsed=0.0, detail=message
+                )
             setup.progress.finalize()
-            raise RuntimeError(
-                f"All {self.backend_label} persistent workers failed to start. "
-                f"See per-worker errors above. Try re-running with --batch."
-            )
+            raise RuntimeError(f"{message}. Try re-running with --batch.")
         if not self.quiet:
             print(
                 f"  {len(live_workers)}/{n_workers} workers ready in "
@@ -755,15 +1139,8 @@ class PersistentBackendBase(Backend):
 
         # Now that a worker is live, ask it for the real tool version and the
         # loaded library versions (e.g. MSL) and stamp them into the run
-        # provenance. Best-effort — a failed probe leaves the configured
-        # backend label as the shown version and omits the library line.
-        updates: dict = {}
-        version = self._safe_probe_worker_version(live_workers)
-        if version:
-            updates["tool_version"] = version
-        libs = self._safe_probe_library_versions(live_workers)
-        if libs:
-            updates["library_versions"] = libs
+        # provenance.
+        updates = self.note_versions(live_workers)
         if updates:
             setup.progress.update_metadata(**updates)
 
@@ -783,42 +1160,32 @@ class PersistentBackendBase(Backend):
     # Internal building blocks
     # ------------------------------------------------------------------
 
-    def _start_workers_parallel(self, workers: list["Worker"]) -> list["Worker"]:
-        """Spawn every worker concurrently. Returns the subset that started
-        successfully; failures are logged per-worker. Caller decides what
-        to do on zero-live-workers (the template raises ``RuntimeError``).
+    def _start_workers_parallel(
+        self, workers: list["Worker"]
+    ) -> tuple[list["Worker"], dict[int, str]]:
+        """Spawn every worker concurrently, each start bounded
+        (:meth:`Worker.start_within`). Returns the subset that started and,
+        by worker id, why each of the others did not; failures are printed
+        per worker. Caller decides what to do on zero live workers (the
+        template fails every test with the reasons and raises).
         """
-        worker_ready: dict[int, bool] = {}
-        ready_lock = threading.Lock()
+        failures: dict[int, str] = {}
+        failures_lock = threading.Lock()
 
         def _start_one(w: "Worker"):
             t0 = time.monotonic()
             try:
-                w.start()
+                w.start_within()
                 dt = time.monotonic() - t0
-                with ready_lock:
-                    worker_ready[w.worker_id] = True
                 if not self.quiet:
                     print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
             except Exception as exc:
-                with ready_lock:
-                    worker_ready[w.worker_id] = False
+                with failures_lock:
+                    failures[w.worker_id] = str(exc)
                 if not self.quiet:
                     print(
                         f"  Worker {w.worker_id}: start FAILED — {exc}",
                         file=sys.stderr,
-                    )
-                # review 2026-07-06 (finding 24): a worker that failed mid-
-                # start may already have spawned its subprocess; close it so
-                # the process (and its license seat) doesn't leak. close() is
-                # contractually idempotent + safe on never-started workers.
-                try:
-                    w.close()
-                except Exception:
-                    logger.debug(
-                        "Worker %s: close() after failed start raised",
-                        w.worker_id,
-                        exc_info=True,
                     )
 
         with ThreadPoolExecutor(max_workers=len(workers)) as pool:
@@ -826,7 +1193,7 @@ class PersistentBackendBase(Backend):
             for f in as_completed(futures):
                 f.result()  # propagate unexpected errors; start errors already printed
 
-        return [w for w in workers if worker_ready.get(w.worker_id)]
+        return [w for w in workers if w.worker_id not in failures], failures
 
     def _dispatch_with_restart(
         self,

@@ -49,7 +49,7 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
     registration. We catch this drift at import time so the typo or
     copy-paste-and-forget can't survive past `pytest --collect-only`.
 
-    Every capability has a load-bearing method, and all three are checked:
+    Every capability has a load-bearing method, and all four are checked:
 
     - ``FMU_EXPORT`` → ``export_fmu`` must be overridden.
     - ``BATCH_FALLBACK`` → either ``run_tests`` or ``run_single_test`` must
@@ -57,6 +57,8 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
       use the default per-test loop).
     - ``PERSISTENT_WORKERS`` → ``persistent_backend_cls`` must be overridden
       to return a non-None class.
+    - ``CANCEL`` → ``cancel_test`` must be overridden (a persistent variant's
+      cancel is its worker's, and is covered by tests like its other flags).
 
     Only ``@register``-decorated classes are checked. Persistent variants
     are reached via ``persistent_backend_cls``, not the registry, so their
@@ -68,6 +70,12 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
         raise TypeError(
             f"@register('{name}'): {cls.__name__} declares "
             f"Capability.FMU_EXPORT but does not override export_fmu(). "
+            f"Either implement the method or drop the capability flag."
+        )
+    if Capability.CANCEL in caps and cls.cancel_test is Backend.cancel_test:
+        raise TypeError(
+            f"@register('{name}'): {cls.__name__} declares "
+            f"Capability.CANCEL but does not override cancel_test(). "
             f"Either implement the method or drop the capability flag."
         )
     if Capability.BATCH_FALLBACK in caps and (

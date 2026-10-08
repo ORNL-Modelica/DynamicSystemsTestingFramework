@@ -24,6 +24,14 @@ from dstf.discovery.test_registry import TestModel
 from dstf.storage.batch_manifest import BatchManifest
 
 
+@pytest.fixture(autouse=True)
+def _fake_pids_name_no_process(monkeypatch):
+    """The fakes here track made-up PIDs, which the watchdog's death watch
+    would read as "the tool died". That watch has its own tests, over real
+    processes (test_worker_lifecycle.py)."""
+    monkeypatch.setattr("dstf.backends.persistent.process_gone", lambda pids: False)
+
+
 def _tm(model_id: str = "Lib.A") -> TestModel:
     return TestModel(
         model_id=model_id,
@@ -1303,8 +1311,9 @@ class TestStartupFailureCleanup:
         backend = _stub_backend(tmp_path)
         w0 = _FailStartWorker(0, backend.config)
         w1 = _FailStartWorker(1, backend.config)
-        live = backend._start_workers_parallel([w0, w1])
+        live, failures = backend._start_workers_parallel([w0, w1])
         assert live == []
+        assert failures == {0: "start blew up", 1: "start blew up"}
         assert w0.n_closed >= 1
         assert w1.n_closed >= 1
 
@@ -1331,7 +1340,7 @@ class TestStartupFailureCleanup:
                 return w
 
         backend = _FailingBackend(cfg)
-        with pytest.raises(RuntimeError, match="failed to start"):
+        with pytest.raises(RuntimeError, match="No Stub worker could start"):
             backend.run_tests([_tm("Lib.A"), _tm("Lib.B")])
         assert created
         assert all(w.n_closed >= 1 for w in created)

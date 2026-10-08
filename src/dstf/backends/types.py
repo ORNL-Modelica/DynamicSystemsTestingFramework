@@ -35,6 +35,9 @@ class Capability(str, Enum):
     BATCH_FALLBACK = "batch-fallback"
     #: Backend can export a test artefact as an FMU (enables cross-backend verification).
     FMU_EXPORT = "fmu-export"
+    #: Backend can stop a test that is running, from another thread (the
+    #: simulation queue's cancel).
+    CANCEL = "cancel"
 
 
 class DatasetType(str, Enum):

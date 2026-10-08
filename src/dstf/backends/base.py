@@ -186,6 +186,21 @@ def _print_progress(
         print("".join(parts), file=sys.stderr)
 
 
+def no_worker_message(label: str, failures: dict[int, str]) -> str:
+    """The sentence every waiting test fails with when no worker of a
+    backend could start: each worker's reason in the backend's own words,
+    e.g. ``No OpenModelica worker could start — worker 0: omc exited (code
+    -9) during loadModel(Modelica)``. A reason that already names its worker
+    (``Worker 0: failed to load ...``) is not named twice."""
+    parts = []
+    for worker_id, reason in sorted(failures.items()):
+        prefix = f"worker {worker_id}: "
+        if reason.lower().startswith(prefix):
+            reason = reason[len(prefix) :]
+        parts.append(prefix + reason)
+    return f"No {label} worker could start — " + "; ".join(parts)
+
+
 #: Run outcomes that make a result on disk untrustworthy: the ``.mat`` (if
 #: any) is partial or left over from an earlier, better run.
 FAILED_RUN_STATUSES = ("failed", "timed_out")
@@ -320,6 +335,54 @@ class RunSetup:
     #: ``(test, test_key)`` in the caller's test order.
     keyed_tests: list[tuple[TestModel, str]]
     manifest: BatchManifest
+
+
+class ItemRunner:
+    """What ONE thread of the simulation pool drives: bring the thing that
+    runs tests up, run a test on it, stop a running one, let it go.
+
+    The strategy seam between the pool (:mod:`dstf.backends.pool`) and how a
+    backend runs a single test, obtained from :meth:`Backend.item_runner`.
+    This base is the runner of a backend WITHOUT persistent workers: nothing
+    to start, and a test goes through the backend's own single-test path
+    (:meth:`Backend.run_single_test`) on the pool's thread. A persistent
+    backend's is :class:`~dstf.backends.persistent.WorkerRunner`, over one
+    :class:`~dstf.backends.persistent.Worker`.
+    """
+
+    #: Set when this runner can take no more tests: the sentence why. The
+    #: pool then lets its thread go.
+    retired: str | None = None
+
+    def __init__(self, backend: "Backend", worker_id: int):
+        self.backend = backend
+        self.worker_id = worker_id
+
+    def start(self) -> None:
+        """Bring the runner up. Raises ``RuntimeError`` whose text is the
+        reason, in the backend's own words, when it cannot."""
+
+    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+        """Run *test* to its end on the calling thread."""
+        return self.backend.run_single_test(test, test_key, 1, 1)
+
+    def cancel(self, test_key: str) -> bool:
+        """Stop *test_key*, from another thread; ``False`` when it is not the
+        test running here. Only called on a backend that declares
+        :attr:`Capability.CANCEL`. :meth:`run` then returns a ``cancelled``
+        result."""
+        return self.backend.cancel_test(test_key)
+
+    def stop(self, test_key: str | None) -> None:
+        """The pool is closing: from another thread, end whatever is in
+        flight as fast as the backend can — *test_key* when a test runs
+        here, a start otherwise. A backend that cannot stop a test lets it
+        finish."""
+        if test_key is not None and Capability.CANCEL in self.backend.capabilities:
+            self.backend.cancel_test(test_key)
+
+    def close(self) -> None:
+        """Let go of the runner, on its own thread; idempotent."""
 
 
 class Backend(ABC):
@@ -463,6 +526,37 @@ class Backend(ABC):
         Not needed if run_tests is overridden entirely (e.g., batch execution).
         """
         raise NotImplementedError("Override run_tests() or run_single_test()")
+
+    def prepare_item_runners(self) -> None:
+        """Once per pool, before the first :meth:`item_runner`. Raises
+        ``RuntimeError`` when this backend cannot run one test at a time."""
+        if type(self).run_single_test is Backend.run_single_test:
+            raise RuntimeError(
+                f"{type(self).__name__} runs whole batches and has no "
+                f"single-test path; the simulation queue needs its "
+                f"persistent workers (backends.select_backend(config, "
+                f"persistent=True))."
+            )
+
+    def item_runner(self, worker_id: int) -> ItemRunner:
+        """The runner one pool thread drives (see :class:`ItemRunner`)."""
+        return ItemRunner(self, worker_id)
+
+    def cancel_test(self, test_key: str) -> bool:
+        """Stop the test :meth:`run_single_test` is running under *test_key*,
+        from another thread; ``False`` when none is. That call then returns
+        a ``cancelled`` result. Backends whose single-test path can be
+        stopped declare :attr:`Capability.CANCEL` and override this."""
+        raise NotImplementedError(
+            f"{type(self).__name__} declares no Capability.CANCEL: its "
+            f"single-test path cannot be stopped."
+        )
+
+    def run_versions(self) -> dict:
+        """``tool_version`` / ``library_versions`` for run provenance, as far
+        as this backend can name them now (see :meth:`_build_run_metadata`)."""
+        version = self._safe_tool_version()
+        return {"tool_version": version} if version else {}
 
     @abstractmethod
     def read_result(
