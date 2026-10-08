@@ -13,7 +13,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
-from .sides import Sides, as_written, parse_sides
+from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
 
 
@@ -847,7 +847,8 @@ def _tube_bounds(
         upper_width = raw_upper
         lower_width = raw_lower
 
-    min_width = tube_config.get("tube_min_width", 0.0)
+    # One number, whoever built the config: a negative one is no floor.
+    min_width = parse_number(tube_config.get("tube_min_width", 0.0), "tube_min_width")
     if min_width > 0:
         upper_width = np.maximum(upper_width, min_width)
         lower_width = np.maximum(lower_width, min_width)

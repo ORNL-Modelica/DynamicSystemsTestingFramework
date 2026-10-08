@@ -3434,6 +3434,84 @@ class TestAMalformedToleranceIsAConfigError:
         with pytest.raises(ValueError, match=f"^{key} must be a number or "):
             _tube_bounds(_S_T, _S_REF, {"tube_width_mode": mode, key: {"lower": 1}})
 
+    @pytest.mark.parametrize(
+        "bad",
+        [{"lower": 0.1, "upper": 0.2}, "0.1", True, [1], float("nan"), float("inf")],
+        ids=repr,
+    )
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    def test_a_tubes_min_width_takes_one_number(self, bad, flat):
+        """`tube_min_width` has no sides: a floor under both. Handed a
+        pair, a string or a list it was compared with zero as it came, and
+        the ``TypeError`` went out of ``compare_test`` and took the run
+        down; `true` scored as a floor of 1. Anything but one finite number
+        is the leaf's config error, as a width that is no number or pair
+        is, and the rest of the test is scored."""
+        leaf = {
+            "metric": "tube",
+            "tube_width_mode": "band",
+            "tube_abs": 0.5,
+            "tube_min_width": bad,
+        }
+        comp = _sides_compare(
+            leaf, flat=flat, extra={"metric": "nrmse", "tolerance": 0.5}
+        )
+        x, y = comp.variables
+        said = f"tube_min_width must be one number, got {json.dumps(bad)}"
+        assert not x.passed and x.diagnostics["config_error"] is True
+        assert x.diagnostics["error"] == (
+            said if flat else f"metric 'tube' misconfigured: {said}"
+        )
+        assert y.passed and not comp.passed
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
+    @pytest.mark.parametrize("width", [-0.3, None, 0, 0.3])
+    def test_a_min_width_that_is_one_number_scores_as_it_did(self, flat, width):
+        """A negative one written by hand is no floor at all — every width
+        is above it — and scores as the tube without it; `null` is unset."""
+        leaf = {"metric": "tube", "tube_width_mode": "band", "tube_abs": 0.005}
+
+        def scored(extra):
+            (vc,) = _sides_compare({**leaf, **extra}, flat=flat).variables
+            assert "config_error" not in vc.diagnostics, vc.diagnostics
+            return vc.passed, vc.tube_points_inside
+
+        # The run is 0.01 above its reference: outside a tube of 0.005.
+        assert scored({}) == (False, 0.0)
+        floored = width is not None and width > 0
+        assert scored({"tube_min_width": width}) == (
+            (True, 1.0) if floored else (False, 0.0)
+        )
+
+    def test_a_min_width_is_refused_where_the_mode_is_built(self):
+        """Where a width that is no number or pair is: a ``ValueError`` out
+        of ``resolve_mode``, before anything is scored."""
+        from dstf.comparison.modes import resolve_mode
+
+        override = {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.5}
+        pair = {"lower": 0.1, "upper": 0.2}
+        with pytest.raises(ValueError) as box:
+            resolve_mode({**override, "tube_min_width": pair}, 0.01)
+        assert str(box.value) == (
+            'tube_min_width must be one number, got {"lower": 0.1, "upper": 0.2}'
+        )
+        built = resolve_mode({**override, "tube_min_width": 2}, 0.01)
+        assert built.config.tube_min_width == 2.0
+        assert isinstance(built.config.tube_min_width, float)
+        unset = resolve_mode({**override, "tube_min_width": None}, 0.01)
+        assert unset.config.tube_min_width == 0.0
+
+    def test_the_tube_scorer_refuses_a_min_width_it_reads_raw(self):
+        """The scorer reads a raw config too, and refuses it in the same
+        words: no caller of it meets a ``TypeError``."""
+        from dstf.comparison.algorithms import _tube_bounds
+
+        raw = {"tube_width_mode": "band", "tube_abs": 0.5, "tube_min_width": "0.1"}
+        with pytest.raises(
+            ValueError, match='^tube_min_width must be one number, got "0.1"$'
+        ):
+            _tube_bounds(_S_T, _S_REF, raw)
+
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_event_timing_does_not_read_the_leafs_tolerance(self, flat):
         """Its window is ``time_tolerance``; a ``tolerance`` on the leaf is

@@ -94,6 +94,18 @@ def parse_sides(value: object, what: str) -> Sides:
     )
 
 
+def parse_number(value: object, what: str) -> float:
+    """``value`` as the ONE number a field without sides takes — a tube's
+    minimum width, a floor under both of its sides. Anything else — a
+    lower/upper pair, a string, a bool, a list, NaN or an infinity — is a
+    ``ValueError`` naming ``what`` and the value (:func:`_as_json`), the
+    way :func:`parse_sides` refuses what is no number or pair. No sign
+    check here either."""
+    if _is_number(value):
+        return float(value)
+    raise ValueError(f"{what} must be one number, got {_as_json(value)}")
+
+
 def as_written(sides: Sides) -> float | dict:
     """``sides`` as data leaving Python (a tree view, a leaf's diagnostics):
     the number when the sides are equal, else the pair. NOT how the tool

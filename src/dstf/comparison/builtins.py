@@ -51,7 +51,7 @@ from .registry import (
     register_metric,
 )
 from .seeds import seed_dominant_frequency, seed_range, seed_scalar, seed_tube
-from .sides import Sides, parse_sides
+from .sides import Sides, parse_number, parse_sides
 from .summaries import (
     summarize_dominant_frequency,
     summarize_event_timing,
@@ -80,6 +80,16 @@ def _build_tube(override: dict, tolerance: Sides) -> TubeMode:
             del tube_kwargs[key]
         else:
             tube_kwargs[key] = parse_sides(tube_kwargs[key], key)
+    # The floor has no sides: one number, read here so that anything else
+    # is a ``ValueError`` where ``resolve_mode``'s callers catch it — a
+    # pair or a string went on to the scorer, which compared it with zero
+    # and raised a ``TypeError`` nothing caught. ``null`` is "no floor".
+    if tube_kwargs.get("tube_min_width") is None:
+        tube_kwargs.pop("tube_min_width", None)
+    else:
+        tube_kwargs["tube_min_width"] = parse_number(
+            tube_kwargs["tube_min_width"], "tube_min_width"
+        )
     return TubeMode(TubeConfig(**tube_kwargs))
 
 
