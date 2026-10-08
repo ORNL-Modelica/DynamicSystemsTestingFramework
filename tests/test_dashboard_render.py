@@ -1001,14 +1001,13 @@ def test_every_column_but_status_has_a_typed_filter(tmp_path):
     assert found == [(c.key, c.kind) for c in COLUMNS if c.kind != "status"]
 
 
-def test_a_cancelled_row_reads_cancelled_and_counts_as_not_run(tmp_path):
-    """D150: the queue's cancel leaves a status.json row "cancelled". The
-    page says CANCELLED on a not-run row — the NOT RUN pill counts and
-    filters it — where it said "status 'cancelled'" in the message."""
+def _cancelled_snapshot(tmp_path) -> None:
+    """A queue's drain, as `ItemRun.write_status` leaves it: one test that
+    passed and one whose run was stopped."""
     _write_status_json(
         tmp_path,
         {
-            "total": 1,
+            "total": 2,
             "elapsed": 1.0,
             "counts": {},
             "start_wall": 1.0,
@@ -1019,17 +1018,90 @@ def test_a_cancelled_row_reads_cancelled_and_counts_as_not_run(tmp_path):
                     "status": "cancelled",
                     "detail": "Cancelled",
                     "report_dir": "test_0001",
-                }
+                },
+                {
+                    "test_key": "test_0002",
+                    "model_id": "Lib.B",
+                    "status": "passed",
+                    "report_dir": "test_0002",
+                },
             ],
             "updated_at": 2.0,
         },
     )
-    render_final(tmp_path)
+
+
+def _cancelled_comparisons() -> list:
+    """What the compare phase holds for that drain: no result for the
+    cancelled test (NOT RUN), a pass for the other."""
+    from conftest import make_test_model
+    from dstf.comparison.comparator import compare_one
+    from dstf.comparison.types import TestComparison
+
+    return [
+        compare_one(make_test_model("Lib.A"), None, None),
+        TestComparison(model_id="Lib.B", passed=True, test_id="0002"),
+    ]
+
+
+def _status_counts(html: str) -> dict[str, int]:
+    """Rows per `data-status` — what dashboard.js counts the pills from."""
+    from collections import Counter
+
+    return dict(Counter(_attrs(tr)["data-status"] for tr in _body_rows(html)))
+
+
+def test_a_cancelled_row_reads_cancelled_and_counts_as_not_run(tmp_path):
+    """D150: the queue's cancel leaves a status.json row "cancelled", and
+    the compare phase scores the test NOT RUN — there is no result. The
+    page a caller writes (every one hands `render_final` its comparisons)
+    says CANCELLED on a not-run row: the NOT RUN pill counts and filters
+    it, and no pill is its own. It said NOT RUN: the verdict replaced the
+    row's word."""
+    _cancelled_snapshot(tmp_path)
+    render_final(tmp_path, comparisons=_cancelled_comparisons())
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    (row,) = _body_rows(html)
-    assert _attrs(row)["data-status"] == "not-run"
-    assert '<span class="status-badge not-run">CANCELLED</span>' in row
+    cancelled, passed = _body_rows(html)
+    assert _attrs(cancelled)["data-status"] == "not-run"
+    assert '<span class="status-badge not-run">CANCELLED</span>' in cancelled
+    assert "NOT RUN" not in cancelled
+    assert '<td class="detail-cell" title="Cancelled">Cancelled</td>' in cancelled
+    assert _attrs(passed)["data-status"] == "pass"
+    assert _status_counts(html) == {"not-run": 1, "pass": 1}
+    pills = json.loads(re.search(r"const STATUSES = (\[.*?\]);\n", html).group(1))
+    assert ["not-run", "NOT RUN"] in pills
+    assert not any("CANCELLED" in pill for pill in pills)
     assert "status &#39;cancelled&#39;" not in html and "status 'cancelled'" not in html
+
+
+def test_a_cancelled_row_keeps_its_word_over_a_sidecar_s_not_run(tmp_path):
+    """`--report` writes the cancelled test a sidecar whose verdict is NOT
+    RUN: the sidecar's enrichment and the comparison in hand ask one rule,
+    so neither puts NOT RUN over the row's word."""
+    _cancelled_snapshot(tmp_path)
+    _sidecar_in(tmp_path, "test_0001", {"model_id": "Lib.A", "status": "NOT RUN"})
+    for comparisons in ([], _cancelled_comparisons()):
+        render_final(tmp_path, comparisons=comparisons)
+        html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+        assert '<span class="status-badge not-run">CANCELLED</span>' in html
+        assert "NOT RUN</span>" not in html
+
+
+def test_a_cancelled_test_that_then_ran_reads_its_verdict(tmp_path):
+    """The word is for a test with NO result. A status.json row still
+    saying "cancelled" beside a verdict (the test ran again since) reads
+    the verdict, as every live state does."""
+    from dstf.comparison.types import TestComparison
+
+    _cancelled_snapshot(tmp_path)
+    comparisons = [
+        TestComparison(model_id="Lib.A", passed=True, test_id="0001"),
+        TestComparison(model_id="Lib.B", passed=True, test_id="0002"),
+    ]
+    render_final(tmp_path, comparisons=comparisons)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert _status_counts(html) == {"pass": 2}
+    assert "CANCELLED</span>" not in html
 
 
 def test_the_pills_are_the_statuses(tmp_path):

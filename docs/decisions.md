@@ -7238,7 +7238,17 @@ the tool.
     failed, the exit code is unchanged). `CANCELLED` is what a live row
     says for why, on NOT RUN's class, so its pill, tint and filter count
     it; a cancelled row keeps the word when the compare phase scores it
-    NOT RUN.
+    NOT RUN. One rule decides that, `reporting.status.scored_status`, and
+    every surface that puts a verdict on a row asks it: the Suite's row,
+    the sidecar's enrichment and the dashboard's comparison in hand — the
+    last had none, so every dashboard a command wrote (the queue's drain,
+    `dstf compare`, each of which hands the page its comparisons) said NOT
+    RUN where the Suite said CANCELLED (found by an executing review,
+    2026-10-08). A row keeps the word only while its `status.json` row
+    says `cancelled` and its verdict is NOT RUN; any other verdict means
+    the test ran since. The console and JUnit have no row to read why
+    from: they print the verdict — `NOT RUN`, `<skipped message="not
+    run"/>` — and count the test there, as the pill does.
 
 **From the backend tier** (measured there, not again here): cancel is per
 backend — Dymola's `stop` file ended a simulating test in 1.7 s with the
