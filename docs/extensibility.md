@@ -135,10 +135,11 @@ capabilities: frozenset[Capability]  # members of backends.types.Capability
 | `PERSISTENT_WORKERS` | Holds loaded model(s) in memory across tests (performance: no per-test startup). |
 | `BATCH_FALLBACK` | Exposes a non-interactive script-driven mode when persistent workers aren't available. |
 | `FMU_EXPORT` | Can export a test artefact as an FMU (enables cross-backend verification). |
+| `CANCEL` | Can stop a test that is running, from another thread (the simulation pool's cancel). |
 
 Features in the framework (CLI flags, report sections, cross-backend chains) gate on capabilities, not on backend names. A new backend that declares `FMU_EXPORT` automatically participates in cross-backend verification with no framework change.
 
-Declare a capability on the class that actually has it. Where a backend ships a persistent variant, the two classes can differ — Dymola's FMU export needs a live `DymolaInterface`, so `PersistentDymolaBackend` declares `FMU_EXPORT` and the batch `DymolaBackend` does not. Registration-time validation (`backends._validate_capabilities`) enforces flag ⟹ method override, but only for `@register`-ed classes; persistent variants are reached through `persistent_backend_cls`, so their declarations are covered by tests.
+Declare a capability on the class that actually has it. Where a backend ships a persistent variant, the two classes can differ — Dymola's FMU export needs a live `DymolaInterface`, so `PersistentDymolaBackend` declares `FMU_EXPORT` and the batch `DymolaBackend` does not; `CANCEL` sits on the three persistent variants (the stop is their worker's) and on `PythonBackend` (its `cancel_test`). Registration-time validation (`backends._validate_capabilities`) enforces flag ⟹ method override, but only for `@register`-ed classes; persistent variants are reached through `persistent_backend_cls`, so their declarations are covered by tests.
 
 ### Produced datasets (mandatory to declare)
 
@@ -155,6 +156,7 @@ A Backend must:
 2. Implement `run_tests(tests) -> list[BatchManifest]` (or inherit a default that uses `run_single_test`).
 3. Implement `read_result(test) -> Dataset` returning a typed Dataset.
 4. Implement `export_fmu(test) -> Path` iff the class declares `Capability.FMU_EXPORT`.
+   Implement `cancel_test(test_key) -> bool` iff a class WITHOUT persistent workers declares `Capability.CANCEL` (see "The simulation pool").
 5. Use `ProgressReporter` (backend-agnostic, already exists) for live-dashboard status.
 6. Put all tool-specific code under `backends/<name>/`. No tool-specific imports in framework core.
 
@@ -234,12 +236,21 @@ If your backend can hold a loaded model in memory across tests (declares `Capabi
 
 What the base guarantees, for every worker: `run_test` executes on a daemon exec thread joined with the test's timeout; on expiry the worker is `close()`d (graceful attempt on its own daemon thread, abandoned after `timeout_kill_grace`, then `kill_process_tree` on every tracked PID and on the children recorded by the tree walks `close()` takes before the graceful attempt and every 0.25 s during it — a child that first appears *inside* that window, as dymosim does when the timeout lands during translation, is only reachable while its parent is still alive); `_evaluate_from_disk` then gets a chance to rescue a simulation that finished just before the kill. Timeout results carry `worker_killed=True` (a *healthy* worker died because the test was slow — the dispatch loop must not charge it against `max_restarts_per_worker`); worker exceptions leave it `False` (a genuinely broken worker DOES cost budget). `self.pids` and `self._n_restarts` are declared by `Worker.__init__`, so `super().__init__(worker_id, config)` is not optional.
 
+Three more things the base does for every worker, each with a hook for what only the backend knows:
+
+- **A bounded start.** Nothing calls `start()` bare: `start_within()` runs it on a daemon thread against `startup_bound()` — `worker_startup_timeout` from `testing.json`, else the class's `startup_timeout` (60 s; Julia's is 240, its first start compiles) — and raises `WorkerStartError` at once when the tracked process is gone while `start()` still waits on it. OMPython waits for omc's reply with no bound, so an omc that died during `loadModel` used to hold a run for good, every test "queued". The reason is in the backend's words: what `start()` raised, or `process_detail()` (exit code or "still running", the step in `self._step`, the log's tail). A start given up on is closed again if it ever returns, and that worker object is never started again. When no worker starts, `run_tests` fails every test with `No <label> worker could start — worker 0: <reason>; ...` and raises the same sentence.
+- **A death that takes its children with it.** While a test runs the watchdog looks at the tracked process every `_CHILD_WATCH_SECONDS` (2 s) and keeps its live children on record. A tool that dies by itself fails the test (`Worker process exited during the test`), and `close()` kills the recorded children — an orphaned dymosim is out of reach of a tree walk from a parent that no longer exists. A tool that died while `run_test` still returned is closed too, so the next test restarts it. Charged against the restart budget like any worker-side malfunction.
+- **A cancel.** `request_cancel(test_key)` (any thread) ends the watchdog's wait with a `TestRunResult(cancelled=True)`: after `cancel_running(test_key)` and the tool's own return when that hook has a stop for the simulation alone — the worker is reused — else after the kill a timeout uses, uncharged. A run that finished anyway keeps its result. Dymola's hook writes a file named `stop` into the directory of the process NAMED dymosim (never matched in a command line: the compiler is handed a `dymosim` argument too) and has none during translation; OpenModelica's kills omc's children. A worker that overrides the watchdog (Julia) reads `self._cancel` in its own loop. Declare `Capability.CANCEL` on the backend class once a worker hears cancels.
+
 `_detach_interface` is what makes `is_alive()` go False, and `close()` is the only thing that calls it — so a worker that keeps its handle (or its `Popen`) after a kill still reads alive, and the dispatch loop hands it the next test. That test dies against a dead process with a result carrying no `worker_killed` flag, and the restart it forces is charged against the budget. Julia hit exactly this (D110): detach the handle on every path that kills the process, not just on `close()`.
 
 | Method / attribute | Required | Contract |
 |---|---|---|
 | `__init__(worker_id, config, ...)` | yes | Subclass extends with backend-specific args (e.g. `DymolaConfig`, an interface class). MUST call `super().__init__(worker_id, config)`. |
-| `start()` | abstract | Bring the process up, apply startup (library loads, framework settings), record the process PID in `self.pids`. Raise on failure. |
+| `start()` | abstract | Bring the process up, apply startup (library loads, framework settings), record the process PID in `self.pids` as soon as it exists, and name the call in flight in `self._step`. Raise on failure. May block: `start_within` is what bounds it. |
+| `startup_timeout` (class attr) | hook | Seconds a start gets when `testing.json` sets no `worker_startup_timeout`. Default `60.0`. |
+| `process_detail()` | hook | What the backend can say about its process when a start or a test did not come back (exit code, step, log tail), read before the kill. Default `""`. |
+| `cancel_running(test_key)` | hook | Stop only the running simulation and leave the tool alive: `True` when asked and `run_test` will return on its own within `cancel_grace` (default 10 s). Default `False` — the watchdog kills the worker. |
 | `is_alive()` | abstract | True iff the worker can accept another test. Usually `self._handle is not None`. |
 | `run_test(test, test_key, progress=None)` | hook | The blocking single-test execution the watchdog runs on its exec thread. Required unless you override `run_test_with_timeout`. **MUST NOT** raise on test-level failures — return a `TestRunResult(success=False)`. **MAY** raise on worker-level catastrophes (RPC dropped, pipe broken); the template turns that into a `success=False` result and tears the worker down for the dispatch loop to restart. |
 | `_detach_interface()` | **required iff the worker holds a handle** | Clear the live-handle attribute and return what it held; runs synchronously inside `close()`. Default `None` = nothing to shut down. |
@@ -249,7 +260,8 @@ What the base guarantees, for every worker: `run_test` executes on a daemon exec
 | `kill_name_hint` (class attr) | hook | Name substring a tracked PID must still match before it is killed — the guard against a recycled PID (`"dymola"`, `"omc"`, `"julia"`). `None` disables it. |
 | `timeout_kill_grace` (class attr) | hook | Graceful-shutdown budget on the *timeout* path. Default `1.0`; Dymola uses `5.0` so it can flush its open `dslog.txt`. |
 | `exec_thread_prefix` (class attr) | hook | Names the exec thread `<prefix>-exec-<worker_id>`. |
-| `run_test_with_timeout(...)` | template | Implemented by the base. Override wholesale only when the execution model doesn't fit "blocking call on a thread" — Julia polls a response queue against a deadline. An override still owes the shared semantics: no raise on test-level failure, `worker_killed=True` on a timeout kill, and `self._kill_tracked_pids()` for the kill. |
+| `run_test_with_timeout(...)` | template | Implemented by the base. Override wholesale only when the execution model doesn't fit "blocking call on a thread" — Julia polls a response queue against a deadline. An override still owes the shared semantics: no raise on test-level failure, `worker_killed=True` on a timeout kill, `self._kill_tracked_pids()` for the kill, and a `cancelled=True` result when `self._cancel` is set. |
+| `start_within(timeout=None)` / `request_cancel(test_key)` | template | Implemented by the base. Do not override. |
 | `close(grace=5.0)` | template | Implemented by the base and idempotent. Do not override. |
 | `export_fmu(test, output_dir)` | iff `FMU_EXPORT` | Default raises `NotImplementedError`. |
 
@@ -257,10 +269,12 @@ What the base guarantees, for every worker: `run_test` executes on a daemon exec
 
 ```
 setup_before_workers → _prepare_run (progress + keys + manifest)
-    → make_worker × N → start in parallel
-    → filter live workers (raise if zero) → dispatch with restart
-    → close all workers → finalize progress
+    → make_worker × N → start in parallel, each start bounded
+    → filter live workers (if zero: fail every test with the reasons, raise)
+    → dispatch with restart → close all workers → finalize progress
 ```
+
+Each dispatch thread drives one `WorkerRunner` — restart a dead worker within its budget, run the test under the watchdog, keep the restart accounting. The simulation pool's threads drive the same object, which is what makes a test fail, retry and restart identically in `dstf run` and in the tool's queue.
 
 You fill in:
 
@@ -292,13 +306,49 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
 
 Worked example: `backends/openmodelica/persistent_backend.py` has the most compact of the three persistent backends' class bodies — read it as the canonical reference.
 
+### The simulation pool
+
+`backends/pool.py` — `SimulationPool` is `run_tests`' dispatch kept open, for a caller that queues tests while others run (the authoring tool): `pipeline.open_pool(config, *, backend, store, on_start=None, on_end=None, workers=None)` builds one over the run pipeline's per-item path.
+
+| Call | Does |
+|---|---|
+| `submit(test) -> QueueItem` | Appends. `Refused` when the test is already waiting or running, or the pool is closed or stopped. |
+| `remove(item) -> bool` | Takes a waiting item out (`REMOVED`); `False` once it has started. |
+| `cancel(item) -> bool` | Stops a running item (it ends `CANCELLED`); `False` when it is not running; `Refused`, with a sentence, on a backend without `Capability.CANCEL`. |
+| `workers` (get / set) | How many run at once; `Config.parallel` unless given. Raised: more start as items need them. Lowered: the surplus leave as each finishes its item. |
+| `waiting`, `running`, `stopped`, `can_cancel`, `path` | The queue in order, the items running, the message the pool stopped with, the capability, the per-item path. |
+| `close()` | Waiting items `REMOVED`, running ones stopped (`CANCELLED`), every worker closed, every thread joined. The owner must call it. |
+
+First in, first out. No worker exists before the first `submit`; then as many as there are items, up to `workers`. An item (`QueueItem`) carries `state`, `test_key`, `worker_id`, `run_result`, `result`, `message` and wall-clock stamps:
+
+| `ItemState` | Meaning |
+|---|---|
+| `WAITING` / `RUNNING` | In the queue / on a worker. |
+| `FINISHED` | The simulation ran; `result` is the result read back. |
+| `FAILED` | It failed or timed out (`result` carries the failure), or no worker could start; `message` is the backend's. |
+| `CANCELLED` | Stopped while running. Recorded as `last_run_status: "cancelled"` — never "failed" — and read back as no result. |
+| `REMOVED` | Taken out while waiting; nothing ran, nothing was recorded. |
+
+`on_start(item)` and `on_end(item)` are called once each, on the POOL thread that ran the item, outside the pool's lock, start before end; an item that never started gets `on_end` only when the pool itself failed it. A callback may call anything but `close()`.
+
+When a worker cannot start, or cannot be restarted, it leaves; when none is left, the waiting items fail with the backend's own message (`No OpenModelica worker could start — worker 0: omc exited (code -9) during loadModel(Modelica); omc log: ...`) and the pool stops taking items.
+
+**How one item runs is the backend's** — one seam, `Backend.item_runner(worker_id) -> ItemRunner`, not a name check:
+
+- a persistent backend returns a `WorkerRunner` over one `Worker` (the default of `PersistentBackendBase`; nothing to override);
+- any other backend gets the base `ItemRunner`: nothing to start, and the item goes through `run_single_test` on the pool's thread. Its cancel is `Backend.cancel_test(test_key)`, which the JSON-driver backends implement by killing the test's subprocess (`run_single_test` then returns `cancelled=True`); `PythonBackend` declares `CANCEL`, `FmpyBackend` simulates in-process and does not.
+
+A backend that only runs whole batches (the `.mos` `DymolaBackend`) is refused when the pool is built — hand it the persistent variant.
+
+**What happens around the run on disk** is `pipeline.ItemRun`, `run_pipeline` cut at one test: `begin(test)` keys the test and stamps it pending (`Backend.key_tests`) and wipes that test's stale state only; `end(test, test_key, run_result)` records the verdict and reads the one result back (`Backend.result_of_run`). `status.json` and the dashboard are a list run's snapshot and are not written per item; `pool.path.write_status(items)` writes them for the items given, when asked.
+
 ### Current
 
 `Backend` ABC with five concrete implementations: `DymolaBackend`, `OpenModelicaBackend` (native Modelica), `FmpyBackend` (FMU), `JuliaBackend` (ModelingToolkit), and `PythonBackend` (arbitrary `simulate()`). The `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract gate feature availability per backend.
 
-- `DymolaBackend` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK}`. `FMU_EXPORT` sits on `PersistentDymolaBackend`, not here — batch mode has no `.mos` export path (see the note above about declaring a capability on the class that actually has it).
-- `OpenModelicaBackend` and `JuliaBackend` declare `{PERSISTENT_WORKERS, BATCH_FALLBACK}` (`PersistentJuliaBackend` re-declares the same pair; `PersistentOpenModelicaBackend` inherits it).
-- `PythonBackend` declares `{BATCH_FALLBACK}` — subprocess per test; a long-lived Python worker is deferred, and FMU export isn't meaningful for arbitrary `simulate()` scripts.
+- `DymolaBackend` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK}`. `FMU_EXPORT` and `CANCEL` sit on `PersistentDymolaBackend`, not here — batch mode has no `.mos` export path and no stop (see the note above about declaring a capability on the class that actually has it).
+- `OpenModelicaBackend` and `JuliaBackend` declare `{PERSISTENT_WORKERS, BATCH_FALLBACK}`; `PersistentOpenModelicaBackend` and `PersistentJuliaBackend` declare the same pair plus `CANCEL`.
+- `PythonBackend` declares `{BATCH_FALLBACK, CANCEL}` — subprocess per test, which a cancel kills; a long-lived Python worker is deferred, and FMU export isn't meaningful for arbitrary `simulate()` scripts.
 - `FmpyBackend` declares `frozenset()` — no persistent worker exists, no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs).
 
 All five produce `{TIME_SERIES}`. The framework *does* gate on the declarations: `backends.select_backend` swaps to the persistent variant only when `PERSISTENT_WORKERS` is declared, `backends/__init__.py` rejects a registration whose flags have no matching method override, and `backends/cross_backend.py` refuses the export chain unless the primary backend declares `FMU_EXPORT`.
