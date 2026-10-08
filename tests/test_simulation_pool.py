@@ -672,11 +672,12 @@ class TestClose:
             on_end=events.on_end,
         )
         backend.gate("Lib.A", "Lib.B")
-        a, b, c, d = (pool.submit(_t(name)) for name in "ABCD")
-        _wait_until(lambda: len(backend.ran) == 2)
-
-        t0 = time.monotonic()
-        pool.close()
+        try:
+            a, b, c, d = (pool.submit(_t(name)) for name in "ABCD")
+            _wait_until(lambda: len(pool.running) == 2 and len(backend.ran) == 2)
+            t0 = time.monotonic()
+        finally:
+            pool.close()
 
         assert time.monotonic() - t0 < 10.0
         assert a.state is b.state is ItemState.CANCELLED
@@ -700,11 +701,12 @@ class TestClose:
         pool = SimulationPool(
             backend, ItemRun(backend.config, backend=backend, store=_STORE)
         )
-        item = pool.submit(_t("A"))
-        _wait_until(lambda: backend.starts == [0])
-
-        t0 = time.monotonic()
-        pool.close()
+        try:
+            item = pool.submit(_t("A"))
+            _wait_until(lambda: backend.starts == [0])
+            t0 = time.monotonic()
+        finally:
+            pool.close()
 
         assert time.monotonic() - t0 < 10.0  # not the 60 s of the bound
         assert item.state is ItemState.REMOVED
@@ -786,11 +788,12 @@ class TestWithoutWorkers:
         pool = SimulationPool(
             backend, ItemRun(backend.config, backend=backend, store=_STORE)
         )
-        slow = pool.submit(_t("Slow"))
-        _wait_until(lambda: backend.threads != [])
-        threading.Timer(0.3, backend.gate.set).start()
-
-        pool.close()
+        try:
+            slow = pool.submit(_t("Slow"))
+            _wait_until(lambda: backend.threads != [])
+        finally:
+            threading.Timer(0.3, backend.gate.set).start()
+            pool.close()
 
         assert slow.state is ItemState.FINISHED  # it succeeded: a result
 

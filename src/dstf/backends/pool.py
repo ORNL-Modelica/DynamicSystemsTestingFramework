@@ -145,7 +145,9 @@ class SimulationPool:
     there are items to run, up to ``workers`` (``Config.parallel`` unless
     given). Setting ``workers`` higher starts more as items need them;
     lower lets the surplus go as each finishes its item. They live until
-    ``close``.
+    ``close`` — which the owner must call: the pool's threads are daemons
+    and do not keep a dying process open, but nothing else ends the
+    workers' tool processes.
 
     **A backend that cannot start.** A worker whose start fails or which
     cannot be restarted leaves. When none is left, every waiting item FAILS
@@ -327,6 +329,10 @@ class SimulationPool:
                 target=self._slot_loop,
                 args=(slot,),
                 name=f"{self.backend.label.lower().replace(' ', '-')}-pool-{slot.id}",
+                # An owner that dies without close() must not be held open
+                # by an idle queue. Its workers' tool processes are then
+                # left running: close() is what ends them.
+                daemon=True,
             )
             self._slots[slot.id] = slot
             slot.thread.start()
