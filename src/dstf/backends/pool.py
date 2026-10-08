@@ -307,10 +307,12 @@ class SimulationPool:
         return True
 
     def cancel(self, item: QueueItem) -> bool:
-        """Stop a running *item*'s simulation; it ends CANCELLED (``on_end``
-        follows from its thread). ``False`` when it is not running — waiting
-        (``remove`` it) or already ended. Raises :class:`Refused` when it
-        runs on a backend that cannot stop a test."""
+        """Ask a running *item*'s simulation to stop: ``True`` when it was
+        asked. It then ends CANCELLED — unless its simulation had already
+        finished, which stays the result it is, FINISHED (``on_end`` follows
+        from its thread either way). ``False`` when it is not running —
+        waiting (``remove`` it) or already ended. Raises :class:`Refused`
+        when it runs on a backend that cannot stop a test."""
         with self._cond:
             if item.state is not ItemState.RUNNING:
                 return False
@@ -324,9 +326,11 @@ class SimulationPool:
             runner, test_key = slot.runner, item.test_key
         # Before its key exists the item has not reached its runner: the
         # flag set above is what its thread sees. After, the runner expects
-        # the key (set under this lock), so the stop reaches the test.
+        # the item (announced under this lock), so the stop reaches its run
+        # — and no other: by now the item may have ended and the same test
+        # be running again, under the same key.
         if runner is not None and test_key is not None:
-            runner.cancel(test_key)
+            runner.cancel(item)
         return True
 
     def close(self) -> None:
@@ -468,7 +472,7 @@ class SimulationPool:
                 item.test_key = test_key
                 stopped_early = item._stop_asked
                 if not stopped_early:
-                    runner.expect(test_key)
+                    runner.expect(test_key, item)
             if stopped_early:
                 run_result = TestRunResult(
                     model_id=item.model_id,

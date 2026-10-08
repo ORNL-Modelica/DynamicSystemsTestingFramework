@@ -743,13 +743,85 @@ class TestCancel:
         assert box["r"].success
         assert worker.request_cancel("test_0001") is False  # it ended
 
+    def test_a_runner_hears_only_the_token_of_the_run_it_is_on(self, tmp_path):
+        """Not a key (a rerun has the same), not another run's token, and
+        nothing at all for a run nobody announced."""
+        backend = _Backend(_config(tmp_path))
+        backend.quiet = True
+        worker = _Worker(0, backend.config)
+        worker.start()
+        runner = WorkerRunner(backend, worker)
+        token, box = object(), {}
+
+        def run(key):
+            box[key] = runner.run(make_test_model("Lib.A"), key)
+
+        runner.expect("test_0001", token)
+        th = threading.Thread(target=run, args=("test_0001",))
+        th.start()
+        assert worker.entered.wait(10)
+        assert runner.cancel(object()) is False  # another run's
+        assert runner.cancel("test_0001") is False  # the key is not the token
+        assert runner.cancel(None) is False
+        time.sleep(0.2)
+        assert th.is_alive() and worker.is_alive()  # nothing landed
+
+        assert runner.cancel(token) is True
+        th.join(10)
+        assert box["test_0001"].cancelled
+        assert runner.cancel(token) is False  # that run is over
+
+        worker.gate.set()
+        worker.entered.clear()
+        th = threading.Thread(target=run, args=("test_0002",))  # unannounced
+        th.start()
+        th.join(10)
+        assert box["test_0002"].success
+
+    def test_a_tool_that_died_as_the_test_returned_is_closed_and_restarted(
+        self, tmp_path
+    ):
+        """An interface that turns a lost connection into a failed result:
+        `run_test` returns, and the worker would look alive. It is closed,
+        so the next test starts a new tool instead of failing on a dead one."""
+        tool = subprocess.Popen([sys.executable, "-c", _SLEEP])
+
+        class _Returns(_Worker):
+            def run_test(self, test, test_key, progress=None):
+                if tool.poll() is None:
+                    tool.kill()
+                    tool.wait()
+                    return TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        error_message="connection lost",
+                    )
+                return _ok(test, test_key)
+
+        backend = _Backend(_config(tmp_path))
+        backend.quiet = True
+        worker = _Returns(0, backend.config)
+        worker.start()
+        worker.pids = {tool.pid}
+        runner = WorkerRunner(backend, worker)
+
+        first = runner.run(make_test_model("Lib.A"), "test_0001")
+        assert first.error_message == "connection lost" and not first.cancelled
+        assert not worker.is_alive() and worker.n_closed == 1
+
+        second = runner.run(make_test_model("Lib.B"), "test_0002")
+        assert second.success and worker.n_started == 2
+
     def test_a_cancelled_kill_is_not_charged_to_the_restart_budget(self, tmp_path):
         backend = _Backend(_config(tmp_path))
         backend.quiet = True
         worker = _Worker(0, backend.config)
         worker.start()
         runner = WorkerRunner(backend, worker)
-        threading.Timer(0.2, lambda: runner.cancel("test_0001")).start()
+        token = object()
+        runner.expect("test_0001", token)
+        threading.Timer(0.2, lambda: runner.cancel(token)).start()
 
         first = runner.run(make_test_model("Lib.A"), "test_0001")
         assert first.cancelled and not worker.is_alive()
@@ -1131,6 +1203,41 @@ def test_a_cancel_flag_without_a_stop_is_refused_at_registration():
 
     with pytest.raises(TypeError, match="Capability.CANCEL"):
         _validate_capabilities(_Claims, "Claims")
+
+
+def test_a_driver_that_had_finished_keeps_its_result_when_cancelled_late(
+    tmp_path, monkeypatch
+):
+    """The stop arrives after the driver exited 0 and before its run was
+    read: there is nothing left to kill, and what it wrote is a result."""
+    from conftest import python_example_copy
+    from dstf.backends import select_backend
+    from dstf.backends.common import json_driver
+
+    config, _ = python_example_copy(tmp_path)
+    quick = config.source_path / "Quick.py"
+    quick.write_text(
+        "def simulate(stop_time, tolerance):\n"
+        "    return {'time': [0.0, 1.0], 'variables': {'x': [0.0, 1.0]}}\n"
+    )
+    backend = select_backend(config, persistent=True)
+    backend.quiet = True
+    real_run = json_driver.run_killable
+    asked: list[bool] = []
+
+    def finished_then_cancelled(cmd, **kw):
+        proc = real_run(cmd, **kw)
+        asked.append(backend.cancel_test("test_0001"))
+        return proc
+
+    monkeypatch.setattr(json_driver, "run_killable", finished_then_cancelled)
+    test = make_test_model("Lib.Quick", source_file=quick, variable_patterns=["x"])
+
+    result = backend.run_single_test(test, "test_0001", 1, 1)
+
+    assert asked == [True]  # the stop was taken: its process was on record
+    assert result.success and not result.cancelled, result.error_message
+    assert backend._cancelled == set()
 
 
 def test_the_python_backend_kills_the_test_s_subprocess(tmp_path):

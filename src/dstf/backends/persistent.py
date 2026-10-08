@@ -897,8 +897,8 @@ class WorkerRunner(ItemRunner):
     def starting(self) -> tuple[str, float] | None:
         return self.worker.starting()
 
-    def expect(self, test_key: str) -> None:
-        super().expect(test_key)
+    def expect(self, test_key: str, token: object) -> None:
+        super().expect(test_key, token)
         self.worker.arm(test_key)
 
     def _stop_test(self, test_key: str) -> bool:
