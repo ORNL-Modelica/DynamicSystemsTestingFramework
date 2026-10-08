@@ -334,4 +334,7 @@ def test_openmodelica_timed_out_run_is_shown_and_not_passed(tmp_path, live):
         assert mat_reaches_time(watch.path, 10.0) == (False, None)
         assert reread.success is False and reread.error_message == note
         assert len(reread.variables[0].time) == rows
+        # what `compare` stores says the run's verdict AND the file's state
+        recorded = watch.backend.read_last_results([watch.test])["LiveLib.Slow"]
+        assert recorded.error_message == f"Run recorded timed_out — {note}"
     assert np.all(np.diff(watch.trace.series(NAMES[0])[0]) >= 0)

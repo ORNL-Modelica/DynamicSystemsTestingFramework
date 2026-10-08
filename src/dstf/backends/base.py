@@ -207,10 +207,18 @@ FAILED_RUN_STATUSES = ("failed", "timed_out")
 
 
 def _force_failed(result: "TestResult | None", status: str) -> None:
-    """Mark a successfully-read result as failed because the run says so."""
-    if result is not None and result.success:
+    """Mark a successfully-read result as failed because the run says so —
+    and say that the run says so beside the reader's own sentence, where the
+    reader already failed it over what it read: a run killed by its timeout
+    leaves a partial file, and "Partial result: …" alone does not say why."""
+    if result is None:
+        return
+    recorded = f"Run recorded {status}"
+    if result.success:
         result.success = False
-        result.error_message = result.error_message or f"Run recorded {status}"
+        result.error_message = result.error_message or recorded
+    elif result.variables and result.error_message:
+        result.error_message = f"{recorded} — {result.error_message}"
 
 
 def _with_run_timing(stats: dict | None, rr: TestRunResult) -> dict | None:

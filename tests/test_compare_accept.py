@@ -70,6 +70,41 @@ class TestStatusJsonVerdicts:
         _apply(run_verdicts(tmp_path, []), results)
         assert results["Lib.A"].error_message == "boom"
 
+    def test_a_partial_result_says_the_run_s_verdict_and_the_reader_s_sentence(
+        self, tmp_path
+    ):
+        """A run killed by its timeout leaves a partial file: its reader
+        fails the result with what the file holds, and the stored message
+        said that alone — not that the run timed out."""
+        from dstf.backends.types import VariableResult
+
+        _write_status(tmp_path, [{"model_id": "Lib.T", "status": "timed_out"}])
+        partial = "Partial result: dsres.mat holds 12 time points up to t=3.5"
+        shown = VariableResult(index=1, name="x", time=[0.0], values=[1.0])
+        results = {
+            "Lib.T": TestResult(
+                model_id="Lib.T",
+                success=False,
+                variables=[shown],
+                error_message=partial,
+            )
+        }
+        _apply(run_verdicts(tmp_path, []), results)
+        assert results["Lib.T"].success is False
+        assert results["Lib.T"].error_message == f"Run recorded timed_out — {partial}"
+
+    def test_a_failed_run_s_own_message_is_left_as_it_is(self, tmp_path):
+        """Nothing read: the message is the run's (`failed_run_result`),
+        which already says what happened."""
+        _write_status(tmp_path, [{"model_id": "Lib.T", "status": "timed_out"}])
+        results = {
+            "Lib.T": TestResult(
+                model_id="Lib.T", success=False, error_message="Timed out after 8s"
+            )
+        }
+        _apply(run_verdicts(tmp_path, []), results)
+        assert results["Lib.T"].error_message == "Timed out after 8s"
+
     def test_missing_status_json_is_noop(self, tmp_path):
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
         _apply(run_verdicts(tmp_path, []), results)  # no status.json written
