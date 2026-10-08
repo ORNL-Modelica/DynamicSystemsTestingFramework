@@ -213,6 +213,17 @@ def _with_run_timing(stats: dict | None, rr: TestRunResult) -> dict | None:
     return merge_timing_stats(out, timing)
 
 
+def failed_run_result(rr: TestRunResult) -> TestResult:
+    """The result of a run that failed: its message and its statistics, with
+    nothing read from disk — whatever file it left is partial."""
+    return TestResult(
+        model_id=rr.model_id,
+        success=False,
+        error_message=rr.error_message or "Simulation failed",
+        statistics=_with_run_timing(rr.statistics, rr),
+    )
+
+
 def kept_run_result(
     test_dir: Path, model_id: str, test_key: str
 ) -> TestRunResult | None:
@@ -505,9 +516,7 @@ class Backend(ABC):
         )
         self.progress = progress
 
-        # Assign test_keys (reuse existing from prior runs if present — supports
-        # incremental workflows where the manifest accumulates known tests).
-        manifest_map, keyed_tests = assign_test_keys(self.config.work_dir, tests)
+        manifest, keyed_tests = self.key_tests(tests)
         for test, test_key in keyed_tests:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             progress.register(
@@ -517,6 +526,27 @@ class Backend(ABC):
                 field_sources=test.field_sources,
             )
 
+        return RunSetup(
+            total=total,
+            run_metadata=run_metadata,
+            progress=progress,
+            keyed_tests=keyed_tests,
+            manifest=manifest,
+        )
+
+    def key_tests(
+        self, tests: list[TestModel]
+    ) -> tuple[BatchManifest, list[tuple[TestModel, str]]]:
+        """Key *tests* in the work dir's manifest and stamp them pending:
+        the saved manifest and ``(test, test_key)`` in the caller's order.
+
+        The half of the prologue a run of ONE test needs as much as a run of
+        a list (:meth:`_prepare_run` is the other caller).
+        """
+        self.config.work_dir.mkdir(parents=True, exist_ok=True)
+        # Assign test_keys (reuse existing from prior runs if present — supports
+        # incremental workflows where the manifest accumulates known tests).
+        manifest_map, keyed_tests = assign_test_keys(self.config.work_dir, tests)
         manifest = BatchManifest(
             work_dir=self.config.work_dir,
             manifest=manifest_map,
@@ -529,14 +559,7 @@ class Backend(ABC):
         # own last verdict (that is what --merge/--rerun report over).
         manifest.mark_pending({t.model_id for t in tests})
         manifest.save()
-
-        return RunSetup(
-            total=total,
-            run_metadata=run_metadata,
-            progress=progress,
-            keyed_tests=keyed_tests,
-            manifest=manifest,
-        )
+        return manifest, keyed_tests
 
     @property
     def run_summary_phrase(self) -> str:
@@ -711,15 +734,7 @@ class Backend(ABC):
                 test_model = test_lookup.get(model_id)
 
                 if rr and not rr.success:
-                    _store(
-                        model_id,
-                        TestResult(
-                            model_id=model_id,
-                            success=False,
-                            error_message=rr.error_message or "Simulation failed",
-                            statistics=_with_run_timing(rr.statistics, rr),
-                        ),
-                    )
+                    _store(model_id, failed_run_result(rr))
                     continue
 
                 if (

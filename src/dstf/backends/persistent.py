@@ -391,6 +391,169 @@ class Worker(ABC):
 
 
 # ---------------------------------------------------------------------------
+# One worker's dispatch state
+# ---------------------------------------------------------------------------
+
+
+class WorkerRunner:
+    """What a dispatch thread does for each test it takes: bring a dead worker
+    back within its restart budget, run the test under the watchdog, keep the
+    restart accounting.
+
+    One per worker, living as long as its dispatch thread. ``retired`` is the
+    sentence the worker was given up with; the test in hand has already been
+    failed with it, and the thread holding this runner takes no more tests.
+    """
+
+    def __init__(self, backend: "PersistentBackendBase", worker: "Worker"):
+        self.backend = backend
+        self.worker = worker
+        # Whether the previous test left the worker dead for a benign reason
+        # (we deliberately hard-killed it after a per-test timeout, or it was
+        # disk-rescued post-timeout). Such restarts shouldn't count against
+        # the worker's permanent-broken budget — the worker was healthy, the
+        # test was slow.
+        self._prev_killed_worker = False
+        self.retired: str | None = None
+
+    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+        """Run *test* on this worker. Never raises: a worker that cannot be
+        restarted, and one that raises, are both a failed result."""
+        w, backend = self.worker, self.backend
+        if not w.is_alive():
+            if not self._restart(count_against_budget=not self._prev_killed_worker):
+                self.retired = "Worker dead; restart exhausted"
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=0.0,
+                    error_message=self.retired,
+                )
+            self._prev_killed_worker = False  # consumed by restart
+        if backend.progress is not None:
+            backend.progress.on_start(test_key, worker_id=w.worker_id)
+        timeout = float(
+            test.timeout if test.timeout is not None else backend.config.timeout
+        )
+        try:
+            tr = w.run_test_with_timeout(
+                test,
+                test_key,
+                timeout,
+                progress=backend.progress,
+            )
+        except Exception as exc:
+            # review 2026-07-06 (finding 21): the Worker ABC contract permits
+            # raises for worker-level catastrophes. A raise must be recorded —
+            # not kill the dispatch thread and silently drop the in-flight
+            # test (plus, at --parallel 1, the whole remaining queue). The
+            # next test's is_alive()/restart logic handles the possibly-dead
+            # worker.
+            logger.exception(
+                "Worker %s raised while running %s",
+                w.worker_id,
+                test.model_id,
+            )
+            self._prev_killed_worker = False
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=0.0,
+                error_message=f"worker exception: {exc!r}",
+            )
+        # Reset the restart counter on a successful test — the worker has
+        # demonstrably recovered. Consecutive *real* worker deaths
+        # (translation broke / RPC dead) still accumulate to
+        # ``max_restarts_per_worker`` and trip restart-exhausted. Benign
+        # worker kills (timeout, post-timeout disk-rescue) flow through
+        # _prev_killed_worker so they don't poison the counter.
+        if tr.success and not tr.worker_killed:
+            w._n_restarts = 0
+        self._prev_killed_worker = bool(tr.timed_out or tr.worker_killed)
+        return tr
+
+    def _restart(self, count_against_budget: bool = True) -> bool:
+        """Bring the worker back up after a death.
+
+        ``count_against_budget`` distinguishes two scenarios:
+
+        * **True** (default): worker died because something is genuinely
+          wrong with it (translation returned False with no diagnostic
+          log; RPC error; start() failure on a previous iteration). The
+          counter increments; after ``max_restarts_per_worker`` such
+          consecutive failures, we declare the worker permanently dead.
+        * **False**: worker died because the dispatch loop hard-killed
+          it after a per-test *timeout*. The worker was healthy when
+          the test started — it actively translated/simulated for the
+          full timeout budget. Restart is just to bring up a fresh
+          process; the count of "consecutive worker deaths" should not
+          tick up. This avoids a known cascade where 3 slow tests in
+          a row exhaust the budget and synthesize ~290 fake failures
+          for the rest of the queue.
+        """
+        w, backend = self.worker, self.backend
+        n_restarts = w._n_restarts
+        if count_against_budget and n_restarts >= backend.max_restarts_per_worker:
+            return False
+        if count_against_budget:
+            n_restarts += 1
+            w._n_restarts = n_restarts
+        t0 = time.monotonic()
+        # Exactly one retry, after a short pause. A start() that fails is
+        # usually transient (licence seat not yet released by the process
+        # we just killed); retiring the dispatch thread on the first
+        # failure cost the whole remaining queue at --parallel 1. The
+        # retry is NOT a second charge against the restart budget — it is
+        # the same restart attempt, tried twice.
+        backoff = backend.restart_retry_backoff_seconds
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            if attempt == 2:
+                if not backend.quiet:
+                    print(
+                        f"  Worker {w.worker_id}: retrying restart in "
+                        f"{backoff:.0f}s (one retry, then the worker is retired)",
+                        file=sys.stderr,
+                    )
+                time.sleep(backoff)
+                t0 = time.monotonic()
+            try:
+                w.start()
+            except Exception as exc:
+                last_exc = exc
+                if not backend.quiet:
+                    print(
+                        f"  Worker {w.worker_id}: restart FAILED — {exc}",
+                        file=sys.stderr,
+                    )
+                continue
+            if not backend.quiet:
+                if count_against_budget:
+                    print(
+                        f"  Worker {w.worker_id}: restarted "
+                        f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
+                        f"{backend.max_restarts_per_worker})",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"  Worker {w.worker_id}: restarted post-timeout "
+                        f"({time.monotonic() - t0:.1f}s — not counted)",
+                        file=sys.stderr,
+                    )
+            return True
+        if not backend.quiet:
+            print(
+                f"  Worker {w.worker_id}: restart failed twice "
+                f"({type(last_exc).__name__}) — retiring the worker",
+                file=sys.stderr,
+            )
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Persistent-worker template
 # ---------------------------------------------------------------------------
 
@@ -742,83 +905,6 @@ class PersistentBackendBase(Backend):
                     timed_out=tr.timed_out,
                 )
 
-        def _try_restart(w: "Worker", count_against_budget: bool = True) -> bool:
-            """Bring the worker back up after a death.
-
-            ``count_against_budget`` distinguishes two scenarios:
-
-            * **True** (default): worker died because something is genuinely
-              wrong with it (translation returned False with no diagnostic
-              log; RPC error; start() failure on a previous iteration). The
-              counter increments; after ``max_restarts_per_worker`` such
-              consecutive failures, we declare the worker permanently dead.
-            * **False**: worker died because the dispatch loop hard-killed
-              it after a per-test *timeout*. The worker was healthy when
-              the test started — it actively translated/simulated for the
-              full timeout budget. Restart is just to bring up a fresh
-              process; the count of "consecutive worker deaths" should not
-              tick up. This avoids a known cascade where 3 slow tests in
-              a row exhaust the budget and synthesize ~290 fake failures
-              for the rest of the queue.
-            """
-            n_restarts = w._n_restarts
-            if count_against_budget and n_restarts >= self.max_restarts_per_worker:
-                return False
-            if count_against_budget:
-                n_restarts += 1
-                w._n_restarts = n_restarts
-            t0 = time.monotonic()
-            # Exactly one retry, after a short pause. A start() that fails is
-            # usually transient (licence seat not yet released by the process
-            # we just killed); retiring the dispatch thread on the first
-            # failure cost the whole remaining queue at --parallel 1. The
-            # retry is NOT a second charge against the restart budget — it is
-            # the same restart attempt, tried twice.
-            backoff = self.restart_retry_backoff_seconds
-            last_exc: Exception | None = None
-            for attempt in (1, 2):
-                if attempt == 2:
-                    if not self.quiet:
-                        print(
-                            f"  Worker {w.worker_id}: retrying restart in "
-                            f"{backoff:.0f}s (one retry, then the worker is retired)",
-                            file=sys.stderr,
-                        )
-                    time.sleep(backoff)
-                    t0 = time.monotonic()
-                try:
-                    w.start()
-                except Exception as exc:
-                    last_exc = exc
-                    if not self.quiet:
-                        print(
-                            f"  Worker {w.worker_id}: restart FAILED — {exc}",
-                            file=sys.stderr,
-                        )
-                    continue
-                if not self.quiet:
-                    if count_against_budget:
-                        print(
-                            f"  Worker {w.worker_id}: restarted "
-                            f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
-                            f"{self.max_restarts_per_worker})",
-                            file=sys.stderr,
-                        )
-                    else:
-                        print(
-                            f"  Worker {w.worker_id}: restarted post-timeout "
-                            f"({time.monotonic() - t0:.1f}s — not counted)",
-                            file=sys.stderr,
-                        )
-                return True
-            if not self.quiet:
-                print(
-                    f"  Worker {w.worker_id}: restart failed twice "
-                    f"({type(last_exc).__name__}) — retiring the worker",
-                    file=sys.stderr,
-                )
-            return False
-
         # review 2026-07-06 (finding 20): dispatch-thread liveness registry.
         # A worker whose restart failed permanently must NOT stay in the
         # dispatch loop — it would tight-loop on the shared queue, instantly
@@ -855,13 +941,7 @@ class PersistentBackendBase(Backend):
                     _fail_dead(test, test_key, reason)
                 work_queue.task_done()
 
-        def _worker_loop(w: "Worker"):
-            # Track whether the previous test left the worker dead for a
-            # benign reason (we deliberately hard-killed it after a per-
-            # test timeout, or it was disk-rescued post-timeout). Such
-            # restarts shouldn't count against the worker's permanent-
-            # broken budget — the worker was healthy, the test was slow.
-            prev_killed_worker = False
+        def _worker_loop(runner: WorkerRunner):
             try:
                 while True:
                     item = work_queue.get()
@@ -869,84 +949,14 @@ class PersistentBackendBase(Backend):
                         work_queue.task_done()
                         return
                     test, test_key = item
-                    restart_exhausted = False
                     try:
-                        if not w.is_alive():
-                            if not _try_restart(
-                                w, count_against_budget=not prev_killed_worker
-                            ):
-                                # review 2026-07-06 (finding 20): fail-mark
-                                # ONLY the item this thread already holds;
-                                # exit the loop right after the finally so
-                                # remaining tests go to live workers.
-                                _fail_dead(
-                                    test,
-                                    test_key,
-                                    "Worker dead; restart exhausted",
-                                )
-                                restart_exhausted = True
-                            else:
-                                prev_killed_worker = False  # consumed by restart
-                        if not restart_exhausted:
-                            if self.progress is not None:
-                                self.progress.on_start(test_key, worker_id=w.worker_id)
-                            timeout = float(
-                                test.timeout
-                                if test.timeout is not None
-                                else self.config.timeout
-                            )
-                            try:
-                                tr = w.run_test_with_timeout(
-                                    test,
-                                    test_key,
-                                    timeout,
-                                    progress=self.progress,
-                                )
-                            except Exception as exc:
-                                # review 2026-07-06 (finding 21): the Worker
-                                # ABC contract permits raises for worker-level
-                                # catastrophes. A raise must be recorded — not
-                                # kill the dispatch thread and silently drop
-                                # the in-flight test (plus, at --parallel 1,
-                                # the whole remaining queue). The next
-                                # iteration's is_alive()/restart logic handles
-                                # the possibly-dead worker.
-                                logger.exception(
-                                    "Worker %s raised while running %s",
-                                    w.worker_id,
-                                    test.model_id,
-                                )
-                                _record(
-                                    test,
-                                    test_key,
-                                    TestRunResult(
-                                        model_id=test.model_id,
-                                        test_key=test_key,
-                                        success=False,
-                                        elapsed=0.0,
-                                        error_message=f"worker exception: {exc!r}",
-                                    ),
-                                )
-                                prev_killed_worker = False
-                            else:
-                                _record(test, test_key, tr)
-                                # Reset the restart counter on a successful
-                                # test — the worker has demonstrably recovered.
-                                # Consecutive *real* worker deaths (translation
-                                # broke / RPC dead) still accumulate to
-                                # ``max_restarts_per_worker`` and trip restart-
-                                # exhausted. Benign worker kills (timeout,
-                                # post-timeout disk-rescue) flow through
-                                # prev_killed_worker so they don't poison the
-                                # counter.
-                                if tr.success and not tr.worker_killed:
-                                    w._n_restarts = 0
-                                prev_killed_worker = bool(
-                                    tr.timed_out or tr.worker_killed
-                                )
+                        _record(test, test_key, runner.run(test, test_key))
                     finally:
                         work_queue.task_done()
-                    if restart_exhausted:
+                    if runner.retired:
+                        # review 2026-07-06 (finding 20): the item this thread
+                        # held is fail-marked (by the runner); exit so the
+                        # remaining tests go to live workers.
                         return
             finally:
                 # review 2026-07-06 (finding 20): last thread out drains the
@@ -963,7 +973,7 @@ class PersistentBackendBase(Backend):
         threads = [
             threading.Thread(
                 target=_worker_loop,
-                args=(w,),
+                args=(WorkerRunner(self, w),),
                 name=f"{thread_prefix}-pworker-{w.worker_id}",
             )
             for w in live_workers
