@@ -38,6 +38,7 @@ from ..capabilities import Placement
 from ..session import Selection
 from ..tree_text import leaf_name, parent_kinds
 from .actions import InlineHost, RowTarget
+from .family_fold import Folding
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status
 from .widgets import MiddleCut, Pill
@@ -500,6 +501,9 @@ class PlotCard:
                     self.rows[path] = CriterionRow(
                         self, row["leaf"], takers.get(path), row["crumbs"], crumb_ch
                     )
+            #: A family's identical criteria, folded into one row each
+            #: (D152): painted with the rows, in `paint`.
+            self.folding = Folding(self, criteria, crumb_ch)
             if resolved.watch:
                 ui.label("No criteria yet.").classes("dstf-why").mark(
                     f"plot-empty:{index}"
@@ -649,6 +653,7 @@ class PlotCard:
             )
             pill.set(status, text)
         self._paint_rows(view)
+        self.folding.paint(view)
         takers = parent_kinds(view)
         for path, row in self.rows.items():
             if takers.get(path) != row.taker:
@@ -902,7 +907,11 @@ class PlotCard:
         """The editor, below its row and at the plot's width (board 2A):
         one hint line and Done, then every capability placed at CRITERION,
         stacked without headings — the row above already names the
-        criterion, so the editor reads as one thing (brief §3.2)."""
+        criterion, so the editor reads as one thing (brief §3.2). A folded
+        row's editor is its own (`family_fold.FoldRow.open_editor`)."""
+        view = self._view(view)
+        if self.folding.opens(path, view):
+            return
         row, index = self.rows[path], self.index
         model, variable = self.page.model_id, row.variable
         self.open_path = path

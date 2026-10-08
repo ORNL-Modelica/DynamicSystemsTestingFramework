@@ -33,11 +33,13 @@ from ...reporting.tree_rows import leaves_of
 from ...storage.ref_index import RefIndex
 from ..capabilities import Outcome, plural
 from ..errors import user_text
+from ..family_rows import is_fold, leaf_of
 from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..session import JobRunningError, LockedError
 from ..situation import Strip, new_variables, strip_for
 from ..tree_pointer import node_or_none
 from .actions import ActionBar, RowBuild, RowTarget
+from .family_fold import Folding
 from .header import Header
 from .plot_card import GRIPS_URL, UNREAD, PlotCard, folded
 from .rail import Rail
@@ -312,8 +314,13 @@ class TestPage:
     def editing_for(self, index: int) -> tuple[str, ...]:
         """The leaf paths whose rings plot ``index`` draws — the open
         criterion's, and only on the card its row is on. A tuple, never a
-        bare string: `rings_for` refuses one."""
-        if self.open is not None and self.open[0] == index:
+        bare string: `rings_for` refuses one. None for a folded row's
+        editor (D152): it is fields only, and its key is no leaf's path."""
+        if (
+            self.open is not None
+            and self.open[0] == index
+            and not is_fold(self.open[1])
+        ):
             return (self.open[1],)
         return ()
 
@@ -430,8 +437,10 @@ class TestPage:
         that does (a tree row's add has no plot). Recorded only when that
         criterion EXISTS: apply is synchronous, so a refused add left no
         node, and a reveal kept for it opened the next add's criterion by
-        itself."""
-        if node_or_none(self.shell.session.tree(self.model_id), path) is not None:
+        itself. A folded row's key (D152) is revealed while its first
+        member exists."""
+        tree = self.shell.session.tree(self.model_id)
+        if node_or_none(tree, leaf_of(path)) is not None:
             self.pending_reveal = (path, index)
 
     def _reveal(self, path: str, index: int | None) -> None:
@@ -654,6 +663,8 @@ class TestPage:
         the edit did not keep."""
         if self.tree is not None:
             self.tree.rekey(paths)
+        # The plots' unfolded family rows are kept by their members' paths.
+        Folding.rekey(self.state, self.model_id, paths)
         kept = self.state.kept.get(self.model_id)
         if kept:
             self.state.kept[self.model_id] = {
@@ -751,6 +762,8 @@ class TestPage:
                 self.focused = None
                 self._paint_focus(view)
             self.cards[index].show(view)
+            # Its OWN row: a family's folded row would hide it (D152).
+            self.cards[index].folding.unfold_to(path, view)
         elif self.stats is not None and self.stats.row_for(path) is not None:
             index = STATS
             if not self.stats.is_open:
