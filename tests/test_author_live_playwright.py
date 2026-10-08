@@ -221,6 +221,9 @@ def test_a_running_test_s_trace_grows_and_ends_on_its_scored_result(
         page.wait_for_function(f"() => ({PLOT})().x.length === 400")
         done = _plot(page)
         assert np.allclose(done["x"], times) and np.allclose(done["y"], 1.25 * times)
+        # The run's zoom went with the run: the result is drawn whole.
+        assert done["xrange"] == [0.0, 1.0]
+        assert done["yrange"][0] <= 0.0 and done["yrange"][1] >= 1.25
         rows = page.evaluate(ROWS)
         assert rows["pills"] == rows["every"] > 0
         assert "NRMSE" in rows["readouts"][0]

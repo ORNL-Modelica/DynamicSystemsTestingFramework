@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -43,6 +44,11 @@ FAILED = "Failed"
 
 #: The name of the shape :func:`stopped_marker` adds.
 STOPPED = "stopped"
+
+#: The ``uirevision`` of a figure :func:`spanned` over a run, in place of
+#: the figure layer's own: what the browser keeps of a plot — a zoom, the
+#: legend's choices — it keeps while this stands.
+RUN_REVISION = "run"
 
 #: Samples a :class:`LiveTrace` holds per name before it thins them: an
 #: hour of a run that writes faster than the reader serves is 7 million
@@ -264,14 +270,26 @@ def unscored_view(spec: SpecNode, texts: Mapping[str, VariableText], word: str) 
 def spanned(figure: dict, stop_time: float | None) -> dict:
     """``figure`` with its time axis spanning the whole run, 0 to
     ``stop_time``, so a growing trace grows INTO the plot; as it was with
-    no stop time. The range is the same in every figure of the run, which
-    is what lets a zoom survive each of them (the figure's ``uirevision``).
-    A copy: nothing is written into the figure handed in."""
+    no stop time. The range is the same in every figure of the run, and so
+    is its ``uirevision`` (:data:`RUN_REVISION`): a zoom made while the
+    test runs survives every update, and the plot starts over — both axes,
+    not the time axis alone — when the run's first figure replaces the
+    last result's and when the next result's replaces the run's. A copy:
+    nothing is written into the figure handed in."""
     if stop_time is None or not stop_time > 0:
         return figure
-    layout = figure["layout"]
-    axis = {**layout.get("xaxis", {}), "range": [0.0, float(stop_time)]}
-    return {**figure, "layout": {**layout, "xaxis": axis}}
+
+    def revised(value: Any) -> Any:
+        if isinstance(value, dict) and value.get("uirevision") == "keep":
+            return {**value, "uirevision": RUN_REVISION}
+        return value
+
+    layout: dict = {
+        key: revised(value) if key[1:5] == "axis" else value
+        for key, value in revised(figure["layout"]).items()
+    }
+    layout["xaxis"] = {**layout.get("xaxis", {}), "range": [0.0, float(stop_time)]}
+    return {**figure, "layout": layout}
 
 
 def stopped_marker(figure: dict, partial: Partial, colour: str) -> dict:

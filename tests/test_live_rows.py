@@ -245,7 +245,10 @@ FIGURE = {
     "data": [{"x": [0, 1], "y": [0, 1]}],
     "layout": {
         "xaxis": {"title": {"text": "time"}, "uirevision": "keep"},
-        "xaxis2": {"title": {"text": "Hz"}},
+        "yaxis": {"uirevision": "keep"},
+        "yaxis3": {"uirevision": "error/abs"},
+        "xaxis2": {"title": {"text": "Hz"}, "uirevision": "keep"},
+        "uirevision": "keep",
         "shapes": [{"type": "rect", "name": "a"}],
     },
 }
@@ -254,11 +257,25 @@ FIGURE = {
 def test_spanned_sets_the_time_axis_to_the_whole_run_on_a_copy():
     figure = spanned(FIGURE, 100.0)
     assert figure["layout"]["xaxis"]["range"] == [0.0, 100.0]
-    assert figure["layout"]["xaxis"]["uirevision"] == "keep"
     assert "range" not in figure["layout"]["xaxis2"]  # the spectrum's is not time
     assert "range" not in FIGURE["layout"]["xaxis"]
     # no stop time, or none ahead of the start: the axis stays the data's
     assert spanned(FIGURE, None) is FIGURE and spanned(FIGURE, 0.0) is FIGURE
+
+
+def test_a_spanned_figure_is_another_revision_of_the_plot():
+    """The time axis's range changes when a run starts and when it ends.
+    Under the figure's own revision the browser would then reset that axis
+    and keep a zoom's y range: every axis the figure pinned moves to the
+    run's revision, so the plot starts over whole — and keeps a zoom made
+    mid-run, the revision standing for as long as the run."""
+    layout = spanned(FIGURE, 100.0)["layout"]
+    assert layout["uirevision"] == live_rows.RUN_REVISION
+    for axis in ("xaxis", "yaxis", "xaxis2"):
+        assert layout[axis]["uirevision"] == live_rows.RUN_REVISION
+    assert layout["yaxis3"]["uirevision"] == "error/abs"  # the error axes' own
+    assert FIGURE["layout"]["uirevision"] == "keep"
+    assert FIGURE["layout"]["yaxis"]["uirevision"] == "keep"
 
 
 def test_the_stopped_marker_is_a_line_and_its_words_in_the_given_colour():
