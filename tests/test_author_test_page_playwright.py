@@ -7645,19 +7645,36 @@ def test_an_arrow_dragged_across_its_target_snaps_back_and_says_why(
 
 # -- the grips show on hover (D147) ----------------------------------------
 
+#: Whether the arrow path ``el`` of the plot ``gd`` is one a person SEES, as
+#: far as the DOM can say: it has a box — a path under `display: none` has
+#: none — and nothing from it up to the plot's own element takes the paint
+#: off what has one: a `visibility` that is not `visible`, an `opacity`
+#: under 1. A box alone called an arrow shown that a rule of the stylesheet
+#: had made transparent, and a press test agreed: Plotly writes
+#: `pointer-events: all` on every editable shape, so it is hit where nothing
+#: shows. What the SCREEN shows is `_orange`'s to say.
+_SEEN = """(el, gd) => {
+    const b = el.getBoundingClientRect();
+    if (!(b.width > 0 && b.height > 0)) return false;
+    for (let n = el; n; n = n === gd ? null : n.parentNode) {
+      const style = getComputedStyle(n);
+      if (style.visibility !== 'visible' || +style.opacity !== 1) return false;
+    }
+    return true;
+  }"""
+
 #: Plot ``card``'s grips as the page holds them: every path the hover module
 #: marked (`data-grip`), by the tail of its shape's name, and whether it is
-#: DISPLAYED — a path under `display: none` has no box. `drawn` counts the
-#: figure's own grip shapes, so "none is shown" is never said of a plot
-#: whose grips were not marked at all.
+#: DISPLAYED (`_SEEN`). `drawn` counts the figure's own grip shapes, so "none
+#: is shown" is never said of a plot whose grips were not marked at all.
 GRIPS_ON = """
 ([card, colour]) => {
+  const seen = __SEEN__;
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
   const shapes = gd.layout.shapes || [];
   const marked = [...gd.querySelectorAll('.shapelayer path[data-grip]')].map(el => {
-    const b = el.getBoundingClientRect();
     const name = shapes[+el.getAttribute('data-index')].name;
-    return [name.split('/').slice(-3).join('/'), b.width > 0 && b.height > 0];
+    return [name.split('/').slice(-3).join('/'), seen(el, gd)];
   });
   return {
     marked: marked.map(m => m[0]).sort(),
@@ -7665,7 +7682,7 @@ GRIPS_ON = """
     drawn: shapes.filter(s => s.fillcolor === colour && s.visible !== false).length,
   };
 }
-"""
+""".replace("__SEEN__", _SEEN)
 
 
 def _grips_on(page, card: int = 0) -> dict:
@@ -9374,36 +9391,36 @@ ARROW_AT = """
 """
 
 #: Shape ``index`` of plot ``card`` at viewport ``(x, y)``: whether the hover
-#: module marks it shown, and whether a press there is on it.
+#: module marks it shown and it is seen (`_SEEN`), and whether a press there
+#: is on it.
 ARROW_STATE = """
 ([card, index, x, y]) => {
+  const seen = __SEEN__;
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
   const el = gd.querySelector('.shapelayer path[data-index="' + index + '"]');
   return {
-    on: !!el && el.hasAttribute('data-grip-on'),
+    on: !!el && el.hasAttribute('data-grip-on') && seen(el, gd),
     hit: !!el && document.elementFromPoint(x, y) === el,
   };
 }
-"""
+""".replace("__SEEN__", _SEEN)
 
-#: The arrows of plot ``card`` a person SEES, by the tail of their names: a
-#: path under `display: none` has no box.
+#: The arrows of plot ``card`` a person SEES (`_SEEN`), by the tail of
+#: their names.
 DISPLAYED = """
 (card) => {
+  const seen = __SEEN__;
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
   const shapes = gd.layout.shapes || [];
   return [...gd.querySelectorAll('.shapelayer path[data-grip]')]
-    .filter(el => {
-      const b = el.getBoundingClientRect();
-      return b.width > 0 && b.height > 0;
-    })
+    .filter(el => seen(el, gd))
     .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
     .sort();
 }
-"""
+""".replace("__SEEN__", _SEEN)
 
 #: Record IN THE PAGE what plot ``card`` displays after every real
-#: `mousemove` from now on — `DISPLAYED`'s own rule, read where the event
+#: `mousemove` from now on — `DISPLAYED`'s own rule (`_SEEN`), read where the event
 #: is heard — beside where the event was. On `document`, as it bubbles: the
 #: hover module hears the move on the plot first. A walk of the real mouse
 #: is then read back ONCE (`WATCHED`), not once per pixel: a round trip to
@@ -9415,46 +9432,44 @@ WATCH = """
   watch.gd = document.querySelectorAll('.js-plotly-plot')[card];
   watch.log.length = 0;
   if (watch.heard) return;
+  const seen = __SEEN__;
   watch.heard = (e) => {
     const gd = window.__dstfWatch.gd, shapes = gd.layout.shapes || [];
     window.__dstfWatch.log.push([e.isTrusted, e.clientX, e.clientY,
       [...gd.querySelectorAll('.shapelayer path[data-grip]')]
-        .filter(el => {
-          const b = el.getBoundingClientRect();
-          return b.width > 0 && b.height > 0;
-        })
+        .filter(el => seen(el, gd))
         .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
         .sort()]);
   };
   document.addEventListener('mousemove', watch.heard);
 }
-"""
+""".replace("__SEEN__", _SEEN)
 
 #: What `WATCH` recorded since it was last read, oldest first: per real
 #: mouse move, whether the browser made it, where, and the arrows shown.
 WATCHED = "() => window.__dstfWatch.log.splice(0)"
 
 #: Shape ``index`` of plot ``card`` — an arrow — and viewport ``(x, y)``:
-#: whether the arrow is displayed, and WHICH shape a press there is on
+#: whether the arrow is displayed (`_SEEN`), and WHICH shape a press there is on
 #: (`document.elementFromPoint`): its index in the figure, the tail of its
 #: name, whether it is an arrow.
 UNDER_POINTER = """
 ([card, index, x, y]) => {
+  const seen = __SEEN__;
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
   const shapes = gd.layout.shapes || [];
   const el = gd.querySelector('.shapelayer path[data-index="' + index + '"]');
-  const b = el ? el.getBoundingClientRect() : null;
   const hit = document.elementFromPoint(x, y);
   const shape = hit && hit.closest('.shapelayer') && hit.hasAttribute('data-index');
   const at = shape ? +hit.getAttribute('data-index') : null;
   return {
-    displayed: !!b && b.width > 0 && b.height > 0,
+    displayed: !!el && seen(el, gd),
     index: at,
     hit: at === null ? null : shapes[at].name.split('/').slice(-3).join('/'),
     arrow: at !== null && hit.hasAttribute('data-grip'),
   };
 }
-"""
+""".replace("__SEEN__", _SEEN)
 
 #: Plot ``card``'s groups as its figure names them (`layout.meta.dstf`), each
 #: with what the figure draws of it, in viewport pixels: the x of its ring
@@ -9514,6 +9529,28 @@ def _areas(page, card: int = 0) -> dict[str, dict]:
         }
         for key, g in groups.items()
     }
+
+
+#: An arrow as the figure draws it (`figures.plotly._GRIP_PATHS`): a filled
+#: triangle 12 px wide and 7 long, 42 px² of the grips' orange.
+ARROW_PX = 42
+
+
+def _orange_in(page, *areas: dict) -> int:
+    """How many pixels of the SCREEN are the grips' orange over the hover
+    ``areas`` — each holds its group's ring and every one of its arrows
+    whole. The paint itself, which no reading of the DOM is: an arrow drawn
+    in the plot's own background has a box, full opacity, and takes a
+    press."""
+    return _orange(
+        page,
+        {
+            "left": min(a["l"] for a in areas),
+            "top": min(a["t"] for a in areas),
+            "right": max(a["r"] for a in areas),
+            "bottom": max(a["b"] for a in areas),
+        },
+    )
 
 
 def _overlap(p: dict, q: dict) -> bool:
@@ -9792,14 +9829,23 @@ def test_far_apart_checkpoints_show_their_own_arrows_and_between_them_none(
         ), areas
         zero, one = _group("points", 0, FOUR), _group("points", 1, FOUR)
         first, second = (areas[f"points/{i}"]["rings"][0] for i in (0, 1))
+        a0, a1 = areas["points/0"], areas["points/1"]
+        four = 0.8 * 4 * ARROW_PX  # four arrows, filled, but for their edges
         _rest(page)
+        assert (_orange_in(page, a0), _orange_in(page, a1)) == (0, 0)
         page.mouse.move(*first)
         assert _displayed(page) == zero
+        painted = _orange_in(page, a0), _orange_in(page, a1)
+        assert painted[0] >= four and painted[1] == 0, painted
         page.mouse.move(*second)
         assert _displayed(page) == one
+        painted = _orange_in(page, a0), _orange_in(page, a1)
+        assert painted[0] == 0 and painted[1] >= four, painted
         between = ((first[0] + second[0]) / 2, first[1])
         page.mouse.move(*between)
         assert _displayed(page) == []
+        # The control: with none displayed, nothing there is orange.
+        assert (_orange_in(page, a0), _orange_in(page, a1)) == (0, 0)
         hidden = page.evaluate(
             """() => [...document.querySelectorAll('.js-plotly-plot')[0]
                  .querySelectorAll('.shapelayer path[data-grip]')]
@@ -9833,6 +9879,12 @@ CLUSTERED = {
     # On ONE spot: every arrow of the first is drawn under the second's.
     "one spot": ((500, 0.5), (500, 0.5)),
 }
+
+#: The cases none of whose arrows is drawn over another, and how many they
+#: are: what the screen holds of the grips' orange there is that many whole
+#: arrows. In every other case two members' arrows overlap, and it is at
+#: least one member's four.
+APART = {"40 px apart": 8, "a chain of three": 12, "an L": 8}
 
 #: The arrows of a case that are NOT whole under the pointer: how many of
 #: their 7 centreline px are their own, and whose arrow — a member's, drawn
@@ -9893,8 +9945,18 @@ def test_close_checkpoints_show_together_wherever_the_pointer_is_in_their_areas(
         box = _plot_box(page)
         assert _over(box, (left - 12, top - 12), (right + 12, bottom + 12))
 
+        # On the screen: with the pointer on the first ring every arrow of
+        # the cluster is painted, and at rest none is.
+        _rest(page)
+        assert _orange_in(page, *areas.values()) == 0, case
+        page.mouse.move(*rings[0])
+        assert _displayed(page) == every
+        painted = _orange_in(page, *areas.values())
+        assert painted >= 0.8 * ARROW_PX * APART.get(case, 4), (case, painted)
+
         # Everywhere: a grid over the box around the areas and 9 px beyond.
         _rest(page)
+        assert _orange_in(page, *areas.values()) == 0, case
         grid = [
             (x, y)
             for x in range(int(left) - 9, int(right) + 10, 7)
