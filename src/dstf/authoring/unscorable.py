@@ -1,6 +1,7 @@
 """What an editor refuses to stage because it can never score: a negative
 tolerance — a number, or either side of a pair; a value's or a time's; the
-criterion's or a table row's — and bounds out of order.
+criterion's or a table row's — a tube's constant width as a negative
+number, and bounds out of order.
 
 The EDITOR's rule, raised from a capability's ``act`` before anything is
 staged, the way a window that ends before it starts is refused. It is not
@@ -14,6 +15,9 @@ from typing import TypeGuard
 
 #: The keys that hold a tolerance, on a criterion and in a row of its tables.
 TOLERANCES = ("tolerance", "time_tolerance")
+
+#: The keys that hold a tube's constant width (``TubeConfig``).
+WIDTHS = ("tube_abs", "tube_rel")
 
 #: The metrics whose two bounds may not be EQUAL either: the scorer refuses
 #: a scalar leaf with ``min_value >= max_value`` when it is built
@@ -56,6 +60,18 @@ def refuse_negative(
     for what, side in sides:
         if _is_number(side) and side < 0:
             raise ValueError(f"{where}{what} must not be negative; got {_num(side)}")
+
+
+def refuse_negative_width(key: str, value: object) -> None:
+    """Raise ``ValueError`` when the tube width ``value`` held under ``key``
+    is a negative NUMBER: ``tube_abs must not be negative; got −0.3``. A
+    number is both sides, and with both below zero the tube's upper bound
+    is under its lower one: nothing is ever inside it (it was staged, and
+    read "0.0% inside tube"). A PAIR is not this rule's: with one side
+    negative it is a band shifted off its reference, which a run can lie
+    in."""
+    if _is_number(value):
+        refuse_negative(key, value)
 
 
 def refuse_bounds(metric: str, params: Mapping[str, object]) -> None:

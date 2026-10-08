@@ -27,7 +27,13 @@ from ...comparison.tree_spec import (
 )
 from ..capabilities import Panel, Patch, Placement
 from ..tree_pointer import node_or_none
-from ..unscorable import TOLERANCES, refuse_bounds, refuse_negative
+from ..unscorable import (
+    TOLERANCES,
+    WIDTHS,
+    refuse_bounds,
+    refuse_negative,
+    refuse_negative_width,
+)
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -74,8 +80,8 @@ def _authored_leaf(tree: dict | None, path: str) -> dict | None:
 def refuse_unscorable(name: str, params: dict) -> None:
     """Raise ``ValueError`` for a criterion of metric ``name`` whose
     ``params`` can never score (`..unscorable`): a negative tolerance, its
-    sides named as the mode's own fields name them, or bounds out of
-    order."""
+    sides named as the mode's own fields name them, a tube's width as a
+    negative number, or bounds out of order."""
     desc = metric(name)
     sides: dict[str, Any] = {}
     if desc is not None and dataclasses.is_dataclass(desc.config_cls):
@@ -85,6 +91,8 @@ def refuse_unscorable(name: str, params: dict) -> None:
         }
     for key in TOLERANCES:
         refuse_negative(key, params.get(key), sides.get(key))
+    for key in WIDTHS:
+        refuse_negative_width(key, params.get(key))
     refuse_bounds(name, params)
 
 

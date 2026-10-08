@@ -397,6 +397,16 @@ def _criteria_act(session, metric: str, params: dict):
             "time_tolerance (late side) must not be negative; got −0.5",
         ),
         (
+            "tube",
+            {"tube_width_mode": "band", "tube_abs": -0.3},
+            "tube_abs must not be negative; got −0.3",
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "rel", "tube_rel": -0.02},
+            "tube_rel must not be negative; got −0.02",
+        ),
+        (
             "range",
             {"min_value": 9, "max_value": 2},
             "min_value 9 exceeds max_value 2",
@@ -438,6 +448,17 @@ def test_edit_criteria_refuses_a_value_that_can_never_score(
         ("nrmse", {"tolerance": 0.0}),
         ("points", {"tolerance": {"lower": 0.0, "upper": 0.1}}),
         ("event-timing", {"time_tolerance": 0}),
+        ("tube", {"tube_width_mode": "band", "tube_abs": 0.0}),
+        # A pair with a negative side is a band shifted off the reference,
+        # and can pass: only a negative NUMBER — both sides — never scores.
+        (
+            "tube",
+            {"tube_width_mode": "band", "tube_abs": {"lower": -0.1, "upper": 0.3}},
+        ),
+        (
+            "tube",
+            {"tube_width_mode": "rel", "tube_rel": {"lower": 0.2, "upper": -0.05}},
+        ),
         ("range", {"min_value": -9}),
         ("range", {"min_value": 2, "max_value": 2}),  # equal bounds score
         ("scalar", {**MAX, "min_value": 1, "max_value": 2}),
@@ -469,6 +490,32 @@ def test_equal_bounds_are_refused_where_the_scorer_refuses_them(name):
     except ValueError:
         refused = True
     assert (name in STRICT_BOUNDS) is refused
+
+
+@pytest.mark.parametrize("key", ["tube_abs", "tube_rel"])
+def test_a_negative_tube_width_never_scores_and_a_shifted_band_can(key):
+    """Why a number is refused and a pair is not: a negative NUMBER is
+    both sides, a tube whose upper bound is under its lower one — nothing
+    is inside it, whatever the run (it was staged, and read "0.0% inside
+    tube"). A pair with ONE negative side is a band that does not hold its
+    reference, and a run that lies in it passes."""
+    import numpy as np
+
+    from dstf.comparison.modes import resolve_mode
+
+    mode = "band" if key == "tube_abs" else "rel"
+    t = np.linspace(0.0, 1.0, 11)
+    ref = 1.0 + t
+
+    def scored(width, act):
+        override = {"mode": "tube", "tube_width_mode": mode, key: width}
+        return resolve_mode(override, 0.01).compare(t, ref, t, act)
+
+    for act in (ref, ref + 0.1, ref - 0.1):
+        assert not scored(-0.2, act).passed
+    shifted = {"lower": -0.05, "upper": 0.2}
+    assert scored(shifted, ref + 0.1).passed
+    assert not scored(shifted, ref).passed  # the reference itself is outside
 
 
 def test_a_hand_written_negative_tolerance_is_staged_and_scored_as_it_was(session):
@@ -507,6 +554,30 @@ async def test_a_negative_tolerance_typed_puts_the_leaf_back(session):
         assert tol.value == -0.5
         _keys(user, tol, "0.2")
         assert session.tree(A)["tolerance"] == 0.2
+        assert "edit-criteria" not in errors
+
+
+async def test_a_negative_tube_width_typed_puts_the_leaf_back(session):
+    """`-0.3` typed over a tube's width of 0.3 — linked: both sides —
+    passes through nothing and `-0`, which the leaf takes; refused, the
+    leaf holds the width the field had when it was entered."""
+    leaf = {
+        "metric": "tube",
+        "variable": "x",
+        "tube_width_mode": "band",
+        "tube_abs": 0.3,
+    }
+    session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(leaf))])
+    async with host(session, EditCriteria(), ROOT_LEAF) as (user, errors, _):
+        width = _number(user, "− Tube abs")
+        _keys(user, width, "", "-0", "-0.", "-0.3")
+        assert errors["edit-criteria"] == (
+            "ValueError: tube_abs must not be negative; got −0.3"
+        )
+        assert session.tree(A) == leaf
+        assert width.value == -0.3
+        _keys(user, width, "0.2")
+        assert session.tree(A)["tube_abs"] == 0.2
         assert "edit-criteria" not in errors
 
 
