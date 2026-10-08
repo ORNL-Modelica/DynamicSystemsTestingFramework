@@ -46,7 +46,12 @@ class Placement(Enum):
     capability that needs one is not offered there. TREE_CRITERION is the
     editor of any criterion opened under its row in the criteria tree
     (U5): CRITERION's with no plot, like STATISTIC_CRITERION — the plot's
-    own editor is a link away. At VARIABLE and
+    own editor is a link away. FAMILY_CRITERION is the editor of a folded
+    criteria row (D152): one criterion on several elements of an array,
+    every one of them named by the selection's ``leaf_paths`` (``leaf_path``
+    the first) — CRITERION's with no plot again, since nothing is dragged
+    for twenty criteria at once, so a capability that edits ONE leaf is not
+    offered there. At VARIABLE and
     CRITERION ``Panel.figure`` is the plot's hook, subscribed for as long as
     the panel is drawn; elsewhere a subscription raises."""
 
@@ -58,6 +63,7 @@ class Placement(Enum):
     STATISTIC = "statistic"
     STATISTIC_CRITERION = "statistic-criterion"
     TREE_CRITERION = "tree-criterion"
+    FAMILY_CRITERION = "family-criterion"
 
 
 class Emphasis(Enum):

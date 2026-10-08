@@ -7,6 +7,11 @@ and the TREE_CRITERION one, any criterion's editor under its tree row (U5). Each
 consecutive replaces of one leaf into one pending op, so the pending count
 and the exported envelope carry one edit, never a keystroke log (the
 preview drawer shows the entry's diff either way).
+
+At FAMILY_CRITERION (D152) the same fields are a folded row's: the
+criterion every member shares, read off the first, and each change replaces
+EVERY member's leaf — its own variable kept — as one whole-tree op
+(`family_rows.as_one`), which the Session collapses the same way.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from ...comparison.tree_spec import (
     spec_to_view,
 )
 from ..capabilities import Panel, Patch, Placement
+from ..family_rows import as_one
+from ..session import no_tree_error
 from ..tree_pointer import node_or_none
 from ..unscorable import (
     MIN_WIDTH,
@@ -102,7 +109,7 @@ def refuse_unscorable(name: str, params: dict) -> None:
 
 class EditCriteria:
     """One leaf's metric, its mode's parameters, its window and the baseline
-    it scores against."""
+    it scores against — or, for a folded row, every member's at once."""
 
     name = "edit-criteria"
     label = "Edit criteria"
@@ -111,6 +118,7 @@ class EditCriteria:
             Placement.CRITERION,
             Placement.STATISTIC_CRITERION,
             Placement.TREE_CRITERION,
+            Placement.FAMILY_CRITERION,
         }
     )
 
@@ -189,7 +197,10 @@ class EditCriteria:
             taken["field"], taken["entered"] = field, copy.deepcopy(taken["leaf"])
 
         def submit(values: dict) -> bool:
-            if not ui_panel.submit(model_id=model_id, path=path, **values):
+            # A folded row's members (D152): the act replaces each of them.
+            if not ui_panel.submit(
+                model_id=model_id, path=path, paths=sel.leaf_paths, **values
+            ):
                 return False
             taken["leaf"] = copy.deepcopy(values)
             return True
@@ -367,10 +378,23 @@ class EditCriteria:
             window_start=inputs["window"].get("start"),
             window_end=inputs["window"].get("end"),
         )
-        return Patch(
-            ops=[
-                PatchOp(
-                    inputs["model_id"], "replace", inputs["path"], spec_to_raw(leaf)
-                )
-            ]
-        )
+        model_id = inputs["model_id"]
+        paths = tuple(inputs.get("paths") or ())
+        if not paths:
+            return Patch(
+                ops=[PatchOp(model_id, "replace", inputs["path"], spec_to_raw(leaf))]
+            )
+        # A folded row (D152): the same criterion on every member, each on
+        # its own variable — ONE op, refused or staged whole.
+        tree, why = s.tree_or_reason(model_id)
+        if tree is None:
+            assert why is not None  # `tree` is None
+            raise no_tree_error(model_id, why)
+        ops = []
+        for member in paths:
+            node = node_or_none(tree, member)
+            if node is None or "metric" not in node:
+                raise ValueError(f"{member} names no criterion of {model_id}")
+            raw = spec_to_raw(dataclasses.replace(leaf, variable=node["variable"]))
+            ops.append(PatchOp(model_id, "replace", member, raw))
+        return Patch(ops=[as_one(model_id, tree, ops)])

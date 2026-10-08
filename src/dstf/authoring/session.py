@@ -138,6 +138,9 @@ class Selection:
     keep two. Not the Session's — that was the old shell's one-tab shape.
     ``node_path``: the tree node whose controls are being drawn (NODE) — a
     leaf or a combinator; ``leaf_path`` only ever names a criterion;
+    ``leaf_paths`` every member of a folded criteria row (FAMILY_CRITERION,
+    D152), in tree order, ``leaf_path`` the first of them — empty wherever
+    one criterion is selected;
     ``quantity`` the statistic a Statistics row shows (STATISTIC), by the
     path a leaf would read it through (``translation.nonlinear_count``).
 
@@ -156,6 +159,7 @@ class Selection:
     tests: frozenset[str] = frozenset()
     variable: str | None = None
     leaf_path: str | None = None
+    leaf_paths: tuple[str, ...] = ()
     node_path: str | None = None
     quantity: str | None = None
     texts: Mapping[str, VariableText] = MappingProxyType({})

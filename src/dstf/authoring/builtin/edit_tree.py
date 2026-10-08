@@ -7,7 +7,9 @@ a plot's criteria header — it is one `+` whose "Add a criterion for x"
 form is a row under the header, the new criterion's editor open after
 Add; at STATISTIC — a Statistics row no criterion reads yet — one `+`
 that adds a requirement on the row's quantity at once, and opens its
-editor.
+editor. An add form whose variable is an element of an array carries an
+Indices field (D152): Add writes one criterion per chosen element, all
+the same, as ONE whole-tree op.
 Every control stages one structural change against the paths the report's
 tree already shows. The D66 validator's refusal reaches the page through
 ``Panel.submit`` — the Session is what it was.
@@ -15,6 +17,7 @@ tree already shows. The D66 validator's refusal reaches the page through
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from functools import partial
 from types import SimpleNamespace
@@ -30,7 +33,9 @@ from ...comparison.seeds import (
     seeded_leaf,
 )
 from ...comparison.sides import parse_sides, signed_sides
+from ...discovery.unit_tests import is_unit_test_variable
 from ..capabilities import Panel, Patch, Placement
+from ..family_rows import Family, as_one, family_in, fold_key
 from ..session import SIMULATE_ONLY, no_tree_error
 
 if TYPE_CHECKING:
@@ -274,7 +279,12 @@ class EditTree:
         if tree is None:
             assert why is not None  # `tree` is None
             raise no_tree_error(model_id, why)
-        return _patch(s, tree, inputs)
+        patch = _patch(s, tree, inputs)
+        if action == "add" and patch is not None and len(patch.ops) > 1:
+            # One criterion per chosen element of a family (D152): one
+            # gesture, one pending edit — the tree those adds give.
+            return Patch(ops=[as_one(model_id, tree, patch.ops)])
+        return patch
 
 
 def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch | None:
@@ -296,7 +306,7 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
         if quantity is not None and inputs.get("variable") is not None:
             raise ValueError("add takes a quantity or a variable, not both")
         if quantity is not None:
-            leaf = _quantity_leaf(diagnostics, quantity, into)
+            leaves = [_quantity_leaf(diagnostics, quantity, into)]
         elif inputs["variable"] in diagnostics:
             # A diagnostic is one stored number (K1): its final through
             # a quantity path, never a trajectory — a `{"reduce": ...}`
@@ -305,32 +315,48 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
                 raise ValueError(
                     f"{inputs['variable']} is a diagnostic: scalar scores it"
                 )
-            leaf = seed_diagnostic(
-                inputs["variable"], diagnostics[inputs["variable"]], into=into
-            )
+            leaves = [
+                seed_diagnostic(
+                    inputs["variable"], diagnostics[inputs["variable"]], into=into
+                )
+            ]
         else:
-            # Seeded: a bare range, tube or scalar does not resolve, and
-            # a bare dominant-frequency always fails "no peaks declared".
-            leaf = seeded_leaf(
-                inputs["metric"],
-                inputs["variable"],
-                seed_data(s, model_id, inputs["variable"]),
+            # One criterion per chosen element of the variable's family
+            # (D152) — the variable alone with no Indices text. Seeded: a
+            # bare range, tube or scalar does not resolve, and a bare
+            # dominant-frequency always fails "no peaks declared". ONCE,
+            # from the first chosen element: the leaves are one criterion
+            # on several variables, which is what folds them into one row.
+            names = _chosen(s, model_id, inputs["variable"], inputs.get("indices"))
+            seeded = seeded_leaf(
+                inputs["metric"], names[0], seed_data(s, model_id, names[0])
             )
+            leaves = [{**copy.deepcopy(seeded), "variable": name} for name in names]
         if "combinator" in node:
-            under = path
-        elif path == ROOT:
-            # Beside a root leaf: the root becomes an `and` of both, in
+            # At the end, in order.
+            return Patch(
+                ops=[
+                    PatchOp(model_id, "add", f"{path}/children/-", leaf)
+                    for leaf in leaves
+                ]
+            )
+        if path == ROOT:
+            # Beside a root leaf: the root becomes an `and` of them all, in
             # one op (`add` at /metrics replaces the member). A leaf has
             # no `children` for the patch to append to.
-            value = {"combinator": "and", "children": [node, leaf]}
+            value = {"combinator": "and", "children": [node, *leaves]}
             return Patch(ops=[PatchOp(model_id, "add", ROOT, value)])
-        else:
-            # Beside any other leaf: right AFTER it, under its parent
-            # combinator (Q3 A) — where the `+` that was clicked is.
-            parent, index = path.rsplit("/children/", 1)
-            at = f"{parent}/children/{int(index) + 1}"
-            return Patch(ops=[PatchOp(model_id, "add", at, leaf)])
-        return Patch(ops=[PatchOp(model_id, "add", f"{under}/children/-", leaf)])
+        # Beside any other leaf: right AFTER it, under its parent
+        # combinator (Q3 A) — where the `+` that was clicked is.
+        parent, index = path.rsplit("/children/", 1)
+        return Patch(
+            ops=[
+                PatchOp(
+                    model_id, "add", f"{parent}/children/{int(index) + 1 + k}", leaf
+                )
+                for k, leaf in enumerate(leaves)
+            ]
+        )
     if action == "unwrap":
         # A single-child combinator gives way to its child (the browser
         # editor's unwrap): `warn(leaf)` becomes `leaf`, params kept.
@@ -518,7 +544,13 @@ def _add_form(
     recorded. Its values are result-file names — a leaf is written against
     the name — and a row reads the label, with the name beside it. A list
     of ``unitTests.x[1..12]`` named nothing a person could choose between.
-    The names are read when the form OPENS, never when the `+` is drawn."""
+    The names are read when the form OPENS, never when the `+` is drawn.
+
+    Under the picker, while the variable picked is an element of an array
+    (`_family`), an Indices field (D152, the owner's R1): filled with every
+    element the result has (``1:20``), it takes a range, a stepped range
+    and a list (`families.parse_slice`), and Add writes one criterion per
+    chosen element. Enter in it is Add."""
     from ..picker_rows import picker_rows
     from ..shell.picker import VariablePicker
 
@@ -535,6 +567,19 @@ def _add_form(
     #: chosen again, not the first metric of the list.
     kept: dict[str, str] = {}
 
+    def offer_indices(name: str) -> None:
+        """The Indices field follows the pick: every element of its family,
+        or no field."""
+        family = None if name in diagnostics else _family(s, model_id, name, names)
+        indices.set_visibility(family is not None)
+        if family is not None:
+            indices.set_value(family.text)
+            indices.props["hint"] = (
+                f"Elements of {family.label} to add the criterion for: a range "
+                "(1:5), a stepped range (1:5:20, start:step:end) or a list (1:3,7)."
+            )
+            indices.update()
+
     def follow(name: str) -> None:
         """The Metric select offers what can score ``name`` (Q2)."""
         options = _metrics_for(diagnostic=name in diagnostics)
@@ -545,6 +590,7 @@ def _add_form(
         else:
             value = kept.pop("metric", value)
         met.set_options(options, value=value if value in options else options[0])
+        offer_indices(name)
 
     var = VariablePicker(
         lambda keep: picker_rows(
@@ -559,6 +605,13 @@ def _add_form(
         on_change=follow,
         marker=f"{mark}:variable",
     )
+    indices = (
+        ui.input(label="Indices")
+        .props("dense")
+        .classes("w-full")
+        .mark(f"{mark}:indices")
+    )
+    offer_indices(first)
     options = _metrics_for(diagnostic=first in diagnostics)
     met = (
         ui.select(
@@ -571,6 +624,11 @@ def _add_form(
     )
 
     def apply() -> None:
+        text = str(indices.value or "") if indices.visible else None
+        try:
+            several = len(_chosen(s, model_id, var.value, text, names)) > 1
+        except ValueError:  # the submit raises it again, and says it
+            several = False
         if not _submit(
             s,
             ui_panel,
@@ -579,10 +637,16 @@ def _add_form(
             path=under,
             variable=var.value,
             metric=met.value,
+            indices=text,
         ):
             return  # refused: the row stays, with what was chosen
         close()
-        ui_panel.reveal(_first_leaf(s.tree(model_id), added))
+        leaf = _first_leaf(s.tree(model_id), added)
+        # Several elements are one folded row, and that row's editor is the
+        # one to show: its first member is the first leaf added.
+        ui_panel.reveal(fold_key(leaf) if several else leaf)
+
+    indices.on("keydown.enter", apply)
 
     # A criterion staged on a simulate-only test is never scored (the
     # comparator short-circuits it): Add is grey there, tree or not.
@@ -597,6 +661,40 @@ def _add_form(
             if simulate_only:
                 add.disable()
                 ui.tooltip(SIMULATE_ONLY)
+
+
+def _family(
+    s: SessionView, model_id: str, variable: str, names: list[str] | None = None
+) -> Family | None:
+    """The array family ``variable`` is an element of, as the last run's
+    result file has it (`family_rows.family_in` over ``names``, read here
+    when not given) — or None: no element of an array, the only one there
+    is, or an element of the test's UnitTests component, which is a test
+    quantity of its own and never one of a family (D140)."""
+    project = s.project
+    tests = project.tests if project is not None else ()
+    test = next((t for t in tests if t.model_id == model_id), None)
+    if test is not None and is_unit_test_variable(test, variable):
+        return None
+    return family_in(s.variable_names(model_id) if names is None else names, variable)
+
+
+def _chosen(
+    s: SessionView,
+    model_id: str,
+    variable: str,
+    indices: str | None,
+    names: list[str] | None = None,
+) -> list[str]:
+    """The variables an add scores: ``variable`` alone with no Indices
+    text, else the elements of its family the text names, by index
+    (`Family.chosen`, whose refusals are the sentences shown)."""
+    if indices is None:
+        return [variable]
+    family = _family(s, model_id, variable, names)
+    if family is None:
+        raise ValueError(f"{variable} is no element of an array: it takes no indices")
+    return family.chosen(indices)
 
 
 def _simulate_only(s: SessionView, model_id: str) -> bool:

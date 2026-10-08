@@ -11,10 +11,15 @@ def register_builtins() -> None:
     names = {c.name for c in registered_capabilities()}
     from .accept import Accept
     from .edit_criteria import EditCriteria
+    from .edit_family import EditFamily
     from .edit_on_plot import EditOnPlot
     from .edit_tree import EditTree
     from .rerun import Rerun
 
+    # Before Edit criteria: a folded row's editor reads which elements,
+    # then what the criterion is (a host stacks its panels in this order).
+    if EditFamily.name not in names:
+        register_capability(EditFamily())
     if EditCriteria.name not in names:
         register_capability(EditCriteria())
     if EditTree.name not in names:
