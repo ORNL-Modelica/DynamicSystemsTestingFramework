@@ -25,6 +25,7 @@ import numpy as np
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import (
+    CANCELLED_RUN_STATUS,
     PENDING_RUN_STATUS,
     RECORDED_RUN_STATUSES,
     BatchManifest,
@@ -185,6 +186,21 @@ def _print_progress(
         print("".join(parts), file=sys.stderr)
 
 
+def no_worker_message(label: str, failures: dict[int, str]) -> str:
+    """The sentence every waiting test fails with when no worker of a
+    backend could start: each worker's reason in the backend's own words,
+    e.g. ``No OpenModelica worker could start — worker 0: omc exited (code
+    -9) during loadModel(Modelica)``. A reason that already names its worker
+    (``Worker 0: failed to load ...``) is not named twice."""
+    parts = []
+    for worker_id, reason in sorted(failures.items()):
+        prefix = f"worker {worker_id}: "
+        if reason.lower().startswith(prefix):
+            reason = reason[len(prefix) :]
+        parts.append(prefix + reason)
+    return f"No {label} worker could start — " + "; ".join(parts)
+
+
 #: Run outcomes that make a result on disk untrustworthy: the ``.mat`` (if
 #: any) is partial or left over from an earlier, better run.
 FAILED_RUN_STATUSES = ("failed", "timed_out")
@@ -211,6 +227,17 @@ def _with_run_timing(stats: dict | None, rr: TestRunResult) -> dict | None:
     out = dict(stats or {})
     out["timing"] = dict(out.get("timing") or {})
     return merge_timing_stats(out, timing)
+
+
+def failed_run_result(rr: TestRunResult) -> TestResult:
+    """The result of a run that failed: its message and its statistics, with
+    nothing read from disk — whatever file it left is partial."""
+    return TestResult(
+        model_id=rr.model_id,
+        success=False,
+        error_message=rr.error_message or "Simulation failed",
+        statistics=_with_run_timing(rr.statistics, rr),
+    )
 
 
 def kept_run_result(
@@ -308,6 +335,112 @@ class RunSetup:
     #: ``(test, test_key)`` in the caller's test order.
     keyed_tests: list[tuple[TestModel, str]]
     manifest: BatchManifest
+
+
+class ItemRunner:
+    """What ONE thread of the simulation pool drives: bring the thing that
+    runs tests up, run a test on it, stop a running one, let it go.
+
+    The strategy seam between the pool (:mod:`dstf.backends.pool`) and how a
+    backend runs a single test, obtained from :meth:`Backend.item_runner`.
+    This base is the runner of a backend WITHOUT persistent workers: nothing
+    to start, and a test goes through the backend's own single-test path
+    (:meth:`Backend.run_single_test`) on the pool's thread. A persistent
+    backend's is :class:`~dstf.backends.persistent.WorkerRunner`, over one
+    :class:`~dstf.backends.persistent.Worker`.
+
+    A subclass overrides the hooks (``start``, ``_run``, ``_stop_test``,
+    ``stop``, ``close``); ``expect`` / ``run`` / ``cancel`` are the template
+    that makes a cancel land whenever it arrives after ``expect``.
+    """
+
+    #: Set when this runner can take no more tests: the sentence why. The
+    #: pool then lets its thread go.
+    retired: str | None = None
+
+    def __init__(self, backend: "Backend", worker_id: int):
+        self.backend = backend
+        self.worker_id = worker_id
+        self._lock = Lock()
+        #: The test this runner is on, from ``expect`` to the end of ``run``,
+        #: and whether a stop was asked of it.
+        self._key: str | None = None
+        self._cancel_asked = False
+
+    # -- hooks ---------------------------------------------------------
+
+    def start(self) -> None:
+        """Bring the runner up. Raises ``RuntimeError`` whose text is the
+        reason, in the backend's own words, when it cannot."""
+
+    def _run(self, test: TestModel, test_key: str) -> TestRunResult:
+        """Run *test* to its end on the calling thread."""
+        if self._cancel_asked:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                error_message="Cancelled",
+                cancelled=True,
+            )
+        return self.backend.run_single_test(test, test_key, 1, 1)
+
+    def _stop_test(self, test_key: str) -> bool:
+        """Stop *test_key* now; ``False`` while there is nothing to stop yet
+        (its process does not exist) — ``cancel`` asks again."""
+        return self.backend.cancel_test(test_key)
+
+    def stop(self, test_key: str | None) -> None:
+        """The pool is closing: from another thread, end whatever is in
+        flight as fast as the backend can — *test_key* when a test runs
+        here, a start otherwise. A backend that cannot stop a test lets it
+        finish."""
+        if test_key is not None and Capability.CANCEL in self.backend.capabilities:
+            self.cancel(test_key)
+
+    def close(self) -> None:
+        """Let go of the runner, on its own thread; idempotent."""
+
+    # -- template ------------------------------------------------------
+
+    def expect(self, test_key: str) -> None:
+        """*test_key* is about to run here: a ``cancel`` for it is heard
+        from now on. The pool calls this under its own lock, as it publishes
+        the key, so no cancel can fall between the two."""
+        with self._lock:
+            self._key, self._cancel_asked = test_key, False
+
+    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+        """Run *test* to its end on the calling thread. Never raises on a
+        test-level failure; a ``cancel`` makes it return promptly."""
+        with self._lock:
+            if self._key != test_key:
+                self._key, self._cancel_asked = test_key, False
+        try:
+            return self._run(test, test_key)
+        finally:
+            with self._lock:
+                self._key = None
+
+    def cancel(self, test_key: str) -> bool:
+        """Stop *test_key*, from another thread; ``False`` when it is not the
+        test this runner is on. Only called on a backend that declares
+        :attr:`Capability.CANCEL`. :meth:`run` then returns a failed or
+        ``cancelled`` result — or the test's own, if it finished anyway."""
+        with self._lock:
+            if self._key != test_key:
+                return False
+            self._cancel_asked = True
+        # The test may be a few statements short of having a process to
+        # stop; ask until it has one or has ended. Bounded all the same: a
+        # stop that cannot be delivered must not hold the caller.
+        deadline = time.monotonic() + 5.0
+        while not self._stop_test(test_key) and time.monotonic() < deadline:
+            with self._lock:
+                if self._key != test_key:
+                    break
+            time.sleep(0.01)
+        return True
 
 
 class Backend(ABC):
@@ -452,6 +585,42 @@ class Backend(ABC):
         """
         raise NotImplementedError("Override run_tests() or run_single_test()")
 
+    @property
+    def label(self) -> str:
+        """The backend's name in a sentence a person reads ("Dymola")."""
+        return self.config.backend
+
+    def prepare_item_runners(self) -> None:
+        """Once per pool, before the first :meth:`item_runner`. Raises
+        ``RuntimeError`` when this backend cannot run one test at a time."""
+        if type(self).run_single_test is Backend.run_single_test:
+            raise RuntimeError(
+                f"{type(self).__name__} runs whole batches and has no "
+                f"single-test path; the simulation queue needs its "
+                f"persistent workers (backends.select_backend(config, "
+                f"persistent=True))."
+            )
+
+    def item_runner(self, worker_id: int) -> ItemRunner:
+        """The runner one pool thread drives (see :class:`ItemRunner`)."""
+        return ItemRunner(self, worker_id)
+
+    def cancel_test(self, test_key: str) -> bool:
+        """Stop the test :meth:`run_single_test` is running under *test_key*,
+        from another thread; ``False`` when none is. That call then returns
+        a ``cancelled`` result. Backends whose single-test path can be
+        stopped declare :attr:`Capability.CANCEL` and override this."""
+        raise NotImplementedError(
+            f"{type(self).__name__} declares no Capability.CANCEL: its "
+            f"single-test path cannot be stopped."
+        )
+
+    def run_versions(self) -> dict:
+        """``tool_version`` / ``library_versions`` for run provenance, as far
+        as this backend can name them now (see :meth:`_build_run_metadata`)."""
+        version = self._safe_tool_version()
+        return {"tool_version": version} if version else {}
+
     @abstractmethod
     def read_result(
         self,
@@ -517,9 +686,7 @@ class Backend(ABC):
         )
         self.progress = progress
 
-        # Assign test_keys (reuse existing from prior runs if present — supports
-        # incremental workflows where the manifest accumulates known tests).
-        manifest_map, keyed_tests = assign_test_keys(self.config.work_dir, tests)
+        manifest, keyed_tests = self.key_tests(tests)
         for test, test_key in keyed_tests:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             progress.register(
@@ -529,6 +696,27 @@ class Backend(ABC):
                 field_sources=test.field_sources,
             )
 
+        return RunSetup(
+            total=total,
+            run_metadata=run_metadata,
+            progress=progress,
+            keyed_tests=keyed_tests,
+            manifest=manifest,
+        )
+
+    def key_tests(
+        self, tests: list[TestModel]
+    ) -> tuple[BatchManifest, list[tuple[TestModel, str]]]:
+        """Key *tests* in the work dir's manifest and stamp them pending:
+        the saved manifest and ``(test, test_key)`` in the caller's order.
+
+        The half of the prologue a run of ONE test needs as much as a run of
+        a list (:meth:`_prepare_run` is the other caller).
+        """
+        self.config.work_dir.mkdir(parents=True, exist_ok=True)
+        # Assign test_keys (reuse existing from prior runs if present — supports
+        # incremental workflows where the manifest accumulates known tests).
+        manifest_map, keyed_tests = assign_test_keys(self.config.work_dir, tests)
         manifest = BatchManifest(
             work_dir=self.config.work_dir,
             manifest=manifest_map,
@@ -541,14 +729,7 @@ class Backend(ABC):
         # own last verdict (that is what --merge/--rerun report over).
         manifest.mark_pending({t.model_id for t in tests})
         manifest.save()
-
-        return RunSetup(
-            total=total,
-            run_metadata=run_metadata,
-            progress=progress,
-            keyed_tests=keyed_tests,
-            manifest=manifest,
-        )
+        return manifest, keyed_tests
 
     @property
     def run_summary_phrase(self) -> str:
@@ -695,6 +876,10 @@ class Backend(ABC):
         (D145): the comparator reads a test with no result as NOT RUN, and a
         test whose run recorded a failure — here, or in ``status.json`` for a
         pending entry — as SIM_FAIL.
+
+        A run that was cancelled (:data:`CANCELLED_RUN_STATUS`, or a
+        cancelled run result in hand) yields no result either: it was
+        stopped on request, and what it left on disk is partial.
         """
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
@@ -722,18 +907,14 @@ class Backend(ABC):
                 rr = run_results.get(model_id)
                 test_model = test_lookup.get(model_id)
 
+                if rr is not None and rr.cancelled:
+                    continue  # stopped on request: no result
                 if rr and not rr.success:
-                    _store(
-                        model_id,
-                        TestResult(
-                            model_id=model_id,
-                            success=False,
-                            error_message=rr.error_message or "Simulation failed",
-                            statistics=_with_run_timing(rr.statistics, rr),
-                        ),
-                    )
+                    _store(model_id, failed_run_result(rr))
                     continue
 
+                if rr is None and entry.get("last_run_status") == CANCELLED_RUN_STATUS:
+                    continue  # stopped on request: no result
                 if (
                     rr is None
                     and entry.get("last_run_status") == PENDING_RUN_STATUS
@@ -796,6 +977,22 @@ class Backend(ABC):
                 f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
             )
         return results
+
+    def result_of_run(
+        self, test: TestModel, test_key: str, run_result: TestRunResult
+    ) -> TestResult | None:
+        """What ONE run that just ended produced, from its run result in
+        hand: ``None`` for a cancelled run, the failure for a run that
+        failed, else the result read back (:meth:`read_run_result`).
+
+        :meth:`read_results`' per-test step for a caller holding one run
+        result — the simulation queue reads each test back as it finishes.
+        """
+        if run_result.cancelled:
+            return None
+        if not run_result.success:
+            return failed_run_result(run_result)
+        return self.read_run_result(test, test_key, run_result)
 
     def read_run_result(
         self,

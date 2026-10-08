@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from conftest import make_test_model as _tm
+from dstf.backends.common import json_driver
 from dstf.backends.common.mat_reader import read_result_mat
 from dstf.backends.common.result_variables import extract_variables
 from dstf.backends.dymola.log_parser import parse_dslog
@@ -628,7 +629,7 @@ class TestTimeoutExpiredBytesHandling:
                 cmd=["julia"], timeout=1, output=b"partial out", stderr=b"partial err"
             )
 
-        monkeypatch.setattr(jr.subprocess, "run", fake_run)
+        monkeypatch.setattr(json_driver, "run_killable", fake_run)
         test = _tm("T", source_file=user, variable_patterns=["x"])
         rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
@@ -654,7 +655,7 @@ class TestTimeoutExpiredBytesHandling:
                 cmd=["python"], timeout=1, output=b"po", stderr=b"pe"
             )
 
-        monkeypatch.setattr(pr.subprocess, "run", fake_run)
+        monkeypatch.setattr(json_driver, "run_killable", fake_run)
         test = _tm("T", source_file=user, variable_patterns=["x"])
         rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
@@ -716,8 +717,8 @@ class TestStderrTailGuard:
         )
         backend = jr.JuliaBackend(cfg)
         monkeypatch.setattr(
-            jr.subprocess,
-            "run",
+            json_driver,
+            "run_killable",
             lambda *a, **kw: CompletedProcess(
                 args=a, returncode=1, stdout="", stderr="   \n\t\n"
             ),
@@ -740,8 +741,8 @@ class TestStderrTailGuard:
         )
         backend = pr.PythonBackend(cfg)
         monkeypatch.setattr(
-            pr.subprocess,
-            "run",
+            json_driver,
+            "run_killable",
             lambda *a, **kw: CompletedProcess(
                 args=a, returncode=1, stdout="", stderr="  \n \n"
             ),

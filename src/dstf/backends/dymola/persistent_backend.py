@@ -30,6 +30,7 @@ from pathlib import Path
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import read_mat_time_extents
+from ..common.proc_kill import live_children
 from ..persistent import PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import DymolaBackend, DymolaConfig
@@ -158,6 +159,12 @@ class _suppress_stderr_noise:
         return False  # don't suppress exceptions — noise window expires naturally
 
 
+#: The simulation executable Dymola builds and runs for a test, by PROCESS
+#: NAME. Never matched as a substring of a command line: the compiler that
+#: builds it is handed a ``dymosim`` argument too.
+_DYMOSIM_NAMES = ("dymosim", "dymosim.exe")
+
+
 def _classify_translation_error(log_path: Path) -> str:
     """Best-effort classification of a Dymola translation failure.
 
@@ -211,6 +218,7 @@ class DymolaWorker(Worker):
         from DymolaInterface's internal subprocess handle, so we never need
         to serialize around a process-set snapshot.
         """
+        self._step = "its launch"
         kwargs: dict = {"showwindow": bool(self.dymola_config.show_ide)}
         if self.config.backend_path:
             # DEBT: on Linux, backend_path must point at the wrapper script
@@ -238,6 +246,7 @@ class DymolaWorker(Worker):
         # Load dependencies
         for dep_path in self.config.dependencies or []:
             dep_pkg = Path(dep_path).resolve() / "package.mo"
+            self._step = f"openModel({dep_pkg})"
             ok = self.dymola.openModel(str(dep_pkg))
             if not ok:
                 raise RuntimeError(
@@ -247,6 +256,7 @@ class DymolaWorker(Worker):
 
         # Load main library
         main_pkg = self.config.library_dir / "package.mo"
+        self._step = f"openModel({main_pkg})"
         ok = self.dymola.openModel(str(main_pkg))
         if not ok:
             raise RuntimeError(
@@ -267,6 +277,39 @@ class DymolaWorker(Worker):
             if not cmd.endswith(";"):
                 cmd += ";"
             self._exec_setting(cmd)
+        self._step = ""
+
+    def process_detail(self) -> str:
+        proc = getattr(self.dymola, "_dymola_process", None)
+        if proc is None:
+            return f"Dymola had not come up ({self._step})" if self._step else ""
+        code = proc.poll()
+        state = (
+            "Dymola is still running"
+            if code is None
+            else f"Dymola exited (code {code})"
+        )
+        return f"{state} during {self._step}" if self._step else state
+
+    def cancel_running(self, test_key: str) -> bool:
+        """dymosim's own stop request: a file named ``stop`` in its working
+        directory ends the integration within a couple of seconds, and
+        ``simulateModel`` returns with Dymola intact.
+
+        Only while a dymosim process runs under this Dymola. During
+        translation there is none, and nothing short of killing Dymola stops
+        the compile — ``False``, and the watchdog does that.
+        """
+        asked = False
+        for child in live_children(self.pids):
+            try:
+                if child.name().lower() not in _DYMOSIM_NAMES:
+                    continue
+                (Path(child.cwd()) / "stop").write_text("", encoding="utf-8")
+                asked = True
+            except Exception:
+                continue  # gone, or not ours to look at
+        return asked
 
     def run_test(
         self,
@@ -306,6 +349,7 @@ class DymolaWorker(Worker):
             if progress is not None:
                 progress.on_phase(test_key, "translating")
             t_trans_start = time.monotonic()
+            self._step = f"translateModel({test.model_id})"
             translation_ok = bool(dymola.translateModel(test.model_id))
             translation_wall = time.monotonic() - t_trans_start
 
@@ -388,6 +432,7 @@ class DymolaWorker(Worker):
             t_sim_start = time.monotonic()
             # simulateModel returns bool; actual success/failure determined
             # by on-disk artifacts in _evaluate_from_disk
+            self._step = f"simulateModel({test.model_id})"
             _ = dymola.simulateModel(test.model_id, **call_kwargs)
             sim_wall = time.monotonic() - t_sim_start
 
@@ -706,11 +751,14 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     #: Declared explicitly, not inherited-and-extended: this class does
     #: persistent orchestration, so the batch class's BATCH_FALLBACK
     #: would be a false claim here (B2 review finding 5).
+    #: CANCEL is the worker's: ``DymolaWorker.cancel_running`` (dymosim's
+    #: ``stop`` file) with the watchdog's kill behind it.
     capabilities = frozenset(
         {
             Capability.PERSISTENT_WORKERS,
             Capability.FMU_EXPORT,
             Capability.LIVE_RESULTS,
+            Capability.CANCEL,
         }
     )
 

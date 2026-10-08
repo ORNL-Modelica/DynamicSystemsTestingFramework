@@ -6,7 +6,7 @@ directly — timeout mapping, the non-zero-return message precedence, the
 numeric validation of a driver payload — plus the Julia tool-version stamp,
 which the batch lane gained in the same change.
 
-Everything here stubs ``subprocess.run``; nothing needs a julia binary.
+Everything here stubs the driver's subprocess (``run_killable``); nothing needs a julia binary.
 """
 
 from __future__ import annotations
@@ -82,9 +82,7 @@ def _fake_backend(tmp_path: Path) -> tuple[_FakeBackend, TestModel]:
 
 
 def _patch_run(monkeypatch, fn):
-    monkeypatch.setattr(
-        "dstf.backends.common.json_driver.subprocess.run", fn, raising=True
-    )
+    monkeypatch.setattr("dstf.backends.common.json_driver.run_killable", fn)
 
 
 def _proc(returncode=0, stdout="", stderr=""):
@@ -339,8 +337,8 @@ class TestJuliaToolVersion:
         backend = _julia_backend(tmp_path)
         (backend.config.source_path / "Lib.A.jl").write_text("# user source")
 
-        # The version probe and the driver invocation go through the same
-        # subprocess.run, so one stub serves both, dispatching on argv.
+        # One stub serves the version probe (subprocess.run) and the driver
+        # invocation (run_killable), dispatching on argv.
         def fake(cmd, **kw):
             if cmd[-1] == "--version":
                 return _proc(stdout="julia version 1.11.2\n")
@@ -350,6 +348,7 @@ class TestJuliaToolVersion:
             return _proc(returncode=0)
 
         _patch_run(monkeypatch, fake)
+        monkeypatch.setattr("dstf.backends.julia.backend.subprocess.run", fake)
 
         backend.run_tests([_tm()])
 

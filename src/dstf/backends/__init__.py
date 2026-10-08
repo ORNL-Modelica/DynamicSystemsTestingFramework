@@ -58,6 +58,8 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
     - ``PERSISTENT_WORKERS`` → ``persistent_backend_cls`` must be overridden
       to return a non-None class.
     - ``LIVE_RESULTS`` → ``live_result_path`` must be overridden.
+    - ``CANCEL`` → ``cancel_test`` must be overridden (a persistent variant's
+      cancel is its worker's, and is covered by tests like its other flags).
 
     Only ``@register``-decorated classes are checked. Persistent variants
     are reached via ``persistent_backend_cls``, not the registry, so their
@@ -69,6 +71,12 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
         raise TypeError(
             f"@register('{name}'): {cls.__name__} declares "
             f"Capability.FMU_EXPORT but does not override export_fmu(). "
+            f"Either implement the method or drop the capability flag."
+        )
+    if Capability.CANCEL in caps and cls.cancel_test is Backend.cancel_test:
+        raise TypeError(
+            f"@register('{name}'): {cls.__name__} declares "
+            f"Capability.CANCEL but does not override cancel_test(). "
             f"Either implement the method or drop the capability flag."
         )
     if Capability.BATCH_FALLBACK in caps and (

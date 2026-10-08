@@ -49,10 +49,6 @@ logger = logging.getLogger(__name__)
 
 _PERSISTENT_DRIVER_PATH = Path(__file__).resolve().parent / "run_persistent.jl"
 
-# Max seconds to wait for a worker's startup "ready" pulse. MTK +
-# OrdinaryDiffEq precompiled-cache load takes ~15-40s; allow plenty.
-_WORKER_READY_TIMEOUT = 240.0
-
 # Max seconds to wait for a hard-killed worker to actually exit before we
 # stop caring — the handle is dropped either way.
 _KILL_EXIT_TIMEOUT = 5.0
@@ -79,6 +75,10 @@ class JuliaWorker(Worker):
     """
 
     kill_name_hint = "julia"
+    # Max seconds to wait for a worker's startup "ready" pulse when
+    # testing.json sets no worker_startup_timeout. MTK + OrdinaryDiffEq
+    # precompiled-cache load takes ~15-40s, a first run minutes; allow plenty.
+    startup_timeout = 240.0
 
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
         super().__init__(worker_id, config)
@@ -139,13 +139,14 @@ class JuliaWorker(Worker):
         # Wait for the 'ready' event. This is the worker's warmup —
         # `using` is finishing. Dispatching tests before this point would
         # queue them behind the package load and bill it to the first test.
-        ready = self._wait_for_ready(timeout=_WORKER_READY_TIMEOUT)
+        bound = self.startup_bound()
+        ready = self._wait_for_ready(timeout=bound)
         if not ready:
             # Leave the stderr buffer around so the caller can surface it.
             self.close(grace=0.5)
             raise RuntimeError(
                 f"Julia worker {self.worker_id} did not emit ready within "
-                f"{_WORKER_READY_TIMEOUT}s. stderr tail: "
+                f"{bound}s. stderr tail: "
                 f"{self._stderr_tail(6)}"
             )
 
@@ -168,7 +169,10 @@ class JuliaWorker(Worker):
         Overrides the base watchdog: the response arrives on a queue, so a
         deadline poll reads it directly instead of parking a blocking call
         on an exec thread the watchdog would then have to abandon. The kill
-        and the restart-accounting flags are the shared ones.
+        and the restart-accounting flags are the shared ones, and so is the
+        cancel (``Worker.request_cancel``): the poll sees it within a tick.
+        The driver has no stop short of its process, so a cancel is the
+        timeout's kill, uncharged.
         """
         if self.proc is None or self.proc.poll() is not None:
             return TestRunResult(
@@ -217,6 +221,20 @@ class JuliaWorker(Worker):
         deadline = wall_start + timeout
         while True:
             remaining = deadline - time.monotonic()
+            if self._cancel is not None:
+                self._kill_tracked_pids()
+                self._await_killed_process()
+                elapsed = time.monotonic() - wall_start
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    sim_wall=elapsed,
+                    error_message="Cancelled",
+                    cancelled=True,
+                    worker_killed=True,
+                )
             if remaining <= 0:
                 self._kill_tracked_pids()
                 self._await_killed_process()
@@ -471,6 +489,8 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
         {
             Capability.PERSISTENT_WORKERS,
             Capability.BATCH_FALLBACK,
+            # The worker's: its poll loop honours Worker.request_cancel.
+            Capability.CANCEL,
         }
     )
 

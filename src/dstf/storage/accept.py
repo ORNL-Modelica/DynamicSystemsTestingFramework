@@ -74,9 +74,9 @@ def accept_run_results(
         *(
             (
                 model_id,
-                f"last run did not complete for this test (aborted while it was "
-                f"in flight; {work_dir} still records it as pending) — "
-                f"re-run before accepting",
+                f"last run did not complete for this test (aborted or "
+                f"cancelled while it was in flight; {work_dir} records no "
+                f"verdict for it) — re-run before accepting",
             )
             for model_id in sorted(unfinished)
         ),

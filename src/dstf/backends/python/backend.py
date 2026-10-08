@@ -76,6 +76,8 @@ class PythonBackend(JsonDriverBackend):
     capabilities = frozenset(
         {
             Capability.BATCH_FALLBACK,
+            # Each test is its own subprocess: killing it stops the test.
+            Capability.CANCEL,
             # Deliberately absent:
             #   PERSISTENT_WORKERS — stdin-driven long-lived Python process deferred.
             #   FMU_EXPORT — not meaningful for arbitrary Python scripts.

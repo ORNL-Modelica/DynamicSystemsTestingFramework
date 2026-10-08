@@ -37,8 +37,9 @@ from pathlib import Path
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import mat_reaches_time
+from ..common.proc_kill import live_children
 from ..persistent import PersistentBackendBase, Worker
-from ..types import TestRunResult
+from ..types import Capability, TestRunResult
 from .backend import OpenModelicaBackend, OpenModelicaConfig
 from .log_parser import _TIMING_KEYS, ParsedOmcOutput, parse_omc_stdout
 from .mos_generator import build_simulate_args, classify_dependency
@@ -261,6 +262,7 @@ class OpenModelicaWorker(Worker):
                         om_home,
                         omc_path,
                     )
+        self._step = "its launch"
         self.session = self._OMCSession()
         pid = _resolve_session_pid(self.session)
         if pid is None:
@@ -321,15 +323,53 @@ class OpenModelicaWorker(Worker):
                     cmd,
                     exc,
                 )
+        self._step = ""
 
     def _exec(self, expr: str) -> bool:
         """Send an expression that returns bool (loadModel / loadFile / setOption).
 
         Uses :func:`_raw_exec_bool` so the response bypasses OMPython's
-        non-thread-safe pyparsing grammar.
+        non-thread-safe pyparsing grammar. OMPython waits for the reply
+        with no bound, so an omc that died or stopped answering parks this
+        call for good; ``start_within`` is what gives up on it, naming the
+        expression recorded here.
         """
         assert self.session is not None
+        self._step = expr
         return _raw_exec_bool(self.session, expr)
+
+    def process_detail(self) -> str:
+        omc = getattr(self.session, "omc_process", None)
+        proc = getattr(omc, "_omc_process", None)
+        if proc is None:
+            return ""
+        code = proc.poll()
+        state = "omc is still running" if code is None else f"omc exited (code {code})"
+        if self._step:
+            state += f" during {self._step}"
+        try:
+            log = (omc.get_log() or "").strip()
+        except Exception:
+            log = ""
+        return state + (f"; omc log: {log[-300:]}" if log else "")
+
+    def cancel_running(self, test_key: str) -> bool:
+        """Kill what omc spawned for the test — make and the compiler during
+        the build, the compiled model during the run — and leave omc itself:
+        its ``simulate()`` returns a failed record at once.
+
+        ``False`` while omc has no child (its own frontend and backend
+        phases), which only killing omc ends; the watchdog does that, as it
+        does when omc has not come back within ``cancel_grace``.
+        """
+        killed = False
+        for child in live_children(self.pids):
+            try:
+                child.kill()
+                killed = True
+            except Exception:
+                continue  # already gone
+        return killed
 
     def tool_version(self) -> str | None:
         """Actual omc version via ``getVersion()`` (wire format is a quoted
@@ -413,6 +453,7 @@ class OpenModelicaWorker(Worker):
             if progress is not None:
                 progress.on_phase(test_key, "translating")
 
+            self._step = f"simulate({test.model_id})"
             record_dict, _raw_simulate_response = _raw_send_simulate(
                 session,
                 simulate_expr,
@@ -639,6 +680,11 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
 
     worker_cls = OpenModelicaWorker
     backend_label = "OpenModelica"
+
+    #: CANCEL is the worker's: ``OpenModelicaWorker.cancel_running`` (omc's
+    #: children) with the watchdog's kill behind it. The batch class, one
+    #: ``omc`` subprocess per test, has no such stop.
+    capabilities = OpenModelicaBackend.capabilities | {Capability.CANCEL}
 
     @classmethod
     def preflight(cls, config) -> None:

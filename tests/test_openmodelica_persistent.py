@@ -25,6 +25,14 @@ from dstf.storage.batch_manifest import BatchManifest
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _fake_pids_name_no_process(monkeypatch):
+    """A FakeSession's PID is made up, which the watchdog's death watch
+    would read as "omc died". That watch has its own tests, over real
+    processes (test_worker_lifecycle.py)."""
+    monkeypatch.setattr("dstf.backends.persistent.process_gone", lambda pids: False)
+
+
 class FakeSession:
     """Minimal OMCSessionZMQ stand-in for unit tests.
 
@@ -869,7 +877,10 @@ class TestCLISelectionWiring:
         monkeypatch.setattr(OpenModelicaWorker, "start", _always_fail)
 
         backend = PersistentOpenModelicaBackend(cfg)
-        with pytest.raises(RuntimeError, match="All OpenModelica persistent workers"):
+        with pytest.raises(
+            RuntimeError,
+            match="No OpenModelica worker could start — worker 0: synthetic failure",
+        ):
             backend.run_tests([_make_test()])
 
 

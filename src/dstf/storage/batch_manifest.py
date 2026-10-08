@@ -27,9 +27,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: ``last_run_status`` values that mean "this run reached a verdict for this
-#: test". Only these make a manifest entry authoritative for a reader.
-RECORDED_RUN_STATUSES = ("passed", "failed", "timed_out")
+#: A run that was stopped on request (the simulation queue's cancel). It is
+#: recorded, not left pending: a pending entry falls through to the
+#: status.json cross-check, where an earlier run's "failed" row for the same
+#: model would be applied to a test nobody failed.
+CANCELLED_RUN_STATUS = "cancelled"
+
+#: ``last_run_status`` values that mean "this run recorded what became of
+#: this test". Only these make a manifest entry authoritative for a reader.
+RECORDED_RUN_STATUSES = ("passed", "failed", "timed_out", CANCELLED_RUN_STATUS)
 
 #: Stamped on every in-scope entry when a run starts, and overwritten the
 #: instant that test's result lands. An entry still saying ``pending`` when a
@@ -39,6 +45,11 @@ RECORDED_RUN_STATUSES = ("passed", "failed", "timed_out")
 #: PREVIOUS run's ``passed`` survived ``assign_test_keys``' carry-forward into
 #: an aborted run's manifest and reported green over a partial ``.mat``.
 PENDING_RUN_STATUS = "pending"
+
+#: The two statuses of a last run that left NO result — it never finished the
+#: test, or was told to stop. Whatever file such a run left is partial, and
+#: is neither read nor accepted.
+NO_RESULT_RUN_STATUSES = (PENDING_RUN_STATUS, CANCELLED_RUN_STATUS)
 
 
 @dataclass
@@ -78,7 +89,8 @@ class BatchManifest:
         only read the ``.mat`` on disk — and a partial/stale one from a failed
         run reads back as a success (D93 follow-on). ``last_run_status`` is
         that record, in status.json's vocabulary
-        (``passed`` / ``failed`` / ``timed_out``).
+        (``passed`` / ``failed`` / ``timed_out``), plus
+        :data:`CANCELLED_RUN_STATUS` for a run that was stopped on request.
 
         Written per result rather than in a run epilogue **because the
         epilogue is exactly what an abort skips**: Ctrl-C or an exception in
@@ -92,7 +104,9 @@ class BatchManifest:
         makes ``--merge`` and ``--rerun`` reports honest about the tests they
         did not re-run.
         """
-        if result.timed_out:
+        if result.cancelled:
+            status = CANCELLED_RUN_STATUS
+        elif result.timed_out:
             status = "timed_out"
         else:
             status = "passed" if result.success else "failed"
@@ -170,7 +184,8 @@ def unfinished_run_models(work_dir: Path) -> set[str]:
 
     A manifest entry still reading :data:`PENDING_RUN_STATUS` means a run
     stamped it at startup and was aborted (Ctrl-C, crash, killed worker pool)
-    before that test finished. The accept path uses this: blessing such a
+    before that test finished; one reading :data:`CANCELLED_RUN_STATUS` was
+    stopped on request. The accept path uses this: blessing such a
     test's on-disk ``.mat`` would bake in whatever the simulator had flushed
     at the moment it died, and a truncated result file can still parse.
 
@@ -185,5 +200,5 @@ def unfinished_run_models(work_dir: Path) -> set[str]:
     return {
         entry["model_id"]
         for entry in BatchManifest.load(manifest_path).manifest.values()
-        if entry.get("last_run_status") == PENDING_RUN_STATUS
+        if entry.get("last_run_status") in NO_RESULT_RUN_STATUSES
     }

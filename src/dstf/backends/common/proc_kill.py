@@ -116,3 +116,48 @@ def snapshot_children(
             # a PID without its create time is not safe to kill later.
             continue
     return snapshot
+
+
+def process_gone(pids: set[int]) -> bool:
+    """True when *pids* names at least one process and none of them is
+    running any more — exited, or a zombie nobody has reaped yet.
+
+    How a worker's watchdog tells "the tool died" from "the tool is slow".
+    Errs towards alive: no PIDs, no psutil, or a process it cannot inspect
+    all read as not gone, since the answer triggers a kill and a restart.
+    """
+    if not pids:
+        return False
+    try:
+        import psutil
+
+        for pid in list(pids):
+            try:
+                if psutil.Process(pid).status() != psutil.STATUS_ZOMBIE:
+                    return False
+            except psutil.NoSuchProcess:
+                continue
+        return True
+    except Exception:
+        return False
+
+
+def live_children(pids: set[int]) -> list:
+    """Every descendant of *pids* alive right now, as ``psutil.Process``
+    objects — what a backend's soft cancel looks through for the process
+    doing the simulating. A zombie is not alive: a child killed a moment
+    ago stays in the table until its parent reaps it. Best-effort: ``[]``
+    on any failure."""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover — psutil is a hard dep in practice
+        return []
+    children: list = []
+    for pid in list(pids):
+        try:
+            for child in psutil.Process(pid).children(recursive=True):
+                if child.status() != psutil.STATUS_ZOMBIE:
+                    children.append(child)
+        except Exception:
+            continue
+    return children

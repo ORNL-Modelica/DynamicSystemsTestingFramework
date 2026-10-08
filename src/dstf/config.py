@@ -336,6 +336,10 @@ class Config:
     tolerance: float | None = None
     default_points: bool = False
     timeout: int = 60
+    # Seconds a persistent worker's start may take (testing.json
+    # `worker_startup_timeout`). None means "not set": each backend's own
+    # default applies (60 s; 240 s for Julia, whose first start compiles).
+    worker_startup_timeout: float | None = None
 
     # The run's results will be read WHILE it is in progress (the authoring
     # tool showing a running test). Set by that caller only: there is no
@@ -565,6 +569,20 @@ class Config:
             self.tolerance = float(tolerance)
         else:
             raise ConfigError(base_tolerance_refused(named, tolerance))
+
+        # A worker start's bound: one positive finite number of seconds.
+        startup = file_config.get("worker_startup_timeout")
+        if startup is not None:
+            if (
+                isinstance(startup, bool)
+                or not isinstance(startup, int | float)
+                or not 0 < startup < float("inf")
+            ):
+                raise ConfigError(
+                    f"testing.json worker_startup_timeout must be a positive "
+                    f"number of seconds, got {startup!r}"
+                )
+            self.worker_startup_timeout = float(startup)
 
         # Reporter payload budget
         if "max_embedded_samples" in file_config:

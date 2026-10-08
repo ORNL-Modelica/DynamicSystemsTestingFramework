@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
 import time
 from abc import abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -35,6 +37,43 @@ from ..types import (
 from . import result_files
 from .proc_output import decode_output
 from .result_variables import criterion_variables
+
+
+def run_killable(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    timeout: float,
+    on_spawn: Callable[[subprocess.Popen], None],
+) -> subprocess.CompletedProcess:
+    """``subprocess.run(cmd, capture_output=True, text=True, timeout=...)``
+    with the live ``Popen`` handed to *on_spawn*, so another thread can kill
+    it. Same contract otherwise: the child is killed and reaped on timeout
+    and ``TimeoutExpired`` carries what it had written.
+    """
+    with subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        # review 2026-07-06 (finding 75): pin utf-8 + replace so a
+        # non-ASCII traceback can't crash decoding on cp1252 hosts.
+        encoding="utf-8",
+        errors="replace",
+    ) as proc:
+        on_spawn(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            exc.stdout, exc.stderr = proc.communicate()
+            raise
+        except BaseException:
+            proc.kill()
+            raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +94,15 @@ class JsonDriverBackend(Backend):
     source_suffix: ClassVar[str]
     #: Name the driver writes its JSON result under, inside the test dir.
     result_filename: ClassVar[str] = "result.json"
+
+    def __init__(self, config):
+        super().__init__(config)
+        #: The driver subprocess of each test in flight, by test key, and the
+        #: tests told to stop — what :meth:`cancel_test` works on, from
+        #: another thread.
+        self._procs_lock = threading.Lock()
+        self._procs: dict[str, subprocess.Popen] = {}
+        self._cancelled: set[str] = set()
 
     @property
     @abstractmethod
@@ -126,18 +174,21 @@ class JsonDriverBackend(Backend):
         logger.debug("%s cmd: %s", self.tool_label, " ".join(cmd))
 
         wall_start = time.monotonic()
+
+        def _register(spawned: subprocess.Popen) -> None:
+            with self._procs_lock:
+                self._procs[test_key] = spawned
+
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=test_dir,
-                capture_output=True,
-                text=True,
-                # review 2026-07-06 (finding 75): pin utf-8 + replace so a
-                # non-ASCII traceback can't crash decoding on cp1252 hosts.
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-            )
+            try:
+                proc = run_killable(
+                    cmd, cwd=test_dir, timeout=timeout, on_spawn=_register
+                )
+            finally:
+                with self._procs_lock:
+                    self._procs.pop(test_key, None)
+                    cancelled = test_key in self._cancelled
+                    self._cancelled.discard(test_key)
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
             # review 2026-07-06 (finding 23): TimeoutExpired.stdout/.stderr are
@@ -168,6 +219,23 @@ class JsonDriverBackend(Backend):
         elapsed = time.monotonic() - wall_start
         stdout_path.write_text(proc.stdout or "", encoding="utf-8")
         stderr_path.write_text(proc.stderr or "", encoding="utf-8")
+
+        if cancelled and proc.returncode != 0:
+            # Killed on request (cancel_test): neither a failure nor a
+            # result. A driver that had already finished keeps its result.
+            if self.progress:
+                self.progress.on_finish(
+                    test_key, success=False, elapsed=elapsed, detail="Cancelled"
+                )
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                error_message="Cancelled",
+                sim_wall=elapsed,
+                cancelled=True,
+            )
 
         if proc.returncode != 0:
             # The driver writes a structured failure JSON on exceptions; if
@@ -208,6 +276,20 @@ class JsonDriverBackend(Backend):
             sim_wall=elapsed,
             statistics={"simulation": {"wall_time": elapsed}},
         )
+
+    def cancel_test(self, test_key: str) -> bool:
+        """Kill the driver subprocess running *test_key*; its
+        ``run_single_test`` then returns a ``cancelled`` result."""
+        with self._procs_lock:
+            proc = self._procs.get(test_key)
+            if proc is None:
+                return False
+            self._cancelled.add(test_key)
+        try:
+            proc.kill()
+        except OSError:
+            pass  # it ended on its own in the meantime
+        return True
 
     # ------------------------------------------------------------------
     # Reading

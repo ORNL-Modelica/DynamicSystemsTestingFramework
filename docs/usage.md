@@ -39,6 +39,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
 | `tolerance` | No | The project's comparison tolerance (default: `1e-4`): what a test with no `comparison.tolerance` of its own, in its spec entry or its baseline, is scored with. One finite number — anything else is a config error (see "Tolerances with two sides"). `--tolerance` overrides it. |
+| `worker_startup_timeout` | No | Seconds a persistent worker (Dymola, OpenModelica, Julia) may take to start before the run fails with the backend's message. One positive number; default 60, and 240 for Julia. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 
 All relative paths resolve from where `testing.json` is located.
@@ -656,7 +657,8 @@ uv run dstf --config testing.json run -i
 
 `a` stores through the same function `run --accept` and `compare --accept`
 call, so it accepts exactly what they accept. A test the last run left
-recorded as pending — a run aborted while it was in flight — is refused with
+recorded as pending or cancelled — a run aborted or stopped while it was in
+flight — is refused with
 `re-run before accepting`; a result the store declines (a trajectory carrying
 `NaN`, say) is refused with that reason and the review moves on to the next
 test; and a simulate-only test stores no baseline at all
