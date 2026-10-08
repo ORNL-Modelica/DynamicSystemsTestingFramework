@@ -8129,6 +8129,48 @@ def test_a_scroll_under_a_resting_pointer_shows_and_hides_as_a_move_does(
         assert _displayed(page) == four
 
 
+def test_a_plot_wheeled_under_a_pointer_never_moved_over_it_shows_its_arrows(
+    tmp_path, playwright_browser
+):
+    """A plot knew the pointer only from its OWN mouse events: wheeled
+    under a pointer that had never moved over it — at rest above it, on
+    the card's own header — a checkpoint showed no arrow until the pointer
+    moved. Where the pointer is, is the PAGE's to know, once for every
+    plot: brought there from the page's header in one move, 30 px above
+    the plot, it has the checkpoint's ring wheeled under it, and the four
+    arrows show in the frame after the scroll; wheeled back, none."""
+    project = partial(_checkpoints_project, places=((500, 0.5),))
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        page.wait_for_timeout(700)
+        _open_scaled(page, "points · x", TIME_SCALE)
+        four = _group("points", 0, FOUR)
+        (ring,) = _areas(page)["points/0"]["rings"]
+        by = round(ring[1] - _plot_box(page)["top"]) + 30
+        at = (ring[0], ring[1] - by)
+        start, below = page.evaluate(
+            "() => [window.scrollY, document.documentElement.scrollHeight"
+            " - window.innerHeight - window.scrollY]"
+        )
+        assert below >= by, (below, by)
+        over_the_plot = (
+            "([x, y]) => document.querySelectorAll('.js-plotly-plot')[0]"
+            ".contains(document.elementFromPoint(x, y))"
+        )
+        _rest(page)
+        page.mouse.move(*at)
+        assert not page.evaluate(over_the_plot, list(at))
+        assert _displayed(page) == []
+        page.evaluate(SCROLL_WATCH, 0)
+
+        assert _wheel_to(page, by) == [start + by, four]
+        assert page.evaluate(over_the_plot, list(at))
+        page.wait_for_timeout(300)
+        assert _displayed(page) == four
+        assert _wheel_to(page, -by) == [start, []]
+        page.wait_for_timeout(300)
+        assert _displayed(page) == []
+
+
 # -- a shape no editor moves takes no pointer ----------------------------------
 
 

@@ -118,6 +118,19 @@
 
   const instances = new Map();
 
+  // Where the pointer is on the PAGE — viewport px, or null once it has
+  // left the window — kept once, for every plot: a plot hears the moves
+  // over itself alone, and one wheeled under a pointer that had never
+  // moved over it had no pointer to test (`scrolled`).
+  let pointer = null;
+  const tracked = (e) => {
+    pointer = [e.clientX, e.clientY];
+  };
+  document.addEventListener("mousemove", tracked, true);
+  document.documentElement.addEventListener("mouseleave", () => {
+    pointer = null;
+  });
+
   function create(gd) {
     const st = {
       gd, clusters: [], on: null, latched: false, xy: null, ranges: {}, press: null,
@@ -626,11 +639,15 @@
     // A scroll moves the plot under a pointer at rest, and no mouse event
     // says so: the arrows of a checkpoint wheeled out from under the
     // pointer stayed shown until it moved, and one wheeled under it showed
-    // none. The pointer is where it was on the screen (`st.xy`, viewport
-    // px) and the plot is not: the same test as a move, against the plot
-    // where it is now. Once per frame, however many scroll events one
-    // brings.
-    const rehere = guarded(() => here(st.xy));
+    // none. The pointer is where it was on the screen (the page's
+    // `pointer`) and the plot is not: the same test as a move, against
+    // the plot where it is now — if the pointer is over this plot at all,
+    // by what a press there would land on. Once per frame, however many
+    // scroll events one brings.
+    const rehere = guarded(() => {
+      const under = pointer && document.elementFromPoint(pointer[0], pointer[1]);
+      here(under && gd.contains(under) ? pointer : null);
+    });
     const scrolled = () => {
       if (st.frame) return;
       st.frame = requestAnimationFrame(() => {
