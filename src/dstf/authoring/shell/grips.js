@@ -5,12 +5,14 @@
 //
 // WHICH arrows show is decided by CLUSTERS. Each group — one checkpoint,
 // event or peak: its ring and its arrows — has a hover area, a rectangle
-// around its ring and its arrows' anchors. Groups whose areas overlap show
-// TOGETHER: they are one cluster, and with the pointer anywhere in a
-// cluster's areas every arrow of every member is shown; outside every
-// area, none. No two clusters' areas overlap, so the pointer is in at most
-// one and there is nothing to choose between: no nearest group, nothing
-// kept from where the pointer was. (ONE group was shown at a time before,
+// around its ring and its arrows' anchors, those of them that are ON the
+// plot (`placed`): a group zoomed off it has none. Groups whose areas
+// overlap show TOGETHER: they are one cluster, and with the pointer
+// anywhere in a cluster's areas every arrow of every member is shown;
+// outside every area, none. No two clusters' areas overlap, so the pointer
+// is in at most one and there is nothing to choose between: no nearest
+// group, nothing kept from where the pointer was. (ONE group was shown at
+// a time before,
 // chosen by the nearest anchor, then by the arrows' drawn tips too, then
 // with an advantage for the shown one: at some spacings a facing arrow
 // still could not be reached, the display flickered between two groups,
@@ -46,6 +48,11 @@
   // How near a shown arrow, or the ring its group stands around, the plot's
   // own hover label gives way, px.
   const HUSH = 20;
+  // How far outside the plot area an anchor still counts as ON the plot,
+  // px. A zoom lands an edge within a fraction of a pixel of the border it
+  // was dragged to, on either side of it: that edge is the plot's own, and
+  // its arrow — all in the margin — is the one the un-clip is for.
+  const EDGE = 0.5;
   // How far the pointer must travel along an axis, press to release, for
   // the release to move a shape on it, px — Plotly's own threshold (its
   // `MINDRAG`): under it Plotly moves nothing on that axis.
@@ -109,6 +116,37 @@
     // Whether the grip path `el` is of the shown cluster.
     const shown = (el) => !!st.on && st.on.groups.has(el.getAttribute("data-grip"));
 
+    // Where the shape `s` — a ring or an arrow, sized in pixels about its
+    // anchor — is anchored, in pixels of the graph div, as the figure is
+    // drawn NOW (`_fullLayout`: the axes' ranges of this very redraw, a
+    // pan's every step too), or null where it is on no axis of the figure.
+    // An arrow anchored to the PAPER in y (an event's or a peak's window
+    // spans its panel) has no y of its own: `y` is null, and it reaches
+    // from the panel's `top` to its `bottom`.
+    //
+    // And whether that anchor is OFF the plot: outside the plot area by
+    // more than EDGE px on either axis — the one the arrow moves on (its
+    // edge is past the end of the axis) or the other (its checkpoint is).
+    // Plotly would have clipped all of such an arrow but the 10 to 17 px it
+    // stands out by.
+    const placed = (s, fl) => {
+      const xa = fl["xaxis" + (s.xref || "x").slice(1)];
+      if (!xa) return null;
+      const paper = s.yref === "paper";
+      const ya = fl["yaxis" + (paper ? xa.anchor : s.yref || "y").slice(1)];
+      if (!ya) return null;
+      const within = (p, axis) => p >= -EDGE && p <= axis._length + EDGE;
+      const px = xa.d2p(s.xanchor);
+      const py = paper ? null : ya.d2p(s.yanchor);
+      return {
+        x: xa._offset + px,
+        y: paper ? null : ya._offset + py,
+        top: ya._offset,
+        bottom: ya._offset + ya._length,
+        off: !(within(px, xa) && (paper || within(py, ya))),
+      };
+    };
+
     // Plotly replaces every shape path on a react or a newPlot: the marks go
     // with them, and are put back from what the figure says of its shapes.
     // A shape is three elements of one `data-index` — its group, its path
@@ -119,21 +157,32 @@
     // edge is the plot's, and the stylesheet's rules over `data-grip`
     // (style.py) un-clip the path and its group. Nothing here touches a
     // `clip-path`.
+    //
+    // But for an arrow whose anchor is OFF the plot (`placed`), marked
+    // `data-grip-off`: those rules leave it Plotly's clip. Un-clipped like
+    // the rest, the arrows of a checkpoint zoomed just off the plot were
+    // painted in the margin, about a ring that was not drawn, and took a
+    // press there. The mark is this pass's, like the others: of the
+    // figure as this redraw draws it.
     const mark = () => {
       const shapes = (gd.layout && gd.layout.shapes) || [];
       const info = said(gd);
+      const fl = gd._fullLayout;
       for (const el of gd.querySelectorAll(".shapelayer [data-index]")) {
-        const name = (shapes[+el.getAttribute("data-index")] || {}).name;
-        el.toggleAttribute("data-inert", !!info && !info.draggable.has(name));
+        const shape = shapes[+el.getAttribute("data-index")] || {};
+        el.toggleAttribute("data-inert", !!info && !info.draggable.has(shape.name));
         if (el.tagName !== "path") continue;
-        const grip = gripOf(info, name);
+        const grip = gripOf(info, shape.name);
         if (grip) {
+          const at = fl ? placed(shape, fl) : null;
           el.setAttribute("data-grip", grip.group);
           el.toggleAttribute("data-grip-on", shown(el));
+          el.toggleAttribute("data-grip-off", !!at && at.off);
           tell(el, grip);
         } else if (el.hasAttribute("data-grip")) {
           el.removeAttribute("data-grip");
           el.removeAttribute("data-grip-on");
+          el.removeAttribute("data-grip-off");
           untell(el);
         }
       }
@@ -145,6 +194,7 @@
       for (const el of gd.querySelectorAll("[data-grip]")) {
         el.removeAttribute("data-grip");
         el.removeAttribute("data-grip-on");
+        el.removeAttribute("data-grip-off");
         untell(el);
       }
       for (const el of gd.querySelectorAll("[data-inert]")) {
@@ -194,45 +244,48 @@
     // A grip anchored to the PAPER in y (an event's or a peak's window
     // spans its panel) has no y of its own: it reaches over the panel's
     // whole height. A ring whose group has no grip has no area.
+    //
+    // Of the members that are ON the plot (`placed`) alone: an arrow whose
+    // anchor is off it is not drawn, and a ring off it is clipped away. A
+    // group partly on the plot has the area of what is on it; one that is
+    // off it whole — its ring and every arrow — has none, and nothing
+    // shows for it wherever the pointer is.
     const areas = () => {
       const fl = gd._fullLayout;
       const out = new Map();
       if (!fl) return out;
       const info = said(gd);
+      const gripped = new Set();
       const rings = [];
-      for (const s of (gd.layout && gd.layout.shapes) || []) {
-        if (s.visible === false) continue;
-        const grip = gripOf(info, s.name);
-        const g = grip ? grip.group : ringOf(info, s.name);
-        if (g === null) continue;
-        const xa = fl["xaxis" + (s.xref || "x").slice(1)];
-        if (!xa) continue;
-        const paper = s.yref === "paper";
-        const ya = fl["yaxis" + (paper ? xa.anchor : s.yref || "y").slice(1)];
-        if (!ya) continue;
-        const x = xa._offset + xa.d2p(s.xanchor);
-        const y = paper ? null : ya._offset + ya.d2p(s.yanchor);
-        if (!grip) {
-          if (y !== null) rings.push([g, x, y]);
-          continue;
-        }
-        const t = paper ? ya._offset : y;
-        const b = paper ? ya._offset + ya._length : y;
+      // Group `g`'s area, grown to hold x from t to b.
+      const reach = (g, x, t, b) => {
         const a = out.get(g) || { l: x, r: x, t, b, rings: [] };
         a.l = Math.min(a.l, x);
         a.r = Math.max(a.r, x);
         a.t = Math.min(a.t, t);
         a.b = Math.max(a.b, b);
         out.set(g, a);
+        return a;
+      };
+      for (const s of (gd.layout && gd.layout.shapes) || []) {
+        if (s.visible === false) continue;
+        const grip = gripOf(info, s.name);
+        const g = grip ? grip.group : ringOf(info, s.name);
+        if (g === null) continue;
+        const at = placed(s, fl);
+        if (!at) continue;
+        if (grip) gripped.add(g);
+        if (at.off) continue;
+        if (!grip) {
+          if (at.y !== null) rings.push([g, at.x, at.y]);
+        } else if (at.y === null) {
+          reach(g, at.x, at.top, at.bottom);
+        } else {
+          reach(g, at.x, at.y, at.y);
+        }
       }
       for (const [g, x, y] of rings) {
-        const a = out.get(g);
-        if (!a) continue;
-        a.l = Math.min(a.l, x);
-        a.r = Math.max(a.r, x);
-        a.t = Math.min(a.t, y);
-        a.b = Math.max(a.b, y);
-        a.rings.push([x, y]);
+        if (gripped.has(g)) reach(g, x, y, y).rings.push([x, y]);
       }
       // To the hundredth of a pixel, the precision Plotly places a shape
       // at (its `l2p`): two areas that touch on the screen touch here too,

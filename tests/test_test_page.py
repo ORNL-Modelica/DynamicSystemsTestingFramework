@@ -12398,20 +12398,23 @@ def test_the_stylesheet_alone_takes_plotlys_clip_off_a_grip_in_two_rules():
     stylesheet, whose property beats the attribute wherever and whenever
     it is written; `grips.js` takes no attribute off. The path's rule and
     the group's are two rules, not one selector list: a browser without
-    `:has` drops the whole rule that names it. (What a person gets is read
-    in the browser: `test_an_arrow_pressed_in_the_margin_of_a_zoomed_plot_
-    stays_painted_while_held`.)"""
+    `:has` drops the whole rule that names it. Neither rule takes the
+    clip off an arrow marked off the plot (`data-grip-off`). (What a person
+    gets is read in the browser: `test_an_arrow_pressed_in_the_margin_of_a_
+    zoomed_plot_stays_painted_while_held`, `test_an_arrow_whose_anchor_is_
+    off_the_plot_is_hidden_until_it_is_panned_back`.)"""
     import re
 
     from dstf.authoring.shell.plot_card import GRIPS_JS
     from dstf.authoring.shell.style import STYLE
 
     css = re.sub(r"\s+", " ", STYLE)
-    assert " .js-plotly-plot .shapelayer path[data-grip] { clip-path: none; }" in css
+    on = "path[data-grip]:not([data-grip-off])"
+    assert f" .js-plotly-plot .shapelayer {on} {{ clip-path: none; }}" in css
     assert (
-        " .js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip])"
-        " { clip-path: none; }"
+        f" .js-plotly-plot .shapelayer g.shape-group:has(> {on}) {{ clip-path: none; }}"
     ) in css
+    assert css.count("clip-path: none") == 2
     assert not re.search(r"Attribute\(\s*[\"']clip-path", GRIPS_JS.read_text("utf-8"))
 
 

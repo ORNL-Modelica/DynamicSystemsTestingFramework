@@ -264,9 +264,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    off, and an arrow pressed in the margin of a zoomed plot stays painted
    while it is held. Two rules, never one selector list: a browser
    without `:has` (Firefox before 121) drops the whole rule that names it,
-   and keeps the path's. */
-.js-plotly-plot .shapelayer path[data-grip] { clip-path: none; }
-.js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]) { clip-path: none; }
+   and keeps the path's.
+   Not an arrow whose ANCHOR is off the plot (`data-grip-off`, marked by
+   `grips.js` on every redraw): it keeps Plotly's clip, held or not. The
+   un-clip is for the 10 to 17 px an arrow stands outside an edge that is
+   on the plot; the arrows of a checkpoint zoomed just off the plot were
+   painted in the margin beside the axis title, and took a press. */
+.js-plotly-plot .shapelayer path[data-grip]:not([data-grip-off]) { clip-path: none; }
+.js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]:not([data-grip-off])) {
+  clip-path: none;
+}
 /* The cursor over an arrow is the way it moves — up and down for a value
    side, left and right for a time or a frequency side — by the axis
    `grips.js` marks it with. Plotly's own for a draggable shape is `move`,

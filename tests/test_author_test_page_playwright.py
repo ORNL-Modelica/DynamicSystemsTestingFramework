@@ -8345,8 +8345,8 @@ def test_opening_a_criterion_on_a_split_plot_keeps_its_trace_as_tall(
 #: a shape's group as drawn and on the path itself while it is held, and a
 #: rule of the stylesheet overrides either) and the svg's own edge — or
 #: None where nothing is; the clip in effect on its group and on itself;
-#: and whether its middle is under itself (a hit test honours a clip).
-#: Read off the DOM.
+#: whether it is marked off the plot; and whether its middle is under
+#: itself (a hit test honours a clip). Read off the DOM.
 PAINTED = """
 ([card, tail]) => {
   const gd = document.querySelectorAll('.js-plotly-plot')[card];
@@ -8382,6 +8382,7 @@ PAINTED = """
     painted: left.right > left.left && left.bottom > left.top ? left : null,
     clip: getComputedStyle(el.parentNode).clipPath,
     held: getComputedStyle(el).clipPath,
+    off: el.hasAttribute('data-grip-off'),
     hit: under === el,
     under: under ? under.tagName + '.' + (under.getAttribute('class') || '') : null,
   };
@@ -8671,6 +8672,300 @@ def test_an_arrow_pressed_in_the_margin_of_a_zoomed_plot_stays_painted_while_hel
         upper = float(_table_cell(page, 1, "+ tolerance").input_value())
         assert abs(upper - (top - 1.2)) * ppy < 0.5, (upper, top, ppy)
         assert _table_cell(page, 0, "+ tolerance").input_value() == "0.3"
+
+
+# -- an arrow whose anchor is off the plot keeps its clip ------------------------
+
+#: The arrows of plot ``card`` the page has marked OFF the plot
+#: (`data-grip-off`), by the last three segments of their names, sorted.
+OFF = """
+(card) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const shapes = gd.layout.shapes || [];
+  return [...gd.querySelectorAll('.shapelayer path[data-grip-off]')]
+    .map(el => shapes[+el.getAttribute('data-index')].name.split('/').slice(-3).join('/'))
+    .sort();
+}
+"""
+
+#: What takes a press at a point of the viewport: its tag, its classes,
+#: and whether it is a shape of a plot at all.
+UNDER = """
+([x, y]) => {
+  const el = document.elementFromPoint(x, y);
+  return el && {tag: el.tagName, classes: (el.getAttribute('class') || '').split(' '),
+                shape: !!el.closest('.shapelayer')};
+}
+"""
+
+
+def _off(page, card: int = 0) -> list[str]:
+    return page.evaluate(OFF, card)
+
+
+def _pan_mode(page) -> None:
+    """The toolbar's Pan, on plot 0."""
+    pan = page.locator(".js-plotly-plot").first.locator(
+        '.modebar-btn[data-title="Pan"]'
+    )
+    expect(pan).to_have_count(1)
+    pan.click(force=True)
+    page.wait_for_function(
+        "() => document.querySelectorAll('.js-plotly-plot')[0]"
+        "._fullLayout.dragmode === 'pan'",
+        timeout=EXPECT_TIMEOUT,
+    )
+    page.wait_for_timeout(300)
+
+
+def test_an_arrow_whose_anchor_is_off_the_plot_is_hidden_until_it_is_panned_back(
+    tmp_path, playwright_browser
+):
+    """An arrow is un-clipped so that it can stand in the margin just
+    outside an edge that is ON the plot. Zoomed so that a checkpoint is
+    off the plot — its ring 54 px left of the plot area, clipped — its
+    upper and lower arrows were painted out there, beside the axis title,
+    and took a press. An arrow whose anchor is off the plot keeps Plotly's
+    clip and gives its group no hover area: with the pointer where the
+    ring would be, and anywhere in the left margin, nothing of it shows
+    and a press where its upper arrow would be is the plot's own — the
+    value axis's drag strip next to the plot, its container further out,
+    never a shape. The `after` edge of that checkpoint is still on the
+    plot: near it the group shows, and of its four arrows that one alone
+    is painted. Panned back onto the plot — the marks follow the pan as it
+    goes — all four are drawn whole, each takes a press, and a drag stages
+    its side."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        assert _off(page) == []
+        area = page.evaluate(PLOT_AREA)
+        width = area["right"] - area["left"]
+        ring = _shape(page, "/points/target/0")
+        left = (ring["x"] + 33 - area["left"]) / width
+        _box_zoom(page, (left, left + 0.6), (0.08, 0.98))
+        area = page.evaluate(PLOT_AREA)
+        ring = _shape(page, "/points/target/0")
+        assert -62 <= ring["x"] - area["left"] <= -46, (ring, area)
+        assert area["top"] + 20 < ring["y"] < area["bottom"] - 20, (ring, area)
+        after = _shape(page, "/points/after/0")
+        assert after["x"] - area["left"] >= 30, (after, area)
+        # Checkpoint 1 is off the plot whole, to the right.
+        gone = _group("points", 0, ("upper", "lower", "before"))
+        assert _off(page) == sorted(gone + _group("points", 1, FOUR))
+
+        # Where the ring would be, and all over the left margin: no
+        # shape is under the pointer. Within 20 px of the plot that is the
+        # value axis's own drag strip; further out, the plot's container.
+        margin = [
+            (area["left"] - dx, area["top"] + frac * area["height"])
+            for dx in (4, 12, 30, area["left"] - ring["x"], 70)
+            for frac in (0.03, 0.2, 0.4, 0.6, 0.8, 0.97)
+        ]
+        for x, y in [(ring["x"], ring["y"]), *margin]:
+            page.mouse.move(x, y)
+            assert _grips_on(page)["shown"] == [], (x, y)
+            under = page.evaluate(UNDER, [x, y])
+            assert not under["shape"], (x, y, under)
+            assert ("drag" in under["classes"]) == (area["left"] - x < 20), (x, under)
+        for edge in FOUR:
+            assert page.evaluate(PAINTED, [0, f"/points/{edge}/0"])["painted"] is None
+        _shot(page, tmp_path, "left-margin-of-a-checkpoint-zoomed-off-the-plot")
+        # A press where the upper arrow would be drawn, 13 px above the
+        # ring, is not a shape's, and stages nothing.
+        page.evaluate(
+            "() => { window.__dstfPressed = null;"
+            " document.addEventListener('mousedown', (e) => {"
+            "   window.__dstfPressed = !!e.target.closest('.shapelayer'); },"
+            " {capture: true, once: true}); }"
+        )
+        page.mouse.move(ring["x"], ring["y"] - 13)
+        page.mouse.down()
+        page.mouse.up()
+        assert page.evaluate("() => window.__dstfPressed") is False
+        page.wait_for_timeout(400)
+        expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")
+
+        # Near the `after` edge, still on the plot: the group shows, and
+        # the arrow whose anchor is on the plot is the one painted.
+        page.mouse.move(after["x"], after["y"], steps=4)
+        page.wait_for_timeout(150)
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        on = page.evaluate(PAINTED, [0, "/points/after/0"])
+        assert _whole(on) and not on["off"], on
+        for edge in ("upper", "lower", "before"):
+            hidden = page.evaluate(PAINTED, [0, f"/points/{edge}/0"])
+            assert hidden["off"] and hidden["painted"] is None, (edge, hidden)
+            assert not hidden["hit"], (edge, hidden)
+            assert "#clip" in hidden["clip"], (edge, hidden)
+        _shot(page, tmp_path, "the-after-arrow-of-a-checkpoint-off-the-plot")
+
+        # Panned back onto the plot: the marks follow the pan as it goes.
+        _pan_mode(page)
+        at = (area["left"] + 0.55 * width, area["top"] + 30)
+        page.mouse.move(*at)
+        page.mouse.down()
+        page.mouse.move(at[0] + 230, at[1], steps=10)
+        page.wait_for_timeout(100)
+        mid = _shape(page, "/points/target/0")
+        assert mid["x"] - area["left"] >= 150, (mid, area)
+        assert _off(page) == _group("points", 1, FOUR)
+        page.mouse.up()
+        page.wait_for_timeout(500)
+        assert _off(page) == _group("points", 1, FOUR)
+        for edge in FOUR:
+            arrow = _painted(page, f"/points/{edge}/0", near="/points/target/0")
+            assert _whole(arrow) and arrow["clip"] == "none", (edge, arrow)
+            assert _arrow_says(page, f"/points/{edge}/0", "/points/target/0")["hit"]
+        assert _grips_on(page)["shown"] == _group("points", 0, FOUR)
+        shown = _drag_arrow(page, "/points/upper/0", 0, -15)
+        expect(_table_cell(page, 0, "+ tolerance")).not_to_have_value(
+            "0.3", timeout=EXPECT_TIMEOUT
+        )
+        upper = float(_table_cell(page, 0, "+ tolerance").input_value())
+        assert abs(upper - (0.3 + 15 / shown["ppy"])) * shown["ppy"] < 0.5, upper
+        assert _table_cell(page, 1, "+ tolerance").input_value() == "0.3"
+
+
+def test_an_arrow_whose_own_edge_is_above_the_plot_is_hidden_and_the_others_drag(
+    tmp_path, playwright_browser
+):
+    """Off the plot on the arrow's OWN axis: zoomed so that a checkpoint's
+    upper edge is some 12 px above the plot's top while its ring is
+    inside, that edge's arrow was painted in the top margin, pointing at
+    an edge that is not drawn. It keeps its clip — nothing of it is
+    painted, and where it would be takes no press — and the group's other
+    three arrows, whose edges are on the plot, show near the ring, take a
+    press and stage their sides. (This checkpoint's tolerances are one
+    number each way: a side dragged moves its opposite too. The lower side
+    is dragged OUTWARD, so the upper edge goes further off the plot.)
+    Zoomed in on the ring until all four edges are off the plot, the group
+    keeps the area of what is on it — its ring: near it the group is the
+    one shown, with none of its arrows painted."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        area = page.evaluate(PLOT_AREA)
+        edge = _shape(page, "/points/upper/1")
+        top = (edge["y"] + 8 - area["top"]) / area["height"]
+        _box_zoom(page, (0.4, 0.99), (top, top + 0.65))
+        area = page.evaluate(PLOT_AREA)
+        edge = _shape(page, "/points/upper/1")
+        ring = _shape(page, "/points/target/1")
+        assert -20 <= edge["y"] - area["top"] <= -5, (edge, area)
+        assert ring["y"] - area["top"] >= 20, (ring, area)
+        # Checkpoint 0 is off the plot whole, to the left.
+        assert _off(page) == sorted(["points/upper/1", *_group("points", 0, FOUR)])
+
+        upper = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert _grips_on(page)["shown"] == _group("points", 1, FOUR)
+        assert upper["off"] and upper["painted"] is None, upper
+        assert "#clip" in upper["clip"], upper
+        # Displayed, so it has a box — in the margin, where it would be.
+        assert upper["box"] is not None, upper
+        assert upper["box"]["bottom"] < area["top"], (upper, area)
+        assert not upper["hit"] and not _orange(page, upper["box"]), upper
+        _shot(page, tmp_path, "an-upper-edge-above-the-plots-top")
+        for name in ("lower", "before", "after"):
+            arrow = _painted(page, f"/points/{name}/1", near="/points/target/1")
+            assert _whole(arrow) and not arrow["off"], (name, arrow)
+            assert _arrow_says(page, f"/points/{name}/1", "/points/target/1")["hit"]
+
+        def dragged(name: str, label: str, dx: float, dy: float, px: float) -> None:
+            """Drag arrow ``name`` by ``(dx, dy)``: its field ``label``
+            moves by ``px`` pixels of its axis."""
+            cell = _table_cell(page, 1, label)
+            was = cell.input_value()
+            shown = _drag_arrow(page, f"/points/{name}/1", dx, dy)
+            expect(cell).not_to_have_value(was, timeout=EXPECT_TIMEOUT)
+            scale = shown["ppy"] if dy else shown["ppx"]
+            moved = (float(cell.input_value()) - float(was)) * scale
+            assert abs(moved - px) < 0.5, (name, was, cell.input_value())
+            page.wait_for_timeout(500)
+
+        dragged("lower", "− tolerance", 0, 15, 15)
+        dragged("before", "before time_tolerance", 15, 0, -15)
+        dragged("after", "after time_tolerance", -15, 0, -15)
+        # Its arrow is still off, and still not painted.
+        assert "points/upper/1" in _off(page)
+        upper = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert upper["off"] and upper["painted"] is None and not upper["hit"], upper
+
+        # In on the ring: every edge off the plot, the ring alone on it.
+        area = page.evaluate(PLOT_AREA)
+        ring = _shape(page, "/points/target/1")
+        fx = (ring["x"] - area["left"]) / (area["right"] - area["left"])
+        fy = (ring["y"] - area["top"]) / area["height"]
+        _box_zoom(page, (fx - 0.04, fx + 0.04), (fy - 0.06, fy + 0.1))
+        area = page.evaluate(PLOT_AREA)
+        ring = _shape(page, "/points/target/1")
+        assert area["left"] + 30 < ring["x"] < area["right"] - 30, (ring, area)
+        assert area["top"] + 30 < ring["y"] < area["bottom"] - 30, (ring, area)
+        every = sorted(_group("points", 0, FOUR) + _group("points", 1, FOUR))
+        assert _off(page) == every
+        _rest(page)
+        page.mouse.move(ring["x"], ring["y"], steps=5)
+        assert _grips_on(page)["shown"] == _group("points", 1, FOUR)
+        for name in FOUR:
+            arrow = page.evaluate(PAINTED, [0, f"/points/{name}/1"])
+            assert arrow["off"] and arrow["painted"] is None, (name, arrow)
+        # Its area is the ring's: 25 px about it, and no further.
+        page.mouse.move(ring["x"] + 40, ring["y"] + 40, steps=5)
+        assert _grips_on(page)["shown"] == []
+
+
+def test_an_edge_a_fraction_of_a_pixel_past_the_border_is_on_it_and_2_px_past_is_off(
+    tmp_path, playwright_browser
+):
+    """An edge ON the plot's border is on the plot: a zoom lands an edge
+    within a fraction of a pixel of the border it was dragged to, on
+    either side of it, and its arrow — all in the margin — is the case
+    the un-clip is for. Half a pixel is the allowance. The upper edge of a
+    checkpoint zoomed to the plot's top is put 0.3 px ABOVE the top by its
+    field (a mouse places nothing that finely): its arrow is drawn whole
+    in the margin and takes a press. Put 2 px above, it is off the plot:
+    not painted."""
+    with _served(tmp_path, playwright_browser, project=_past_the_data_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        _zoom_upper_edge_to_the_top(page)
+        top = page.evaluate(
+            "() => document.querySelectorAll('.js-plotly-plot')[0]"
+            "._fullLayout.yaxis.range[1]"
+        )
+        ppy = _shape(page, "/points/upper/1")["ppy"]
+        cell = _table_cell(page, 1, "+ tolerance")
+
+        def put(px: float) -> float:
+            """The upper edge ``px`` above the plot's top (the checkpoint's
+            value is 1.2); how far above it is then drawn."""
+            cell.fill(repr(top - 1.2 + px / ppy))
+            cell.press("Tab")
+            expect(page.locator(".dstf-header-row")).to_contain_text(
+                "1 pending edit", timeout=EXPECT_TIMEOUT
+            )
+            page.wait_for_timeout(600)
+            page.locator(".js-plotly-plot").first.evaluate(
+                "e => e.scrollIntoView({block: 'center'})"
+            )
+            page.wait_for_timeout(300)
+            return (
+                page.evaluate(PLOT_AREA)["top"] - _shape(page, "/points/upper/1")["y"]
+            )
+
+        above = put(0.3)
+        assert 0.1 <= above <= 0.45, above
+        area = page.evaluate(PLOT_AREA)
+        arrow = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert _whole(arrow) and not arrow["off"], arrow
+        assert arrow["box"]["bottom"] <= area["top"], (arrow, area)
+        assert _arrow_says(page, "/points/upper/1", "/points/target/1")["hit"]
+
+        above = put(2.0)
+        assert 1.8 <= above <= 2.2, above
+        arrow = _painted(page, "/points/upper/1", near="/points/target/1")
+        assert arrow["off"] and arrow["painted"] is None and not arrow["hit"], arrow
+        assert _off(page) == sorted(["points/upper/1", *_group("points", 0, FOUR)])
 
 
 # -- a refused drag's reason, under the plot ------------------------------------
