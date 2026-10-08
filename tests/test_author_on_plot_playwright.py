@@ -751,25 +751,43 @@ def test_what_a_held_handle_shows_is_what_its_release_writes(
         assert f"{staged:g}" == shown, (staged, shown)
 
         # Let go straight after the last move: the page says where, once
-        # more, before the release — the last move the fields were shown
-        # is the release's own position, not one a frame short of it.
+        # more, before the release. Press, two moves and the release are
+        # dispatched in ONE task of the page, so no frame comes between
+        # them and no throttled move is sent: the one move the server
+        # hears is the one said at the release — the release's own place.
         page.evaluate(RELAYOUT, [0, {"yaxis.range": [-2.5, 2.5]}])
         page.wait_for_timeout(400)
         page.evaluate(TAP)
-        held = _hold(page, "/points/upper/0")
-        page.mouse.move(held["px"], held["py"] + 12, steps=2)
-        page.wait_for_timeout(200)
-        page.mouse.move(held["px"], held["py"] + 40)
-        page.mouse.up()
-        moves = page.evaluate("() => window.__moves.map(m => m.arg)")
-        last = [m for m in moves if not m.get("end")][-1]["update"]
-        (anchor,) = [v for k, v in last.items() if k.endswith(".yanchor")]
-        assert abs(anchor - (held["yanchor"] - 40 / held["ppy"])) * held["ppy"] < 1.5, (
-            anchor,
-            held,
+        ring = _shape(page, "/points/target/0")
+        page.mouse.move(ring["x"], ring["y"], steps=4)  # its arrows show
+        arrow = _shape(page, "/points/upper/0")
+        assert arrow["box"] is not None, arrow
+        said = page.evaluate(
+            """([tail, dy]) => {
+              const gd = document.querySelectorAll('.js-plotly-plot')[0];
+              const i = gd.layout.shapes.findIndex(s => (s.name || '').endsWith(tail));
+              const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+              const b = el.getBoundingClientRect();
+              const x = (b.left + b.right) / 2, y = (b.top + b.bottom) / 2;
+              const fire = (on, type, cy) => on.dispatchEvent(new MouseEvent(type, {
+                bubbles: true, cancelable: true, view: window, button: 0,
+                buttons: type === 'mouseup' ? 0 : 1, clientX: x, clientY: cy}));
+              const anchor = gd.layout.shapes[i].yanchor;
+              fire(el, 'mousedown', y);
+              fire(document, 'mousemove', y + 12);
+              fire(document, 'mousemove', y + dy);
+              fire(document, 'mouseup', y + dy);
+              return {anchor, moves: window.__moves.map(m => m.arg)};
+            }""",
+            ["/points/upper/0", 40],
         )
-        want = anchor + 1.0  # the row's value is -1.0
-        shown, _ = _shows(page, upper, want, 0.01 / 2 + 1e-9)
+        moves = [m["update"] for m in said["moves"] if not m.get("end")]
+        assert len(moves) == 1, said
+        (anchor,) = [v for k, v in moves[0].items() if k.endswith(".yanchor")]
+        want = said["anchor"] - 40 / arrow["ppy"]
+        assert abs(anchor - want) * arrow["ppy"] < 1.5, (anchor, want)
+        # ... and what it showed is what the release then stages.
+        shown, _ = _shows(page, upper, anchor + 1.0, 0.01 / 2 + 1e-9)
         page.wait_for_timeout(600)
         staged = _staged_tree(page)["children"][0]["points"][0]["tolerance"]
         assert f"{staged:g}" == shown, (staged, shown)

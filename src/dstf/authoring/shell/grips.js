@@ -812,8 +812,9 @@
     // double-click (it resets the axes: `detail` counts the clicks); not
     // the click that ends a drag — a Ctrl+drag draws Plotly's zoom box
     // and ends in a real click where it is let go; not one on a shape an
-    // editor moves (a ring, an arrow, a bound: a press there is a drag's),
-    // on the toolbar or on the legend; not one outside every panel. Heard
+    // editor moves (a ring, an arrow, a bound: a press there is a drag's);
+    // not one outside every panel — where the toolbar and the legend
+    // stand, so a click on either is none of the plot's. Heard
     // in the capture phase: a plain click here is one Plotly makes itself
     // after its own handling, and it is still this plot's.
     const clicked = guarded((e) => {
@@ -821,7 +822,6 @@
       if (st.press && Math.hypot(e.clientX - st.press[0], e.clientY - st.press[1]) > CLICKED) {
         return;
       }
-      if (e.target.closest(".modebar-container, .legend")) return;
       const shape = e.target.closest(".shapelayer [data-index]");
       if (shape && !shape.hasAttribute("data-inert")) return;
       const at = spot(e.clientX, e.clientY);

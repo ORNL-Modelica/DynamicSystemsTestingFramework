@@ -487,18 +487,21 @@ async def test_a_row_added_or_removed_disarms(shell, change):
         assert _leaf(shell, POINTS) == staged
 
 
-async def test_a_row_change_the_table_holds_back_disarms_too(shell):
+@pytest.mark.parametrize("change", ["add", "0:remove"])
+async def test_a_row_change_the_table_holds_back_disarms_too(shell, change):
     """No edit says so: a required cell is blank, the list is held back
-    and nothing is staged — the rows still moved under the ⌖."""
+    and nothing is staged — the rows still moved under the ⌖. With "row 2"
+    armed and row 1 removed, the click set the row that had been third."""
     async with user_simulation(root=shell.index) as user:
         page, card = await _opened(shell, user, TUBE)
         _press(user, card, "edit-on-plot", ("tube_points", 1))
         with page.client:
-            _cell(user, TUBE, "tube_points", 0, "time").set_value(None)
+            _cell(user, TUBE, "tube_points", 1, "time").set_value(None)
         assert card.placing.armed is not None  # held back: no edit, still armed
-        user.find(marker=f"{TUBE}:tube_points:add").click()
+        user.find(marker=f"{TUBE}:tube_points:{change}").click()
         await _settled(lambda: card.placing.armed is None)
         assert shell.session.spec.pending == []
+        assert "data-armed" not in card.card.props
 
 
 async def test_a_mode_change_a_ctrl_click_and_an_edit_elsewhere_disarm(shell):
