@@ -808,7 +808,11 @@ async def test_the_tables_line_is_said_only_where_a_table_is_drawn(session):
     )
     async with host(session, EditOnPlot(), on_range) as (user, _errors, figure):
         await user.should_not_see("edit the table")
-        assert [kind for kind, _ in figure.handlers] == ["plotly_relayout"]
+        assert [kind for kind, _ in figure.handlers] == [
+            "plotly_relayout",
+            "dstf_move",
+            "dstf_click",
+        ]
 
 
 async def test_the_rows_scroll_and_add_row_does_not(session):
@@ -1780,7 +1784,7 @@ async def test_a_negative_typed_in_a_rows_tolerance_puts_back_what_the_cell_held
         _keys(user, lower, "-0.", "-0.5")
         await _settled(lambda: _a_rows(session, "points")[0].get("tolerance") == 0.1)
         assert errors["edit-on-plot"] == (
-            "ValueError: row 0: tolerance must not be negative; got −0.5"
+            "Refused: row 0: tolerance must not be negative; got −0.5"
         )
         assert _cell(user, lower).value == -0.5
         assert _a_rows(session, "points") == [
@@ -1904,7 +1908,7 @@ async def test_a_refused_cell_entered_again_puts_back_what_the_spec_holds(
         await _settled(lambda: "got −0.7" in errors.get("edit-on-plot", ""))
         await _settled(lambda: _a_rows(session, field) == held)
         assert errors["edit-on-plot"] == (
-            f"ValueError: row 0: {named} must not be negative; got −0.7"
+            f"Refused: row 0: {named} must not be negative; got −0.7"
         )
         assert session.spec.pending == pending
         assert _cell(user, lower).value == -0.7
@@ -1961,7 +1965,7 @@ async def test_a_refused_cell_in_a_row_the_spec_does_not_hold_puts_back_its_own(
         assert _a_rows(session, "events") == leaf["events"]
         assert session.spec.pending == pending
         assert errors["edit-on-plot"] == (
-            "ValueError: row 0: tolerance must not be negative; got −0.5"
+            "Refused: row 0: tolerance must not be negative; got −0.5"
         )
 
 
@@ -1990,7 +1994,7 @@ async def test_the_sentence_names_the_first_refusal_of_the_rows_as_shown(session
         await _settled(lambda: "row 1" in errors.get("edit-on-plot", ""))
         await asyncio.sleep(0.25)
         assert errors["edit-on-plot"] == (
-            "ValueError: row 1: tolerance must not be negative; got −0.3"
+            "Refused: row 1: tolerance must not be negative; got −0.3"
         )
         assert _a_rows(session, "points") == held
         assert session.spec.pending == pending
@@ -2019,7 +2023,7 @@ async def test_two_negatives_the_file_holds_are_named_as_the_rows_show_them(sess
         await _settled(lambda: "edit-on-plot" in errors)
         await asyncio.sleep(0.25)
         assert errors["edit-on-plot"] == (
-            "ValueError: row 1: tolerance must not be negative; got −0.3"
+            "Refused: row 1: tolerance must not be negative; got −0.3"
         )
         assert session.spec.pending == pending
         user.find(marker="/metrics:points").trigger("focusin")
@@ -2051,7 +2055,7 @@ async def test_a_refusal_above_another_is_the_one_named_after_its_put_back(sessi
         await _settled(lambda: "row 0" in errors.get("edit-on-plot", ""))
         await asyncio.sleep(0.25)
         assert errors["edit-on-plot"] == (
-            "ValueError: row 0: tolerance must not be negative; got −0.7"
+            "Refused: row 0: tolerance must not be negative; got −0.7"
         )
         assert _a_rows(session, "points") == held
         assert session.spec.pending == pending
@@ -2074,7 +2078,7 @@ async def test_a_refused_cell_goes_back_to_its_own_rows_staged_value(session):
             user.find(marker="/metrics:points").trigger("focusin")
             _keys(user, lower, "", "-0", "-0.", typed)
             sentence = (
-                f"ValueError: row 1: tolerance must not be negative; got −{typed[1:]}"
+                f"Refused: row 1: tolerance must not be negative; got −{typed[1:]}"
             )
             await _settled(lambda s=sentence: errors.get("edit-on-plot") == s)
             await _settled(lambda: _a_rows(session, "points") == held)
@@ -2153,7 +2157,7 @@ async def test_a_refused_cell_of_an_added_row_entered_again_goes_back_to_its_own
         await _settled(lambda: "got −0.7" in errors.get("edit-on-plot", ""))
         await asyncio.sleep(0.25)
         assert errors["edit-on-plot"] == (
-            "ValueError: row 2: tolerance must not be negative; got −0.7"
+            "Refused: row 2: tolerance must not be negative; got −0.7"
         )
         assert [r.get("tolerance") for r in _a_rows(session, field)] == [0.2, 0.3, 0.3]
         assert _cell(user, cell.format(2)).value == -0.7

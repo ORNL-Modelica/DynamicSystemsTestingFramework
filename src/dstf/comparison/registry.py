@@ -26,7 +26,7 @@ from .summaries import summarize_default
 from .types import ScoreSummary, VariableComparison
 
 if TYPE_CHECKING:
-    from .handles import HandleEdit
+    from .handles import HandleEdit, RowPlace
     from .metric_tree import Combinator
     from .modes import ComparisonMode
     from .seeds import SeedData
@@ -74,6 +74,13 @@ class MetricDescriptor:
     the leaf cannot take; see :mod:`.handles`. ``None`` for a metric no drag
     edits (the builtins ``nrmse`` and ``event-timing``).
 
+    ``place_row`` is what a Ctrl+click on the plot adds to the metric's
+    table: the leaf with one more row, settled on the data it scores
+    (:class:`~.handles.RowPlace`); ``None`` for a metric with no rows.
+    ``row_noun`` says what that row is called for a leaf — "a point" — or
+    ``None`` where a click adds nothing to THAT leaf (a tube of constant
+    width); the editor's hint reads it.
+
     ``seed`` gives a new leaf its first values from the data it will score
     (the reference / actual series in, the params to add out), so a leaf
     added with only a metric and a variable is valid and sensible; ``None``
@@ -104,6 +111,10 @@ class MetricDescriptor:
     drawn_by_default: bool = True
     #: A new leaf's first values from the data it will score.
     seed: Callable[[SeedData], dict] | None = None
+    #: A Ctrl+click on the plot, as the leaf with one more row.
+    place_row: Callable[[RowPlace], dict] | None = None
+    #: What that row is called for a leaf, or None where a click adds none.
+    row_noun: Callable[[dict], str | None] | None = None
 
 
 @dataclass(frozen=True)

@@ -1569,8 +1569,91 @@ declared peaks); "Drag a tolerance arrow on the plot (hover near it to show
 the arrows), or edit the fields." (a tube of constant width, an event's
 window); "Drag a ring on the plot, or edit the fields." (a tube's control
 points); "Drag a line on the plot, or edit the fields." (a `range`, a
-`scalar`); "Edit the fields." (`nrmse`) — each followed by "Edits are staged
-as you make them; Save writes them."
+`scalar`); "Edit the fields." (`nrmse`) — then, for a criterion with rows a
+click adds to, "Ctrl+click adds a point." (a checkpoint; "an event", "a
+peak", "a control point" for the others) — each followed by "Edits are staged
+as you make them; Save writes them." While a field is armed (below) the line
+says only what the next click does: "Click the plot to set row 1 —
+Esc cancels."
+
+**Ctrl+click adds a row that settles on the data.** With a criterion open,
+Ctrl+click on its plot (⌘+click on macOS) adds one row to its table — one
+pending edit — placed by what it clicks ON, not by the pixel:
+
+- a **checkpoint** takes the clicked time and no value of its own, so it
+  follows the baseline there and its ring stands on the reference curve.
+  Where the test has no baseline to follow, it takes the run's value at that
+  time as its `value`;
+- a **declared event** takes the time of the run's event nearest the click;
+- a **declared peak** — a click on the spectrum panel — takes the frequency
+  of the nearest peak of the run's spectrum;
+- a **tube control point** takes the clicked time and the tube's own widths
+  at that time, so adding it changes nothing until you drag it.
+
+Every other field of the new row is what **Add row** gives. A criterion with
+no rows — `nrmse`, `range`, `scalar`, a tube of constant width — takes no
+Ctrl+click. A click that names no place for a row says why under the plot:
+the run has no event, a peak is added on the spectrum — or a row already
+stands there ("a checkpoint already stands at t=0.6 (row 2)"): within one
+snap step of it, or, for a peak, inside a declared peak's own window. A
+double-click still resets the axes, a Ctrl+drag is still Plotly's own, and a
+press on a ring, an arrow or a bound is a drag: none of them adds anything.
+Rows are removed in the table.
+
+**Arm it, then click the plot.** What a click on the plot can place has a
+small ⌖: each row of a table has ONE, in its first cell, and a criterion's
+own field has one where the plot draws it — a bound, a side of a tolerance
+some row is held to, a window's start and end. (A mode, `against`, a tube's
+minimum width, `nrmse`'s tolerance, the width of the tube mode not in use,
+a scalar's bounds while it is scored by its tolerance: none.) Press ⌖ and
+it is **armed** — its ⌖ is filled, the hint says "Click the plot to set row
+2 — Esc cancels.", and the plot itself says so too, with an accent outline
+and the same sentence under it — and the next plain click on its plot sets
+it and disarms. One is armed at a time. Esc, pressing ⌖ again, closing the
+editor, opening another criterion, adding or removing a row, changing the
+mode, and any edit of the test — Discard and Save too — disarm. The ⌖ is
+the mouse's — the gesture ends in a click on the plot — and Tab passes it
+by.
+
+A click is a drag released at the click, so it is snapped, clamped and
+refused exactly as the drag is — a refused click says why under the plot
+and leaves the field armed.
+
+- A **row** is placed as its ring dragged to the click: its time (a peak's
+  frequency) from the click's x, and its value from the click's y where
+  the row holds a value of its own — a checkpoint that follows the
+  baseline goes on following it. A declared event's time is the click's x.
+  A row's tolerance sides are set by their arrows, or typed.
+- A **tolerance side** of the criterion: its EDGE lands on the click — the
+  side becomes the distance from its target to where you clicked, measured
+  from the row nearest the click among those that defer to it.
+- A **bound**: the click's y — through its line, or directly where the
+  bound is still blank.
+- A **window's** start or end: the click's x.
+
+Each belongs to one panel. A click on the other — the spectrum, with a
+checkpoint's row armed — is refused ("row 1 is set on the time plot") and
+leaves it armed.
+
+**The fields follow a held handle.** While a ring, an arrow or a bound line
+is held and moved, the fields it will change show the value its release
+would write — a number tolerance in both its fields, a pair's side in that
+one — and nothing is staged: the pending count does not move until you let
+go. A drag released where it is refused, or not moved at all, puts the
+fields back. The box or band a handle belongs to follows on release, as
+before. A field you type in during a drag is yours: no later preview shows
+over it.
+
+**Placed values are snapped.** A value the pointer places — a drag's
+release, a click, and the preview of either — is rounded to a readable
+step: the power of ten nearest to a thousandth of what its axis SHOWS. On a
+time axis from 0 to 1 that is 0.001; zoom in to a tenth of it and the step
+is 0.0001. A coordinate (a time, a value, a bound, a frequency) and a
+tolerance side in the axis' units are rounded to a multiple of the step; a
+relative side — a fraction of its target — to 3 significant digits. A value
+is snapped first and clamped or refused after. What you TYPE is never
+snapped, and neither is what a row settles on (an event's time, a peak's
+frequency, the tube's widths): those are read off the data.
 
 Releasing a drag stages one `replace` of the leaf the handle belongs to and
 rescores the test; the plot redraws in place, so your zoom stays. Consecutive
@@ -1616,8 +1699,10 @@ drags of one leaf collapse into one pending op. What a drag means:
   A checkpoint of either kind is also held inside the run's own first and
   last sample in that window, where the two spans overlap: past the run it
   would read "not scored".
-- A number a drag writes into the leaf is rounded to 12 significant digits, so
-  the spec file reads `0.3`, not `0.30000000000000004`.
+- A number a drag writes into the leaf is snapped (above) and never holds
+  more than 12 significant digits, so the spec file reads `0.3`, not
+  `0.30000000000000004`. An axis the drag did not move is not re-snapped: a
+  hand-written `0.123456` stays until that axis is really dragged.
 
 After every drag the plot is redrawn from the staged spec, so anything the drag
 did not change goes back where it was. A drag the leaf cannot take snaps back

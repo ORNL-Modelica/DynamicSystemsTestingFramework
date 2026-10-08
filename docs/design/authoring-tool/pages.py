@@ -924,7 +924,7 @@ def tube_editor() -> str:
             [
                 flex(
                     [
-                        f'<span class="hint">{icon("grip", C["text2"], 14)} Drag a ring to move a point · Shift+click the plot adds one · Shift+right-click deletes the one under the cursor · Set window starts the brush</span>',
+                        f'<span class="hint">{icon("grip", C["text2"], 14)} Drag a ring to move a point · Ctrl+click the plot adds one · Shift+right-click deletes the one under the cursor · Set window starts the brush</span>',
                         spacer(),
                         btn(
                             "Reset",
@@ -1071,7 +1071,7 @@ def points_editor() -> str:
             [
                 flex(
                     [
-                        f'<span class="hint">{icon("grip", C["text2"], 14)} Drag a diamond to move a point (value only when it is explicit) · drag a box edge to change its tolerance · Shift+click adds · Shift+right-click deletes</span>',
+                        f'<span class="hint">{icon("grip", C["text2"], 14)} Drag a diamond to move a point (value only when it is explicit) · drag a box edge to change its tolerance · Ctrl+click adds · Shift+right-click deletes</span>',
                         spacer(),
                         btn("Reset", "", "", icon("reset", C["accent"], 14)),
                         btn("Done", "outline"),

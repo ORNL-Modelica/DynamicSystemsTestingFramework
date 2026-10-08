@@ -23,7 +23,7 @@ draws a panel's row inside the dialog, below the panel."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +34,7 @@ from ..capabilities import FigureHook as FigureHookProtocol
 from ..errors import USER_ERRORS, user_text
 from ..session import Selection
 from .figure_hook import FigureHook
+from .placing import PLACE, PREVIEW, Placing
 from .widgets import Action, IconAction, MenuAction
 
 if TYPE_CHECKING:
@@ -47,7 +48,8 @@ LOADING = "batch actions unlock when loading finishes"
 def log_unless_users(e: BaseException, name: str) -> None:
     """Log a failed act unless a person's own edit raised it: `user_text`
     shows a ValueError's text alone, and a JSONDecodeError or a numpy shape
-    error from a bug is one — it must still reach the log."""
+    error from a bug is one — it must still reach the log. A value an
+    editor REFUSES is a person's own (`unscorable.Refused`)."""
     if not isinstance(e, USER_ERRORS):
         logger.exception("%s failed", name)
 
@@ -81,8 +83,14 @@ class ShellPanel:
         target: RowTarget | None = None,
         fail: Callable[[BaseException], None] | None = None,
         kept: dict[Any, Any] | None = None,
+        placing: Placing | None = None,
+        name: str = "",
     ) -> None:
         self._submit, self.figure = submit, figure
+        #: The plot's armed field and ⌖ buttons, where the panel is beside
+        #: a plot (the criterion editor under one), and the capability the
+        #: panel is — a ⌖ is its panel's.
+        self._placing, self._name = placing, name
         #: `Panel.kept`: the host's, where it keeps one; else this build's.
         self.kept: dict[Any, Any] = {} if kept is None else kept
         #: Says a refusal the way a failed `submit` does (a drop refused
@@ -133,6 +141,46 @@ class ShellPanel:
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
+
+    # Quiet where there is no plot (a dialog, a tree row, a Statistics
+    # row): the contract's no-ops.
+    @property
+    def can_place(self) -> bool:
+        return self._placing is not None
+
+    def place_button(self, pointer: Hashable, label: str) -> None:
+        if self._placing is not None:
+            self._placing.button(self._name, pointer, label)
+
+    def disarm(self) -> None:
+        if self._placing is not None:
+            self._placing.disarm()
+
+    def on_place(self, handler: Callable[[Hashable, dict], bool]) -> None:
+        placing, name = self._placing, self._name
+        if placing is None:
+            return
+
+        def placed(_primitive: str, click: dict) -> None:
+            armed = placing.armed
+            if armed is None or armed.owner != name:
+                return  # another panel's field, or none
+            if handler(armed.pointer, {**click, "label": armed.label}):
+                placing.disarm()
+
+        self.figure.on(PLACE, placed)
+
+    def preview(self, leaf: dict | None, revision: int = 0) -> None:
+        if self._placing is not None:
+            said = {"leaf": leaf, "revision": revision}
+            self._placing.hook.emit(PREVIEW, said)
+
+    def on_preview(self, handler: Callable[[dict | None, int], None]) -> None:
+        if self._placing is not None:
+            self.figure.on(
+                PREVIEW,
+                lambda _primitive, said: handler(said["leaf"], said["revision"]),
+            )
 
     def row(self, title: str, build: RowBuild) -> None:
         # Loud, like `_NoFigure`: a placement that draws no row asked for
@@ -439,10 +487,14 @@ class InlineHost:
         apply: Callable[[Outcome | Sequence[Outcome]], None] | None = None,
         kept: Callable[[str], dict[Any, Any]] | None = None,
         on_said: Callable[[str | None], None] | None = None,
+        placing: Placing | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
         self.on_said = on_said
+        #: The plot's ⌖ buttons and armed field (D149), lent to every panel
+        #: of this host; None for a host beside no plot.
+        self.placing = placing
         self.row = row
         self.kept = kept
         #: capability name -> the `Panel.kept` its panel was built with
@@ -534,6 +586,9 @@ class InlineHost:
             # Not the skipped capability's: its place still shows the answer
             # it was built on, and `follow` is what brings it back in line.
             self.answers[cap.name] = avail
+        if self.placing is not None:
+            # A field whose ⌖ this build did not draw again is not armed.
+            self.placing.settle()
 
     def follow(self) -> None:
         """Rebuild when an `available` answer has moved since this host was
@@ -627,6 +682,8 @@ class InlineHost:
                         target=self.row,
                         fail=fail,
                         kept=self.handed[cap.name],
+                        placing=self.placing,
+                        name=cap.name,
                     ),
                 )
             except Exception as e:  # shown in the slot, never breaks the page

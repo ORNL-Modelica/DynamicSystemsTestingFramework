@@ -243,8 +243,9 @@ In this order:
 
 Per-leaf visibility checkboxes are not coming back (the legend covers them).
 
-**Plot gestures:** a plain drag moves a handle; Shift+click adds a point to the
-open criterion; Shift+right-click deletes the handle under the cursor; a "Set
+**Plot gestures:** a plain drag moves a handle; Ctrl+click adds a point to the
+open criterion (the owner's later ruling, D149: it was Shift+click here);
+Shift+right-click deletes the handle under the cursor; a "Set
 window" button starts the brush; the criterion editor shows a one-line hint.
 Clicking empty plot space is not a Plotly event, so the plan opens with a
 feasibility test of a small browser-side listener for it.

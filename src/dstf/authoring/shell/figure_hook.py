@@ -45,6 +45,18 @@ class FigureHook:
       keys are dropped.
     - Any other relayout (a zoom): dispatched once with id ``""`` and the raw
       payload (``{}`` when it is not a dict); ``on_shape_moved`` is not called.
+    - ``dstf_move`` (D149; `move`): a handle HELD on the plot. The page
+      sends ``{"seq": n, "update": {...}}``, ``update`` shaped as the
+      relayout its release would be, and it is dispatched as one — once per
+      shape index, the id resolved the same way — but ``on_shape_moved`` is
+      not called: nothing moved. ``{"seq": n, "end": True}`` (a drag that
+      ended with no release) is dispatched once with id ``""``. Every move
+      and every release carries a sequence number, the page's, rising: a
+      move numbered at or under the last release or end heard is DROPPED —
+      a preview that arrives after its drag was let go must not paint over
+      what the release staged.
+    - ``dstf_click`` / anything else a caller hands `emit`: dispatched once
+      with id ``""`` and the payload as given.
 
     Handler semantics: each shape index is dispatched in turn, ascending,
     from its own snapshot of the handlers, taken when that shape's dispatch
@@ -62,6 +74,9 @@ class FigureHook:
         self._handlers: dict[str, list[tuple[str, Callable[[str, dict], None]]]] = {}
         self._plot: Any = None
         self.dispatching = False  # true while handlers run
+        #: The sequence number of the last release or drag end heard: a
+        #: `move` numbered at or under it is of a drag already over.
+        self.released: float = -1
 
     def clear(self, owner: str | None = None) -> None:
         """Remove one owner's handlers, or every handler. A host rebuilds its
@@ -108,6 +123,28 @@ class FigureHook:
             else:
                 plot.on(event, heard)
 
+    def emit(self, kind: str, payload: dict, primitive: str = "") -> None:
+        """One event of ``kind`` to its subscribers, as a dispatch: what
+        the card hears from the page beside Plotly's own events (a click),
+        and what one panel says to the others (a preview)."""
+        self._call(kind, primitive, payload if isinstance(payload, dict) else {})
+
+    def move(self, payload: Any) -> None:
+        """A held handle's would-be position, from the page (`dstf_move`
+        above). Dropped where its drag is already over."""
+        data = payload if isinstance(payload, dict) else {}
+        seq = data.get("seq")
+        if not isinstance(seq, (int, float)) or isinstance(seq, bool):
+            return
+        if seq <= self.released:
+            return
+        if data.get("end"):
+            self.released = seq
+            self._call("dstf_move", "", {"end": True})
+            return
+        for i, shape in sorted(_by_shape(data.get("update")).items()):
+            self._call("dstf_move", self._shape_name(i), shape)
+
     def _shape_name(self, index: int) -> str:
         # A known race: the index is resolved against the figure the SERVER
         # last sent. A drag released after an in-place `update_figure` that
@@ -129,14 +166,15 @@ class FigureHook:
     def _dispatch(self, kind: str, payload: Any) -> None:
         data = payload if isinstance(payload, dict) else {}
         if kind == "plotly_relayout":
-            by_shape: dict[int, dict] = {}
-            for key, value in data.items():
-                match = _SHAPE_KEY.match(key) if isinstance(key, str) else None
-                if match is not None:
-                    by_shape.setdefault(int(match.group(1)), {})[match.group(2)] = value
+            by_shape = _by_shape(data)
             if not by_shape:
                 self._call(kind, "", data)
                 return
+            # The release's number, before any handler runs: whatever
+            # move of this drag is still on its way is late from here on.
+            for shape in by_shape.values():
+                if _is_seq(shape.get("seq")):
+                    self.released = max(self.released, shape["seq"])
             try:
                 for i in sorted(by_shape):
                     self._call(kind, self._shape_name(i), by_shape[i])
@@ -176,6 +214,23 @@ class FigureHook:
                 entry[1](primitive, payload)
         finally:
             self.dispatching = was
+
+
+def _is_seq(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _by_shape(update: object) -> dict[int, dict]:
+    """A relayout's ``shapes[N].<key>`` entries, grouped by shape index
+    with the prefix stripped; every other key is dropped."""
+    by_shape: dict[int, dict] = {}
+    if not isinstance(update, dict):
+        return by_shape
+    for key, value in update.items():
+        match = _SHAPE_KEY.match(key) if isinstance(key, str) else None
+        if match is not None:
+            by_shape.setdefault(int(match.group(1)), {})[match.group(2)] = value
+    return by_shape
 
 
 def _meta(point: dict) -> dict:

@@ -12,12 +12,13 @@ Anything else is a bug and keeps its class name, so it can be reported.
 
 from __future__ import annotations
 
-from ..backends.pool import Refused
+from ..backends.pool import Refused as PoolRefused
 from ..comparison.handles import HandleEditError
 from ..config import ConfigError
 from ..discovery.patch_apply import PatchError
 from .session import QueueError
 from .tree_move import MoveRefused
+from .unscorable import Refused as EditorRefused
 
 #: What a person's own edit raises. Shown as its reason and never logged.
 USER_ERRORS: tuple[type[BaseException], ...] = (
@@ -26,10 +27,12 @@ USER_ERRORS: tuple[type[BaseException], ...] = (
     ConfigError,
     # The simulation queue's refusals: the Session's and the pool's own.
     QueueError,
-    Refused,
+    PoolRefused,
     # A move the tree refuses — a Move to… menu or a drag map gone stale
     # under an edit staged since offers one — is said, not a bug.
     MoveRefused,
+    # A value an editor will not stage: typed on the way to a good one.
+    EditorRefused,
 )
 
 

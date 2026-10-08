@@ -64,6 +64,10 @@ LINK_NAMES = {
     False: "Unlinked: each side of {label} is set on its own",
 }
 _OTHER = {"lower": "upper", "upper": "lower"}
+#: `render_form`'s ``place``: offered every number field and each side of
+#: a tolerance — its pointer (its keys into the leaf), its label and the
+#: field itself — to draw a ⌖ in where a click on the plot can set it.
+Place = Callable[[tuple, str, ui.element], None]
 
 
 def in_effect_hint(entry: dict) -> str:
@@ -96,6 +100,18 @@ class Form:
         out.update({k: v for k, v in self._passthrough.items() if v is not None})
         return out
 
+    def preview(self, values: dict | None, revision: int = 0) -> None:
+        """Show ``values`` — the params a handle held on the plot would
+        write (D149) — in the number fields and tolerance sides whose value
+        would change, staging nothing; None shows what they hold again."""
+        for name, control in self.controls.items():
+            held = self._values.get(name)
+            would = held if values is None else values.get(name)
+            if isinstance(control, SidesControl):
+                control.preview(None if would == held else would, revision)
+            elif isinstance(control, TypedNumber):
+                control.preview(None if would == held else _shown(would), revision)
+
 
 def render_form(
     schema: Schema,
@@ -106,6 +122,7 @@ def render_form(
     in_effect: dict | None = None,
     shown: Mapping[str, dict[str, float | None]] | None = None,
     on_edit: Callable[[str, SidesControl], None] | None = None,
+    place: Place | None = None,
 ) -> Form:
     """Build one control per field into the current NiceGUI container.
 
@@ -134,6 +151,12 @@ def render_form(
     two-sided field ``name`` — the caller reads the control's ``half()``
     and ``shown()`` — and ``shown[name]`` is the half pair that field's
     two fields show, while ``values[name]`` is still what the leaf holds.
+
+    ``place`` is offered every number field and each side of a tolerance
+    — ``place(pointer, label, field)``, the pointer ``(name,)`` or
+    ``(name, "lower")`` — and draws a ⌖ in the field's ``append`` slot
+    where a click on the plot can set it (D149); which fields those are is
+    the caller's to say, not a list here.
     """
     in_effect = in_effect or {}
     form = Form()
@@ -171,12 +194,14 @@ def render_form(
                 shown=(shown or {}).get(spec.name),
                 on_edit=_sides_edited(form, spec.name, on_edit),
             )
-            for side in (group.lower, group.upper):
+            for end, side in (("lower", group.lower), ("upper", group.upper)):
                 side.props(BOTTOM)
                 if classes:
                     side.classes(classes)
                 if spec.help:
                     side.tooltip(spec.help)
+                if place is not None:
+                    place((spec.name, end), side.props["label"], side)
             form.controls[spec.name] = group
             continue
         control = _control(
@@ -200,6 +225,8 @@ def render_form(
             control.classes(classes)
         if spec.help:
             control.tooltip(spec.help)
+        if place is not None and spec.type in ("float", "int"):
+            place((spec.name,), spec.label or spec.name, control)
         form.controls[spec.name] = control
     return form
 
@@ -396,6 +423,16 @@ class SidesControl(ui.row):
         to show (``shown``): a half pair too, which ``on_change`` never
         carried."""
         return dict(self._sides)
+
+    def preview(self, value: Any, revision: int = 0) -> None:
+        """Show ``value`` — a number, or a pair — in the two fields in place
+        of what they hold, a side that would not change left as it is;
+        None shows what they hold again. Nothing is handed to
+        ``on_change`` (`TypedNumber.preview`)."""
+        pair = isinstance(value, dict)
+        for side, number in (("lower", self.lower), ("upper", self.upper)):
+            would = None if value is None else _shown(value[side] if pair else value)
+            number.preview(None if would == self._sides[side] else would, revision)
 
     def toggle(self) -> None:
         """Unlink: the number becomes the pair holding it twice (nothing

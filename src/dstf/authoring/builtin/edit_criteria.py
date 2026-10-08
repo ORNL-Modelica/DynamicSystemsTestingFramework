@@ -47,6 +47,7 @@ from ..unscorable import (
 if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
+from .edit_on_plot import _replace, placeable, placed
 from .edit_tree import seed_data
 
 # NO module-level `nicegui` or `..forms` import: `import dstf.authoring` runs
@@ -253,6 +254,19 @@ class EditCriteria:
             else:
                 kept.pop(name, None)
 
+        #: The form as last built, and the window's two fields: what a
+        #: preview is shown in.
+        built: dict[str, Any] = {"form": None, "window": {}}
+        # A ⌖ only where a click on the plot can set the field as the
+        # criterion now is (`edit_on_plot.placeable`, the rule the click
+        # itself acts by) — and none beside no plot, or on a statistic.
+        can = placeable(s, model_id=model_id, variable=leaf["variable"], path=path)
+
+        def place(pointer: tuple, label: str, field: Any) -> None:
+            if ui_panel.can_place and not statistic and can(pointer):
+                with field.add_slot("append"):
+                    ui_panel.place_button(pointer, label)
+
         def build_form() -> None:
             form_slot.clear()
             desc = metric(state["metric"])
@@ -269,13 +283,14 @@ class EditCriteria:
                     n for n in kept if kept[n]["base"] != state["params"].get(n)
                 ]:
                     del kept[name]  # the leaf moved under it
-                render_form(
+                built["form"] = render_form(
                     schema,
                     state["params"],
                     on_change=set_params,
                     classes="dstf-field",
                     shown={name: cell["shown"] for name, cell in kept.items()},
                     on_edit=remember,
+                    place=place,
                     # The mode the leaf was scored in: a switched mode's
                     # fields were never applied, so nothing is in effect.
                     in_effect=(
@@ -300,6 +315,7 @@ class EditCriteria:
             emit("params:" + ",".join(changed))
 
         def set_metric(name: str) -> None:
+            ui_panel.disarm()  # another mode's fields are other fields
             state["metric"] = name
             # A new mode starts from its seed, else its defaults: a range
             # switched to with no bound does not resolve. The window stays,
@@ -354,16 +370,18 @@ class EditCriteria:
                 ).props(f"dense {BOTTOM}").classes("dstf-field")
             form_slot = ui.column().classes("dstf-form")
             if not statistic:
-                TypedNumber(
-                    label="window start",
-                    value=state["window"].get("start"),
-                    on_change=lambda e: set_window("start", e.value),
-                ).props(f"dense {BOTTOM}").classes("dstf-field")
-                TypedNumber(
-                    label="window end",
-                    value=state["window"].get("end"),
-                    on_change=lambda e: set_window("end", e.value),
-                ).props(f"dense {BOTTOM}").classes("dstf-field")
+                for end in ("start", "end"):
+                    field = (
+                        TypedNumber(
+                            label=f"window {end}",
+                            value=state["window"].get(end),
+                            on_change=lambda e, end=end: set_window(end, e.value),
+                        )
+                        .props(f"dense {BOTTOM}")
+                        .classes("dstf-field")
+                    )
+                    place(("window", end), f"window {end}", field)
+                    built["window"][end] = field
             ui.select(
                 names or ["primary"],
                 label="against",
@@ -372,7 +390,50 @@ class EditCriteria:
             ).props(f"dense {BOTTOM}").classes("dstf-field")
         build_form()
 
-    def act(self, s: SessionView, **inputs: Any) -> Patch:
+        def preview(shown: dict | None, revision: int) -> None:
+            """A handle held on the plot (D149): the fields its release
+            would change show what it would write, and nothing is staged."""
+            would = None
+            if shown is not None:
+                try:
+                    would = spec_to_view(parse_metric_tree(shown), root=path)
+                except ValueError:
+                    would = None  # no leaf: nothing to show
+            form = built["form"]
+            if form is not None:
+                form.preview(None if would is None else would["params"], revision)
+            for end, field in built["window"].items():
+                value = None if would is None else (would.get("window") or {}).get(end)
+                held = state["window"].get(end)
+                field.preview(None if value == held else value, revision)
+
+        ui_panel.on_preview(preview)
+        variable = state["variable"]
+        # An armed field of THIS panel, and the plot clicked: the click is
+        # read as Edit on plot reads a drag — this panel's fields are the
+        # same leaf's — and staged from here, so it is this panel's edit.
+        ui_panel.on_place(
+            lambda pointer, click: ui_panel.submit(
+                kind="place",
+                model_id=model_id,
+                variable=variable,
+                path=path,
+                pointer=pointer,
+                click=click,
+            )
+        )
+
+    def act(self, s: SessionView, **inputs: Any) -> Patch | None:
+        if inputs.get("kind") == "place":
+            new = placed(
+                s,
+                model_id=inputs["model_id"],
+                variable=inputs["variable"],
+                path=inputs["path"],
+                pointer=inputs["pointer"],
+                click=inputs["click"],
+            )
+            return _replace(inputs["model_id"], inputs["path"], new)
         params = dict(inputs["params"])
         # A value that can never score is refused here, before the stage —
         # as the stage refuses a window that ends before it starts, and the

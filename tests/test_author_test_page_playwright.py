@@ -38,8 +38,10 @@ pytest.importorskip("nicegui")
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeout  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
+from dstf.comparison.snap import snapped  # noqa: E402
 from dstf.figures.plotly import GRIP, RING_PATH  # noqa: E402
 from test_author_suite_playwright import (  # noqa: E402
     EXPECT_TIMEOUT,
@@ -339,11 +341,37 @@ SHAPE_ABOVE = """
 """
 
 
+def _let_go(page) -> None:
+    """Release the mouse and wait for the server's answer to the release.
+    Since D149 a field follows a handle while it is HELD, so "the field no
+    longer shows the old value" is true before the release is answered —
+    and what it shows then is a preview. Every release of a shape is
+    answered with a redraw stamped anew (`PlotCard._figure`'s
+    `editrevision`), sent after the edit it staged reached the editor: that
+    is what is waited for. A drag that moved nothing sends no release, and
+    nothing is waited for past a short grace."""
+    stamps = (
+        "() => [...document.querySelectorAll('.js-plotly-plot')]"
+        ".map(g => (g.layout || {}).editrevision)"
+    )
+    was = page.evaluate(stamps)
+    page.mouse.up()
+    try:
+        page.wait_for_function(
+            "(was) => [...document.querySelectorAll('.js-plotly-plot')]"
+            ".some((g, i) => (g.layout || {}).editrevision !== was[i])",
+            arg=was,
+            timeout=4000,
+        )
+    except PlaywrightTimeout:
+        pass
+
+
 def _drag(page, x: float, y: float, dy: float) -> None:
     page.mouse.move(x, y)
     page.mouse.down()
     page.mouse.move(x, y + dy, steps=12)
-    page.mouse.up()
+    _let_go(page)
 
 
 # -- the status strip (Q2 A) -------------------------------------------------
@@ -1047,8 +1075,10 @@ def test_the_editors_hint_names_what_the_open_criterion_drags(
 
         _open_crit(page, 0, "tube · x")
         expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        # ... and that a Ctrl+click adds one more of them (D149).
         expect(editor.locator(".dstf-why").first).to_have_text(
-            "Drag a ring on the plot, or edit the fields." + STAGED_AND_SAVE,
+            "Drag a ring on the plot, or edit the fields."
+            " Ctrl+click adds a control point." + STAGED_AND_SAVE,
             timeout=EXPECT_TIMEOUT,
         )
         expect(editor).to_contain_text("drag on the plot, or edit the table")
@@ -4444,7 +4474,8 @@ def _tables_project(tmp_path: Path) -> tuple[Path, Path]:
 #: clientWidth, left, right of what it shows]`) and, per row, every control
 #: in document order — a field's label, box, input line and its label's
 #: `[scrollWidth, clientWidth]` (cut where the first is the larger); a
-#: button's label and box.
+#: button's label and box. A row's ⌖ (D149) stands inside its first field
+#: and is part of it: it is no control of the row's own.
 READ_TABLE = """() => {
   const t = document.querySelector('.dstf-editor .dstf-table-scroll');
   const r = t.getBoundingClientRect();
@@ -4454,7 +4485,7 @@ READ_TABLE = """() => {
     scroll: [t.scrollWidth, t.clientWidth, r.left, r.left + t.clientWidth],
     rows: [...t.children].map(row => ({
       wrap: getComputedStyle(row).flexWrap, box: box(row),
-      cells: [...row.querySelectorAll('.q-field, .q-btn')].map(c => {
+      cells: [...row.querySelectorAll('.q-field, .q-btn:not(.dstf-arm)')].map(c => {
         const control = c.querySelector('.q-field__control');
         const label = c.querySelector('.q-field__label');
         return control
@@ -4684,8 +4715,12 @@ def test_a_rows_tolerance_is_typed_as_two_sides_with_real_keys(
         )
         expect(second.get_by_label("− tolerance", exact=True)).to_have_value("0.02")
         expect(second.get_by_label("+ tolerance", exact=True)).to_have_value("0.08")
-        expect(second.get_by_label("before time_tolerance")).to_have_value("0.05")
-        expect(second.get_by_label("after time_tolerance")).to_have_value("0.1")
+        expect(second.get_by_label("before time_tolerance", exact=True)).to_have_value(
+            "0.05"
+        )
+        expect(second.get_by_label("after time_tolerance", exact=True)).to_have_value(
+            "0.1"
+        )
 
         _retype(page, lower, "0.07")
         expect(upper).to_have_value("0.07", timeout=EXPECT_TIMEOUT)
@@ -7053,7 +7088,7 @@ def _mouse_drag_by(page, x: float, y: float, dx: float, dy: float) -> None:
     page.mouse.move(x, y, steps=4)
     page.mouse.down()
     page.mouse.move(x + dx, y + dy, steps=10)
-    page.mouse.up()
+    _let_go(page)
 
 
 #: A point ON a named shape of plot ``card`` that is no ring and no arrow —
@@ -7331,7 +7366,7 @@ def _drag_arrow(
     page.mouse.move(x + dx, y + dy, steps=10)
     if during is not None:
         during()
-    page.mouse.up()
+    _let_go(page)
     return shown
 
 
@@ -9794,7 +9829,7 @@ def _drag_arrow_to(page, tail: str, near: str, x=None, y=None) -> dict:
         arrow["box"]["y"] if y is None else y,
         steps=12,
     )
-    page.mouse.up()
+    _let_go(page)
     return arrow
 
 
@@ -9816,8 +9851,10 @@ def test_an_arrow_let_go_outside_the_plot_lands_on_the_plots_edge(
         )
         upper = float(_table_cell(page, 0, "+ tolerance").input_value())
         top = max(ranges["yaxis"])
-        # The row's value is 0.3: the edge is the axis's end.
-        assert upper == pytest.approx(top - 0.3, abs=1e-9), (upper, ranges)
+        # The row's value is 0.3: the edge is the axis's end, and the side
+        # written is that distance SNAPPED (D149) by what the axis showed.
+        shows = top - min(ranges["yaxis"])
+        assert upper == snapped(top - 0.3, shows), (upper, ranges)
         _settled_at(page, "/points/upper/0", "yanchor", 0.3 + upper)
 
         # A time side, let go 200 px left of the plot: the axis's start.
@@ -12290,7 +12327,9 @@ def test_a_ring_or_a_bound_line_let_go_outside_the_plot_lands_on_its_edge(
         print("LET GO", case, written(), ranges)
         assert written() != (was["points"][0] if "points" in tail else was)[key]
         if key != "time":
-            assert written() == pytest.approx(landed(ranges["yaxis"]), abs=1e-9), ranges
+            # The end of the axis, SNAPPED (D149) by what the axis showed.
+            shows = max(ranges["yaxis"]) - min(ranges["yaxis"])
+            assert written() == snapped(landed(ranges["yaxis"]), shows), ranges
             return
         # The axis the release was held to runs past the run on that side.
         assert min(ranges["xaxis"]) < 0.0 and max(ranges["xaxis"]) > 1.0, ranges

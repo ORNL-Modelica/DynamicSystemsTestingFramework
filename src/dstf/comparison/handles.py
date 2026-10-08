@@ -14,7 +14,8 @@ the reason, rather than return a leaf the drag cannot mean: a non-finite
 or non-numeric position, a local it does not name, or a rule below broken. The locals are
 the ids the modes emit (``algorithms._tube_geometry`` and its siblings).
 Every number an editor writes is rounded to 12 significant digits
-(:func:`_written`).
+(:func:`_written`) — after it is SNAPPED, where it is a value the pointer
+placed and the caller says what its axis showed (:func:`_placed`, D149).
 
 A ``kind="grip"`` primitive is one SIDE of a tolerance, and its editor
 writes that side through :func:`_set_side`: the value is the distance from
@@ -22,18 +23,35 @@ the target to the dragged edge — in ``rel``, over the target's magnitude —
 and the holder is the row's own tolerance where the row has one, else the
 criterion's. A grip moves on ONE axis; the other reaches the editor as the
 grip's own resolved position, never as something to write.
+
+Two more inverses stand beside the editors (D149). :func:`handle_fields`
+says which FIELD of the leaf a handle writes on each axis it moves on —
+what "arm a field, then click the plot" finds a field's handle by. And a
+PLACER takes a Ctrl+click (:class:`RowPlace`) to the leaf with one more row
+in its table, settled on the data — a checkpoint on the reference, an event
+on the nearest actual event, a peak on the nearest spectral peak, a tube
+control point on the tube as it stands — attached to the descriptor as
+``place_row``.
 """
 
 from __future__ import annotations
 
 import copy
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
-from .algorithms import _find_event_boundaries, _peak_window
+from .algorithms import (
+    _PEAK_MIN_REL_AMPLITUDE,
+    _find_event_boundaries,
+    _interpolate_tube_widths,
+    _peak_window,
+)
+from .geometry import Primitive, Series, VLine
 from .sides import parse_sides
+from .snap import snap_step, snapped
 from .types import _EPS
 
 
@@ -63,6 +81,12 @@ class HandleEdit:
     #: run, with a value of its own or the baseline's. ``None`` where the
     #: caller has no actual series: no such bound.
     span: tuple[float, float] | None = None
+    #: What the x and the y axis the position was read on SHOWED — each
+    #: one's visible span, the page's, as it stood at the press or the
+    #: click: what a placed value is snapped by (:func:`_placed`). ``None``
+    #: for an axis whose span the caller does not know: nothing placed on
+    #: it is snapped.
+    visible: tuple[float | None, float | None] = (None, None)
 
 
 class HandleEditError(ValueError):
@@ -100,6 +124,21 @@ def _written(value: float) -> float:
     (``0.8 - 0.5``) otherwise lands ``0.30000000000000004`` in the spec file
     the author reads and version-controls."""
     return float(f"{float(value):.12g}")
+
+
+def _placed(
+    edit: HandleEdit, axis: str, value: float, *, fraction: bool = False
+) -> float:
+    """A number the POINTER placed, as an editor writes it: a dragged or
+    clicked coordinate on ``axis``, or a tolerance side measured from one
+    — snapped to a readable step of what that axis showed
+    (:func:`~.snap.snapped`; a ``fraction`` of its target to 3 significant
+    digits), then written as every number is (:func:`_written`). Snapped
+    FIRST: every clamp and refusal reads the value that would be written.
+    A caller that names no span (``edit.visible``) is no pointer, and gets
+    the 12 digits alone."""
+    span = edit.visible[0 if axis == "x" else 1]
+    return _written(snapped(float(value), span, fraction=fraction))
 
 
 def _is_number(value: object) -> bool:
@@ -341,13 +380,14 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
     if x is None:
         return _set_tube_width(edit, leaf, point, i, side, mode, t, reference)
     _refuse_other_baseline(edit, leaf, "its time")
+    x = _placed(edit, "x", x)
     t = _written(_clamped_time(edit, leaf, x, reference))
     try:
         _refuse_shared_time(edit, rows, i, t)
         point["time"] = t
         return _set_tube_width(edit, leaf, point, i, side, mode, t, reference)
     except HandleEditError as err:
-        if t == _written(x):
+        if t == x:
             raise
         clamp = f"(x={_num(x)} was clamped to t={_num(t)})"
         raise HandleEditError(
@@ -376,7 +416,8 @@ def _edit_constant_tube(edit: HandleEdit, leaf: dict, side: str) -> dict:
     if mode == "rel":
         zero = f"the reference is zero at t={_num(edit.x)}"
         width = _fraction(edit, width, ref_x, zero)
-    _set_side(edit, leaf, "tube_abs" if mode == "band" else "tube_rel", side, width)
+    key = "tube_abs" if mode == "band" else "tube_rel"
+    _set_side(edit, leaf, key, side, width, axis="y", fraction=mode == "rel")
     return leaf
 
 
@@ -393,8 +434,8 @@ def _set_tube_width(
     """``edit.y`` written as ``point``'s ``side`` width at time ``t``."""
     if edit.y is None:
         return leaf
-    y = float(edit.y)
     if mode == "abs":
+        y = _placed(edit, "y", edit.y)
         if side == "upper":
             lower = _authored_number(
                 edit, point.get("lower", 0.0), f"tube_points[{i}].lower"
@@ -411,15 +452,18 @@ def _set_tube_width(
                 raise _refuse(
                     edit, f"lower {_num(y)} would rise above upper {_num(upper)}"
                 )
-        point[side] = _written(y)
+        point[side] = y
         return leaf
     assert reference is not None  # refused above for band / rel
     ref_t = float(np.interp(t, reference[0], reference[1]))
-    width = y - ref_t if side == "upper" else ref_t - y
+    width = edit.y - ref_t if side == "upper" else ref_t - edit.y
+    if mode == "band":
+        width = _placed(edit, "y", width)
     if width < 0:
         raise _refuse(edit, f"{side} width {_num(width)} would be negative")
     if mode == "rel":
         width = _fraction(edit, width, ref_t, f"the reference is zero at t={_num(t)}")
+        width = _placed(edit, "y", width, fraction=True)
     point[side] = _written(width)
     return leaf
 
@@ -481,7 +525,8 @@ def _edit_scalar_side(edit: HandleEdit, side: str) -> dict:
         if abs(target) == 0.0:
             raise _refuse(edit, "the baseline scalar is zero")
         value = value / abs(target)
-    _set_side(edit, leaf, "tolerance", side, value)
+    rel = leaf.get("tolerance_mode", "abs") == "rel"
+    _set_side(edit, leaf, "tolerance", side, value, axis="y", fraction=rel)
     return leaf
 
 
@@ -492,6 +537,8 @@ def _set_side(
     side: str,
     value: float,
     *,
+    axis: str,
+    fraction: bool = False,
     named: str | None = None,
     crosses: str = "target",
 ) -> None:
@@ -507,9 +554,14 @@ def _set_side(
     would cross (``crosses``); a zero one is not. A tolerance the scorer
     would refuse is refused in the scorer's words, and one that is no
     finite number — a rel side over a tiny baseline overflows — is refused
-    before it is written."""
+    before it is written.
+
+    ``value`` is a side the pointer placed, measured along ``axis`` — a
+    ``fraction`` of its target where the tolerance is relative: it is
+    snapped (:func:`_placed`) before anything here reads it."""
     if not math.isfinite(value):
         raise _refuse(edit, "the tolerance would not be a finite number")
+    value = _placed(edit, axis, value, fraction=fraction)
     if value < 0:
         raise _refuse(edit, f"the {named or side} side would cross its {crosses}")
     current = holder.get(key)
@@ -541,7 +593,7 @@ def _edit_bounds(edit: HandleEdit, *, strict: bool) -> dict:
     leaf = copy.deepcopy(edit.leaf)
     if edit.y is None:
         return leaf
-    leaf[f"{which}_value"] = _written(edit.y)
+    leaf[f"{which}_value"] = _placed(edit, "y", edit.y)
     lo, hi = leaf.get("min_value"), leaf.get("max_value")
     if lo is not None and hi is not None:
         lo = _authored_number(edit, lo, "min_value")
@@ -608,18 +660,26 @@ def edit_points_handle(edit: HandleEdit) -> dict:
         x = _time_move(edit, _authored_number(edit, time, f"points[{i}].time"))
     if x is not None:
         _refuse_other_baseline(edit, leaf, "its time")
-        follows_baseline = point.get("value") is None
-        reference = _reference(edit) if follows_baseline else None
-        lo, hi = _time_span(edit, leaf, reference)
-        t = float(min(max(float(x), lo), hi))
-        if edit.span is not None:
-            first, last = edit.span
-            if max(lo, first) <= min(hi, last):
-                t = min(max(t, first), last)
-        point["time"] = _written(t)
+        follows = point.get("value") is None
+        point["time"] = _checkpoint_time(edit, leaf, _placed(edit, "x", x), follows)
     if edit.y is not None and point.get("value") is not None:
-        point["value"] = _written(edit.y)
+        point["value"] = _placed(edit, "y", edit.y)
     return leaf
+
+
+def _checkpoint_time(
+    edit: HandleEdit, leaf: dict, x: float, follows_baseline: bool
+) -> float:
+    """``x`` as a checkpoint's time: held to where the checkpoint is scored
+    and drawn (:func:`edit_points_handle` says where), then written."""
+    reference = _reference(edit) if follows_baseline else None
+    lo, hi = _time_span(edit, leaf, reference)
+    t = float(min(max(float(x), lo), hi))
+    if edit.span is not None:
+        first, last = edit.span
+        if max(lo, first) <= min(hi, last):
+            t = min(max(t, first), last)
+    return _written(t)
 
 
 #: A point's grips: the side each writes, and of which tolerance.
@@ -666,7 +726,7 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
             return leaf
         target = float(ref_values[-1])
         value = edit.y - target if side == "upper" else target - edit.y
-        _set_side(edit, leaf, "tolerance", side, value)
+        _set_side(edit, leaf, "tolerance", side, value, axis="y")
         return leaf
     i = _index(edit, segment, leaf.get("points"))
     point = leaf["points"][i]
@@ -683,6 +743,7 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
             "time_tolerance",
             side,
             value,
+            axis="x",
             named=role,
             crosses="point's time",
         )
@@ -696,20 +757,31 @@ def _edit_points_side(edit: HandleEdit, role: str, segment: str) -> dict:
     if edit.y is None:
         return leaf
     value = edit.y - target if side == "upper" else target - edit.y
-    if point.get("tolerance_mode", "abs") == "rel":
+    rel = point.get("tolerance_mode", "abs") == "rel"
+    if rel:
         # The scorer's arithmetic, inverted: each side is that fraction of
         # |target| — by the tube's rule, refused under `_EPS`.
         value = _fraction(edit, value, target, "the target is zero")
     holder = point
     if point.get("tolerance") is None:
-        if _deferring_modes(leaf) == {point.get("tolerance_mode", "abs")}:
+        if _defers(leaf, point):
             holder = leaf
         elif leaf.get("tolerance") is not None:
             # It stops deferring: from the tolerance it was held to, so a
             # pair keeps its other side where the box's other edge stands.
             point["tolerance"] = copy.deepcopy(leaf["tolerance"])
-    _set_side(edit, holder, "tolerance", side, value)
+    _set_side(edit, holder, "tolerance", side, value, axis="y", fraction=rel)
     return leaf
+
+
+def _defers(leaf: dict, point: dict) -> bool:
+    """Whether a drag on ``point``'s value tolerance writes the
+    CRITERION's: the row holds none of its own, and every row that defers
+    reads the criterion's in this row's ``tolerance_mode``
+    (:func:`_edit_points_side` says why)."""
+    return point.get("tolerance") is None and _deferring_modes(leaf) == {
+        point.get("tolerance_mode", "abs")
+    }
 
 
 def _deferring_modes(leaf: dict) -> set[str]:
@@ -777,7 +849,9 @@ def edit_events_handle(edit: HandleEdit) -> dict:
     if edit.x is None:
         return leaf
     value = t - edit.x if side == "lower" else edit.x - t
-    _set_side(edit, holder, key, side, value, named=role, crosses="event's time")
+    _set_side(
+        edit, holder, key, side, value, axis="x", named=role, crosses="event's time"
+    )
     return leaf
 
 
@@ -829,7 +903,7 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
             value = value / abs(freq)
         # A pair's upper grip leaves its lower side as it was.
         kept = role == "upper" and isinstance(peak.get("tolerance"), dict)
-        _set_side(edit, peak, "tolerance", role, value)
+        _set_side(edit, peak, "tolerance", role, value, axis="x", fraction=rel)
         # `_set_side` wrote what it parsed: a number or a whole pair.
         lower = parse_sides(peak["tolerance"], "tolerance").lower
         if lower >= (1.0 if rel else freq):
@@ -838,11 +912,12 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
             raise _refuse(edit, "the window would reach 0 Hz")
         return leaf
     if edit.x is not None:
-        if edit.x <= 0:
-            raise _refuse(edit, f"frequency {_num(edit.x)} must be positive")
+        x = _placed(edit, "x", edit.x)
+        if x <= 0:
+            raise _refuse(edit, f"frequency {_num(x)} must be positive")
         peak = leaf["peaks"][i]
         was = peak.get("freq")
-        peak["freq"] = _written(edit.x)
+        peak["freq"] = x
         if peak.get("tolerance_mode", "rel") != "rel":
             try:
                 low, _high, sides, _mode = _peak_window(peak, i)
@@ -855,3 +930,265 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
                     raise _refuse(edit, "the window's lower side already reaches 0 Hz")
                 raise _refuse(edit, "the window would reach 0 Hz")
     return leaf
+
+
+# -- which field a handle writes (D149) ----------------------------------------
+
+
+def _row_index(segment: str) -> int | None:
+    return int(segment) if segment.isascii() and segment.isdigit() else None
+
+
+def handle_fields(leaf: dict, local: str) -> dict[str, tuple[str | int, ...]]:
+    """Which field of ``leaf`` a move of the handle ``local`` writes, per
+    axis it moves on: ``{"x": ("points", 3, "time"), "y": ("points", 3,
+    "value")}`` for a checkpoint's ring. A field is a path of keys into the
+    raw leaf; one side of a tolerance ends in ``"lower"`` or ``"upper"``
+    whether the file holds a number or a pair. It is the editors' own
+    choice of holder, said as data — a checkpoint's arrow names the
+    criterion's ``tolerance`` while its row defers to it, an event's the
+    criterion's ``time_tolerance`` — so "arm a field, then click the plot"
+    finds the handle that sets a field without a second rule. ``{}`` for a
+    local no editor names."""
+    parts = local.split("/")
+    if len(parts) == 2:
+        family, which = parts
+        if which in ("min", "max"):
+            return {"y": (f"{which}_value",)}
+        if family == "scalar" and which in ("upper", "lower"):
+            return {"y": ("tolerance", which)}
+        return {}
+    if len(parts) != 3:
+        return {}
+    family, role, key = parts
+    i = _row_index(key)
+    if family == "tube" and role in ("upper", "lower"):
+        if key == "const":
+            band = leaf.get("tube_width_mode") == "band"
+            return {"y": ("tube_abs" if band else "tube_rel", role)}
+        if i is not None:
+            return {"x": ("tube_points", i, "time"), "y": ("tube_points", i, role)}
+    if family == "points" and role == "target" and i is not None:
+        return {"x": ("points", i, "time"), "y": ("points", i, "value")}
+    if family == "points" and role in _POINT_SIDES:
+        side, tolerance = _POINT_SIDES[role]
+        if tolerance == "time_tolerance":
+            return {} if i is None else {"x": ("points", i, tolerance, side)}
+        rows = leaf.get("points") or []
+        if i is not None and i < len(rows) and not _defers(leaf, rows[i]):
+            return {"y": ("points", i, tolerance, side)}
+        return {"y": (tolerance, side)} if key == "final" or i is not None else {}
+    if family == "events" and role in ("early", "late") and i is not None:
+        side = "lower" if role == "early" else "upper"
+        events = leaf.get("events") or []
+        own = i < len(events) and isinstance(events[i], dict)
+        if own and events[i].get("tolerance") is not None:
+            return {"x": ("events", i, "tolerance", side)}
+        return {"x": ("time_tolerance", side)}
+    if family == "peaks" and i is not None:
+        if role == "declared":
+            return {"x": ("peaks", i, "freq")}
+        if role in ("lower", "upper"):
+            return {"x": ("peaks", i, "tolerance", role)}
+    return {}
+
+
+# -- a Ctrl+click adds a row that settles on the data (D149) -------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class RowPlace:
+    """One Ctrl+click on the plot, as a placer receives it. A placer returns
+    the leaf with one more row in its table — the input is not mutated —
+    and refuses with :class:`HandleEditError` where the click names no
+    place for one."""
+
+    #: The raw leaf, as ``metrics`` holds it; never mutated.
+    leaf: dict
+    #: Per list field of the metric, the row the editor's ``Add row`` would
+    #: append to it now: every field of the new row the click does not set.
+    blanks: Mapping[str, dict]
+    #: The panel that was clicked — ``"time"`` or ``"spectrum"`` — and the
+    #: click in that panel's own axes.
+    panel: str
+    x: float
+    y: float
+    #: The primary baseline and the run, ``(time, values)``, full
+    #: resolution and unwindowed; ``None`` where there is none.
+    reference: tuple[np.ndarray, np.ndarray] | None = None
+    actual: tuple[np.ndarray, np.ndarray] | None = None
+    #: What the plot draws for this leaf: the geometry it was scored with.
+    geometry: Sequence[Primitive] = ()
+    #: As :attr:`HandleEdit.visible` and :attr:`HandleEdit.span`.
+    visible: tuple[float | None, float | None] = (None, None)
+    span: tuple[float, float] | None = None
+
+
+def _place_edit(place: RowPlace, panel: str, noun: str) -> HandleEdit:
+    """``place`` as the editors' helpers read a drag — the clamps and the
+    refusals of a row added by a click are a dragged row's — refused where
+    the click is not on ``panel``, the one a row of this kind is drawn on."""
+    edit = HandleEdit(
+        leaf=place.leaf,
+        local=f"new {noun}",
+        x=place.x,
+        y=place.y,
+        reference=place.reference,
+        span=place.span,
+        visible=place.visible,
+    )
+    _check_position(edit)
+    if place.panel != panel:
+        where = "spectrum" if panel == "spectrum" else "time plot"
+        raise _refuse(edit, f"{noun} is added by a Ctrl+click on the {where}")
+    return edit
+
+
+def _refuse_standing(
+    edit: HandleEdit, rows: list, key: str, at: float, noun: str, where: str
+) -> None:
+    """Refuse a row placed ON one that stands there — the one rule for all
+    four tables: a row of the table already holds ``key`` within ONE snap
+    step of ``at`` (the step of what the x axis showed; with no span, the
+    same number), or, for a peak, ``at`` lies inside that row's own window.
+    Two Ctrl+clicks on one spot left two rows, and a click a few pixels
+    beside a checkpoint a second one a step away. ``where`` says the place
+    (``"t={}"``); the sentence names the row as the table numbers it."""
+    step = snap_step(edit.visible[0]) or 0.0
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict) or not _is_number(row.get(key)):
+            continue
+        low = high = float(row[key])
+        if key == "freq":
+            try:
+                low, high, _sides, _mode = _peak_window(row, i)
+            except ValueError:
+                pass  # a window that cannot be read: the frequency alone
+        else:
+            low, high = low - step * (1 + 1e-9), high + step * (1 + 1e-9)
+        if low <= at <= high:
+            stands = where.format(_num(row[key]))
+            raise _refuse(edit, f"{noun} already stands at {stands} (row {i + 1})")
+
+
+def place_points_row(place: RowPlace) -> dict:
+    """A checkpoint at the clicked TIME — snapped, and held to where a
+    checkpoint is scored and drawn, as a dragged one is — with no value of
+    its own: it follows the baseline there. Where there is no baseline to
+    follow it takes the RUN's value at that time as its ``value``, as the
+    data has it (not snapped: it was not placed, it was read). Refused on a
+    leaf scored against another baseline, as a time drag is."""
+    edit = _place_edit(place, "time", "a point")
+    leaf = copy.deepcopy(place.leaf)
+    _refuse_other_baseline(edit, leaf, "its time")
+    row = copy.deepcopy(dict(place.blanks["points"]))
+    follows = _reference(edit) is not None
+    row["time"] = _checkpoint_time(edit, leaf, _placed(edit, "x", place.x), follows)
+    rows = list(leaf.get("points") or [])
+    _refuse_standing(edit, rows, "time", row["time"], "a checkpoint", "t={}")
+    row.pop("value", None)
+    if not follows:
+        actual = place.actual
+        if actual is None or len(actual[0]) == 0:
+            raise _refuse(edit, "there is no signal to place a point on")
+        row["value"] = _written(float(np.interp(row["time"], actual[0], actual[1])))
+    leaf["points"] = [*rows, row]
+    return leaf
+
+
+def place_events_row(place: RowPlace) -> dict:
+    """A declared event at the run's event NEAREST the click — the actual
+    events the plot draws for the leaf — at that event's own time. Refused
+    where the run has none, and where a declared event already stands
+    there (:func:`_refuse_standing`): a second row on it would say nothing
+    more."""
+    edit = _place_edit(place, "time", "an event")
+    leaf = copy.deepcopy(place.leaf)
+    actual = [
+        p.time
+        for p in place.geometry
+        if isinstance(p, VLine) and p.kind == "act" and p.panel == "time"
+    ]
+    if not actual:
+        raise _refuse(edit, "the run has no event to place one on")
+    t = _written(min(actual, key=lambda at: abs(at - place.x)))
+    rows = list(leaf.get("events") or [])
+    _refuse_standing(edit, rows, "time", t, "an event", "t={}")
+    row = copy.deepcopy(dict(place.blanks["events"]))
+    row["time"] = t
+    leaf["events"] = [*rows, row]
+    return leaf
+
+
+def place_peaks_row(place: RowPlace) -> dict:
+    """A declared peak at the peak of the run's spectrum NEAREST the click
+    — a local maximum of the spectrum the plot draws, above the noise floor
+    the scorer matches peaks over — at that peak's own frequency. A click
+    on the time plot is refused: a frequency is read off the spectrum."""
+    edit = _place_edit(place, "spectrum", "a peak")
+    leaf = copy.deepcopy(place.leaf)
+    spectrum = next(
+        (
+            p
+            for p in place.geometry
+            if isinstance(p, Series) and p.panel == "spectrum" and p.kind == "act"
+        ),
+        None,
+    )
+    peaks: list[float] = []
+    if spectrum is not None and len(spectrum.x) >= 3:
+        freqs = np.asarray(spectrum.x, dtype=float)
+        amps = np.asarray(spectrum.y, dtype=float)
+        inner = np.arange(1, len(amps) - 1)
+        tops = inner[
+            (amps[inner] > amps[inner - 1])
+            & (amps[inner] > amps[inner + 1])
+            & (amps[inner] >= _PEAK_MIN_REL_AMPLITUDE * float(np.max(amps)))
+        ]
+        peaks = [float(freqs[k]) for k in tops if freqs[k] > 0]
+    if not peaks:
+        raise _refuse(edit, "the run's spectrum has no peak to place one on")
+    freq = _written(min(peaks, key=lambda f: abs(f - place.x)))
+    rows = list(leaf.get("peaks") or [])
+    _refuse_standing(edit, rows, "freq", freq, "a peak", "{} Hz")
+    row = copy.deepcopy(dict(place.blanks["peaks"]))
+    row["freq"] = freq
+    leaf["peaks"] = [*rows, row]
+    return leaf
+
+
+def place_tube_row(place: RowPlace) -> dict:
+    """A control point at the clicked time — snapped, and clamped into the
+    span a control point is drawn in — whose widths are the tube's own
+    THERE, interpolated as the scorer interpolates them: adding it changes
+    nothing until it is dragged. A tube of constant width has no rows, and
+    a click adds none: the leaf comes back as it is. Refused where a
+    control point already stands at that time, and — like a time drag — on
+    a leaf scored against another baseline."""
+    leaf = copy.deepcopy(place.leaf)
+    rows = leaf.get("tube_points")
+    if not rows:
+        return leaf
+    edit = _place_edit(place, "time", "a control point")
+    _refuse_other_baseline(edit, leaf, "its time")
+    x = _placed(edit, "x", place.x)
+    t = _written(_clamped_time(edit, leaf, x, _reference(edit)))
+    _refuse_standing(edit, rows, "time", t, "a control point", "t={}")
+    try:
+        upper, lower = _interpolate_tube_widths(
+            np.array([t]), rows, leaf.get("tube_interpolation", "linear")
+        )
+    except (KeyError, TypeError, ValueError) as err:
+        raise _refuse(
+            edit, f"the tube's control points cannot be read: {err}"
+        ) from None
+    row = copy.deepcopy(dict(place.blanks["tube_points"]))
+    row.update(time=t, upper=_written(upper[0]), lower=_written(lower[0]))
+    leaf["tube_points"] = [*rows, row]
+    return leaf
+
+
+def tube_row_noun(leaf: dict) -> str | None:
+    """What a Ctrl+click adds to a tube: a control point, where it has
+    any; nothing to one of constant width."""
+    return "a control point" if leaf.get("tube_points") else None
