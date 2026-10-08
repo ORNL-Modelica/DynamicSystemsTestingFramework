@@ -9465,6 +9465,71 @@ def test_each_arrow_is_on_the_plot_to_half_a_pixel_past_each_border_and_off_beyo
         assert wrong == []
 
 
+#: Put plot ``card``'s line ``tail`` ``px`` pixels BELOW the bottom border
+#: of the plot (negative: above it), by a relayout of the value axis's
+#: range, and say what is under the pointer's reach of it: at mid-width,
+#: from 4 px above the line to 4 below, whether each point is a shape of
+#: the plot, and the cursor there.
+LINE_BELOW = """
+async ([card, tail, px]) => {
+  const {Plotly} = await import('nicegui-plotly');
+  const gd = document.querySelectorAll('.js-plotly-plot')[card];
+  const s = gd.layout.shapes.find(s => (s.name || '').endsWith(tail));
+  const ya = gd._fullLayout.yaxis;
+  const span = ya.range[1] - ya.range[0];
+  const start = s.y0 + px * span / ya._length;
+  await Plotly.relayout(gd, {'yaxis.range': [start, start + span]});
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const fl = gd._fullLayout, r = gd.getBoundingClientRect();
+  const x = r.left + fl.xaxis._offset + fl.xaxis._length / 2;
+  const y = r.top + fl.yaxis._offset + fl.yaxis.d2p(s.y0);
+  const under = [];
+  for (let dy = -4; dy <= 4; dy++) {
+    const el = document.elementFromPoint(x, y + dy);
+    under.push([!!(el && el.closest('.shapelayer')), el ? getComputedStyle(el).cursor : '']);
+  }
+  return {x, y, below: y - (r.top + fl.yaxis._offset + fl.yaxis._length), under};
+}
+"""
+
+
+def test_a_bound_line_zoomed_off_the_plot_takes_no_pointer(
+    tmp_path, playwright_browser
+):
+    """Plotly clips what it DRAWS of a line to the plot area, and not the
+    wide helper that takes its drag: a scalar's lower bound zoomed 3 px,
+    or 12, below the plot was still what the pointer met in the bottom
+    margin — the `move` cursor, on nothing a person could see — and a
+    drag from there staged a tolerance. A line off the plot whole is
+    inert: nothing of it is under the pointer and a drag there stages
+    nothing. On the plot — 10 px inside, and 0.3 px past the border — it
+    is the line a press takes."""
+    with _served(tmp_path, playwright_browser, project=_grips_project) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 1, "scalar · y")
+
+        def shapes_under(px: float) -> tuple[dict, list]:
+            put = page.evaluate(LINE_BELOW, [1, "/scalar/lower", px])
+            assert put["below"] == pytest.approx(px, abs=0.02), put
+            page.wait_for_timeout(150)
+            return put, [cursor for shape, cursor in put["under"] if shape]
+
+        for px in (-10.0, 0.3):
+            _, cursors = shapes_under(px)
+            assert len(cursors) >= 3 and set(cursors) == {"move"}, (px, cursors)
+        for px in (3.0, 12.0):
+            put, cursors = shapes_under(px)
+            assert cursors == [], (px, put)
+            _rest(page)
+            page.mouse.move(put["x"], put["y"] - 20)
+            page.mouse.move(put["x"], put["y"], steps=4)
+            page.mouse.down()
+            page.mouse.move(put["x"], put["y"] - 30, steps=10)
+            page.mouse.up()
+            page.wait_for_timeout(700)
+            assert _pending(page) == "0 pending edits", px
+
+
 # -- a refused drag's reason, under the plot ------------------------------------
 
 

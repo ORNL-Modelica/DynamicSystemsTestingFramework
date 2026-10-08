@@ -205,10 +205,30 @@
     // How far the ring `s` reaches from its anchor, px: its radius.
     const radius = (s) => Math.max(0, ...points(s).flat().map(Math.abs));
 
+    // Whether the LINE `s` — a bound an editor moves — is off the plot
+    // whole: both its ends past the same end of an axis, by more than EDGE
+    // px. Plotly clips what it draws of a line and not the wide helper
+    // that takes its drag: a scalar's bound zoomed 3 or 12 px below the
+    // plot was still what the pointer met in the bottom margin, with the
+    // `move` cursor, and a drag from there staged a tolerance.
+    const gone = (s, fl) => {
+      if (s.type !== "line" || !fl) return false;
+      const past = (key, v0, v1) => {
+        const ref = s[key + "ref"] || key;
+        const axis = /^[xy]\d*$/.test(ref) ? fl[key + "axis" + ref.slice(1)] : null;
+        if (!axis) return false;
+        const p = [axis.d2p(v0), axis.d2p(v1)];
+        return Math.max(...p) < -EDGE || Math.min(...p) > axis._length + EDGE;
+      };
+      return past("x", s.x0, s.x1) || past("y", s.y0, s.y1);
+    };
+
     // Plotly replaces every shape path on a react or a newPlot: the marks go
     // with them, and are put back from what the figure says of its shapes.
     // A shape is three elements of one `data-index` — its group, its path
-    // and, for a line, the wide helper that takes its drag: all three inert.
+    // and, for a line, the wide helper that takes its drag: all three inert
+    // — a shape no editor moves, and a line one does that is off the plot
+    // (`gone`).
     //
     // The mark on a grip's path is also what takes Plotly's clip off it:
     // an arrow stands 10 to 17 px OUTSIDE its edge, in the margin when that
@@ -236,7 +256,10 @@
       const arrows = [];
       for (const el of gd.querySelectorAll(".shapelayer [data-index]")) {
         const shape = shapes[+el.getAttribute("data-index")] || {};
-        el.toggleAttribute("data-inert", !!info && !info.draggable.has(shape.name));
+        el.toggleAttribute(
+          "data-inert",
+          !!info && (!info.draggable.has(shape.name) || gone(shape, fl)),
+        );
         if (el.tagName !== "path") continue;
         const grip = gripOf(info, shape.name);
         if (grip) {

@@ -322,7 +322,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    `!important`), so such a shape showed a resize cursor, moved under the
    mouse and snapped back on release with nothing said. A press on it is now
    the plot's own. A line is dragged by a helper group of its own, marked
-   too. */
+   too — and that helper is not clipped to the plot area as the line is:
+   a bound line an editor DOES move is marked the same while it is off
+   the plot whole, where its helper alone was left to press. */
 .js-plotly-plot .shapelayer [data-inert],
 .js-plotly-plot .shapelayer [data-inert] * { pointer-events: none !important; }
 @media (hover: none), (pointer: coarse) {
