@@ -3668,12 +3668,29 @@ def test_two_moves_in_a_row_are_one_pending_op(two_var_session):
     from dstf.authoring.tree_move import Dest
 
     s = two_var_session
-    before = s.tree(A)
+    x, y = s.tree(A)["children"]
     s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
-    s.apply(_move(s, "/metrics/children/0", Dest("at", ROOT, None)))
+    s.apply(_move(s, "/metrics/children/1", Dest("onto", "/metrics/children/0")))
     (pending,) = s.spec.pending
     assert (pending.op, pending.path) == ("add", ROOT)
     assert len(SessionView(s).pending) == 1
+    assert s.tree(A)["children"] == [{"combinator": "and", "children": [y, x]}]
+
+
+def test_a_move_and_the_move_back_leave_nothing_pending(two_var_session):
+    """A flat test's tree moved is one whole tree staged; moved back it is
+    the tree the entry already scores by — as saved, and no pending edit
+    (it stayed "1 unsaved", and Save wrote a `metrics` block that scores
+    as the flat entry does)."""
+    from dstf.authoring.tree_move import Dest
+
+    s = two_var_session
+    before = s.tree(A)
+    s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
+    assert len(s.spec.pending) == 1
+    s.apply(_move(s, "/metrics/children/0", Dest("at", ROOT, None)))
+    assert s.spec.pending == []
+    assert "metrics" not in s.spec.entry(A)
     assert s.tree(A) == before
 
 
@@ -3797,11 +3814,14 @@ def test_a_move_after_rescore_folds_the_materialization_and_is_unmarked(
     from dstf.authoring.tree_move import Dest
 
     s = two_var_session
+    # Beside another edit: alone, the tree `rescore` writes out is the
+    # entry as saved, and no op stays for a move to fold.
+    s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
     s.rescore(A)
-    (marked,) = s.spec.pending
+    _plots, marked = s.spec.pending
     assert marked.materializes  # the op the move folds is the marked one
     s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
-    (pending,) = s.spec.pending
+    _plots, pending = s.spec.pending
     assert (pending.op, pending.path, pending.materializes) == ("add", ROOT, False)
 
 

@@ -692,13 +692,12 @@ class PendingDrawer:
                     spec.saved_entry(model_id) is None,
                 )
             ).classes("text-xs text-secondary").mark("drawer-note")
+        # Never an empty box: edits that cancel out are not here at all, and
+        # neither is the tree written out with nothing else beside it (a
+        # `rescore`, a value typed and cleared on a flat test) — an entry
+        # put back as saved, or as saved but for the tree it already scores
+        # by, has no pending op (`Session.stage`).
         lines = entry_lines(spec.preview_base(model_id), spec.entry(model_id))
-        if not lines:
-            # No diff to box: the edits leave the entry as `preview_base` has
-            # it — the tree written out and nothing else (a `rescore`), which
-            # the note says. Edits that cancel out are not here at all: an
-            # entry put back as saved has no pending op (`Session.stage`).
-            return
         texts = session.variable_texts(model_id)
         with (
             ui.element("div").classes("dstf-diff").mark("drawer-diff"),

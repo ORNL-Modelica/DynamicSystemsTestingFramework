@@ -70,7 +70,7 @@ from .capabilities import (
     StoreWrite,
 )
 from .situation import unrecorded_variables
-from .spec_document import PatchOp, SpecDocument
+from .spec_document import PatchOp, SpecDocument, json_equal
 
 if TYPE_CHECKING:
     import numpy as np
@@ -593,7 +593,9 @@ class Session:
         ``spec-update`` prepends, so the document the tool edits and the one
         it saves never differ in shape — but only when that tree scores
         exactly what the flat path scored (Conventions #7); otherwise the
-        test is scored as loaded and nothing is staged."""
+        test is scored as loaded and nothing is staged. On a test with no
+        other pending edit that op does not stay: its entry with nothing
+        but its own tree written out is as saved (`stage`)."""
         self._refuse_if_locked([model_id])
         op, _why = self._materialization(model_id)
         if op is not None:
@@ -1204,8 +1206,16 @@ class Session:
         # thing the count, the strip, the Tests drawer's mark, Save and the
         # preview read: every op of such a model goes. After the checks
         # above, so a stage that is refused is refused as it was; the model
-        # is still rescored below, back to its saved verdict.
-        put_back = {m for m in models if candidate.as_saved(m)}
+        # is still rescored below, back to its saved verdict. A flat entry
+        # with nothing but its own tree written out is as saved too
+        # (`_only_its_tree_written_out`): the first per-leaf edit writes
+        # that tree, and the edit put back left it — "2 unsaved", and a Save
+        # that added a `metrics` block scoring as the entry already did.
+        put_back = {
+            m
+            for m in models
+            if candidate.as_saved(m) or self._only_its_tree_written_out(candidate, m)
+        }
         if put_back:
             candidate = SpecDocument(
                 self.spec.path,
@@ -1609,6 +1619,51 @@ class Session:
                 f"scoring {model_id} failed ({len(failures)} of {len(to_read)} models)"
             ) from error
 
+    def _only_its_tree_written_out(
+        self, candidate: SpecDocument, model_id: str
+    ) -> bool:
+        """Whether ``candidate``'s entry for the model differs from the
+        SAVED one only by a ``metrics`` member, and that member is the tree
+        the saved entry already scores by — its implicit tree, written out.
+        Every other member (``plots``, ``comparison``, ...) is as saved; a
+        saved entry with a tree of its own is never this.
+
+        "The tree the saved entry scores by" is `_materialization`'s and no
+        other's, so what is dropped here and what `stage` writes out cannot
+        drift: the value of an op it built and marked (`PatchOp.materializes`
+        — marked only while it IS the saved entry's tree,
+        `_saved_scoring_tree`) where the pending list still holds one, and
+        otherwise `_materialization` asked for the saved entry. The marked
+        op is read first because it is free: every keystroke in a flat
+        test's editor comes through here with one, and the other way scores
+        the test as saved (`saved_comparison`: a merge and a compare). The
+        other way is for a tree no op of the Session's wrote — a move or a
+        wrap stages the whole tree (`edit_tree`), and moved back it is the
+        implicit one again, unmarked."""
+        saved = candidate.saved_entry(model_id) or {"model": model_id}
+        entry = candidate.entry(model_id)
+        if entry is None or has_metrics(saved) or not has_metrics(entry):
+            return False
+
+        def rest(of: dict) -> dict:
+            return {k: v for k, v in of.items() if k != "metrics"}
+
+        if not json_equal(rest(entry), rest(saved)):
+            return False
+        marked = [
+            op.value
+            for op in candidate.pending
+            if op.model_id == model_id and op.materializes
+        ]
+        if marked:
+            tree = marked[0]
+        else:
+            op, _why = self._materialization(model_id, saved=True)
+            if op is None:
+                return False
+            tree = op["value"]
+        return json_equal(entry["metrics"], tree)
+
     def _saved_scoring_tree(self, model_id: str) -> bool:
         """Whether the tree `_materialization` builds now is the one the
         SAVED entry scores — what marks it (`PatchOp.materializes`). Never
@@ -1626,11 +1681,16 @@ class Session:
             return False
         return overrides(saved) == overrides(self.spec.entry(model_id) or {})
 
-    def _materialization(self, model_id: str) -> tuple[dict | None, str | None]:
+    def _materialization(
+        self, model_id: str, *, saved: bool = False
+    ) -> tuple[dict | None, str | None]:
         """``(op, None)``: the ``add /metrics`` op for a test the flat path
         scored, built from the variables it scored — the leaves the report
         shows, in the report's order, so leaf ``i`` is
-        ``/metrics/children/i`` on both tiers. For a test tracked by its
+        ``/metrics/children/i`` on both tiers. ``saved``: for the entry as
+        the FILE holds it and the comparison of that (`saved_comparison`),
+        whatever is pending — the tree `_only_its_tree_written_out` drops.
+        For a test tracked by its
         ``.mo`` annotation those names are in no spec entry (and the entry
         may not exist yet: the op creates it). ``(None, None)`` when the
         entry already has a tree (`has_metrics`: a null ``metrics`` is
@@ -1648,10 +1708,16 @@ class Session:
         the spec does not shadow (the flat path merges it; a tree ignores
         it). Each case has its negative test in tests/test_session.py."""
         project = self._require_project()
-        entry = self.spec.entry(model_id) or {"model": model_id}
-        comp = self.comparisons.get(model_id)
+        bare: dict = {"model": model_id}
+        if saved:
+            entry = self.spec.saved_entry(model_id) or bare
+        else:
+            entry = self.spec.entry(model_id) or bare
         if has_metrics(entry):
             return None, None
+        comp = (
+            self.saved_comparison(model_id) if saved else self.comparisons.get(model_id)
+        )
         if comp is None or not comp.variables:
             test = project.test(model_id)
             simulate_only = test is not None and test.simulate_only

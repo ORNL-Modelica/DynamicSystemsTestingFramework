@@ -612,16 +612,20 @@ async def test_the_open_drawer_holds_every_comparison_its_key_names(shell):
         await _settled(lambda: drawer.held == [])
 
 
-async def test_a_rescored_flat_test_shows_its_note_and_no_empty_diff(shell):
-    """`rescore` writes A's tree out and nothing else: the section says
-    Save writes the tree, and draws no empty diff box."""
+async def test_a_rescored_flat_test_has_nothing_to_preview(shell):
+    """`rescore` writes A's tree out and nothing else: the entry is as
+    saved but for the tree it already scores by, so nothing is pending and
+    the drawer has no section for it — it showed "1 edit" over a note and
+    no diff, and Save wrote the tree."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         shell.session.rescore(A)
+        assert shell.session.spec.pending == []
         _open_drawer(user)
-        await user.should_see(marker="drawer-note", retries=20)
-        with pytest.raises(AssertionError):
-            user.find(marker="drawer-diff")
+        await user.should_see("nothing staged", retries=20)
+        for marker in (f"drawer-test:{A}", "drawer-note", "drawer-diff"):
+            with pytest.raises(AssertionError):
+                user.find(marker=marker)
 
 
 async def test_edits_that_cancel_out_leave_nothing_to_preview(tmp_path):

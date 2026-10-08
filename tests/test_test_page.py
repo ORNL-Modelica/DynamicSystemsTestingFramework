@@ -4683,6 +4683,46 @@ async def test_a_value_typed_and_cleared_again_is_no_pending_edit(scored_shell):
     assert shell.session.spec.path.read_bytes() == before
 
 
+async def test_a_value_typed_and_cleared_on_a_flat_test_is_no_pending_edit(shell):
+    """D's entry holds no tree (every TRANSFORM test's shape): the first
+    value typed writes its tree out under the edit — two ops — and the value
+    cleared left that tree, "1 pending edit" and a Save that added a
+    `metrics` block scoring as the entry already did. An entry as saved but
+    for the tree it scores by is as saved: nothing pending, Save disabled."""
+    before = shell.session.spec.path.read_bytes()
+    assert "metrics" not in shell.session.spec.saved_entry(D)
+    async with user_simulation(root=shell.index) as user:
+        page = await _tests_drawer(shell, user, D)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        (tolerance,) = _numbers(page, "Tolerance")
+        with page.client:
+            tolerance.set_value(0.5)
+        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        assert _one(user, "save").enabled
+        assert page.rail.tests.list.rows[D].pending == 2
+        with page.client:
+            tolerance.set_value(None)
+        await _settled(lambda: _one(user, "pending").text == "0 pending edits")
+        assert shell.session.spec.pending == []
+        assert _one(user, "strip-text").text == "Passes against its baseline."
+        assert not _one(user, "save").enabled
+        assert _one(user, "save:why").text == "no pending edits"
+        assert page.rail.tests.list.rows[D].pending == 0
+        assert not page.rail.tests.list.rows[D].edits.visible
+        user.find(marker="pending").click()
+        await user.should_see("nothing staged", retries=20)
+        # The editor is still open on the same criterion, and takes the
+        # next value: the tree is written out again under it.
+        assert page.open == (0, T0)
+        (again,) = _numbers(page, "Tolerance")
+        with page.client:
+            again.set_value(0.25)
+        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        assert shell.session.tree(D)["children"][0]["tolerance"] == 0.25
+    assert shell.session.spec.path.read_bytes() == before
+
+
 async def test_a_window_staged_elsewhere_reaches_the_open_editor(scored_shell):
     """The window is one of the leaf's edited fields, so an edit that moves
     only it must rebuild the editor: the fields went on showing no window
