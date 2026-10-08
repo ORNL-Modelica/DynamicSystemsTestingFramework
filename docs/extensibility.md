@@ -475,7 +475,7 @@ traceback.
 
 `cli.run_cmds._get_backend` is the CLI's wrapper over it and nothing more: it
 prints the message and exits 1, where a caller with a UI puts the same message
-on the job that asked for the run. `Session.open` builds through
+on the action that asked for the run (the tool's Queue button carries it). `Session.open` builds through
 `select_backend(config, persistent=False)` — the batch class, since the
 Session's backend reads results rather than running them — and turns
 `BackendUnavailableError` into `ConfigError`, so `dstf author` on a machine
@@ -489,10 +489,10 @@ the ref-ID mapping, the stale-state wipe for the tests in scope, the live
 dashboard's first paint, `backend.run_tests`, the cross-backend chains, the
 `merge` scope widening and the result read. It never prints, never exits the
 process, never opens a browser and never prompts; a backend that cannot start
-raises, and the caller decides whether that is an exit code or a red job panel.
+raises, and the caller decides whether that is an exit code or a red panel.
 `cmd_run` is its CLI wrapper — selection, the outcome's notices printed,
-`--accept` / `-i` / the report — and the authoring tool's Rerun capability is
-the other caller.
+`--accept` / `-i` / the report. The authoring tool runs through the simulation
+pool instead (`open_pool`, below): the same per-test path, one test at a time.
 
 `RunOutcome` carries `manifests`, `scope_tests`, `notices` (the cross-backend
 chain's lines, for the caller to show however it shows things) and `results`,
@@ -835,7 +835,7 @@ rerun a selection, drag a tube's control points — and it registers through the
 same `dstf.plugins` entry-point group a metric does. A capability decides
 whether it is available, builds its own controls, and returns an *outcome*; it
 applies nothing itself, so the session stays the single place where a spec is
-mutated, a store is written, or a job is launched.
+mutated, a store is written, or a test is queued.
 
 The contract lives in `dstf.authoring.capabilities`: the `Capability` protocol
 (`name`, `label`, `placements`, and `available` / `caption` / `panel` / `act`),
@@ -843,10 +843,15 @@ the `Placement` enum (`SUITE`, `TEST`, `VARIABLE`, `CRITERION`, `NODE`,
 `STATISTIC`, `STATISTIC_CRITERION` — where the capability attaches; a capability
 names a frozenset of them), and the
 five outcomes `act` may return — `Patch` (ops for the Session to stage),
-`StoreWrite`, `Job`, `Artifact`, `OpenProject` — or `None`, or a sequence of
-them. `Job` and `StoreWrite` each carry `models: frozenset[str]`, the models
-they touch: the Session locks a job's models while it runs and a locked model
-refuses a `StoreWrite`. Every outcome is keyword-only, so a field added later
+`StoreWrite`, `Enqueue`, `Artifact`, `OpenProject` — or `None`, or a sequence of
+them. `Enqueue(models=...)` hands the Session tests for its simulation queue
+(D150), in the order to run them; the Session appends them — one already
+queued or running is skipped — runs them on its pool, and reads each result
+back and rescores that test as it ends. A capability starts no thread and no
+run of its own: the `Job` outcome that did (with `JobContext`, `after_reload`
+and the Session's lock on a job's models) is gone. `StoreWrite` carries
+`models: frozenset[str]`, the models it touches: one the queue holds refuses
+it. Every outcome is keyword-only, so a field added later
 cannot silently take a positional argument's place. `caption(view)` is the
 button's label — object, effect and count, `plural()` for the noun — and
 `available` the sentence beside it when it is greyed. The view's `selection`
@@ -883,21 +888,23 @@ real answer, not an oversight (every plot sends one `{"autosize": true}` relayou
 when it mounts, and a subscribing panel answers that with `None`), so a capability
 that returns `None` on purpose says why in its own panel.
 
-`StoreWrite.run` returns `str | None`: the one line the job panel shows, saying
+`StoreWrite.run` returns `str | None`: the one line the queue panel shows, saying
 what the write did — what it stored and what it refused, with the reason. A
 partial write has no other way to report its skips, and raising after some
 baselines were already stored would say something false. The Session appends
-that line to its notices and emits `job` with `state="written"`; returning
+that line to its notices and emits `notice` with that `message`; returning
 `None` says there is nothing to report and appends nothing.
 
-The view carries the job panel's other readers: `notices`, the panel's lines
+The view carries the panel's other readers: `notices`, the panel's lines
 oldest first — what each store write reported, plus the open-time warning where
-there was one; `last_job`, the job that ran last in this project whatever its
-outcome; and on a `RunningJob`, `started_wall` — epoch seconds sampled before
-the worker thread starts. A `status.json` whose `start_wall` is older than that
-belongs to the previous run, and the panel does not show it as this job's
-progress. `notices`, `last_job` and `artifacts` are per project: opening another
-one resets all three at the commit point, so one library's panel is never shown
+there was one — and `artifacts`; and the queue as a capability may read it:
+`queue_state(model_id)` — `ItemState.WAITING` or `RUNNING` while the queue
+holds the test, how its last run there ended until that row is cleared, else
+`None` — and `queue_refusal`, why nothing can be queued on this backend. A
+queued or running test refuses nothing but a `StoreWrite` on it: `available`
+has no lock to answer for. `notices`, `artifacts` and the queue are per
+project: opening another one resets them at the commit point, so one
+library's panel is never shown
 under another's, and an open that fails leaves the live project's as it was.
 
 `backends.progress.read_status(work_dir)` is the one reader of `status.json` —
@@ -910,7 +917,7 @@ name is an error rather than an import-order race.
 
 A capability receives a `SessionView` — readers only — and applies nothing
 itself: the Session is the single place a spec is mutated, a store is written or
-a job is launched. The view carries what a panel draws from: `comparisons`,
+a test is queued. The view carries what a panel draws from: `comparisons`,
 `figure(model_id, variable)`, `tree_view(model_id)` — the read-only tree the
 report page and the shell both show, built by the report's own function — and
 `tree(model_id)`, a copy of the raw tree a `Patch` edits (the entry's `metrics`
@@ -977,7 +984,7 @@ a tree row's, right after its status pill, where the node's kind is read — how
 Edit tree draws a combinator's kind as a dropdown there. The place is emptied
 before each draw and with the panel's host; while it holds something the row's
 text leaves the kind out (`3 criteria`, not `and · 3 criteria`), and a host that
-draws nothing there — Edit tree under a job's lock — leaves the row reading its
+draws nothing there — Edit tree where it can only say why — leaves the row reading its
 kind. A row without a lead place (a leaf's, a criteria row's, a plot's header,
 a dialog) raises, as `row` does where there is no row.
 
@@ -989,8 +996,8 @@ field being typed in survives; when that act came from the figure hook (a drag,
 during which nothing is being typed) the acting panel is rebuilt too. A dialog's
 panel is not rebuilt while the dialog is open: a confirm list belongs to the
 moment of the click, and an act that applied something closes the dialog. When
-the set of capabilities placed there changes, or an `available` answer moves —
-a job's lock comes and goes without the tree changing shape — the host rebuilds
+the set of capabilities placed there changes, or an `available` answer moves
+without the tree changing shape, the host rebuilds
 them all. So a panel must read what it shows from the view on each build, never
 from state it kept from an earlier one: a panel that captured its leaf when
 first built would show — and on its next change re-stage — values another
@@ -1073,8 +1080,9 @@ nothing until the other is. The same
 
 The five shipped capabilities live in `authoring/builtin/` and register through
 this same call — Edit criteria and Edit tree return a `Patch`, Accept a
-`StoreWrite` over the shared accept function, Rerun a `Job` that builds its own
-backend through `select_backend` and runs it through `run_pipeline`, and Edit on
+`StoreWrite` over the shared accept function, Queue (`EnqueueTests`, named for
+what it does: "queue" is the shell's word for the queue itself, and the shell
+names no capability) an `Enqueue`, and Edit on
 plot a `Patch` from a metric's `edit_handle` or a table's rows — the one
 builtin client of the figure hook.
 

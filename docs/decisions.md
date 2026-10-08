@@ -5123,7 +5123,9 @@ and checkboxes, rebuilt from Python on a layout toggle.
    clears them too; an open that fails takes them back); the Suite page draws
    them waiting — during a reopen the Session's comparisons are still the
    previous project's.
-6. *A tool Rerun ends on a scored dashboard.* A `Job` may carry
+6. *A tool Rerun ends on a scored dashboard.* (Replaced by D150: the `Job`
+   and its contract below are gone; a drained queue writes the dashboard,
+   and Save, Discard and Reload are no longer refused.) A `Job` may carry
    `after_reload`, called once the Session has reloaded and rescored; Rerun's
    renders `dashboard.html` with the Session's verdicts (the run's own
    `finally` render stays, for a run that fails before the reload). A
@@ -6982,3 +6984,135 @@ test — a coordinated change for whoever holds such a file; the scan in
 item 1 found none in the owner's. `export-schema`'s output changes for the
 fields of item 2. The report's scalar figure gains two lines; no other
 report figure changes.
+
+## D150 — The simulation queue: one FIFO per tool process over a live worker pool (2026-10-08)
+
+**Context.** `dstf author` ran one job at a time: a Rerun locked its tests
+against every edit, refused Save, Discard and Reload until it ended, could
+not be cancelled, started its backend's workers for that run and closed
+them after it, and then re-read and rescored every test of the project. A
+rerun-edit-rerun loop paid a library load each time, and a second test
+could not be added while the first ran. The redesign brief (§3.6) asks for
+a queue; this is it, in two tiers — the pool in `backends/`, the queue in
+the tool.
+
+**Decision.**
+
+1. *One queue per tool process, in the Session.* `Session.enqueue` /
+   `remove` / `cancel`, the items in run order (`Session.queue`), first in,
+   first out, a test never in it twice (the pool's refusal, said as its
+   sentence). The pool (`backends/pool.py`, `pipeline.open_pool`) is opened
+   at the first enqueue and lives, its workers with it, until the tool
+   stops, the project is reopened, or Stop workers in the panel's ⋮ — which
+   frees the licence seats and is refused while a test runs. A stopped pool
+   takes nothing more, so the next enqueue after one replaces it.
+2. *Each result is read back and rescored as its test ends — that test
+   only.* The pool hands the item its result; the Session stores it and
+   scores that one model. No reload per item: it read every result of the
+   project for each. The pool's callbacks arrive on its threads and do
+   nothing there but post to the UI loop, where every Session mutation
+   happens.
+3. *A queued or running test is not locked.* A queued test takes every
+   edit and runs with the spec as it stands when it STARTS
+   (`SimulationPool.update` hands a waiting item its test again after each
+   re-merge). A running test takes its criteria's edits, scored when its
+   result arrives with the criteria as they are then; its simulation
+   settings are refused with a sentence, in `Session.stage`. Save, Discard
+   and Reload are not refused. What a test's run started with is gone from
+   memory when the run starts — the run cleared it on disk — so a running
+   test reads NOT RUN, and a per-leaf edit of a flat entry is refused there
+   as on any test with nothing scored.
+4. *Rerun is Queue.* The capability (`EnqueueTests`, name `enqueue` — the
+   shell names no capability, and "queue" is its word for the queue) returns
+   an `Enqueue` outcome; its caption counts what it adds and what the queue
+   already holds ("Queue 3 (2 already queued)") and says the unsaved edits
+   are taken when each test starts. The `Job` outcome, `JobContext`,
+   `RunningJob`, `LockedError`, `JobRunningError`, `Session.running` /
+   `last_job` and the `job` event are deleted. Accept refuses a queued or
+   running test with a sentence; a reopen refuses while the queue holds one.
+5. *The queue panel, beside the Suite table.* One row per item in run
+   order: its number, status badge, test (a link to its page), its state in
+   words — `waiting · 3 ahead`, `running · 42 s · worker 2`, `finished · 9 s`,
+   `failed: <message, one line; the whole on hover>`, `cancelled` — and
+   Remove (waiting), Cancel (running, where the backend can), Open test and
+   the Suite's actions for that test (ended). Its header: counts, a Workers
+   field (1 to the machine's cores, from `parallel`; applies to workers
+   started after the change), Clear finished, and ⋮ → Stop workers. Above
+   the table under 1200 px, and one line while empty. The rows are data
+   (`authoring/queue_rows.py`); the shell draws them.
+6. *The header's indicator, on every page.* `3 running · 5 queued` or
+   `idle`; red, with the first words of the pool's message, when no worker
+   could start, until Clear finished or the next test that starts. A click
+   opens the Suite page at the panel.
+7. *The Test page of a test the queue holds.* The strip says "Queued —
+   waiting · 3 ahead" with Remove, "Running on worker 2 — 42 s" with Cancel,
+   "Cancelled — no result (its earlier result was replaced when the run
+   started)." or the backend's message with Queue again.
+8. *No worker can start.* The pool fails the waiting items with the
+   backend's own message and stops; nothing stays queued. The bound is the
+   existing `worker_startup_timeout`.
+9. *`status.json` and the dashboard are written when the queue drains* —
+   nothing waiting, nothing running — for the items that ran since the last
+   write, off the UI loop, with the Session's verdicts for every test. Not
+   per item: both are one run's snapshot. The runs card and its one-second
+   `status.json` read are deleted; the shell's one-second `poll` event
+   remains only as the clock a running row's seconds move by, and reads no
+   file.
+10. *Stop server asks while the queue holds a test* ("3 tests are queued
+    or running — stop anyway?"), then removes the waiting ones, stops the
+    running ones and closes the pool; NiceGUI's shutdown hook closes it too
+    (a real Ctrl-C was not run).
+11. *Every backend with a single-test path can be queued.* One that runs
+    whole batches only, or cannot be built on the machine, refuses the
+    first Queue with its sentence, and the button carries it from then on.
+12. *A cancelled run has a word.* It is recorded `cancelled` and read back
+    as no result, so the classifier's verdict stays NOT RUN (D145: nothing
+    failed, the exit code is unchanged). `CANCELLED` is what a live row
+    says for why, on NOT RUN's class, so its pill, tint and filter count
+    it; a cancelled row keeps the word when the compare phase scores it
+    NOT RUN.
+
+**From the backend tier** (measured there, not again here): cancel is per
+backend — Dymola's `stop` file ended a simulating test in 1.7 s with the
+worker reused, and a test still translating is stopped by killing Dymola
+and restarting the worker; OpenModelica kills omc's children, 0.02 s; the
+JSON-driver backends kill the test's subprocess; FMPy simulates in-process
+and cannot. A worker's start is bounded, and its failure is the backend's
+own words. A tool that dies takes its children with it.
+
+**What the gate measured** (2026-10-08, the example library copied to a
+scratch directory with one stiff model added, driven through the Session —
+not clicked in a browser): Dymola, three queued — the third removed while
+waiting, the stiff one cancelled 8 s into its simulation and ended 0.46 s
+later, the next ran on the same worker and was rescored PASS 3 s after;
+`status.json` listed the cancelled and the passed test; closing the pool
+took 1.2 s and left no process. OpenModelica — a run completed and was
+rescored PASS; with omc killed during its start both waiting tests failed
+1.3 s later with "No OpenModelica worker could start — worker 0: omc exited
+(code -9) during setCommandLineOptions(…)", the indicator red, nothing left
+running.
+
+**Not built.** The growing trace of a running test (the next step, on this
+queue); a log viewer for a failed row; cross-backend chains through the
+queue; an idle timeout for workers; a simulation-settings editor — `/simulation`
+is not stageable for any test (`patch_apply`'s whitelist, the `spec-update`
+seam), so item 3's lock has no field to grey yet, and a queued test's
+settings cannot be edited in the tool either.
+
+**Known limits.** The page of a running test draws no criterion (it has no
+result), so criteria are edited mid-run only where the tool offers an edit
+without one. Stop workers and Stop server close the pool on the UI loop
+(1.2 s with one Dymola worker). The pool starts one worker per item as items are submitted: with
+several workers asked for, one whose start fails at once can stop the pool
+before a second was started. Every load of a Test page logs NiceGUI's
+"Event listeners changed after initial definition" in the browser console
+— two listeners the page adds to the layout after the handshake — with or
+without a queue.
+
+**What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
+refusal of Save, Discard and Reload while one runs. D129's capability
+contract loses the `Job` outcome and gains `Enqueue`.
+
+**Consequences.** A plug-in capability that returned a `Job` has no
+outcome to return: the tool pre-dates any outside plug-in. `status.json`
+may now carry a row with `status: "cancelled"`. The CLI is unchanged.

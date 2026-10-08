@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D150 the simulation queue). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -27,6 +27,7 @@ DynamicSystemsTestingFramework/
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
 │   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place)
+│   │   ├── pool.py               # SimulationPool: a FIFO queue of tests over a backend's runners that stays open (the tool's queue)
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
@@ -39,6 +40,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
 │   │                             #      picker_rows.py (the add form's variable picker as data: sections, filter, cap),
 │   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
+│   │                             #      queue_rows.py (the simulation queue as data: a row per item, the header's indicator),
 │   │                             #      situation.py (a test's situation and the strip's sentence), spec_preview.py (an entry's
 │   │                             #      diff as test_spec.json would write it), needle.py (the drawers' budgeted filter matcher),
 │   │                             #      typed_number.py + typed_number.js (the tool's number field: it keeps what is typed until it is left),
@@ -46,12 +48,13 @@ DynamicSystemsTestingFramework/
 │   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages,
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
 │   │                             #      test_list (the Tests drawer's list), tree_card + plot_card, stats_card.py (the Statistics card),
+│   │                             #      queue_panel.py (the Suite page's queue panel and the header's queue indicator),
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      picker.py (the add form's variable picker over picker_rows),
 │   │                             #      drawer_controls.py (both drawers' filter box and menus), strip.py (the Test page's status strip),
 │   │                             #      grips.js (a plot's tolerance arrows: which show, which shapes take the pointer, what a release sends),
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
-│   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
+│   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + enqueue + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py (the classifier + every status word and class) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
@@ -120,7 +123,12 @@ uv run dstf --config testing.json spec-update spec_patch.json
 
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
 # The Suite page is a table of the tests (count pills, typed column filters with .* / Aa, package
-# group rows, a column chooser); Accept the selection's results as baselines, Rerun the selection.
+# group rows, a column chooser); Accept the selection's results as baselines, Queue the selection:
+# one simulation queue per tool process (D150), first in, first out, over workers that stay alive.
+# Its panel beside the table lists each item in run order (Remove a waiting one, Cancel a running
+# one, Open test / Accept an ended one; a Workers field, Clear finished, Stop workers); the header
+# says `3 running · 5 queued` on every page. A queued or running test stays editable; each result
+# is read back and that test rescored as it ends.
 # Open a test: a Statistics card above the tree (every recorded statistic, run vs baseline,
 # collapsed to the changed ones; `+` adds a scalar criterion, and a statistics criterion is
 # edited there), its criteria tree closed to one line naming what failed, its plots — one per scored
@@ -139,7 +147,7 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # in (or, on a criterion, to wrap both in `and`). The add form picks from
 # EVERY variable of the result file and the run's diagnostics (a searchable picker; the Metric
 # list follows the choice); a criterion's variable is tracked by that, and the strip asks for a
-# rerun where the last run did not record it. An editor's field says the tolerance in effect
+# new run where the last run did not record it. An editor's field says the tolerance in effect
 # (the test's / baseline's / project's) under it. Focus shows one plot alone,
 # a select switches plots. Variable labels are cut in the middle (head…[3]).
 # A plot's legend holds its signals, above the plot; a swatch on each criteria row shows or hides

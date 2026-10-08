@@ -684,9 +684,9 @@ The **Translate (s) / Sim (s) / Total (s)** columns — on the dashboard and on 
 
 A run keeps these, and its other statistics, beside each result in `test_NNNN/run_stats.json`, so a later `compare`, a `--merge`d test and a reload in `dstf author` show them too. A Dymola result from before that file existed still shows its translation and simulation statistics, read back from the `dslog.txt` and `translation_log.txt` beside it; the logs hold no wall times. Where no wall time was kept — a test last run before that file existed, or a Dymola `--batch` run — Sim (s) shows the result file's own CPU time instead, marked: the number is followed by a small **cpu** tag and its tooltip reads "CPU time from the result file (no wall time was kept)". That is the final value of Dymola's `CPUtime` (DSTF sets `OutputCPUtime := true`), so only Dymola results carry one; on any other backend such a row reads "—" until it is re-run. A kept wall time always wins, and Sim (s) sorts and filters on the number whichever it is.
 
-A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), an aborted run, or a rerun from `dstf author`. SIMULATED is not a status: it is in no count pill.
+A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), or an aborted run. SIMULATED is not a status: it is in no count pill.
 
-A row reads **NOT RUN**, in grey, when its test has no result: the last run never ran it, or started it and never finished it (a run stopped by Ctrl-C or a crash leaves its unfinished tests so). That is not a failed simulation — a test whose run finished and failed, timed out or could not translate reads SIM_FAIL — and it is not a failure: `run` and `compare` exit 0 when every test that ran passed, whatever is NOT RUN beside them; the console lists it as `NOT RUN` and JUnit writes it as a skipped testcase (`<skipped message="not run"/>`). Rerun it to give it a verdict.
+A row reads **NOT RUN**, in grey, when its test has no result: the last run never ran it, or started it and never finished it (a run stopped by Ctrl-C or a crash leaves its unfinished tests so). That is not a failed simulation — a test whose run finished and failed, timed out or could not translate reads SIM_FAIL — and it is not a failure: `run` and `compare` exit 0 when every test that ran passed, whatever is NOT RUN beside them; the console lists it as `NOT RUN` and JUnit writes it as a skipped testcase (`<skipped message="not run"/>`). Run it again to give it a verdict. A run the tool's queue cancelled is recorded as cancelled and reads **CANCELLED**, also grey: it left no result either, so `compare` scores the test NOT RUN, and the NOT RUN pill counts it.
 
 The count pills along the top are the status filter: click one to show only its rows (PASS, FAIL, SIM_FAIL, NO_REF, TIMED OUT, QUEUED, RUNNING, NOT RUN; `warnings` shows the rows with any), `Total` to show every row again.
 
@@ -953,7 +953,8 @@ and Elapsed are a live run's and are not offered. One toolbar row above it
 holds:
 
 - **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · NOT RUN n · EDITED n`, and
-  `RUNNING n` while a job runs (and, switched on, until you switch it off). A
+  `QUEUED n` / `RUNNING n` while the simulation queue holds such a test (and,
+  switched on, until you switch it off). A cancelled test counts under NOT RUN. A
   pill filters the table to its status; several pills show any of them, and
   EDITED adds the edited tests. The counts are over every test, whatever the
   filters; a pill with nothing to count is greyed.
@@ -962,9 +963,9 @@ holds:
   every column filter a regex and case-sensitive.
 - at the right, **"N selected · ✕"** (✕ clears the selection; "(M hidden)"
   when a filter or a closed group hides selected tests — the actions still act
-  on all of them), then **Accept** and **Rerun** as icons whose tooltip is the
-  caption, "Rerun 2 selected tests", or the sentence saying what would enable
-  it. A click opens the same confirm dialog.
+  on all of them), then **Accept** and **Queue** as icons whose tooltip is the
+  caption, "Queue 3 (2 already queued)", or the sentence saying what would
+  enable it. A click opens the same confirm dialog.
 
 Under the header row, each column has a filter: status by the pills, numbers
 by `>1e-4`, `<=3`, `=0` or a range `1..10` (read from the value, not its
@@ -982,13 +983,46 @@ The table's view — pills, filters, `.*` / `Aa`, grouping, names, sort, columns
 and closed groups — is the viewer's: the browser keeps it (per project, by
 config file) across reloads and restarts. The selection is the tab's and comes
 back when you return from a test. Rows repaint in place as results are scored,
-edits staged and jobs run, keeping the sort, filters and selection. On a cold
+edits staged and queued tests start and end (a queued test's row reads QUEUED,
+a running one's RUNNING, a cancelled one's CANCELLED until its queue row is
+cleared), keeping the sort, filters and selection. On a cold
 library scan the rows the spec and the last run name appear at once, reading
-"…" until the scan and the scoring reach them. A Rerun from the tool ends, like
-`dstf run`, on a static `dashboard.html` — with the tool's verdicts, those of
-any unsaved edit the Rerun ran with included. The dashboard is the report of
-the last `dstf run` / `compare` or tool Rerun; Save, Discard and Reload do not
-rewrite it. Save, Discard and Reload are refused while a job runs.
+"…" until the scan and the scoring reach them. When the tool's queue has
+drained — nothing queued, nothing running — it leaves, like `dstf run`, a
+`status.json` listing the tests that ran since it was last written and a static
+`dashboard.html` with the tool's verdicts for every test, those of any unsaved
+edit included. The dashboard is the report of the last `dstf run` / `compare`
+or drained queue; Save, Discard and Reload do not rewrite it, and none of the
+three is refused while the queue runs.
+
+Beside the table (above it under 1200 px, and as one line reading "queue
+empty" while it holds nothing) is the **simulation queue**: one per tool
+process, first in, first out, a test never in it twice. Each row is one test
+in run order — its number, its status, its name (a link to its Test page) and
+its state in words: `waiting · 3 ahead`, `running · 42 s · worker 2`,
+`finished · 9 s` with the verdict as its badge, `failed: <the backend's
+message>` (one line; the whole message on hover) or `cancelled`. A waiting row
+has **Remove**; a running row has **Cancel**, which stops its simulation and
+leaves no result (where the backend cannot stop a test — FMPy — the row says
+so instead); an ended row has **Open test** and the Suite's own actions for
+that one test, Accept and Queue. The panel's header counts the rows, holds
+the **workers** field — how many tests run at once, from `parallel` in
+`testing.json`, between 1 and the machine's cores; a change applies to workers
+started after it — **Clear finished**, which drops the ended rows and leaves
+their results, and a ⋮ with **Stop workers**: the simulator processes end and
+their licence seats are free, and the next queued test starts new ones (it is
+refused while a test runs). The workers otherwise stay alive while the tool
+runs, so a second run of a test does not load its libraries again. The store
+writes' lines and the artifacts are listed under the rows.
+
+The header of every page carries the queue's indicator — `3 running · 5
+queued`, or `idle` — and a click on it opens the Suite page at the queue. When
+no worker can start (a licence, a missing tool) the waiting tests fail with
+the backend's own message, nothing stays queued, and the indicator shows the
+message's first words in red until Clear finished or the next test that
+starts. **Stop server** asks first while the queue holds a test ("3 tests are
+queued or running — stop anyway?"); stopping removes the waiting ones, cancels
+the running ones and ends every simulator process.
 
 The **Test page** is one test. A second header row carries the way back to the
 Suite, the model id, its verdict, and the backend and baseline it was scored
@@ -997,21 +1031,27 @@ strip** says the test's situation in one sentence and fills its one next
 action: "Fails 2 of 3 criteria. If the new behaviour is right, accept it as
 the baseline." (red, Accept filled); "No baseline yet — accept this result as
 the first one" (Accept filled); "The simulation failed. Fix the model or its
-settings, then rerun." and "No result yet — rerun to simulate it." (Rerun
-filled; the verdict beside the model id then reads NOT RUN); "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
+settings, then queue it again." and "No result yet — queue it to simulate it."
+(Queue filled; the verdict beside the model id then reads NOT RUN); for a test
+the queue holds, "Queued — waiting · 3 ahead" with Remove, and "Running on
+worker 2 — 42 s" with Cancel — its earlier result went when the run started,
+so the page reads as a NOT RUN test's until the new one arrives; "Cancelled —
+no result (its earlier result was replaced when the run started)." and, where
+no worker could start, the backend's message, each with Queue again filled; "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
 and save opens the preview on this test, and Discard drops this test's edits
 only — the header's Discard drops every test's); "Passes against its
 baseline." (grey, Accept in the strip's ⋮ menu: there is nothing new to
 accept). A criterion on a variable the last run did not record scores "not
 found in the result" until a run records it, and the strip says so: with the
-edit unsaved, "1 unsaved edit · verdict stays FAIL · 1 new variable: rerun to
-score it", Rerun the one filled action (Preview and save and Discard quiet,
-Accept in the ⋮); saved without a rerun, "1 new variable the last run did not
-record: rerun to score it." (Rerun filled, Accept in the ⋮ — the baseline would
+edit unsaved, "1 unsaved edit · verdict stays FAIL · 1 new variable: queue the
+test to score it", Queue the one filled action (Preview and save and Discard
+quiet, Accept in the ⋮); saved without a new run, "1 new variable the last run
+did not record: queue the test to score it." (Queue filled, Accept in the ⋮ —
+the baseline would
 not hold it yet). Where the result FILE already holds the variable — Dymola's
 and the JSON driver's (Julia, Python) record every variable — the tool reads it
 again the moment the criterion is staged and scores it at once; the strip asks
-for a rerun only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
+for a new run only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
 reads 2 — its tree written out, and the edit — and none again once that edit
 is put back (see the preview, above).
 
@@ -1039,9 +1079,9 @@ instead; click the row to edit it there — the tolerance's two fields, the
 tolerance mode, bounds; there is no plot, so the fields are the only way to
 its sides. A criterion reading a quantity no
 statistic holds gets a row under "Other scored quantities". The `+` is grey,
-with the reason as its tooltip, while a job holds the test, on a
+with the reason as its tooltip, on a
 simulate-only test, where nothing is scored yet, where the last run no
-longer holds what it scored (rerun it), where the test's flat criteria
+longer holds what it scored (queue it again), where the test's flat criteria
 cannot become a tree without changing its scores (write a `metrics` tree
 in `test_spec.json`), and under a `warn` or `weighted` root.
 
@@ -1142,17 +1182,6 @@ the tab's, so a switch of test keeps it:
 - on Tests, **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · NOT RUN
   n · EDITED n`, over every test whatever the filter, filtering as the Suite table's do; a
   test whose scoring failed counts under SIM_FAIL, as its Suite row reads.
-
-Below the Suite page's list is the job panel: while a job runs it reads
-`running: <label>` and one row per test in the job, taken from the `status.json`
-the run itself writes — model, status, phase, elapsed and the backend's detail
-line — refreshed on a timer until the job ends. (A snapshot older than the job
-belongs to the previous run and is not shown as this job's progress.) When the
-job is over the panel reads `finished: <label>`, with one row per test it ran
-carrying the backend's failure message where a result failed, or
-`failed: <label> — <type>: <message>` when the job itself failed. Below that
-come the lines the store writes reported, then links to the artifacts
-capabilities wrote.
 
 **Edit criteria** is the top of the open criterion's editor: the metric, the
 form derived from that metric's config dataclass, the window, and the baseline
@@ -1256,7 +1285,7 @@ scores a time series (and the one chosen before a diagnostic comes back).
 A criterion on a variable the test did not track is what tracks it: every
 backend records, stores and scores a criterion's variables after the test's
 `UnitTests` variables and `variables` patterns, with no change to `variables`
-(see the strip, above, for the rerun). A diagnostic's criterion scores its
+(see the strip, above, for the new run). A diagnostic's criterion scores its
 stored final — `scalar` with `quantity: "<name>.final"` — exactly for a count
 (`EventCounter`, or a diagnostic of whole numbers) and within 10% otherwise;
 a time (`CPUtime`, or a diagnostic of fractional numbers) is added inside a
@@ -1375,27 +1404,32 @@ its result may be whatever the simulator had flushed when the run was aborted),
 skipped — it has nothing to compare) or `no tracked variables in result`. The
 button itself is greyed when no row will be stored, carrying that first row's
 own reason — and with nothing checked it reads `Accept needs a selection`. The
-write reports one line in the job panel — how
+write reports one line in the queue panel — how
 many baselines it stored, where, and every test it skipped with its reason —
 and the results reload, so a re-baselined test's verdict flips in place.
+Accept is refused for a test the queue holds — "… is queued: accept it when
+its run has ended" — since the result in memory is about to be replaced.
 
-**Rerun** simulates the selected tests again on a worker thread, as a job: the
-rest of the tool stays usable, and the tests in the selection are locked until
-the job ends (an edit to one of them is refused, since the run rewrites their
-simulation directories). The panel names the backend the run will use — `runs
-through Dymola` — lists the selected tests in project order, and the button
-starts them. The job builds its own backend, the same choice a CLI run makes by
-default: the persistent workers when the backend declares them, the batch path
-otherwise. It narrates nothing of its own to the console `dstf author` was
-started from — a logged warning or a simulator's own output is not narration
-and still appears there.
-One job at a time, and there is no cancel — a rerun ends when the backend ends
-or its per-test timeout does. A job that finishes reloads the results and
-rescores every verdict; a job that fails leaves the verdicts exactly as they
-were and shows its error in the footer instead. Afterwards the dashboard link
-shows the tests that reran and no others: one invocation writes one
-`status.json`, so a partial rerun's page is that subset, exactly as a CLI
-`--rerun ... --merge` leaves it.
+**Queue** appends the selected tests to the simulation queue (above), in
+project order; a test the queue already holds is left out, and the caption
+counts both — "Queue 3 (2 already queued)". The panel names the backend the
+runs will use — `runs through Dymola` — and lists the tests. The queue runs
+on a backend of its own, the same choice a CLI run makes by default (the
+persistent workers where the backend declares them), and narrates nothing to
+the console `dstf author` was started from — a logged warning or a
+simulator's own output is not narration and still appears there. A backend
+that can only run whole batches, or cannot be built on this machine, refuses
+the first Queue with its own sentence, and the button carries it from then on.
+
+A queued or running test is not locked. A queued test takes every edit and
+runs with the spec as it stands when it STARTS, unsaved edits included — the
+caption says so ("with 1 unsaved edit, as they stand when each starts") — so
+a criterion added on a new variable while it waits is recorded by that run. A
+running test's criteria can still be edited and are scored, as they stand
+then, when its result arrives; its simulation settings are locked until its
+run ends. As each test ends its result alone is read back and that test alone
+rescored. A test that fails keeps the backend's message on its queue row; a
+cancelled one has no result.
 
 **Edit on plot** is the rest of the open criterion's editor, scoped to that one
 criterion: it is available when that leaf's metric has handles or a table — a
@@ -1403,8 +1437,8 @@ criterion: it is available when that leaf's metric has handles or a table — a
 leaf. (An `nrmse` criterion says `nrmse has no on-plot handles` in the editor's
 place.) On a test whose flat criteria cannot become a tree without changing
 its scores, the editor draws no field and says that reason on one line, in
-place of both Edit criteria and Edit on plot; a reason both would give — a
-job holding the test — likewise appears once. The plot above the editor
+place of both Edit criteria and Edit on plot; a reason both would give
+appears once. The plot above the editor
 carries rings and arrows for the open criterion alone, and nothing else on it
 takes the pointer: a press on a checkpoint's tolerance box, a window, a result
 line or another criterion's bound line is the plot's own (a box zoom). What

@@ -30,7 +30,7 @@ queue. Between those, the visible work follows the brief's own sequence
 | 2 | The Suite page and the new shell | to write | 1 | 331 rows fill in progressively; batch actions unlock; nothing written |
 | 3 | The Test page, inline criteria, the drawer, modular plots | 3a `2026-09-20-plots-key-and-plot-figure.md` (built); 3b `2026-09-20-the-test-page.md` (built); 3c to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
 | 4 | Editing returns (brief §3.5, in its order) | to write | 3 | Shift+click adds a point on a real trace; brush sets a window |
-| 5 | The simulation queue | to write | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
+| 5 | The simulation queue | BUILT (backend tier merged at `6609d01`; the tool `ec84398..c4d366d`, D150) | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
 | 6 | Live results | to write | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
 | 7 | Themes | to write | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
 

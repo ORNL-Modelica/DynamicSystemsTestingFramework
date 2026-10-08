@@ -185,7 +185,8 @@ CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
 read-modify-write both `dstf spec-update` and `Session.save` call, and
 `storage/accept.py` is the one accept path `run --accept`, `compare --accept`,
 `run -i`'s `[a]` and the tool's Accept capability all call, and `pipeline.py` is
-the run itself, which `cmd_run` and the tool's Rerun both drive.
+the run itself: `cmd_run` drives `run_pipeline`, and the tool's queue drives the
+same path one test at a time (`open_pool` over `backends/pool.py`, D150).
 
 On-plot editing crosses the layers without either importing the tool. The
 figure layer draws the editable figure — `variable_figure(view, editable=True)`
