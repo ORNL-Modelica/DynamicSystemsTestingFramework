@@ -12420,7 +12420,10 @@ def test_the_stylesheet_hides_a_grip_at_rest_by_display_and_shows_it_on_touch():
     """`display: none`, never `visibility` or `opacity`: Plotly writes
     inline `opacity: 1; pointer-events: all` on every editable shape, so a
     grip hidden either way is still grabbed. Where there is no hover (a
-    touch screen) the open criterion's grips are always shown."""
+    touch screen) the open criterion's grips are always shown — but an
+    arrow marked OFF the plot (`data-grip-off`), which is displayed
+    nowhere: its own rule hides it in a shown group, and the touch rule
+    leaves it out."""
     import re
 
     from dstf.authoring.shell.style import STYLE
@@ -12428,13 +12431,16 @@ def test_the_stylesheet_hides_a_grip_at_rest_by_display_and_shows_it_on_touch():
     css = re.sub(r"\s+", " ", STYLE)
     hidden = ".js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on])"
     assert f"{hidden} {{ display: none; }}" in css
+    assert ".js-plotly-plot .shapelayer path[data-grip-off] { display: none; }" in css
     assert (
-        f"@media (hover: none), (pointer: coarse) {{ {hidden} {{ display: inline; }} }}"
-        in css
-    )
+        "@media (hover: none), (pointer: coarse) {"
+        f" {hidden}:not([data-grip-off]) {{ display: inline; }} }}"
+    ) in css
     assert css.index(f"{hidden} {{ display: none; }}") < css.index(
         "@media (hover: none)"
     )
+    # Nothing else of the stylesheet shows a grip.
+    assert css.count("display: inline;") == 1
 
 
 def test_the_stylesheet_alone_takes_plotlys_clip_off_a_grip_in_two_rules():
@@ -12443,24 +12449,28 @@ def test_the_stylesheet_alone_takes_plotlys_clip_off_a_grip_in_two_rules():
     grip's arrow stands outside its edge. ONE mechanism un-clips it: the
     stylesheet, whose property beats the attribute wherever and whenever
     it is written; `grips.js` takes no attribute off. A rule for the path
-    and one for its group, and no third: neither takes the clip off an
-    arrow marked off the plot (`data-grip-off`). (What a person gets is
-    read in the browser: `test_an_arrow_pressed_in_the_margin_of_a_zoomed_
-    plot_stays_painted_while_held`, `test_an_arrow_whose_anchor_is_off_
-    the_plot_is_hidden_until_it_is_panned_back`.)"""
+    and one for its group, and no third. Neither names an arrow marked off
+    the plot (`data-grip-off`): that one is not displayed, and a clip on
+    what is not displayed is nothing — the mark is read by the two
+    `display` rules and by no other. (What a person gets is read in the
+    browser: `test_an_arrow_pressed_in_the_margin_of_a_zoomed_plot_stays_
+    painted_while_held`, `test_an_arrow_whose_anchor_is_off_the_plot_is_
+    hidden_until_it_is_panned_back`.)"""
     import re
 
     from dstf.authoring.shell.plot_card import GRIPS_JS
     from dstf.authoring.shell.style import STYLE
 
     css = re.sub(r"\s+", " ", STYLE)
-    on = "path[data-grip]:not([data-grip-off])"
+    on = "path[data-grip]"
     assert f" .js-plotly-plot .shapelayer {on} {{ clip-path: none; }}" in css
     assert (
         f" .js-plotly-plot .shapelayer g.shape-group:has(> {on}) {{ clip-path: none; }}"
     ) in css
     assert css.count("clip-path: none") == 2
     assert not re.search(r"Attribute\(\s*[\"']clip-path", GRIPS_JS.read_text("utf-8"))
+    rules = re.findall(r"[^{}/]*\[data-grip-off\][^{}]*\{[^{}]*\}", css)
+    assert len(rules) == 2 and all("display:" in rule for rule in rules), rules
 
 
 def test_the_stylesheet_moves_a_staggered_arrow_by_the_modules_own_step():

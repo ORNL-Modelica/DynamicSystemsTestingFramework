@@ -30,7 +30,9 @@
 // — `display: none`, because Plotly writes inline `opacity: 1; pointer-events:
 // all` on every editable shape: hidden by `visibility` or `opacity` a grip is
 // still grabbed. Where there is no hover (a touch screen) the same stylesheet
-// shows every marked grip, and nothing here is needed.
+// shows every marked grip, and nothing here is needed. And an arrow whose
+// edge is OFF the plot (`data-grip-off`) is not displayed at all, by the
+// same stylesheet: one rule for an edge that is not on the plot — no arrow.
 //
 // WHICH shape is a grip, of which group, and which shapes may be dragged at
 // all is the SERVER's to say: it rides in the figure itself
@@ -152,8 +154,6 @@
     // And whether that anchor is OFF the plot: outside the plot area by
     // more than EDGE px on either axis — the one the arrow moves on (its
     // edge is past the end of the axis) or the other (its checkpoint is).
-    // Plotly would have clipped all of such an arrow but the 10 to 17 px it
-    // stands out by.
     const placed = (s, fl) => {
       const xa = fl["xaxis" + (s.xref || "x").slice(1)];
       if (!xa) return null;
@@ -203,12 +203,16 @@
     // (style.py) un-clip the path and its group. Nothing here touches a
     // `clip-path`.
     //
-    // But for an arrow whose anchor is OFF the plot (`placed`), marked
-    // `data-grip-off`: those rules leave it Plotly's clip. Un-clipped like
-    // the rest, the arrows of a checkpoint zoomed just off the plot were
-    // painted in the margin, about a ring that was not drawn, and took a
-    // press there. The mark is this pass's, like the others: of the
-    // figure as this redraw draws it.
+    // An arrow whose anchor is OFF the plot (`placed`) is marked
+    // `data-grip-off`, and the stylesheet does not display it, shown group
+    // or not. Un-clipped like the rest, the arrows of a checkpoint zoomed
+    // just off the plot were painted in the margin, about a ring that was
+    // not drawn, and took a press there; left Plotly's clip and no more,
+    // an arrow drawn INWARD from an edge 2 px off the panel (the
+    // spectrum's lower one, next to 0 Hz) was painted whole inside it,
+    // where the pointer could not come, and one beside a border its
+    // checkpoint was just past left a sliver on the border. The mark is
+    // this pass's, like the others: of the figure as this redraw draws it.
     //
     // Returns the arrows that are ON the plot, each with what is painted
     // of it (`painted`), for `stagger`.
@@ -306,7 +310,8 @@
     // whole height. A ring whose group has no grip has no area.
     //
     // Of the members that are ON the plot (`placed`) alone: an arrow whose
-    // anchor is off it is not drawn, and a ring off it is clipped away. A
+    // anchor is off it is not displayed (`mark`), and a ring whose centre
+    // is off it is cut by Plotly's clip, half of it at the most painted. A
     // group partly on the plot has the area of what is on it; one that is
     // off it whole — its ring and every arrow — has none, and nothing
     // shows for it wherever the pointer is.
@@ -491,10 +496,13 @@
 
     // How far the pointer (viewport px) is from the nearest SHOWN arrow's
     // box — 0 on it, Infinity with none shown. The box is the path's own,
-    // as drawn: whichever way its arrow points.
+    // as drawn: whichever way its arrow points, and wherever it is
+    // staggered to. An arrow off the plot is of a shown group and is not
+    // shown: it is not asked.
+    const SHOWN = ".shapelayer path[data-grip-on]:not([data-grip-off])";
     const arrow = (cx, cy) => {
       let nearest = Infinity;
-      for (const el of gd.querySelectorAll(".shapelayer path[data-grip-on]")) {
+      for (const el of gd.querySelectorAll(SHOWN)) {
         const b = el.getBoundingClientRect();
         if (!b.width && !b.height) continue;
         const dx = cx < b.left ? b.left - cx : cx > b.right ? cx - b.right : 0;

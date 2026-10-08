@@ -244,8 +244,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    every one (`data-grip-on`). `display: none`, never `visibility` or `opacity`:
    Plotly writes inline `opacity: 1; pointer-events: all` on every editable
    shape, so a grip hidden either way was still grabbed where nothing
-   showed. Without a hover — a touch screen — they are always shown. */
+   showed. Without a hover — a touch screen — they are always shown.
+   But an arrow whose edge is OFF the plot (`data-grip-off`, marked by
+   `grips.js` on every redraw): that one is not displayed at all, its
+   group shown or not, hover or none. One rule for an edge that is not on
+   the plot — no arrow. Left Plotly's clip instead, an arrow was still
+   painted wherever the clip cut nothing: whole, inside the panel, when it
+   is drawn inward of an edge 2 px off it; a sliver on the border beside
+   a checkpoint just past it. And the hover label gave way next to it. */
 .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) { display: none; }
+.js-plotly-plot .shapelayer path[data-grip-off] { display: none; }
 /* And a grip is not clipped to the plot area. Plotly clips every shape to
    it, and an arrow stands 10 to 17 px OUTSIDE its edge: with that edge at
    the plot's edge, where any zoom can put it, the arrow was all in the
@@ -265,15 +273,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    while it is held. A browser without `:has` (Firefox before 121) drops
    the group's rule, and the path's alone un-clips nothing: there an
    arrow at the plot's edge is clipped as Plotly draws it.
-   Not an arrow whose ANCHOR is off the plot (`data-grip-off`, marked by
-   `grips.js` on every redraw): it keeps Plotly's clip, held or not. The
-   un-clip is for the 10 to 17 px an arrow stands outside an edge that is
-   on the plot; the arrows of a checkpoint zoomed just off the plot were
-   painted in the margin beside the axis title, and took a press. */
-.js-plotly-plot .shapelayer path[data-grip]:not([data-grip-off]) { clip-path: none; }
-.js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]:not([data-grip-off])) {
-  clip-path: none;
-}
+   The un-clip is for the 10 to 17 px an arrow stands outside an edge that
+   is ON the plot. An arrow whose edge is off it — the arrows of a
+   checkpoint zoomed just off the plot were painted in the margin beside
+   the axis title, and took a press — is not displayed (above), so no
+   rule here needs to leave it out. */
+.js-plotly-plot .shapelayer path[data-grip] { clip-path: none; }
+.js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]) { clip-path: none; }
 /* An arrow that would be drawn over another of its cluster is moved ACROSS
    its own axis by whole steps of 9 px (`grips.js` `stagger`, which marks
    it with the steps: `data-grip-shift`, -3, -1, 1 or 3): a time or a
@@ -320,7 +326,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .js-plotly-plot .shapelayer [data-inert],
 .js-plotly-plot .shapelayer [data-inert] * { pointer-events: none !important; }
 @media (hover: none), (pointer: coarse) {
-  .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) {
+  .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]):not([data-grip-off]) {
     display: inline;
   }
 }
