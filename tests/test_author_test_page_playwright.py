@@ -381,8 +381,8 @@ def test_the_strips_menu_says_it_is_open_and_why_an_item_is_grey(
     tmp_path, playwright_browser
 ):
     """C's last run never finished it: Accept is in the strip's ⋮, greyed,
-    and a real mouse over it reads why. The ⋮ says whether its menu is
-    open, as the header's does."""
+    and says why under its name — read without a hover. The ⋮ says whether
+    its menu is open, as the header's does."""
     with _served(tmp_path, playwright_browser, project=_two_var_project) as page:
         page.goto(page.url.split("test/")[0] + f"test/{C}")
         expect(page.locator(".dstf-strip-text")).to_have_text(
@@ -397,12 +397,7 @@ def test_the_strips_menu_says_it_is_open_and_why_an_item_is_grey(
         item = page.get_by_role("menuitem").filter(has_text="Accept")
         expect(item).to_be_visible(timeout=EXPECT_TIMEOUT)
         assert item.get_attribute("aria-disabled") == "true"
-        box = item.bounding_box()
-        assert box is not None
-        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-        expect(page.locator(".q-tooltip")).to_have_text(
-            "re-run before accepting", timeout=EXPECT_TIMEOUT
-        )
+        assert item.inner_text().split("\n") == ["Accept", "re-run before accepting"]
         page.keyboard.press("Escape")
         expect(more).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
 
