@@ -25,7 +25,7 @@ from dstf.authoring.shell.suite import SuitePage  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.situation import Situation  # noqa: E402
 from dstf.backends.pool import ItemState, StartingWorker  # noqa: E402
-from test_session import A, B, D, _project  # noqa: E402
+from test_session import LOOSEN, A, B, D, _project  # noqa: E402
 from test_session_queue import fake_item  # noqa: E402
 
 
@@ -378,9 +378,8 @@ async def test_the_workers_field_sets_the_session_s_workers(shell):
 
 async def test_the_panel_s_stop_workers_never_raises_into_the_page(shell):
     """The Session refuses Stop workers while a test runs (its sentence is
-    `test_session_queue`'s); the panel's handler says a refusal and raises
-    nothing, and the queue is as it was. What it SAYS is a notification,
-    which the simulation does not show: the browser test reads it."""
+    `test_session_queue`'s); the panel's handler raises nothing, and the
+    queue is as it was. What it says is the next test's."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         panel = _suite(shell, user).queue
@@ -431,3 +430,145 @@ async def test_the_backend_cannot_change_while_the_queue_holds_a_test(shell):
         shell.session._emit("queue", state="removed", models={A})
         shell.tick()
         assert header._backend_why() is None and header.backend.enabled
+
+
+# ---------------------------------------------------------------------------
+# what a refusal SAYS, and what the panel repaints on
+# ---------------------------------------------------------------------------
+
+
+def _end(shell, item, state: ItemState) -> None:
+    """``item`` ended in ``state``, as the pool ends it and the Session
+    takes it in."""
+    item.state, item.ended_at = state, item.started_at
+    del shell.session._live[item.model_id]
+    shell.session._emit("queue", state="ended", models={item.model_id})
+    shell.tick()
+
+
+async def test_clear_finished_is_offered_for_a_stopped_pool_s_message_alone(shell):
+    """Clear finished is what dismisses the stopped pool's message, so it is
+    offered wherever that message stands — with no ended row beside it too
+    — and not on a queue with neither."""
+    message = "No Stub worker could start — worker 0: licence server unreachable"
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        panel = _suite(shell, user).queue
+        assert panel.clear.visible is False
+
+        _hold(shell, A, ItemState.WAITING)
+        assert panel.clear.visible is False  # nothing ended, nothing stopped
+
+        shell.session.queue_stopped = message
+        shell.session._emit("queue", state="ended", models=set())
+        shell.tick()
+        assert panel.error.visible and panel.error.text == message
+        assert panel.clear.visible
+
+        user.find(marker="queue-clear").click()
+        shell.tick()
+        assert shell.session.queue_stopped is None
+        assert panel.error.visible is False and panel.clear.visible is False
+        assert _has(user, f"queue-row:{A}")  # the waiting row is not "finished"
+
+
+async def test_a_finished_row_s_badge_follows_a_rescore(shell):
+    """A finished row's badge is its test's verdict as it stands, and
+    `results` is the event that says a verdict moved. An edit says `spec`
+    in the same tick — which repaints the panel too — so the panel is
+    handed the edit's events one at a time here: after its `results`, and
+    before any other, the badge has moved."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        panel = _suite(shell, user).queue
+        _end(shell, _hold(shell, A, ItemState.RUNNING), ItemState.FINISHED)
+        assert _one(user, f"queue-status:{A}").text == "FAIL"
+        assert shell._events.empty()
+
+        shell.session.stage([LOOSEN])  # A passes now
+
+        events = []
+        while not shell._events.empty():
+            events.append(shell._events.get_nowait())
+        assert [e["event"] for e in events] == ["spec", "results"]
+        assert _one(user, f"queue-status:{A}").text == "FAIL"  # nothing said yet
+        panel.handle(events[1])
+        assert _one(user, f"queue-status:{A}").text == "PASS"
+        assert _one(user, f"queue-words:{A}").text.startswith("finished")
+
+
+async def test_a_refused_stop_workers_says_the_session_s_sentence(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        panel = _suite(shell, user).queue
+        _hold(shell, A, ItemState.RUNNING)
+
+        panel._stop_workers()
+
+        assert user.notify.messages == [
+            "1 test is running — cancel it or wait, then stop the workers"
+        ]
+        assert shell.session.queue_state(A) is ItemState.RUNNING
+
+
+async def test_stop_workers_says_it_stopped_them(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _suite(shell, user).queue._stop_workers()
+        assert user.notify.messages == ["workers stopped"]
+
+
+async def test_a_row_s_remove_or_cancel_that_missed_says_so(shell):
+    """The row was painted for a waiting item, and the item started before
+    the click: Remove changes nothing and says why. The same for a Cancel
+    that finds its item ended."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _hold(shell, A, ItemState.WAITING)
+        _hold(shell, B, ItemState.RUNNING)
+        # Neither can land: no pool holds these items (as for one that has
+        # moved on, the Session's `remove` and `cancel` answer False).
+        user.find(marker=f"queue-remove:{A}").click()
+        await _settled(lambda: len(user.notify.messages) == 1)
+        user.find(marker=f"queue-cancel:{B}").click()
+        await _settled(lambda: len(user.notify.messages) == 2)
+
+        assert user.notify.messages == [
+            f"{A} has already started",
+            f"{B} is no longer running",
+        ]
+        assert [i.model_id for i in shell.session.queue] == [A, B]
+
+
+async def test_the_strip_s_remove_or_cancel_that_missed_says_so(shell):
+    """The strip's own Remove and Cancel, on a test whose item moved on
+    since the strip was painted."""
+    async with user_simulation(root=shell.index) as user:
+        shell.mount()
+        await _open(user, f"/test/{A}")
+        await _settled(lambda: _has(user, "strip-text"))
+        (page,) = [
+            p
+            for p in shell.pages
+            if isinstance(p, TestPage) and p.client is user.client
+        ]
+        strip = page.strip
+        await _settled(lambda: strip.text.text != "")
+
+        item = _hold(shell, A, ItemState.WAITING)
+        assert strip.remove.visible
+        user.find(marker="strip-remove").click()
+        await _settled(lambda: len(user.notify.messages) == 1)
+
+        item.state, item.started_at, item.worker_id = ItemState.RUNNING, 1.0, 0
+        shell.session._emit("queue", state="started", models={A})
+        shell.tick()
+        assert strip.cancel.visible
+        user.find(marker="strip-cancel").click()
+        await _settled(lambda: len(user.notify.messages) == 2)
+
+        assert user.notify.messages == [
+            f"{A} has already started",
+            f"{A} is no longer running",
+        ]
+        assert shell.session.queue_state(A) is ItemState.RUNNING

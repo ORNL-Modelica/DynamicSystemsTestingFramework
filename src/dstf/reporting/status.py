@@ -61,7 +61,8 @@ TIMED_OUT = "TIMED_OUT"
 
 #: A run stopped on request (the simulation queue's cancel, D150). It is
 #: recorded as cancelled and read back as NO result, so the classifier's
-#: word for the test is NOT RUN; this is the word a live row says for why.
+#: word for the test is NOT RUN; this is the word a live row says for why
+#: (:func:`scored_status` is where a row keeps it).
 #: It wears NOT RUN's class: the pills, the tint and the exit code count it
 #: there — nothing ran to a verdict, so nothing failed (D145).
 CANCELLED = "CANCELLED"
@@ -152,6 +153,23 @@ def refusal(comp: TestComparison) -> str | None:
     if classify(comp) == FAIL and not comp.variables and comp.error_message:
         return comp.error_message
     return None
+
+
+def scored_status(verdict: str, *, cancelled: bool) -> str:
+    """What a ROW reads once its test has a verdict: *verdict*, the
+    classifier's — but a run stopped on request keeps its word. A cancelled
+    run scores NOT RUN, there being no result, and CANCELLED says why
+    (D150); any other verdict means the test has a result since, and
+    replaces the word as it replaces every live state.
+
+    The one place this is decided. *cancelled* is what the caller's row
+    knows — a status.json row's state, a queue item's — and every surface
+    that puts a verdict on such a row asks here: the sidecar's enrichment
+    (``rows.enrich_row``), the dashboard's comparison in hand and the
+    Suite's row. A surface with no row (the console, JUnit) prints the
+    verdict itself.
+    """
+    return CANCELLED if cancelled and verdict == NOT_RUN else verdict
 
 
 def classify_with_class(comp: TestComparison) -> tuple[str, str]:

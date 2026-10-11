@@ -16,12 +16,11 @@ from typing import TYPE_CHECKING
 from ..backends.pool import ItemState
 from ..reporting.rows import TestRow, summary_fields
 from ..reporting.status import (
-    CANCELLED,
-    NOT_RUN,
     QUEUED,
     RUNNING,
     SCORING_FAILED,
     SIM_FAIL,
+    scored_status,
 )
 
 if TYPE_CHECKING:
@@ -69,12 +68,9 @@ def suite_row(
             ref_id=f"ref_{comp.test_id}" if comp.test_id else None,
             field_sources=row.field_sources,
         )
-        status = s["status"]
-        if state is ItemState.CANCELLED and status == NOT_RUN:
-            status = CANCELLED
         return replace(
             row,
-            status=status,
+            status=scored_status(s["status"], cancelled=state is ItemState.CANCELLED),
             ref_id=s["ref_id"],
             worst_score=s["worst_nrmse"],
             n_unscored=s["n_unscored"],

@@ -47,7 +47,14 @@ from .rows import (
     row_from_status,
     summary_fields,
 )
-from .status import PILL_STATUSES, STATUS_CLASSES, STATUS_LABELS, refusal
+from .status import (
+    CANCELLED,
+    PILL_STATUSES,
+    STATUS_CLASSES,
+    STATUS_LABELS,
+    refusal,
+    scored_status,
+)
 from .theme import css_variables
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -203,6 +210,9 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
 
     The Message is the run's (status.json's ``detail``) — but for a test
     the comparison refused, whose reason is the one thing to read of it.
+
+    The status is the verdict as a row reads it (``scored_status``): a row
+    whose run was stopped keeps CANCELLED over the NOT RUN it scores.
     """
     summary = summary_fields(comp)
     ref_id, ref_file = row.ref_id, row.ref_file
@@ -212,7 +222,7 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
             ref_file = None
     return replace(
         row,
-        status=summary["status"],
+        status=scored_status(summary["status"], cancelled=row.status == CANCELLED),
         worst_score=summary["worst_nrmse"],
         n_unscored=summary["n_unscored"],
         n_vars=summary["n_vars"],

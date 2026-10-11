@@ -205,10 +205,21 @@ class Worker(ABC):
 
     @abstractmethod
     def is_alive(self) -> bool:
-        """True iff the worker can accept another test. Backends without
-        watchable subprocess state can implement this as ``self._handle is
-        not None``.
+        """True iff the worker can accept another test: it holds its tool's
+        handle AND that tool still runs (``not self.tool_gone()``). The
+        handle alone says only that nobody closed the worker — a tool that
+        died while the worker sat idle leaves it in place, and the next
+        test would be failed for a death it had no part in. Backends
+        without watchable subprocess state can implement this as
+        ``self._handle is not None``.
         """
+
+    def tool_gone(self) -> bool:
+        """True when the process this worker tracks is no longer its tool:
+        it exited, or its PID is another process's by now
+        (:attr:`kill_name_hint`, the guard of the kill). ``False`` for a
+        worker that tracks none — closed, or its PID never learnt."""
+        return process_gone(self.pids, name_hint=self.kill_name_hint)
 
     # -- template-method hooks ----------------------------------------
 
@@ -695,6 +706,9 @@ class Worker(ABC):
             )
         finally:
             self.disarm()
+            # The step was this test's: an idle tool is in no call, and a
+            # death is never said to have happened "during" an earlier test.
+            self._step = ""
 
     def _watch_test(
         self,
@@ -826,11 +840,11 @@ class Worker(ABC):
             )
 
         result: TestRunResult = result_box[0]
-        if self.is_alive() and process_gone(self.pids):
+        if process_gone(self.pids):
             # The tool died and run_test still returned (an interface that
-            # turns a lost connection into a failed result): close, so the
-            # next test restarts the worker instead of failing against a
-            # dead process, and the recorded children go with it.
+            # turns a lost connection into a failed result): close here,
+            # while the test is known, so the children it left are found
+            # (its directory is their mark) and go with it.
             self._record_orphans(test_key, tool_born)
             self._close_quietly()
         if self._cancel is not None and not result.success:
@@ -928,6 +942,20 @@ class WorkerRunner(ItemRunner):
     def _run_armed(self, test: TestModel, test_key: str) -> TestRunResult:
         w, backend = self.worker, self.backend
         if not w.is_alive():
+            if w.tool_gone():
+                # Not closed by the test before: its tool died while it sat
+                # idle. This test had no part in that, so it is not failed
+                # for it — what is left of the tool (its handle, the
+                # children on record) is closed, and the restart below runs
+                # the test on a new one.
+                detail = w._safe_detail()
+                if not backend.quiet:
+                    print(
+                        f"  Worker {w.worker_id}: its process was gone before "
+                        f"{test.model_id}" + (f" — {detail}" if detail else ""),
+                        file=sys.stderr,
+                    )
+                w._close_quietly()
             if not self._restart(count_against_budget=not self._prev_killed_worker):
                 self.retired = "Worker dead; restart exhausted"
                 return TestRunResult(

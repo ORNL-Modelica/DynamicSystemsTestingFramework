@@ -30,7 +30,9 @@ def _fake_pids_name_no_process(monkeypatch):
     """A FakeSession's PID is made up, which the watchdog's death watch
     would read as "omc died". That watch has its own tests, over real
     processes (test_worker_lifecycle.py)."""
-    monkeypatch.setattr("dstf.backends.persistent.process_gone", lambda pids: False)
+    monkeypatch.setattr(
+        "dstf.backends.persistent.process_gone", lambda pids, name_hint=None: False
+    )
 
 
 class FakeSession:

@@ -74,6 +74,19 @@ def test_a_cancelled_run_is_counted_as_not_run():
     assert len(classes) == len(set(classes))
 
 
+def test_a_cancelled_row_keeps_its_word_over_not_run_and_no_other_verdict():
+    """The one rule for what a cancelled row reads once its test is scored
+    (D150): CANCELLED where the verdict is NOT RUN — the verdict says there
+    is no result, the row says why — and the verdict wherever there is one,
+    since the test then has a result. A row that was not cancelled reads
+    its verdict."""
+    assert st.scored_status(st.NOT_RUN, cancelled=True) == st.CANCELLED
+    assert st.scored_status(st.NOT_RUN, cancelled=False) == st.NOT_RUN
+    for verdict in (st.PASS, st.FAIL, st.SIM_FAIL, st.NO_REF):
+        assert st.scored_status(verdict, cancelled=True) == verdict
+        assert st.scored_status(verdict, cancelled=False) == verdict
+
+
 def test_the_statuses_that_fail_a_run():
     """D145: what the exit code counts. NOT RUN is not in it."""
     assert st.FAILURES == frozenset({"FAIL", "SIM_FAIL"})

@@ -19,7 +19,9 @@ What they pin, measured where a number is printed (run with `-s`):
   tool is still coming up leaves no tool process, launched before the
   give-up or after it. And the tool killed from outside a moment after its
   simulation process appeared takes that process with it: the item fails,
-  the worker is restarted for the next.
+  the worker is restarted for the next. Killed while its worker sits idle
+  between two items, it fails nothing: the worker is restarted first, and
+  the next item runs.
 
 "No tool process is left" is asked of the whole machine, not of pytest's
 descendants: a tool whose worker lost track of it is an orphan, and an
@@ -33,6 +35,7 @@ import json
 import os
 import shutil
 import signal
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -318,6 +321,45 @@ def test_dymola_cancel_during_translation(tmp_path, no_tool_left):
     assert _manifest(config) == {"Slow": "cancelled", "Fast": "passed"}
 
 
+@pytest.mark.dymola
+def test_dymola_killed_under_a_call_prints_no_connection_noise(
+    tmp_path, no_tool_left, capfd
+):
+    """A cancel during translation kills Dymola under `translateModel`. The
+    thread left in that call retries it against nothing — and then its next
+    call — and Dymola's interface prints every refused attempt into
+    whatever the user is reading. None is printed for a Dymola this process
+    closed."""
+    config, tests, backend = _project(tmp_path, "Dymola", "pool")
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=1)
+    try:
+        slow = pool.submit(tests["Slow"])
+        _wait_until(lambda: slow.test_key is not None, 120, "the item on its worker")
+        time.sleep(0.3)
+        assert pool.cancel(slow) is True
+        _wait_until(lambda: _ended(slow), 60, "the cancelled item ended")
+        assert slow.run_result.worker_killed is True  # Dymola killed, mid-call
+        abandoned = [t for t in threading.enumerate() if t.name == "dym-exec-0"]
+        assert abandoned, "the call was over before the kill"
+    finally:
+        pool.close()
+    t0 = time.monotonic()
+    for thread in abandoned:
+        thread.join(60)  # until it has given up every retry
+    assert not any(thread.is_alive() for thread in abandoned)
+    out = capfd.readouterr().out
+    noise = [
+        line
+        for line in out.splitlines()
+        if "Connection refused" in line or "Remote end closed" in line
+    ]
+    print(
+        f"\nDymola killed under translateModel: its thread retried for "
+        f"{time.monotonic() - t0:.1f} s after the close; {len(noise)} line(s) printed"
+    )
+    assert noise == []
+
+
 def _tool_killed_mid_simulation(
     tmp_path, backend_name: str, tool: str, simulation: str, delay: float
 ):
@@ -366,6 +408,55 @@ def test_omc_killed_as_the_model_starts_takes_the_model_with_it(
 ):
     slow = _tool_killed_mid_simulation(tmp_path, "OpenModelica", "omc", "result", delay)
     print(f"\nomc killed {delay} s after the model started: {slow.message}")
+
+
+def _tool_killed_while_idle(tmp_path, backend_name: str, tool: str):
+    """*tool* is killed from outside while its worker sits idle, one item
+    done and none waiting. The item queued next is not failed for it: the
+    worker is restarted first, and the item runs on the new tool."""
+    config, tests, backend = _project(tmp_path, backend_name, "pool")
+    pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=1)
+    try:
+        fast = pool.submit(tests["Fast"])
+        _wait_until(lambda: _ended(fast), 300, "the first item ended")
+        assert fast.state is ItemState.FINISHED, fast.message
+        (tool_pid,) = _named(tool)
+        os.kill(tool_pid, signal.SIGKILL)
+        _wait_until(lambda: _named(tool) == [], 10, f"the idle {tool} gone")
+
+        t0 = time.monotonic()
+        fast2 = pool.submit(tests["Fast2"])
+        _wait_until(lambda: _ended(fast2), 300, "the next item ended")
+        print(
+            f"\n{tool} killed while idle: the next item {fast2.state.value} "
+            f"{time.monotonic() - t0:.2f} s after it was queued"
+            + (f" — {fast2.message}" if fast2.message else "")
+        )
+
+        assert fast2.state is ItemState.FINISHED, fast2.message
+        assert fast2.worker_id == 0
+        (new_pid,) = _named(tool)  # ONE tool, and not the dead one
+        assert new_pid != tool_pid
+    finally:
+        pool.close()
+
+    assert _manifest(config) == {"Fast": "passed", "Fast2": "passed"}
+    _assert_same(
+        fast2.result,
+        _uncancelled(tmp_path, backend_name, ["Fast2"])["QueueLib.Fast2"],
+    )
+
+
+@pytest.mark.dymola
+def test_dymola_killed_while_idle_is_restarted_for_the_next_item(
+    tmp_path, no_tool_left
+):
+    _tool_killed_while_idle(tmp_path, "Dymola", "dymola")
+
+
+@pytest.mark.ompython
+def test_omc_killed_while_idle_is_restarted_for_the_next_item(tmp_path, no_tool_left):
+    _tool_killed_while_idle(tmp_path, "OpenModelica", "omc")
 
 
 def _start_given_up(tmp_path, backend_name: str, bound: float):

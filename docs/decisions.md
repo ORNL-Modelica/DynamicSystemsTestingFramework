@@ -7238,7 +7238,17 @@ the tool.
     failed, the exit code is unchanged). `CANCELLED` is what a live row
     says for why, on NOT RUN's class, so its pill, tint and filter count
     it; a cancelled row keeps the word when the compare phase scores it
-    NOT RUN.
+    NOT RUN. One rule decides that, `reporting.status.scored_status`, and
+    every surface that puts a verdict on a row asks it: the Suite's row,
+    the sidecar's enrichment and the dashboard's comparison in hand — the
+    last had none, so every dashboard a command wrote (the queue's drain,
+    `dstf compare`, each of which hands the page its comparisons) said NOT
+    RUN where the Suite said CANCELLED (found by an executing review,
+    2026-10-08). A row keeps the word only while its `status.json` row
+    says `cancelled` and its verdict is NOT RUN; any other verdict means
+    the test ran since. The console and JUnit have no row to read why
+    from: they print the verdict — `NOT RUN`, `<skipped message="not
+    run"/>` — and count the test there, as the pill does.
 
 **From the backend tier** (measured there, not again here): cancel is per
 backend — Dymola's `stop` file ended a simulating test in 1.7 s with the
@@ -7246,7 +7256,14 @@ worker reused, and a test still translating is stopped by killing Dymola
 and restarting the worker; OpenModelica kills omc's children, 0.02 s; the
 JSON-driver backends kill the test's subprocess; FMPy simulates in-process
 and cannot. A worker's start is bounded, and its failure is the backend's
-own words. A tool that dies takes its children with it.
+own words. A tool that dies takes its children with it. One that died
+while its worker sat idle fails no test: the dispatch step asks whether
+the tool's process is still there before every test, and restarts the
+worker first (found by an executing review, 2026-10-08, where it failed
+the next test queued with "Worker process exited during the test … during
+simulateModel(<the test before>)"; after the fix, with the idle tool
+killed by PID, the next item FINISHED 12.1 s after it was queued on
+Dymola 2026x and 2.6 s on OpenModelica, bit for bit a plain run's).
 
 **What the gate measured** (2026-10-08, the example library copied to a
 scratch directory with one stiff model added, driven through the Session —
@@ -7275,7 +7292,11 @@ several workers asked for, one whose start fails at once can stop the pool
 before a second was started. Every load of a Test page logs NiceGUI's
 "Event listeners changed after initial definition" in the browser console
 — two listeners the page adds to the layout after the handshake — with or
-without a queue.
+without a queue. A tool process killed with SIGKILL leaves its simulators
+running: the pool's close is what ends them (Stop server calls it, and
+NiceGUI's shutdown hook), and after a SIGKILL nothing is left to. A row
+in the panel follows its test's CURRENT state, not its own run's: an old
+`cancelled` row offers Accept once a later run of that test has finished.
 
 **What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
 refusal of Save, Discard and Reload while one runs. D129's capability

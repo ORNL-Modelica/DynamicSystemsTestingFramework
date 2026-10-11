@@ -807,3 +807,141 @@ def test_reload_is_not_refused_while_the_queue_runs(h):
     h.release(A)
     h.ended(A)
     assert classify(h.session.comparisons[A]) == FAIL
+
+
+# ---------------------------------------------------------------------------
+# the seams between the pool's threads and the loop
+# ---------------------------------------------------------------------------
+
+
+def test_removing_the_last_waiting_item_writes_what_ran(h):
+    """A ended and B never started: with B taken out the queue has drained,
+    and `status.json` is owed for A — nothing else will say so, no item is
+    left to end. B is kept waiting by holding the pool's thread in the post
+    of A's end, the instant before it would take B."""
+    status = h.work / "status.json"
+    before = status.read_bytes()
+    posted, release = threading.Event(), threading.Event()
+    put = h.loop.posted.put
+
+    armed: list[bool] = []
+
+    def put_and_wait(fn) -> None:
+        put(fn)
+        if armed and threading.current_thread().name.startswith("python-pool"):
+            posted.set()
+            release.wait(30)
+
+    h.loop.posted.put = put_and_wait
+    h.hold(A)
+    a, b = h.session.enqueue([A, B])
+    h.running(A)
+    try:
+        armed.append(True)
+        h.release(A)
+        assert posted.wait(30), "A's end was never posted"
+        h.loop.pump()  # the Session takes A's end in; B is still live
+        assert h.state(A) is ItemState.FINISHED and b.state is ItemState.WAITING
+        assert h.session.wait_background(30) and status.read_bytes() == before
+
+        assert h.session.remove(b) is True
+
+        assert h.session.wait_background(30)
+        written = json.loads(status.read_text())
+        assert [(t["model_id"], t["status"]) for t in written["tests"]] == [
+            (A, "passed")
+        ]
+    finally:
+        release.set()
+    assert h.session.queue == [a] and b.state is ItemState.REMOVED
+
+
+def test_an_item_the_pool_ended_reads_running_until_the_session_took_it_in(h):
+    """The pool ends an item on its own thread; the Session reads its result
+    a tick later. In between the item is FINISHED and the test still has no
+    result here: every reader of the queue is told RUNNING, not an ended
+    row whose badge would be the verdict of nothing."""
+    h.hold(A)
+    (a,) = h.session.enqueue([A])
+    h.running(A)
+
+    h.release(A)
+    deadline = time.monotonic() + 30
+    while a.state is ItemState.RUNNING and time.monotonic() < deadline:
+        time.sleep(0.01)  # no pump: the end stays posted, not taken in
+    assert a.state is ItemState.FINISHED and a.result is not None
+
+    assert h.session.item_state(a) is ItemState.RUNNING
+    assert h.state(A) is ItemState.RUNNING
+    row = queue_row(h.session, A)
+    assert (row.state, row.status) == (ItemState.RUNNING, RUNNING)
+    assert suite_row(h.session, A).status == RUNNING
+    assert A not in h.session.project.results
+
+    h.loop.pump()
+    assert h.session.item_state(a) is ItemState.FINISHED
+    assert queue_row(h.session, A).status == FAIL
+
+
+def test_an_item_the_pool_failed_unstarted_reads_waiting_until_taken_in(
+    h, monkeypatch, tmp_path
+):
+    """The same seam for an item no worker could start: FAILED in the pool,
+    still waiting here until its end is taken in."""
+    stub = _stub_backend(h, monkeypatch, tmp_path)
+
+    def cannot_start(worker):
+        raise RuntimeError("licence server unreachable")
+
+    stub.start_script = cannot_start
+    (a,) = h.session.enqueue([A])
+    deadline = time.monotonic() + 30
+    while a.state is ItemState.WAITING and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert a.state is ItemState.FAILED and a.started_at is None
+
+    assert h.session.item_state(a) is ItemState.WAITING
+    row = queue_row(h.session, A)
+    assert (row.status, row.actions) == (QUEUED, ("remove",))
+
+    h.loop.pump()
+    assert h.session.item_state(a) is ItemState.FAILED
+
+
+def test_a_running_row_offers_no_cancel_where_the_backend_cannot_stop_a_test(
+    h, monkeypatch
+):
+    """FMPy simulates in-process: nothing can stop its test. The row offers
+    no Cancel and carries the sentence saying why — the panel and the strip
+    draw it where the button would be — and a cancel asked all the same is
+    the pool's refusal, a sentence."""
+    from dstf.backends.pool import Refused
+    from dstf.backends.types import Capability
+
+    h.hold(A)
+    (a,) = h.session.enqueue([A])
+    h.running(A)
+    row = queue_row(h.session, A)
+    assert (row.actions, row.cancel_why) == (("cancel",), None)
+
+    backend = h.session._pool.backend
+    monkeypatch.setattr(
+        backend, "capabilities", frozenset(backend.capabilities) - {Capability.CANCEL}
+    )
+
+    why = (
+        "Python cannot stop a running simulation: it runs to its end, or to its timeout"
+    )
+    assert h.session.cannot_cancel == why
+    row = queue_row(h.session, A)
+    assert (row.actions, row.cancel_why) == ((), why)
+    with pytest.raises(Refused, match="Python cannot stop a running simulation"):
+        h.session.cancel(a)
+    assert h.state(A) is ItemState.RUNNING
+    # a waiting row has nothing to cancel: no sentence
+    (b,) = h.session.enqueue([B])
+    assert queue_row(h.session, B).cancel_why is None
+
+    h.session.remove(b)
+    h.release(A)
+    h.ended(A)

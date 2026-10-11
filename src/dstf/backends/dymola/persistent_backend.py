@@ -21,6 +21,7 @@ with a message naming both fixes (see `backends.select_backend`).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import threading
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Stderr noise suppression
+# Patches of Dymola's Python interface
 # ---------------------------------------------------------------------------
 
 _parallel_startup_patched = False
@@ -95,68 +96,77 @@ def _patch_dymola_for_parallel_startup() -> None:
     _parallel_startup_patched = True
 
 
-_NOISE_PATTERNS = (
-    "WinError 10061",
-    "WinError 10054",
-    "urlopen error",
-)
-
-_suppress_until = 0.0  # monotonic deadline
+#: The interface whose request the current thread is inside. Dymola's logger
+#: is static — a message does not say which Dymola it is about — so the
+#: request method notes it here for the logger's filter.
+_requesting = threading.local()
 _dymola_logger_patched = False
 
 
 def _install_dymola_log_filter() -> None:
-    """Monkey-patch Dymola's logger so noise from its internal HTTP retries
-    (WinError 10061/10054 / urlopen error) can be muted during our
-    suppression window.
+    """Monkey-patch Dymola's interface so the connection noise of a Dymola
+    THIS process closed is not printed.
 
-    Dymola's `DymolaLogger._PrintMessage` uses `print(msg)` — so messages
-    go to stdout, not stderr. Patching the logger itself is cleaner than
-    filtering stdout globally.
+    The interface retries a request ten times, a second apart, and prints
+    every failed attempt. A thread still inside a call when its Dymola is
+    killed (a timeout, a cancel during translation, the pool closing over a
+    running test) prints "Remote end closed connection without response",
+    then a refused connection per second — and goes on to its next call,
+    which does the same. Measured on Dymola 2026x after a cancel during
+    translation: 10 lines, the thread retrying for 19.5 s after the close.
+
+    Muted by a window of seconds after a close, the first line (not among
+    the patterns) and every line past the window were printed, and for its
+    length the same lines of every OTHER worker's Dymola were not — where a
+    lost connection is a finding. So the mute is by interface and for good:
+    a worker's ``_quiet`` marks the one it is closing (:func:`_closing`),
+    ``_make_rpc_call`` notes whose request the thread is inside, and the
+    logger drops a connection error — an ``OSError``, as the request loop
+    logs it; nothing else — raised inside a marked one.
+
+    Dymola's ``DymolaLogger._PrintMessage`` uses ``print(msg)``, so the
+    lines go to stdout: patching the logger is cleaner than filtering a
+    stream.
     """
     global _dymola_logger_patched
     if _dymola_logger_patched:
         return
     try:
-        from dymola.dymola_interface_internal import (
-            DymolaLogger,  # type: ignore[import-not-found]
-        )
+        import dymola.dymola_interface_internal as _di  # type: ignore[import-not-found]
     except ImportError:
         return  # interface not loaded yet; will be retried on next call
-    orig = DymolaLogger._PrintMessage
+    rpc = _di.DymolaInterfaceInternal._make_rpc_call
+    orig = _di.DymolaLogger._PrintMessage
+
+    def _noted_request(self, *args, **kwargs):
+        _requesting.interface = self
+        try:
+            return rpc(self, *args, **kwargs)
+        finally:
+            _requesting.interface = None
 
     def _filtered_print(level, msg):
-        text = str(msg)
-        if time.monotonic() < _suppress_until and any(
-            p in text for p in _NOISE_PATTERNS
-        ):
+        inside = getattr(_requesting, "interface", None)
+        if isinstance(msg, OSError) and getattr(inside, "_dstf_closing", False):
             return
         orig(level, msg)
 
-    DymolaLogger._PrintMessage = staticmethod(_filtered_print)  # type: ignore[method-assign]
+    _di.DymolaInterfaceInternal._make_rpc_call = _noted_request  # type: ignore[method-assign]
+    _di.DymolaLogger._PrintMessage = staticmethod(_filtered_print)  # type: ignore[method-assign]
     _dymola_logger_patched = True
 
 
-class _suppress_stderr_noise:
-    """Mute known-noisy Dymola log lines for a short grace period.
-
-    Extends any currently-active window rather than overwriting it, so
-    overlapping timeouts from multiple workers still benefit.
-    """
-
-    def __init__(self, grace: float = 12.0):
-        self.grace = grace
-
-    def __enter__(self):
-        global _suppress_until
-        _install_dymola_log_filter()
-        deadline = time.monotonic() + self.grace
-        if deadline > _suppress_until:
-            _suppress_until = deadline
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False  # don't suppress exceptions — noise window expires naturally
+@contextlib.contextmanager
+def _closing(interface):
+    """A worker's teardown of *interface*: from here on what it prints about
+    the connection it loses is this process's doing
+    (:func:`_install_dymola_log_filter`). The mark stays — a closed
+    interface is never used again, and the thread abandoned inside it may
+    retry for 20 s more. Nothing the teardown raises is caught here."""
+    _install_dymola_log_filter()
+    if interface is not None:
+        interface._dstf_closing = True
+    yield
 
 
 #: The simulation executable Dymola builds and runs for a test, by PROCESS
@@ -652,12 +662,12 @@ class DymolaWorker(Worker):
         handle.close()  # type: ignore[attr-defined]
 
     def _quiet(self):
-        # Stale JSON-RPC retries against the Dymola we are killing spam the
-        # terminal with urlopen/WinError noise; mute them for the teardown.
-        return _suppress_stderr_noise()
+        # The Dymola being torn down: the requests still in flight against
+        # it fail from here on, and that is not a finding.
+        return _closing(self.dymola)
 
     def is_alive(self) -> bool:
-        return self.dymola is not None
+        return self.dymola is not None and not self.tool_gone()
 
     # -----------------------------------------------------------------
     def _exec_setting(self, cmd: str) -> None:
@@ -808,8 +818,8 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         # Cache the DymolaInterface class for make_worker, then apply
         # Dymola-specific runtime patches. These two patches must run
         # before any worker spawns:
-        #   * _install_dymola_log_filter — silences DymolaInterface's
-        #     own urlopen-spam during forced timeout teardowns.
+        #   * _install_dymola_log_filter — keeps the connection errors of
+        #     a Dymola a worker closed out of the console.
         #   * _patch_dymola_for_parallel_startup — narrows DymolaInterface's
         #     module-level startup lock so workers can launch concurrently
         #     (~7s × N serialized → all workers in ~7s wall).
