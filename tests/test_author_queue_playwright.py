@@ -31,7 +31,7 @@ from test_author_suite_playwright import (  # noqa: E402
     _keep,
     _served,
 )
-from test_session import A, B, C, D, G  # noqa: E402
+from test_session import CASES_X, A, B, C, D, G  # noqa: E402
 from test_session_queue import SIMULATE  # noqa: E402
 
 pytestmark = pytest.mark.playwright
@@ -426,6 +426,49 @@ def test_the_panel_is_a_line_above_the_table_at_1024(tmp_path, playwright_browse
         grid = page.locator(".dstf-suite-grid").bounding_box()
         assert panel is not None and grid is not None
         assert panel["x"] >= grid["x"] + grid["width"] and panel["width"] == 420
+        _release(cfg, A)
+        expect(page.locator(INDICATOR)).to_have_text("idle", timeout=RUN_TIMEOUT)
+        assert errors == []
+    finally:
+        _stop(proc)
+
+
+def test_the_rows_scroll_inside_the_panel_above_the_table(tmp_path, playwright_browser):
+    """Above the table (under 1200 px) every row of the queue was a row the
+    table sat lower by: fifteen uncleared rows put it below the fold. The
+    rows scroll inside about a third of the window; beside the table, where
+    the panel pushes nothing, they are not held."""
+    proc, _url, page, _context, errors, cfg = _served(
+        tmp_path, playwright_browser, width=1024, setup=_gated()
+    )
+    every = (A, B, C, D, G, CASES_X)
+    read = (
+        "e => ({client: e.clientHeight, scroll: e.scrollHeight,"
+        " lefts: new Set([...e.children].map(c => c.getBoundingClientRect().left)).size})"
+    )
+    try:
+        page.set_viewport_size({"width": 1024, "height": 600})
+        _hold(cfg, A)
+        for model_id in every:
+            _box(page, model_id).click()
+        _queue(page, "Queue 6")
+        expect(page.locator(".dstf-queue-row")).to_have_count(6, timeout=RUN_TIMEOUT)
+        rows = page.locator(".dstf-queue-rows")
+        held = rows.evaluate(read)
+        assert held["client"] <= 0.34 * 600 + 1 < held["scroll"], held
+        assert held["lefts"] == 1, held  # one column, not wrapped into two
+        grid = page.locator(".dstf-suite-grid").bounding_box()
+        assert grid is not None and grid["y"] < 600 - 100, grid
+        # The last row is reached by scrolling the rows, not the page.
+        _row(page, CASES_X).scroll_into_view_if_needed()
+        expect(_row(page, CASES_X)).to_be_in_viewport()
+        assert page.evaluate("() => window.scrollY") == 0
+        _keep(page, tmp_path, "queue-panel-capped")
+
+        page.set_viewport_size({"width": 1280, "height": 600})
+        page.wait_for_timeout(300)
+        beside = rows.evaluate(read)
+        assert beside["client"] == beside["scroll"], beside
         _release(cfg, A)
         expect(page.locator(INDICATOR)).to_have_text("idle", timeout=RUN_TIMEOUT)
         assert errors == []

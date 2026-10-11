@@ -65,6 +65,10 @@ QUEUE_CSS = """
 .dstf-queue-title { font-weight: 600; }
 .dstf-queue-workers { width: 76px; }
 .dstf-queue-row { padding: 4px 12px; border-top: 1px solid var(--dstf-border-hairline); }
+/* Above the table every row is a row the table sits lower by: there the
+   rows scroll inside about a third of the window (fifteen uncleared ones
+   put the table below the fold). Beside it the panel pushes nothing. */
+@media (max-width: 1199px) { .dstf-queue-rows { max-height: 34vh; overflow-y: auto; } }
 .dstf-queue-num { width: 20px; text-align: right; flex: none; font-family: var(--dstf-mono);
   color: var(--dstf-text-muted); }
 .dstf-queue-what { flex: 1 1 0; min-width: 0; }
@@ -177,7 +181,13 @@ class QueuePanel:
             self.starting = (
                 ui.column().classes("dstf-queue-starting w-full gap-0")
             ).mark("queue-starting")
-            self.rows = ui.column().classes("w-full gap-0").mark("queue-rows")
+            # One column whatever its height: a Quasar column wraps, and a
+            # held one (the stylesheet's cap) would start a second.
+            self.rows = (
+                ui.column()
+                .classes("dstf-queue-rows w-full gap-0 no-wrap")
+                .mark("queue-rows")
+            )
             self.notes = ui.column().classes("dstf-queue-notes w-full gap-1")
         # The rows' capability buttons open ONE dialog, the panel's — a
         # row's own would go with the row at the next repaint. The bar
