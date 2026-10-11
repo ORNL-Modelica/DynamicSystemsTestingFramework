@@ -20,7 +20,9 @@ from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
+from dstf.authoring.situation import Situation  # noqa: E402
 from dstf.authoring.typed_number import TypedNumber  # noqa: E402
+from live_fake import make_live, steer, write_scripts  # noqa: E402
 from on_plot_project import (  # noqa: E402
     EVENT_TIMING,
     NRMSE,
@@ -50,6 +52,26 @@ def shell(tmp_path):
     s.session.open(cfg, work_dir=work)
     s.load.phase = "done"
     return s
+
+
+@pytest.fixture
+def live(tmp_path, monkeypatch):
+    """`shell`'s project on the Python backend made live (`live_fake`),
+    every script one a test holds at a row of its choosing: the shell, and
+    the library's Examples directory to steer a run from."""
+    make_live(monkeypatch.setattr)
+    cfg, work = wave_project(tmp_path)
+    examples = tmp_path / "FakeLib" / "Examples"
+    write_scripts(examples)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.session.rescan_done.wait(30)
+    s.load.phase = "done"
+    yield s, examples
+    for hold in examples.glob("*.hold"):
+        hold.unlink()
+    s.session.stop_queue()
+    s.session.wait_background(30)
 
 
 async def _settled(predicate, tries: int = 60) -> None:
@@ -557,29 +579,44 @@ async def test_done_disarms_with_no_other_editor_opening(shell):
         assert "data-armed" not in card.card.props and not card.armed_line.visible
 
 
-async def test_a_field_that_is_no_longer_drawn_is_no_longer_armed(shell):
-    """A rebuild no edit caused — a job takes the test, the editor's
-    panels become a sentence — leaves no ⌖: nothing stays armed."""
-    import threading
+async def _running(shell, page) -> None:
+    """Tick the shell — the pool's posts, its events — until the page's
+    test runs AND the Session took its start in: the pool marks an item
+    running a tick before its result is dropped."""
+    results = shell.session.project.results
 
-    from dstf.authoring.capabilities import Job
+    def started() -> bool:
+        shell.tick()
+        return page.strip.situation is Situation.RUNNING and A not in results
 
+    await _settled(started, tries=600)
+
+
+async def test_a_run_that_starts_leaves_no_field_armed_that_is_not_drawn(live):
+    """A rebuild no edit caused: the queue starts the test (D150), nothing
+    of it is scored until its result arrives (D151), and the editor's
+    table — a row's ⌖ with it — becomes a sentence. Nothing stays armed,
+    and the ⌖ that are still drawn are the ones a click can still set: a
+    window's ends, which are read off the click alone."""
+    shell, examples = live
     async with user_simulation(root=shell.index) as user:
         page, card = await _armed_row(shell, user)
-        gate = threading.Event()
-        try:
-            shell.session.apply(
-                Job(
-                    run=lambda _ctx: gate.wait(20),
-                    label="rerun",
-                    models=frozenset({A}),
-                    reloads_results=False,
-                )
-            )
-            await _settled(lambda: card.placing.armed is None)
-            assert _buttons(card) == {"edit-criteria": set(), "edit-on-plot": set()}
-        finally:
-            gate.set()
+        steer(examples, A, hold=3)
+        shell.session.enqueue([A])
+        await _running(shell, page)
+        (card,) = [c for c in page.cards if c.subject == ["x"]]
+        assert card.placing.armed is None
+        assert "data-armed" not in card.card.props and not card.armed_line.visible
+        assert page.open == (card.index, POINTS)  # its fields stay editable
+        assert _buttons(card) == {"edit-criteria": WINDOW, "edit-on-plot": set()}
+        assert "Click the plot" not in _hint(user, POINTS)
+        # ... and a ⌖ that is drawn takes its click, mid-run.
+        _press(user, card, "edit-criteria", ("window", "start"))
+        with page.client:
+            page.on_plot("clicked", _click(card, 0.31234, 0.3))
+        (op,) = shell.session.spec.pending
+        assert op.value["window"] == {"start": 0.312}
+        assert card.placing.armed is None
 
 
 async def test_a_new_drags_preview_shows_though_its_value_is_the_last_ones(shell):
