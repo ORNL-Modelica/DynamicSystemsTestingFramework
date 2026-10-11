@@ -20,6 +20,7 @@ from dstf.authoring.layout import layout_op, new_watch
 from dstf.authoring.live_rows import NOT_SCORED, WAITING, Partial
 from dstf.authoring.queue_rows import queue_row
 from dstf.authoring.session import Selection, Session, SessionView
+from dstf.authoring.situation import strip_for
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.common.live_mat import GONE, RUNNING, LiveMatReader
 from dstf.backends.pool import ItemState
@@ -468,6 +469,27 @@ def test_a_timed_out_run_shows_what_it_wrote_as_a_failure(h):
     assert _subjects(s, A) == [("x",), ("y",)]
     assert len(s.view(A, "x").act_time) == 4
     assert Accept().available(h.view(A)) == PARTIAL
+
+    # Its reason, in the run's words — and for a tool started later, which
+    # holds no run result, the verdict the run recorded and then what its
+    # file is: "No Python result at …" alone said nothing of a timeout.
+    said = s.comparisons[A].error_message
+    assert said.startswith("Python execution exceeded 8.0s timeout (")
+    s.stop_queue()
+    s.wait_background(30)
+    loop = Loop()
+    later = Session(post=loop.post)
+    later.open(h.cfg, work_dir=h.work)
+    later.rescan_done.wait(30)
+    loop.pump()
+    read_back = later.comparisons[A]
+    assert classify(read_back) == SIM_FAIL
+    assert read_back.error_message.startswith(
+        "Run recorded timed_out — No Python result at "
+    )
+    assert strip_for(
+        status=SIM_FAIL, has_result=True, failure=read_back.error_message
+    ).sentence.startswith("Run recorded timed_out — No Python result at ")
 
 
 def test_a_run_that_raised_after_its_rows_is_a_failed_partial(h):

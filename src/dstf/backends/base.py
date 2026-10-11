@@ -207,17 +207,23 @@ FAILED_RUN_STATUSES = ("failed", "timed_out")
 
 
 def _force_failed(result: "TestResult | None", status: str) -> None:
-    """Mark a successfully-read result as failed because the run says so —
-    and say that the run says so beside the reader's own sentence, where the
-    reader already failed it over what it read: a run killed by its timeout
-    leaves a partial file, and "Partial result: …" alone does not say why."""
+    """Mark a result read back from disk as failed because its run says so
+    — and say that the run says so before the reader's own sentence, where
+    the reader already failed it over what it found: a run killed by its
+    timeout leaves a partial file or none, and "Partial result: …" or "No
+    Python result at …" alone does not say why. Whether or not the file
+    held a row. A failure in the run's own words (``TestResult.run_reason``:
+    the driver wrote why into its result file) is left as it is — it reads
+    as the run said it."""
     if result is None:
         return
     recorded = f"Run recorded {status}"
     if result.success:
         result.success = False
         result.error_message = result.error_message or recorded
-    elif result.variables and result.error_message:
+    elif not result.error_message:
+        result.error_message = recorded
+    elif not result.run_reason:
         result.error_message = f"{recorded} — {result.error_message}"
 
 
@@ -245,6 +251,7 @@ def failed_run_result(rr: TestRunResult) -> TestResult:
         success=False,
         error_message=rr.error_message or "Simulation failed",
         statistics=_with_run_timing(rr.statistics, rr),
+        run_reason=True,
     )
 
 

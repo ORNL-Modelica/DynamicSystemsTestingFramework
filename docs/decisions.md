@@ -7642,7 +7642,13 @@ reader's row count taken from the file's size, `LiveMatReader`,
    leaves a partial file, whose reader fails the result with "Partial
    result: …"; the recorded verdict then found it already failed and added
    nothing. The stored message is now both: `Run recorded timed_out —
-   Partial result: …`.
+   Partial result: …`. Whether or not the file holds a row: a run killed
+   before its first one reads back `Run recorded timed_out — Empty result:
+   …`, one that left no file `… — Result file not found: …` or `… — No
+   Python result at …` — the reader's sentence alone said nothing of the
+   run. A failure in the run's own words is not led by the verdict
+   (`TestResult.run_reason`: the run result's message, or a reason a
+   driver wrote into its result file).
 10. *A failed run's reason is on its page.* The strip of a failed or
     timed-out test said "The simulation failed. Fix the model or its
     settings, then queue it again."; the backend's reason was on the
@@ -7652,9 +7658,14 @@ reader's row count taken from the file's size, `LiveMatReader`,
     After a partial result's `Timed out at t = … — not scored.` where there
     is one. It is the comparison's message, read from the run's stored
     result (what the Suite table's Message column shows), so it survives
-    the cleared row and a restart of the tool. A test no worker could
-    start says one line of the pool's message; a run that recorded no
-    reason keeps the plain sentence.
+    the cleared row. After a restart of the tool it is what is read back
+    from disk: the same line where the run wrote its reason into its
+    result file (a JSON driver's `simulate` that raised), and otherwise
+    the verdict the run recorded with what its file is (item 9: `Run
+    recorded timed_out — No Python result at …`) — the run's own sentence
+    for a timeout or a driver that died is kept in no file. A test no
+    worker could start says one line of the pool's message; a run that
+    recorded no reason keeps the plain sentence.
 
 OpenModelica writes its rows a 4 KB block at a time unless asked; the pool
 the tool opens sets `Config.live_results`, which adds `-mat_sync=1` to its
@@ -7728,15 +7739,23 @@ file": it now reads the running tests' result files.
 
 **Consequences.** `SessionView` gains `partial(model_id)`. The `queue`
 event has a state `live`. The pool's `StartingWorker` gains `restart`.
-A JSON-driver backend's failure reads back from its result file in the
-words its run result said it in (`JsonDriverBackend._failure`: "Python
-execution failed: …"), so the strip's line of one failure is the same
-before and after a restart of the tool; it read back bare when this entry
-was written. The Session sets `live_results` on the open project's
+A failure a JSON-driver backend's driver WROTE into its result file reads
+back in the words its run result said it in (`JsonDriverBackend._failure`:
+"Python execution failed: …"; "… the driver gave no reason" on both sides
+for a failure file that gives none), so the strip's line of that failure
+is the same before and after a restart of the tool; it read back bare
+when this entry was written. A run that left no such file — killed by its
+timeout, a driver that died — reads back led by its recorded verdict
+(item 9), which is not the sentence its run said. `status.json`'s `detail`
+for a JSON driver's failure is the result's message, not the driver's bare
+reason. The Session sets `live_results` on the open project's
 `Config` when it opens its pool. A plug-in backend that declares
 `LIVE_RESULTS` must write a DSresult file and list a growing one through
 `result_names` for the tool to show it live. The CLI's runs are unchanged;
-`compare`'s stored message for a timed-out run is longer.
+`compare`'s stored message for a failed or timed-out run whose file does
+not say why is longer; nothing reads that text but a person
+(classification, `--rerun sim-failed`, JUnit and the dashboard go by the
+result's flags).
 
 ## D152 — A criterion over an array family: chosen by indices, shown folded, edited as one (2026-10-08)
 

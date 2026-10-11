@@ -23,6 +23,7 @@ from conftest import make_test_model
 from dstf.backends.common.json_driver import JsonDriverBackend
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
+from dstf.storage.batch_manifest import BatchManifest
 
 # ---------------------------------------------------------------------------
 # Fixtures / fakes
@@ -201,6 +202,116 @@ class TestFailureMessagePrecedence:
 
         assert result.success is True
         assert result.statistics["simulation"]["wall_time"] == result.elapsed
+
+
+# ---------------------------------------------------------------------------
+# A failed run's reason: as its run said it, and read back by a later process
+# ---------------------------------------------------------------------------
+
+
+class _Progress:
+    """What a CLI run's progress reporter is told (`status.json`'s rows)."""
+
+    def __init__(self) -> None:
+        self.finished: list[dict] = []
+
+    def on_start(self, test_key):
+        pass
+
+    def on_phase(self, test_key, phase):
+        pass
+
+    def on_finish(self, test_key, **said):
+        self.finished.append(said)
+
+
+class TestAFailedRunSReasonReadBack:
+    """A run's result says why it failed. A later process — `dstf compare`,
+    the tool started again — holds no run result: it reads the manifest's
+    verdict and the result file. Where the file carries the run's own
+    reason the two read alike; where it does not (killed by its timeout,
+    died before it wrote one), what is read back LEADS with the verdict the
+    run recorded, then says what the file is."""
+
+    def _ran(self, tmp_path, monkeypatch, fake):
+        backend, test = _fake_backend(tmp_path)
+        backend.quiet = True
+        _patch_run(monkeypatch, fake)
+        work = backend.config.work_dir
+        work.mkdir(parents=True, exist_ok=True)
+        manifest = BatchManifest(
+            work_dir=work, manifest={"test_0001": {"model_id": test.model_id}}
+        )
+        run = backend.run_single_test(test, "test_0001", 1, 1)
+        manifest.record_result(run)
+        manifest.results.append(run)
+        in_hand = backend.read_results([manifest], [test])[test.model_id]
+        read_back = backend.read_last_results([test])[test.model_id]
+        assert in_hand.success is False and read_back.success is False
+        # with the run result in hand, its own message and nothing before it
+        assert in_hand.error_message == run.error_message
+        return run.error_message, read_back.error_message, work / "test_0001"
+
+    def test_a_run_killed_by_its_timeout_reads_back_as_timed_out(
+        self, tmp_path, monkeypatch
+    ):
+        def killed(*a, **kw):
+            raise subprocess.TimeoutExpired(cmd="faketool", timeout=5.0)
+
+        said, read_back, test_dir = self._ran(tmp_path, monkeypatch, killed)
+        assert said.startswith("Fake execution exceeded 5.0s timeout (")
+        assert read_back == (
+            f"Run recorded timed_out — No Fake result at {test_dir / 'result.json'} "
+            "(did execution run?)"
+        )
+
+    def test_a_driver_that_died_without_a_failure_file_reads_back_as_failed(
+        self, tmp_path, monkeypatch
+    ):
+        said, read_back, test_dir = self._ran(
+            tmp_path, monkeypatch, lambda *a, **kw: _proc(returncode=3, stderr="dead\n")
+        )
+        assert said == "Fake execution failed: dead"
+        assert read_back == (
+            f"Run recorded failed — No Fake result at {test_dir / 'result.json'} "
+            "(did execution run?)"
+        )
+
+    @pytest.mark.parametrize(
+        ("payload", "reason"),
+        [
+            ({"success": False, "error": "driver said no"}, "driver said no"),
+            # a failure file with no reason: the same words on both sides,
+            # never the stderr tail on one and "no reason" on the other
+            ({"success": False, "error": ""}, "the driver gave no reason"),
+            ({"success": False, "error": None}, "the driver gave no reason"),
+            ({"success": False}, "the driver gave no reason"),
+        ],
+        ids=["a reason", "an empty reason", "a null reason", "no reason key"],
+    )
+    def test_a_failure_the_driver_wrote_reads_back_in_the_run_s_words(
+        self, tmp_path, monkeypatch, payload, reason
+    ):
+        def failed(*a, **kw):
+            path = tmp_path / "work" / "test_0001" / "result.json"
+            path.write_text(json.dumps(payload))
+            return _proc(returncode=3, stderr="noise\nlast stderr line\n")
+
+        said, read_back, _dir = self._ran(tmp_path, monkeypatch, failed)
+        assert said == f"Fake execution failed: {reason}"
+        assert read_back == said
+
+    def test_the_progress_row_says_the_run_s_message(self, tmp_path, monkeypatch):
+        """`status.json`'s detail and the result's message are one text: the
+        row said the driver's bare reason beside "Fake execution failed: …"."""
+        backend, test = _fake_backend(tmp_path)
+        backend.progress = _Progress()
+        _patch_run(monkeypatch, lambda *a, **kw: _proc(returncode=3, stderr="dead\n"))
+
+        run = backend.run_single_test(test, "test_0001", 1, 1)
+
+        (said,) = backend.progress.finished
+        assert said["detail"] == run.error_message == "Fake execution failed: dead"
 
 
 # ---------------------------------------------------------------------------

@@ -175,6 +175,12 @@ class TestResult:
     diagnostics: list[VariableResult] = field(default_factory=list)
     error_message: str | None = None
     statistics: dict | None = None
+    #: Whether ``error_message`` is the RUN's own reason — its run result's,
+    #: or a failure the run wrote into its result file — and not a reader's
+    #: account of what the file holds. A reader's account is led by the
+    #: verdict the run recorded (``backends.base._force_failed``); the run's
+    #: own reason already says what happened. In memory only.
+    run_reason: bool = False
 
 
 #: Appended to every timed-out result's ``error_message``, so the escape hatch

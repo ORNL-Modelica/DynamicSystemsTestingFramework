@@ -77,6 +77,10 @@ def run_killable(
 
 logger = logging.getLogger(__name__)
 
+#: The reason of a failure JSON that gives none (no ``error``, an empty or a
+#: null one) — the run's word and the read-back's.
+NO_REASON = "the driver gave no reason"
+
 
 class JsonDriverBackend(Backend):
     """Subprocess-per-test backend driving a shipped JSON-writing script."""
@@ -244,24 +248,27 @@ class JsonDriverBackend(Backend):
             # review 2026-07-06 (finding 75): whitespace-only stderr made
             # splitlines()[-1] IndexError inside the failure handler.
             stderr_lines = (proc.stderr or "").strip().splitlines()
-            err = _read_failure_error(result_path) or (
-                stderr_lines[-1]
-                if stderr_lines
-                else f"{self.stdio_prefix} returned {proc.returncode}"
-            )
+            err = _read_failure_error(result_path)
+            if err is None:
+                err = (
+                    stderr_lines[-1]
+                    if stderr_lines
+                    else f"{self.stdio_prefix} returned {proc.returncode}"
+                )
+            msg = self._failure(err)
             if self.progress:
                 self.progress.on_finish(
                     test_key,
                     success=False,
                     elapsed=elapsed,
-                    detail=err,
+                    detail=msg,
                 )
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
                 success=False,
                 elapsed=elapsed,
-                error_message=self._failure(err),
+                error_message=msg,
                 sim_wall=elapsed,
             )
 
@@ -279,9 +286,13 @@ class JsonDriverBackend(Backend):
 
     def _failure(self, reason: str) -> str:
         """The ONE message of a run whose driver failed, ``reason`` being
-        the driver's own word for why: what the run's result says and what
-        `read_result` says of the same failure read back from disk — the
-        queue's row and, after a restart of the tool, the test's page."""
+        the driver's own word for why: what the run's result says, what
+        the progress row says, and what `read_result` says of the same
+        failure read back from the file the driver wrote it into — the
+        queue's row and, after a restart of the tool, the test's page. A
+        failure that left no such file (killed by its timeout, a driver
+        that died) reads back as the verdict its run recorded
+        (``backends.base._force_failed``)."""
         return f"{self.tool_label} {self.action_label} failed: {reason}"
 
     def cancel_test(self, test_key: str) -> bool:
@@ -336,10 +347,9 @@ class JsonDriverBackend(Backend):
             return TestResult(
                 model_id=test.model_id,
                 success=False,
-                error_message=self._failure(
-                    payload.get("error") or "the driver gave no reason"
-                ),
+                error_message=self._failure(payload.get("error") or NO_REASON),
                 statistics=stats,
+                run_reason=True,
             )
 
         # review 2026-07-06 (finding 29): non-numeric values in a result
@@ -456,14 +466,16 @@ def resolve_source_file(test: TestModel, config, suffix: str) -> Path | None:
 
 
 def _read_failure_error(result_path: Path) -> str | None:
-    """If the driver wrote a failure JSON, pull its 'error' message."""
+    """If the driver wrote a failure JSON, its 'error' message —
+    :data:`NO_REASON` for one that gives none, as `read_result` says of the
+    same file; None with no failure JSON."""
     if not result_path.exists():
         return None
     try:
         with result_path.open(encoding="utf-8") as f:
             payload = json.load(f)
         if not payload.get("success", True):
-            return payload.get("error")
+            return payload.get("error") or NO_REASON
     except Exception:
         return None
     return None

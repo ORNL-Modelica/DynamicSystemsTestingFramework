@@ -94,16 +94,41 @@ class TestStatusJsonVerdicts:
         assert results["Lib.T"].error_message == f"Run recorded timed_out — {partial}"
 
     def test_a_failed_run_s_own_message_is_left_as_it_is(self, tmp_path):
-        """Nothing read: the message is the run's (`failed_run_result`),
-        which already says what happened."""
+        """The message is the run's (`failed_run_result`, or a failure the
+        driver wrote into its result file), which already says what
+        happened."""
+        from dstf.backends.base import failed_run_result
+
         _write_status(tmp_path, [{"model_id": "Lib.T", "status": "timed_out"}])
-        results = {
-            "Lib.T": TestResult(
-                model_id="Lib.T", success=False, error_message="Timed out after 8s"
-            )
-        }
+        run = TestRunResult(
+            model_id="Lib.T",
+            test_key="test_0001",
+            success=False,
+            error_message="Timed out after 8s",
+            timed_out=True,
+        )
+        results = {"Lib.T": failed_run_result(run)}
         _apply(run_verdicts(tmp_path, []), results)
         assert results["Lib.T"].error_message == "Timed out after 8s"
+
+    def test_a_read_that_found_no_row_leads_with_the_run_s_verdict_too(self, tmp_path):
+        """No result file, or one holding no row: the reader says what the
+        file is, and that alone read as if nothing was known of the run —
+        the reason a timed-out test's page gave changed when the tool was
+        started again."""
+        _write_status(tmp_path, [{"model_id": "Lib.T", "status": "timed_out"}])
+        missing = "Result file not found: /work/test_0001/result_res.mat"
+        results = {
+            "Lib.T": TestResult(model_id="Lib.T", success=False, error_message=missing)
+        }
+        _apply(run_verdicts(tmp_path, []), results)
+        assert results["Lib.T"].error_message == f"Run recorded timed_out — {missing}"
+
+    def test_a_failed_read_that_says_nothing_says_the_run_s_verdict(self, tmp_path):
+        _write_status(tmp_path, [{"model_id": "Lib.T", "status": "failed"}])
+        results = {"Lib.T": TestResult(model_id="Lib.T", success=False)}
+        _apply(run_verdicts(tmp_path, []), results)
+        assert results["Lib.T"].error_message == "Run recorded failed"
 
     def test_missing_status_json_is_noop(self, tmp_path):
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}

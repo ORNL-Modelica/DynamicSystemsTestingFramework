@@ -282,6 +282,72 @@ class TestOpenModelicaBackendUnit:
 
 
 # ---------------------------------------------------------------------------
+# A timed-out run read back by a later process (no omc needed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "what_the_file_is"),
+    [
+        (None, "Result file not found: {mat}"),
+        (0, "Empty result: result_res.mat holds no time point"),
+        (12, "Partial result: result_res.mat holds 12 time"),
+    ],
+    ids=["no file", "its header only", "12 of 41 rows"],
+)
+def test_a_timed_out_run_reads_back_as_timed_out_whatever_its_file_holds(
+    tmp_path, rows, what_the_file_is
+):
+    """`dstf compare`, or the tool started again, after a run its timeout
+    killed: the manifest's verdict leads, then what the file is. With no
+    file, or one killed before its first row, the message said the file's
+    state alone — nothing of the timeout."""
+    import json
+
+    import numpy as np
+
+    from conftest import make_test_model
+    from dstf.backends.openmodelica.backend import OpenModelicaBackend
+    from mat4_files import write_result_mat
+
+    (tmp_path / "package.mo").write_text("package Lib end Lib;")
+    work = tmp_path / "work"
+    cfg = Config(
+        source_path=tmp_path,
+        reference_root=tmp_path / "refs",
+        backend_name="OpenModelica",
+        work_dir=work,
+    )
+    backend = OpenModelicaBackend(cfg)
+    backend.quiet = True
+    test_dir = work / "test_0001"
+    test_dir.mkdir(parents=True)
+    (work / "batch_manifest.json").write_text(
+        json.dumps({"test_0001": {"model_id": "Lib.A", "last_run_status": "timed_out"}})
+    )
+    mat = test_dir / "result_res.mat"
+    t = np.linspace(0.0, 4.0, 41)
+    if rows is not None:
+        write_result_mat(
+            mat,
+            tool="openmodelica",
+            dtype="<f8",
+            time=t,
+            trajectories={"x": t},
+            points=rows,
+            declared=0,
+        )
+    test = make_test_model("Lib.A", stop_time=4.0, variable_patterns=["x"])
+
+    result = backend.read_last_results([test])["Lib.A"]
+
+    assert result.success is False
+    assert len(result.variables) == (1 if rows else 0)
+    said = "Run recorded timed_out — " + what_the_file_is.format(mat=mat)
+    assert result.error_message.startswith(said), result.error_message
+
+
+# ---------------------------------------------------------------------------
 # Integration tests (real omc; skipped if not installed)
 # ---------------------------------------------------------------------------
 
