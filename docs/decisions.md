@@ -7720,6 +7720,16 @@ at most); the browser's one long task per update was 72 ms at the median
 and 125 ms at most, a `Plotly.react` 9.6 ms a plot. Under the 100 ms set
 for the loop, so the read stays on it.
 
+*A header's parse* (2026-10-11, a loaded machine; synthetic files of
+2,000 / 20,000 / 60,000 variables with 60- to 100-character names): a
+partial result's 20-member family, asked a name at a time, cost 508 ms /
+3.75 s / 12.0 s on the loop — every ask parsed the header. One parse per
+file: 16 / 184 / 651 ms. With the name matrix decoded a row at a time
+(it was a character at a time; the same names over all 703 result files
+in this checkout's fixtures and work dirs, 1,338,159 of them): 4 / 20 /
+64 ms, and a run's first poll 2 / 18 / 64 ms where it was 27 / 371 /
+609 ms. Listing the file for the pickers costs no parse of its own.
+
 **Not built.** Verdicts before a run ends (a tube already left, a range
 already broken); a progress bar; live reads for `dstf run`; a page watching
 many runs at once; a partial result found on disk by a tool started later;

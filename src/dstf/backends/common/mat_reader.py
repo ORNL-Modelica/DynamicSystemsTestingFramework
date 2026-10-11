@@ -356,9 +356,11 @@ class ResultMatFile:
         the one read. None, with the reason logged, for a file that cannot
         be read."""
         try:
-            if self._stamp is None or self._stamp != self._stamp_of(os.stat(self.path)):
-                if not self._parse():
-                    return None
+            changed = self._stamp is None or self._stamp != self._stamp_of(
+                os.stat(self.path)
+            )
+            if changed and not self._parse():
+                return None
             if self._block is None:
                 return None  # parsed before, and it held no header matrices
 
@@ -555,6 +557,22 @@ def mat_shortfall(mat_path: Path) -> str | None:
         return f"{name} unreadable"
 
 
+def _as_bytes(codes: np.ndarray) -> np.ndarray | None:
+    """A 2-D matrix of character codes as one byte a code, where every code
+    — truncated, as ``int()`` truncates a float one — is a byte's (0..255):
+    Latin-1 decodes those exactly as ``chr`` does. None for any other
+    matrix, an empty one included; it is then read a character at a time."""
+    if codes.size == 0 or codes.shape[1] == 0:
+        return None
+    if codes.dtype.kind == "f":
+        if not np.isfinite(codes).all():
+            return None
+        codes = np.trunc(codes)
+    if codes.min() < 0 or codes.max() > 255:
+        return None
+    return np.ascontiguousarray(codes, dtype=np.uint8)
+
+
 def _parse_name_matrix(name_matrix: np.ndarray) -> list[str]:
     """Parse Dymola's name matrix into a list of variable name strings.
 
@@ -563,6 +581,15 @@ def _parse_name_matrix(name_matrix: np.ndarray) -> list[str]:
     """
     if name_matrix.ndim == 2 and name_matrix.dtype.kind in ("u", "i", "f"):
         # 2D integer/float array — each row is char codes for one name
+        packed = _as_bytes(name_matrix)
+        if packed is not None:
+            # A row at a time: a character at a time was 0.3 s of a
+            # 20,000-variable file's header, for every read of it.
+            raw, width = packed.tobytes(), packed.shape[1]
+            return [
+                raw[start : start + width].decode("latin1").strip("\x00").strip()
+                for start in range(0, len(raw), width)
+            ]
         var_names = []
         for row in name_matrix:
             name = "".join(chr(int(c)) for c in row).strip("\x00").strip()

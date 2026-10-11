@@ -570,6 +570,66 @@ def test_a_file_without_its_header_matrices_reads_as_none_every_time(tmp_path):
     assert opened.names is None
 
 
+# ---------------------------------------------------------------------------
+# The name matrix: decoded a row at a time, as a character at a time read it
+# ---------------------------------------------------------------------------
+
+
+def _by_character(name_matrix: np.ndarray) -> list[str]:
+    """The rule the decode is held to: one `chr` per code."""
+    return [
+        "".join(chr(int(c)) for c in row).strip("\x00").strip() for row in name_matrix
+    ]
+
+
+@pytest.mark.parametrize("dtype", ["<u1", "<i2", "<i4", "<f4", "<f8"])
+def test_names_decode_as_a_character_at_a_time_did(dtype):
+    """Every code a name can hold in a byte, with the padding (NUL, blank)
+    and the edges (0, 255) in every position — and a matrix with no row."""
+    rng = np.random.default_rng(20261011)
+    codes = rng.integers(0, 256, size=(400, 37))
+    codes[rng.random(codes.shape) < 0.3] = 0
+    codes[rng.random(codes.shape) < 0.2] = 32
+    codes[:8] = [[0] * 37, [32] * 37, [255] * 37, [9] * 37, *([[65] + [0] * 36] * 4)]
+    matrix = codes.astype(dtype)
+    assert mat_reader._parse_name_matrix(matrix) == _by_character(matrix)
+    if np.dtype(dtype).kind == "f":
+        # A float code is truncated, as int() does: 65.75 is "A", not "B".
+        part = np.minimum(matrix, 254) + 0.75
+        assert mat_reader._as_bytes(part) is not None
+        assert mat_reader._parse_name_matrix(part) == _by_character(part)
+    assert mat_reader._as_bytes(matrix) is not None  # the decode under test
+    empty = matrix[:0]
+    assert mat_reader._parse_name_matrix(empty) == []
+
+
+@pytest.mark.parametrize("code", [256, 0x20AC, -1, float("nan"), float("inf")])
+def test_a_code_past_a_byte_is_read_as_it_always_was(code):
+    """Not a DSresult name, but whatever it read as — a wider character, or
+    a raise the reader's caller turns into "cannot read" — it still does."""
+    matrix = np.full((3, 5), 65.0)
+    matrix[1, 2] = code
+
+    def outcome(parse):
+        try:
+            return parse(matrix)
+        except (ValueError, OverflowError) as e:
+            return type(e)
+
+    assert outcome(mat_reader._parse_name_matrix) == outcome(_by_character)
+
+
+@pytest.mark.parametrize("path", STORED, ids=lambda p: p.parent.name)
+def test_a_stored_result_lists_the_names_it_did(path):
+    """The decode over the two tools' own files, every name of each."""
+    with open(path, "rb") as f:
+        blocks = mat_reader._scan_mat4_headers(f).blocks
+        matrix = mat_reader._read_mat4_block(f, blocks["name"]).T
+    assert mat_reader._as_bytes(matrix) is not None
+    got = mat_reader._parse_name_matrix(matrix)
+    assert got == _by_character(matrix) and len(got) >= 10
+
+
 def test_a_stored_fixture_copied_whole_still_passes_the_rescue(tmp_path):
     """The complete OpenModelica fixture, through the same rescue helper."""
     path = tmp_path / "result_res.mat"
