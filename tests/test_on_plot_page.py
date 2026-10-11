@@ -18,6 +18,8 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
+from dstf.authoring.builtin.edit_on_plot import UNSCORED  # noqa: E402
+from dstf.authoring.live_rows import NOT_SCORED, WAITING  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.situation import Situation  # noqa: E402
@@ -592,6 +594,11 @@ async def _running(shell, page) -> None:
     await _settled(started, tries=600)
 
 
+def _ticked(shell) -> bool:
+    shell.tick()
+    return True
+
+
 async def test_a_run_that_starts_leaves_no_field_armed_that_is_not_drawn(live):
     """A rebuild no edit caused: the queue starts the test (D150), nothing
     of it is scored until its result arrives (D151), and the editor's
@@ -617,6 +624,38 @@ async def test_a_run_that_starts_leaves_no_field_armed_that_is_not_drawn(live):
         (op,) = shell.session.spec.pending
         assert op.value["window"] == {"start": 0.312}
         assert card.placing.armed is None
+
+
+@pytest.mark.parametrize("ended", [False, True], ids=["running", "cancelled"])
+async def test_an_unscored_tests_editor_offers_no_click_that_nothing_takes(live, ended):
+    """While a test runs, and after a run that did not finish, nothing of
+    it is scored (D151): no handle is drawn and the table's place is a
+    sentence. The hint offered "Ctrl+click adds a point." all the same,
+    and the sentence was "/metrics/children/0 is not a criterion on x"."""
+    shell, examples = live
+    async with user_simulation(root=shell.index) as user:
+        page, card = await _opened(shell, user, POINTS)
+        assert "Ctrl+click adds a point." in _hint(user, POINTS)
+        steer(examples, A, hold=3)
+        shell.session.enqueue([A])
+        await _running(shell, page)
+        word = WAITING
+        if ended:
+            # Once its file holds a row: a partial result is what it wrote.
+            await _settled(lambda: _ticked(shell) and "t = " in page.strip.text.text)
+            user.find(marker="strip-cancel").click()
+            await _settled(
+                lambda: _ticked(shell) and shell.session.partial(A), tries=600
+            )
+            word = NOT_SCORED
+        (card,) = [c for c in page.cards if c.subject == ["x"]]
+        await _settled(lambda: _ticked(shell) and page.open == (card.index, POINTS))
+        assert _hint(user, POINTS) == "Edit the fields." + STAGED
+        (why,) = user.find(marker="why:edit-on-plot").elements
+        assert why.text == UNSCORED.format(word)
+        with page.client:
+            page.on_plot("clicked", _click(card, 0.9, 0.0, ctrl=True))
+        assert shell.session.spec.pending == []
 
 
 async def test_a_new_drags_preview_shows_though_its_value_is_the_last_ones(shell):

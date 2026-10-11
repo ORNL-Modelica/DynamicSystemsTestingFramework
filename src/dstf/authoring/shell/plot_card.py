@@ -693,9 +693,12 @@ class PlotCard:
                 self._say_hint()
                 self._edited = edited
             else:
-                # The editor is not rebuilt while it is open, so a lock that
-                # greys its panels has to reach them here.
+                # The editor is not rebuilt while it is open, so an answer
+                # that moves under it has to reach its panels here — and
+                # its hint, which says what the plot takes: a run that
+                # starts takes the handles and the table with it (D151).
                 self.editor.follow()
+                self._say_hint()
         if self.variable_host is not None:
             kind = _root_kind(view)
             if kind != self.root_kind:
@@ -966,6 +969,18 @@ class PlotCard:
         self._say_hint()
         self._edited = self._edited_now(view)
 
+    def _scored(self) -> Any:
+        """The open criterion as it was scored — its comparison, whose
+        geometry the plot draws — or None where it was not: a test that is
+        running, or whose last run did not finish (D151)."""
+        comp = self.page.shell.session.comparisons.get(self.page.model_id)
+        tree = comp.metric_tree if comp is not None else None
+        for pairs in leaves_by_variable(tree).values():
+            for path, vc in pairs:
+                if path == self.open_path:
+                    return vc
+        return None
+
     def _drags(self) -> Drags:
         """What the plot draws for the open criterion to be dragged by —
         a key of `EDITOR_HINTS` — read off the geometry its leaf was scored
@@ -974,16 +989,13 @@ class PlotCard:
         here by its name. Nothing where the
         leaf was not scored, or where its metric has no editor for a drag
         (one would be refused)."""
-        comp = self.page.shell.session.comparisons.get(self.page.model_id)
-        tree = comp.metric_tree if comp is not None else None
-        for pairs in leaves_by_variable(tree).values():
-            for path, vc in pairs:
-                if path == self.open_path:
-                    desc = registry.metric(vc.mode)
-                    if desc is None or desc.edit_handle is None:
-                        return ""
-                    return drags_of(vc.geometry)
-        return ""
+        vc = self._scored()
+        if vc is None:
+            return ""
+        desc = registry.metric(vc.mode)
+        if desc is None or desc.edit_handle is None:
+            return ""
+        return drags_of(vc.geometry)
 
     def _say_hint(self) -> None:
         """The editor's hint line: what drags on the plot for the open
@@ -1008,7 +1020,11 @@ class PlotCard:
         """What a Ctrl+click adds to the open criterion, as the hint's
         sentence: its metric's own word for a row, or nothing where a
         click adds none — a metric with no rows, a tube of constant width,
-        a metric no drag edits (its Edit on plot place is not drawn)."""
+        a metric no drag edits (its Edit on plot place is not drawn), and
+        a criterion that was not scored: the click is read off its scored
+        geometry, and its place says why it takes none."""
+        if self._scored() is None:
+            return ""
         raw = self.page._node(self.open_path or "")
         desc = registry.metric(str((raw or {}).get("metric", registry.DEFAULT_METRIC)))
         if raw is None or desc is None or desc.place_row is None:

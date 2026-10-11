@@ -80,6 +80,12 @@ _RINGLESS = {"events": "time"}
 #: its other.
 _BOUNDS = {"min_value": "max_value", "max_value": "min_value"}
 
+#: Why the place is a sentence on a test with nothing scored BECAUSE OF A
+#: RUN (D151), ``{}`` being the word its criteria say in place of a verdict
+#: (`live_rows.WAITING`, `NOT_SCORED`): a handle is drawn from a scored
+#: criterion's geometry, and the table is edited beside its handles.
+UNSCORED = "{} — its table and its handles on the plot are edited once it is scored"
+
 
 def _selected(s: SessionView) -> tuple[str, str, str] | None:
     """``(model_id, variable, leaf_path)`` for exactly one test, a variable
@@ -720,6 +726,12 @@ class EditOnPlot:
             return why
         metric_name = dict(_leaf_paths(s, model_id, variable)).get(leaf_path)
         if metric_name is None:
+            # Nothing of the test is scored while it runs, or after a run
+            # that did not finish (D151): the criterion is there, and the
+            # page's word for it is the reason.
+            word = (s.tree_view(model_id) or {}).get("unscored")
+            if word:
+                return UNSCORED.format(word)
             return f"{leaf_path} is not a criterion on {variable}"
         if not _has_handles(metric_name):
             return f"{metric_name} has no on-plot handles"

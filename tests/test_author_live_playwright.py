@@ -11,6 +11,7 @@ themes — and Accept saying why it will not take a partial result."""
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -23,6 +24,7 @@ pytest.importorskip("playwright")
 from playwright.sync_api import expect  # noqa: E402
 
 from dstf.authoring.builtin.accept import PARTIAL  # noqa: E402
+from dstf.authoring.builtin.edit_on_plot import UNSCORED  # noqa: E402
 from dstf.authoring.live_rows import (  # noqa: E402
     NOT_AVAILABLE,
     NOT_SCORED,
@@ -489,5 +491,157 @@ def test_a_failed_run_s_reason_is_on_its_page_after_its_queue_row_is_cleared(
         expect(tip).to_be_visible(timeout=EXPECT_TIMEOUT)
         expect(tip).to_contain_text("RuntimeError: boom in simulate")
         assert _console(errors) == []
+    finally:
+        _stop(proc)
+
+
+#: A's criteria as an explicit tree — a running test's stay editable there
+#: (D150) — with a table and handles on x for on-plot editing (D149).
+ON_PLOT_TREE = {
+    "combinator": "and",
+    "children": [
+        {
+            "metric": "points",
+            "variable": "x",
+            "tolerance": 0.2,
+            "points": [{"time": 0.25}, {"time": 0.6}],
+        },
+        {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+    ],
+}
+
+#: What the open editor says and holds, and the armed cue on its plot.
+EDITOR = """
+() => ({
+  hint: document.querySelector('.dstf-editor .dstf-why').textContent,
+  why: [...document.querySelectorAll('.dstf-editor .dstf-why')].at(-1).textContent,
+  arms: document.querySelectorAll('.dstf-editor .dstf-arm').length,
+  pressed: document.querySelectorAll('.dstf-arm[aria-pressed=true]').length,
+  outlined: document.querySelectorAll('.dstf-plot[data-armed]').length,
+  line: [...document.querySelectorAll('.dstf-plot-armed')]
+    .filter(e => e.offsetParent !== null).map(e => e.textContent),
+  shapes: document.querySelectorAll('.js-plotly-plot')[0].layout.shapes || [],
+})
+"""
+
+
+def _treed(**files):
+    """`_live`, with `ON_PLOT_TREE` as A's criteria."""
+    live = _live(**files)
+
+    def setup(cfg: Path) -> None:
+        live(cfg)
+        spec_file = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_file.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["metrics"] = ON_PLOT_TREE
+        spec_file.write_text(json.dumps(spec), encoding="utf-8")
+
+    return setup
+
+
+def _click_plot(page, fx: float, fy: float, *keys: str) -> None:
+    """A real click at these fractions of plot 0's plot area."""
+    left, top, width, height = page.evaluate(
+        "() => { const gd = document.querySelectorAll('.js-plotly-plot')[0];"
+        " const fl = gd._fullLayout, r = gd.getBoundingClientRect();"
+        " return [r.left + fl._size.l, r.top + fl._size.t, fl._size.w, fl._size.h]; }"
+    )
+    page.mouse.move(left + width * fx - 12, top + height * fy - 12)
+    page.mouse.move(left + width * fx, top + height * fy, steps=3)
+    for key in keys:
+        page.keyboard.down(key)
+    page.mouse.down()
+    page.mouse.up()
+    for key in keys:
+        page.keyboard.up(key)
+
+
+def test_a_running_test_s_editor_offers_what_a_click_takes_through_every_update(
+    tmp_path, playwright_browser
+):
+    """On-plot editing on a page nothing is scored on (D149 × D151): no
+    handle is drawn and the table's place says why, so the hint offers no
+    Ctrl+click and one adds nothing; a window's ⌖ is drawn, and it stays
+    armed — outline, line and all — beside a box zoom while the trace
+    grows under both, then takes its click. The same after a cancel."""
+    proc, _url, page, _context, errors, _cfg = _served(
+        tmp_path,
+        playwright_browser,
+        hooks=LIVE_HOOKS,
+        setup=_treed(rows=400, pause=0.04, hold=300),
+    )
+    pending = page.locator(".dstf-header-row").get_by_role(
+        "button", name=re.compile("pending edit")
+    )
+    try:
+        _run_and_open(page)
+        expect(page.locator(STRIP)).to_have_text(RUNNING_AT, timeout=RUN_TIMEOUT)
+        page.locator(".dstf-crit", has_text="points · x").click()
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        read = page.evaluate(EDITOR)
+        assert read["hint"] == (
+            "Edit the fields. Edits are staged as you make them; Save writes them."
+        )
+        assert read["why"] == UNSCORED.format(WAITING)
+        assert read["arms"] == 2 and read["shapes"] == []  # the window's two
+
+        # Armed and zoomed, then three updates of the growing trace.
+        page.locator(".dstf-editor label", has_text="window start").locator(
+            ".dstf-arm"
+        ).click()
+        page.locator(".js-plotly-plot").first.evaluate(
+            "e => window.scrollBy(0, e.getBoundingClientRect().top - 190)"
+        )
+        _box_zoom(page, (0.1, 0.9), (0.2, 0.8))  # a drag is no click
+        zoomed = _plot(page)
+        assert zoomed["xrange"] != [0.0, 1.0]
+        said = "Click the plot to set window start — Esc cancels."
+        at = _points(page)
+        for _ in range(3):
+            page.wait_for_function(
+                f"(n) => ({PLOT})().x.length > n", arg=at, timeout=EXPECT_TIMEOUT
+            )
+            at = _points(page)
+            kept = _plot(page)
+            assert (kept["xrange"], kept["yrange"]) == (
+                zoomed["xrange"],
+                zoomed["yrange"],
+            )
+            read = page.evaluate(EDITOR)
+            assert (read["pressed"], read["outlined"]) == (1, 1), read
+            assert read["hint"] == said and read["line"] == [said]
+        _keep(page, tmp_path, "live-armed")
+
+        # Ctrl+click adds nothing; the plain click sets the armed window.
+        _click_plot(page, 0.7, 0.5, "Control")
+        page.wait_for_timeout(600)
+        expect(pending).to_have_text("0 pending edits")
+        assert page.evaluate(EDITOR)["pressed"] == 1
+        _click_plot(page, 0.5, 0.5)
+        expect(pending).to_have_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        start = page.locator(".dstf-editor").get_by_label("window start", exact=True)
+        low, high = zoomed["xrange"]
+        assert abs(float(start.input_value()) - (low + high) / 2) < 0.01
+        read = page.evaluate(EDITOR)
+        assert (read["pressed"], read["outlined"], read["line"]) == (0, 0, [])
+        assert _console(errors) == [], "running"
+
+        # Cancelled: what it wrote is shown, never scored — the same editor.
+        page.locator(".dstf-strip").get_by_role("button", name="Cancel").click()
+        page.wait_for_function(
+            f"() => !!(({PLOT})() || {{}}).stopped", timeout=RUN_TIMEOUT
+        )
+        expect(page.locator(".dstf-editor .dstf-why").last).to_have_text(
+            UNSCORED.format(NOT_SCORED), timeout=EXPECT_TIMEOUT
+        )
+        read = page.evaluate(EDITOR)
+        assert "Ctrl+click" not in read["hint"] and read["arms"] == 2
+        assert [s["name"] for s in read["shapes"]] == [STOPPED]
+        _click_plot(page, 0.2, 0.5, "Control")
+        page.wait_for_timeout(600)
+        expect(pending).to_have_text("1 pending edit")
+        assert _console(errors) == [], "cancelled"
     finally:
         _stop(proc)
