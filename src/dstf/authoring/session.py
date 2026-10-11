@@ -1834,10 +1834,20 @@ class Session:
             project.results[model_id] = item.result
             # The result was read for the test as it started. A criterion
             # added while it ran may name a variable the file holds and
-            # that read did not extract: read again, this test only.
-            reread = self._unread_in_file({model_id}, project.tests)
-            if reread:
-                self._keep_read(reread, self._read_again(reread, project.tests))
+            # that read did not extract: read again, this test only. A
+            # read that fails costs that variable, never the run: the
+            # result that WAS read is scored, and the end is said.
+            try:
+                reread = self._unread_in_file({model_id}, project.tests)
+                if reread:
+                    self._keep_read(reread, self._read_again(reread, project.tests))
+            except Exception as e:
+                logger.error(
+                    "reading %s again failed (%s: %s): its result stands as its run read it",
+                    model_id,
+                    type(e).__name__,
+                    e,
+                )
         self._score_one(model_id)
 
     def _score_one(self, model_id: str) -> None:

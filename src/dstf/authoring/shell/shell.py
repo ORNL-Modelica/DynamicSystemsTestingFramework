@@ -177,9 +177,10 @@ class Shell:
         self.pages.append(page)
 
     def tick(self) -> None:
-        """Run what worker threads posted, then hand every queued Session
-        event to every live page, then let each flush what it coalesced — a
-        page whose client is gone is dropped.
+        """Run what worker threads posted — each on its own: one that
+        raises is logged, and the rest of the tick follows — then hand every
+        queued Session event to every live page, then let each flush what it
+        coalesced — a page whose client is gone is dropped.
         Once a second while a test runs or a worker is being started, the
         running tests' growing result files are read (`Session.live_runs`,
         D151) and a `poll` event follows: the clock a running row's words
@@ -191,7 +192,10 @@ class Shell:
                 fn = self._posted.get_nowait()
             except queue.Empty:
                 break
-            fn()
+            try:
+                fn()
+            except Exception:  # one call's failure is not the others' wait
+                logger.exception("a posted call failed")
         events: list[dict[str, Any]] = []
         while True:
             try:

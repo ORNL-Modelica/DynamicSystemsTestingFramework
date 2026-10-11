@@ -14,6 +14,7 @@ import json
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,7 +25,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.shell.shell import Shell  # noqa: E402
+from dstf.authoring.shell.shell import TICK, Shell  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.reporting.status import FAIL, classify  # noqa: E402
@@ -897,6 +898,66 @@ async def test_a_thread_posted_callback_reaches_the_page(tmp_path):
 
 def _failure_records(caplog) -> list:
     return [r for r in caplog.records if r.exc_info is not None]
+
+
+class _Page:
+    """What `Shell.tick` asks of a page, and what it was handed."""
+
+    def __init__(self) -> None:
+        self.client = SimpleNamespace(is_deleted=False)
+        self.handled: list[str] = []
+        self.flushed = 0
+
+    def handle(self, event: dict) -> None:
+        self.handled.append(event["event"])
+
+    def flush(self) -> None:
+        self.flushed += 1
+
+
+def test_a_posted_call_that_raises_does_not_stop_the_tick_for_the_others(shell, caplog):
+    """What a worker thread posts runs inside the tick. One that raised
+    ended it: the calls posted after it waited a tick, no event reached a
+    page, and the exception went to the timer."""
+    page = _Page()
+    shell.register(page)
+    ran: list[str] = []
+
+    def bad() -> None:
+        raise RuntimeError("boom in a posted call")
+
+    shell._posted.put(bad)
+    shell._posted.put(lambda: ran.append("after"))
+    shell._events.put({"event": "notice"})
+    with caplog.at_level("ERROR", logger="dstf.authoring.shell.shell"):
+        shell.tick()
+
+    assert ran == ["after"]
+    assert "notice" in page.handled and page.flushed == 1
+    (record,) = _failure_records(caplog)
+    assert record.getMessage() == "a posted call failed"
+    assert "boom in a posted call" in str(record.exc_info[1])
+
+
+def test_a_poll_that_raises_does_not_stop_the_tick(shell, monkeypatch, caplog):
+    """The once-a-second read of the running tests' files: a read that
+    fails is logged, and the `poll` event and every page's flush follow."""
+    page = _Page()
+    shell.register(page)
+
+    def gone() -> None:
+        raise OSError("the mount went away")
+
+    monkeypatch.setattr(shell, "clocked", lambda: True)
+    monkeypatch.setattr(shell.session.live_runs, "poll", gone)
+    every = max(1, round(1.0 / TICK))
+    with caplog.at_level("ERROR", logger="dstf.authoring.shell.shell"):
+        for _ in range(every):
+            shell.tick()
+
+    assert page.handled.count("poll") == 1 and page.flushed == every
+    (record,) = _failure_records(caplog)
+    assert record.getMessage() == "the live poll failed"
 
 
 async def test_a_discard_that_fails_on_a_bug_is_logged_and_notified(

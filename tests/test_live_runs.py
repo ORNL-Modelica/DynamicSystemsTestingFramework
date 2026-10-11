@@ -492,6 +492,56 @@ def test_a_timed_out_run_shows_what_it_wrote_as_a_failure(h):
     ).sentence.startswith("Run recorded timed_out — No Python result at ")
 
 
+def test_a_reread_that_raises_at_a_run_s_end_leaves_the_result_that_was_read(
+    h, monkeypatch, caplog
+):
+    """A criterion staged while the test ran names a variable its file
+    holds and the run's read did not extract: the end reads the result
+    again. That read raising (the mount went away) left a FINISHED run
+    reading NOT RUN, said no `ended`, wrote no status.json — and the
+    exception left the tick. It is logged in one line; the result the run
+    read is scored and everything after it happens."""
+    s = h.session
+    events = []
+    for kind in ("queue", "results"):
+        s.on(kind, lambda e: events.append((e["event"], e.get("state"))))
+    h.steer(A, hold=5)
+    s.enqueue([A])
+    h.running(A)
+    h.ask(A, "x")
+    h.at(A, 0.2)
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "z", "min_value": -1, "max_value": 5},
+        ],
+    }
+    s.stage([PatchOp(A, "add", "/metrics", tree)])
+    h.loop.pump()
+
+    def gone(*args, **kwargs):
+        raise OSError("the mount went away")
+
+    monkeypatch.setattr(s.project.backend, "read_last_results", gone)
+    events.clear()
+    caplog.clear()
+    h.steer(A, hold=None)
+    with caplog.at_level("ERROR", logger="dstf.authoring.session"):
+        h.ended(A)  # a raise out of the posted call fails here
+
+    assert s.queue_state(A) is ItemState.FINISHED
+    assert A in s.project.results and s.project.results[A].success
+    assert classify(s.comparisons[A]) != NOT_RUN
+    assert ("results", None) in events and events[-1] == ("queue", "ended")
+    (line,) = [r for r in caplog.records if "again" in r.getMessage()]
+    assert "the mount went away" in line.getMessage() and A in line.getMessage()
+    assert line.exc_info is None  # one line: no traceback
+    s.wait_background(30)
+    status = json.loads((h.work / "status.json").read_text(encoding="utf-8"))
+    assert A in [row["model_id"] for row in status["tests"]]
+
+
 def test_a_run_that_raised_after_its_rows_is_a_failed_partial(h):
     s = h.session
     h.steer(D, boom="")
