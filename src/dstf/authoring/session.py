@@ -1675,10 +1675,17 @@ class Session:
 
     def cancel(self, item: QueueItem) -> bool:
         """Stop a running ``item``'s simulation; it ends CANCELLED once its
-        thread says so. ``False`` when it is not running; the pool's
-        ``Refused``, a sentence, on a backend that cannot stop a test."""
+        thread says so — at once on most backends, after its worker's grace
+        where the simulation does not look at the request. Said meanwhile:
+        a ``queue`` event, state ``cancelling``, so its row and its strip
+        read that until the end. ``False`` when it is not running; the
+        pool's ``Refused``, a sentence, on a backend that cannot stop a
+        test."""
         pool = self._pool
-        return pool is not None and pool.cancel(item)
+        if pool is None or not pool.cancel(item):
+            return False
+        self._emit("queue", state="cancelling", models={item.model_id})
+        return True
 
     def clear_finished(self) -> None:
         """Drop the rows of the items that ended — finished, failed or

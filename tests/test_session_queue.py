@@ -36,6 +36,7 @@ from dstf.authoring.session import (
     Session,
     SessionView,
 )
+from dstf.authoring.situation import Situation, strip_for
 from dstf.authoring.spec_document import PatchOp
 from dstf.authoring.suite_rows import suite_row
 from dstf.backends import BackendUnavailableError
@@ -662,6 +663,52 @@ def test_status_json_is_written_when_the_queue_drains_for_the_items_that_ran(h):
     assert [(t["model_id"], t["status"]) for t in written["tests"]] == [
         (D, "cancelled")
     ]
+
+
+def test_a_run_asked_to_stop_reads_cancelling_until_it_ends(h):
+    """Cancel was clicked and the simulation has not ended — a model
+    blocked in an external call runs on for the worker's grace (Dymola:
+    about 11 s). Its row went on reading `running · 42 s` beside a Cancel
+    button, and the strip `Running on worker 1`: nothing said the click
+    had been taken."""
+    s = h.session
+    item = fake_item(s, A, ItemState.RUNNING)
+    try:
+        row = queue_row(s, A)
+        assert row.words.startswith("running · ") and not row.cancelling
+        assert row.actions == ("cancel",)
+        assert strip_for(queue=row).sentence.startswith("Running on worker 1 — ")
+
+        item._stop_asked = True  # what the pool's `cancel` sets
+        row = queue_row(s, A)
+        assert (row.words, row.cancelling, row.actions) == ("cancelling…", True, ())
+        assert row.status == RUNNING and row.state is ItemState.RUNNING
+        strip = strip_for(queue=row)
+        assert strip.sentence == "Cancelling on worker 1…"
+        assert strip.situation is Situation.RUNNING and strip.note == ""
+        assert counts_text(queue_rows(s)) == "1 running"  # it has not ended
+    finally:
+        drop_item(s, item)
+
+
+def test_a_cancel_that_was_taken_is_said_at_once(h):
+    """The row and the strip are repainted by a `queue` event; a cancel
+    said none, so they changed at the next second's poll — or, the Cancel
+    button being part of the row, not at all."""
+    s = h.session
+    heard: list[tuple[str, frozenset]] = []
+    s.on("queue", lambda e: heard.append((e["state"], frozenset(e["models"]))))
+    h.hold(A)
+    (item,) = s.enqueue([A])
+    h.running(A)
+    heard.clear()
+
+    assert s.cancel(item) is True
+    assert heard[0] == ("cancelling", frozenset({A}))
+    h.ended(A)
+    assert heard[-1][0] == "ended" and not item.stopping
+    assert s.cancel(item) is False  # ended: nothing is asked, nothing is said
+    assert [state for state, _ in heard].count("cancelling") == 1
 
 
 def test_the_drain_s_page_links_no_wiped_report_and_says_how_long_it_ran(

@@ -190,6 +190,9 @@ def strip_for(
         return Strip(S.QUEUED, "grey", f"Queued — {queue.words}")
     if queue is not None and queue.state is ItemState.RUNNING:
         where = f" on worker {queue.worker}" if queue.worker is not None else ""
+        if queue.cancelling:
+            # A stop was asked and it has not ended yet (`QueueRow`).
+            return Strip(S.RUNNING, "grey", f"Cancelling{where}…")
         # How far its result file has got, where the backend has a live
         # view (D151); its seconds, and the line that says why, where not.
         if queue.progress is not None:

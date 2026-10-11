@@ -332,8 +332,14 @@ class DymolaWorker(Worker):
 
     def cancel_running(self, test_key: str) -> bool:
         """dymosim's own stop request: a file named ``stop`` in its working
-        directory ends the integration within a couple of seconds, and
-        ``simulateModel`` returns with Dymola intact.
+        directory. An integration that LOOKS at it ends there and
+        ``simulateModel`` returns with Dymola intact — measured 0.16 to
+        0.38 s on a CPU-bound model. One that does not look — a model
+        blocked in an external call (``Modelica.Utilities.System.command``)
+        never returns to the solver's loop — runs on: the file is written
+        at once, the watchdog's :attr:`cancel_grace` (10 s) runs out, and
+        the worker is killed and restarted, about 11.7 s after the request
+        (4 of 4). The request is ``True`` either way: it was made.
 
         Only while a dymosim process runs under this Dymola. During
         translation there is none, and nothing short of killing Dymola stops

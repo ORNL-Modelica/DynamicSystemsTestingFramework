@@ -7557,7 +7557,17 @@ settings cannot be edited in the tool either.
 
 **Known limits.** The page of a running test draws no criterion (it has no
 result), so criteria are edited mid-run only where the tool offers an edit
-without one. Stop workers and Stop server close the pool on the UI loop
+without one. A cancel is a request, and Dymola's is a `stop` file dymosim
+reads between steps: a model blocked in an external call
+(`Modelica.Utilities.System.command`) never reads it, so the cancel takes
+the worker's whole grace (`Worker.cancel_grace`, 10 s) and then the
+worker itself, which is restarted — 11.6 to 11.7 s from the click, 4 of
+4, where a CPU-bound model stopped in 0.16 to 0.38 s and kept its worker
+(measured 2026-10-11 by the release gate, on a real Dymola). Meanwhile the item is still
+running: its row reads `cancelling…` with no second Cancel and its strip
+`Cancelling on worker 1…` (`QueueItem.stopping`; the Session says a
+`queue` event, state `cancelling`) — they read `running · 42 s` beside a
+Cancel button until the end. Stop workers and Stop server close the pool on the UI loop
 (1.2 s with one Dymola worker). The pool starts one worker per item as items are submitted: with
 several workers asked for, one whose start fails at once can stop the pool
 before a second was started. Every load of a Test page logs NiceGUI's
@@ -7586,7 +7596,8 @@ contract loses the `Job` outcome and gains `Enqueue`.
 
 **Consequences.** A plug-in capability that returned a `Job` has no
 outcome to return: the tool pre-dates any outside plug-in. `status.json`
-may now carry a row with `status: "cancelled"`. The CLI is unchanged.
+may now carry a row with `status: "cancelled"`. The `queue` event has a
+state `cancelling`. The CLI is unchanged.
 
 ## D151 — Live results: the running test's page reads its growing result file (2026-10-08)
 

@@ -440,6 +440,29 @@ class TestCancel:
         assert pool.cancel(b) is False
         assert events.of("Lib.A") == ["start", "end"]
 
+    def test_an_item_asked_to_stop_says_so_until_it_ends(self, stub, monkeypatch):
+        """A cancel is a request. A simulation that takes it — and one that
+        never looks at it, which runs on until its worker's grace is over
+        (Dymola, a model blocked in an external call: about 11 s) — is
+        still RUNNING meanwhile: the item says a stop was asked, for the
+        queue's row to read."""
+        backend, pool, _ = stub
+        # The tool says it will come back on its own, and takes its time.
+        monkeypatch.setattr(_FakeWorker, "cancel_running", lambda self, key: True)
+        backend.gate("Lib.A")
+        a = pool.submit(_t("A"))
+        assert a.stopping is False  # waiting
+        _wait_until(lambda: ("Lib.A", 0) in backend.ran)
+        assert a.state is ItemState.RUNNING and a.stopping is False
+
+        assert pool.cancel(a) is True
+        time.sleep(0.3)  # well past a watchdog tick: it is still running
+        assert a.state is ItemState.RUNNING and a.stopping is True
+
+        backend.gates["Lib.A"].set()
+        _wait_until(lambda: _ended(a))
+        assert a.stopping is False
+
     def test_a_cancelled_item_is_recorded_cancelled_never_failed(self, stub):
         backend, pool, _ = stub
         backend.gate("Lib.A")

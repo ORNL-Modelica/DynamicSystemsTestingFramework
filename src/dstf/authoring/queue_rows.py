@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 #: What a row may offer, by the name the panel draws it under.
 REMOVE, CANCEL, OPEN = "remove", "cancel", "open"
 
+#: A running row a stop was asked of, until it ends.
+CANCELLING = "cancelling…"
+
 #: How much of the stopped pool's message the header shows; the rest is its
 #: tooltip.
 INDICATOR_WIDTH = 48
@@ -42,8 +45,9 @@ class QueueRow:
     #: ``running · 42 s`` (``running · t = 42 / 100 s`` where the backend
     #: has a live view, D151; ``running · worker restarting`` while its
     #: worker is brought back after a death),
-    #: ``finished · 9 s``, ``failed: <the backend's message, one line>``,
-    #: ``cancelled``.
+    #: ``cancelling…`` once a stop was asked of a running one and until it
+    #: ends, ``finished · 9 s``, ``failed: <the backend's message, one
+    #: line>``, ``cancelled``.
     words: str
     #: The badge: QUEUED / RUNNING while the queue holds it, the test's
     #: verdict once it finished, SIM_FAIL for a run that failed, CANCELLED,
@@ -51,6 +55,9 @@ class QueueRow:
     status: str
     #: The worker it runs on, from 1, while it runs.
     worker: int | None = None
+    #: A running item a stop was asked of (`QueueItem.stopping`): it
+    #: offers no second Cancel, and says so until it ends.
+    cancelling: bool = False
     #: The items ahead of a waiting one: running, or waiting before it.
     ahead: int = 0
     #: Seconds since it started while it runs; its run's length once ended.
@@ -162,6 +169,13 @@ def _row(
             "actions": () if why is not None else (CANCEL,),
             "cancel_why": why,
         }
+        if item.stopping:
+            # Cancel was taken and the simulation has not ended: one that
+            # does not look at the request runs on for its worker's grace
+            # (Dymola, a model blocked in an external call: about 11 s),
+            # and `running · 42 s` beside a Cancel button said the click
+            # went nowhere.
+            fields.update(words=CANCELLING, cancelling=True, actions=())
     else:
         ran = (
             item.ended_at - item.started_at

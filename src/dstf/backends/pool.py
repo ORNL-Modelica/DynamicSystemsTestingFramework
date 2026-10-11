@@ -94,6 +94,15 @@ class QueueItem:
     def model_id(self) -> str:
         return self.test.model_id
 
+    @property
+    def stopping(self) -> bool:
+        """A stop was asked of it and it has not ended: still RUNNING, on
+        its way to CANCELLED (or FINISHED, where its simulation got there
+        first). For as long as the backend takes — a simulation that does
+        not look at the request runs on until its worker's grace is over
+        and the worker is killed."""
+        return self._stop_asked and self.state is ItemState.RUNNING
+
 
 class ItemPath(Protocol):
     """What happens around one item's run, on disk."""

@@ -540,6 +540,44 @@ async def test_a_row_s_remove_or_cancel_that_missed_says_so(shell):
         assert [i.model_id for i in shell.session.queue] == [A, B]
 
 
+async def test_a_cancel_under_way_is_said_on_the_row_and_on_the_strip(shell):
+    """Cancel was clicked, the simulation has not ended (a backend may take
+    its worker's whole grace): the row reads `cancelling…` and offers no
+    second Cancel, and the test's strip says it too — both went on reading
+    "running", with the button still there."""
+    async with user_simulation(root=shell.index) as user:
+        shell.mount()
+        await _open(user)
+        item = _hold(shell, A, ItemState.RUNNING)
+        assert _one(user, f"queue-words:{A}").text.startswith("running · ")
+        assert _has(user, f"queue-cancel:{A}")
+
+        item._stop_asked = True  # the pool's `cancel`, on a run that goes on
+        shell.session._emit("queue", state="cancelling", models={A})
+        shell.tick()
+        assert _one(user, f"queue-words:{A}").text == "cancelling… · worker 1"
+        assert not _has(user, f"queue-cancel:{A}")
+        assert _one(user, f"queue-status:{A}").text == "RUNNING"
+        assert _one(user, "queue-indicator").text == "1 running"
+        # the second's poll keeps the word: it is not "running · 43 s" again
+        shell.session._emit("poll")
+        shell.tick()
+        assert _one(user, f"queue-words:{A}").text == "cancelling… · worker 1"
+
+        await _open(user, f"/test/{A}")
+        await _settled(lambda: _has(user, "strip-text"))
+        (page,) = [
+            p
+            for p in shell.pages
+            if isinstance(p, TestPage) and p.client is user.client
+        ]
+        await _settled(lambda: page.strip.text.text != "")
+        assert page.strip.text.text == "Cancelling on worker 1…"
+        assert not page.strip.cancel.visible
+        page._tick()  # the strip's own clock
+        assert page.strip.text.text == "Cancelling on worker 1…"
+
+
 async def test_the_strip_s_remove_or_cancel_that_missed_says_so(shell):
     """The strip's own Remove and Cancel, on a test whose item moved on
     since the strip was painted."""

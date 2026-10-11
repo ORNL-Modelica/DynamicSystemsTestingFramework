@@ -139,10 +139,14 @@ class StatusStrip:
         self.text.set_text(strip.sentence)
 
     def _show_queue_buttons(self, situation: Situation | None) -> None:
-        why = self.page.shell.session.cannot_cancel
+        session = self.page.shell.session
+        why = session.cannot_cancel
         running = situation is Situation.RUNNING
+        # A stop already asked of it: no second Cancel while it ends.
+        item = session.queue_item(self.page.model_id)
+        stopping = item is not None and item.stopping
         self.remove.set_visibility(situation is Situation.QUEUED)
-        self.cancel.set_visibility(running and why is None)
+        self.cancel.set_visibility(running and why is None and not stopping)
         self.cancel_why.set_text(why or "")
         self.cancel_why.set_visibility(running and why is not None)
 
