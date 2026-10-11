@@ -456,7 +456,9 @@ def test_the_rows_scroll_inside_the_panel_above_the_table(tmp_path, playwright_b
         rows = page.locator(".dstf-queue-rows")
         held = rows.evaluate(read)
         assert held["client"] <= 0.34 * 600 + 1 < held["scroll"], held
-        assert held["lefts"] == 1, held  # one column, not wrapped into two
+        # Held, they are still one column: a NiceGUI column does not wrap
+        # (the `no-wrap` it carried for this did nothing, and is gone).
+        assert held["lefts"] == 1, held
         grid = page.locator(".dstf-suite-grid").bounding_box()
         assert grid is not None and grid["y"] < 600 - 100, grid
         # The last row is reached by scrolling the rows, not the page.

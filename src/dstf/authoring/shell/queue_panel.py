@@ -181,12 +181,8 @@ class QueuePanel:
             self.starting = (
                 ui.column().classes("dstf-queue-starting w-full gap-0")
             ).mark("queue-starting")
-            # One column whatever its height: a Quasar column wraps, and a
-            # held one (the stylesheet's cap) would start a second.
             self.rows = (
-                ui.column()
-                .classes("dstf-queue-rows w-full gap-0 no-wrap")
-                .mark("queue-rows")
+                ui.column().classes("dstf-queue-rows w-full gap-0").mark("queue-rows")
             )
             self.notes = ui.column().classes("dstf-queue-notes w-full gap-1")
         # The rows' capability buttons open ONE dialog, the panel's — a
