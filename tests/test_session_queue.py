@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -661,6 +662,52 @@ def test_status_json_is_written_when_the_queue_drains_for_the_items_that_ran(h):
     assert [(t["model_id"], t["status"]) for t in written["tests"]] == [
         (D, "cancelled")
     ]
+
+
+def test_the_drain_s_page_links_no_wiped_report_and_says_how_long_it_ran(
+    h, monkeypatch
+):
+    """A run wipes its test's report dir. The page the drain wrote still
+    linked the test's name to `reports/<dir>/interactive.html` — gone —
+    and its header read "last run: 1 test in 0.0s" whatever the run took:
+    the elapsed was the time it took to WRITE the snapshot."""
+    from dstf.cli import main
+
+    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: 0)
+    main(["--config", str(h.cfg), "compare", "--work-dir", str(h.work), "--report"])
+    page = h.work / "dashboard.html"
+
+    def report_links() -> dict[str, str]:
+        html = page.read_text(encoding="utf-8")
+        cells = re.findall(r'<td class="model-cell" title="([^"]+)">(.*?)</td>', html)
+        return {
+            model: found.group(1)
+            for model, cell in cells
+            if (found := re.search(r'href="(reports/[^"]+)"', cell))
+        }
+
+    before = report_links()
+    assert {A, D} <= set(before) and (h.work / before[D]).exists()
+
+    h.hold(D)
+    (item,) = h.session.enqueue([D])
+    h.running(D)
+    time.sleep(0.5)
+    h.release(D)
+    h.ended(D)
+    assert h.session.wait_background(30)
+
+    after = report_links()
+    assert D not in after and not (h.work / before[D]).exists()
+    assert after[A] == before[A]  # not run again: its page is still there
+    assert all((h.work / link).exists() for link in after.values())
+    # the page says the wall time of the items it reports
+    wall = item.ended_at - item.started_at
+    written = json.loads((h.work / "status.json").read_text(encoding="utf-8"))
+    assert wall >= 0.5 and written["elapsed"] == pytest.approx(wall)
+    assert written["start_wall"] == item.started_at
+    html = page.read_text(encoding="utf-8")
+    assert f"last run: 1 test in {wall:.1f}s" in html
 
 
 def test_the_drain_writes_both_its_pages_in_the_project_s_theme(tmp_path):

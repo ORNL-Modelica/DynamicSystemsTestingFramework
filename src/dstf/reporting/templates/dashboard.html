@@ -223,7 +223,7 @@ body.has-selection { padding-bottom: 5em; }
 {% for c in columns %}{% set text = c.text(t) %}
 {%- if c.key == 'test' %}  <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'ref' %}  <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
-{% elif c.key == 'model' %}  <td class="model-cell" title="{{ t.model_id }}">{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'model' %}  <td class="model-cell" title="{{ t.model_id }}">{% if t.report_page %}<a href="reports/{{ t.report_page }}/interactive.html">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'status' %}  <td><span class="status-badge {{ t.status_class }}">{{ text }}</span></td>
 {% elif c.key == 'resolution' %}  <td>{% if t.resolution == 'mixed' %}<span title="{% for k, v in t.field_sources.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}">{{ text }}</span>{% elif t.resolution %}<span title="all fields from {{ text }}">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'elapsed' %}  <td class="elapsed-cell">{{ text }}</td>

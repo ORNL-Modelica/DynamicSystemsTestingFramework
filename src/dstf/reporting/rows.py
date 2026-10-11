@@ -53,7 +53,14 @@ class TestRow:
     ref_id: str | None = None
     #: file:// URI of the reference JSON
     ref_file: str | None = None
+    #: The name a run gives this test's directory under ``reports/`` before
+    #: it starts — where its page's sidecar is looked for, not a page.
     report_dir: str | None = None
+    #: The directory under ``reports/`` of a report page the writer of this
+    #: row READ (its sidecar, fresh): what the Model cell links to. None
+    #: where it read none — a run wipes its tests' report dirs, and only
+    #: ``--report`` writes them again.
+    report_page: str | None = None
     field_sources: Mapping[str, str] = field(default_factory=dict)
     worker_id: int | None = None
     elapsed: float | None = None

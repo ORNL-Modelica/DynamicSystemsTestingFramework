@@ -992,6 +992,76 @@ def test_the_cells_keep_their_markup(tmp_path):
     assert '<td class="detail-cell" title="a message">a message</td>' in a
 
 
+def _model_cell(tr: str) -> str:
+    return re.search(r'<td class="model-cell".*?</td>', tr, flags=re.S).group(0)
+
+
+def test_a_row_links_to_a_report_page_only_where_this_page_read_one(tmp_path):
+    """The Model cell linked wherever a row had a report DIR — the name a
+    page would have. A run wipes its tests' report dirs and only `--report`
+    writes them again, so after a plain `run` or `compare`, and for every
+    test the tool's queue ran, the link opened nothing. A row links to the
+    page whose sidecar this write read, fresh."""
+    a, b = _body_rows(_two_row_final_page(tmp_path))
+    assert '<a href="reports/test_0001/interactive.html">Lib.A</a>' in _model_cell(a)
+    assert _model_cell(b) == '<td class="model-cell" title="Lib.B">Lib.B</td>'
+
+
+def _one_row(tmp_path, *, report_dir: str, start_wall: float = 1.0) -> None:
+    _write_status_json(
+        tmp_path,
+        {
+            "total": 1,
+            "elapsed": 5.0,
+            "counts": {"failed": 1},
+            "start_wall": start_wall,
+            "tests": [
+                {
+                    "test_key": "test_0001",
+                    "model_id": "Lib.A",
+                    "status": "failed",
+                    "report_dir": report_dir,
+                }
+            ],
+        },
+    )
+
+
+def test_a_report_page_from_before_this_run_is_not_linked(tmp_path, capsys):
+    _one_row(tmp_path, report_dir="test_0001", start_wall=10.0)
+    _write_sidecar(tmp_path, {"model_id": "Lib.A", "written_at": 2.0, "status": "PASS"})
+    render_final(tmp_path)
+    (row,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert "interactive.html" not in row
+    assert "stale sidecar" in capsys.readouterr().err
+
+
+def test_the_page_linked_is_where_the_suite_wrote_it(tmp_path):
+    """A run names a baselined test's report dir `ref_NNNN` before it
+    starts; the suite writes a test it could not compare — its simulation
+    failed — under its test key. The link went to the first, the page was
+    in the second, and its numbers never reached the row."""
+    _one_row(tmp_path, report_dir="ref_0007")
+    _write_sidecar(
+        tmp_path,
+        {"model_id": "Lib.A", "written_at": 2.0, "status": "SIM_FAIL", "n_warnings": 4},
+    )
+    render_final(tmp_path)
+    (row,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert '<a href="reports/test_0001/interactive.html">Lib.A</a>' in _model_cell(row)
+    assert '<span class="warn">4</span>' in row
+
+
+def test_a_live_page_links_no_report_page(tmp_path):
+    """While a run is under way its tests' report dirs are wiped, and the
+    pages come at its end."""
+    _one_row(tmp_path, report_dir="test_0001")
+    _write_sidecar(tmp_path, {"model_id": "Lib.A", "written_at": 2.0, "status": "PASS"})
+    render_live(tmp_path)
+    (row,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert _model_cell(row) == '<td class="model-cell" title="Lib.A">Lib.A</td>'
+
+
 def test_every_column_but_status_has_a_typed_filter(tmp_path):
     from dstf.reporting.rows import COLUMNS
 

@@ -339,24 +339,38 @@ def build_dashboard_context(
     rows = []
     for row, start_wall, anchor in base:
         before = row
-        if mode == "final" and row.report_dir:
-            sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
-            if sidecar:
-                # Sidecars written before the summary block carry the
-                # fields at the top level.
-                row = enrich_row(
-                    row,
-                    sidecar.get("summary", sidecar),
-                    start_wall=start_wall,
-                    anchor=anchor,
-                )
+        comp = by_model.get(row.model_id)
+        # Where this test's report page may be. The suite writes it under
+        # the baseline it was compared against (``ref_NNNN``), else under
+        # its test key — a failed simulation's too. The name its RUN gave
+        # it is a guess made before either was known: a test accepted
+        # since has a baseline its run did not name.
+        compared = f"ref_{comp.test_id}" if comp is not None and comp.test_id else None
+        places = dict.fromkeys(d for d in (compared, row.report_dir, row.test_key) if d)
+        for place in places if mode == "final" else ():
+            sidecar = _read_comparison_sidecar(work_dir, place)
+            if not sidecar:
+                continue
+            # Sidecars written before the summary block carry the
+            # fields at the top level.
+            row = enrich_row(
+                row,
+                sidecar.get("summary", sidecar),
+                start_wall=start_wall,
+                anchor=anchor,
+            )
+            if row is not before:
+                # A sidecar of THIS run's verdict was read: the page it
+                # was written beside is there to open. Nothing else says
+                # a page exists — a run wipes its tests' report dirs.
+                row = replace(row, report_page=place)
+                break
         # enrich_row hands back the same row when a guard refuses the
         # sidecar. With no fresh sidecar (a run without --report, or a stale
         # one), the walls are the ones the run kept beside the result
         # (storage.run_stats).
         if mode == "final" and row is before and row.test_key:
             row = _with_kept_timing(work_dir, row)
-        comp = by_model.get(row.model_id)
         if comp is not None:
             row = _with_verdict(row, comp)
         result = (results or {}).get(row.model_id) if mode == "final" else None

@@ -7479,7 +7479,17 @@ the tool.
    per item: both are one run's snapshot. The runs card and its one-second
    `status.json` read are deleted; the shell's one-second `poll` event
    remains only as the clock a running row's seconds move by, and reads no
-   file.
+   file. The snapshot's `elapsed` and `start_wall` are its items' — first
+   start to last end; made after the run, the reporter counted its own
+   0.0 s. A row of the page links to a report page only where the page's
+   writer read that page's sidecar, fresh (`TestRow.report_page`): a run
+   wipes its test's report dir, so a test the queue ran has no page until
+   a `--report` writes one, and its name linked to nothing — as every
+   row's did after a plain `dstf run` or `compare`. The sidecar is looked
+   for where the suite writes it (the baseline compared against, else
+   the test key), not only under the name the run guessed. Such a row's
+   Reference is its id as text: the link's target comes from the sidecar,
+   and the page's writer is handed no reference directory.
 10. *Stop server asks while the queue holds a test* ("3 tests are queued
     or running — stop anyway?"), then removes the waiting ones, stops the
     running ones and closes the pool; NiceGUI's shutdown hook closes it too

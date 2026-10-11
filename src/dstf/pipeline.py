@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -335,10 +336,15 @@ class ItemRun:
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
         rows = []
+        started: list[float] = []
+        ended: list[float] = []
         for item in items:
             rr = item.run_result
             if rr is None or item.test_key is None:
                 continue
+            if item.started_at is not None and item.ended_at is not None:
+                started.append(item.started_at)
+                ended.append(item.ended_at)
             if rr.cancelled:
                 status = "cancelled"
             elif rr.timed_out:
@@ -367,7 +373,14 @@ class ItemRun:
             metadata=self.backend._build_run_metadata(**self.backend.run_versions()),
             theme=self.config.theme,
         )
-        progress.load(rows)
+        # The wall time of the items reported: from the first one's start
+        # to the last one's end.
+        now = time.time()
+        progress.load(
+            rows,
+            started_wall=min(started, default=now),
+            ended_wall=max(ended, default=now),
+        )
         progress.finalize()
 
 

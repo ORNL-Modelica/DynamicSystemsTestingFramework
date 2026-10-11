@@ -81,6 +81,8 @@ class ProgressReporter:
         # meta-refresh ticks (otherwise the header elapsed appears frozen at
         # whatever it was when the last test state-change wrote the snapshot).
         self._start_wall = time.time()
+        # A finished run's own wall time, where its rows were `load`ed.
+        self._loaded_elapsed: float | None = None
         # Set by finalize: the run is over, and nothing writes again.
         self._closed = False
 
@@ -151,12 +153,19 @@ class ProgressReporter:
                 ts.detail = detail
         self._write()
 
-    def load(self, tests: list[TestStatus]) -> None:
+    def load(
+        self, tests: list[TestStatus], *, started_wall: float, ended_wall: float
+    ) -> None:
         """Take rows that are already final, whole, with no write per row —
         a queue that drained reports itself in one snapshot. ``finalize``
-        writes it."""
+        writes it. The run they report began at ``started_wall`` and ended
+        at ``ended_wall`` (epoch seconds): its snapshot's ``start_wall``
+        and ``elapsed`` are theirs, not this reporter's own — it was made
+        after the run, and counted 0.0 s for one of a minute."""
         with self._lock:
             self._tests = {t.test_key: t for t in tests}
+            self._start_wall = started_wall
+            self._loaded_elapsed = max(0.0, ended_wall - started_wall)
 
     def _snapshot(self) -> dict:
         with self._lock:
@@ -165,7 +174,11 @@ class ProgressReporter:
         counts = {"queued": 0, "running": 0, "passed": 0, "failed": 0, "timed_out": 0}
         for t in tests:
             counts[t["status"]] = counts.get(t["status"], 0) + 1
-        elapsed = time.monotonic() - self._start_time
+        elapsed = (
+            time.monotonic() - self._start_time
+            if self._loaded_elapsed is None
+            else self._loaded_elapsed
+        )
         done = counts["passed"] + counts["failed"] + counts["timed_out"]
         eta = None
         if done > 0 and done < self.total:
