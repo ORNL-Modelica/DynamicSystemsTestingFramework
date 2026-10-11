@@ -249,7 +249,7 @@ class TestAnUnevenToleranceSaysWhichSide:
             "Point at t=5: error +5.000e-01 vs tolerance −5.000e-01 / +2.500e-01 → FAIL"
         )
         assert self._points(act, 0.5, rows) == (
-            "Final value error 5.000e-01 vs tolerance 5.000e-01 → PASS"
+            "Largest point error 5.000e-01 vs tolerance 5.000e-01 → PASS"
         )
 
     def test_the_signed_keys_are_recorded_for_uneven_sides_only(self):
@@ -540,8 +540,23 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
     def test_points_equal_sides_say_what_a_number_said(self):
         for tolerance in (0.03, {"lower": 0.03, "upper": 0.03}):
             vc, crit = self._points({5: +0.04, 8: -0.02}, tolerance)
-            assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+            assert crit == "Largest point error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
             assert "worst_signed_delta" not in vc.diagnostics
+
+    def test_declared_rows_never_say_final_value(self):
+        """The sentence of a leaf with NO rows — the final value alone is
+        scored — was said of declared rows whose worst deferred to an equal
+        tolerance: an error at t=0.5, called the final value's. Where it is
+        stays in the details."""
+        vc, crit = self._points({5: +0.04, 8: -0.02}, 0.03)
+        assert crit == "Largest point error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+        # ... the verdict and the score as they were: the largest |Δ|.
+        assert not vc.passed and vc.max_abs_error == pytest.approx(0.04)
+        assert vc.max_abs_error_time == pytest.approx(0.5)
+        assert ("worst delta", "4.000000e-02 at t=0.5") in summarize(vc).details
+        vc, crit = self._points({5: +0.01, 8: -0.02}, 0.03)
+        assert crit == "Largest point error 2.000e-02 vs tolerance 3.000e-02 → PASS"
+        assert vc.passed
 
     REF = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 10.0])
 
@@ -873,9 +888,9 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert crit == "Point at t=0.5: error 2.000e-03 vs tolerance 1.000e-03 → FAIL"
 
     @pytest.mark.parametrize("leaf", [0.03, {"lower": 0.03, "upper": 0.03}])
-    def test_rows_deferring_to_an_equal_leaf_read_as_they_did(self, leaf):
+    def test_rows_deferring_to_an_equal_leaf_record_what_they_did(self, leaf):
         vc, crit = self._points(leaf, [(5, +0.04, {}), (8, -0.02, {})])
-        assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert crit == "Largest point error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
     def test_a_number_leaf_and_a_row_with_its_own_number(self):
@@ -891,10 +906,10 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert vc.diagnostics["worst_sides"] == 0.001
         assert vc.diagnostics["worst_point_time"] == 0.5
 
-    def test_a_row_whose_own_number_is_the_leafs_reads_as_it_did(self):
-        """Its sides ARE the leaf's: nothing to name."""
+    def test_a_row_whose_own_number_is_the_leafs_records_what_it_did(self):
+        """Its sides ARE the leaf's: no key of its own is recorded."""
         vc, crit = self._points(0.03, [(5, +0.04, {"tolerance": 0.03}), (8, -0.02, {})])
-        assert crit == "Final value error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert crit == "Largest point error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
     def test_a_number_row_that_is_not_the_reported_one_changes_nothing(self):
@@ -902,7 +917,7 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         vc, crit = self._points(
             0.03, [(5, +0.0005, {"tolerance": 0.001}), (8, -0.05, {})]
         )
-        assert crit == "Final value error 5.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert crit == "Largest point error 5.000e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
     def test_a_pair_row_that_is_not_the_reported_one_changes_nothing(self):
@@ -910,7 +925,7 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         vc, crit = self._points(
             0.03, [(5, +0.04, {"tolerance": self.PAIR}), (8, -0.05, {})]
         )
-        assert crit == "Final value error 5.000e-02 vs tolerance 3.000e-02 → FAIL"
+        assert crit == "Largest point error 5.000e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
     def test_all_inside_the_largest_delta_is_the_pair_rows(self):
@@ -979,7 +994,7 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         vc, crit = self._points(
             0.03, [(5, +0.052, {}), (8, +0.022, {"tolerance": 0.001})]
         )
-        assert crit == "Final value error 5.200e-02 vs tolerance 3.000e-02 → FAIL"
+        assert crit == "Largest point error 5.200e-02 vs tolerance 3.000e-02 → FAIL"
         assert set(vc.diagnostics) == self.POINT_KEYS
 
     def test_a_relative_rows_distance_is_on_its_scaled_band(self):

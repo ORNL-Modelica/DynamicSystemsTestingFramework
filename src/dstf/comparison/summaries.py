@@ -150,8 +150,13 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
             error = signed(diag.get("worst_signed_delta", vc.max_abs_error))
         else:
             error = signed(vc.actual_final - vc.reference_final)
+    # What is scored: the final value where no row is declared, else the
+    # largest |Δ| of the declared ones — which was said of the final value
+    # too, though no row need be it. Where it is, is in the details (`worst
+    # delta`): its time is a sample's, inside a row's time box.
+    what = "Largest point" if "scored_points" in diag else "Final value"
     criterion = (
-        f"Final value error {error} vs tolerance "
+        f"{what} error {error} vs tolerance "
         f"{sides_text(vc.tolerance_used)} → {_verdict(vc)}"
     )
     # Among declared points, the reported one's sides are not the leaf's
