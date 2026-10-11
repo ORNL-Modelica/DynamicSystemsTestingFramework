@@ -106,7 +106,7 @@ def test_a_comparison_beats_an_earlier_scoring_failure(session):
 def test_waiting_before_a_comparison(session):
     del session.comparisons[C]
     row = suite_row(session, C)
-    assert row.status is None and row.waiting and row.status_text == "…"
+    assert row.status is None and row.waiting and row.status_text == "SCORING"
 
 
 def test_rows_in_the_given_order(session):

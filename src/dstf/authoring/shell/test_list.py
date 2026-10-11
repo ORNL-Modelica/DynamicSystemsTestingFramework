@@ -14,7 +14,7 @@ from nicegui import ui
 from nicegui.elements.mixins.text_element import TextElement
 
 from ...reporting.rows import unsaved_text
-from ...reporting.status import SCORING_FAILED, classify_with_class
+from ...reporting.status import SCORING_CLASS, SCORING_FAILED, classify_with_class
 from ...reporting.theme import STATUS
 
 if TYPE_CHECKING:
@@ -151,7 +151,7 @@ class TestList:
         elif model_id in self.shell.load.failed_models:
             verdict, css = SCORING_FAILED, "sim-fail"
         else:
-            verdict, css = "", "queued"
+            verdict, css = "", SCORING_CLASS
         row.verdict = verdict
         row.pending = sum(
             1 for op in self.shell.session.spec.pending if op.model_id == model_id

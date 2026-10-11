@@ -8,8 +8,8 @@
   // Per project (the page sets it before this script): two tabs on one
   // project share a view, two projects do not.
   const KEY = window.DstfSuiteKey || 'dstf-suite-v1';
-  // The count pills, [key, word] (suite_grid.py's PILLS): the words are
-  // reporting.status's, so this script spells none of them.
+  // The count pills, [key, word, passing] (suite_grid.py's PILLS): the
+  // words are reporting.status's, so this script spells none of them.
   const PILLS = window.DstfSuitePills;
   const S = {
     grouped: true, short: true, regex: false, case: false,
@@ -282,13 +282,14 @@
     host.textContent = '';
     const pills = document.createElement('span');
     pills.className = 'dstf-pills';
-    for (const [k, word] of PILLS) {
+    for (const [k, word, passing] of PILLS) {
       const n = D.counts[k] || 0;
       const on = S.pills.includes(k);
-      // The queue's two are shown while it holds such a test — and while
-      // they filter, reading 0, so a pill switched on can be switched off
-      // once the queue has emptied.
-      if ((k === 'queued' || k === 'running') && !n && !on) continue;
+      // A state a row only passes through (not scored yet, queued,
+      // running) is shown while a row is in it — and while it filters,
+      // reading 0, so a pill switched on can be switched off once the
+      // rows have moved on.
+      if (passing && !n && !on) continue;
       const b = btn('pill:' + k, 'txt:' + word + ' ' + n, (on ? 'Stop showing only ' : 'Show only ') + word, on, () => {
         const i = S.pills.indexOf(k);
         if (i >= 0) S.pills.splice(i, 1); else S.pills.push(k);

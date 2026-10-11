@@ -194,7 +194,9 @@ async def test_the_suite_page_draws_known_rows_waiting_then_the_scans(
             await _until(lambda: any(tx["add"] for tx in sent))
             assert sh.session.project is None
             (first,) = [tx for tx in sent if tx["add"]]
-            assert first["add"] == [(m, "…") for m in (A, B, C, D, G, "FakeLib.Gone")]
+            assert first["add"] == [
+                (m, "SCORING") for m in (A, B, C, D, G, "FakeLib.Gone")
+            ]
             # The tab's selection reaches rows drawn after the grid was ready.
             assert first["select"] == [D]
             slow_scan.set()
@@ -249,7 +251,11 @@ async def test_a_reopen_draws_the_known_rows_waiting(tmp_path, monkeypatch):
             assert set(initial) == {A, B, C, D, G}
             sh.session._emit("known", models=[A, D, "FakeLib.Gone"])
             sh.tick()
-            assert _final(sent, initial) == {A: "…", D: "…", "FakeLib.Gone": "…"}
+            assert _final(sent, initial) == {
+                A: "SCORING",
+                D: "SCORING",
+                "FakeLib.Gone": "SCORING",
+            }
             assert sh.session.project is not None  # the old one
     finally:
         caps._reset_for_tests()
@@ -259,7 +265,7 @@ async def test_a_reopen_draws_the_known_rows_waiting(tmp_path, monkeypatch):
 async def test_a_failed_reopen_draws_the_old_projects_rows_again(tmp_path, monkeypatch):
     """An open that fails takes back what it named (`known` with none):
     every row the grid holds reads the open project's verdict again, not
-    "…" — the `known []` event names no model, and repainting only the
+    SCORING — the `known []` event names no model, and repainting only the
     event's models left every row waiting for good."""
     pytest.importorskip("nicegui")
     from nicegui.testing.user_simulation import user_simulation
@@ -303,7 +309,7 @@ async def test_a_failed_reopen_draws_the_old_projects_rows_again(tmp_path, monke
             }
             sh.open_async()
             await _until(lambda: bool(sh.known))
-            await _until(lambda: _final(sent, initial)[A] == "…")
+            await _until(lambda: _final(sent, initial)[A] == "SCORING")
             gate.set()
             sh._open_thread.join(10)
             await _until(lambda: sh.load.error is not None)

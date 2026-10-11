@@ -25,6 +25,7 @@ from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
 from ...reporting.status import (
+    SCORING_CLASS,
     SCORING_FAILED,
     classify,
     classify_with_class,
@@ -1114,7 +1115,9 @@ class TestPage:
             return
         session = self.shell.session
         comp = session.comparisons.get(self.model_id)
-        verdict, css = classify_with_class(comp) if comp is not None else ("", "queued")
+        verdict, css = (
+            classify_with_class(comp) if comp is not None else ("", SCORING_CLASS)
+        )
         self.badge.set_text(verdict or "…")
         self.badge.style(f"background-color: var(--dstf-{css}-fill)")
         project = session.project

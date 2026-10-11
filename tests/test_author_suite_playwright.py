@@ -768,6 +768,49 @@ def _d_sleeps(seconds: float):
     return setup
 
 
+def test_rows_not_scored_yet_read_scoring_and_never_queued(
+    tmp_path, playwright_browser
+):
+    """While a project opens every row is known and none is scored. They
+    counted under the queue's pill — `QUEUED 6`, beside a header reading
+    `idle` and a panel reading `queue empty`. They read SCORING, under a
+    pill of that word that goes when the last row has its verdict."""
+    cfg, work = _two_package_project(tmp_path)
+    hold = cfg.parent / "hold-open"
+    hold.write_text("", encoding="utf-8")
+    log = tmp_path / "author.log"
+    proc, url = _start(
+        cfg, work, log, hooks=Path(__file__).with_name("slow_open_hooks.py")
+    )
+    try:
+        _wait_until_serving(url, proc, log)
+        page = playwright_browser.new_context(
+            viewport={"width": 1280, "height": 900}
+        ).new_page()
+        page.goto(url)
+        expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        badges = page.locator(".dstf-badge-cell")
+        expect(badges.filter(has_text=re.compile("^SCORING$"))).to_have_count(6)
+        scoring = page.locator("button[data-pill='scoring']")
+        expect(scoring).to_have_text("SCORING 6")
+        expect(page.locator("button[data-pill='queued']")).to_have_count(0)
+        expect(page.locator("a.dstf-indicator")).to_have_text("idle")
+        # the neutral grey, as a queued row's is
+        assert badges.first.evaluate("e => getComputedStyle(e).backgroundColor") == (
+            "rgb(136, 136, 136)"
+        )
+
+        hold.unlink()
+        expect(badges.filter(has_text="PASS")).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        expect(badges.filter(has_text="SCORING")).to_have_count(0)
+        expect(scoring).to_have_count(0)
+        expect(page.locator("button[data-pill='queued']")).to_have_count(0)
+    finally:
+        hold.unlink(missing_ok=True)
+        proc.terminate()
+        proc.wait(10)
+
+
 def test_a_running_pill_that_is_on_stays_until_switched_off(
     tmp_path, playwright_browser
 ):

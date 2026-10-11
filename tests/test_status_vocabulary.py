@@ -35,6 +35,20 @@ def test_the_word_a_person_reads():
     assert st.NOT_RUN == st.STATUS_LABELS[st.NOT_RUN] == "NOT RUN"
 
 
+def test_scoring_is_the_tools_word_for_a_test_it_has_not_scored_yet():
+    """Not QUEUED: that is a test in the simulation queue (D150), and a
+    waiting test of a CLI run. SCORING has its own class in the same
+    neutral grey, is no status of the classifier's, and has no pill on the
+    dashboard — no status.json row says it."""
+    from dstf.reporting import theme
+
+    assert (st.SCORING, st.SCORING_CLASS) == ("SCORING", "scoring")
+    assert st.SCORING not in st.STATUS_ORDER and st.SCORING not in st.PILL_STATUSES
+    assert st.SCORING_CLASS not in st.STATUS_CLASSES.values()
+    assert theme.STATUS["scoring"] == theme.STATUS["queued"]
+    assert "scoring" in theme.status_colours("dark")
+
+
 def test_a_live_state_before_any_comparison():
     # status.json's words; "passed"/"failed" there mean the SIMULATION ran
     # or did not, not a verdict, so they are not PASS/FAIL

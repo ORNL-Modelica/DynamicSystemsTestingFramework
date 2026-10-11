@@ -7562,6 +7562,17 @@ NiceGUI's shutdown hook), and after a SIGKILL nothing is left to. A row
 in the panel follows its test's CURRENT state, not its own run's: an old
 `cancelled` row offers Accept once a later run of that test has finished.
 
+**QUEUED means the queue** (2026-10-11). A Suite row the Session had not
+scored yet — every row while a project opens — read `…` and wore the
+`queued` class, so the pills said `QUEUED 331`, counting down, beside a
+header reading `idle` and a panel reading `queue empty`. Such a row reads
+`SCORING` (`reporting.status.SCORING`, class `scoring`: the neutral grey
+under a third name) and has a pill of that word, drawn only while a row
+counts under it, as QUEUED's and RUNNING's are — which the table's
+`PILLS` now says, not the script. The Tests drawer has no pill for it and
+its badge still reads `…`. On the dashboard of a CLI run QUEUED stays: a
+waiting test there IS queued for simulation.
+
 **What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
 refusal of Save, Discard and Reload while one runs. D129's capability
 contract loses the `Job` outcome and gains `Enqueue`.

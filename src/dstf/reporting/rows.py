@@ -22,6 +22,8 @@ from .context_builder import worst_finite_score
 from .status import (
     CANCELLED,
     LIVE_STATES,
+    SCORING,
+    SCORING_CLASS,
     STATUS_CLASSES,
     STATUS_LABELS,
     STATUS_ORDER,
@@ -36,10 +38,6 @@ SIMULATED = "SIMULATED"
 
 #: The class that row is styled with: the theme's "no verdict yet" token.
 PENDING_CLASS = "pending"
-
-#: The word and class of a tool row the Session has not scored yet.
-WAITING = "…"
-WAITING_CLASS = "queued"
 
 
 @dataclass(frozen=True)
@@ -87,13 +85,13 @@ class TestRow:
     def status_text(self) -> str:
         if self.status:
             return STATUS_LABELS[self.status]
-        return WAITING if self.waiting else SIMULATED
+        return SCORING if self.waiting else SIMULATED
 
     @property
     def status_class(self) -> str:
         if self.status:
             return STATUS_CLASSES[self.status]
-        return WAITING_CLASS if self.waiting else PENDING_CLASS
+        return SCORING_CLASS if self.waiting else PENDING_CLASS
 
     @property
     def sim_source(self) -> Literal["wall", "cpu"] | None:

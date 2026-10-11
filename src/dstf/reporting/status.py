@@ -72,6 +72,16 @@ CANCELLED = "CANCELLED"
 #: comparison to classify — and the Tests drawer counts it under SIM_FAIL.
 SCORING_FAILED = "scoring failed"
 
+#: What the tool says for a test its Session has not scored yet — every
+#: row while a project opens — and the class it wears: the neutral grey,
+#: under a name of its own. NOT ``QUEUED``: since D150 that word is a test
+#: in the simulation queue (and a waiting test of a CLI run), and a Suite
+#: pill reading ``QUEUED 331`` beside a header reading ``idle`` said two
+#: things at once. No status of the classifier's, and no status.json row
+#: says it: the dashboard has no pill for it.
+SCORING = "SCORING"
+SCORING_CLASS = "scoring"
+
 #: Every status, in the order a sort by status uses.
 STATUS_ORDER = (
     QUEUED,

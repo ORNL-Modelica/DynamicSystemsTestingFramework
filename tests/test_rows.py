@@ -103,8 +103,15 @@ def test_the_edits_column_is_the_tools_alone():
 
 
 def test_a_row_waiting_for_the_tools_verdict():
+    """It reads SCORING, under its own class: it read `…` under QUEUED's,
+    so while a project opened the Suite's pill said `QUEUED 331` with no
+    test in the simulation queue — since D150 that word means the queue."""
+    from dstf.reporting.status import QUEUED
+
     row = TestRow(model_id="A", waiting=True)
-    assert row.status_text == "…" and row.status_class == "queued"
+    assert row.status_text == "SCORING" and row.status_class == "scoring"
+    queued = TestRow(model_id="A", status=QUEUED)
+    assert queued.status_text == "QUEUED" and queued.status_class == "queued"
     # SIMULATED stays the dashboard's word for a simulated, unscored live row.
     assert TestRow(model_id="A").status_text == "SIMULATED"
 

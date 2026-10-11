@@ -29,6 +29,8 @@ from ...reporting.status import (
     PASS,
     QUEUED,
     RUNNING,
+    SCORING,
+    SCORING_CLASS,
     SIM_FAIL,
     STATUS_CLASSES,
     STATUS_LABELS,
@@ -59,19 +61,23 @@ ORDER = (*VISIBLE, "ref", "resolution", "translate", "total")
 #: dashboard's words): the Test column shows short names and filters the
 #: full one.
 FILTER_NOTE = {"model": "Reads the full test name. "}
-#: The count pills, ``[key, word]`` in the order the toolbar draws them: a
-#: status by its class (a row's ``status_class``), EDITED (a row with
-#: staged edits, whatever its status), then QUEUED and RUNNING (each drawn
-#: only while the queue holds such a test, or it filters). The words are ``reporting.status``'s: the script
-#: reads this table (``window.DstfSuitePills``) and spells none of them.
-PILLS: tuple[tuple[str, str], ...] = (
+#: The count pills, ``[key, word, passing]`` in the order the toolbar draws
+#: them: a status by its class (a row's ``status_class``), EDITED (a row
+#: with staged edits, whatever its status), then the three a row only
+#: passes through (``passing``: drawn only while a row counts under it, or
+#: it filters) — SCORING, a row not scored yet, and the queue's QUEUED and
+#: RUNNING. The words are ``reporting.status``'s: the script reads this
+#: table (``window.DstfSuitePills``) and spells none of them, nor which
+#: come and go.
+PILLS: tuple[tuple[str, str, bool], ...] = (
     *(
-        (STATUS_CLASSES[s], STATUS_LABELS[s])
+        (STATUS_CLASSES[s], STATUS_LABELS[s], False)
         for s in (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN)
     ),
-    ("edited", "EDITED"),
-    (STATUS_CLASSES[QUEUED], STATUS_LABELS[QUEUED]),
-    (STATUS_CLASSES[RUNNING], STATUS_LABELS[RUNNING]),
+    ("edited", "EDITED", False),
+    (SCORING_CLASS, SCORING, True),
+    (STATUS_CLASSES[QUEUED], STATUS_LABELS[QUEUED], True),
+    (STATUS_CLASSES[RUNNING], STATUS_LABELS[RUNNING], True),
 )
 
 

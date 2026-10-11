@@ -463,27 +463,38 @@ async def test_rows_dropped_and_named_again_in_one_tick_are_repainted(shell, sen
 def test_the_count_pills_are_the_status_tables_and_include_not_run():
     """The Suite's pills are handed to its script from Python, in the words
     of `reporting.status` (the script spells none); NOT RUN has its own
-    (D145), after NO_REF, and the queue's two — QUEUED, RUNNING — come last."""
-    from dstf.authoring.shell.suite_grid import PILLS, scripts_html
+    (D145), after NO_REF. Three come and go — each drawn only while a row
+    counts under it, which the table says too (the script named two of
+    them): SCORING, a row not scored yet, and the queue's QUEUED and
+    RUNNING. A row waiting for its verdict counted under QUEUED."""
+    from dstf.authoring.shell.suite_grid import PILLS, row_json, scripts_html
+    from dstf.reporting.rows import TestRow
 
-    assert [k for k, _ in PILLS] == [
+    assert [k for k, _, _ in PILLS] == [
         "pass",
         "fail",
         "sim-fail",
         "no-ref",
         "not-run",
         "edited",
+        "scoring",
         "queued",
         "running",
     ]
-    assert PILLS[-3:] == (
-        ("edited", "EDITED"),
-        ("queued", "QUEUED"),
-        ("running", "RUNNING"),
+    assert PILLS[-4:] == (
+        ("edited", "EDITED", False),
+        ("scoring", "SCORING", True),
+        ("queued", "QUEUED", True),
+        ("running", "RUNNING", True),
     )
-    assert dict(PILLS)["not-run"] == "NOT RUN"
-    assert 'window.DstfSuitePills = [["pass", "PASS"]' in scripts_html("k")
-    assert '["not-run", "NOT RUN"]' in scripts_html("k")
+    assert not any(passing for _, _, passing in PILLS[:5])
+    assert {k: word for k, word, _ in PILLS}["not-run"] == "NOT RUN"
+    assert 'window.DstfSuitePills = [["pass", "PASS", false]' in scripts_html("k")
+    assert '["not-run", "NOT RUN", false]' in scripts_html("k")
+    assert '["scoring", "SCORING", true]' in scripts_html("k")
+    # what the script counts a row under
+    waiting = row_json(TestRow(model_id="Lib.A", waiting=True))
+    assert (waiting["status"], waiting["status_class"]) == ("SCORING", "scoring")
 
 
 def test_the_views_storage_key_is_the_same_before_and_after_the_open(

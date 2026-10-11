@@ -100,9 +100,9 @@ def is_dark(name: str) -> bool:
     return name in DARK_THEMES
 
 
-#: The neutral grey: a live row still queued, and a test with no result
-#: (NOT RUN, D145) — one token under two classes, so a pill and a filter
-#: can still tell them apart.
+#: The neutral grey: a live row still queued, a test with no result (NOT
+#: RUN, D145) and a row the tool has not scored yet (SCORING) — one token
+#: under three classes, so a pill and a filter can still tell them apart.
 _NEUTRAL: Mapping[str, str] = MappingProxyType(
     {
         "fill": "#888888",
@@ -173,6 +173,7 @@ STATUS: Mapping[str, Mapping[str, str]] = MappingProxyType(
         ),
         "queued": _NEUTRAL,
         "not-run": _NEUTRAL,
+        "scoring": _NEUTRAL,
         "running": MappingProxyType(
             {
                 "fill": "#2196F3",
