@@ -16,6 +16,7 @@ from ..family_rows import NOT_A_FOLD, Family, Reindexed, as_one, fold_key, reind
 from ..session import no_tree_error
 from ..tree_move import path_map
 from ..tree_pointer import node_or_none
+from ..unscorable import Refused
 from .edit_tree import _family
 
 if TYPE_CHECKING:
@@ -62,17 +63,20 @@ def planned(
     (`Session.variable_names` lists both), so a member that run did not
     record is an element all the same (D142: the strip asks for a rerun).
 
-    ``ValueError`` with the sentence to show: nothing named (`EMPTY`), a
-    text that is no slice, an index the family does not have, an element
-    with a criterion of its own (`reindex`), members gone stale."""
+    `Refused` with the sentence to show — a refusal reaches the person as
+    that sentence and logs nothing; as a plain ``ValueError``, which a
+    bug's also is, each was logged with a traceback: nothing named
+    (`EMPTY`), a text that is no slice, an index the family does not have,
+    an element with a criterion of its own (`reindex`), members gone
+    stale."""
     if not text.replace(",", "").strip():
-        raise ValueError(EMPTY)
+        raise Refused(EMPTY)
     if not variables or _variables(tree, paths) != list(variables):
-        raise ValueError(NOT_A_FOLD)
+        raise Refused(NOT_A_FOLD)
     if family is None:
         family = _family(s, model_id, variables[0])
     if family is None:
-        raise ValueError(NOT_A_FOLD)
+        raise Refused(NOT_A_FOLD)
     return reindex(model_id, tree, paths, family.chosen(text))
 
 
@@ -130,7 +134,7 @@ class EditFamily:
         def plan_of(text: str) -> Reindexed:
             tree = s.tree(model_id)
             if tree is None:
-                raise ValueError(NOT_A_FOLD)
+                raise Refused(NOT_A_FOLD)
             return planned(s, model_id, tree, paths, variables, text, family)
 
         def count() -> None:

@@ -21,6 +21,7 @@ from ..discovery.patch_apply import apply_patch_to_document
 from ..figures.families import family_label, family_of, parse_slice, slice_text
 from .spec_document import PatchOp, json_equal
 from .tree_pointer import node_or_none
+from .unscorable import Refused
 
 ROOT = "/metrics"
 
@@ -210,10 +211,13 @@ class Family:
 
     def chosen(self, text: str) -> list[str]:
         """The names the Indices ``text`` chooses, by index ascending.
-        ``ValueError`` with the sentence to show: `parse_slice`'s for a
-        text that is no slice, and one naming the family's size for an
-        index it does not have."""
-        indices = parse_slice(text)
+        `Refused` — a person's own, shown and never logged — with the
+        sentence to show: `parse_slice`'s for a text that is no slice, and
+        one naming the family's size for an index it does not have."""
+        try:
+            indices = parse_slice(text)
+        except ValueError as e:
+            raise Refused(str(e)) from None
         missing = [i for i in indices if i not in self.names]
         if missing:
             n = len(self.names)
@@ -222,7 +226,7 @@ class Family:
                 if len(missing) == 1
                 else f"{slice_text(missing)} are not among them"
             )
-            raise ValueError(
+            raise Refused(
                 f"{self.label} has {n} element{'' if n == 1 else 's'}; {what}."
             )
         return [self.names[i] for i in indices]
@@ -415,7 +419,7 @@ def reindex(
     An element that already has the fold's very criterion as a leaf under
     that node gets no second one: that leaf is taken as a member. One with
     a criterion of the fold's METRIC that differs — or sits in a ``warn``
-    of its own — is not given another beside it: ``ValueError`` naming it,
+    of its own — is not given another beside it: `Refused` naming it,
     and nothing is planned. So is ``paths`` that do not name leaves under
     one node (`NOT_A_FOLD`).
 
@@ -429,7 +433,7 @@ def reindex(
         or None in parents
         or any(leaf is None or "metric" not in leaf for leaf in leaves)
     ):
-        raise ValueError(NOT_A_FOLD)
+        raise Refused(NOT_A_FOLD)
     (parent,) = parents
     siblings = (node_or_none(tree, str(parent)) or {}).get("children") or []
     template = leaves[0]
@@ -462,7 +466,7 @@ def reindex(
         indices = ",".join(
             str(fam[1]) for n in taken if (fam := family_of(n)) is not None
         )
-        raise ValueError(
+        raise Refused(
             f"{taken[0]} already has its own {metric} criterion under this group — "
             f"edit or remove that one, or leave {indices} out"
             if len(taken) == 1

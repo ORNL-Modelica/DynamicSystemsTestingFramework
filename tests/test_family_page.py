@@ -663,14 +663,22 @@ async def test_indices_down_to_one_element_opens_that_criterions_own_editor(some
         ("1:11", "pipe.T[1:10] has 10 elements; 11 is not one of them."),
         ("", "Indices is empty. To remove the criterion"),
         ("4:1", "4:1 ends before it starts."),
+        ("a", "'a' is not an index or a range"),
+        ("1:999", "pipe.T[1:10] has 10 elements"),
     ],
 )
-async def test_a_refused_indices_edit_says_why_and_stages_nothing(some, text, says):
+async def test_a_refused_indices_edit_says_why_and_stages_nothing(
+    some, text, says, caplog
+):
+    """A refusal is not an error: it is said where the typing is, and logs
+    nothing. As a plain `ValueError` — which a bug's also is — each of
+    these was logged "edit-family failed" with a traceback."""
     async with user_simulation(root=some.index) as user:
         page = await _test_page(some, user)
         _click(user, _one(user, f"family:1:{FOLD}"))
         with page.client:
             _one(user, "edit-family:indices").set_value(text)
+        caplog.clear()
         _enter(user, "edit-family:indices")
         (error,) = [
             e for e in user.find(marker="error:edit-family").elements if e.visible
@@ -679,6 +687,7 @@ async def test_a_refused_indices_edit_says_why_and_stages_nothing(some, text, sa
         assert some.session.spec.pending == []
         assert page.open == (1, FOLD)
         assert _one(user, "edit-family:indices").value == text  # what was typed stays
+        assert [r.getMessage() for r in caplog.records if r.levelname == "ERROR"] == []
 
 
 async def test_indices_as_they_are_stage_nothing(some):
