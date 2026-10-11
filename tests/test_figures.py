@@ -430,6 +430,17 @@ class TestEditableFigure:
         assert variable_figure(view)["config"]["scrollZoom"] is True
         assert variable_figure(view, editable=False)["config"] == PLOT_CONFIG
 
+    def test_the_tools_figure_shows_no_plotly_tip(self):
+        """plotly.js says "Double-click to zoom back out" in a box fixed to
+        the window's top right after a zoom — over the Test page's sticky
+        strip, on its Preview and save / Discard buttons. The double-click
+        itself is `doubleClick`'s, and stays. The report's page, which has
+        nothing there, keeps the tip."""
+        view = _handle_view()
+        config = variable_figure(view, editable=True)["config"]
+        assert config["showTips"] is False and "doubleClick" not in config
+        assert "showTips" not in variable_figure(view)["config"]
+
     def test_one_ring_per_handle_marker_and_everything_else_unchanged(self):
         view = _handle_view()
         plain = variable_figure(view)

@@ -1069,12 +1069,17 @@ def _config(editable: bool) -> dict:
     are stacked full-width down the Test page, where ``scrollZoom`` costs the
     page its wheel: one notch puts a plot under the cursor and the page never
     scrolls again, so the cards below are never drawn (measured in Chromium).
-    The report draws one figure per page and keeps it. It does not depend on
-    ``rings_for`` (decision 7): opening a criterion stays a `Plotly.react`."""
+    The report draws one figure per page and keeps it. And the tool's show
+    no tip: plotly.js says "Double-click to zoom back out" in a box fixed to
+    the window's top right after a zoom, which on the Test page is the
+    sticky strip's buttons; the double-click itself stays. It does not
+    depend on ``rings_for`` (decision 7): opening a criterion stays a
+    `Plotly.react`."""
     config: dict = dict(PLOT_CONFIG)
     if editable:
         config["edits"] = {"shapePosition": True}
         config["scrollZoom"] = False
+        config["showTips"] = False
     return config
 
 

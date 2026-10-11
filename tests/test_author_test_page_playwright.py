@@ -11443,6 +11443,10 @@ def test_a_box_zoom_parts_a_cluster_and_a_double_click_joins_it_again(
         page.wait_for_function(RANGES_MOVED, arg=was, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(400)
         assert _pending(page) == "0 pending edits"
+        # No tip from plotly.js: its "Double-click to zoom back out" box is
+        # fixed to the window's top right — on the strip's buttons. The
+        # double click below works all the same.
+        assert page.locator(".plotly-notifier .notifier-note").count() == 0
         zoomed = _areas(page)
         apart = zoomed["points/1"]["rings"][0][0] - zoomed["points/0"]["rings"][0][0]
         print("ZOOMED", apart, zoomed["points/1"]["l"] - zoomed["points/0"]["r"])
