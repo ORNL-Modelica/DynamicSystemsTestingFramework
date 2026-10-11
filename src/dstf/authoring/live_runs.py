@@ -47,6 +47,7 @@ from .live_rows import (
     Partial,
     how_ended,
     progress,
+    run_revision,
     spanned,
     stopped_marker,
 )
@@ -102,6 +103,8 @@ class _Run:
     #: Whether the backend's result file grows while the run is in progress.
     live: bool
     trace: LiveTrace
+    #: The ``uirevision`` of this run's figures, its partial result's too.
+    revision: str
     reader: LiveMatReader | None = None
     #: The names each page asked for, and the poll it last asked at.
     asked: dict[object, tuple[frozenset[str], int]] = field(default_factory=dict)
@@ -129,6 +132,7 @@ class LiveRuns:
         self._emit = emit
         self._runs: dict[str, _Run] = {}
         self._polls = 0
+        self._starts = 0
 
     # -- the Session's calls ---------------------------------------------------
 
@@ -152,12 +156,14 @@ class LiveRuns:
                 result = None  # a failed run's: it holds no variable
             if result is None:
                 result = expected_result(item.test)
+        self._starts += 1
         self._runs[model_id] = _Run(
             item=item,
             comparison=comparison,
             result=result,
             live=self._live(),
             trace=self._trace(),
+            revision=run_revision(self._starts),
         )
 
     def ended(self, item: QueueItem) -> None:
@@ -315,13 +321,14 @@ class LiveRuns:
         return run.series[name], 0
 
     def dress(self, model_id: str, figure: dict, colour: str) -> dict:
-        """``figure`` as ``model_id``'s page draws it: the time axis
-        spanning the whole run while a live view grows into it, and after
-        an unfinished run the marker where it stopped, in ``colour``."""
+        """``figure`` as ``model_id``'s page draws it: one of its run's own
+        revision, the time axis spanning the whole run while a live view
+        grows into it, and after an unfinished run the marker where it
+        stopped, in ``colour``."""
         run = self._runs.get(model_id)
         if run is None or not run.live:
             return figure
-        figure = spanned(figure, run.stop_time)
+        figure = spanned(figure, run.stop_time, run.revision)
         if run.partial is None:
             return figure
         return stopped_marker(figure, run.partial, colour)

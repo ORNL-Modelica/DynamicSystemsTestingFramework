@@ -45,10 +45,16 @@ FAILED = "Failed"
 #: The name of the shape :func:`stopped_marker` adds.
 STOPPED = "stopped"
 
-#: The ``uirevision`` of a figure :func:`spanned` over a run, in place of
-#: the figure layer's own: what the browser keeps of a plot — a zoom, the
-#: legend's choices — it keeps while this stands.
-RUN_REVISION = "run"
+
+def run_revision(number: int) -> str:
+    """The ``uirevision`` of the figures :func:`spanned` over the
+    ``number``-th run a tool started, in place of the figure layer's own:
+    what the browser keeps of a plot — a zoom, the legend's choices — it
+    keeps while this stands. One per RUN, and its partial result's too: a
+    run that follows another's partial result is another revision, as one
+    that follows a result is."""
+    return f"run {number}"
+
 
 #: Samples a :class:`LiveTrace` holds per name before it thins them: an
 #: hour of a run that writes faster than the reader serves is 7 million
@@ -267,28 +273,29 @@ def unscored_view(spec: SpecNode, texts: Mapping[str, VariableText], word: str) 
 # -- the figure ----------------------------------------------------------------------
 
 
-def spanned(figure: dict, stop_time: float | None) -> dict:
-    """``figure`` with its time axis spanning the whole run, 0 to
-    ``stop_time``, so a growing trace grows INTO the plot; as it was with
-    no stop time. The range is the same in every figure of the run, and so
-    is its ``uirevision`` (:data:`RUN_REVISION`): a zoom made while the
-    test runs survives every update, and the plot starts over — both axes,
-    not the time axis alone — when the run's first figure replaces the
-    last result's and when the next result's replaces the run's. A copy:
-    nothing is written into the figure handed in."""
-    if stop_time is None or not stop_time > 0:
-        return figure
+def spanned(figure: dict, stop_time: float | None, revision: str) -> dict:
+    """``figure`` as one of a run's: under the run's ``revision``
+    (:func:`run_revision`) in place of the figure layer's, and with its
+    time axis spanning the whole run, 0 to ``stop_time``, so a growing
+    trace grows INTO the plot — the axis stays the data's with no stop
+    time. Both are the same in every figure of the run: a zoom made while
+    the test runs survives every update, and the plot starts over — both
+    axes, not the time axis alone — when the run's first figure replaces
+    what stood there (the last result's, or another run's partial one) and
+    when the next result's replaces the run's. A copy: nothing is written
+    into the figure handed in."""
 
     def revised(value: Any) -> Any:
         if isinstance(value, dict) and value.get("uirevision") == "keep":
-            return {**value, "uirevision": RUN_REVISION}
+            return {**value, "uirevision": revision}
         return value
 
     layout: dict = {
         key: revised(value) if key[1:5] == "axis" else value
         for key, value in revised(figure["layout"]).items()
     }
-    layout["xaxis"] = {**layout.get("xaxis", {}), "range": [0.0, float(stop_time)]}
+    if stop_time is not None and stop_time > 0:
+        layout["xaxis"] = {**layout.get("xaxis", {}), "range": [0.0, float(stop_time)]}
     return {**figure, "layout": layout}
 
 

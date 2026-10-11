@@ -7574,10 +7574,14 @@ reader's row count taken from the file's size, `LiveMatReader`,
    with no page open. A page asks only for the variables of plots that are
    DRAWN (a card draws when it scrolls into view) and not hidden by Focus.
    A plot is re-sent only when the poll brought it a sample, as a
-   `Plotly.react`; the run's figures carry their own `uirevision`, so a
-   zoom and the legend's choices survive every update, and the plot starts
-   over whole at the run's first figure and at the result's (pinning the
-   time axis under the figure's one revision reset x and kept a zoom's y).
+   `Plotly.react`; each run's figures carry that run's own `uirevision`
+   (`live_rows.run_revision`, its partial result's too), so a zoom and the
+   legend's choices survive every update, and the plot starts over whole
+   at the run's first figure — whether the last result's or another run's
+   partial one stood there — and at the result's (pinning the time axis
+   under the figure's one revision reset x and kept a zoom's y; one
+   revision for every run carried a zoom made on a partial result into
+   the next run's plot).
    Samples are kept per name, dropped when the reader starts over on
    another file, held to 200,000 a name (thinned evenly past that) and
    drawn under the figure layer's cap with its own LTTB — once past the

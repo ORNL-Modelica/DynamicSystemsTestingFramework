@@ -511,6 +511,49 @@ def test_a_second_run_shows_no_sample_of_the_first(h):
     assert np.allclose(view.act_values, 7 * view.act_time)  # none of scale 1
 
 
+def _revisions(figure: dict) -> tuple:
+    """What the browser keeps a plot's zoom and legend choices under."""
+    layout = figure["layout"]
+    return tuple(layout[key].get("uirevision") for key in ("xaxis", "yaxis")) + (
+        layout.get("uirevision"),
+    )
+
+
+def test_every_run_s_figures_are_their_own_revision_of_the_plot(h):
+    """The plot starts over whole at a run's first figure, whatever stood
+    there before — the last result's or a PARTIAL one's: a zoom made on a
+    cancelled run's trace carried into the next run's. A partial result's
+    figure is its own run's revision (the same trace, stopped), and a
+    result's is the figure layer's."""
+    s = h.session
+    result = _revisions(s.plot_figure(A, 0, theme="default"))
+    assert set(result) == {"keep"}
+
+    h.steer(A, hold=7)
+    (item,) = s.enqueue([A])
+    h.running(A)
+    h.ask(A, "x")
+    h.at(A, 0.3)
+    first = _revisions(s.plot_figure(A, 0, theme="default"))
+    assert len(set(first)) == 1 and first != result
+    s.cancel(item)
+    h.ended(A)
+    assert s.partial(A) is not None
+    assert _revisions(s.plot_figure(A, 0, theme="default")) == first
+
+    h.steer(A, hold=3)
+    s.enqueue([A])
+    h.running(A)
+    h.ask(A, "x")
+    h.at(A, 0.1)
+    second = _revisions(s.plot_figure(A, 0, theme="default"))
+    assert len(set(second)) == 1 and second not in (first, result)
+
+    h.steer(A, hold=None)
+    h.ended(A)
+    assert _revisions(s.plot_figure(A, 0, theme="default")) == result
+
+
 def test_a_file_that_goes_away_under_the_reader_starts_the_trace_over(h):
     """The wipe as the reader sees it: the file removed and written again
     under a poller is another run — `gone`, then its rows from the start,

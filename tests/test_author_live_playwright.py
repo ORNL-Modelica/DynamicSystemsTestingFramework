@@ -322,6 +322,51 @@ def test_a_cancelled_run_shows_its_partial_trace_and_is_not_accepted(
         _stop(proc)
 
 
+def test_a_zoom_on_a_partial_result_does_not_hold_the_next_run_s_plot(
+    tmp_path, playwright_browser
+):
+    """The plot starts over whole at a run's first figure, after a PARTIAL
+    result too: a box zoom on a cancelled run's trace was kept under the
+    next run's figures (one revision for every run), and the new trace grew
+    outside the plot."""
+    proc, _url, page, _context, errors, cfg = _served(
+        tmp_path, playwright_browser, hooks=LIVE_HOOKS, setup=_live(hold=7)
+    )
+    try:
+        _run_and_open(page)
+        strip = page.locator(STRIP)
+        expect(strip).to_have_text(
+            "Running on worker 1 — t = 0.3 / 1 s", timeout=RUN_TIMEOUT
+        )
+        page.locator(".dstf-strip").get_by_role("button", name="Cancel").click()
+        expect(strip).to_have_text(
+            "Cancelled at t = 0.3 of 1 s — not scored", timeout=RUN_TIMEOUT
+        )
+        page.wait_for_function(f"() => !!(({PLOT})() || {{}}).stopped")
+        assert _plot(page)["xrange"] == [0.0, 1.0]
+        _box_zoom(page, (0.1, 0.3), (0.2, 0.8))
+        zoomed = _plot(page)
+        assert 0.05 < zoomed["xrange"][0] < zoomed["xrange"][1] < 0.35
+
+        steer(_examples(cfg), A, hold=3)
+        page.locator(".dstf-strip").get_by_role("button", name="Queue again").click()
+        page.locator(".q-dialog").get_by_role("button", name="Queue again").click()
+        expect(strip).to_have_text(
+            "Running on worker 1 — t = 0.1 / 1 s", timeout=RUN_TIMEOUT
+        )
+        page.wait_for_function(
+            f"() => ((({PLOT})() || {{}}).x || []).length === 3", timeout=RUN_TIMEOUT
+        )
+        live = _plot(page)
+        assert live["stopped"] is None
+        assert live["xrange"] == [0.0, 1.0], "the partial result's zoom was kept"
+        assert live["yrange"] != zoomed["yrange"]
+        assert _console(errors) == [], "rerun after a partial result"
+    finally:
+        steer(_examples(cfg), A, hold=None)
+        _stop(proc)
+
+
 def test_a_watch_plot_added_mid_run_draws_live_and_the_dark_page_is_dark(
     tmp_path, playwright_browser
 ):

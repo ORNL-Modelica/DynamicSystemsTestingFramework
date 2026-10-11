@@ -255,27 +255,36 @@ FIGURE = {
 
 
 def test_spanned_sets_the_time_axis_to_the_whole_run_on_a_copy():
-    figure = spanned(FIGURE, 100.0)
+    figure = spanned(FIGURE, 100.0, "run 1")
     assert figure["layout"]["xaxis"]["range"] == [0.0, 100.0]
     assert "range" not in figure["layout"]["xaxis2"]  # the spectrum's is not time
     assert "range" not in FIGURE["layout"]["xaxis"]
     # no stop time, or none ahead of the start: the axis stays the data's
-    assert spanned(FIGURE, None) is FIGURE and spanned(FIGURE, 0.0) is FIGURE
+    for unknown in (None, 0.0):
+        assert "range" not in spanned(FIGURE, unknown, "run 1")["layout"]["xaxis"]
 
 
-def test_a_spanned_figure_is_another_revision_of_the_plot():
+@pytest.mark.parametrize("stop_time", [100.0, None, 0.0])
+def test_a_spanned_figure_is_another_revision_of_the_plot(stop_time):
     """The time axis's range changes when a run starts and when it ends.
     Under the figure's own revision the browser would then reset that axis
     and keep a zoom's y range: every axis the figure pinned moves to the
     run's revision, so the plot starts over whole — and keeps a zoom made
-    mid-run, the revision standing for as long as the run."""
-    layout = spanned(FIGURE, 100.0)["layout"]
-    assert layout["uirevision"] == live_rows.RUN_REVISION
+    mid-run, the revision standing for as long as the run. With no stop
+    time known too: the figure was handed back under the RESULT's
+    revision, so a zoom made on the last result held the growing trace."""
+    layout = spanned(FIGURE, stop_time, "run 3")["layout"]
+    assert layout["uirevision"] == "run 3"
     for axis in ("xaxis", "yaxis", "xaxis2"):
-        assert layout[axis]["uirevision"] == live_rows.RUN_REVISION
+        assert layout[axis]["uirevision"] == "run 3"
     assert layout["yaxis3"]["uirevision"] == "error/abs"  # the error axes' own
     assert FIGURE["layout"]["uirevision"] == "keep"
     assert FIGURE["layout"]["yaxis"]["uirevision"] == "keep"
+
+
+def test_no_two_runs_share_a_revision_and_none_is_the_figure_layer_s():
+    revisions = [live_rows.run_revision(n) for n in range(1, 50)]
+    assert len(set(revisions)) == len(revisions) and "keep" not in revisions
 
 
 def test_the_stopped_marker_is_a_line_and_its_words_in_the_given_colour():
