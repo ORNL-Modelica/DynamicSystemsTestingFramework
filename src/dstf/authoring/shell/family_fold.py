@@ -424,6 +424,10 @@ class Folding:
                 page.drop_row(self.rows[path].target)
         else:
             unfolded |= paths
+            if self._open() == key:
+                # The row its open editor is on: what the plot's line said
+                # of a FOLDED row is no longer so.
+                self.card.fold_unfolded()
         self._keep(unfolded)
         self.paint(self.card._view())
 

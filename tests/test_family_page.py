@@ -249,30 +249,36 @@ def _ctrl_click(card, x: float, y: float) -> dict:
     }
 
 
-async def test_a_ctrl_click_with_a_fold_open_adds_nothing_and_says_why(tmp_path):
+@pytest.mark.parametrize("modifier", ["ctrl", "meta"])
+async def test_a_ctrl_click_with_a_fold_open_adds_nothing_and_says_why(
+    tmp_path, modifier
+):
     """On-plot editing over a fold (D149 × D152): a click adds a row to ONE
     criterion's table, and a fold's editor is fields only — its Ctrl+click
-    went nowhere, with nothing said. The plot's own line says where the
-    gesture is; with a member open it adds to that member, which is then a
-    row of its own."""
+    (Cmd+click, alone, on a Mac) went nowhere, with nothing said. The
+    plot's own line says where the gesture is; with a member open it adds
+    to that member, which is then a row of its own."""
     shell = _shell(*family_project(tmp_path, 4, fail=(), tree=TUBES))
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         card = page.cards[1]
         _click(user, _one(user, f"family:1:{FOLD}"))
         assert page.open == (1, FOLD) and card.placing._buttons == {}
+        # A plain click is no gesture of a fold's: nothing is said of it.
+        plain = {**_ctrl_click(card, 0.6, 1.0), "ctrl": False}
         with page.client:
-            page.on_plot("clicked", _ctrl_click(card, 0.5, 1.0))
+            page.on_plot("clicked", plain)
+        assert not card.refusal.visible and shell.session.spec.pending == []
+        with page.client:
+            page.on_plot("clicked", {**plain, modifier: True})
         assert shell.session.spec.pending == []
         assert card.refusal.visible and card.refusal.text == FOLD_ADDS.format(
             "a control point"
         )
-        # A plain click is no gesture of a fold's: nothing more is said.
-        with page.client:
-            page.on_plot("clicked", {**_ctrl_click(card, 0.6, 1.0), "ctrl": False})
-        assert shell.session.spec.pending == []
-        # The line goes with the fold's editor; a member's takes the click.
+        # The line is about the FOLDED row: it goes when the row unfolds,
+        # the fold's editor still open; a member's then takes the click.
         _click(user, _one(user, f"family-chev:1:{FOLD}"))
+        assert page.open == (1, FOLD) and not card.refusal.visible
         _click(user, _one(user, f"criterion:1:{leaf(2)}"))
         assert page.open == (1, leaf(2)) and not card.refusal.visible
         assert ("edit-on-plot", ("tube_points", 0)) in card.placing._buttons

@@ -7882,7 +7882,11 @@ decisions are folded in below; what follows is the contract as built.
    No handle is drawn for it — its hint says "These fields change all 20
    criteria. Unfold to drag one on the plot." — and Edit on plot is not
    placed there: a handle belongs to one criterion's drawing, and twenty
-   at one place cannot be told apart or dragged as one. A refusal — a
+   at one place cannot be told apart or dragged as one. A Ctrl+click (or
+   Cmd+click) on the plot while it is open adds nothing and says so on
+   the line under the plot ("Ctrl+click adds a control point to one
+   criterion: unfold this row and open the one to add to."); a plain
+   click says nothing, and the line goes when that row unfolds. A refusal — a
    value that can never score, a window that ends before it starts — is
    one refusal, and stages nothing for any member. A mode switched there
    is seeded from the first member, as an add is. The act is handed each

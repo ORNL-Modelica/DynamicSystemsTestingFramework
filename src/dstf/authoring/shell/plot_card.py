@@ -1087,6 +1087,14 @@ class PlotCard:
             self.refusal.set_text(FOLD_ADDS.format(noun))
             self.refusal.set_visibility(True)
 
+    def fold_unfolded(self) -> None:
+        """The folded row whose editor is open here was unfolded
+        (`Folding.toggle`): the line that said to unfold it (`clicked`)
+        goes — under a fold's editor the line says nothing else, and it
+        stayed for as long as that editor did."""
+        if self.refusal is not None and not self.refusal.is_deleted:
+            self.refusal.set_visibility(False)
+
     def moved(self, move: Any) -> None:
         """A handle of this card's plot is HELD (`grips.js`, D149): its
         would-be position, for the editor's fields to follow."""

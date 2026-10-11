@@ -477,8 +477,11 @@ TUBES = {
 }
 
 
-def _ctrl_click(page, x: float, y: float, card: int = 1) -> None:
-    """A real Ctrl+click at a data position of plot ``card``'s time plot."""
+def _ctrl_click(
+    page, x: float, y: float, card: int = 1, modifier: str | None = "Control"
+) -> None:
+    """A real Ctrl+click at a data position of plot ``card``'s time plot —
+    or the click with another ``modifier`` held, or (None) with none."""
     at = page.evaluate(
         "([card, x, y]) => { const gd = document.querySelectorAll('.dstf-plot')[card]"
         ".querySelector('.js-plotly-plot'); const p = gd._fullLayout._plots.xy,"
@@ -488,10 +491,12 @@ def _ctrl_click(page, x: float, y: float, card: int = 1) -> None:
     )
     page.mouse.move(at[0] - 12, at[1] - 12)
     page.mouse.move(at[0], at[1], steps=3)
-    page.keyboard.down("Control")
+    if modifier:
+        page.keyboard.down(modifier)
     page.mouse.down()
     page.mouse.up()
-    page.keyboard.up("Control")
+    if modifier:
+        page.keyboard.up(modifier)
 
 
 def test_a_fold_takes_no_click_on_the_plot_and_an_unfolded_member_does(
@@ -517,20 +522,39 @@ def test_a_fold_takes_no_click_on_the_plot_and_an_unfolded_member_does(
             "e => window.scrollBy(0, e.getBoundingClientRect().top - 190)"
         )
         page.wait_for_timeout(300)
-        _ctrl_click(page, 0.5, 1.0)
         refusal = card.locator(".dstf-plot-refusal")
-        expect(refusal).to_have_text(
+        said = (
             "Ctrl+click adds a control point to one criterion: unfold this row "
-            "and open the one to add to.",
-            timeout=EXPECT_TIMEOUT,
+            "and open the one to add to."
         )
+        chevron = _fold(page).first.locator(".dstf-fold-chev")
+        # A plain click is no gesture of a fold's: nothing is said of it.
+        _ctrl_click(page, 0.4, 1.0, modifier=None)
+        page.wait_for_timeout(700)  # a round trip, had it said anything
+        expect(refusal).to_be_hidden()
+        # Cmd, alone, is the Mac's Ctrl: the line says where the gesture is,
+        # and goes when the row it is about unfolds — its editor still open.
+        _ctrl_click(page, 0.5, 1.0, modifier="Meta")
+        expect(refusal).to_have_text(said, timeout=EXPECT_TIMEOUT)
+        chevron.click()
+        expect(_members(page).first).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(refusal).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        expect(editor.locator(".dstf-why").first).to_contain_text(HINT.format(n=4))
+        chevron.click()
+        expect(_members(page).first).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        card.locator(".js-plotly-plot").evaluate(
+            "e => window.scrollBy(0, e.getBoundingClientRect().top - 190)"
+        )
+        page.wait_for_timeout(300)
+        _ctrl_click(page, 0.5, 1.0)
+        expect(refusal).to_have_text(said, timeout=EXPECT_TIMEOUT)
         expect(_pending(page)).to_have_text("0 pending edits")
         _shot(page, tmp_path, "fold-ctrl-click")
 
         # Unfolded, pipe.T[2]'s own editor: the ⌖, the offer, the click.
-        _fold(page).first.locator(".dstf-fold-chev").click()
-        _members(page).filter(has_text="pipe.T[2]").click()
+        chevron.click()
         expect(refusal).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        _members(page).filter(has_text="pipe.T[2]").click()
         expect(editor.locator(".dstf-why").first).to_contain_text(
             "Ctrl+click adds a control point."
         )
