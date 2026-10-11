@@ -35,7 +35,7 @@ from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Drags, Visibility, drags_of
 from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
-from ..family_rows import is_fold
+from ..family_rows import is_fold, leaf_of
 from ..session import Selection
 from ..tree_text import leaf_name, parent_kinds
 from .actions import InlineHost, RowTarget
@@ -108,6 +108,12 @@ STAGED = " Edits are staged as you make them; Save writes them."
 #: field is armed, ``{}`` being that field's label.
 ADDS = " Ctrl+click adds {}."
 ARMED = "Click the plot to set {} — Esc cancels."
+#: What the line under a family's plot says for a Ctrl+click made while a
+#: FOLDED row's editor is open (D152: fields only), ``{}`` as in `ADDS`: a
+#: row is added to one criterion's table, and a fold is several.
+FOLD_ADDS = (
+    "Ctrl+click adds {} to one criterion: unfold this row and open the one to add to."
+)
 
 #: The hover module of the tolerance grips (`grips.js`): its file, and where
 #: the shell serves it — beside the Suite table's scripts.
@@ -972,15 +978,17 @@ class PlotCard:
         self._say_hint()
         self._edited = self._edited_now(view)
 
-    def _scored(self) -> Any:
-        """The open criterion as it was scored — its comparison, whose
-        geometry the plot draws — or None where it was not: a test that is
-        running, or whose last run did not finish (D151)."""
+    def _scored(self, path: str | None = None) -> Any:
+        """The criterion at ``path`` (the open one, unless said) as it was
+        scored — its comparison, whose geometry the plot draws — or None
+        where it was not: a test that is running, or whose last run did
+        not finish (D151)."""
+        path = self.open_path if path is None else path
         comp = self.page.shell.session.comparisons.get(self.page.model_id)
         tree = comp.metric_tree if comp is not None else None
         for pairs in leaves_by_variable(tree).values():
-            for path, vc in pairs:
-                if path == self.open_path:
+            for at, vc in pairs:
+                if at == path:
                     return vc
         return None
 
@@ -1023,20 +1031,25 @@ class PlotCard:
             return
         self.hint.set_text(EDITOR_HINTS[self._drags()] + self._adds() + STAGED)
 
-    def _adds(self) -> str:
-        """What a Ctrl+click adds to the open criterion, as the hint's
-        sentence: its metric's own word for a row, or nothing where a
-        click adds none — a metric with no rows, a tube of constant width,
-        a metric no drag edits (its Edit on plot place is not drawn), and
-        a criterion that was not scored: the click is read off its scored
-        geometry, and its place says why it takes none."""
-        if self._scored() is None:
-            return ""
-        raw = self.page._node(self.open_path or "")
+    def _row_noun(self, path: str) -> str | None:
+        """What a Ctrl+click adds to the criterion at ``path`` — its
+        metric's own word for a row — or None where a click adds none: a
+        metric with no rows, a tube of constant width, a metric no drag
+        edits (its Edit on plot place is not drawn), and a criterion that
+        was not scored: the click is read off its scored geometry, and its
+        place says why it takes none."""
+        if self._scored(path) is None:
+            return None
+        raw = self.page._node(path)
         desc = registry.metric(str((raw or {}).get("metric", registry.DEFAULT_METRIC)))
         if raw is None or desc is None or desc.place_row is None:
-            return ""
-        noun = desc.row_noun(raw) if desc.row_noun is not None else None
+            return None
+        return desc.row_noun(raw) if desc.row_noun is not None else None
+
+    def _adds(self) -> str:
+        """What a Ctrl+click adds to the open criterion, as the hint's
+        sentence (`_row_noun`), or nothing."""
+        noun = self._row_noun(self.open_path or "")
         return ADDS.format(noun) if noun else ""
 
     def _armed_moved(self) -> None:
@@ -1060,13 +1073,19 @@ class PlotCard:
     def clicked(self, click: Any) -> None:
         """A click on this card's plot, as the page reports it (`grips.js`,
         D149): Ctrl+click adds a row to the open criterion, and a plain one
-        sets its armed field. Nothing with no editor open here."""
-        if (
-            self.plot is not None
-            and self.editor is not None
-            and isinstance(click, dict)
-        ):
+        sets its armed field. Nothing with no editor open here. A FOLDED
+        row's editor is fields only (D152) and takes no click: a Ctrl+click
+        that would add a row to any one of its members says, under the
+        plot, where that gesture is."""
+        if self.plot is None or self.editor is None or not isinstance(click, dict):
+            return
+        if not is_fold(self.open_path or ""):
             self.placing.clicked(click)
+            return
+        noun = self._row_noun(leaf_of(self.open_path or ""))
+        if noun and (click.get("ctrl") or click.get("meta")) and self.refusal:
+            self.refusal.set_text(FOLD_ADDS.format(noun))
+            self.refusal.set_visibility(True)
 
     def moved(self, move: Any) -> None:
         """A handle of this card's plot is HELD (`grips.js`, D149): its

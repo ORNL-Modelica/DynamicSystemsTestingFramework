@@ -456,3 +456,91 @@ def test_a_differing_row_follows_the_block_and_a_rows_plus_is_its_own_elements(
         page.wait_for_timeout(600)
         expect(_pending(page)).to_have_text("0 pending edits")
         expect(_own(page)).to_have_count(1)
+
+
+#: The family scored by a tube of control points — a metric a Ctrl+click
+#: adds a row to (D149) — the same on every element: one fold of four.
+_TUBE = {
+    "metric": "tube",
+    "tube_width_mode": "band",
+    "tube_points": [
+        {"time": 0.25, "upper": 0.5, "lower": 0.5},
+        {"time": 0.75, "upper": 0.5, "lower": 0.5},
+    ],
+}
+TUBES = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        *({**_TUBE, "variable": f"pipe.T[{i}]"} for i in range(1, 5)),
+    ],
+}
+
+
+def _ctrl_click(page, x: float, y: float, card: int = 1) -> None:
+    """A real Ctrl+click at a data position of plot ``card``'s time plot."""
+    at = page.evaluate(
+        "([card, x, y]) => { const gd = document.querySelectorAll('.dstf-plot')[card]"
+        ".querySelector('.js-plotly-plot'); const p = gd._fullLayout._plots.xy,"
+        " r = gd.getBoundingClientRect(); return [r.left + p.xaxis._offset +"
+        " p.xaxis.d2p(x), r.top + p.yaxis._offset + p.yaxis.d2p(y)]; }",
+        [card, x, y],
+    )
+    page.mouse.move(at[0] - 12, at[1] - 12)
+    page.mouse.move(at[0], at[1], steps=3)
+    page.keyboard.down("Control")
+    page.mouse.down()
+    page.mouse.up()
+    page.keyboard.up("Control")
+
+
+def test_a_fold_takes_no_click_on_the_plot_and_an_unfolded_member_does(
+    tmp_path, playwright_browser
+):
+    """On-plot editing over a fold (D149 × D152). A fold's editor is fields
+    only: no ⌖, a hint that offers no click, and a Ctrl+click on the
+    family's plot adds nothing and says where that gesture is, on the line
+    under the plot. An unfolded member's editor has the ⌖ and the offer;
+    its Ctrl+click adds a control point to THAT member, which leaves the
+    fold — three stay folded."""
+    project = partial(family_project, n=4, fail=(), tree=TUBES)
+    with _served(tmp_path, playwright_browser, project=project) as page:
+        card = _card(page)
+        card.scroll_into_view_if_needed()
+        expect(_fold(page)).to_contain_text("tube · pipe.T[1:4]")
+        _open_fold(page)
+        editor = card.locator(".dstf-editor")
+        expect(editor.locator(".dstf-why").first).to_contain_text(HINT.format(n=4))
+        expect(editor.locator(".dstf-why").first).not_to_contain_text("Ctrl+click")
+        expect(editor.locator(".dstf-arm")).to_have_count(0)
+        card.locator(".js-plotly-plot").evaluate(
+            "e => window.scrollBy(0, e.getBoundingClientRect().top - 190)"
+        )
+        page.wait_for_timeout(300)
+        _ctrl_click(page, 0.5, 1.0)
+        refusal = card.locator(".dstf-plot-refusal")
+        expect(refusal).to_have_text(
+            "Ctrl+click adds a control point to one criterion: unfold this row "
+            "and open the one to add to.",
+            timeout=EXPECT_TIMEOUT,
+        )
+        expect(_pending(page)).to_have_text("0 pending edits")
+        _shot(page, tmp_path, "fold-ctrl-click")
+
+        # Unfolded, pipe.T[2]'s own editor: the ⌖, the offer, the click.
+        _fold(page).first.locator(".dstf-fold-chev").click()
+        _members(page).filter(has_text="pipe.T[2]").click()
+        expect(refusal).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        expect(editor.locator(".dstf-why").first).to_contain_text(
+            "Ctrl+click adds a control point."
+        )
+        expect(editor.locator(".dstf-table-row .dstf-arm")).to_have_count(2)
+        card.locator(".js-plotly-plot").evaluate(
+            "e => window.scrollBy(0, e.getBoundingClientRect().top - 190)"
+        )
+        page.wait_for_timeout(300)
+        _ctrl_click(page, 0.5, 1.0)
+        expect(_pending(page)).to_have_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        expect(editor.locator(".dstf-table-row")).to_have_count(3)
+        expect(_fold(page)).to_contain_text("tube · pipe.T[1,3,4]")
+        expect(_own(page).filter(has_text="pipe.T[2]")).to_have_count(1)

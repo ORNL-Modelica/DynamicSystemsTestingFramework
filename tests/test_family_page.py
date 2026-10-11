@@ -17,7 +17,7 @@ from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.family_rows import fold_key  # noqa: E402
 from dstf.authoring.shell.family_fold import HINT, FoldRow  # noqa: E402
-from dstf.authoring.shell.plot_card import STAGED  # noqa: E402
+from dstf.authoring.shell.plot_card import FOLD_ADDS, STAGED  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from family_project import element, family_project  # noqa: E402
@@ -214,6 +214,88 @@ async def test_a_folded_editors_hint_is_its_own_through_every_repaint(six):
         assert _one(user, f"editor-hint:1:{FOLD}").text == HINT.format(n=6) + STAGED
         # ... and no ⌖: no click on the plot sets a field of twenty criteria.
         assert page.cards[1].placing._buttons == {}
+
+
+#: `six`'s family scored by a tube of control points: a metric a
+#: Ctrl+click adds a row to (D149), the same on every element — one fold.
+_TUBE = {
+    "metric": "tube",
+    "tube_width_mode": "band",
+    "tube_points": [
+        {"time": 0.25, "upper": 0.5, "lower": 0.5},
+        {"time": 0.75, "upper": 0.5, "lower": 0.5},
+    ],
+}
+TUBES = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        *({**_TUBE, "variable": element(i)} for i in range(1, 5)),
+    ],
+}
+
+
+def _ctrl_click(card, x: float, y: float) -> dict:
+    """What the page sends for a Ctrl+click on ``card``'s time plot."""
+    return {
+        "plot": card.plot.id,
+        "xaxis": "x",
+        "yaxis": "y",
+        "x": x,
+        "y": y,
+        "xrange": [0.0, 1.0],
+        "yrange": [0.0, 4.0],
+        "ctrl": True,
+    }
+
+
+async def test_a_ctrl_click_with_a_fold_open_adds_nothing_and_says_why(tmp_path):
+    """On-plot editing over a fold (D149 × D152): a click adds a row to ONE
+    criterion's table, and a fold's editor is fields only — its Ctrl+click
+    went nowhere, with nothing said. The plot's own line says where the
+    gesture is; with a member open it adds to that member, which is then a
+    row of its own."""
+    shell = _shell(*family_project(tmp_path, 4, fail=(), tree=TUBES))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[1]
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        assert page.open == (1, FOLD) and card.placing._buttons == {}
+        with page.client:
+            page.on_plot("clicked", _ctrl_click(card, 0.5, 1.0))
+        assert shell.session.spec.pending == []
+        assert card.refusal.visible and card.refusal.text == FOLD_ADDS.format(
+            "a control point"
+        )
+        # A plain click is no gesture of a fold's: nothing more is said.
+        with page.client:
+            page.on_plot("clicked", {**_ctrl_click(card, 0.6, 1.0), "ctrl": False})
+        assert shell.session.spec.pending == []
+        # The line goes with the fold's editor; a member's takes the click.
+        _click(user, _one(user, f"family-chev:1:{FOLD}"))
+        _click(user, _one(user, f"criterion:1:{leaf(2)}"))
+        assert page.open == (1, leaf(2)) and not card.refusal.visible
+        assert ("edit-on-plot", ("tube_points", 0)) in card.placing._buttons
+        with page.client:
+            page.on_plot("clicked", _ctrl_click(card, 0.5, 1.0))
+        (op,) = shell.session.spec.pending
+        assert op.path == leaf(2) and len(op.value["tube_points"]) == 3
+        await _settled(
+            lambda: _one(user, f"family-count:1:{fold_key(leaf(1))}").text == "3 pass"
+        )
+        assert not card.rows[leaf(2)].row.props.get("data-member")
+
+
+async def test_a_ctrl_click_on_a_fold_of_a_metric_without_rows_says_nothing(six):
+    """nrmse has no rows: a Ctrl+click adds none to a member either (D149),
+    so there is nothing to unfold for."""
+    async with user_simulation(root=six.index) as user:
+        page = await _test_page(six, user)
+        card = page.cards[1]
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        with page.client:
+            page.on_plot("clicked", _ctrl_click(card, 0.5, 1.0))
+        assert not card.refusal.visible and six.session.spec.pending == []
 
 
 def _marks_under(element) -> list[str]:
