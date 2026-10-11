@@ -2352,9 +2352,11 @@ async def test_a_failed_run_says_the_run_failed_on_every_line(tmp_path):
         assert page.run_state() == "failed"
         assert page.badge.text == "SIM_FAIL"  # it ran, and failed (D145)
         said = {m: _one(user, m).text for m in _RUN_LINES}
-        # the strip: the stored reason, then the next action (D151)
+        # the strip: the stored reason, then the next action (D151) — read
+        # back with no run result in hand, so the verdict the run recorded
+        # leads what its file is
         reason = shell.session.comparisons[C].error_message
-        assert reason.startswith("No Python result at ")
+        assert reason.startswith("Run recorded failed — No Python result at ")
         assert said["strip-text"] == (
             f"{reason} — fix the model or its settings, then queue it again."
         )
@@ -2380,9 +2382,11 @@ async def test_a_pending_run_status_json_records_failed_says_the_run_failed(
         assert page.badge.text == "SIM_FAIL"
         assert page.run_state() == "failed"
         said = {m: _one(user, m).text for m in _RUN_LINES}
-        # the strip: the stored reason, then the next action (D151)
+        # the strip: the stored reason, then the next action (D151) — read
+        # back with no run result in hand, so the verdict the run recorded
+        # leads what its file is
         reason = shell.session.comparisons[C].error_message
-        assert reason.startswith("No Python result at ")
+        assert reason.startswith("Run recorded failed — No Python result at ")
         assert said["strip-text"] == (
             f"{reason} — fix the model or its settings, then queue it again."
         )

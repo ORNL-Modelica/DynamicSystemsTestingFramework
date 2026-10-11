@@ -1105,7 +1105,7 @@ def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser
         _keep(page, tmp_path, "suite-table-1280")
         # A message cut at 1280 reads whole on hover; "—" has no tooltip.
         message = _tooltip(page, C, "detail")
-        assert message.startswith("No Python result at "), message
+        assert message.startswith("Run recorded failed — No Python result at "), message
         assert message.endswith("(did execution run?)"), message
         page.mouse.move(0, 0)
         box = page.locator(f".ag-row[row-id='{A}'] .ag-cell[col-id='detail']")
