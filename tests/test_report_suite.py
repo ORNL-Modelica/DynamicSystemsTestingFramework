@@ -113,6 +113,24 @@ class TestStrictJsonArtifacts:
         assert re.search(r"\bNaN\b", html) is None
 
 
+def test_a_template_comment_is_no_line_of_the_page(tmp_path):
+    """The summary's first branch stands one line under its `<div>`, as
+    every branch tag leaves it: a `{# … #}` put above the branches was a
+    blank line more in every per-test page."""
+    plot_dir = tmp_path / "report"
+    generate_comparison_plots(
+        plots=(),  # no test to derive them from
+        model_id="Fixture.Comment",
+        ref_data=None,
+        result=None,
+        comparisons=[_nonfinite_comparison()],
+        plot_dir=plot_dir,
+    )
+    html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
+    (after,) = re.findall(r'<div class="summary" id="summary">(\s*)\S', html)
+    assert after.count("\n") == 2, repr(after)
+
+
 class TestRunMetadataBanner:
     """Run-provenance banner in the per-test interactive.html."""
 

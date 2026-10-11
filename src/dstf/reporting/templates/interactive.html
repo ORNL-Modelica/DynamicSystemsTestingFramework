@@ -197,7 +197,7 @@ details summary:hover { color: var(--dstf-text); }
 {# === SUMMARY === #}
 <div class="summary" id="summary">
 {# A refused test FIRST: it has no scored variable, so the branches below
-   read it as a test with no baseline — whether or not it has one. #}
+   read it as a test with no baseline — whether or not it has one. -#}
 {% if refused %}
   <span class="fail"><strong>Not scored:</strong> {{ refused }}</span>
 {% elif is_simulate_only %}
