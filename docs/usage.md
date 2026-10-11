@@ -1015,9 +1015,16 @@ Beside the table (above it under 1200 px, and as one line reading "queue
 empty" while it holds nothing) is the **simulation queue**: one per tool
 process, first in, first out, a test never in it twice. Each row is one test
 in run order — its number, its status, its name (a link to its Test page) and
-its state in words: `waiting · 3 ahead`, `running · 42 s · worker 2`,
-`finished · 9 s` with the verdict as its badge, `failed: <the backend's
-message>` (one line; the whole message on hover) or `cancelled`. A waiting row
+its state in words: `waiting · 3 ahead`, `running · t = 42 / 100 s · worker 2`
+(how far its result file has got; `running · 42 s · worker 2` on a backend
+whose result is written at the end), `finished · 9 s` with the verdict as its
+badge, `failed: <the backend's message>` (one line; the whole message on
+hover) or `cancelled`. While a worker is being started the panel lists it
+above the rows — `starting worker 1 — loadModel(Modelica) · 85 s`, the step in
+the backend's own words — and the next test reads `waiting · worker starting`:
+a large library loads for minutes before its first test runs. A worker that
+died is brought back for the test it was about to run: `restarting worker 1 —
+…`, and that test's row reads `running · worker restarting`. A waiting row
 has **Remove**; a running row has **Cancel**, which stops its simulation and
 leaves no result (where the backend cannot stop a test — FMPy — the row says
 so instead); an ended row has **Open test** and the Suite's own actions for
@@ -1046,14 +1053,21 @@ against. Under it, still in the part that stays at the top, the **status
 strip** says the test's situation in one sentence and fills its one next
 action: "Fails 2 of 3 criteria. If the new behaviour is right, accept it as
 the baseline." (red, Accept filled); "No baseline yet — accept this result as
-the first one" (Accept filled); "The simulation failed. Fix the model or its
-settings, then queue it again." and "No result yet — queue it to simulate it."
-(Queue filled; the verdict beside the model id then reads NOT RUN); for a test
+the first one" (Accept filled); for a failed run, the backend's own reason and
+then the next action — "Timed out after 12s (raise it per test with
+simulation.timeout in test_spec.json, or globally with --timeout) — fix the
+model or its settings, then queue it again." — one line of the message, the
+whole of it on hover, and still there after its queue row is cleared and after
+the tool is started again ("The simulation failed. Fix the model or its
+settings, then queue it again." where the run recorded no reason), Queue
+filled; "No result yet — queue it to simulate it." (Queue filled; the verdict
+beside the model id then reads NOT RUN); for a test
 the queue holds, "Queued — waiting · 3 ahead" with Remove, and "Running on
-worker 2 — 42 s" with Cancel — its earlier result went when the run started,
-so the page reads as a NOT RUN test's until the new one arrives; "Cancelled —
-no result (its earlier result was replaced when the run started)." and, where
-no worker could start, the backend's message, each with Queue again filled; "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
+worker 2 — t = 42 / 100 s" with Cancel (the running view, below); "Cancelled
+at t = 19.2 of 200 s — not scored" for a run that was stopped and left rows,
+"Cancelled — no result (its earlier result was replaced when the run
+started)." for one that left none and, where no worker could start, the
+backend's message, each with Queue again filled; "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
 and save opens the preview on this test, and Discard drops this test's edits
 only — the header's Discard drops every test's); "Passes against its
 baseline." (grey, Accept in the strip's ⋮ menu: there is nothing new to
@@ -1070,6 +1084,43 @@ again the moment the criterion is staged and scores it at once; the strip asks
 for a new run only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
 reads 2 — its tree written out, and the edit — and none again once that edit
 is put back (see the preview, above).
+
+**While a test runs** its page keeps the plots and the criteria it had — its
+earlier result went when the run started, and the verdict beside the model id
+reads NOT RUN — and shows the run as it goes. On Dymola and OpenModelica,
+whose result file grows during a run, each plot's Actual trace is what the
+simulator has written so far, drawn beside the baseline on a time axis that
+already spans the whole run, and the strip says how far it has got: "Running
+on worker 2 — t = 42 / 100 s" ("starting" until the first row is written,
+"t = 42 s" for a test with no stop time). Only the plots that have been
+drawn are read, once a second — a plot is drawn when it scrolls into view —
+and a zoom, the legend's choices and the scroll position stay as they are
+through every update; the zoom starts over when the run starts and when its
+result arrives. Every criteria row and the tree's line read
+"waiting for result", and nothing on the page shows a verdict until the run
+ends; then the page shows the finished result, scored. The Variables drawer
+and the add form's picker list the growing file's variables, so a watch plot
+added while the test runs draws live. On Python, Julia and FMPy, which write
+their result once at the end, the plots stay with the baseline alone, the
+strip counts seconds, and one line under it says "live view not available for
+this backend". A test that has never had a result is laid out by the
+variables its model and its spec name; one whose spec names them only by a
+pattern has no plot until its first result.
+
+OpenModelica runs started from the tool write every row to the file as it is
+computed (`-mat_sync=1`), which is what makes the trace grow smoothly; on a
+slow disk such a run takes longer than the same test under `dstf run`, which
+never sets it.
+
+**A run that did not finish** — cancelled, timed out, or failed after it
+began writing — shows what it wrote: the Actual trace up to where it stopped,
+a dashed marker there ("stopped at t = 5.85 s"), and the strip's "Cancelled at
+t = 19.2 of 200 s — not scored", "Timed out at t = …" or "Failed at t = …",
+the last two followed by the backend's reason.
+Its criteria read "not scored". It is never scored and never a baseline:
+Accept is greyed with "a partial result is never a baseline: queue it again",
+and the Suite row keeps CANCELLED or SIM_FAIL. The partial trace stays until
+the test runs again or the tool is restarted.
 
 Under the strip, the **Statistics card** shows every statistic the run and its
 baseline recorded, side by side — the rows the report's Statistics table
@@ -1477,7 +1528,9 @@ write reports one line in the queue panel — how
 many baselines it stored, where, and every test it skipped with its reason —
 and the results reload, so a re-baselined test's verdict flips in place.
 Accept is refused for a test the queue holds — "… is queued: accept it when
-its run has ended" — since the result in memory is about to be replaced.
+its run has ended" — since the result in memory is about to be replaced, and
+for a test whose last run did not finish: what its page draws of that run is
+a partial result, never a baseline.
 
 **Queue** appends the selected tests to the simulation queue (above), in
 project order; a test the queue already holds is left out, and the caption

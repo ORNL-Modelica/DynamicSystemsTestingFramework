@@ -7285,6 +7285,195 @@ contract loses the `Job` outcome and gains `Enqueue`.
 outcome to return: the tool pre-dates any outside plug-in. `status.json`
 may now carry a row with `status: "cancelled"`. The CLI is unchanged.
 
+## D151 — Live results: the running test's page reads its growing result file (2026-10-08)
+
+**Context.** A test the queue ran showed nothing until it ended: its run
+cleared its last result (D150), so its page read "nothing scored" with no
+plot, and its strip counted seconds. A real library's tests run for minutes;
+whether one was converging, oscillating or stuck was visible only in the
+simulator's own files. A run that was cancelled or hit its timeout left a
+result file with everything it had computed, and the page said "no result".
+The redesign brief (§3.7) asks for the growing trace on the test's own
+page. It was built in two tiers: the reader in `backends/` (the `.mat`
+reader's row count taken from the file's size, `LiveMatReader`,
+`Capability.LIVE_RESULTS`), and — this entry — the tool.
+
+**Decision.**
+
+1. *The running test's page keeps its layout and draws the trace so far.*
+   When a run starts, the Session keeps the comparison and the result it
+   replaces for the LAYOUT alone (`authoring/live_runs.py`): the plots stay
+   the ones the test had, in the order the tree names them, and a test that
+   never had a result is laid out by the variables its model and spec name
+   (its UnitTests variables, each `variables` entry that names one). No
+   verdict and no sample of the replaced result is shown. On a backend
+   whose result file grows, each plot's Actual trace is the rows read so
+   far, the Reference the baseline's as always, and the time axis spans 0
+   to the test's stop time from the first second, so the trace grows into
+   the plot. One reader per running test, in the Session, polled once a
+   second from the UI loop for the union of what the open pages asked for:
+   two tabs on one test share it, and the queue panel's row needs the time
+   with no page open. A page asks only for the variables of plots that are
+   DRAWN (a card draws when it scrolls into view) and not hidden by Focus.
+   A plot is re-sent only when the poll brought it a sample, as a
+   `Plotly.react`; the run's figures carry their own `uirevision`, so a
+   zoom and the legend's choices survive every update, and the plot starts
+   over whole at the run's first figure and at the result's (pinning the
+   time axis under the figure's one revision reset x and kept a zoom's y).
+   Samples are kept per name, dropped when the reader starts over on
+   another file, held to 200,000 a name (thinned evenly past that) and
+   drawn under the figure layer's cap with its own LTTB — once past the
+   cap and then again each time a quarter of it is new, not on every poll:
+   one decimation is 12 ms whatever it is given.
+2. *The words while it runs.* The strip reads `Running on worker 2 — t =
+   42 / 100 s`: the last whole row's time over the stop time (`t = 42 s`
+   where the stop time is not known, `starting` until the file holds a
+   row). The queue panel's row reads `running · t = 42 / 100 s`. Every
+   criteria row, the tree card's line and a folded family's row read
+   `waiting for result`, and no pill is drawn anywhere on the page: the
+   page's tree view is the criteria as authored with that word in place of
+   every verdict (`live_rows.unscored_view`), so the rows are the ones a
+   scored test has, and an edit made while it runs shows in them.
+3. *A backend without a growing file says so once.* Python, Julia and FMPy
+   write their result at the end. Their running test keeps its plots, with
+   the baseline and no Actual, the strip counts seconds, and one line under
+   it reads `live view not available for this backend`. Nothing is polled.
+4. *The end is the queue's word.* A finished file reads `running` to the
+   reader too, so "in progress" is never asked of it: when the Session
+   takes an item's end, the live entry goes, no sample of it is kept, and
+   the page shows the result scored as D150 has it. A page opened on a
+   test already running is served the file from its start, thinned.
+5. *A run that did not finish shows what it wrote.* Cancelled, timed out
+   or failed with rows in its file: the page draws the file to where it
+   stops — read by the size-based reader's partial read, not the live
+   reader — with a dashed marker `stopped at t = 5.85 s` in the theme's
+   muted text; the strip reads `Cancelled at t = 19.2 of 200 s — not
+   scored` (`Timed out at …`, `Failed at …`), every criterion `not scored`.
+   It is shown and nothing else: nothing hands it to the comparator, the
+   test's result stays none (or the failed one), its Suite row keeps
+   CANCELLED or SIM_FAIL, and Accept refuses it with its own sentence ("a
+   partial result is never a baseline: queue it again") before the shared
+   function's refusal is reached. It is kept until the test's next run or
+   the project's reopen, and is the process's: a tool started later reads
+   the test as it did before this entry.
+6. *The pickers list the growing file.* Once the file's header is whole,
+   the Variables drawer and the add form offer its variables
+   (`result_names` of the run's directory; the Session says a `queue`
+   event, state `live`, so the open page lists them), and a watch plot
+   added while the test runs draws live.
+7. *The directory wipe.* A rerun's directory is cleared before its key is
+   handed back, and the reader is built only once the item has its key —
+   so there is no old file under it. Until the new file exists the page
+   says `starting`; a file that goes away under a poller is another run
+   (the reader's `run` counts up) and every sample is dropped.
+8. *Starting workers are listed.* The queue panel shows each worker being
+   brought up — `starting worker 1 — loadModel(Modelica) · 85 s`, the phase
+   in the backend's own words, a path cut to its last part — and the next
+   waiting row reads `waiting · worker starting` instead of `waiting ·
+   next`. A worker brought back after a death is restarted under the test
+   it is to run: its line reads `restarting worker 1 — …` (the pool's
+   `StartingWorker.restart`), and that test's row `running · worker
+   restarting` — it read `running · N s` for the whole load. The shell's
+   once-a-second `poll` now also runs while a worker starts. A real library
+   took 143 s to load; "queued" for that long read as a hang.
+9. *`compare` says a timed-out run timed out.* A run killed by its timeout
+   leaves a partial file, whose reader fails the result with "Partial
+   result: …"; the recorded verdict then found it already failed and added
+   nothing. The stored message is now both: `Run recorded timed_out —
+   Partial result: …`.
+10. *A failed run's reason is on its page.* The strip of a failed or
+    timed-out test said "The simulation failed. Fix the model or its
+    settings, then queue it again."; the backend's reason was on the
+    queue's row alone, which Clear finished removes. The strip says it —
+    one line, the whole on hover — and then the next action: `Timed out
+    after 12s (…) — fix the model or its settings, then queue it again.`
+    After a partial result's `Timed out at t = … — not scored.` where there
+    is one. It is the comparison's message, read from the run's stored
+    result (what the Suite table's Message column shows), so it survives
+    the cleared row and a restart of the tool. A test no worker could
+    start says one line of the pool's message; a run that recorded no
+    reason keeps the plain sentence.
+
+OpenModelica writes its rows a 4 KB block at a time unless asked; the pool
+the tool opens sets `Config.live_results`, which adds `-mat_sync=1` to its
+simulate call. No CLI run sets it.
+
+**From the reader tier** (measured there, not again here): the row count
+taken from the file's size reads every stored result checked exactly as its
+header describes it — 997 files of this repository and 330 TRANSFORM
+result files, 660,154 variables. A poll opens, reads and closes the file:
+a memory map over a file that is then truncated kills the process, and a
+handle held open blocks the directory's removal on Windows. Polls took 2 to
+14 ms on the Windows mount. `-mat_sync=1` cost +3 % run time on a local
+disk and +59 % on one output-heavy run on the Windows mount.
+
+**What the gate measured** (2026-10-08; the example library copied to a
+scratch directory with a model that pauses 0.1 s at each of 300 samples,
+30 s of simulated time; a real Chromium). *Dymola 2026x, work dir on the
+Windows mount:* the worker's start listed (`starting worker 1 — its launch
+· 0 s` to `2 s`, the row `waiting · worker starting`); the first run's
+trace grew in 33 of 35 one-second reads, 32 distinct `t =` values, 0 to
+901 points on an axis of 0 to 30. A rerun of the same test read `starting`
+with no point for three seconds and then the new run from `t = 0`; no read
+showed a sample of the run before, and the server logged no exception; the
+finished trace equalled the result file's series, 901 rows, for both
+variables. Against an accepted baseline, mid-run: two rows `waiting for
+result`, no pill visible, 370 Actual points beside the baseline's 901; at
+the end PASS and the pills back. Cancelled at `t = 8.05`: `Cancelled at t =
+18 of 30 s — not scored` 12.1 s later (this model spends its time in a
+system call; D150 measured 0.46 s on one that computes), the marker at 18,
+the Suite row CANCELLED. A 25 s timeout: the partial trace to `t = 24.2`,
+the badge and the Suite row SIM_FAIL; read again on 2026-10-11 with item
+10 built, the strip said `Timed out at t = 25.1 of 30 s — not scored.
+Timed out after 25s (raise it per test with simulation.timeout in
+test_spec.json, or globally with --timeout) — fix the model or its
+settings, then queue it again.` Nothing left running.
+*OpenModelica:* the trace grew in 28 of 30 reads, 30 to 40 rows a second;
+the tool's simulate call carried `simflags="-mat_sync=1"` and the same
+library run by `dstf run` did not; a cancel took 0.17 s. *The example
+Python library:* `Running on worker 1 — 2 s` over the line `live view not
+available for this backend`, gone at the end.
+
+*Cost* (six plots drawn, a file growing to 100,000 rows of 500 variables,
+401 MB at 2,000 rows a second, on a local disk): the tick that reads the
+file and re-sends six plots took 35 ms at the median, 46 ms at the 95th
+percentile and 82 ms at most on the UI loop, the read itself 1.6 ms (4.9
+at most); the browser's one long task per update was 72 ms at the median
+and 125 ms at most, a `Plotly.react` 9.6 ms a plot. Under the 100 ms set
+for the loop, so the read stays on it.
+
+**Not built.** Verdicts before a run ends (a tube already left, a range
+already broken); a progress bar; live reads for `dstf run`; a page watching
+many runs at once; a partial result found on disk by a tool started later;
+a live source that is not a DSresult file.
+
+A worker's restart was not produced on a real simulator: its words are
+tested against a pool that says it is restarting.
+
+**Known limits.** A test with no result whose spec names its variables only
+by pattern has no plot until its first result (a watch plot can be added
+from the Variables drawer while it runs). The live trace is a preview: a
+backlog longer than the cap is thinned by the reader and not read again.
+A plot's zoom does not carry across a run's start or end. Under a partial
+result of a test with no baseline the tree card says "nothing scored: this
+test has no result". A flat entry's criteria still cannot be edited one by
+one while its test runs (D150): their rows say so. The file is read on the
+UI loop; a mount slow enough to make that matter would move it off.
+
+**What it reverses.** D150's known limit "the page of a running test draws
+no criterion", and its item 9's "the shell's one-second `poll` … reads no
+file": it now reads the running tests' result files.
+
+**Consequences.** `SessionView` gains `partial(model_id)`. The `queue`
+event has a state `live`. The pool's `StartingWorker` gains `restart`.
+The Python backend's failure reads back from `result.json` without the
+"Python execution failed:" its run result led with, so the strip's line
+of the same failure is shorter after a restart of the tool. The Session
+sets `live_results` on the open project's `Config` when it opens its pool. A plug-in backend that declares
+`LIVE_RESULTS` must write a DSresult file and list a growing one through
+`result_names` for the tool to show it live. The CLI's runs are unchanged;
+`compare`'s stored message for a timed-out run is longer.
+
 ## D152 — A criterion over an array family: chosen by indices, shown folded, edited as one (2026-10-08)
 
 **Context.** A criterion on twenty elements of one array was twenty

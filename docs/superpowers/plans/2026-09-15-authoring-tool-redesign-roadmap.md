@@ -31,7 +31,7 @@ queue. Between those, the visible work follows the brief's own sequence
 | 3 | The Test page, inline criteria, the drawer, modular plots | 3a `2026-09-20-plots-key-and-plot-figure.md` (built); 3b `2026-09-20-the-test-page.md` (built); 3c to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
 | 4 | Editing returns (brief §3.5, in its order) | to write | 3 | Shift+click adds a point on a real trace; brush sets a window |
 | 5 | The simulation queue | BUILT (backend tier merged at `6609d01`; the tool `ec84398..c4d366d`, D150) | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
-| 6 | Live results | to write | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
+| 6 | Live results | BUILT (no plan: built from the brief §3.7 in two tiers — the reader in `backends/`, merged before this; the tool `4eee642..dab81be`, D151) | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
 | 7 | Themes | BUILT (no plan: built from a prototype and D148) | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
 
 **Reordered after the owner's first hands-on look (2026-09-26).** The owner

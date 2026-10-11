@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D150 the simulation queue, D152 a criterion over an array family). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D150 the simulation queue, D151 live results, D152 a criterion over an array family). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -25,7 +25,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
-│   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
+│   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
 │   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place)
 │   │   ├── pool.py               # SimulationPool: a FIFO queue of tests over a backend's runners that stays open (the tool's queue)
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
@@ -42,6 +42,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      family_rows.py (a family's folded criteria row and its Indices as data, D152),
 │   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
 │   │                             #      queue_rows.py (the simulation queue as data: a row per item, the header's indicator),
+│   │                             #      live_rows.py (a running test's page as data: reader snapshots to the series a plot draws, the words of each state)
+│   │                             #      + live_runs.py (the Session's readers of the running tests' result files, and unfinished runs' partial results; D151),
 │   │                             #      situation.py (a test's situation and the strip's sentence), spec_preview.py (an entry's
 │   │                             #      diff as test_spec.json would write it), needle.py (the drawers' budgeted filter matcher),
 │   │                             #      typed_number.py + typed_number.js (the tool's number field: it keeps what is typed until it is left),
@@ -50,6 +52,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
 │   │                             #      test_list (the Tests drawer's list), tree_card + plot_card, stats_card.py (the Statistics card),
 │   │                             #      queue_panel.py (the Suite page's queue panel and the header's queue indicator),
+│   │                             #      live_view.py (the Test page's part of a running test's view: what its drawn plots ask for and re-send),
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      picker.py (the add form's variable picker over picker_rows),
 │   │                             #      family_fold.py (a plot card's folded criteria rows over family_rows),
@@ -131,7 +134,10 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # Its panel beside the table lists each item in run order (Remove a waiting one, Cancel a running
 # one, Open test / Accept an ended one; a Workers field, Clear finished, Stop workers); the header
 # says `3 running · 5 queued` on every page. A queued or running test stays editable; each result
-# is read back and that test rescored as it ends.
+# is read back and that test rescored as it ends. A running test's page keeps its plots and draws
+# the trace as the simulator writes it (Dymola, OpenModelica; D151): `t = 42 / 100 s` in the strip,
+# `waiting for result` on every criterion. A run that was cancelled or timed out shows what it
+# wrote, marked where it stopped, and is never scored or accepted.
 # Open a test: a Statistics card above the tree (every recorded statistic, run vs baseline,
 # collapsed to the changed ones; `+` adds a scalar criterion, and a statistics criterion is
 # edited there), its criteria tree closed to one line naming what failed, its plots — one per scored

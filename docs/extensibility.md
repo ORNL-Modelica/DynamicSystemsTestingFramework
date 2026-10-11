@@ -276,6 +276,19 @@ header's count current, so a watched run's file is "finished" by its header
 at every moment; what stops a killed one from passing is that it stopped
 short of the stop time, and the run's recorded verdict.
 
+**What `dstf author` does with it** (D151). The tool sets
+`Config.live_results` for the pool it opens. While a test runs on a backend
+that declares `LIVE_RESULTS`, its Session keeps one `LiveMatReader` on
+`live_result_path(work_dir/<test_key>)` — built once the item has its key,
+which is after the run's directory was cleared — and polls it once a second
+for the variables the open pages' drawn plots show. It also calls the
+backend's `result_names(test_dir)` on the GROWING file, once its header is
+whole, to list what a plot can be made of, so that classmethod must answer
+for an unfinished file. After a run that did not finish, the same path is
+read by the partial read (`mat_reader`) to show what it wrote. A
+backend with a growing file in another format gets none of this until the
+contract grows a reader of its own.
+
 ### The `VariableResult` contract: name vs expression
 
 Each `VariableResult` a backend produces carries two texts (D132):
