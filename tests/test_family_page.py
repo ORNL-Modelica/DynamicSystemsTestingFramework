@@ -201,6 +201,21 @@ async def test_the_folded_rows_click_opens_a_fields_only_editor(six):
         assert _none(user, f"editor:1:{FOLD}")
 
 
+async def test_a_folded_editors_hint_is_its_own_through_every_repaint(six):
+    """The card says its open criterion's hint again whenever its panels
+    follow (D151: a run that starts takes the handles). A fold's editor is
+    the card's too and is no criterion: said again, its line read "Edit
+    the fields." — that its fields change all six, and to unfold to drag
+    one, gone at the first sync."""
+    async with user_simulation(root=six.index) as user:
+        page = await _test_page(six, user)
+        _click(user, _one(user, f"family:1:{FOLD}"))
+        page.sync()
+        assert _one(user, f"editor-hint:1:{FOLD}").text == HINT.format(n=6) + STAGED
+        # ... and no ⌖: no click on the plot sets a field of twenty criteria.
+        assert page.cards[1].placing._buttons == {}
+
+
 def _marks_under(element) -> list[str]:
     from test_test_page import _marks
 

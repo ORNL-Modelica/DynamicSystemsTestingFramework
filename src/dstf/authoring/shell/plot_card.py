@@ -35,6 +35,7 @@ from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Drags, Visibility, drags_of
 from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
+from ..family_rows import is_fold
 from ..session import Selection
 from ..tree_text import leaf_name, parent_kinds
 from .actions import InlineHost, RowTarget
@@ -1009,6 +1010,10 @@ class PlotCard:
         fields — its Edit on plot place says why. Said again after an edit:
         the mode is a field of the editor."""
         if self.hint is None or self.hint.is_deleted:
+            return
+        if is_fold(self.open_path or ""):
+            # A folded row's editor is this card's too, and its line is
+            # its own (`family_fold.HINT`): fields only, nothing to drag.
             return
         armed = self.placing.armed
         if armed is not None:
