@@ -666,3 +666,70 @@ def test_a_running_test_s_editor_offers_what_a_click_takes_through_every_update(
         assert _console(errors) == [], "cancelled"
     finally:
         _stop(proc)
+
+
+def _live_family(tmp_path: Path) -> tuple[Path, Path]:
+    """`family_project` — A scored on x and on `pipe.T[1]` … `pipe.T[4]`,
+    whose four identical criteria are one folded row — with every script
+    `SIMULATE_LIVE` writing those five series, A's held at its sixth row."""
+    from family_project import family_project
+    from live_fake import SIMULATE_LIVE
+
+    cfg, work = family_project(tmp_path, 4)
+    examples = tmp_path / "FakeLib" / "Examples"
+    series = '{"x": scale * t, "y": 2 * t, "z": t * t}'
+    assert series in SIMULATE_LIVE
+    family = '{"x": scale * t, **{f"pipe.T[{i}]": i * t for i in range(1, 5)}}'
+    for script in examples.rglob("*.py"):
+        script.write_text(SIMULATE_LIVE.replace(series, family), encoding="utf-8")
+    steer(examples, A, rows=40, hold=6)
+    return cfg, work
+
+
+def test_a_running_family_plot_under_dark_folds_to_waiting_for_result(
+    tmp_path, playwright_browser
+):
+    """Live results × themes × a folded row (D151, D148, D152): the test
+    is queued from its own page in a tab switched to dark; its family's
+    plot is the dark theme's and draws every element's rows so far; the
+    folded row reads `waiting for result` in place of a count of verdicts,
+    with no pill; and no word of the page is the default theme's."""
+    from test_author_test_page_playwright import _served as _test_page_served
+
+    with _test_page_served(
+        tmp_path, playwright_browser, project=_live_family, hooks=LIVE_HOOKS
+    ) as page:
+        switch_theme(page, "dark")
+        fold = page.locator(".dstf-plot").nth(1).locator(".dstf-fold")
+        expect(fold).to_contain_text("3 pass · 1 fail", timeout=EXPECT_TIMEOUT)
+        _queue(page, "Queue 1")
+        expect(page.locator(STRIP)).to_have_text(
+            "Running on worker 1 — t = 0.128 / 1 s", timeout=RUN_TIMEOUT
+        )
+        expect(fold.locator(".dstf-mono")).to_have_text(WAITING)
+        expect(fold).to_contain_text("nrmse · pipe.T[1:4]")
+        rows = page.evaluate(ROWS)
+        assert rows["pills"] == 0 and rows["every"] > 0
+        assert rows["readouts"] == [WAITING] * 6  # x, the fold, its four members
+        dark = theme.THEMES["dark"]
+        assert fold.locator(".dstf-mono").evaluate(
+            "e => getComputedStyle(e).color"
+        ) == rgb(dark["text"])
+
+        # The family's plot: the theme's ground, each element's six rows.
+        fold.scroll_into_view_if_needed()
+        family = (
+            "() => { const gd = document.querySelectorAll('.js-plotly-plot')[1];"
+            " if (!gd || !gd._fullLayout) return null;"
+            " return gd.data.filter(t => (t.meta || {}).kind === 'act')"
+            ".map(t => t.x.length); }"
+        )
+        page.wait_for_function(
+            f"() => JSON.stringify(({family})()) === '[6,6,6,6]'",
+            timeout=EXPECT_TIMEOUT,
+        )
+        ground = page.evaluate(
+            f"() => ({PLOT_GROUND})(document.querySelectorAll('.js-plotly-plot')[1])"
+        )
+        assert_dark_plot(ground)
+        _keep(page, tmp_path, "live-family-dark")
