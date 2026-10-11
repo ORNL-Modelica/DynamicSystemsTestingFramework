@@ -791,3 +791,68 @@ def test_what_a_held_handle_shows_is_what_its_release_writes(
         page.wait_for_timeout(600)
         staged = _staged_tree(page)["children"][0]["points"][0]["tolerance"]
         assert f"{staged:g}" == shown, (staged, shown)
+
+
+#: The fill of the shape of plot 0 whose name ends ``tail``, as drawn.
+SHAPE_FILL = """
+(tail) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const i = (gd.layout.shapes || []).findIndex(s => (s.name || '').endsWith(tail));
+  const el = gd.querySelector('.shapelayer path[data-index="' + i + '"]');
+  return el ? getComputedStyle(el).fill : null;
+}
+"""
+
+
+def test_under_dark_the_armed_cue_a_refusal_and_the_arrows_are_the_themes(
+    tmp_path, playwright_browser
+):
+    """On-plot editing in a tab switched to dark (D149 × D148): what says
+    a field is armed — the outline about its plot, the line under it, the
+    filled ⌖ — is the DARK accent and a ⌖ at rest its muted text; a
+    refused click's line is the fail fill, which reads on the dark
+    surface; and a point's arrows are the grip's orange, which reads on
+    the dark plot. None is a colour of the default theme left behind."""
+    from dstf.figures.plotly import GRIP
+    from dstf.reporting import theme
+    from test_themes import contrast
+    from test_themes_playwright import DARK, LIGHT, rgb, switch_theme
+
+    colour = "e => getComputedStyle(e).color"
+    with _served(tmp_path, playwright_browser, project=_wave, hooks=True) as page:
+        page.wait_for_timeout(700)
+        switch_theme(page, "dark")
+        _open_for_grips(page, 0, "points · x")
+        button = _arm_row(page, 0)
+        _plot_on_top(page)
+        accent = rgb(DARK["accent"])
+        assert accent != rgb(LIGHT["accent"])
+        cue = page.evaluate(ARMED_CUE)
+        assert cue["armed"] and cue["line"] == ARMED_HINT.format("row 1"), cue
+        assert (cue["outline"], cue["colour"], cue["accent"]) == (accent,) * 3, cue
+        assert button.evaluate(colour) == accent
+        assert _row_button(page, 1).evaluate(colour) == rgb(DARK["text-muted"])
+        assert contrast(DARK["accent"], DARK["surface"]) >= 4.5
+
+        # Refused — a row of checkpoints is set on the time plot — in the
+        # fail fill, the one red every theme keeps.
+        top = _at(page, 2.0, 0.0, "x2y2")["yrange"][1]
+        _click_at(page, _at(page, 2.0, top / 2, "x2y2"))
+        refusal = page.locator(".dstf-plot-refusal").first
+        expect(refusal).to_have_text(
+            "row 1 is set on the time plot", timeout=EXPECT_TIMEOUT
+        )
+        fail = theme.STATUS["fail"]["fill"]
+        assert refusal.evaluate(colour) == rgb(fail)
+        assert contrast(fail, DARK["surface"]) >= 4.5
+        _shot(page, tmp_path, "onplot-dark-armed")
+        page.keyboard.press("Escape")
+
+        # A point's arrows, shown under the pointer, on the dark plot.
+        ring = _shape(page, "/points/target/0")
+        page.mouse.move(ring["x"] - 40, ring["y"] - 40)
+        page.mouse.move(ring["x"], ring["y"], steps=4)
+        assert _shape(page, "/points/upper/0")["box"] is not None
+        assert page.evaluate(SHAPE_FILL, "/points/upper/0") == rgb(GRIP)
+        assert contrast(GRIP, DARK["surface"]) >= 3.0
+        _shot(page, tmp_path, "onplot-dark-arrows")
