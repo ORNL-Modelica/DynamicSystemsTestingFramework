@@ -26,11 +26,17 @@ What it is built around, each measured on Dymola 2026x / omc 1.27 under WSL:
 
 A NEW RUN is a different file under the same path. It is recognised by any
 of: the file was gone at a poll, its identity (device, inode) changed, it
-got smaller, or the last row served no longer reads back as it did — the
-last because a file removed and recreated takes the same inode on ext4, and
-can have outgrown the old one before the next poll. The reader then starts
-over, and :attr:`LiveSnapshot.run` counts up so its caller drops what it had
-accumulated.
+got smaller, the last row served no longer reads back as it did — or, while
+no row was served yet, its header matrices are not the ones read before.
+The last two because a file removed and recreated takes the same inode on
+ext4, and can have outgrown the old one before the next poll. The reader
+then starts over, and :attr:`LiveSnapshot.run` counts up so its caller
+drops what it had accumulated.
+
+Not recognised: a file put in place of one whose rows were served, no
+smaller than it, whose row at the last index served is the same bytes. Its
+earlier rows are then the old file's on the caller's trace until the run
+ends and the result is read whole.
 
 A poll returns at most ``max_rows`` samples per name — fewer for a file
 with very wide rows, so that no read of rows exceeds 16 MB (one row, where a
@@ -122,6 +128,9 @@ class _Layout(NamedTuple):
     #: Every variable the file names, in its order, the abscissa left out:
     #: what `result_files.mat_names` lists of the same file.
     names: tuple[str, ...]
+    #: The header matrices' own bytes, hashed: two files with one key are
+    #: read alike (a NaN parameter is no difference here).
+    key: int
 
     @property
     def row_bytes(self) -> int:
@@ -204,9 +213,20 @@ class LiveMatReader:
             self._start_over()
         self._identity, self._size = identity, st.st_size
 
-        if self._layout is None:
-            self._layout = self._read_layout(f)
-            if self._layout is None:
+        if self._layout is None or self._rows == 0:
+            # Until a row was served nothing but the header itself says the
+            # file is still the one it was read from: a file put in its
+            # place — in place, and no smaller — would be read through the
+            # other's offsets and columns. So it is read again each poll,
+            # and another header is another run.
+            layout = self._read_layout(f)
+            if self._layout is not None and (
+                layout is None or layout.key != self._layout.key
+            ):
+                self._start_over()
+                self._identity, self._size = identity, st.st_size
+            self._layout = layout
+            if layout is None:
                 return self._snapshot({})
         layout = self._layout
         present = max(0, st.st_size - layout.offset) // layout.row_bytes
@@ -288,7 +308,17 @@ class LiveMatReader:
             # whatever a foreign file's bytes decode to, it is not a layout.
             return None
         listed = tuple(n for n in names if n.lower() != "time")
-        return _Layout(offset, dtype, n_values, sources, listed)
+        key = hash(
+            (
+                offset,
+                dtype.str,
+                n_values,
+                tuple(names),
+                data_info.tobytes(),
+                b"" if data_1 is None else data_1.tobytes(),
+            )
+        )
+        return _Layout(offset, dtype, n_values, sources, listed, key)
 
     @staticmethod
     def _rows_between(

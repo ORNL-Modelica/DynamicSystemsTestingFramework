@@ -372,6 +372,72 @@ def test_a_smaller_file_before_any_row_was_served_is_another_run(tmp_path):
     assert _same(snap.series["x"].values, new.expected["x"])
 
 
+def test_a_file_replaced_before_any_row_was_served_is_read_by_its_own_header(
+    tmp_path,
+):
+    """Header whole, no row yet — then another model's file in its place,
+    in place, and no smaller: neither the size nor a last row says so. The
+    header on record was kept, and the new file's rows were read through
+    it: 20 rows where it holds 12, another variable's column as `x`."""
+    path = tmp_path / "res.mat"
+    _result(path, "openmodelica", "<f8", n=40, points=0, declared=0)
+    reader = LiveMatReader(path)
+    trace = Trace()
+    first = trace.take(reader.poll(["x", "y"]))
+    assert (first.state, first.run, first.rows) == (RUNNING, 0, 0)
+    # the same file polled again is the same run
+    assert trace.take(reader.poll(["x", "y"])).run == 0
+    size, inode = path.stat().st_size, path.stat().st_ino
+
+    t = np.linspace(0.0, 4.0, 40)
+    new = write_result_mat(
+        path,
+        tool="openmodelica",
+        dtype="<f8",
+        time=t,
+        trajectories={"a": 100 + t, "x": 200 + t, "b": 300 + t, "y": 400 + t},
+        parameters={"k": 1.0},
+        points=0,
+        declared=0,
+    )
+    with open(path, "ab") as f:
+        f.write(new.rows(0, 12))
+    assert path.stat().st_size >= size and path.stat().st_ino == inode
+
+    snap = trace.take(reader.poll(["x", "y"]))
+    assert (snap.state, snap.run, snap.rows) == (RUNNING, 1, 12)
+    assert snap.time == float(t[11])
+    for name in ("x", "y"):
+        assert _same(trace.series(name)[1], new.expected[name][:12]), name
+    assert reader.names == ("a", "x", "b", "y", "k")
+    # and from its first row on, the header is the run's: not read again
+    with open(path, "ab") as f:
+        f.write(new.rows(12, 20))
+    assert trace.take(reader.poll(["x", "y"])).run == 1
+    assert _same(trace.series("x")[1], new.expected["x"][:20])
+
+
+def test_a_header_is_read_again_only_until_its_first_row(tmp_path, monkeypatch):
+    path = tmp_path / "res.mat"
+    mat = _result(path, n=40, points=0, declared=1)
+    reader = LiveMatReader(path)
+    read: list[int] = []
+    real = LiveMatReader._read_layout
+    monkeypatch.setattr(
+        LiveMatReader, "_read_layout", lambda self, f: read.append(1) or real(self, f)
+    )
+    for _ in range(3):
+        assert reader.poll(NAMES).rows == 0
+    assert len(read) == 3
+    with open(path, "ab") as f:
+        f.write(mat.rows(0, 5))
+    assert reader.poll(NAMES).rows == 5 and len(read) == 4
+    with open(path, "ab") as f:
+        f.write(mat.rows(5, 9))
+    assert reader.poll(NAMES).rows == 9 and reader.poll(NAMES).run == 0
+    assert len(read) == 4
+
+
 def test_another_inode_is_another_run_even_when_it_continues_the_old_one(tmp_path):
     """A replacement that is larger and whose first rows ARE the old file's
     — nothing but its identity says it is a different file."""

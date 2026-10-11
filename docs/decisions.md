@@ -7632,7 +7632,10 @@ reader's row count taken from the file's size, `LiveMatReader`,
    handed back, and the reader is built only once the item has its key —
    so there is no old file under it. Until the new file exists the page
    says `starting`; a file that goes away under a poller is another run
-   (the reader's `run` counts up) and every sample is dropped.
+   (the reader's `run` counts up) and every sample is dropped. Until a
+   file's first row is served its header is read again at each poll, and
+   another header is another run: a file put in place of a header-only
+   one, no smaller, was read through the first one's columns.
 8. *Starting workers are listed.* The queue panel shows each worker being
    brought up — `starting worker 1 — loadModel(Modelica) · 85 s`, the phase
    in the backend's own words, a path cut to its last part — and the next
