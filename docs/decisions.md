@@ -7123,14 +7123,31 @@ every page load; after, it is the dark page from the first frame sampled.
 - The Variables drawer's array glyph: the default accent ramp's four
   blocks in both themes. It marks a row as an array and is tied to no
   plot; its darkest block is 1.9:1 on the dark surface, dim but there.
-- AG Grid's light scheme on `default` (item 13), the column chooser's
-  shadow literal, and what the browser draws itself — a native tooltip, a
+- AG Grid's light scheme on `default` (item 13), and what the browser
+  draws itself — a native tooltip, a
   select's list — which follows `color-scheme: dark` and nothing of ours.
 - A figure a plug-in capability asks its `SessionView` for is the
   default theme's unless the capability passes `theme`: nothing hands a
   capability its tab's theme yet.
 - A tab that switched AWAY from the project's theme shows the project's
   ground for the moment before it connects (item 14).
+
+**Five literals that followed no theme** (2026-10-11, found by a review of
+the release tree; `default` renders as it did — every figure of the
+fixture report and the theme tests' figure cases compared equal before
+and after, and the pages differ by one new variable line). On `dark`:
+the actual's event line and the sibling-backend overlay `#1976D2`
+(3.6:1 on the dark plot) → `#64b5f6` (7.5), the companion overlay
+`#388E3C` (4.0) → `#81c784` (8.3) — series read against each other, so
+held to 4.5:1; a marker's outline `white`, a 16:1 halo about every
+checkpoint on a dark plot, → the plot's ground `#1e1e1e` (it parts a
+marker from the line under it, and is the ground's colour in both
+themes); the tint of a region drawn over the plot's whole height, grey
+at 9 %, → the dark muted text at 9 %. They are the palette's
+`actual_event`, `sibling`, `companion`, `marker_outline` and
+`span_fill`. And a 16th token, `shadow-menu` (`rgba(0,0,0,0.15)` /
+`rgba(0,0,0,0.6)`): the Suite table's column chooser drew its shadow in
+a literal a step darker than `shadow`.
 
 **What was not run.** TRANSFORM: the gate was a fixture project with a
 Python backend. Any browser but Chromium. The Playwright tests are not

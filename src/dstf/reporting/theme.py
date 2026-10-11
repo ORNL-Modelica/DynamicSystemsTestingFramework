@@ -40,6 +40,9 @@ DEFAULT_THEME: Mapping[str, str] = MappingProxyType(
         "accent-hover": "#1565C0",
         "selection": "#e3f2fd",
         "shadow": "rgba(0,0,0,0.1)",
+        #: Under a floating menu (the Suite table's column chooser), which
+        #: lies over the content it shades: a step past ``shadow``.
+        "shadow-menu": "rgba(0,0,0,0.15)",
         #: Text on a FILLED accent (the primary button). A token of its
         #: own: on a dark surface no one blue reads as link text and
         #: carries white text at once (white on the dark accent is 2.2:1).
@@ -65,6 +68,7 @@ DARK_THEME: Mapping[str, str] = MappingProxyType(
         "accent-hover": "#90caf9",
         "selection": "#1d3a57",
         "shadow": "rgba(0,0,0,0.5)",
+        "shadow-menu": "rgba(0,0,0,0.6)",
         "on-accent": "#0b1a2b",
     }
 )

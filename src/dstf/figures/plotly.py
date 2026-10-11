@@ -312,7 +312,7 @@ def _box(prim: Box, leaf: LeafView, window: Window | None, ctx: _Ctx):
             "y1": y1,
             "fillcolor": (PASS if ok else FAIL)
             if not full_height
-            else "rgba(117,117,117,0.09)",
+            else ctx.palette.span_fill,
             "line": {
                 "color": PASS_LINE if ok else FAIL_LINE,
                 "width": 1,
@@ -385,7 +385,9 @@ def _vline(prim: VLine, leaf: LeafView, window: Window | None, ctx: _Ctx):
             "y0": y0,
             "y1": y1,
             "line": {
-                "color": ctx.palette.reference_event if ref else "#1976D2",
+                "color": ctx.palette.reference_event
+                if ref
+                else ctx.palette.actual_event,
                 "width": 1 if ref else 1.5,
                 "dash": "dash" if ref else "solid",
             },
@@ -481,7 +483,7 @@ def _marker_traces(
                     "color": [
                         FAIL_LINE if m.passed is False else ok_colour for m in group
                     ],
-                    "line": {"color": "white", "width": 1},
+                    "line": {"color": palette.marker_outline, "width": 1},
                 },
                 "hoverinfo": "x+y",
                 "showlegend": True,
@@ -693,9 +695,9 @@ def _base_traces(view: VariableView, palette: Palette) -> list[dict]:
         if ov.role == "soft_check":
             color, dash = palette.soft_check, "dot"
         elif ov.kind == "sibling-backend":
-            color, dash = "#1976D2", "dash"
+            color, dash = palette.sibling, "dash"
         else:
-            color, dash = "#388E3C", "dashdot"
+            color, dash = palette.companion, "dashdot"
         traces.append(
             {
                 "type": "scatter",

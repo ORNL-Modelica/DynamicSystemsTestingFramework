@@ -51,11 +51,11 @@ class TestTokens:
         assert theme.THEMES["default"] is theme.DEFAULT_THEME
         assert not theme.is_dark("default") and theme.is_dark("dark")
 
-    def test_every_theme_sets_the_same_fifteen_tokens(self):
+    def test_every_theme_sets_the_same_sixteen_tokens(self):
         """A token one theme lacks is a `var(--dstf-...)` that silently
         falls back to the browser's default under it."""
         default = set(theme.DEFAULT_THEME)
-        assert len(default) == 15
+        assert len(default) == 16
         for name, table in theme.THEMES.items():
             assert set(table) == default, name
 
@@ -75,9 +75,12 @@ class TestTokens:
             "accent-hover": "#90caf9",
             "selection": "#1d3a57",
             "shadow": "rgba(0,0,0,0.5)",
+            "shadow-menu": "rgba(0,0,0,0.6)",
             "on-accent": "#0b1a2b",
         }
         assert theme.DEFAULT_THEME["on-accent"] == "#ffffff"
+        # the literal the Suite table's column menu drew its shadow in
+        assert theme.DEFAULT_THEME["shadow-menu"] == "rgba(0,0,0,0.15)"
 
     def test_the_dark_neutrals_are_grey_not_tinted(self):
         """Neutral grey (the owner's choice over the blue-tinted board):
@@ -236,6 +239,11 @@ class TestFigurePalette:
         assert default.ring_fill == "rgba(46,125,50,0.25)"
         assert default.context == "#888888"
         assert default.soft_check == "#7B1FA2"
+        assert default.actual_event == "#1976D2"
+        assert default.sibling == "#1976D2"
+        assert default.companion == "#388E3C"
+        assert default.marker_outline == "white"
+        assert default.span_fill == "rgba(117,117,117,0.09)"
         assert default.hues is HUES
         assert default.template is None
 
@@ -312,11 +320,76 @@ class TestFigurePalette:
         assert contrast(default.ring, ground) < 3.3
         assert contrast(default.reference_event, ground) < 3.7
 
+    def test_the_dark_lines_that_carry_meaning_read_as_text_does(self):
+        """The actual's event line and the two overlays are series a
+        person reads against each other: 4.5:1 on the dark plot. As
+        literals they stood at 3.6 and 4.0 there."""
+        dark, default = palette_of("dark"), palette_of("default")
+        ground = theme.DARK_THEME["surface"]
+        assert (dark.actual_event, dark.sibling, dark.companion) == (
+            "#64b5f6",
+            "#64b5f6",
+            "#81c784",
+        )
+        for name in ("actual_event", "sibling", "companion"):
+            assert contrast(getattr(dark, name), ground) >= 4.5, name
+            assert contrast(getattr(default, name), ground) < 4.1, name
+
+    def test_a_markers_outline_is_the_plots_own_ground(self):
+        """It parts a marker from the line under it: the ground's colour
+        in both themes. White on the dark plot was a 16:1 halo about every
+        checkpoint."""
+        assert palette_of("default").marker_outline == "white"
+        assert palette_of("dark").marker_outline == theme.DARK_THEME["surface"]
+
+    def test_a_full_height_spans_tint_is_muted_text_thinned(self):
+        for name, table in theme.THEMES.items():
+            muted = table["text-muted"]
+            r, g, b = (int(muted[i : i + 2], 16) for i in (1, 3, 5))
+            want = f"rgba({r},{g},{b},0.09)"
+            if name == "default":
+                # the literal the figures drew, a shade off its muted text
+                want = "rgba(117,117,117,0.09)"
+            assert palette_of(name).span_fill == want, name
+
     def test_the_ring_fill_is_the_rings_colour_thinned(self):
         for name in PALETTES:
             p = palette_of(name)
             r, g, b = (int(p.ring[i : i + 2], 16) for i in (1, 3, 5))
             assert p.ring_fill == f"rgba({r},{g},{b},0.25)", name
+
+
+def _other_overlays():
+    """A variable with the two overlays that are not a soft check: another
+    backend's run of the same test, and a companion."""
+    import numpy as np
+
+    from dstf.figures.view import build_view
+
+    t = np.linspace(0.0, 1.0, 11)
+    return build_view(
+        "x",
+        act_time=t,
+        act_values=t,
+        ref_time=t,
+        ref_values=t * 1.1,
+        overlays=[
+            {
+                "name": "om",
+                "role": "companion",
+                "kind": "sibling-backend",
+                "time": t,
+                "values": t * 0.9,
+            },
+            {
+                "name": "vendor",
+                "role": "companion",
+                "kind": "external",
+                "time": t,
+                "values": t * 1.2,
+            },
+        ],
+    )
 
 
 def _figure_cases() -> dict:
@@ -339,6 +412,7 @@ def _figure_cases() -> dict:
     cases["overlay+context"] = partial(
         plot_figure, [_one_with_overlay()], context=[_labelled("z", "a.Q", 2.0)]
     )
+    cases["overlays"] = partial(variable_figure, _other_overlays())
     families = [
         _view(f"{name}[{i}]", i, ref=True) for name in "abc" for i in range(1, 5)
     ]
@@ -395,6 +469,11 @@ class TestFigures:
             (default.ring_fill, dark.ring_fill),
             (default.context, dark.context),
             (default.soft_check, dark.soft_check),
+            (default.actual_event, dark.actual_event),
+            (default.sibling, dark.sibling),
+            (default.companion, dark.companion),
+            (default.marker_outline, dark.marker_outline),
+            (default.span_fill, dark.span_fill),
             *zip(sum(default.hues, ()), sum(dark.hues, ())),
         }
         diffs = _differences(build(), build(theme="dark"))
@@ -412,8 +491,20 @@ class TestFigures:
             diffs.pop("/layout/template")
             return {now for _, now in diffs.values()}
 
-        assert swapped("report:event-timing") == {dark.reference_event}
-        assert swapped("tool:handles") == {dark.ring, dark.ring_fill}
+        # An event's box spans the plot's height: the tint is the theme's.
+        assert swapped("report:event-timing") == {
+            dark.reference_event,
+            dark.actual_event,
+            dark.span_fill,
+        }
+        assert swapped("overlays") == {dark.sibling, dark.companion}
+        # A checkpoint's marker and a handle's, each with its outline.
+        assert swapped("report:points") == {dark.marker_outline, dark.ring}
+        assert swapped("tool:handles") == {
+            dark.ring,
+            dark.ring_fill,
+            dark.marker_outline,
+        }
         assert swapped("overlay+context") == {dark.soft_check, dark.context}
         assert swapped("families") == {
             dark.hues[0][3],
@@ -448,11 +539,10 @@ class TestFigures:
         for build in _figure_cases().values():
             seen |= _line_colours(build(theme="dark"))
         opaque = {c for c in seen if HEX.match(c)}
-        # What is left out, by name: a marker's white outline, the band's
-        # invisible edge, and the translucent pass / fail / muted /
-        # window lines, which mark a REGION's edge.
+        # What is left out, by name: the band's invisible edge, and the
+        # translucent pass / fail / muted / window lines, which mark a
+        # REGION's edge.
         assert seen - opaque <= {
-            "white",
             "rgba(0,0,0,0)",
             "rgba(76,175,80,0.6)",
             "rgba(244,67,54,0.8)",
