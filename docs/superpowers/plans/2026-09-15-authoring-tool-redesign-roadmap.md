@@ -26,13 +26,13 @@ queue. Between those, the visible work follows the brief's own sequence
 
 | # | Sub-project | Plan | Depends on | Gate over TRANSFORM |
 |---|---|---|---|---|
-| 1 | The foundations | `2026-09-15-the-foundations.md` | — | report page's two error axes; warm open and first click timed |
-| 2 | The Suite page and the new shell | to write | 1 | 331 rows fill in progressively; batch actions unlock; nothing written |
-| 3 | The Test page, inline criteria, the drawer, modular plots | 3a `2026-09-20-plots-key-and-plot-figure.md` (built); 3b `2026-09-20-the-test-page.md` (built); 3c to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
-| 4 | Editing returns (brief §3.5, in its order) | to write | 3 | Shift+click adds a point on a real trace; brush sets a window |
+| 1 | The foundations | BUILT (`2026-09-15-the-foundations.md`, `2026-09-16-foundations-corrections.md`; D127) | — | report page's two error axes; warm open and first click timed |
+| 2 | The Suite page and the new shell | BUILT (`2026-09-16-suite-page-and-shell.md`; D129) | 1 | 331 rows fill in progressively; batch actions unlock; nothing written |
+| 3 | The Test page, inline criteria, the drawer, modular plots | BUILT: 3a `2026-09-20-plots-key-and-plot-figure.md` (D130); 3b `2026-09-20-the-test-page.md` (D131); 3c `2026-09-25-rail-and-drawers.md` (D134); 3d with no plan (D152) | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
+| 4 | Editing returns (brief §3.5, in its order) | BUILT as steps T (D139), E1 (D147) and E2 (D149) of the reorder below, which took its items; what they left — a point deleted on the plot, a window brush — is not scheduled (D149, Rejected) | 3 | Ctrl+click adds a point on a real trace (D149: Shift+click as first drawn) |
 | 5 | The simulation queue | BUILT (backend tier merged at `6609d01`; the tool `ec84398..c4d366d`, D150) | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
 | 6 | Live results | BUILT (no plan: built from the brief §3.7 in two tiers — the reader in `backends/`, merged before this; the tool `4eee642..dab81be`, D151) | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
-| 7 | Themes | BUILT (no plan: built from a prototype and D148) | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
+| 7 | Themes | BUILT (no plan: built from a prototype; `f505ee2..d1807ef`, D148) | 1, 2, 3 | dark theme over the report and the tool; plot template follows |
 
 **Reordered after the owner's first hands-on look (2026-09-26).** The owner
 used 3b and 3c over TRANSFORM and ruled, on a two-round board, what comes
@@ -45,7 +45,7 @@ TRANSFORM gate:
 | S | The Suite table: one row model shared with the dashboard (same columns and words; the dashboard stays static); a sortable table with group rows (collapsible), typed column filters (status by the count pills, numbers by `>1e-4` / `1..10`, text by glob with `.*` / `Aa` once in the toolbar), no separate filter box; "2 selected · Clear" with Rerun / Accept as icon buttons with tooltips (their confirm dialogs stay); no "(Dymola)" in Rerun; an EDITED count pill and an Edits column; rows shown before the library scan finishes; one control set (filter, sort, group, names) on the Suite table, the Tests drawer and the Variables drawer, with the Variables drawer's name format (expression / result-file name / both) and grouping (by component / flat / tracked first) | Q1 A, Q1a B, Q1b A, Q7; icons for view controls | BUILT (`2026-09-26-row-model-and-vocabulary.md`, `2026-09-27-the-suite-table.md`; D136, D137); the drawers' half (the Tests and Variables drawers' control set) built in T (D139) |
 | T | The Test page: a status strip under the test's row, in the sticky part, colouring the one next action (Accept into the ⋮ when there is nothing to accept); every `+` opens one inline row where it was clicked (no dialog), a new criterion lands right after the clicked one, a combinator's kind is an inline dropdown; the pending-edits drawer becomes a `difflib` preview of the entry as `test_spec.json` writes it | Q2 A, Q3 A, Q6 A | BUILT (`2026-09-27-the-test-page.md`; D139; ba6208a.. through the review fixes "drawers: second review fixes — families stay open under a filter, …") |
 | E1 | Two-sided tolerance: a tolerance is a number or a `{"lower", "upper"}` pair on every metric with one but `nrmse` (a scoring change: an additive `test_spec.json` shape — a spec of numbers scores as before — and a base tolerance that is not one finite number refuses its test); two fields with a link toggle on a criterion's form and in a table row; an arrow outside each tolerance edge on the plot, shown while the pointer is near its point (close points together) and dragged to set that side; a scalar scored against its baseline draws what it allows | Q5 A; Q1 B, Q2 B, Q6 A, Q7 A (the tolerance board, 2026-10-02) | BUILT (`2026-10-02-two-sided-tolerance.md`; D147; 5bac523..4b7612c); its TRANSFORM gate is the controller's |
-| E2 | On-plot editing: arm a field then click the plot, and Ctrl+click adds a row that settles on the data, on every metric; drags update the fields live; dragged values snapped to a readable precision | Q4 C; Q3 A, Q4 A, Q5 A (the tolerance board, 2026-10-02); live drag | BUILT (D149; built from the controller's brief, no plan file); its TRANSFORM gate is the controller's |
+| E2 | On-plot editing: arm a field then click the plot, and Ctrl+click adds a row that settles on the data, on every metric; drags update the fields live; dragged values snapped to a readable precision | Q4 C; Q3 A, Q4 A, Q5 A (the tolerance board, 2026-10-02); live drag | BUILT (D149; built from the controller's brief, no plan file; `cb18b81..fff3538`); its TRANSFORM gate is the controller's |
 | U1 | Plots from the tree: one plot per scored variable or array family, in tree order, on both tiers (nothing scored: one per tracked variable); a UnitTests element never folds, any other array folds by result-file name; criteria rows in tree order led by their ancestors; `plots` holds only extras — same-axis context series and unscored watch plots (New / Remove / Reset act on those alone); Add series goes; Focus switches plots; variable labels cut in the middle | Q1 b, Q10-Q17, Q19, Q20, O2, O3 (the plot-model board and grill, 2026-09-28) | BUILT (`2026-09-28-plots-from-the-tree.md`; D140; f270d2d..d78304c); its TRANSFORM gate is the controller's |
 | U2 | The add form: one searchable picker over every file variable and the diagnostics, metrics narrowed to the variable (a diagnostic: scalar); a variable is tracked because a criterion names it (Q18 b: runs record, store and score it; no `spec-update` change; rerun, then accept) — which lifts the grey `+` on a watch plot of an untracked variable; editors show the values in effect, fields aligned; the Variables drawer's rows on two lines and the drawers resizable (the owner's 2026-09-29 rulings) | Q2, Q7, Q8, Q18 b, O1-O3 | BUILT (`2026-09-29-the-add-form.md`; D142; 83ffbbf through the commit "U2 final review fixes: the picker, the base in effect, the grip"); its TRANSFORM gate is the controller's |
 | U3 | The Statistics card: run against baseline, collapsed to one line naming the changed rows; a click adds a scalar leaf; a missing zero count read as 0; hosts the editor of a diagnostic criterion (U2 left it none, D142) | the owner's Statistics idea; Q6 | BUILT (`2026-09-29-the-statistics-card.md`; D143; 6841a49 through 8968d55, seven fix batches; TRANSFORM gate over a copy passed at c8a8d9f) |
@@ -60,9 +60,11 @@ is in the ADD FORM and in the folded row's editor, not on the Variables
 drawer's row the brief drew; Add writes one literal leaf per chosen element
 as it stages, so nothing is expanded at Save; and under a family's plot
 identical criteria fold into one row whose editor changes them all. Its
-TRANSFORM gate is the controller's. Then 5 (the queue), 6 (live results) and
-7 (themes), as below. Sub-project 4's brief §3.5 items are re-scoped into T
-and E when those are planned.
+TRANSFORM gate is the controller's. After it 5 (the queue, D150), 6 (live
+results, D151) and 7 (themes, D148) were BUILT too, as below: every step of
+this roadmap is, and the five built apart — E2, 3d, 5, 6 and 7 — stand in
+one tree from the merge `86ddc94`. Sub-project 4's brief §3.5 items were
+re-scoped into T, E1 and E2.
 
 
 ---
@@ -471,6 +473,12 @@ computed server-side (all — the page computes nothing).
 Shift+click on the real trace, a window brushed, then discarded; a screenshot
 READ.
 
+**Status.** Never planned as one sub-project: the 2026-09-26 reorder took its
+items into steps T (D139), E1 (D147) and E2 (D149), each BUILT. The gesture
+contract as built is D149's, not the one above: Ctrl+click adds a row, a row
+is removed in its table, and a window's ends are armed and clicked — no
+brush.
+
 ## 5. The simulation queue
 
 **Goal.** Brief §3.6: a FIFO queue per tool process replacing the single job;
@@ -495,6 +503,10 @@ backend.
 cancelled mid-run, one finishes and rescored; OpenModelica: a run completes
 or its failure is shown with the backend's message; nothing left running.
 
+**Status (built 2026-10-08).** BUILT in two tiers — the pool in `backends/`
+and the queue in the tool — with D150 (`docs/decisions.md`) the contract as
+built and the record of what the gate measured.
+
 ## 6. Live results
 
 **Goal.** Brief §3.7: the running test's Test page shows the growing actual
@@ -513,6 +525,10 @@ wipe tolerated by the reader.
 **Gate.** Dymola on `/mnt/d`: a long test's trace grows on the page; the 331
 results re-read byte-identical by the new reader; a timed-out run's partial
 result shown.
+
+**Status (built 2026-10-08).** BUILT in two tiers — the reader in `backends/`
+and the running test's page in the tool — with D151 the contract as built
+and the record of what the gate measured.
 
 ## 7. Themes
 
