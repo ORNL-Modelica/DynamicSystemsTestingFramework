@@ -422,6 +422,72 @@ def test_a_cancelled_run_shows_what_it_wrote_and_scores_nothing(h):
     assert h.runs.polled(A) is False and h.runs._runs[A].reader is None
 
 
+def _header_parses(monkeypatch) -> list[int]:
+    """One entry — the count of names — each time a result file's name
+    matrix is decoded: what a header parse costs (0.3 s for 20,000
+    variables), whichever reader asked."""
+    from dstf.backends.common import mat_reader
+
+    parsed: list[int] = []
+    real = mat_reader._parse_name_matrix
+
+    def counting(name_matrix):
+        names = real(name_matrix)
+        parsed.append(len(names))
+        return names
+
+    monkeypatch.setattr(mat_reader, "_parse_name_matrix", counting)
+    return parsed
+
+
+def test_a_partial_result_s_file_is_parsed_once_for_every_name_its_page_draws(
+    h, monkeypatch
+):
+    """The page asks a name at a time (a 20-member family is twenty asks),
+    on the UI loop. Each ask parsed the whole header again and kept its own
+    copy of the time: one parse and one time array now, for as long as the
+    partial result stands."""
+    s = h.session
+    h.steer(A, hold=7)
+    (item,) = s.enqueue([A])
+    h.running(A)
+    h.ask(A, "x")
+    h.at(A, 0.3)
+    s.cancel(item)
+    h.ended(A)
+    assert s.partial(A) is not None
+
+    parsed = _header_parses(monkeypatch)
+    views = {name: s.view(A, name) for name in ("x", "y", "z")}
+    assert s.variable_names(A) == ["x", "y", "z"]  # the pickers' listing too
+    assert len(parsed) == 1
+    times = [h.runs.series(A, name)[0][0] for name in ("x", "y", "z", "x")]
+    assert all(time is times[0] for time in times)
+    assert len(parsed) == 1  # asked again: nothing is read again
+    assert times[0].tolist() == _steps(7)
+    assert np.allclose(views["x"].act_values, 1.25 * times[0])
+    assert np.allclose(views["z"].act_values, times[0] ** 2)
+    # a name the file lacks is asked of it once, and stays absent
+    assert h.runs.series(A, "nope") == (None, 0) and len(parsed) == 1
+
+
+def test_a_running_file_s_header_is_parsed_once_for_its_rows_and_its_names(
+    h, monkeypatch
+):
+    """The first poll parses the header; listing the file's variables for
+    the pickers parsed it a second time, on the loop too."""
+    s = h.session
+    parsed = _header_parses(monkeypatch)
+    h.steer(A, hold=5)
+    s.enqueue([A])
+    h.running(A)
+    h.ask(A, "x")
+    h.at(A, 0.2)
+    assert s.variable_names(A) == ["x", "y", "z"]
+    assert s.variable_names(A) == ["x", "y", "z"]
+    assert len(parsed) == 1
+
+
 def test_a_partial_result_is_refused_as_a_baseline_with_a_sentence(h):
     s = h.session
     accept = Accept()

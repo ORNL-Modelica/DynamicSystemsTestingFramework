@@ -21,7 +21,9 @@ import numpy as np
 import pytest
 
 from conftest import make_test_model
+from dstf.backends.common import mat_reader
 from dstf.backends.common.mat_reader import (
+    ResultMatFile,
     list_result_mat_variables,
     mat_reaches_time,
     mat_shortfall,
@@ -499,6 +501,73 @@ def test_the_tool_reads_any_variable_of_a_partial_result(tmp_path):
     got = DymolaBackend.result_series(tmp_path, ["y", "k.neg"])
     assert _same(got["y"][1], mat.expected["y"][:3])
     assert _same(got["k.neg"][1], mat.expected["k.neg"][:3])
+
+
+# ---------------------------------------------------------------------------
+# A file read again and again: one parse of its header
+# ---------------------------------------------------------------------------
+
+
+def _parses(monkeypatch) -> list[int]:
+    parsed: list[int] = []
+    real = mat_reader._parse_name_matrix
+
+    def counting(name_matrix):
+        names = real(name_matrix)
+        parsed.append(len(names))
+        return names
+
+    monkeypatch.setattr(mat_reader, "_parse_name_matrix", counting)
+    return parsed
+
+
+@pytest.mark.parametrize(("tool", "dtype"), LAYOUTS)
+def test_a_file_kept_open_reads_as_one_read_does_through_one_parse(
+    tmp_path, monkeypatch, tool, dtype
+):
+    """`ResultMatFile`: any variable, a name at a time or several, is what
+    `read_result_mat` reads of it — with one header parse for them all, and
+    one time array."""
+    mat = _synthetic(tmp_path / "r.mat", tool, dtype, 9, points=6, declared=1)
+    want = _expected(mat, 6)
+    parsed = _parses(monkeypatch)
+    opened = ResultMatFile(mat.path)
+
+    _assert_series(opened.series(), want)
+    assert opened.names == tuple(list_result_mat_variables(mat.path)[1:])
+    one_by_one = {name: opened.series([name])[name] for name in want}
+    _assert_series(one_by_one, want)
+    assert len({id(series[0]) for series in one_by_one.values()}) == 1
+    # asked out of the file's order, with a name it lacks: the file's order
+    assert list(opened.series(["k.neg", "nope", "x"])) == ["x", "k.neg"]
+    assert opened.series([]) == {}
+    assert len(parsed) == 2  # this file's one, and the listing it is held to
+
+
+def test_a_file_replaced_under_an_open_one_is_parsed_again(tmp_path):
+    """Never another file's rows through the header of the one before."""
+    path = tmp_path / "r.mat"
+    first = _synthetic(path, "dymola", "<f4", 9)
+    opened = ResultMatFile(path)
+    _assert_series(opened.series(["x"]), {"x": _expected(first)["x"]})
+
+    t = np.linspace(0.0, 5.0, 14)
+    second = write_result_mat(
+        path, tool="dymola", time=t, trajectories={"a": t * t, "x": 7.0 - t}
+    )
+    _assert_series(opened.series(["x", "a"]), _expected(second))
+    assert opened.names == ("a", "x")
+
+    path.unlink()
+    assert opened.series(["x"]) is None and opened.names is None
+
+
+def test_a_file_without_its_header_matrices_reads_as_none_every_time(tmp_path):
+    path = tmp_path / "r.mat"
+    path.write_bytes(b"not a result file at all")
+    opened = ResultMatFile(path)
+    assert opened.series(["x"]) is None and opened.series(["x"]) is None
+    assert opened.names is None
 
 
 def test_a_stored_fixture_copied_whole_still_passes_the_rescue(tmp_path):

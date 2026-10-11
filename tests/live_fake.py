@@ -90,18 +90,8 @@ def make_live(patch=setattr) -> None:
     """The Python backend with a live view: ``patch(obj, name, value)`` is
     ``monkeypatch.setattr`` in a test, plain ``setattr`` in a server a
     browser test starts."""
-    from dstf.backends.common import result_files
     from dstf.backends.python.backend import PythonBackend
     from dstf.backends.types import Capability
-
-    finished = PythonBackend.result_names.__func__
-
-    def result_names(cls, test_dir):
-        # The contract of a backend with a live view: a growing file's
-        # variables are listed too.
-        if (test_dir / "result.json").exists():
-            return finished(cls, test_dir)
-        return result_files.mat_names(test_dir / "live.mat")
 
     patch(
         PythonBackend,
@@ -113,7 +103,6 @@ def make_live(patch=setattr) -> None:
         "live_result_path",
         classmethod(lambda cls, test_dir: test_dir / "live.mat"),
     )
-    patch(PythonBackend, "result_names", classmethod(result_names))
 
 
 def write_scripts(examples: Path) -> None:

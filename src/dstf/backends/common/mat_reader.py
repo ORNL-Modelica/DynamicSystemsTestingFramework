@@ -30,6 +30,7 @@ loudly rather than score.
 import logging
 import os
 import struct
+from collections.abc import Collection
 from pathlib import Path
 from typing import NamedTuple
 
@@ -281,6 +282,141 @@ def _variable_sources(
             yield name, col, negate, None
 
 
+class ResultMatFile:
+    """A result file's header matrices, parsed ONCE, and any of its
+    variables read through them after that: :meth:`series` as often as
+    asked costs one parse — a quarter of a second for 20,000 variables —
+    and every series it hands out shares one time array.
+
+    For a file that no longer changes (a finished result, or what a run
+    that was stopped left). One that does change between two reads — its
+    identity, size or modification time — is parsed again, so a file
+    replaced under the path is never read through the header of the one
+    before.
+    """
+
+    def __init__(self, mat_path: Path) -> None:
+        self.path = Path(mat_path)
+        self._stamp: tuple[int, int, int, int] | None = None
+        #: The trajectory's ``(offset, dtype, mrows, ncols)``.
+        self._block: tuple | None = None
+        #: name → (row of ``data_2`` or None, negate, constant), in the
+        #: file's order (:func:`_variable_sources`).
+        self._sources: dict[str, tuple[int | None, bool, float | None]] = {}
+        self._order: dict[str, int] = {}
+        self._names: tuple[str, ...] = ()
+        self._time: np.ndarray | None = None
+
+    @property
+    def names(self) -> tuple[str, ...] | None:
+        """Every variable the file names, in its order, the abscissa left
+        out — what :func:`list_result_mat_variables` reads of the same file
+        (``result_files.mat_names``), from the one parse. None for a file
+        that cannot be read."""
+        return None if self.series(()) is None else self._names
+
+    @staticmethod
+    def _stamp_of(st: os.stat_result) -> tuple[int, int, int, int]:
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
+
+    def _parse(self) -> bool:
+        """Read the header matrices; False (logged) for a file without
+        them."""
+        self._block, self._sources, self._order, self._time = None, {}, {}, None
+        self._names = ()
+        with open(self.path, "rb") as f:
+            self._stamp = self._stamp_of(os.fstat(f.fileno()))
+            blocks = _scan_mat4_headers(f).blocks
+
+            if "name" not in blocks:
+                logger.error("No 'name' matrix in %s", self.path)
+                return False
+
+            if "dataInfo" not in blocks or "data_2" not in blocks:
+                logger.error("Missing dataInfo or data_2 in %s", self.path)
+                return False
+
+            # Load small matrices eagerly.
+            all_var_names, data_info, data_1 = _read_tables(f, blocks, self.path)
+
+        block = blocks["data_2"]
+        for name, row, negate, constant in _variable_sources(
+            all_var_names, data_info, data_1, block[2], self.path
+        ):
+            self._sources[name] = (row, negate, constant)
+        self._order = {name: i for i, name in enumerate(self._sources)}
+        self._names = tuple(n for n in all_var_names if n.lower() != "time")
+        self._block = block
+        return True
+
+    def series(self, variable_names: Collection[str] | None = None) -> dict | None:
+        """``{name: (time, values)}`` for ``variable_names`` (every
+        variable for None), in the file's order — what
+        :func:`read_result_mat` returns, which is this on a file opened for
+        the one read. None, with the reason logged, for a file that cannot
+        be read."""
+        try:
+            if self._stamp is None or self._stamp != self._stamp_of(os.stat(self.path)):
+                if not self._parse():
+                    return None
+            if self._block is None:
+                return None  # parsed before, and it held no header matrices
+
+            # Memory-map data_2 for selective row access.
+            # MAT4 is column-major: Fortran order gives correct (mrows, ncols) indexing.
+            # For Dymola, mrows = n_trajectory_vars, ncols = n_timesteps (but transposed
+            # from MATLAB convention). Dymola stores data_2 as (n_timesteps, n_vars) in
+            # MATLAB convention, so mrows=n_timesteps, ncols=n_vars.
+            d2_offset, d2_dtype, d2_mrows, d2_ncols = self._block
+            if d2_mrows == 0 or d2_ncols == 0:
+                # No time point yet: there is nothing to map.
+                data_2 = np.empty((max(d2_mrows, 1), 0), dtype=d2_dtype)
+            else:
+                data_2 = np.memmap(
+                    self.path,
+                    dtype=d2_dtype,
+                    mode="r",
+                    offset=d2_offset,
+                    shape=(d2_mrows, d2_ncols),
+                    order="F",
+                )
+
+            if self._time is None:
+                self._time = np.array(data_2[0, :])  # Copy time out of memmap
+            time = self._time
+
+            if variable_names is None:
+                picked = list(self._sources)
+            else:
+                # The few asked for, not a walk over every name the file has.
+                picked = sorted(
+                    self._order.keys() & set(variable_names),
+                    key=self._order.__getitem__,
+                )
+
+            result = {}
+            for name in picked:
+                row, negate, constant = self._sources[name]
+                if row is None:
+                    # A parameter: its one value at every time point.
+                    values = np.full_like(time, constant)
+                else:
+                    # Only this row is actually read from disk (memmap)
+                    values = np.array(data_2[row, :])
+
+                if negate:
+                    values = -values
+
+                result[name] = (time, values)
+
+            return result
+
+        except Exception as e:
+            self._stamp = None  # nothing of a failed read is kept
+            logger.error("Failed to read %s: %s", self.path, e)
+            return None
+
+
 def read_result_mat(
     mat_path: Path,
     variable_names: set[str] | None = None,
@@ -305,64 +441,11 @@ def read_result_mat(
     or a killed one is fewer than the run asked for (and none at all before
     its first point: every series is then empty). Whether the file is a
     finished result is :func:`mat_shortfall`'s question, not this one's.
+
+    One read of one file: a caller that reads the same file again and again
+    keeps a :class:`ResultMatFile`, which parses its header once.
     """
-    try:
-        with open(mat_path, "rb") as f:
-            blocks = _scan_mat4_headers(f).blocks
-
-            if "name" not in blocks:
-                logger.error("No 'name' matrix in %s", mat_path)
-                return None
-
-            if "dataInfo" not in blocks or "data_2" not in blocks:
-                logger.error("Missing dataInfo or data_2 in %s", mat_path)
-                return None
-
-            # Load small matrices eagerly.
-            all_var_names, data_info, data_1 = _read_tables(f, blocks, mat_path)
-
-        # Memory-map data_2 for selective row access.
-        # MAT4 is column-major: Fortran order gives correct (mrows, ncols) indexing.
-        # For Dymola, mrows = n_trajectory_vars, ncols = n_timesteps (but transposed
-        # from MATLAB convention). Dymola stores data_2 as (n_timesteps, n_vars) in
-        # MATLAB convention, so mrows=n_timesteps, ncols=n_vars.
-        d2_offset, d2_dtype, d2_mrows, d2_ncols = blocks["data_2"]
-        if d2_mrows == 0 or d2_ncols == 0:
-            # No time point yet: there is nothing to map.
-            data_2 = np.empty((max(d2_mrows, 1), 0), dtype=d2_dtype)
-        else:
-            data_2 = np.memmap(
-                mat_path,
-                dtype=d2_dtype,
-                mode="r",
-                offset=d2_offset,
-                shape=(d2_mrows, d2_ncols),
-                order="F",
-            )
-
-        time = np.array(data_2[0, :])  # Copy time out of memmap
-
-        result = {}
-        for name, row, negate, constant in _variable_sources(
-            all_var_names, data_info, data_1, d2_mrows, mat_path, variable_names
-        ):
-            if row is None:
-                # A parameter: its one value at every time point.
-                values = np.full_like(time, constant)
-            else:
-                # Only this row is actually read from disk (memmap)
-                values = np.array(data_2[row, :])
-
-            if negate:
-                values = -values
-
-            result[name] = (time, values)
-
-        return result
-
-    except Exception as e:
-        logger.error("Failed to read %s: %s", mat_path, e)
-        return None
+    return ResultMatFile(mat_path).series(variable_names)
 
 
 def _time_at(f, block, point: int) -> float:

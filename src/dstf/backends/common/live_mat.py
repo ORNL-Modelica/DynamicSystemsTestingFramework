@@ -119,6 +119,9 @@ class _Layout(NamedTuple):
     n_values: int  # values in a row; the first is the time
     #: name → (index in a row, negate, constant) — :func:`_variable_sources`
     sources: dict[str, tuple[int | None, bool, float | None]]
+    #: Every variable the file names, in its order, the abscissa left out:
+    #: what `result_files.mat_names` lists of the same file.
+    names: tuple[str, ...]
 
     @property
     def row_bytes(self) -> int:
@@ -158,6 +161,13 @@ class LiveMatReader:
     def _start_over(self) -> None:
         self._run += 1
         self._forget()
+
+    @property
+    def names(self) -> tuple[str, ...] | None:
+        """Every variable the file names, from the header the last poll
+        read rows through — no second parse of it; None until a poll found
+        the header whole."""
+        return None if self._layout is None else self._layout.names
 
     def poll(self, names: Collection[str] = ()) -> LiveSnapshot:
         """The file's state now, and each of ``names``' samples that are new
@@ -277,7 +287,8 @@ class LiveMatReader:
             # Cut between the scan and the read, or not a binTrans result:
             # whatever a foreign file's bytes decode to, it is not a layout.
             return None
-        return _Layout(offset, dtype, n_values, sources)
+        listed = tuple(n for n in names if n.lower() != "time")
+        return _Layout(offset, dtype, n_values, sources, listed)
 
     @staticmethod
     def _rows_between(

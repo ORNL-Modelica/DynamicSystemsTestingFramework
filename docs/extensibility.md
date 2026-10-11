@@ -281,11 +281,12 @@ short of the stop time, and the run's recorded verdict.
 that declares `LIVE_RESULTS`, its Session keeps one `LiveMatReader` on
 `live_result_path(work_dir/<test_key>)` — built once the item has its key,
 which is after the run's directory was cleared — and polls it once a second
-for the variables the open pages' drawn plots show. It also calls the
-backend's `result_names(test_dir)` on the GROWING file, once its header is
-whole, to list what a plot can be made of, so that classmethod must answer
-for an unfinished file. After a run that did not finish, the same path is
-read by the partial read (`mat_reader`) to show what it wrote. A
+for the variables the open pages' drawn plots show. What a plot can be
+made of is listed by that reader too (`LiveMatReader.names`, once the
+file's header is whole): `result_names(test_dir)` is asked of a finished
+result only. After a run that did not finish, the same path is read by
+the partial read (`mat_reader.ResultMatFile`) to show what it wrote and
+to list it. A
 backend with a growing file in another format gets none of this until the
 contract grows a reader of its own.
 

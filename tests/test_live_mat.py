@@ -172,6 +172,41 @@ def test_the_file_is_starting_until_its_header_matrices_are_whole(
             assert _same(snap.series["x.neg"].values, mat.expected["x.neg"][:rows])
 
 
+@pytest.mark.parametrize(("tool", "dtype", "declared"), RUNS)
+def test_the_reader_lists_the_file_s_names_from_the_header_it_reads_through(
+    tmp_path, monkeypatch, tool, dtype, declared
+):
+    """What `result_files.mat_names` lists of the same file — with no
+    second parse of its header — and nothing before the header is whole."""
+    from dstf.backends.common import mat_reader
+    from dstf.backends.common.result_files import mat_names
+
+    full = tmp_path / "full.mat"
+    mat = _result(full, tool, dtype, n=5, points=2, declared=declared)
+    listed = mat_names(full)
+    raw = full.read_bytes()
+    path = tmp_path / "res.mat"
+    reader = LiveMatReader(path)
+    assert reader.names is None
+    path.write_bytes(raw[: mat.data_offset - 1])
+    assert reader.poll(NAMES).state == STARTING and reader.names is None
+
+    parsed: list[int] = []
+    real = mat_reader._parse_name_matrix
+    monkeypatch.setattr(
+        mat_reader,
+        "_parse_name_matrix",
+        lambda matrix: parsed.append(1) or real(matrix),
+    )
+    path.write_bytes(raw)
+    assert reader.poll(NAMES).state == RUNNING
+    assert list(reader.names) == listed and "x" in listed
+    assert reader.poll(NAMES).rows == 2 and list(reader.names) == listed
+    assert parsed == [1]
+    path.unlink()
+    assert reader.poll(NAMES).state == GONE and reader.names is None
+
+
 def test_one_reader_follows_a_file_from_nothing_to_its_rows(tmp_path):
     path = tmp_path / "res.mat"
     reader = LiveMatReader(path)

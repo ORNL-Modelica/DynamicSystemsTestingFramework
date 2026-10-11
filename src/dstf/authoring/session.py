@@ -908,6 +908,13 @@ class Session:
             if live is not None:
                 reads.names, reads.names_read = live, True
             return reads.names or ()
+        if self.live_runs.partial(model_id) is not None:
+            # What its last run left, through the one parse its plots are
+            # read through (`LiveRuns.names`): the same file, not listed a
+            # second time.
+            reads.names = self.live_runs.names(model_id)
+            reads.names_read = True
+            return reads.names or ()
         test_dir = self._test_dir(model_id)
         listed = (
             type(project.backend).result_names(test_dir)

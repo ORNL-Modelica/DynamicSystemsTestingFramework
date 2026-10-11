@@ -33,8 +33,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..backends.common.live_mat import RUNNING, LiveMatReader
-from ..backends.common.mat_reader import read_mat_last_time
-from ..backends.common.result_files import mat_series
+from ..backends.common.mat_reader import ResultMatFile, read_mat_last_time
 from ..backends.pool import ItemState
 from ..backends.types import Capability, TestResult, VariableResult
 from ..discovery.spec_update import is_literal_variable
@@ -108,12 +107,12 @@ class _Run:
     reader: LiveMatReader | None = None
     #: The names each page asked for, and the poll it last asked at.
     asked: dict[object, tuple[frozenset[str], int]] = field(default_factory=dict)
-    #: The growing file's variables, listed once per file (`names`).
-    names: tuple[str, ...] | None = None
     #: The reader's ``run`` whose file the pages were told can be read.
     announced: int | None = None
     partial: Partial | None = None
-    #: A partial file's series, by name; None is a name it lacks.
+    #: A partial file, its header parsed once for every name asked of it,
+    #: and its series by name; None is a name it lacks.
+    file: ResultMatFile | None = None
     series: dict[str, Series | None] = field(default_factory=dict)
 
     @property
@@ -230,7 +229,7 @@ class LiveRuns:
             if run.trace.run != run.announced and run.trace.state == RUNNING:
                 # This file's header is whole: its variables can be listed,
                 # and a file that replaced another's is listed again.
-                run.announced, run.names = run.trace.run, None
+                run.announced = run.trace.run
                 self._emit("live", frozenset({model_id}))
 
     def polled(self, model_id: str) -> bool:
@@ -280,21 +279,21 @@ class LiveRuns:
         return progress(run.trace.state, run.trace.time, run.stop_time)
 
     def names(self, model_id: str) -> tuple[str, ...] | None:
-        """The variables of a running ``model_id``'s growing file, listed
-        once its header is whole; None before, and on a backend without a
-        live view."""
+        """The variables of ``model_id``'s file where the Session has no
+        result of it: a running test's growing file, once its header is
+        whole — the reader's own, from the header it reads the rows
+        through — and a partial result's, from the one parse its series
+        are read through. None before a header is whole, on a backend
+        without a live view, and for a model with no entry here."""
         run = self._runs.get(model_id)
-        if run is None or run.partial is not None or run.announced is None:
+        if run is None:
             return None
-        if run.names is None:
-            test_dir = self._dir(run)
-            listed = (
-                type(self._backend()).result_names(test_dir)
-                if test_dir is not None
-                else None
-            )
-            run.names = tuple(listed or ())
-        return run.names
+        if run.partial is not None:
+            file = self._file(run)
+            return None if file is None else file.names
+        if run.announced is None or run.reader is None:
+            return None
+        return run.reader.names
 
     def series(self, model_id: str, name: str) -> tuple[Series | None, int] | None:
         """What ``model_id``'s page draws as ``name``'s Actual in place of a
@@ -315,9 +314,11 @@ class LiveRuns:
             series = run.trace.series(name)
             return series or (np.empty(0), np.empty(0)), run.trace.samples(name)
         if name not in run.series:
-            path = self._path(run)
-            read = mat_series(path, [name]) if path is not None else {}
-            run.series[name] = read.get(name)
+            # A name at a time, as the page asks — through one parse of the
+            # file's header, and with one time array for them all.
+            file = self._file(run)
+            read = None if file is None else file.series([name])
+            run.series[name] = (read or {}).get(name)
         return run.series[name], 0
 
     def dress(self, model_id: str, figure: dict, colour: str) -> dict:
@@ -364,6 +365,16 @@ class LiveRuns:
         work_dir = project.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
         return work_dir / key
+
+    def _file(self, run: _Run) -> ResultMatFile | None:
+        """A partial result's file, opened once; None while it is not
+        there (its directory wiped for the next run)."""
+        if run.file is None:
+            path = self._path(run)
+            if path is not None:
+                run.file = ResultMatFile(path)
+        file = run.file
+        return file if file is not None and file.path.exists() else None
 
     def _path(self, run: _Run) -> Path | None:
         """The run's growing result file; None on a backend without one,

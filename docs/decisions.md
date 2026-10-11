@@ -7615,14 +7615,19 @@ reader's row count taken from the file's size, `LiveMatReader`,
    test's result stays none (or the failed one), its Suite row keeps
    CANCELLED or SIM_FAIL, and Accept refuses it with its own sentence ("a
    partial result is never a baseline: queue it again") before the shared
-   function's refusal is reached. It is kept until the test's next run or
+   function's refusal is reached. Its file's header is parsed once
+   (`mat_reader.ResultMatFile`, kept with the run's entry) for every
+   series and the pickers' listing, and its series share one time array:
+   the page asks a name at a time, and each ask parsed the header again.
+   It is kept until the test's next run or
    the project's reopen, and is the process's: a tool started later reads
    the test as it did before this entry.
 6. *The pickers list the growing file.* Once the file's header is whole,
-   the Variables drawer and the add form offer its variables
-   (`result_names` of the run's directory; the Session says a `queue`
-   event, state `live`, so the open page lists them), and a watch plot
-   added while the test runs draws live.
+   the Variables drawer and the add form offer its variables (the live
+   reader's own `names`, from the header it reads the rows through — the
+   backend's `result_names` parsed that header a second time on the loop;
+   the Session says a `queue` event, state `live`, so the open page lists
+   them), and a watch plot added while the test runs draws live.
 7. *The directory wipe.* A rerun's directory is cleared before its key is
    handed back, and the reader is built only once the item has its key —
    so there is no old file under it. Until the new file exists the page
@@ -7750,8 +7755,9 @@ timeout, a driver that died — reads back led by its recorded verdict
 for a JSON driver's failure is the result's message, not the driver's bare
 reason. The Session sets `live_results` on the open project's
 `Config` when it opens its pool. A plug-in backend that declares
-`LIVE_RESULTS` must write a DSresult file and list a growing one through
-`result_names` for the tool to show it live. The CLI's runs are unchanged;
+`LIVE_RESULTS` must write a DSresult file at its `live_result_path` for the
+tool to show it live; its `result_names` is asked of a finished result
+only. The CLI's runs are unchanged;
 `compare`'s stored message for a failed or timed-out run whose file does
 not say why is longer; nothing reads that text but a person
 (classification, `--rerun sim-failed`, JUnit and the dashboard go by the
