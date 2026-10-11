@@ -879,6 +879,92 @@ async def test_add_row_on_an_empty_points_table(session):
         ]
 
 
+_PAIR = {"lower": 0.05, "upper": 0.3}
+
+
+@pytest.mark.parametrize(
+    ("leaf", "widths"),
+    [
+        ({"tube_width_mode": "band", "tube_abs": 0.3}, (0.3, 0.3)),
+        ({"tube_width_mode": "band", "tube_abs": _PAIR}, (0.3, 0.05)),
+        ({"tube_width_mode": "rel", "tube_rel": 0.3}, (0.3, 0.3)),
+        ({"tube_width_mode": "rel", "tube_rel": _PAIR}, (0.3, 0.05)),
+    ],
+    ids=["band, a number", "band, a pair", "rel, a number", "rel, a pair"],
+)
+async def test_add_row_on_a_constant_tube_changes_no_verdict(session, leaf, widths):
+    """A tube of constant width has no control point. Its FIRST one takes
+    the width in effect — the constant's, a number or a lower/upper pair,
+    in the unit its width mode reads a row in — so `Add row` alone moves
+    nothing: it gave upper 0 and lower 0, and a passing tube read "0.0%
+    inside → FAIL" at one click."""
+    tube = {"metric": "tube", "variable": "x", **leaf}
+    _root_leaf_on_a(session, tube)
+    before = session.comparisons[A].variables[0]
+    assert before.passed and before.tube_points_inside == 1
+    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
+        user.find(marker="/metrics:tube_points:add").click()
+        await _settled(
+            lambda: (_pending_value(session, "/metrics") or {}).get("tube_points")
+        )
+        upper, lower = widths
+        assert _pending_value(session, "/metrics") == {
+            **tube,
+            "tube_points": [{"time": 0.5, "upper": upper, "lower": lower}],
+        }
+        assert "edit-on-plot" not in errors
+    after = session.comparisons[A].variables[0]
+    assert (after.passed, after.tube_points_inside) == (True, 1)
+
+
+def test_a_first_control_point_takes_the_width_in_effect():
+    """Per width mode: `band` the constant `tube_abs`, `rel` the constant
+    `tube_rel` (a row's widths are fractions there). `abs` has no constant
+    width — its rows are literal bounds and it cannot be scored without
+    one — so its first row is still 0 / 0, as is a tube that names no
+    width."""
+    import dataclasses
+
+    from dstf.authoring.builtin.edit_on_plot import _new_row
+    from dstf.comparison.modes import TubeConfig
+
+    (field,) = [f for f in dataclasses.fields(TubeConfig) if f.name == "tube_points"]
+    tube, span = field.metadata["columns"], (0.0, 1.0)
+
+    def first(**leaf):
+        row = _new_row(tube, [], span, {"metric": "tube", **leaf})
+        assert row.pop("time") == 0.5
+        return row
+
+    assert first(tube_width_mode="band", tube_abs=0.05) == {
+        "upper": 0.05,
+        "lower": 0.05,
+    }
+    assert first(tube_width_mode="band", tube_abs=_PAIR, tube_rel=9) == {
+        "upper": 0.3,
+        "lower": 0.05,
+    }
+    assert first(tube_width_mode="rel", tube_rel=0.02, tube_abs=9) == {
+        "upper": 0.02,
+        "lower": 0.02,
+    }
+    assert first(tube_width_mode="rel", tube_rel=_PAIR) == {"upper": 0.3, "lower": 0.05}
+    assert first(tube_width_mode="abs", tube_abs=0.05) == {"upper": 0.0, "lower": 0.0}
+    assert first(tube_width_mode="band") == {"upper": 0.0, "lower": 0.0}
+    # a width nobody can read is no width: the row is the table's own
+    assert first(tube_width_mode="band", tube_abs="wide") == {
+        "upper": 0.0,
+        "lower": 0.0,
+    }
+    # and after a row, the next is a copy of the last, whatever the constant
+    last = {"time": 0.9, "upper": 0.1, "lower": 0.2}
+    assert _new_row(tube, [last], span, {"tube_width_mode": "band", "tube_abs": 7}) == {
+        "time": 0.45,
+        "upper": 0.1,
+        "lower": 0.2,
+    }
+
+
 def test_add_row_rules():
     """The empty-table rule per column type, and the tube exception."""
     from dstf.authoring.builtin.edit_on_plot import _new_row

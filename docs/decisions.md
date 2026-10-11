@@ -7203,7 +7203,14 @@ not made were made before anything was built (see What was measured).
    over the noise floor the scorer matches peaks over. A tube control point
    takes the clicked time and the tube's CURRENT widths there, interpolated
    as the scorer interpolates them, so adding it changes nothing until it
-   is dragged. Every other field of the row is what `Add row` gives. It is
+   is dragged. Every other field of the row is what `Add row` gives. A
+   tube of constant width has no control point, and a click adds none;
+   its FIRST one, by `Add row`, takes the same rule: the width in effect —
+   the constant its mode reads, `tube_abs` on `band` and `tube_rel` on
+   `rel`, a number or a lower/upper pair — where it took 0 and 0, and a
+   passing tube read "0.0% inside → FAIL" at one click (2026-10-11). On
+   `abs` there is no constant to take (literal bounds, unscorable with no
+   point): its first row is still 0 / 0. It is
    the metric's own function, `MetricDescriptor.place_row` over a
    `handles.RowPlace`, beside `edit_handle`; `row_noun` says what the row
    is called, or that a click adds none to that leaf. A row placed ON

@@ -28,7 +28,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -267,8 +267,34 @@ def _new_time(rows: list[dict], span: tuple[float, float] | None) -> float:
     return next(mid for gap, mid in gaps if gap == width)
 
 
+#: A tube's constant width, by the width mode that reads it: what a tube
+#: with no control point is scored by. ``abs`` has none — its rows are
+#: literal bounds, and it cannot be scored without one.
+_CONSTANT_WIDTH = {"band": "tube_abs", "rel": "tube_rel"}
+
+
+def _first_tube_widths(leaf: Mapping | None) -> dict[str, float]:
+    """``upper`` and ``lower`` of a tube's FIRST control point: the width
+    in effect at that moment — the constant its width mode reads, a number
+    or a lower/upper pair, in the unit that mode reads a row's widths in —
+    so that adding the point alone changes no verdict. ``0.0`` each where
+    there is none to take: no leaf, the ``abs`` mode, a constant that is
+    absent or cannot be read (the reader refuses that one, not this)."""
+    key = _CONSTANT_WIDTH.get((leaf or {}).get("tube_width_mode", ""))
+    try:
+        sides = parse_sides((leaf or {}).get(key, 0.0), key) if key else None
+    except ValueError:
+        sides = None
+    if sides is None:
+        return {"upper": 0.0, "lower": 0.0}
+    return {"upper": sides.upper, "lower": sides.lower}
+
+
 def _new_row(
-    columns: Columns, rows: list[dict], span: tuple[float, float] | None
+    columns: Columns,
+    rows: list[dict],
+    span: tuple[float, float] | None,
+    leaf: Mapping | None = None,
 ) -> dict:
     """The row ``Add row`` appends; its ``time`` (when the table has one) is
     :func:`_new_time`'s. After existing rows: a copy of the last one — a
@@ -276,8 +302,12 @@ def _new_row(
     required float or tolerance ``0.0``; any other optional one blank, so
     omitted (a new checkpoint follows the baseline, and the criterion's
     tolerance); a choice its first. The one exception: a ``tube_points``
-    row gets ``upper`` and ``lower`` ``0.0`` — optional in the reader,
-    which refuses a tube with no width at all."""
+    row gets ``upper`` and ``lower`` — optional in the reader, which
+    refuses a tube with no width at all — and they are the width ``leaf``,
+    the criterion the table is of, has in effect
+    (:func:`_first_tube_widths`): written ``0.0``, the first control point
+    of a tube of constant width collapsed it, and a passing criterion read
+    "0.0% inside" at one click."""
     keys = [column[0] for column in columns]
     if rows:
         last = copy.deepcopy(rows[-1])
@@ -293,7 +323,7 @@ def _new_row(
         elif kind in _REQUIRED:
             row[key] = 0.0
     if keys == ["time", "upper", "lower"]:  # tube_points
-        row.update(upper=0.0, lower=0.0)
+        row.update(_first_tube_widths(leaf))
     return row
 
 
@@ -507,7 +537,7 @@ def clicked_row(
     if reference is not None and len(reference[0]):
         span = float(reference[0][0]), float(reference[0][-1])
     blanks = {
-        field: _new_row(columns, copy.deepcopy(raw.get(field) or []), span)
+        field: _new_row(columns, copy.deepcopy(raw.get(field) or []), span, raw)
         for field, columns in _list_fields(desc.name)
     }
     actual = None
@@ -844,7 +874,7 @@ class EditOnPlot:
                 ui.label(_field_label(name, field)).classes("text-xs text-bold")
                 rows = copy.deepcopy(raw.get(field) or [])
                 show = _table(
-                    ui, path, field, columns, rows, span, ui_panel, model_id, can
+                    ui, path, field, columns, rows, span, ui_panel, model_id, can, raw
                 )
                 shows.append((field, show))
 
@@ -976,8 +1006,11 @@ def _table(
     ui_panel: Panel,
     model_id: str,
     can: Callable[[Pointer], bool],
+    leaf: Mapping,
 ) -> Callable[[list | None, int], None]:
-    """One list field's rows, a control per column, ``Remove row`` per row
+    """One list field's rows of the criterion ``leaf`` (as the spec holds
+    it when this panel is built: what a first row is made from,
+    :func:`_new_row`), a control per column, ``Remove row`` per row
     and ``Add row``. Returns the table's PREVIEW (D149): called with the
     rows a held drag would write — and the drag's number — every number
     cell and tolerance side whose value would change shows that value,
@@ -1209,7 +1242,7 @@ def _table(
     def add() -> None:
         ui_panel.disarm()
         left()
-        rows.append(_new_row(columns, rows, span()))
+        rows.append(_new_row(columns, rows, span(), leaf))
         origin.append(copy.deepcopy(rows[-1]))
         render()
         submit()
