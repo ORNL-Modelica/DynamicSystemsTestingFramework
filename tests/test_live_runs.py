@@ -20,6 +20,7 @@ from dstf.authoring.layout import layout_op, new_watch
 from dstf.authoring.live_rows import NOT_SCORED, WAITING, Partial
 from dstf.authoring.queue_rows import queue_row
 from dstf.authoring.session import Selection, Session, SessionView
+from dstf.authoring.spec_document import PatchOp
 from dstf.backends.common.live_mat import GONE, RUNNING, LiveMatReader
 from dstf.backends.pool import ItemState
 from dstf.reporting.status import CANCELLED, FAIL, NOT_RUN, SIM_FAIL, classify
@@ -332,6 +333,40 @@ def test_a_test_s_first_run_is_laid_out_by_what_it_names(h):
     assert s.partial(C).sentence == "Cancelled at t = 0.2 of 1 s — not scored"
     assert _subjects(s, C) == [("x",)]
     assert s.view(C, "x").act_time.tolist() == _steps(5)
+
+
+def test_a_criterion_edited_while_its_test_runs_shows_in_the_waiting_tree(h):
+    """D150: a running test takes its criteria's edits. Its page's tree is
+    the criteria as they stand, so the edit is a row at once — and the
+    variable it names a plot, drawn live."""
+    s = h.session
+    s.stage([PatchOp(D, "add", "/metrics", {"metric": "nrmse", "variable": "x"})])
+    assert _subjects(s, D) == [("x",)]
+    h.steer(D, hold=5)
+    s.enqueue([D])
+    h.running(D)
+    assert [leaf["variable"] for leaf in leaves_of(s.tree_view(D))] == ["x"]
+
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "y", "min_value": 0.0},
+        ],
+    }
+    s.stage([PatchOp(D, "replace", "/metrics", tree)])
+
+    view = s.tree_view(D)
+    assert view["unscored"] == WAITING and view["combinator"] == "and"
+    assert [(leaf["metric"], leaf["variable"]) for leaf in leaves_of(view)] == [
+        ("nrmse", "x"),
+        ("range", "y"),
+    ]
+    assert all(leaf["criterion"] == WAITING for leaf in leaves_of(view))
+    assert _subjects(s, D) == [("x",), ("y",)]
+    h.ask(D, "y")
+    h.at(D, 0.2)
+    assert np.allclose(s.view(D, "y").act_values, 2 * np.asarray(_steps(5)))
 
 
 def test_the_tool_s_pool_asks_for_prompt_rows_and_nothing_else_does(h):

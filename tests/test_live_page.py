@@ -22,6 +22,7 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring import live_rows  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import PARTIAL  # noqa: E402
+from dstf.authoring.family_rows import fold_key  # noqa: E402
 from dstf.authoring.live_rows import NOT_AVAILABLE, NOT_SCORED, WAITING  # noqa: E402
 from dstf.authoring.queue_rows import one_line  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
@@ -31,8 +32,10 @@ from dstf.authoring.situation import Situation, strip_for  # noqa: E402
 from dstf.backends.common.live_mat import LiveMatReader  # noqa: E402
 from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.reporting.status import SIM_FAIL, classify  # noqa: E402
+from family_project import family_project  # noqa: E402
 from live_fake import live_project, make_live, steer  # noqa: E402
 from test_session import A  # noqa: E402
+from test_session_queue import fake_item  # noqa: E402
 
 EVERY = round(1.0 / TICK)  # shell ticks to its once-a-second poll
 #: The times of a 21-row run over one second, as the fake writes them.
@@ -451,3 +454,37 @@ async def test_a_crashed_run_s_strip_says_why_after_the_row_and_the_tool_went(pl
 
 def _work(session):
     return session.project.config.work_dir
+
+
+# -- a family's folded row ----------------------------------------------------------
+
+
+async def test_a_folded_family_row_says_waiting_and_not_a_count_of_verdicts(tmp_path):
+    """A family's identical criteria fold into one row whose text counts
+    their verdicts (D152). While the test runs there are none to count."""
+    cfg, work = family_project(tmp_path, 6)
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    session = shell.session
+    fold = fold_key("/metrics/children/1")
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, f"family-count:1:{fold}").text == "5 pass · 1 fail"
+
+        item = fake_item(session, A, ItemState.RUNNING)
+        session._item_started(item)
+        shell.tick()
+
+        assert page.body.props["data-unscored"] == WAITING
+        assert _one(user, f"family-count:1:{fold}").text == WAITING
+        assert len(page.cards) == 2  # x's plot and the family's stay
+
+        # ended with the result it had: the count is back
+        held = session.live_runs.kept(A)[1]
+        item.state, item.result = ItemState.FINISHED, held
+        item.ended_at = item.started_at
+        session._item_ended(item)
+        shell.tick()
+        assert page.body.props.get("data-unscored") is None
+        assert _one(user, f"family-count:1:{fold}").text == "5 pass · 1 fail"

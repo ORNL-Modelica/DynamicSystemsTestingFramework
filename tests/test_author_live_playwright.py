@@ -88,6 +88,13 @@ PLOT = """
 }
 """
 
+#: Whether plot 0's Actual and Reference are shown, as plotly.js holds it:
+#: a click on a legend entry leaves its trace `legendonly`.
+SHOWN = """
+() => document.querySelectorAll('.js-plotly-plot')[0]._fullData
+  .slice(0, 2).map(t => t.visible)
+"""
+
 #: The criteria rows' readouts, the pills anyone can see, the tree's line.
 ROWS = """
 () => ({
@@ -186,10 +193,16 @@ def test_a_running_test_s_trace_grows_and_ends_on_its_scored_result(
         expect(page.locator(".dstf-tree-line")).to_contain_text(WAITING)
         _keep(page, tmp_path, "live-running")
 
-        # A box zoom made mid-run survives the updates that follow.
+        # A box zoom made mid-run, and a trace hidden from the legend,
+        # survive the updates that follow.
         _box_zoom(page, (0.1, 0.3), (0.2, 0.8))
         zoomed = _plot(page)
         assert zoomed["xrange"] != [0.0, 1.0]
+        page.locator(".js-plotly-plot .legend .traces").nth(1).locator(
+            ".legendtoggle"
+        ).click()
+        page.wait_for_function(f"() => ({SHOWN})()[1] === 'legendonly'")
+        assert page.evaluate(SHOWN) == [True, "legendonly"]
         at = _points(page)
         for _ in range(3):
             page.wait_for_function(
@@ -201,6 +214,7 @@ def test_a_running_test_s_trace_grows_and_ends_on_its_scored_result(
                 zoomed["xrange"],
                 zoomed["yrange"],
             )
+            assert page.evaluate(SHOWN) == [True, "legendonly"]
 
         # Held at row 300: the strip's time is the trace's last sample.
         want = seconds(float(times[299]))
@@ -346,11 +360,14 @@ def test_a_watch_plot_added_mid_run_draws_live_and_the_dark_page_is_dark(
         xs, ys = page.evaluate(watch)
         assert np.allclose(xs, times[:5]) and np.allclose(ys, times[:5] ** 2)
 
-        # It grows with the run.
+        # It grows with the run, and the page stays where it was scrolled to.
+        where = "() => document.querySelectorAll('.dstf-plot')[1].getBoundingClientRect().top"
+        top = page.evaluate(where)
         steer(_examples(cfg), A, hold=12)
         page.wait_for_function(f"() => (({watch})() || [[]])[0].length === 12")
         xs, ys = page.evaluate(watch)
         assert np.allclose(ys, times[:12] ** 2)
+        assert page.evaluate(where) == top
 
         # The running page under the dark theme: the plot is the theme's.
         page.locator(".dstf-rail").get_by_role("button", name="Vars").click()
