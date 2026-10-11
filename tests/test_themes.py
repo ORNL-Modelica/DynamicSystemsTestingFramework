@@ -520,24 +520,63 @@ def _render_calls() -> list[tuple[str, int, ast.Call]]:
     return found
 
 
+def _renderers_by_another_way() -> list[tuple[str, int, str]]:
+    """Every place in `src` a renderer is reached other than as the function
+    of a direct call: imported under another name, assigned, handed to
+    `partial` or passed along. `figure` is left out — it is every figure
+    dict's variable name too."""
+    named = RENDERERS - {"figure"}
+    found = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        where = str(path.relative_to(SRC))
+        called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                found += [
+                    (where, node.lineno, f"{alias.name} as {alias.asname}")
+                    for alias in node.names
+                    if alias.asname and alias.name.rsplit(".", 1)[-1] in named
+                ]
+            elif (
+                isinstance(node, (ast.Name, ast.Attribute))
+                and isinstance(node.ctx, ast.Load)
+                and id(node) not in called
+            ):
+                name = getattr(node, "id", None) or getattr(node, "attr", None)
+                if name in named:
+                    found.append((where, node.lineno, name))
+    return found
+
+
 class TestTheThemeIsHandedDown:
     """The theme is the project's (`Config.theme`) and reaches a renderer as
     an argument — no process-wide setting a `Config` writes."""
 
     def test_every_render_call_in_src_says_the_theme(self):
+        """A scan by NAME: it finds a renderer called as itself. So the
+        count is exact — a call that goes missing (moved behind an alias,
+        a wrapper) fails here and is looked at — and no renderer is
+        reached any other way (`_renderers_by_another_way`).
+
+        What it still cannot see: a renderer fetched by a string
+        (`getattr(module, "render_live")`); the Session's `figure` behind
+        another name (the word is too common to follow); and a call whose
+        `theme=` is said but wrong — a literal `"default"`. Those are held
+        by the tests that render under the dark theme and read the page."""
         calls = _render_calls()
         # The eight of `cli/run_cmds.py`, the tool's two, the pipeline's,
         # the reporter's own and its construction, the suite's and the
         # review's page, and every figure built: the report's two, the
-        # Session's and its view's, the plot card's. Fewer means the scan
-        # stopped finding them.
-        assert len(calls) >= 24, [(p, n) for p, n, _ in calls]
+        # Session's and its view's, the plot card's.
+        assert len(calls) == 25, [(p, n) for p, n, _ in calls]
         silent = [
             (path, line)
             for path, line, call in calls
             if not any(kw.arg == "theme" for kw in call.keywords)
         ]
         assert silent == []
+        assert _renderers_by_another_way() == []
 
     def test_the_dashboards_environment_holds_no_stylesheet(self):
         """It was set at import, from the default theme, before any
@@ -660,6 +699,58 @@ class TestGeneratedPages:
         assert all("template" not in figure["layout"] for figure in figures)
         for page in pages:
             assert "--dstf-page: #fafafa;" in _root_block(page)
+
+    def test_a_plain_compare_writes_its_dashboard_in_the_projects_theme(self, tmp_path):
+        """Without `--report` the dashboard is `compare`'s own last write:
+        with it, the report suite's render came after and hid a literal
+        theme in this one."""
+        from dstf.cli import main
+
+        cfg, work = themed_project(tmp_path, "dark")
+        main(["--config", str(cfg), "compare", "--work-dir", str(work)])
+        html = (work / "dashboard.html").read_text(encoding="utf-8")
+        assert _root_block(html) == _root_block(theme.css_variables("dark"))
+        lowered = html.lower()
+        assert [c for c in LIGHT_GROUNDS if c.lower() in lowered] == []
+
+    def test_a_dark_pages_diagnostic_figures_are_drawn_dark(self, tmp_path):
+        """A diagnostic's figure is built apart from the plots'
+        (`_build_figures`), and no fixture project records a diagnostic —
+        the Python backend reads none — so a page with one is generated
+        here from a result that holds it."""
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 11)
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=t, values=t)],
+            diagnostics=[VariableResult(index=0, name="CPUtime", time=t, values=t)],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=1,
+            variable_patterns=["x"],
+        )
+        pages = {}
+        for name in ("dark", "default"):
+            page = generate_comparison_plots(
+                "M", None, result, [], tmp_path / name, test_model=test, theme=name
+            )
+            html = Path(page).read_text(encoding="utf-8")
+            (diag,) = json.loads(
+                re.search(r"^\s*DIAG_FIGURES: (\[.*\]),$", html, re.M).group(1)
+            )
+            pages[name] = diag["layout"]
+        assert pages["dark"]["template"] == {"layout": palette_of("dark").template}
+        assert "template" not in pages["default"]
 
     def test_the_filled_buttons_text_is_the_token(self):
         """White on the dark accent is 2.2:1; the one rule that wrote

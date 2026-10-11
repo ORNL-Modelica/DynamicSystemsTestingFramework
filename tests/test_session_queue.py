@@ -141,8 +141,11 @@ class Loop:
 
 
 class Harness:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, theme: str | None = None) -> None:
         self.cfg, self.examples = gated_project(tmp_path)
+        if theme is not None:
+            data = json.loads(self.cfg.read_text(encoding="utf-8"))
+            self.cfg.write_text(json.dumps({**data, "theme": theme}), encoding="utf-8")
         self.work = tmp_path / "work"
         self.loop = Loop()
         self.session = Session(post=self.loop.post)
@@ -658,6 +661,28 @@ def test_status_json_is_written_when_the_queue_drains_for_the_items_that_ran(h):
     assert [(t["model_id"], t["status"]) for t in written["tests"]] == [
         (D, "cancelled")
     ]
+
+
+def test_the_drain_writes_both_its_pages_in_the_project_s_theme(tmp_path):
+    """`testing.json` says dark: the dashboard a drained queue leaves is
+    dark — the final page the Session renders, and the live one the
+    pool's `write_status` renders before it. Every other fixture is
+    default-themed, where a literal `"default"` in either passes."""
+    dark = "--dstf-page: #121212;"
+    h = Harness(tmp_path, theme="dark")
+    try:
+        (item,) = h.session.enqueue([D])
+        h.ended(D)
+        assert h.session.wait_background(30)
+        page = h.work / "dashboard.html"
+        assert dark in page.read_text(encoding="utf-8")  # the final page
+
+        page.unlink()
+        h.session._write_status([item])  # the pool's own: the live page
+        assert dark in page.read_text(encoding="utf-8")
+    finally:
+        h.session.stop_queue()
+        h.session.wait_background(30)
 
 
 # ---------------------------------------------------------------------------
