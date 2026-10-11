@@ -1326,6 +1326,8 @@ planning.
     results); the read-only view's `_store` and `_session` are reachable by
     name. Enforcement is Python-convention strength; the design chose that
     line.
+    CLOSED by D150 for its first half: `JobContext` and the `Job` outcome
+    are deleted — a capability starts no run of its own.
   - `spec-update` cannot materialize a tree for a pattern-tracked or
     annotation-tracked test (it has no result to resolve against); the tool
     can. Either accept that the CLI is the narrower editor or give it a
@@ -1346,6 +1348,7 @@ planning.
     being typed in survives a stage (tabs are not rebuilt on spec/results),
     but a job event mid-keystroke would drop focus. Only the Chromium smoke
     test types into a real field.
+    CLOSED by D150 where the job is concerned: there is no `job` event.
   - An `int` form field rounds on blur in the browser (`precision=0`) and
     truncates on the server; no registered mode has an int field today.
   - Two browser tabs on one shell share the drawer element: the first tab's
@@ -1362,7 +1365,9 @@ planning.
 - **After accept and rerun (2026-09-14), follow-ups** — sub-project 5 of the
   two-tier split shipped (`pipeline.run_pipeline`, `select_backend`,
   `Backend.quiet`, Accept, Rerun, the job panel on `status.json`, the §6
-  end-to-end test over the Python example). None blocks sub-project 6:
+  end-to-end test over the Python example). None blocks sub-project 6.
+  (Rerun and its job became Queue and the simulation queue in D150; the
+  items that closed are marked.)
   - A partial rerun (the tool's, or `run --filter X` then `compare`) can flip a
     NON-rerun test's verdict on OLD data: a manifest entry with no
     `last_run_status` whose only failure record was the previous `status.json`
@@ -1370,17 +1375,21 @@ planning.
     parseable result reads back as a success. Current-writer data is immune
     (`mark_pending` / `record_result` touch only in-scope entries). The fix
     belongs in `ProgressReporter` / `_apply_status_verdicts` (carry the
-    out-of-scope rows forward), not in Rerun.
+    out-of-scope rows forward), not in the tool.
   - `status.json` is per invocation, so a partial rerun's dashboard shows the
     rerun subset, exactly as `--merge` leaves it.
   - `Backend.quiet` gates every print of ours; Dymola's own interface logger
     (`dymola/persistent_backend.py` `_filtered_print`) still writes to the
-    tool's console outside its suppression window, and Python's last-resort
-    logging handler prints WARNING+ (nothing configures logging in `src/`).
+    tool's console — all but the connection errors of a Dymola a worker
+    closed — and Python's last-resort logging handler prints WARNING+
+    (nothing configures logging in `src/`).
   - `PersistentBackendBase.run_tests` closes its workers on the normal path,
     not in a `finally` around the dispatch loop; in a long-lived tool process a
     job that raises there could leak a Dymola/OMC worker per Rerun. Unverified
     (the named-as-unrun owner gate is where it would show).
+    CLOSED by D150 for the tool: its queue runs on a pool the Session closes
+    (`stop_queue`), not through `run_tests`. The CLI's `run_tests` is as
+    described, in a process that ends with the run.
   - `overlay_loader._sibling_backend_index` is `lru_cache`d for the CLI's
     lifetime; a tool process that accepts into a sibling partition and then
     re-renders serves stale cross-backend overlays.
@@ -1399,9 +1408,10 @@ planning.
     requested name).
   - Two jobs cannot queue and there is no cancel (§9); a second Rerun while
     one runs is refused with the running job's label.
+    CLOSED by D150: the queue, with Remove and Cancel.
   - `Session.open` builds its reading backend with `persistent=False`; the
-    Rerun job builds its own persistent-preferring one. Two backend instances
-    per project is the v1 shape.
+    queue's pool builds its own persistent-preferring one. Two backend
+    instances per project is the v1 shape.
 
 - **After on-plot editing (2026-09-14), follow-ups** — sub-project 6 of the
   two-tier split shipped (the editable figure, `edit_handle` on the
@@ -1591,7 +1601,8 @@ planning.
     6d9bb52): 330 of 331 trees editable, the one without a tree is the
     SIM_FAIL timeout; the 147 tests with `cat(`/multi-line expressions all
     edit, since every scored name is now `unitTests.x[i]`.
-  - Layout at 1280 px: the shared header's first row wraps to two lines and
+  - Layout at 1280 px (2026-09-14, before the Suite and Test pages; Rerun
+    is Queue since D150): the shared header's first row wraps to two lines and
     the sub-header's Accept / Rerun stack; the tube editor (455 px) plus its
     320 px plot does not fit a 900 px screen, so the control-points table is
     below the fold; Edit criteria still shows a list field as a raw JSON box
@@ -1743,6 +1754,7 @@ planning.
     background queue start as the process exits; a plug-in `after_reload`
     that calls `wait_background()` waits on itself until the 60 s bound
     (both recorded in D137 §6 as known limits).
+    CLOSED by D150: the `Job` and its `after_reload` are deleted.
   - The dashboard with every column shown scrolls sideways at 1280 px; a
     grid Sim value of 1000 s or more plus its "cpu" tag can be cut at 90 px
     (the tooltip still names it).
@@ -1760,7 +1772,8 @@ planning.
     under the header, so its top or bottom stays out of view.
   - When scoring the EDITED spec raises, the strip and the pending drawer
     read the comparison from before the edit.
-  - After a Rerun with edits pending, `saved_comparison` scores the saved
+  - After a queued run with edits pending (a Rerun, when this was written),
+    `saved_comparison` scores the saved
     spec against the results read for the edited TestModels. Unverified:
     it matters only for a backend that reads only the named variables.
 - **Watch-only from the Test page step's final review and TRANSFORM gate

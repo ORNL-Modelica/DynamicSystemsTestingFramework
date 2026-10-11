@@ -7256,7 +7256,14 @@ worker reused, and a test still translating is stopped by killing Dymola
 and restarting the worker; OpenModelica kills omc's children, 0.02 s; the
 JSON-driver backends kill the test's subprocess; FMPy simulates in-process
 and cannot. A worker's start is bounded, and its failure is the backend's
-own words. A tool that dies takes its children with it.
+own words. A tool that dies takes its children with it. One that died
+while its worker sat idle fails no test: the dispatch step asks whether
+the tool's process is still there before every test, and restarts the
+worker first (found by an executing review, 2026-10-08, where it failed
+the next test queued with "Worker process exited during the test … during
+simulateModel(<the test before>)"; after the fix, with the idle tool
+killed by PID, the next item FINISHED 12.1 s after it was queued on
+Dymola 2026x and 2.6 s on OpenModelica, bit for bit a plain run's).
 
 **What the gate measured** (2026-10-08, the example library copied to a
 scratch directory with one stiff model added, driven through the Session —
@@ -7285,7 +7292,11 @@ several workers asked for, one whose start fails at once can stop the pool
 before a second was started. Every load of a Test page logs NiceGUI's
 "Event listeners changed after initial definition" in the browser console
 — two listeners the page adds to the layout after the handshake — with or
-without a queue.
+without a queue. A tool process killed with SIGKILL leaves its simulators
+running: the pool's close is what ends them (Stop server calls it, and
+NiceGUI's shutdown hook), and after a SIGKILL nothing is left to. A row
+in the panel follows its test's CURRENT state, not its own run's: an old
+`cancelled` row offers Accept once a later run of that test has finished.
 
 **What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
 refusal of Save, Discard and Reload while one runs. D129's capability

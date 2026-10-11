@@ -117,7 +117,7 @@ Chromium smoke tests, neither of which saves: one edits a tolerance, the other
 drags a tube handle and a range bound. What stays
 manual is the feel of a live edit and the states a single page cannot reach.
 
-Accept writes baselines and Rerun simulates: run the two below against a
+Accept writes baselines and Queue simulates: run the steps below against a
 throwaway copy of the example library, never a reference tree you would mind
 re-accepting.
 
@@ -159,24 +159,47 @@ left as you edited it.
 - [ ] Select a test the last run never finished (interrupt a run with Ctrl-C
       to make one): its Accept row reads `re-run before accepting`, the tab is
       greyed with that same reason, and nothing offers to store it.
-- [ ] Select one test and open Rerun: the panel names the backend it will run
-      through. Click `Rerun 1` — the footer reads `running: rerun`, then one
-      row for that test with its status, phase and elapsed time while the run
-      goes; when it ends the footer reads `finished: rerun` and the test's
-      verdict reflects the new results. The console that started `dstf author`
-      printed nothing of the tool's own the whole time — a logged warning
-      (Python's last-resort handler) or a simulator's own log lines can still
-      reach it.
-- [ ] Make a rerun fail — it has to fail *inside the job*, so use a backend
-      whose batch class builds but whose persistent probe does not: point
-      `testing.json` at `OpenModelica` on a machine with no OMPython (re-sync
-      the venv without `--extra om` if it is installed), so the
-      project opens and the job's `select_backend(persistent=True)` is what
-      raises. The footer reads `failed: rerun — BackendUnavailableError: …`
-      and every verdict is exactly what it was before the click. (A backend
-      that cannot be built at all — an unregistered name, a missing
-      executable — never reaches a job: `dstf author` refuses to open the
-      project, printing one `Config error: ...` line.)
+- [ ] On the Suite page tick one test and click Queue (the toolbar's icon
+      whose tooltip is its caption, `Queue 1`): a dialog names the backend
+      (`runs through <backend>`) and the test. Click `Queue 1` — the
+      simulation queue beside the table (above it under 1200 px) gains row 1:
+      its badge and the test's Suite row read QUEUED, then RUNNING with
+      `running · N s · worker 1`, then the test's verdict with `finished ·
+      N s`; the header's indicator reads `1 running`, then `idle`. The
+      console that started `dstf author` printed nothing of the tool's own
+      the whole time — a logged warning (Python's last-resort handler) or a
+      simulator's own log lines can still reach it.
+- [ ] The next three steps need tests that run for seconds: an example FMU
+      is done before you can click. Tick three tests and Queue them (`Queue
+      3`): the rows are numbered in run order, the first runs, the others read
+      `waiting · 1 ahead` and `waiting · 2 ahead`. Remove on a waiting row
+      takes it out — the row goes and its Suite row reads its verdict again.
+      With the three still ticked, Queue's caption counts what the queue
+      holds: `Queue 1 (2 already queued)`.
+- [ ] Cancel on a running row stops its simulation: the row reads `cancelled`
+      under a CANCELLED badge, the test's Suite row reads CANCELLED, and its
+      Test page's strip offers `Queue again`. On a backend that cannot stop a
+      test (FMPy — so the example FMUs) a running row has no Cancel: an info
+      icon in its place says why.
+- [ ] When nothing is queued or running the panel's header counts what ended
+      (`2 finished · 1 cancelled`) and `<work_dir>/dashboard.html` is
+      rewritten with the tool's verdict for every test — CANCELLED for the
+      cancelled one. Clear finished empties the panel and leaves the results.
+      ⋮ → Stop workers ends the simulator processes and says `workers
+      stopped`; while a test runs it is refused with a sentence.
+- [ ] Make Queue fail to start — use a backend whose batch class builds but
+      whose persistent probe does not: point `testing.json` at `OpenModelica`
+      on a machine with no OMPython (re-sync the venv without `--extra om` if
+      it is installed), so the project opens and the queue's
+      `select_backend(persistent=True)` is what raises. The dialog says the
+      backend's sentence, nothing is queued and every verdict is exactly what
+      it was; from then on the Queue button is greyed, with that sentence as
+      its tooltip. (A backend that cannot be built at all — an unregistered
+      name, a missing executable — never gets that far: `dstf author` refuses
+      to open the project, printing one `Config error: ...` line.)
+- [ ] With a test queued or running, the header's ⋮ → Stop server asks first
+      (`2 tests are queued or running — stop anyway?`); Stop anyway ends the
+      tool and leaves no simulator process behind (`ps` shows none).
 - [ ] Select BouncingBall with `h` plotted: Edit on plot is enabled (the
       `range` leaf). Zoom into part of the plot, then drag the `range` upper
       bound line down: the pending count rises, the leaf's verdict follows,

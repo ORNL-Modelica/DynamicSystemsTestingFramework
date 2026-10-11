@@ -173,7 +173,7 @@
 - Atomic write pattern: unique tmp filenames (`status.json.{pid}.{uuid}.tmp`) + a dedicated `_write_lock` serializing the write+replace. Both are required on Windows where `replace` fails when another thread holds the file
 - `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_NNNN"` or `"test_NNNN"`) so the dashboard's model-name link points at the canonical per-test report (`reports/{report_dir}/interactive.html`) — matches `generate_report_suite` naming
 - `backend.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); the backend consults it at registration time so links work even mid-run before the report is generated
-- `finalize()` writes the last snapshot and leaves the page LIVE: the compare phase has not scored anything yet, and a static page there is where a watching browser stops. The command that ends the run (`run`, `run -i`, `run --accept`, `compare`, an aborted run, the tool's Rerun) renders the static final page
+- `finalize()` writes the last snapshot and leaves the page LIVE: the compare phase has not scored anything yet, and a static page there is where a watching browser stops. The command that ends the run (`run`, `run -i`, `run --accept`, `compare`, an aborted run, the tool's queue once it has drained) renders the static final page
 
 ### Per-phase timing on the persistent backend
 - `DymolaWorker.run_test` splits `simulateModel` into explicit `translateModel` + `simulateModel` + `savelog` so each phase is measured independently. Timings (`translation_wall`, `sim_wall`) are fields on `TestRunResult`; total wall is `elapsed`

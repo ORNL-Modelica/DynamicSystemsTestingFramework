@@ -41,7 +41,7 @@ Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` �
 | Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode`; `VariableComparison.diagnostics` carries structured extras | 7 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, spectral shapes, and single-number (reduction / stored-statistic) checks |
 | MetricTree | `comparison/metric_tree.py` (`And`/`Or`/`KOfN`/`Warn`/`Weighted` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
 | Reference | Role-partitioned storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; soft_checks and companions in role subdirs beside it |
-| (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. No printing, no exits, no browser, no prompts; failures are exceptions. Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | Both callers go through it: the CLI and the authoring tool's Rerun |
+| (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. No printing, no exits, no browser, no prompts; failures are exceptions. Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | The CLI drives it (`cmd_run`); the authoring tool's queue drives the same steps one test at a time (`ItemRun` behind `open_pool`, in the same module) |
 | (the run's CLI) | `cli/run_cmds.py`: `cmd_run` is the wrapper — selection and filtering, `_get_backend` (the CLI's wrapper over `backends.select_backend`), `run_pipeline`, then the outcome's notices, `--accept` / `-i` / the report. `cmd_compare` shares the same helpers without simulating. | — |
 
 Forward work: cross-backend verification beyond the Dymola→FMPy chain (each new primary backend needs its own `export_fmu`), and richer metrics (event-timing, spectral, Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
@@ -138,11 +138,13 @@ src/dstf/
 │   │                         #   header.py, actions.py (ActionBar — a button per capability at a placement,
 │   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline, with
 │   │                         #   a RowTarget to open a form row under their row),
-│   │                         #   runs.py, tabstate.py, figure_hook.py (one hook per plot),
+│   │                         #   queue_panel.py (the simulation queue's panel and the header's indicator,
+│   │                         #   D150), tabstate.py, figure_hook.py (one hook per plot),
 │   │                         #   tab_theme.py (the tab's theme and its live switch, D148)
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_family.py, edit_tree.py,
-│                             #   accept.py (the shared accept function), rerun.py (run_pipeline),
+│                             #   accept.py (the shared accept function), enqueue.py (Queue: the selected
+│                             #   tests handed to the Session's simulation queue),
 │                             #   edit_on_plot.py (drag a handle or edit a list's table)
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
