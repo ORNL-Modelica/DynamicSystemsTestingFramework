@@ -24,6 +24,8 @@ class RecordingFigure:
 
     def __init__(self) -> None:
         self.handlers: list[tuple[str, Callable[[str, dict], None]]] = []
+        #: The panel drawn beside this figure, once `host` has built it.
+        self.panel: HostPanel | None = None
 
     def on(self, kind: str, handler: Callable[[str, dict], None]) -> None:
         self.handlers.append((kind, handler))
@@ -40,7 +42,11 @@ class HostPanel:
     panel registered (U5) in ``click``; `host` then draws a button marked
     ``host-click`` that calls it, standing for the row. ``kept`` is the
     test's dict when it hands one — to a second host too, as a shell hands
-    the same one to a rebuilt panel — else this panel's own."""
+    the same one to a rebuilt panel — else this panel's own. A plot's side
+    of the panel (D149) is recorded: the ⌖ a panel drew in ``places``
+    (pointer, label), its place handler in ``place``, and what it previewed
+    in ``previews`` — handed on to every `on_preview` handler, as a shell
+    hands it to every panel of the editor."""
 
     def __init__(
         self,
@@ -65,6 +71,31 @@ class HostPanel:
         self.click: Callable[[], None] | None = None
         #: The open row's title label, which `retitle` says again.
         self.title: ui.label | None = None
+        self.places: list[tuple[Any, str]] = []
+        self.disarmed = 0
+        self.place: Callable[[Any, dict], bool] | None = None
+        self.previews: list[tuple[dict | None, int]] = []
+        self.previewers: list[Callable[[dict | None, int], None]] = []
+
+    #: The host stands for a panel beside a plot.
+    can_place = True
+
+    def place_button(self, pointer: Any, label: str) -> None:
+        self.places.append((pointer, label))
+
+    def disarm(self) -> None:
+        self.disarmed += 1
+
+    def on_place(self, handler: Callable[[Any, dict], bool]) -> None:
+        self.place = handler
+
+    def preview(self, leaf: dict | None, revision: int = 0) -> None:
+        self.previews.append((leaf, revision))
+        for handler in self.previewers:
+            handler(leaf, revision)
+
+    def on_preview(self, handler: Callable[[dict | None, int], None]) -> None:
+        self.previewers.append(handler)
 
     def submit(self, **inputs: Any) -> bool:
         return self._submit(**inputs)
@@ -147,6 +178,7 @@ async def host(
             )
             return
         panel = HostPanel(submit, figure, reveals, edits, kept)
+        figure.panel = panel
         cap.panel(view, panel)
         if panel.click is not None:
             # The row the panel would be drawn in: its click.

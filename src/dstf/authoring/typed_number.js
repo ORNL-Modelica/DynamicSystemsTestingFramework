@@ -2,9 +2,23 @@
 // field shows is what was typed, until it loses focus; a server value is
 // taken only while the field is not being typed in. (The passthrough is
 // NiceGUI's own, elements/input.js.)
+//
+// And a PREVIEW (D149): a value the server shows in the field in place of
+// what it holds, staging nothing — a handle held on the plot, the field
+// following it. `previewed` is that value (null: none) and `revision` the
+// number of the drag it is of. It is shown whatever the field's typing
+// state, except in a field typed in SINCE that drag began: what a person
+// types is never painted over.
+//
+// The server sets it by calling `preview(value, revision)` on this
+// component — never by a prop. A prop write resends the element, and
+// NiceGUI renders the page's whole tree again for any element it is sent:
+// with a 30-row table open that was a 50 to 77 ms task in the browser for
+// every move of a held handle. A method call changes this component's own
+// state, and it alone is drawn again.
 export default {
   template: `
-    <q-input ref="qRef" v-bind="$attrs" :model-value="shown" @update:model-value="typed" @blur="typing = false" @wheel="wheel">
+    <q-input ref="qRef" v-bind="$attrs" :model-value="display" @update:model-value="typed" @blur="typing = false" @wheel="wheel">
       <template v-for="(_, slot) in $slots" v-slot:[slot]="slotProps">
         <slot :name="slot" v-bind="slotProps || {}" />
       </template>
@@ -14,7 +28,13 @@ export default {
   props: { modelValue: null },
   emits: ["update:modelValue"],
   data() {
-    return { shown: this.modelValue, typing: false };
+    return { shown: this.modelValue, typing: false, typedIn: null, previewed: null, revision: 0 };
+  },
+  computed: {
+    display() {
+      const previewing = this.previewed !== null && this.previewed !== undefined;
+      return previewing && this.typedIn !== this.revision ? this.previewed : this.shown;
+    },
   },
   watch: {
     modelValue(value) {
@@ -22,8 +42,13 @@ export default {
     },
   },
   methods: {
+    preview(value, revision) {
+      this.previewed = value;
+      this.revision = revision;
+    },
     typed(value) {
       this.typing = true;
+      this.typedIn = this.revision;
       this.shown = value;
       this.$emit("update:modelValue", value);
     },

@@ -7153,6 +7153,243 @@ A third bundled theme is one more table in `reporting/theme.py`, one more
 palette in `figures/palette.py` and, if it is dark, its name in
 `DARK_THEMES`; the switch goes around the names in order.
 
+## D149 — On-plot editing: a click places, a drag previews, written values are snapped (2026-10-08)
+
+**Context.** D147 left the second half of step E unbuilt: a handle
+committed only on release, with the fields a screen below showing the old
+value until then; a row could be added only by `Add row`, which puts it in
+the largest gap and leaves the author to move it; a field could be set from
+the plot only where it had a handle to drag; and a drag wrote where the
+pointer happened to stop, to 12 significant digits (`0.373778382112`). The
+owner ruled on the five behaviours below; the controller made the calls
+numbered after them, said to the owner and reversible. A spike on NiceGUI
+3.16 / plotly.js 3.1.1 with a real mouse came first, and two checks it had
+not made were made before anything was built (see What was measured).
+
+**Decision.**
+
+1. *Ctrl+click adds a row (the owner's ruling).* Ctrl+click on a plot adds
+   one row to the OPEN criterion drawn on it; ⌘+click is the same gesture
+   where Ctrl+click is the context menu. It does nothing on a metric with
+   no rows: `nrmse`, `range`, `scalar`, a tube of constant width. The
+   2026-09-15 design brief (§3.5) and its artboards said Shift+click; this
+   ruling replaces that, and those sentences are corrected. Shift is
+   Plotly's own modifier on a drag, and a Shift+click on a text field of
+   the same page extends a selection.
+2. *The row settles on the data (the owner's ruling).* A click names a
+   place by what is there, not by its pixel. A checkpoint takes the clicked
+   TIME and no value of its own, so it follows the reference at that time;
+   where the criterion has no reference to follow it takes the run's value
+   there as its `value`. A declared event takes the time of the run's
+   nearest event. A declared peak — a click on the spectrum panel — takes
+   the frequency of the nearest peak of the run's spectrum, a local maximum
+   over the noise floor the scorer matches peaks over. A tube control point
+   takes the clicked time and the tube's CURRENT widths there, interpolated
+   as the scorer interpolates them, so adding it changes nothing until it
+   is dragged. Every other field of the row is what `Add row` gives. It is
+   the metric's own function, `MetricDescriptor.place_row` over a
+   `handles.RowPlace`, beside `edit_handle`; `row_noun` says what the row
+   is called, or that a click adds none to that leaf. A row placed ON
+   one that stands there is refused, naming it ("a checkpoint already
+   stands at t=0.6 (row 2)"): within ONE snap step of a row's time —
+   after any clamp — or, for a peak, inside a declared peak's own
+   window. Two Ctrl+clicks on one spot left two rows.
+3. *Arm a field, then click (the owner's ruling).* What a click can
+   place has a ⌖. Pressing it arms it — one per tab, which one editor per
+   page makes true — fills its ⌖, and says so twice: the editor's hint
+   becomes "Click the plot to set <its label> — Esc cancels.", and the
+   PLOT's own card says the same on a line under the plot, in the accent,
+   with an accent outline about the plot (an attribute of the card the
+   stylesheet reads) — the ⌖ can be a screen below the plot the click is
+   made on. The next plain click on the panel it belongs to sets it and
+   disarms. Disarmed besides by: Esc; the ⌖ again; closing the editor;
+   opening another criterion; a row added to or removed from a table; a
+   change of mode; and ANY edit of the test — a Discard, a Save, another
+   tab's, a Ctrl+click, a typed value — since a ⌖ names a row by its index
+   and a field by its keys, and an edit can put another under the name.
+   The ⌖ is out of the Tab order (the controller's): it is the first half
+   of a gesture whose second is a click on the plot.
+4. *The fields follow a held handle (the owner's ruling).* While a ring, an
+   arrow or a bound line is held and moved, the fields its release would
+   change show what it would write. Nothing is staged before the release.
+5. *Placed values are snapped (the owner's ruling).* A dragged or clicked
+   value is rounded to a readable step: the power of ten nearest to a
+   thousandth of the visible axis span. A typed value is never snapped.
+6. *One click channel, in the page (the controller's).* `grips.js`, which
+   already holds the press, the travel and the ranges, hears a capture-
+   phase DOM `click` on the graph div and sends `dstf_plot_click`: the
+   panel under the pointer, the position in its axes by their `p2d`, what
+   both axes show, and the four modifier keys. Plotly's own click event
+   reaches NiceGUI with neither a position nor a key. It sends nothing for
+   a click whose `detail` is 2 or more (a double-click resets the axes), a
+   click more than 4 px from its press (a Ctrl+drag ends in a real click
+   where it is let go), a click on a shape an editor moves (a press there
+   is a drag's), or outside every panel's
+   plot area, where the toolbar and the legend are. A panel is a pair of axes that overlays no other: the time
+   plot's, the spectrum's. What a click MEANS is the server's: the page
+   never knows what is armed or which metric is open.
+7. *A click that sets a field is a drag of its handle released at the
+   click (the controller's; which fields carry a ⌖ is the review's).* ONE
+   rule, `edit_on_plot._target`, says how a click sets a thing in the
+   criterion's CURRENT state — the ⌖ is drawn by it (`placeable`) and the
+   click acts by it (`placed`), so no ⌖ stands where a click would be
+   refused as setting nothing.
+   - A TABLE ROW has one ⌖, in its first cell ("row 2"): the click is its
+     ring let go there, through the ring's own editor — its time, a peak's
+     frequency, from the click's x; its value from the click's y only
+     where the row HOLDS one, so a checkpoint that follows the baseline
+     goes on following it. A declared event has no ring: its time is the
+     click's x. A row's tolerance sides have their arrows, or are typed.
+   - A criterion's own field has a ⌖ where a handle of the leaf writes it
+     (`handles.handle_fields`): a bound, a side of a tolerance the plot
+     draws. Of several handles that write one field (a tolerance its rows
+     defer to) the one nearest the click is used, and the side's EDGE
+     lands on the click. So there is none on the width of a tube's
+     inactive mode, on a scalar's bounds while it is scored by its
+     tolerance (or the reverse), on a time tolerance nothing defers to.
+   - Two fields with no handle are set from the click itself: a window's
+     start and end (its x), and a BLANK bound of a leaf that draws its
+     other one (its y, then the bounds' own refusal).
+   Every one of these belongs to ONE panel — the axes its handle or its
+   meaning lives on — and a click on the other is refused in words that
+   name where to click ("row 1 is set on the time plot"), stages nothing
+   and leaves it armed: a click on the spectrum wrote its magnitude as a
+   value. A refused click says why on the line under the plot and stays
+   armed. A refusal is a person's own (`unscorable.Refused`): shown, never logged.
+8. *A live drag is fields only (the controller's).* Plotly says nothing
+   during a shape drag and its cover takes every move from the plot, so
+   the page listens on the document in the capture phase and sends the
+   held handle's would-be position (`dstf_grip_move`) — the figure's
+   position at the press plus the pointer's travel, under 8 px on an axis
+   not moved — once a frame at the most and 66 ms apart, and once more
+   where it is let go, shaped as the relayout its release will be. The
+   server reads it with the SAME pure
+   function the release uses (`edit_on_plot.dragged`) and hands the leaf to
+   every panel of the editor (`Panel.preview` / `on_preview`), which shows
+   it without staging or rescoring. The box or band a handle belongs to
+   still follows on release: a figure changed under a held shape loses the
+   drag. A refused, unmoved or abandoned drag puts the fields back.
+9. *A preview is not a value, and not a prop.* `TypedNumber.preview(
+   value, revision)` calls a METHOD of the field's component in the page:
+   what to show instead of what it holds, and the number of the drag it is
+   of. The value is untouched, so nothing reaches `on_change` and nothing
+   can be staged by showing it. It was a prop first: a prop write resends
+   the element, and NiceGUI 3.16 then renders the page's whole tree again
+   — a 50 to 77 ms task in the browser for every move of a held handle
+   with thirty rows open. A method call redraws that field alone. The
+   component shows a preview whatever its typing state, except in a field
+   typed in since that drag began: what a person types is never painted
+   over. (D147 expected a field to keep the focus through a drag; in
+   Chromium the press on a shape takes it — see What was measured — and
+   the rule holds either way.)
+10. *Every move and release is numbered (the controller's).* The page
+    numbers them, rising; the release carries a number past every move of
+    its drag, and `FigureHook` drops a move numbered at or under the last
+    release (or drag end) it heard. The page also stops sending at the
+    release. A websocket delivers in order, so only a move sent late can
+    arrive late — the guard is for that one, and is the server's.
+11. *Snapping is one function (the controller's).*
+    `comparison.snap.snapped(value, span, fraction=False)`: the step is
+    `10 ** round(log10(span / 1000))` — nearest in the exponent; a
+    coordinate, and a tolerance side in the axis' units, is rounded to a
+    multiple of it as a decimal (so the result is the float a person would
+    type; an exact half goes to the even multiple); a RELATIVE side, a
+    fraction on no axis, to 3 significant digits; never `-0.0`; with no
+    span, nothing. The span is the page's — the ranges held at the press,
+    or at the click (`HandleEdit.visible`, new: `HandleEdit.span` is the
+    run's time span, another thing). The editors snap FIRST and then clamp
+    and refuse, so what is judged is what would be written. An axis the
+    pointer went under 8 px along sends no position, so its value is not
+    re-snapped: a hand-written `0.123456` stays until that axis is really
+    dragged. What a row SETTLES on — an event's time, a peak's frequency, a
+    tube's widths, the run's value — is read off the data and not snapped.
+    `_written`'s 12 digits stay under everything.
+12. *The hint.* The editor's hint line adds "Ctrl+click adds a point." (an
+    event, a peak, a control point) for a criterion a click adds a row to.
+
+**Rejected, and why.**
+
+- *Plotly's `plotly_click`.* Through NiceGUI it carries no click position
+  and no modifier key; under x-unified hover it lists every trace at that
+  x. A DOM listener and the axis' `p2d` gives the position within a pixel,
+  on the spectrum panel and after a zoom too.
+- *Redrawing the plot's dependent shapes during a drag.* A figure changed
+  mid-drag loses the held shape (it is named by index), and plotly.js
+  rejects a call made while it is dragging.
+- *Setting the field's value for a preview.* A value set from the server
+  fires the field's change handler, which stages; guarded, the value would
+  still be the field's when the drag was refused.
+- *A mapping from field to handle written per metric.* `handle_fields` is
+  the editors' own choice of holder said once, and a test moves every
+  handle and checks that what changed is what it names.
+- *Snapping the EDGE of a tolerance instead of the side.* The field shows
+  the side; a round edge over a target of 0.3141 is a side of 0.0537.
+- *Deleting a row from the plot, a brush for windows, touch gestures.* Not
+  in this step: rows are removed in the table.
+
+**What was measured.** Before the build, on the tool as it was: a DOM click
+on the SPECTRUM panel read by `xaxis2` / `yaxis2` lands within 0.64 px of
+an independent reading (the drag layer's box and the axis range), plain and
+with Ctrl, before and after a zoom of that axis; five element updates sent
+to a field while its arrow was held did not disturb the drag (the release
+staged the travelled value to the pixel), an update addressed to a field
+the release had already rebuilt away raised nothing, and one addressed to
+the NEW field landed — which is why the late-move guard is the server's.
+After: a row added by Ctrl+click stands 1.0 px from the click along x (a
+mouse event lands on a whole pixel) and on the baseline to 1e-9; a field
+shows a held arrow's value 57 to 109 ms after the pointer moved (two
+runs); a held drag sent 30 moves in 2.05 s, 14.6 a second; the same 37 px drag wrote
+`0.28` on an axis showing 6 (step 0.01) and `0.108` on one showing 0.6
+(step 0.001); eight moves of a finished drag sent again under a server
+slowed by 250 ms a stage changed neither the fields nor the leaf. A press
+on a ring or an arrow takes the focus off a field in Chromium
+(`document.activeElement` is the body). plotly.js rejects a promise where a
+Ctrl+drag is let go — on the tool before this step too; nothing is shown
+for it. The cost of an editor of thirty checkpoints, before this step /
+with a ⌖ in every cell and the preview as a prop / as built (one machine,
+medians of three): open 431–450 / 579 / 469 ms; the rebuild after a
+release 531–608 / 696 / 557 ms; DOM nodes of the editor 1921 / 2841 /
+2081; browser tasks over 50 ms during a two-second drag 0 / 21 (60 ms the
+median) / 0; pointer moves the page took in those two seconds 56–60 / 21
+/ 46. A points row is one line at 1280 px and two at 1024 px, as before.
+
+**Known limits, left.**
+
+- A plain double-click with a field ARMED sets the field with its first
+  click before the second resets the axes: a click is acted on when it
+  arrives, not after a double-click's wait.
+- A Ctrl+double-click adds one row, by its first click.
+- While a handle is held the box, band, window and arrows that depend on
+  it stay where they were; they are redrawn on release.
+- A redraw under a held handle — a value typed in another field with the
+  keyboard while the mouse holds one — can make the preview differ from
+  what the release stages (0.46 shown, 0.53 staged in the review's probe).
+- A tolerance side dragged less than half a step past its target is
+  written 0, not refused: it is snapped first.
+- The window losing the focus mid-drag stops the previews for that drag.
+- A key typed in a field during a drag that leaves a valid value stages it
+  — a typed value always does — and the plot is redrawn under the held
+  shape.
+- A ⌖ costs a little: an editor of thirty checkpoints has 32 (one a row,
+  two on its window) — see the cost measured below.
+- Only Chromium was run; the Playwright browser tests are not run in CI.
+
+**What it reverses.** D147's "a handle still commits on release, the fields
+unchanged until then", and its expectation that `TypedNumber` take a server
+value by a revision prop "whatever its typing state": the prop is there,
+and a field typed in since the drag began is the exception. The 2026-09-15
+brief's Shift+click.
+
+**Consequences.** `test_spec.json` gains nothing: every gesture stages the
+one `replace` of a leaf that a drag and a form edit stage. What a drag
+WRITES changes: a value on a readable grid in place of twelve digits — a
+spec edited by drags before this holds the long numbers until they are
+dragged again. `MetricDescriptor` gains `place_row` and `row_noun`,
+`HandleEdit` `visible`, the `Panel` contract `place_button`, `on_place`,
+`preview` and `on_preview`, the figure hook two kinds (`dstf_click`,
+`dstf_move`); the pointer map (`layout.meta.dstf`) and every figure are
+unchanged.
+
 ## D150 — The simulation queue: one FIFO per tool process over a live worker pool (2026-10-08)
 
 **Context.** `dstf author` ran one job at a time: a Rerun locked its tests

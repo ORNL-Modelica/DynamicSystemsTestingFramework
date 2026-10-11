@@ -10,6 +10,17 @@ Every staged edit is one ``replace`` of the whole leaf — the op Edit
 criteria stages — so consecutive drags on one leaf collapse into one
 pending op, and a drag and a form edit of the same leaf read as "leaf ->
 new leaf" in the drawer.
+
+A plot takes three more gestures for the open criterion (D149), each a pure
+function here over the Session's view and each ending in the same one
+``replace``: a HELD handle previews the leaf its release would stage
+(:func:`dragged` — the release's own function, so the fields show what will
+be written); a Ctrl+click adds a row that settles on the data
+(:func:`clicked_row`); and a click with a field armed sets that field
+(:func:`placed`) — through the handle that sets it, where there is one, so
+a click is refused and clamped as that handle's drag is. A ⌖ is drawn only
+where :func:`placeable` says a click can set its field: one per table row,
+and on a form field in the state the criterion is in.
 """
 
 from __future__ import annotations
@@ -17,20 +28,29 @@ from __future__ import annotations
 import copy
 import dataclasses
 import math
+from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.geometry import HLine, Marker, VLine, Window, grip_axis
-from ...comparison.handles import HandleEdit, HandleEditError
+from ...comparison.handles import (
+    HandleEdit,
+    HandleEditError,
+    RowPlace,
+    _written,
+    handle_fields,
+)
 from ...comparison.mode_schema import SIDE_LABELS
-from ...comparison.registry import DEFAULT_METRIC, metric
+from ...comparison.registry import DEFAULT_METRIC, MetricDescriptor, metric
 from ...comparison.sides import parse_sides
+from ...comparison.snap import snapped
 from ...figures.assemble import leaves_by_variable
 from ..capabilities import Panel, Patch, Placement
 from ..session import no_tree_error
 from ..spec_document import PatchOp
 from ..tree_pointer import node_at
-from ..unscorable import refuse_negative
+from ..unscorable import Refused, refuse_bounds, refuse_negative
 
 if TYPE_CHECKING:
     from ...figures.view import LeafView, VariableView
@@ -44,6 +64,21 @@ if TYPE_CHECKING:
 #: ``sides`` kind, optionally what its two sides are called. Read by INDEX:
 #: an entry is two or three long.
 Columns = tuple[tuple[Any, ...], ...]
+
+
+#: What a ⌖ names (D149): a field of the open leaf by its keys from the
+#: raw leaf down to the value — ``("min_value",)``, ``("window", "start")``,
+#: one side of a tolerance ending in ``"lower"`` or ``"upper"`` whether the
+#: file holds a number or a pair (`handles.handle_fields` names a handle's
+#: fields the same way) — or a ROW of a table, ``("points", 3)``.
+Pointer = tuple[Any, ...]
+
+#: The tables whose rows have no ring: the column a click sets directly.
+_RINGLESS = {"events": "time"}
+
+#: A bound and the other one: a BLANK bound is placed where the leaf draws
+#: its other.
+_BOUNDS = {"min_value": "max_value", "max_value": "min_value"}
 
 
 def _selected(s: SessionView) -> tuple[str, str, str] | None:
@@ -270,6 +305,390 @@ _NO_BOTTOM = "hide-bottom-space"
 _OUTSIDE = "/outside"
 
 
+def _visible(said: object) -> tuple[float | None, float | None]:
+    """What the page says its axes SHOWED — ``{"x": span, "y": span}``, at
+    the press of a drag or at a click — as `HandleEdit.visible`. An axis it
+    does not say (an arrow anchored to the paper has no y; a caller that is
+    no page says none) is None, and nothing placed on it is snapped."""
+    spans = said if isinstance(said, dict) else {}
+
+    def span(value: object) -> float | None:
+        return float(value) if _is_number(value) and value > 0 else None  # type: ignore[arg-type,operator]
+
+    return span(spans.get("x")), span(spans.get("y"))
+
+
+def _click(said: object) -> tuple[str, float, float, tuple[float | None, float | None]]:
+    """A click as the page reports it (`grips.js`): the panel it is on, its
+    position in that panel's axes, and what those axes showed. The spectrum
+    is the one panel on a second x axis (`figures.plotly._xref`)."""
+    click = said if isinstance(said, dict) else {}
+    x, y = click.get("x"), click.get("y")
+    if (
+        not isinstance(x, (int, float))
+        or not isinstance(y, (int, float))
+        or not (math.isfinite(x) and math.isfinite(y))
+    ):
+        raise ValueError(f"a click at ({x!r}, {y!r}) names no place on the plot")
+
+    def span(ends: object) -> float | None:
+        if (
+            isinstance(ends, (list, tuple))
+            and len(ends) == 2
+            and all(map(_is_number, ends))
+        ):
+            return abs(ends[1] - ends[0])
+        return None
+
+    panel = "spectrum" if click.get("xaxis") == "x2" else "time"
+    visible = _visible({"x": span(click.get("xrange")), "y": span(click.get("yrange"))})
+    return panel, float(x), float(y), visible
+
+
+def _scored(
+    s: SessionView, model_id: str, variable: str, path: str, view: VariableView | None
+) -> tuple[dict, MetricDescriptor | None, VariableView, LeafView | None]:
+    """The open leaf as every gesture on the plot reads it: its raw node,
+    its metric's descriptor, the variable's view (``view`` when the caller
+    holds one: a held drag asks many times of a Session that does not
+    move) and the leaf as it was scored — None where it was not."""
+    raw = _leaf_at(s, model_id, path)
+    desc = metric(raw.get("metric", DEFAULT_METRIC))
+    if view is None:
+        view = s.view(model_id, variable)  # full resolution, not the figure
+    leaf = next((lv for lv in view.leaves if lv.path == path), None)
+    return raw, desc, view, leaf
+
+
+def _edit(
+    path: str,
+    raw: dict,
+    view: VariableView,
+    leaf: LeafView | None,
+    local: str,
+    x: float | None,
+    y: float | None,
+    visible: tuple[float | None, float | None],
+) -> HandleEdit:
+    """One position of the handle ``local`` of the leaf at ``path``, with
+    everything an editor measures from."""
+    geometry = leaf.geometry if leaf is not None else ()
+    # The number a tolerance side is measured from, where the leaf's own
+    # geometry holds one: a scalar's baseline scalar.
+    target = next(
+        (
+            p.value
+            for p in geometry
+            if isinstance(p, HLine) and p.id == f"{path}/scalar/reference"
+        ),
+        None,
+    )
+    return HandleEdit(
+        leaf=raw,
+        local=local,
+        x=x,
+        y=y,
+        reference=_reference(view),
+        target=target,
+        # What a time may be dragged to where the leaf is scored against
+        # the RUN and not the baseline (a checkpoint with a value of its
+        # own): the page holds a release to the axis, which runs past the
+        # data.
+        span=_run_span(view, leaf) if leaf is not None else None,
+        visible=visible,
+    )
+
+
+def _reference(view: VariableView) -> tuple[Any, Any] | None:
+    if view.ref_time is None or view.ref_values is None:
+        return None
+    return view.ref_time, view.ref_values
+
+
+def dragged(
+    s: SessionView,
+    *,
+    model_id: str,
+    variable: str,
+    handle: str,
+    shape: dict,
+    view: VariableView | None = None,
+) -> tuple[str, dict, dict] | None:
+    """What a drag of ``handle`` to ``shape`` — the figure hook's per-shape
+    payload — MEANS: ``(leaf path, the raw leaf, the leaf the drag
+    writes)``, or None for a shape no editor moves and for no move at all.
+    It reads and stages nothing, so the release of a handle and the preview
+    of one still held are this one function over the same payload (D149):
+    the fields show, snapped, what the release will write. Refused as the
+    drag is, each refusal naming its leaf."""
+    if not handle:
+        return None
+    handle = _handle_id(handle)
+    paths = [p for p, _ in _leaf_paths(s, model_id, variable)]
+    path = _leaf_path_of(handle, paths)
+    if path is None:
+        raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
+    if view is None:
+        view = s.view(model_id, variable)  # full resolution, not the figure
+    leaf = next((lv for lv in view.leaves if lv.path == path), None)
+    primitive = next(
+        (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
+    )
+    # A window, a box, a result line is drawn, not editable. The page
+    # takes the pointer off it (the figure's `POINTER`, `grips.js`), so
+    # no drag of one should arrive; one that does is answered with
+    # nothing, and the figure hook's redraw snaps it back. Resolved
+    # before the open-leaf check: whichever criterion is open, such a
+    # drag is not an error the user made.
+    if not _draggable(primitive):
+        return None
+    assert isinstance(primitive, (Marker, HLine, VLine))  # `_draggable`
+    assert leaf is not None  # the primitive is its
+    open_leaf = s.selection.leaf_path
+    if open_leaf is not None and path != open_leaf:
+        # Only the open leaf's rings and grips are drawn
+        # (`Session.figure`'s `editing`), and every other leaf's bound
+        # LINES, on the plot too, are inert in the page — but Plotly
+        # itself would drag them, and a release can cross a redraw
+        # (`FigureHook._shape_name`): one that reaches here is not this
+        # editor's.
+        raise HandleEditError(
+            f"{handle} is not a handle of {open_leaf}",
+            reason="Open that criterion to drag its lines.",
+        )
+    tree, why = s.tree_or_reason(model_id)
+    if tree is None:
+        assert why is not None  # `tree` is None
+        raise no_tree_error(model_id, why)
+    raw = node_at(tree, path)
+    name = raw.get("metric", DEFAULT_METRIC)
+    desc = metric(name)
+    if desc is None or desc.edit_handle is None:
+        raise HandleEditError(
+            f"{path}: {name} has no on-plot handles",
+            reason=f"{name} has no on-plot handles",
+        )
+    shape = shape if isinstance(shape, dict) else {}
+    # Several leaves on one variable can refuse the same local id: every
+    # refusal below names its leaf.
+    try:
+        position = _position(primitive, shape)
+        if position is None:
+            return None
+        x, y = position
+        local = handle[len(path) + 1 :]
+        visible = _visible(shape.get("visible"))
+        new = desc.edit_handle(_edit(path, raw, view, leaf, local, x, y, visible))
+    except HandleEditError as e:
+        raise HandleEditError(f"{path}: {e}", reason=e.reason) from None
+    return path, raw, new
+
+
+def clicked_row(
+    s: SessionView, *, model_id: str, variable: str, path: str, click: dict
+) -> dict | None:
+    """The leaf at ``path`` with the row a Ctrl+click at ``click`` adds to
+    its table (D149) — the metric's own placer, which settles the row on
+    the data; every field the click does not set is what ``Add row`` gives
+    today. None where the metric has no rows to add to, and where the
+    placer adds none (a tube of constant width)."""
+    raw, desc, view, leaf = _scored(s, model_id, variable, path, None)
+    if desc is None or desc.place_row is None:
+        return None
+    panel, x, y, visible = _click(click)
+    reference = _reference(view)
+    span = None
+    if reference is not None and len(reference[0]):
+        span = float(reference[0][0]), float(reference[0][-1])
+    blanks = {
+        field: _new_row(columns, copy.deepcopy(raw.get(field) or []), span)
+        for field, columns in _list_fields(desc.name)
+    }
+    actual = None
+    if view.act_time is not None and view.act_values is not None:
+        actual = view.act_time, view.act_values
+    try:
+        new = desc.place_row(
+            RowPlace(
+                leaf=raw,
+                blanks=blanks,
+                panel=panel,
+                x=x,
+                y=y,
+                reference=reference,
+                actual=actual,
+                geometry=leaf.geometry if leaf is not None else (),
+                visible=visible,
+                span=_run_span(view, leaf) if leaf is not None else None,
+            )
+        )
+    except HandleEditError as e:
+        raise HandleEditError(f"{path}: {e}", reason=e.reason) from None
+    return None if new == raw else new
+
+
+@dataclass(frozen=True)
+class _Target:
+    """How a click sets one field of the open leaf (:func:`_target`): on
+    which ``panel``, and either through ``handles`` that write it — each
+    where it stands along x (None: nowhere), its local id and the click's
+    coordinates it is handed — or ``direct``: the field's own keys and the
+    axis of the click read into them."""
+
+    panel: str
+    handles: tuple[tuple[float | None, str, tuple[str, ...]], ...] = ()
+    direct: tuple[Pointer, str] | None = None
+
+
+def _target(
+    raw: dict, path: str, leaf: LeafView | None, pointer: Pointer
+) -> _Target | None:
+    """How a click sets ``pointer`` in the criterion's CURRENT state, or
+    None where none can — the ONE rule a ⌖ is drawn by (:func:`placeable`)
+    and a click acts by (:func:`placed`), so no ⌖ stands on a field a click
+    would refuse.
+
+    A ROW of a table, ``(table, i)``, is placed as its ring let go at the
+    click: handed the click's x — its time, a peak's frequency — and the
+    click's y only where that ring writes the row's ``value``, which the
+    ring's own editor does only for a row that HOLDS one. A declared event
+    has no ring: its time is the click's x. A window's ends are the click's
+    x. Any other field, where handles of the leaf write it: an arrow is
+    handed both coordinates (it writes along its own axis and only
+    MEASURES along the other — a constant tube's side from the reference
+    at the click's time), a line the one on its axis. And a BLANK bound of
+    a leaf that draws its other one — a range, a scalar scored by its
+    bounds — is the click's y."""
+    if len(pointer) == 2 and pointer[0] == "window" and pointer[1] in ("start", "end"):
+        return _Target("time", direct=(pointer, "x"))
+    handles = [
+        (p, _handle_id(p.id)[len(path) + 1 :])
+        for p in (leaf.geometry if leaf is not None else ())
+        if _draggable(p) and p.id.startswith(path + "/")
+    ]
+    if len(pointer) == 2 and type(pointer[1]) is int:
+        table, i = pointer
+        rows = raw.get(table)
+        if not isinstance(rows, list) or not 0 <= i < len(rows):
+            return None
+        for p, local in handles:
+            fields = handle_fields(raw, local)
+            at = fields.get("x", ())
+            if isinstance(p, Marker) and p.kind == "handle" and at[:2] == pointer:
+                valued = fields.get("y") == (*pointer, "value")
+                return _Target(
+                    p.panel, ((None, local, ("x", "y") if valued else ("x",)),)
+                )
+        if table in _RINGLESS:
+            return _Target("time", direct=((table, i, _RINGLESS[table]), "x"))
+        return None
+    found = [
+        (p.panel, (_stands_at(p), local, ("x", "y") if p.kind == "grip" else (axis,)))
+        for p, local in handles
+        for axis, field in handle_fields(raw, local).items()
+        # A criterion's own field: a cell of a row is no place, its row is.
+        if field == pointer and all(isinstance(key, str) for key in pointer)
+    ]
+    if found:
+        return _Target(found[0][0], tuple(handle for _panel, handle in found))
+    if len(pointer) == 1 and pointer[0] in _BOUNDS and raw.get(pointer[0]) is None:
+        other = (_BOUNDS[pointer[0]],)
+        if any(other in handle_fields(raw, local).values() for _p, local in handles):
+            return _Target("time", direct=(pointer, "y"))
+    return None
+
+
+def placeable(
+    s: SessionView, *, model_id: str, variable: str, path: str
+) -> Callable[[Pointer], bool]:
+    """Whether a click on the plot can set a field of the leaf at ``path``
+    as it now is (:func:`_target`): what a panel asks before it draws a ⌖.
+    The leaf is read on the first question and once."""
+    read: list[Any] = []
+
+    def can(pointer: Pointer) -> bool:
+        if not read:
+            try:
+                read.append(_scored(s, model_id, variable, path, None))
+            except (KeyError, ValueError):
+                read.append(None)  # no such leaf: nothing of it is placed
+        if read[0] is None:
+            return False
+        raw, _desc, _view, leaf = read[0]
+        return _target(raw, path, leaf, tuple(pointer)) is not None
+
+    return can
+
+
+def _stands_at(primitive: object) -> float | None:
+    """Where a handle stands along x, to tell which of several a click is
+    nearest; a bound line stands at none."""
+    if isinstance(primitive, VLine):
+        return primitive.time
+    return primitive.x if isinstance(primitive, Marker) else None
+
+
+def placed(
+    s: SessionView,
+    *,
+    model_id: str,
+    variable: str,
+    path: str,
+    pointer: Pointer,
+    click: dict,
+) -> dict | None:
+    """The leaf at ``path`` with the field ``pointer`` set by a click
+    (D149: arm a field, then click the plot), or None where it is as it
+    was. How is :func:`_target`'s to say; where it says None the click is
+    refused — and no ⌖ was drawn. A click IS a drag of the field's handle
+    released at the click, so it is snapped, clamped and refused as that
+    drag is; of several handles that write the field (a criterion's
+    tolerance its rows defer to) the one nearest the click is used, and a
+    tolerance side's EDGE lands on the click. A field set directly is
+    snapped, and a bound then refused as a typed one is.
+
+    Every field belongs to ONE panel — the axes its handle, or its
+    meaning, lives on — and a click on the other is refused in words that
+    name where to click (``click["label"]`` is what the field is called):
+    the spectrum's magnitude was written as a bound, a frequency as a
+    time."""
+    pointer = tuple(pointer)
+    raw, desc, view, leaf = _scored(s, model_id, variable, path, None)
+    panel, x, y, visible = _click(click)
+    target = _target(raw, path, leaf, pointer)
+    if target is None:
+        raise Refused("nothing on this plot sets that field")
+    if panel != target.panel:
+        label = click.get("label") or "this field"
+        where = "spectrum" if target.panel == "spectrum" else "time plot"
+        reason = f"{label} is set on the {where}"
+        raise HandleEditError(f"{path}: {reason}", reason=reason)
+    if target.direct is not None:
+        field, axis = target.direct
+        across = axis == "x"
+        new = copy.deepcopy(raw)
+        node: Any = new
+        for key in field[:-1]:
+            node = node.setdefault(key, {}) if isinstance(node, dict) else node[key]
+        node[field[-1]] = _written(
+            snapped(x if across else y, visible[0 if across else 1])
+        )
+        refuse_bounds(str(new.get("metric", DEFAULT_METRIC)), new)
+        return None if new == raw else new
+    if desc is None or desc.edit_handle is None:
+        raise ValueError(f"{raw.get('metric')} has no on-plot handles")
+    _at, local, axes = min(
+        target.handles, key=lambda one: abs(one[0] - x) if one[0] is not None else 0.0
+    )
+    at_x = x if "x" in axes else None
+    at_y = y if "y" in axes else None
+    try:
+        new = desc.edit_handle(_edit(path, raw, view, leaf, local, at_x, at_y, visible))
+    except HandleEditError as e:
+        raise HandleEditError(f"{path}: {e}", reason=e.reason) from None
+    return None if new == raw else new
+
+
 def _handle_id(shape_name: str) -> str:
     """The primitive a dragged shape stands for: a bound's dotted
     continuation outside its window (`_hline`'s ``<id>/outside``, full
@@ -322,8 +741,70 @@ class EditOnPlot:
                     handle=handle,
                     shape=payload,
                 )
+                # A release ends its preview: staged, the editor was
+                # rebuilt from the leaf; refused or no move at all, the
+                # fields go back to what is staged.
+                ui_panel.preview(None)
 
         ui_panel.figure.on("plotly_relayout", on_relayout)
+
+        #: The drag being held and the variable's view it is previewed
+        #: over: one read for the whole of a drag — the Session does not
+        #: move under a held handle, and a view is every trajectory read
+        #: again.
+        held: dict[str, Any] = {"drag": None, "view": None}
+
+        def on_move(handle: str, payload: dict) -> None:
+            """A held handle's would-be position (D149): the leaf its
+            release would stage, shown in the fields and staged nowhere. A
+            position the release would refuse previews nothing: the
+            release says why."""
+            if not handle or payload.get("end"):
+                ui_panel.preview(None)
+                return
+            drag = payload.get("drag")
+            if held["drag"] != drag or held["view"] is None:
+                held.update(drag=drag, view=s.view(model_id, variable))
+            try:
+                found = dragged(
+                    s,
+                    model_id=model_id,
+                    variable=variable,
+                    handle=handle,
+                    shape=payload,
+                    view=held["view"],
+                )
+            except ValueError:
+                found = None
+            revision = drag if isinstance(drag, int) else 0
+            ui_panel.preview(None if found is None else found[2], revision)
+
+        ui_panel.figure.on("dstf_move", on_move)
+
+        def on_click(_handle: str, click: dict) -> None:
+            """Ctrl+click adds a row (D149); ⌘ is Ctrl where Ctrl+click is
+            the context menu. A plain click is an armed field's
+            (`on_place`), and any other modifier's is nothing."""
+            if click.get("ctrl") or click.get("meta"):
+                ui_panel.submit(
+                    kind="click",
+                    model_id=model_id,
+                    variable=variable,
+                    path=leaf_path,
+                    click=click,
+                )
+
+        ui_panel.figure.on("dstf_click", on_click)
+        ui_panel.on_place(
+            lambda pointer, click: ui_panel.submit(
+                kind="place",
+                model_id=model_id,
+                variable=variable,
+                path=leaf_path,
+                pointer=pointer,
+                click=click,
+            )
+        )
         tree = s.tree(model_id)
         if tree is None:
             return
@@ -345,10 +826,21 @@ class EditOnPlot:
                 # on the plot and no table, and the editor's own hint line
                 # says what its plot drags.
                 ui.label("drag on the plot, or edit the table").classes("text-xs")
+            shows = []
+            can = placeable(s, model_id=model_id, variable=variable, path=path)
             for field, columns in tables:
                 ui.label(_field_label(name, field)).classes("text-xs text-bold")
                 rows = copy.deepcopy(raw.get(field) or [])
-                _table(ui, path, field, columns, rows, span, ui_panel, model_id)
+                show = _table(
+                    ui, path, field, columns, rows, span, ui_panel, model_id, can
+                )
+                shows.append((field, show))
+
+            def preview(leaf: dict | None, revision: int, shows: list = shows) -> None:
+                for field, show in shows:
+                    show(None if leaf is None else leaf.get(field), revision)
+
+            ui_panel.on_preview(preview)
 
     def act(self, s: SessionView, **inputs: Any) -> Patch | None:
         kind = inputs["kind"]
@@ -356,6 +848,25 @@ class EditOnPlot:
             return self._act_handle(s, **inputs)
         if kind == "rows":
             return self._act_rows(s, **inputs)
+        if kind == "click":
+            new = clicked_row(
+                s,
+                model_id=inputs["model_id"],
+                variable=inputs["variable"],
+                path=inputs["path"],
+                click=inputs["click"],
+            )
+            return _replace(inputs["model_id"], inputs["path"], new)
+        if kind == "place":
+            new = placed(
+                s,
+                model_id=inputs["model_id"],
+                variable=inputs["variable"],
+                path=inputs["path"],
+                pointer=inputs["pointer"],
+                click=inputs["click"],
+            )
+            return _replace(inputs["model_id"], inputs["path"], new)
         raise ValueError(f"unknown kind {kind!r}")
 
     def _act_handle(
@@ -368,94 +879,13 @@ class EditOnPlot:
         shape: dict,
         **_: Any,
     ) -> Patch | None:
-        if not handle:
-            return None
-        handle = _handle_id(handle)
-        paths = [p for p, _ in _leaf_paths(s, model_id, variable)]
-        path = _leaf_path_of(handle, paths)
-        if path is None:
-            raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
-        view = s.view(model_id, variable)  # full resolution, not the figure
-        leaf = next((lv for lv in view.leaves if lv.path == path), None)
-        primitive = next(
-            (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
+        found = dragged(
+            s, model_id=model_id, variable=variable, handle=handle, shape=shape
         )
-        # A window, a box, a result line is drawn, not editable. The page
-        # takes the pointer off it (the figure's `POINTER`, `grips.js`), so
-        # no drag of one should arrive; one that does is answered with
-        # nothing, and the figure hook's redraw snaps it back. Resolved
-        # before the open-leaf check: whichever criterion is open, such a
-        # drag is not an error the user made.
-        if not _draggable(primitive):
+        if found is None:
             return None
-        assert isinstance(primitive, (Marker, HLine, VLine))  # `_draggable`
-        assert leaf is not None  # the primitive is its
-        open_leaf = s.selection.leaf_path
-        if open_leaf is not None and path != open_leaf:
-            # Only the open leaf's rings and grips are drawn
-            # (`Session.figure`'s `editing`), and every other leaf's bound
-            # LINES, on the plot too, are inert in the page — but Plotly
-            # itself would drag them, and a release can cross a redraw
-            # (`FigureHook._shape_name`): one that reaches here is not this
-            # editor's.
-            raise HandleEditError(
-                f"{handle} is not a handle of {open_leaf}",
-                reason="Open that criterion to drag its lines.",
-            )
-        tree, why = s.tree_or_reason(model_id)
-        if tree is None:
-            assert why is not None  # `tree` is None
-            raise no_tree_error(model_id, why)
-        raw = node_at(tree, path)
-        name = raw.get("metric", DEFAULT_METRIC)
-        desc = metric(name)
-        if desc is None or desc.edit_handle is None:
-            raise HandleEditError(
-                f"{path}: {name} has no on-plot handles",
-                reason=f"{name} has no on-plot handles",
-            )
-        # Several leaves on one variable can refuse the same local id: every
-        # refusal below names its leaf.
-        # The number a tolerance side is measured from, where the leaf's own
-        # geometry holds one: a scalar's baseline scalar.
-        target = next(
-            (
-                p.value
-                for p in leaf.geometry
-                if isinstance(p, HLine) and p.id == f"{path}/scalar/reference"
-            ),
-            None,
-        )
-        # What a time may be dragged to where the leaf is scored against
-        # the RUN and not the baseline (a checkpoint with a value of its
-        # own): the page holds a release to the axis, which runs past the
-        # data.
-        span = _run_span(view, leaf)
-        try:
-            position = _position(primitive, shape if isinstance(shape, dict) else {})
-            if position is None:
-                return None
-            x, y = position
-            new = desc.edit_handle(
-                HandleEdit(
-                    leaf=raw,
-                    local=handle[len(path) + 1 :],
-                    x=x,
-                    y=y,
-                    reference=(
-                        (view.ref_time, view.ref_values)
-                        if view.ref_time is not None and view.ref_values is not None
-                        else None
-                    ),
-                    target=target,
-                    span=span,
-                )
-            )
-        except HandleEditError as e:
-            raise HandleEditError(f"{path}: {e}", reason=e.reason) from None
-        if new == raw:
-            return None
-        return Patch(ops=[PatchOp(model_id, "replace", path, new)])
+        path, raw, new = found
+        return _replace(model_id, path, None if new == raw else new)
 
     def _act_rows(
         self,
@@ -484,17 +914,18 @@ class EditOnPlot:
         for i, row in enumerate(rows):
             for key in required:
                 if row.get(key) is None:
-                    raise ValueError(f"row {i}: {key} is required")
+                    raise Refused(f"row {i}: {key} is required")
             for key, value in row.items():
                 if _is_number(value) and not math.isfinite(value):
-                    raise ValueError(
-                        f"row {i}: {key} = {value!r} is not a finite number"
-                    )
+                    raise Refused(f"row {i}: {key} = {value!r} is not a finite number")
                 if key in sided and value is not None:
                     # The one reader of a number-or-pair; its ValueError —
                     # a missing side, a third key, a side that is no finite
                     # number — is the refusal.
-                    parse_sides(value, f"row {i}: {key}")
+                    try:
+                        parse_sides(value, f"row {i}: {key}")
+                    except ValueError as e:
+                        raise Refused(str(e)) from None
                     # ... and the editor's own: a tolerance below zero can
                     # never be met (`..unscorable`).
                     refuse_negative(key, value, sided[key], where=f"row {i}: ")
@@ -507,12 +938,20 @@ class EditOnPlot:
             and cleaned
             and not any("upper" in r or "lower" in r for r in cleaned)
         ):
-            raise ValueError(f"{field}: no row has an upper or a lower width")
+            raise Refused(f"{field}: no row has an upper or a lower width")
         new = copy.deepcopy(raw)
         new[field] = cleaned
         if new == raw:
             return None
         return Patch(ops=[PatchOp(model_id, "replace", path, new)])
+
+
+def _replace(model_id: str, path: str, new: dict | None) -> Patch | None:
+    """The one op every gesture on the plot stages — the whole leaf
+    replaced — or None where the gesture left the leaf as it was."""
+    if new is None:
+        return None
+    return Patch(ops=[PatchOp(model_id, "replace", path, new)])
 
 
 def _table(
@@ -524,9 +963,18 @@ def _table(
     span: Any,
     ui_panel: Panel,
     model_id: str,
-) -> None:
+    can: Callable[[Pointer], bool],
+) -> Callable[[list | None, int], None]:
     """One list field's rows, a control per column, ``Remove row`` per row
-    and ``Add row``. The rows live here: neither a refused submit nor a
+    and ``Add row``. Returns the table's PREVIEW (D149): called with the
+    rows a held drag would write — and the drag's number — every number
+    cell and tolerance side whose value would change shows that value,
+    staging nothing (`TypedNumber.preview`); called with None, or with a
+    list of another length, they show what they hold again. A row the
+    plot can place (``can``: `placeable`) carries ONE ⌖, in its first cell
+    (`Panel.place_button`), naming it by the table and its index: armed,
+    the click is its ring let go there. A row added or removed moves what
+    an index names, so it disarms (`Panel.disarm`). The rows live here: neither a refused submit nor a
     successful one rebuilds this panel — ``InlineHost`` shows a refusal above
     it and leaves it alone, so that a control being typed in survives — so
     the table re-renders its own container after adding or removing a row.
@@ -591,6 +1039,7 @@ def _table(
     container = ui.column().classes("w-full").mark(mark)
     required = [column[0] for column in columns if column[1] in _REQUIRED]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
+    numbers: dict[tuple[int, str], Any] = {}  # every number cell, as rendered
     #: The tolerance cells, as rendered: the row each is on, its column and
     #: the control.
     pairs: list[tuple[dict, str, SidesControl]] = []
@@ -738,6 +1187,7 @@ def _table(
         submit(but=own)
 
     def remove(i: int) -> None:
+        ui_panel.disarm()  # a ⌖ names its row by index
         left()
         rows.pop(i)
         origin.pop(i)
@@ -745,6 +1195,7 @@ def _table(
         submit()
 
     def add() -> None:
+        ui_panel.disarm()
         left()
         rows.append(_new_row(columns, rows, span()))
         origin.append(copy.deepcopy(rows[-1]))
@@ -764,6 +1215,7 @@ def _table(
             }
         container.clear()
         cells.clear()
+        numbers.clear()
         pairs.clear()
         with container:
             # The rows alone scroll; `Add row` follows their container.
@@ -824,6 +1276,10 @@ def _table(
                             )
                             if key in required:
                                 cells[(i, key)] = cell
+                            numbers[(i, key)] = cell
+                            if key == columns[0][0] and can((field, i)):
+                                with cell.add_slot("append"):
+                                    ui_panel.place_button((field, i), f"row {i + 1}")
                     ui.button("Remove row", on_click=lambda i=i: remove(i)).props(
                         "flat dense no-caps"
                     ).mark(f"{mark}:{i}:remove")
@@ -836,3 +1292,16 @@ def _table(
     render(restored)
     if any(k[0] == field for k in kept):
         blanks()  # a blank cell read back says so from the start
+
+    def preview(shown: list | None, revision: int) -> None:
+        if shown is not None and len(shown) != len(rows):
+            shown = None  # no drag adds or removes a row
+        for (i, key), cell in numbers.items():
+            would = None if shown is None else shown[i].get(key)
+            cell.preview(None if would == rows[i].get(key) else would, revision)
+        for row, key, group in pairs:
+            at = next((n for n, still in enumerate(rows) if still is row), None)
+            would = None if shown is None or at is None else shown[at].get(key)
+            group.preview(None if would == row.get(key) else would, revision)
+
+    return preview
