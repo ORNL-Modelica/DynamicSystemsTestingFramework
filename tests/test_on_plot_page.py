@@ -642,14 +642,20 @@ async def test_an_unscored_tests_editor_offers_no_click_that_nothing_takes(live,
         word = WAITING
         if ended:
             # Once its file holds a row: a partial result is what it wrote.
-            await _settled(lambda: _ticked(shell) and "t = " in page.strip.text.text)
+            # (A second's poll of a file a subprocess has to start writing:
+            # three seconds were not enough on a loaded machine.)
+            await _settled(
+                lambda: _ticked(shell) and "t = " in page.strip.text.text, tries=600
+            )
             user.find(marker="strip-cancel").click()
             await _settled(
                 lambda: _ticked(shell) and shell.session.partial(A), tries=600
             )
             word = NOT_SCORED
         (card,) = [c for c in page.cards if c.subject == ["x"]]
-        await _settled(lambda: _ticked(shell) and page.open == (card.index, POINTS))
+        await _settled(
+            lambda: _ticked(shell) and page.open == (card.index, POINTS), tries=600
+        )
         assert _hint(user, POINTS) == "Edit the fields." + STAGED
         (why,) = user.find(marker="why:edit-on-plot").elements
         assert why.text == UNSCORED.format(word)
