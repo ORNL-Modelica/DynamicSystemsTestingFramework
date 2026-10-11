@@ -27,7 +27,8 @@ What it is built around, each measured on Dymola 2026x / omc 1.27 under WSL:
 A NEW RUN is a different file under the same path. It is recognised by any
 of: the file was gone at a poll, its identity (device, inode) changed, it
 got smaller, the last row served no longer reads back as it did — or, while
-no row was served yet, its header matrices are not the ones read before.
+no row was served yet, its header names another structure than the one
+read before (other names, other columns, another row shape).
 The last two because a file removed and recreated takes the same inode on
 ext4, and can have outgrown the old one before the next poll. The reader
 then starts over, and :attr:`LiveSnapshot.run` counts up so its caller
@@ -128,8 +129,11 @@ class _Layout(NamedTuple):
     #: Every variable the file names, in its order, the abscissa left out:
     #: what `result_files.mat_names` lists of the same file.
     names: tuple[str, ...]
-    #: The header matrices' own bytes, hashed: two files with one key are
-    #: read alike (a NaN parameter is no difference here).
+    #: The file's STRUCTURE, hashed: where the rows start, their shape,
+    #: every name and where it is stored. Two headers with one key are one
+    #: file to a reader that has served no row. The parameters' VALUES
+    #: (``data_1``) are not in it: a tool may write them again under the
+    #: same structure, and nothing of them was served.
     key: int
 
     @property
@@ -217,8 +221,9 @@ class LiveMatReader:
             # Until a row was served nothing but the header itself says the
             # file is still the one it was read from: a file put in its
             # place — in place, and no smaller — would be read through the
-            # other's offsets and columns. So it is read again each poll,
-            # and another header is another run.
+            # other's offsets and columns. So it is read again each poll
+            # (the parameters' values with it), and another STRUCTURE is
+            # another run.
             layout = self._read_layout(f)
             if self._layout is not None and (
                 layout is None or layout.key != self._layout.key
@@ -308,16 +313,7 @@ class LiveMatReader:
             # whatever a foreign file's bytes decode to, it is not a layout.
             return None
         listed = tuple(n for n in names if n.lower() != "time")
-        key = hash(
-            (
-                offset,
-                dtype.str,
-                n_values,
-                tuple(names),
-                data_info.tobytes(),
-                b"" if data_1 is None else data_1.tobytes(),
-            )
-        )
+        key = hash((offset, dtype.str, n_values, tuple(names), data_info.tobytes()))
         return _Layout(offset, dtype, n_values, sources, listed, key)
 
     @staticmethod

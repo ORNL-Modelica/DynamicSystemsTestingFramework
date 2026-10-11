@@ -417,6 +417,32 @@ def test_a_file_replaced_before_any_row_was_served_is_read_by_its_own_header(
     assert _same(trace.series("x")[1], new.expected["x"][:20])
 
 
+def test_a_parameter_rewritten_before_the_first_row_is_the_same_run(tmp_path):
+    """Another header is another run by its STRUCTURE — the names, where
+    each is stored, the row's shape. A parameter's value written again
+    under the same structure (a tool that completes `data_1` after it has
+    written the header) is the same file: no run is counted, and the
+    constant served is the one the file holds now."""
+    path = tmp_path / "res.mat"
+    _result(path, "openmodelica", "<f8", n=40, points=0, declared=0)
+    reader = LiveMatReader(path)
+    trace = Trace()
+    assert trace.take(reader.poll(NAMES)).run == 0
+    mat = _result(path, "openmodelica", "<f8", n=40, scale=1.0, points=0, declared=0)
+    raw = bytearray(path.read_bytes())
+    _header, data, end = mat.spans["data_1"]
+    at = raw.index(np.float64(2.5).tobytes(), data, end)
+    raw[at : at + 8] = np.float64(7.0).tobytes()
+    path.write_bytes(bytes(raw))
+    with open(path, "ab") as f:
+        f.write(mat.rows(0, 4))
+
+    snap = trace.take(reader.poll(NAMES))
+    assert (snap.state, snap.run, snap.rows) == (RUNNING, 0, 4)
+    assert trace.series("k")[1].tolist() == [7.0] * 4
+    assert _same(trace.series("x")[1], mat.expected["x"][:4])
+
+
 def test_a_header_is_read_again_only_until_its_first_row(tmp_path, monkeypatch):
     path = tmp_path / "res.mat"
     mat = _result(path, n=40, points=0, declared=1)
