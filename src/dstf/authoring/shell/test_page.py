@@ -1137,9 +1137,10 @@ class TestPage:
             except Exception:
                 logger.exception("the strip of %s", self.model_id)
                 # The paint refreshes the bar; raised before it, the bar
-                # still follows a job that locked this test. The bar may be
-                # what raised (a capability's `emphasis` that is no dict):
-                # raised again here, it would stop the sync after all.
+                # still follows the queue taking or ending this test. The
+                # bar may be what raised (a capability's `emphasis` that
+                # is no dict): raised again here, it would stop the sync
+                # after all.
                 try:
                     self.strip.actions.refresh()
                 except Exception:

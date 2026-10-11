@@ -520,9 +520,9 @@ class PendingDrawer:
     the strip, and a click on the page behind was the only other way out.
 
     Built only while open: the header refreshes on every event (the 1 s
-    poll during a job included), and a drawer rebuilt there scored every
-    edited test's saved spec each time and put every diff back at its left
-    edge. Opening it builds it; while open it builds again only when what
+    poll while the queue runs included), and a drawer rebuilt there scored
+    every edited test's saved spec each time and put every diff back at its
+    left edge. Opening it builds it; while open it builds again only when what
     it shows moved (`_key`). Closing it forgets what it drew."""
 
     WIDTH = 520

@@ -73,8 +73,8 @@ _SIGNED = (
 #: as the page's tree view showed it. Its verdict is not in it — a rerun
 #: changes no field — and nothing else in the document is either: comparing
 #: the whole document's pending ops meant an edit to ANOTHER model, followed
-#: by any `job` event, rebuilt this editor and threw away a half-typed table
-#: row; and a combinator edit that moved no leaf rebuilt it for nothing (the
+#: by any event that synced the page, rebuilt this editor and threw away a
+#: half-typed table row; and a combinator edit that moved no leaf rebuilt it for nothing (the
 #: 3b review). ``advisory`` is the one key no test pins: nothing the editor
 #: offers writes it, so a change to it can only arrive from a hand-written
 #: patch — it is here because the field IS the leaf's, not because a path
@@ -678,8 +678,10 @@ class PlotCard:
                 row.taker = takers.get(path)
                 row.host.build()
             else:
-                # What its node's controls MAY do moves too (a job's lock
-                # comes and goes without the shape moving).
+                # What its node's controls MAY do moves too, without the
+                # shape moving: a run of the test starts or ends, and a
+                # flat entry's criteria are edited one by one only while
+                # they are scored (D150).
                 row.host.follow()
         if self.editor is not None:
             edited = self._edited_now(view)
@@ -709,7 +711,7 @@ class PlotCard:
                 self.root_kind = kind
                 self.variable_host.build()
             else:
-                # What it MAY do moves too (a job's lock comes and goes).
+                # What it MAY do moves too (a run starts or ends).
                 self.variable_host.follow()
 
     def _paint_rows(self, view: dict | None) -> None:
