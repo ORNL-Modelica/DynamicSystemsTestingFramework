@@ -7724,10 +7724,12 @@ file": it now reads the running tests' result files.
 
 **Consequences.** `SessionView` gains `partial(model_id)`. The `queue`
 event has a state `live`. The pool's `StartingWorker` gains `restart`.
-The Python backend's failure reads back from `result.json` without the
-"Python execution failed:" its run result led with, so the strip's line
-of the same failure is shorter after a restart of the tool. The Session
-sets `live_results` on the open project's `Config` when it opens its pool. A plug-in backend that declares
+A JSON-driver backend's failure reads back from its result file in the
+words its run result said it in (`JsonDriverBackend._failure`: "Python
+execution failed: …"), so the strip's line of one failure is the same
+before and after a restart of the tool; it read back bare when this entry
+was written. The Session sets `live_results` on the open project's
+`Config` when it opens its pool. A plug-in backend that declares
 `LIVE_RESULTS` must write a DSresult file and list a growing one through
 `result_names` for the tool to show it live. The CLI's runs are unchanged;
 `compare`'s stored message for a timed-out run is longer.

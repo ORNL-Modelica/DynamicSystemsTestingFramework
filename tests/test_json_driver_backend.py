@@ -296,7 +296,20 @@ class TestJuliaPayloadHardening:
         result = backend.read_result(_tm(), "test_0001", None)
 
         assert result.success is False
-        assert result.error_message == "MTK blew up"
+        # ... in the words its run said it in (`test_driver_error_wins_…`):
+        # read back bare, the same failure was "Julia simulation failed:
+        # MTK blew up" on the queue's row and "MTK blew up" after a restart.
+        assert result.error_message == "Julia simulation failed: MTK blew up"
+
+    def test_a_failure_with_no_reason_still_says_which_tool_failed(self, tmp_path):
+        backend = _julia_backend(tmp_path)
+        _write_payload(backend, {"success": False})
+
+        result = backend.read_result(_tm(), "test_0001", None)
+
+        assert result.error_message == (
+            "Julia simulation failed: the driver gave no reason"
+        )
 
 
 # ---------------------------------------------------------------------------

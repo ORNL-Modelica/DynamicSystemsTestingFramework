@@ -440,14 +440,13 @@ async def test_a_crashed_run_s_strip_says_why_after_the_row_and_the_tool_went(pl
         session.spec.path.parent / "testing.json", work_dir=_work(session)
     )
     again.session.rescan_done.wait(30)
-    comp = again.session.comparisons[A]
-    # (The JSON driver reads the failure back from result.json, without the
-    # "Python execution failed:" its run result led with: the same reason.)
+    # (The JSON driver reads the failure back from result.json in the words
+    # its run result said it in: the same message.)
     comp = again.session.comparisons[A]
     assert classify(comp) == SIM_FAIL
-    assert comp.error_message.rstrip().endswith("RuntimeError: boom in simulate")
+    assert comp.error_message == message
     strip = strip_for(status=SIM_FAIL, has_result=True, failure=comp.error_message)
-    assert strip.sentence == f"RuntimeError: boom in simulate{FIX_IT}"
+    assert strip.sentence == said
     assert strip.tip == comp.error_message and "Traceback" in strip.tip
     again.session.stop_queue()
 

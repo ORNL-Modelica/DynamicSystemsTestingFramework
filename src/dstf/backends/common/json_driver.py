@@ -261,7 +261,7 @@ class JsonDriverBackend(Backend):
                 test_key=test_key,
                 success=False,
                 elapsed=elapsed,
-                error_message=(f"{self.tool_label} {self.action_label} failed: {err}"),
+                error_message=self._failure(err),
                 sim_wall=elapsed,
             )
 
@@ -276,6 +276,13 @@ class JsonDriverBackend(Backend):
             sim_wall=elapsed,
             statistics={"simulation": {"wall_time": elapsed}},
         )
+
+    def _failure(self, reason: str) -> str:
+        """The ONE message of a run whose driver failed, ``reason`` being
+        the driver's own word for why: what the run's result says and what
+        `read_result` says of the same failure read back from disk — the
+        queue's row and, after a restart of the tool, the test's page."""
+        return f"{self.tool_label} {self.action_label} failed: {reason}"
 
     def cancel_test(self, test_key: str) -> bool:
         """Kill the driver subprocess running *test_key*; its
@@ -329,8 +336,8 @@ class JsonDriverBackend(Backend):
             return TestResult(
                 model_id=test.model_id,
                 success=False,
-                error_message=payload.get(
-                    "error", f"{self.tool_label} driver reported failure"
+                error_message=self._failure(
+                    payload.get("error") or "the driver gave no reason"
                 ),
                 statistics=stats,
             )
