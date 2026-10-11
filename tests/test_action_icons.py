@@ -173,6 +173,11 @@ def _emphasis_bar(shell, answers, bars):
     return root
 
 
+def _texts(item) -> list[str]:
+    """What a menu item reads: its visible labels, top to bottom."""
+    return [c.text for c in item.descendants() if isinstance(c, ui.label) and c.visible]
+
+
 async def test_emphasis_fills_the_next_action_and_tucks_menu_ones_away(shell):
     for name in ("nxt", "qut"):
         caps.register_capability(_Fake(name))
@@ -197,12 +202,16 @@ async def test_emphasis_fills_the_next_action_and_tucks_menu_ones_away(shell):
         item = _one(user, "menu-action:mnu")
         assert item.props.get("role") == "menuitem"
         assert not item.enabled
-        assert _one(user, "menu-action:mnu:tip").text == "nothing new to take"
+        # Disabled, it has nothing to act on: its name and the sentence that
+        # says why, on the item — not its caption, which counted ("Accept 0
+        # results as baselines") what it would not do, with the sentence in
+        # a tooltip.
+        why = _one(user, "menu-action:mnu:why")
+        assert why.visible and why.text == "nothing new to take"
+        assert _texts(item) == ["Mnu", "nothing new to take"]
         mn2 = _one(user, "menu-action:mn2")
         assert mn2.enabled
-        assert "Do mn2" in [
-            c.text for c in mn2.descendants() if isinstance(c, ui.label)
-        ]
+        assert _texts(mn2) == ["Do mn2"]
         # The same dialog `open(cap)` opens.
         user.find(marker="menu-action:mn2").click()
         await user.should_see(marker="panel:mn2", retries=20)

@@ -177,21 +177,24 @@ button carries `no-caps`.
 **Buttons.** Three tiers, each a Quasar variant. Filled primary
 (`unelevated color=primary`): the one action the page exists for, at most
 one per header, usually Save. Outlined secondary (`outline`): actions on a
-selection (Rerun, Accept). Flat tertiary (`flat`): navigation and
+selection (Queue, Accept). Flat tertiary (`flat`): navigation and
 housekeeping (Discard; the header's ⋮ menu holds Export, Change backend…,
 the dashboard and Stop server as menu items). Destructive actions are outlined in `fail` and
 confirm.
 
 A button's label names its object, its effect and a count: "Save 3 spec
 edits (2 tests) to test_spec.json" — "(2 tests, 1 new entry)" when a save
-creates an entry — "Rerun 2 selected tests (Dymola)",
+creates an entry — "Queue 3 (2 already queued)",
 "Accept 2 results as baselines". A tooltip says when to use it. A count of
-zero disables the button and the label still says what it would do.
+zero disables the button and the label still says what it would do. In a
+⋮ menu, where a reason has no place beside the item, a disabled item reads
+the action's plain name over its reason instead ("Queue" / "FakeLib.A is
+already running"), never a caption that counts zero.
 
 **Disabled states explain themselves.** A greyed control keeps its label and
 gets one line beside or below it: why it is unavailable and what enables it
-("Rerun needs a selection", "locked while this test is running"). Never a
-bare grey button.
+("Queue needs a selection", "FakeLib.A is running: accept it when its run
+has ended"). Never a bare grey button.
 
 **Status badges.** Two forms with two meanings. The filled badge (white text
 on the status fill) is a *test's* verdict: test list, header, queue. The

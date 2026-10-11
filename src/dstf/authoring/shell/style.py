@@ -41,7 +41,13 @@ QUASAR = """
    specificity (unlayered, the button stayed rgb(255, 255, 255) in Chromium). */
 @layer quasar_importants {
   .q-btn.bg-primary { color: var(--dstf-on-accent) !important; }
+  /* A disabled item of a bar's ⋮ menu reads its reason under its name:
+     Quasar dims the whole item to 60 % — an `!important` of that layer —
+     which put the reason, already the muted text, at 2:1. The name is
+     dimmed below; the sentence is not. */
+  .dstf-menu-action.disabled { opacity: 1 !important; }
 }
+.dstf-menu-action.disabled .dstf-menu-name { opacity: 0.6; }
 /* The window's own ground follows the tab's theme: `first_paint` gave it
    the project's before this stylesheet arrived. */
 html { background: var(--dstf-page); }

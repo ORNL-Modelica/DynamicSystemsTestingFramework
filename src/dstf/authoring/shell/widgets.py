@@ -81,22 +81,32 @@ class IconAction:
 
 class MenuAction:
     """An Action drawn as an item of a bar's ⋮ menu: its caption the item's
-    text (in a label: a menu item has no text of its own to set);
-    disabled, the sentence that says why is its tooltip."""
+    text (in a label: a menu item has no text of its own to set).
+    Disabled, it reads ``label`` — the action's plain name — over the
+    sentence that says why: its caption counts what it would act on, and
+    with nothing to act on the menu offered "Accept 0 results as
+    baselines" and "Queue 0 (1 already queued)", their reasons a hover
+    away."""
 
-    def __init__(self, on_click: Callable[[], None], *, marker: str) -> None:
+    def __init__(
+        self, on_click: Callable[[], None], *, marker: str, label: str
+    ) -> None:
+        self.label = label
         self.button = (
-            ui.menu_item(on_click=on_click).props('role="menuitem"').mark(marker)
+            ui.menu_item(on_click=on_click)
+            .props('role="menuitem"')
+            .classes("dstf-menu-action")
+            .mark(marker)
         )
         with self.button, ui.item_section():
-            self.text = ui.label()
-            self.tip = ui.tooltip("").mark(f"{marker}:tip")
-        self.tip.set_visibility(False)
+            self.text = ui.label().classes("dstf-menu-name")
+            self.why = ui.label().classes("dstf-why").mark(f"{marker}:why")
+        self.why.set_visibility(False)
 
     def set(self, caption: str, reason: str | None) -> None:
-        self.text.set_text(caption)
-        self.tip.set_text(reason or "")
-        self.tip.set_visibility(reason is not None)
+        self.text.set_text(caption if reason is None else self.label)
+        self.why.set_text(reason or "")
+        self.why.set_visibility(reason is not None)
         if reason is None:
             self.button.enable()
         else:

@@ -379,6 +379,7 @@ class ActionBar:
                         self.actions[cap.name] = MenuAction(
                             partial(self.open, cap),
                             marker=f"menu-action:{cap.name}",
+                            label=cap.label,
                         )
 
     def open(self, cap: Capability) -> None:

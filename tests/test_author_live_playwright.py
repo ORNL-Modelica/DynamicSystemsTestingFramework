@@ -285,15 +285,12 @@ def test_a_cancelled_run_shows_its_partial_trace_and_is_not_accepted(
         assert rows["readouts"] == [NOT_SCORED] and rows["pills"] == 0
         _keep(page, tmp_path, "live-cancelled")
 
-        # Accept, in the strip's menu, says why it will not.
+        # Accept, in the strip's menu, says why it will not — on the item.
         page.locator(".dstf-strip").get_by_role("button", name="More actions").click()
-        item = page.get_by_role("menuitem", name=re.compile("^Accept 0 results"))
+        item = page.get_by_role("menuitem", name=re.compile("^Accept"))
         expect(item).to_be_visible(timeout=EXPECT_TIMEOUT)
         expect(item).to_have_class(re.compile("disabled"))
-        item.hover()
-        expect(page.locator(".q-tooltip", has_text=PARTIAL)).to_be_visible(
-            timeout=EXPECT_TIMEOUT
-        )
+        assert item.inner_text().split("\n") == ["Accept", PARTIAL]
         page.keyboard.press("Escape")
 
         # Dark: the plot's ground and grid, and the marker in ITS muted text.
@@ -578,6 +575,30 @@ def test_a_running_test_s_editor_offers_what_a_click_takes_through_every_update(
     try:
         _run_and_open(page)
         expect(page.locator(STRIP)).to_have_text(RUNNING_AT, timeout=RUN_TIMEOUT)
+        # The strip's menu: neither action has anything to act on, and each
+        # says why under its name — they read "Accept 0 results as
+        # baselines" and "Queue 0 (1 already queued)".
+        page.locator(".dstf-strip").get_by_role("button", name="More actions").click()
+        items = page.get_by_role("menuitem")
+        expect(items).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        assert [i.split("\n") for i in items.all_inner_texts()] == [
+            ["Accept", f"{A} is running: accept it when its run has ended"],
+            ["Queue", f"{A} is already running"],
+        ]
+        # Disabled, the name is dimmed and the sentence under it is not.
+        assert (
+            items.evaluate_all(
+                "e => e.map(i => [i.classList.contains('disabled'),"
+                " getComputedStyle(i).opacity,"
+                " getComputedStyle(i.querySelector('.dstf-menu-name')).opacity,"
+                " getComputedStyle(i.querySelector('.dstf-why')).color])"
+            )
+            == [[True, "1", "0.6", rgb(theme.DEFAULT_THEME["text-muted"])]] * 2
+        )
+        page.wait_for_timeout(400)  # the menu's own fade
+        _keep(page, tmp_path, "live-running-menu")
+        page.keyboard.press("Escape")
+        expect(items).to_have_count(0, timeout=EXPECT_TIMEOUT)
         page.locator(".dstf-crit", has_text="points · x").click()
         expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
         read = page.evaluate(EDITOR)
