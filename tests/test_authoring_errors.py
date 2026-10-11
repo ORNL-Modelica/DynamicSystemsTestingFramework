@@ -66,6 +66,71 @@ def test_a_refused_move_is_a_persons_error_shown_and_not_logged(caplog):
     assert not caplog.records
 
 
+def _users_errors() -> dict:
+    """One of each error a person's own act raises, with the sentence it
+    is shown as — named HERE, not read from `USER_ERRORS`: a member taken
+    out of that tuple leaves its row behind to fail."""
+    from dstf.authoring.session import QueueError
+    from dstf.authoring.tree_move import INTO_ITSELF, MoveRefused
+    from dstf.authoring.unscorable import Refused as EditorRefused
+    from dstf.backends.pool import Refused as PoolRefused
+    from dstf.config import ConfigError
+
+    return {
+        "PatchError": (
+            PatchError("add /metrics: no leaf", reason="no leaf"),
+            "no leaf",
+        ),
+        "HandleEditError": (
+            HandleEditError("range/max: lower above upper", reason="lower above upper"),
+            "lower above upper",
+        ),
+        "ConfigError": (ConfigError("no test_spec.json"), "no test_spec.json"),
+        "QueueError": (QueueError("A is already queued"), "A is already queued"),
+        "PoolRefused": (PoolRefused("the pool is closed"), "the pool is closed"),
+        "MoveRefused": (MoveRefused(INTO_ITSELF), INTO_ITSELF),
+        "EditorRefused": (
+            EditorRefused("a tolerance is 0 or more"),
+            "a tolerance is 0 or more",
+        ),
+    }
+
+
+def test_the_table_of_a_persons_errors_names_every_one():
+    from dstf.authoring.errors import USER_ERRORS
+
+    assert {type(e) for e, _ in _users_errors().values()} == set(USER_ERRORS)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PatchError",
+        "HandleEditError",
+        "ConfigError",
+        "QueueError",
+        "PoolRefused",
+        "MoveRefused",
+        "EditorRefused",
+    ],
+)
+def test_a_persons_error_reads_as_its_sentence_and_logs_no_traceback(name, caplog):
+    """Each by what it DOES, where the tool shows a failed act: the
+    sentence alone — no `Refused: ` before it — and nothing in the log.
+    The pool's and the editor's refusals were held by nothing: either
+    could leave `USER_ERRORS` with every test green."""
+    pytest.importorskip("nicegui")
+    from dstf.authoring.shell.actions import log_unless_users
+
+    error, sentence = _users_errors()[name]
+    try:
+        raise error
+    except Exception as raised:
+        log_unless_users(raised, "probe")
+        assert user_text(raised) == sentence
+    assert not caplog.records
+
+
 def test_an_unexpected_error_keeps_its_class_name():
     assert user_text(KeyError("k")) == "KeyError: 'k'"
 
