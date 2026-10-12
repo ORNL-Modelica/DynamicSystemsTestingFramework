@@ -130,7 +130,7 @@ uv run dstf --config testing.json run --rerun failed,sim-failed --report
 # Compare without re-running simulations (uses last results)
 uv run dstf --config testing.json compare
 
-# Machine-readable reports to a chosen path (--output works on run and compare). The console verdict table is always printed;
+# Machine-readable reports to a chosen path (--output works on run and compare). A run that scores (not `--accept`, not `-i`) prints the console verdict table;
 # --report and --report-format each add what they name, and together both.
 uv run dstf --config testing.json run --report-format junit --output results.xml
 uv run dstf --config testing.json compare --report-format html --output report.html

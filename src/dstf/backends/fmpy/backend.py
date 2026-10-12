@@ -147,8 +147,9 @@ class FmpyBackend(Backend):
                 success=False,
                 error_message=(
                     f"FMU file not found for {test.model_id}. "
-                    f"Ensure the test_spec.json entry has an 'fmu' field "
-                    f"resolving to an existing .fmu file."
+                    f"Ensure the test_spec.json entry has a 'source' field "
+                    f"— a path relative to the spec file — resolving to an "
+                    f"existing .fmu file."
                 ),
             )
 

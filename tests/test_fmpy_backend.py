@@ -153,6 +153,18 @@ class TestFmpySimulation:
         assert not run_result.success
         assert "not found" in (run_result.error_message or "").lower()
 
+    def test_the_missing_fmu_message_names_the_key_the_spec_reads(self, tmp_path):
+        """It said to add an `'fmu'` field, which is no key of an entry —
+        a Config error since keys are strict. The key is `source`."""
+        from dstf.backends.fmpy import FmpyBackend
+        from dstf.discovery import spec_shape
+
+        test = _make_test(Path("/nonexistent/fake.fmu"), variables=["h"])
+        backend = FmpyBackend(_make_config(tmp_path))  # type: ignore[arg-type]
+        message = backend.run_single_test(test, "test_0001", 1, 1).error_message
+        assert "has a 'source' field" in message and "'fmu' field" not in message
+        assert "source" in spec_shape.ENTRY and "fmu" not in spec_shape.ENTRY
+
     def test_result_includes_time_column_matching_variables(self, tmp_path):
         """Time vector and per-variable values are the same length."""
         from dstf.backends.fmpy import FmpyBackend
