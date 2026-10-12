@@ -4,6 +4,8 @@ else is a bug and keeps its class name."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from dstf.authoring.errors import user_text
@@ -70,7 +72,7 @@ def _users_errors() -> dict:
     """One of each error a person's own act raises, with the sentence it
     is shown as — named HERE, not read from `USER_ERRORS`: a member taken
     out of that tuple leaves its row behind to fail."""
-    from dstf.authoring.session import QueueError
+    from dstf.authoring.session import QueueError, StaleSpecError
     from dstf.authoring.tree_move import INTO_ITSELF, MoveRefused
     from dstf.authoring.unscorable import Refused as EditorRefused
     from dstf.backends.pool import Refused as PoolRefused
@@ -93,6 +95,13 @@ def _users_errors() -> dict:
             EditorRefused("a tolerance is 0 or more"),
             "a tolerance is 0 or more",
         ),
+        # The spec changed on disk under the tool: Save's refusal, and an
+        # Accept's — a sentence with the way out in it, no bug's class name.
+        "StaleSpecError": (
+            StaleSpecError(Path("/p/test_spec.json"), "accepting"),
+            "/p/test_spec.json changed on disk since it was loaded; reload "
+            "before accepting",
+        ),
     }
 
 
@@ -112,6 +121,7 @@ def test_the_table_of_a_persons_errors_names_every_one():
         "PoolRefused",
         "MoveRefused",
         "EditorRefused",
+        "StaleSpecError",
     ],
 )
 def test_a_persons_error_reads_as_its_sentence_and_logs_no_traceback(name, caplog):
