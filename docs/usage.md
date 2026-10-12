@@ -1178,6 +1178,35 @@ refused while a test runs). The workers otherwise stay alive while the tool
 runs, so a second run of a test does not load its libraries again. The store
 writes' lines and the artifacts are listed under the rows.
 
+**A Queue click runs the library as it is on disk.** The workers stay alive,
+so each click first looks at the library's files: one stat of every `*.mo` and
+`package.order` under `source_path` and under each dependency given as a path
+(a Julia project's `*.jl` and `*.toml`; nothing for an FMU or Python project,
+whose tests each start a process) — 0.06 s for a 4,000-file library on a local
+disk, 1.3 s on a slow mount, and not on the page's own thread: the tests
+appear in the queue when it is done. A queued test whose own file changed is
+read again first, so an edited `experiment(StopTime=…)` or `x={…}` is what the
+run uses and what its row shows; a test whose file is gone, or no longer holds
+it, is not queued and the panel says so (`<model>: its file <path> is gone`).
+Before a worker runs a test queued after a change it reads the library again:
+Dymola reopens it (hundredths of a second on a local disk, 8 to 9.5 s for a
+3,000-file library on a slow mount), OpenModelica loads each changed file (a
+third of a second) or — when a file was added or removed, or a `package.mo` or
+`package.order` changed — the whole library, which takes as long as its first
+load (a second on a local disk, over a minute and a half for that library on
+a slow mount), and Julia restarts its worker. Meanwhile the test's row reads `running ·
+reading the library` and the panel `worker 1 reading the library —
+loadFile("…/package.mo") · 12 s`. A library that no longer loads FAILS the
+test with the simulator's own message — `MyLib does not load:
+Examples/Pipe.mo: [syntax:error:2] …` on OpenModelica; on Dymola the test's
+translation fails ("Translation failed", the parser's message in the
+translation log) — and never runs the model the simulator still held. Not
+looked at: a dependency given by NAME (`"Modelica"`: the simulator finds it);
+`testing.json` itself (`backend_setup` and `dependencies` are read when the
+tool opens); an edit made after the click (the next click sees it); a file
+rewritten with the same modification time and size; and a test that did not
+exist when the tool opened (open the tool again to list it).
+
 The header of every page carries the queue's indicator — `3 running · 5
 queued`, or `idle` — and a click on it opens the Suite page at the queue. When
 no worker can start (a licence, a missing tool) the waiting tests fail with

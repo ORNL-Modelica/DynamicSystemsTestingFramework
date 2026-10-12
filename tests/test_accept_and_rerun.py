@@ -75,7 +75,11 @@ class Tool:
         return SessionView(self.session, Selection(tests=frozenset(models)))
 
     def queue(self, *models: str) -> None:
+        """The Queue click, taken to the point where its tests are queued:
+        the click's read of the library runs off the loop, and what queues
+        them is posted when it is back."""
         self.session.apply(EnqueueTests().act(self.view(*models)))
+        self.until("queued")
 
     def finished(self, *models: str) -> None:
         """Until every one of ``models`` ran to its end and was taken in."""

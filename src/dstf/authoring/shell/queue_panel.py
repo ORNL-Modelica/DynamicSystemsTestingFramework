@@ -25,6 +25,7 @@ from ..errors import user_text
 from ..queue_rows import (
     CANCEL,
     OPEN,
+    READING,
     REMOVE,
     RESTARTING,
     QueueRow,
@@ -412,7 +413,8 @@ class QueuePanel:
 
 def _words(row: QueueRow) -> str:
     """The row's state line: its words, and its worker while it runs — the
-    worker's line above says which while it is being brought back."""
-    if row.worker is None or row.progress == RESTARTING:
+    worker's line above says which while it is being brought back, or
+    reads the library again."""
+    if row.worker is None or row.progress in (RESTARTING, READING):
         return row.words
     return f"{row.words} · worker {row.worker}"

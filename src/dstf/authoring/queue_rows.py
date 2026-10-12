@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -44,7 +45,9 @@ class QueueRow:
     #: none, ``waiting · worker starting`` while no worker is up),
     #: ``running · 42 s`` (``running · t = 42 / 100 s`` where the backend
     #: has a live view, D151; ``running · worker restarting`` while its
-    #: worker is brought back after a death),
+    #: worker is brought back after a death, ``running · reading the
+    #: library`` while its worker reads files that changed since it read
+    #: them),
     #: ``cancelling…`` once a stop was asked of a running one and until it
     #: ends, ``finished · 9 s``, ``failed: <the backend's message, one
     #: line>``, ``cancelled``.
@@ -63,8 +66,9 @@ class QueueRow:
     #: Seconds since it started while it runs; its run's length once ended.
     elapsed: float | None = None
     #: How far a running item's result file has got (``t = 42 / 100 s``,
-    #: ``starting`` before its first row), or ``worker restarting``; None on
-    #: a backend with no live view, and for an item that is not running.
+    #: ``starting`` before its first row), or ``worker restarting``, or
+    #: ``reading the library``; None on a backend with no live view, and
+    #: for an item that is not running.
     progress: str | None = None
     #: The backend's message for a failed item, in full.
     message: str | None = None
@@ -105,17 +109,27 @@ _LONG_PATH = re.compile(r'"(?:[A-Za-z]:)?[/\\][^"]*[/\\]([^"/\\]+)"')
 #: A running row whose worker died and is being brought back.
 RESTARTING = "worker restarting"
 
+#: A running row whose worker is up and reads the library again before the
+#: test: its files changed since the worker read them, and a large library
+#: is as long to read again as it was to load. The ONE phrase for it — the
+#: row's words, the strip's sentence and the worker's line all say this.
+READING = "reading the library"
+
 
 def starting_text(worker: StartingWorker) -> str:
-    """One starting worker, as the queue panel lists it: ``starting worker
-    1 — loadFile("…/package.mo") · 85 s``, the phase in the backend's own
-    words with a path cut to its last part; ``starting worker 1 · 85 s``
-    where the backend names no phase; ``restarting worker 1 — …`` for one
-    brought back after a death."""
+    """One worker that is not ready, as the queue panel lists it:
+    ``starting worker 1 — loadFile("…/package.mo") · 85 s``, the phase in
+    the backend's own words with a path cut to its last part; ``starting
+    worker 1 · 85 s`` where the backend names no phase; ``restarting worker
+    1 — …`` for one brought back after a death; ``worker 1 reading the
+    library — …`` for one that is up and reads changed files again."""
     phase = _LONG_PATH.sub(r'"…/\1"', worker.phase)
     doing = f" — {phase}" if phase else ""
+    number = worker.worker_id + 1
+    if worker.reload:
+        return f"worker {number} {READING}{doing} · {worker.seconds:.0f} s"
     verb = "restarting" if worker.restart else "starting"
-    return f"{verb} worker {worker.worker_id + 1}{doing} · {worker.seconds:.0f} s"
+    return f"{verb} worker {number}{doing} · {worker.seconds:.0f} s"
 
 
 def starting_texts(session: Session) -> list[str]:
@@ -129,7 +143,7 @@ def _row(
     number: int,
     ahead: int,
     now: float,
-    starting: frozenset[int],
+    starting: Mapping[int, StartingWorker],
 ) -> QueueRow:
     state = session.item_state(item)
     started = item.started_at is not None
@@ -153,12 +167,14 @@ def _row(
     elif state is ItemState.RUNNING:
         elapsed = max(0.0, now - (item.started_at or now))
         why = session.cannot_cancel
-        # Its worker died and is being brought back: the test has not begun
-        # again, whatever its file or its clock would say.
+        # Its worker died and is being brought back, or is reading the
+        # library again: the test has not begun, whatever its file or its
+        # clock would say.
+        busy = starting.get(item.worker_id) if item.worker_id is not None else None
         live = (
-            RESTARTING
-            if item.worker_id in starting
-            else session.live_runs.progress(item)
+            session.live_runs.progress(item)
+            if busy is None
+            else (READING if busy.reload else RESTARTING)
         )
         fields = {
             "words": f"running · {live or f'{elapsed:.0f} s'}",
@@ -207,7 +223,7 @@ def queue_rows(session: Session, *, now: float | None = None) -> list[QueueRow]:
     """The queue's rows, in run order. ``now`` is the clock a running row's
     elapsed seconds are read against (``time.time()``)."""
     clock = time.time() if now is None else now
-    starting = frozenset(w.worker_id for w in session.starting_workers)
+    starting = {w.worker_id: w for w in session.starting_workers}
     rows: list[QueueRow] = []
     ahead = 0
     for number, item in enumerate(session.queue, start=1):

@@ -277,7 +277,11 @@ def test_a_test_is_never_queued_twice(h):
     h.ended(A, B, D)
     # ended: it may run again
     assert queue_cap.caption(h.view(A, B)) == "Queue 2"
+    # Through the loop: the click's read of the library runs off it, and the
+    # test is queued when that is back.
     h.session.apply(queue_cap.act(h.view(A)))
+    assert len(h.session.queue) == 3
+    h.loop.until(lambda: len(h.session.queue) == 4, what="the click queued")
     h.ended(A)
     assert [i.model_id for i in h.session.queue] == [A, B, D, A]
 

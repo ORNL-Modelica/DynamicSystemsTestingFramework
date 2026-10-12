@@ -35,6 +35,14 @@ from ..backends.types import (
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
+from ..discovery.library_state import (
+    LibraryState,
+    Stamp,
+    following,
+    source_stamps,
+    stamp,
+)
+from ..discovery.mo_parser import LocatedClass, find_class
 from ..discovery.patch_apply import PatchError
 from ..discovery.plots import (
     PlotExtra,
@@ -59,6 +67,7 @@ from ..discovery.test_registry import (
     SpecModelLocator,
     TestModel,
     merge_tests,
+    scan_files,
     scan_source_tests,
     spec_tests_by_model,
 )
@@ -244,6 +253,98 @@ class QueueError(RuntimeError):
     of what was; ``str()`` is the sentence why."""
 
 
+@dataclass(frozen=True)
+class _Ask:
+    """One test a Queue click names, as the click's read needs it."""
+
+    model_id: str
+    #: The file the test was read from; None for a test that has none (a
+    #: spec-only test whose model the library does not hold, any test of a
+    #: source that is not Modelica).
+    path: Path | None
+    #: That file's stamp when the Session last read the test from it; None
+    #: for a test only the scan at open read, at a moment nobody stamped.
+    read_at: Stamp | None
+    #: Whether the scan found it; else only ``test_spec.json`` declares it.
+    scanned: bool
+
+
+@dataclass
+class _ClickRead:
+    """What one Queue click read of the library, off the UI loop."""
+
+    #: The source files' stamps (`library_state.source_stamps`); None for a
+    #: source no worker keeps loaded.
+    stamps: Mapping[Path, Stamp] | None
+    #: The stamp each test's file was read at, for the tests read again.
+    read_at: dict[str, Stamp] = field(default_factory=dict)
+    #: The scanned tests read again from their files.
+    scanned: dict[str, TestModel] = field(default_factory=dict)
+    #: The spec-only tests' models, found again.
+    located: dict[str, LocatedClass] = field(default_factory=dict)
+    #: By model, the sentence for a test that cannot be read any more.
+    refused: dict[str, str] = field(default_factory=dict)
+
+
+def _read_click(config: Config, asks: Sequence[_Ask]) -> _ClickRead:
+    """Sweep the source files (stat only) and read again each asked test
+    whose own file's stamp is not the one it was last read at. Touches
+    nothing of a Session: safe on any thread.
+
+    A stamp is taken BEFORE its file is read: a file edited between the two
+    is read newer than its stamp says, and the next click reads it once
+    more — never the other way round."""
+    stamps = source_stamps(config)
+    read = _ClickRead(stamps)
+    if stamps is None or config.source_type != "modelica":
+        return read
+    stale: dict[Path, list[tuple[str, Stamp]]] = {}
+    for ask in asks:
+        if ask.path is None:
+            continue
+        # Not in the sweep: spelled another way than the sweep spells it (a
+        # scan cached under another path), or gone.
+        now = stamps.get(ask.path) or stamp(ask.path)
+        if now is not None and now == ask.read_at:
+            continue
+        if ask.scanned:
+            if now is None:
+                read.refused[ask.model_id] = _unreadable(ask, "is gone")
+            else:
+                stale.setdefault(ask.path, []).append((ask.model_id, now))
+            continue
+        # Declared in the spec only: looked for again — its class may be in
+        # another file of the library by now.
+        assert config.library_name is not None  # resolved in __post_init__
+        located = find_class(config.library_dir, config.library_name, ask.model_id)
+        if located is None:
+            read.refused[ask.model_id] = _unreadable(
+                ask, "is gone" if now is None else "no longer holds it"
+            )
+            continue
+        read.located[ask.model_id] = located
+        at = stamps.get(located.mo_file) or stamp(located.mo_file)
+        if at is not None:
+            read.read_at[ask.model_id] = at
+    if stale:
+        fresh = scan_files(config, list(stale))
+        for path, models in stale.items():
+            for model_id, now in models:
+                test = fresh.get(model_id)
+                if test is None:
+                    read.refused[model_id] = (
+                        f"{model_id}: its file {path} no longer holds it"
+                    )
+                else:
+                    read.scanned[model_id] = test
+                    read.read_at[model_id] = now
+    return read
+
+
+def _unreadable(ask: _Ask, why: str) -> str:
+    return f"{ask.model_id}: its file {ask.path} {why}"
+
+
 class StaleSpecError(RuntimeError):
     def __init__(self, path: Path):
         self.path = path
@@ -334,10 +435,27 @@ class Session:
         #: The message the pool stopped with (no worker could start), until
         #: `clear_finished` or the next item that starts.
         self.queue_stopped: str | None = None
+        #: The source files as the last Queue click swept them: the next
+        #: click's items carry this same state when nothing changed since,
+        #: and no worker then reads anything again.
+        self._library: LibraryState | None = None
+        #: By model, the stamp of the test's file when a Queue click last
+        #: read the test from it. A test with none here was read by the
+        #: scan at open, at a moment nobody stamped.
+        self._read_at: dict[str, Stamp] = {}
+        #: The models of the Queue clicks whose read of the library is
+        #: still running off the UI loop: a second click on one is refused.
+        self._reading: set[str] = set()
+        #: Counts `stop_queue`: a click read before one is not queued after
+        #: it (the tool stopping must leave no worker behind).
+        self._queue_epoch = 0
         self.comparisons: dict[str, TestComparison] = {}
         self.artifacts: list[Artifact] = []
         self.notices: list[str] = []
         self._post = post or (lambda fn: fn())
+        #: Whether there is a UI loop to keep free: a Queue click's read of
+        #: the library then runs on the background thread (`_enqueue_later`).
+        self._has_loop = post is not None
         self._listeners: dict[str, list[Listener]] = {}
         #: The number of the last `spec` event, which carries it as
         #: ``revision`` (`_emit_spec`): a page tells the event an act of
@@ -555,24 +673,49 @@ class Session:
             try:
                 # The project may have been swapped or closed meanwhile.
                 if changed_models and self.project is project:
-                    # Only what changed is rescored: a one-file edit over
-                    # TRANSFORM must not run 331 comparisons on the UI loop.
-                    # A running model is not re-read: its directory is being
-                    # rewritten, and its result arrives when it ends.
-                    # The changed models' results are re-read with their new
-                    # TestModels before they are rescored: a model the cache
-                    # did not name was read as "not found in discovery"
-                    # (SIM_FAIL where a cold open says NO_REF), and a model
-                    # whose tracked variables changed was read with the old
-                    # list.
-                    self._rebuild_tests(
-                        changed_models - self._running_models(), scanned=fresh
-                    )
+                    self._take_rescan(project, fresh, changed_models)
                 self._emit("loading", phase="rescan", changed=bool(changed_models))
             finally:
                 done.set()
 
         self._post_or_run(apply)
+
+    def _take_rescan(
+        self, project: Project, fresh: dict[str, TestModel], changed: set[str]
+    ) -> None:
+        """On the UI loop: the background rescan's scan in place of the
+        project's. What a Queue click read since the open stays: the click
+        read its tests' files at a stamp it kept, the rescan read them at a
+        moment nobody stamped — before the click's, for all anyone knows —
+        and a waiting item must not be handed the older test."""
+        kept = {m: project.scanned[m] for m in self._read_at if m in project.scanned}
+        located = {
+            m: found
+            for m in self._read_at
+            if m not in project.scanned and (found := project.locate(m)) is not None
+        }
+        scan = {**fresh, **kept}
+        if kept:
+            self._store_scan_later(project.config, scan)
+        changed = changed - set(kept)
+        if changed:
+            # Only what changed is rescored: a one-file edit over
+            # TRANSFORM must not run 331 comparisons on the UI loop.
+            # A running model is not re-read: its directory is being
+            # rewritten, and its result arrives when it ends.
+            # The changed models' results are re-read with their new
+            # TestModels before they are rescored: a model the cache
+            # did not name was read as "not found in discovery"
+            # (SIM_FAIL where a cold open says NO_REF), and a model
+            # whose tracked variables changed was read with the old
+            # list.
+            self._rebuild_tests(
+                changed - self._running_models(),
+                scanned=scan,
+                # A new scan is the library read again: so are the
+                # spec-only models.
+                locate=SpecModelLocator(project.config).having(located),
+            )
 
     def _post_or_run(self, fn: Callable[[], None]) -> None:
         """Hand ``fn`` to the UI loop; when the loop is gone (``post``
@@ -1571,7 +1714,10 @@ class Session:
                 self.notices.append(message)
                 self._emit("notice", message=message)
         elif isinstance(outcome, Enqueue):
-            self.enqueue(outcome.models)
+            if self._has_loop:
+                self._enqueue_later(outcome.models)
+            else:
+                self.enqueue(outcome.models)
         elif isinstance(outcome, Artifact):
             self.artifacts.append(outcome)
             self._emit("notice", artifact=outcome)
@@ -1602,8 +1748,9 @@ class Session:
 
     @property
     def starting_workers(self) -> tuple[StartingWorker, ...]:
-        """The queue's workers being brought up right now (`pool.starting`):
-        a large library is minutes of load, and its tests wait meanwhile."""
+        """The queue's workers that are not ready right now (`pool.starting`):
+        being brought up, or reading the library again — a large library is
+        minutes of load, and its tests wait meanwhile."""
         pool = self._pool
         return pool.starting if pool is not None else ()
 
@@ -1647,32 +1794,181 @@ class Session:
         add, the refusals are raised as one :class:`QueueError`. The first
         call opens the pool — on a backend that cannot run one test at a
         time, or cannot be built here, a :class:`QueueError` with that
-        backend's sentence, kept as `queue_refusal`."""
+        backend's sentence, kept as `queue_refusal`.
+
+        Each call is one click, and what it queues runs the library AS IT
+        IS ON DISK NOW. The source files are swept once (stat only); a
+        queued test whose own file changed is read from it again — its
+        annotation's values, its UnitTests expressions — into the
+        project's scan; and the click's items carry the swept state, so a
+        live worker that read the library before a change reads it again
+        before it runs one of them. A test whose file is gone, or no longer
+        holds it, is refused with one sentence — a notice when others were
+        queued — and the rest are queued.
+
+        The read happens HERE, on the calling thread; a Session with a UI
+        loop queues an `Enqueue` outcome through `_enqueue_later`."""
         project = self._require_project()
-        tests = []
+        self._known(project, model_ids)
+        self._open_pool()
+        read = _read_click(project.config, self._asks(project, model_ids))
+        return self._queue_read(project, model_ids, read)
+
+    def _enqueue_later(self, model_ids: Sequence[str]) -> None:
+        """`enqueue` for a Session with a UI loop: this call returns at
+        once, the click's read of the library — seconds over a large one on
+        a slow mount — runs on the background thread, and the tests are
+        queued on the loop when it is done. What `enqueue` raises after its
+        read is a notice here; what it raises before (an unknown test, a
+        backend that cannot be queued on) is raised here too. A test whose
+        click is still being read is not read twice."""
+        project = self._require_project()
+        self._known(project, model_ids)
+        models = [m for m in model_ids if m not in self._reading]
+        if not model_ids:
+            return
+        if not models:
+            raise QueueError(
+                f"{model_ids[0]} is already being queued"
+                if len(model_ids) == 1
+                else f"all {len(model_ids)} tests are already being queued"
+            )
+        self._open_pool()
+        asks = self._asks(project, models)
+        epoch = self._queue_epoch
+        self._reading.update(models)
+
+        def read() -> None:
+            got: _ClickRead | Exception
+            try:
+                got = _read_click(project.config, asks)
+            except Exception as e:  # said on the loop, never lost on a thread
+                got = e
+            self._post(lambda: self._click_read(project, models, epoch, got))
+
+        self._background.submit("a Queue click's read of the library", read)
+
+    def _click_read(
+        self,
+        project: Project,
+        models: Sequence[str],
+        epoch: int,
+        got: _ClickRead | Exception,
+    ) -> None:
+        """On the UI loop: a click's read is back (`_enqueue_later`)."""
+        if self.project is not project or epoch != self._queue_epoch:
+            return  # the project was swapped, or the queue stopped, meanwhile
+        self._reading.difference_update(models)
+        try:
+            if isinstance(got, Exception):
+                raise got
+            self._queue_read(project, models, got)
+        except QueueError as e:
+            self._say(str(e))
+        except Exception as e:
+            logger.exception("queueing %s failed", ", ".join(models))
+            self._say(f"Queue failed: {type(e).__name__}: {e}")
+
+    def _say(self, message: str) -> None:
+        self.notices.append(message)
+        self._emit("notice", message=message)
+
+    def _known(self, project: Project, model_ids: Sequence[str]) -> None:
         for model_id in model_ids:
-            test = project.test(model_id)
-            if test is None:
+            if project.test(model_id) is None:
                 raise KeyError(model_id)
-            tests.append(test)
+
+    def _asks(self, project: Project, model_ids: Sequence[str]) -> list[_Ask]:
+        """What a click's read needs of each test it names: the file the
+        test came from and the stamp it was last read at."""
+        asks = []
+        for model_id in dict.fromkeys(model_ids):
+            scanned = project.scanned.get(model_id)
+            if scanned is not None:
+                path: Path | None = scanned.source_file
+            else:
+                # Asked at every merge since the open: answered from memory.
+                located = project.locate(model_id)
+                path = located.mo_file if located is not None else None
+            asks.append(
+                _Ask(model_id, path, self._read_at.get(model_id), scanned is not None)
+            )
+        return asks
+
+    def _queue_read(
+        self, project: Project, model_ids: Sequence[str], read: _ClickRead
+    ) -> list[QueueItem]:
+        """Queue ``model_ids`` against what their click ``read``."""
+        library: LibraryState | None = None
+        if read.stamps is not None:
+            # The last click's own object when no file differs from it: a
+            # worker then compares two serials and reads nothing.
+            library = self._library = following(self._library, read.stamps)
+        self._take_read(project, read)
         pool = self._open_pool()
         added: list[QueueItem] = []
-        refused: list[str] = []
-        for test in tests:
-            try:
-                item = pool.submit(test)
-            except Refused as e:
-                refused.append(str(e))
+        said = list(read.refused.values())
+        for model_id in model_ids:
+            test = project.test(model_id)
+            if model_id in read.refused or test is None:
                 continue
-            self._live[test.model_id] = item
+            held = self._live.get(model_id)
+            if held is not None:
+                # Already queued: while it waits, it runs what THIS click
+                # read, on a worker that has read the library since.
+                pool.update(held, test, library)
+            try:
+                item = pool.submit(test, library)
+            except Refused as e:
+                said.append(str(e))
+                continue
+            self._live[model_id] = item
             self.queue.append(item)
             added.append(item)
         if not added:
-            if refused:
-                raise QueueError("; ".join(refused))
+            if said:
+                raise QueueError("; ".join(said))
             return []
+        for sentence in read.refused.values():
+            self._say(sentence)
         self._emit("queue", state="queued", models={i.model_id for i in added})
         return added
+
+    def _store_scan_later(self, config: Config, scan: dict[str, TestModel]) -> None:
+        """The scan cache follows the project's scan, off the UI loop."""
+
+        def store() -> None:
+            store_scan(config, scan)
+
+        self._background.submit("the scan cache", store)
+
+    def _take_read(self, project: Project, read: _ClickRead) -> None:
+        """What a click read of its tests' files, into the project's scan
+        (and the scan cache) — as the rescan's is, and NOT into the queue's
+        items alone: every later re-merge (a spec edit, `_update_waiting`)
+        then hands a waiting item the test as the click read it, where it
+        would otherwise hand back the one read at open."""
+        self._read_at.update(read.read_at)
+        scanned = {
+            m: test
+            for m, test in read.scanned.items()
+            if project.scanned.get(m) != test
+        }
+        located = {
+            m: found for m, found in read.located.items() if project.locate(m) != found
+        }
+        if not scanned and not located:
+            return
+        scan = {**project.scanned, **scanned}
+        if scanned:
+            self._store_scan_later(project.config, scan)
+        # The `spec` event of the re-merge is what tells a page a test's
+        # definition changed: its Suite row and its Test page are redrawn.
+        self._rebuild_tests(
+            (set(scanned) | set(located)) - self._running_models(),
+            scanned=scan,
+            locate=project.locate.having(located),
+        )
 
     def remove(self, item: QueueItem) -> bool:
         """Take a waiting ``item`` out of the queue, its row with it.
@@ -1726,6 +2022,9 @@ class Session:
         (CANCELLED, where the backend can; else it finishes them first),
         every worker closed and every pool thread joined. The rows of what
         ended stay until `clear_finished`."""
+        # A click whose read is still running is not queued after this.
+        self._queue_epoch += 1
+        self._reading.clear()
         pool, self._pool = self._pool, None
         if pool is None:
             return
@@ -1746,6 +2045,7 @@ class Session:
         and everything said about it gone."""
         self.stop_queue()
         self.live_runs.clear()
+        self._library, self._read_at = None, {}
         self.queue, self._unwritten = [], []
         self._workers = self.queue_refusal = self.queue_stopped = None
         self._write_status = None
@@ -1941,24 +2241,30 @@ class Session:
         return merge_tests(scanned, spec_tests_by_model(models), locate=locate)
 
     def _rebuild_tests(
-        self, models: set[str], *, scanned: dict[str, TestModel] | None = None
+        self,
+        models: set[str],
+        *,
+        scanned: dict[str, TestModel] | None = None,
+        locate: SpecModelLocator | None = None,
     ) -> None:
         """Re-merge the scan against the effective spec; models the spec no
         longer names drop out of ``comparisons``, models it newly names are
         scored (with whatever result the last reload holds for them).
 
-        ``scanned`` is the rescan's new scan: it is merged in place of the
-        project's, and the ``models`` are re-read from the last run with
-        their merged TestModels. The read comes BEFORE anything is
-        replaced — the scan, the tests, the comparisons — so a read that
-        raises (the disk went away) leaves the Session as it was."""
+        ``scanned`` and ``locate`` are the library READ AGAIN — the
+        rescan's scan and a new locator, or a Queue click's read of the
+        tests it queues: they are merged in place of the project's, and
+        the ``models`` are re-read from the last run with their merged
+        TestModels. The read comes BEFORE anything is replaced — the scan,
+        the tests, the comparisons — so a read that raises (the disk went
+        away) leaves the Session as it was."""
         project = self._require_project()
+        again = scanned is not None or locate is not None
         scan = project.scanned if scanned is None else scanned
-        # A new scan is the library read again: so are the spec-only models.
-        locate = project.locate if scanned is None else SpecModelLocator(project.config)
+        locate = project.locate if locate is None else locate
         tests = self._merge(project.config, scan, self.spec.effective(), locate)
         current = {t.model_id for t in tests}
-        reread = models & current if scanned is not None else set()
+        reread = models & current if again else set()
         fresh = self._read_again(reread, tests) if reread else {}
         project.scanned, project.locate, project.tests = scan, locate, tests
         self._update_waiting()

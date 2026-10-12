@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -300,12 +300,20 @@ class SpecModelLocator:
     mount the probes for a few spec-only models are not something to repeat
     at every keystroke. A locator therefore shows a model file as it was
     when first asked; whoever holds one replaces it when the library is
-    scanned again.
+    scanned again, or takes one that knows better (:meth:`having`) when it
+    read a model's file again itself.
     """
 
     def __init__(self, config: Config):
         self._config = config
         self._found: dict[str, LocatedClass | None] = {}
+
+    def having(self, found: Mapping[str, "LocatedClass"]) -> "SpecModelLocator":
+        """A locator that answers *found* for those models and, for every
+        other, what this one has found so far (and looks for the rest)."""
+        other = SpecModelLocator(self._config)
+        other._found = {**self._found, **found}
+        return other
 
     def __call__(self, model_id: str) -> "LocatedClass | None":
         if self._config.source_type != "modelica":

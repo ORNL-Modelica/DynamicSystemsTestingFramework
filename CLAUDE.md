@@ -26,7 +26,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/),
 │   │                             #      spec_shape.py (a spec entry's keys: the ONE table the parser refuses by and export-schema publishes),
-│   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation)
+│   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation),
+│   │                             #      library_state.py (the source files' stamps at one Queue click: what a live worker compares before it reads the library again)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
 │   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place)
@@ -145,7 +146,11 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # Its panel beside the table lists each item in run order (Remove a waiting one, Cancel a running
 # one, Open test / Accept an ended one; a Workers field, Clear finished, Stop workers); the header
 # says `3 running · 5 queued` on every page. A queued or running test stays editable; each result
-# is read back and that test rescored as it ends. A running test's page keeps its plots and draws
+# is read back and that test rescored as it ends. A Queue click runs the library as it is on disk
+# NOW: it sweeps the source files' stamps once, reads the queued tests' changed files again
+# (StopTime, expressions), and a live worker reads the library again before it runs one of them —
+# `running · reading the library`; a library that no longer loads FAILS the test with the
+# simulator's message. A running test's page keeps its plots and draws
 # the trace as the simulator writes it (Dymola, OpenModelica; D151): `t = 42 / 100 s` in the strip,
 # `waiting for result` on every criterion. A run that was cancelled or timed out shows what it
 # wrote, marked where it stopped, and is never scored or accepted.

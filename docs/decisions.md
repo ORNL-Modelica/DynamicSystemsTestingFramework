@@ -7597,6 +7597,99 @@ counts under it, as QUEUED's and RUNNING's are — which the table's
 its badge still reads `…`. On the dashboard of a CLI run QUEUED stays: a
 waiting test there IS queued for simulation.
 
+**A Queue click runs the library as it is on disk** (2026-10-12). The
+workers stay alive, and a live worker loaded the library once: queue a
+test, edit its `.mo` — break it, even — queue it again, and the worker ran
+the OLD model and the row said PASS (reproduced on Dymola and on
+OpenModelica). And the Session's tests were the scan at open: an
+`experiment(StopTime=10)` edited to 4 still ran to 10. Now each click
+(`Session.enqueue`):
+
+1. **Sweeps the source files once** (`discovery/library_state.py`): the
+   modification time and size of every `*.mo` and `package.order` under
+   `source_path` and under each dependency given as a PATH; a Julia
+   project's `*.jl` and `*.toml`; nothing for an FMU or Python project,
+   whose tests each start a process. A sweep that finds nothing changed is
+   the last click's own `LibraryState` object, else the next serial. Every
+   item of the click carries it (`QueueItem.library`).
+2. **Reads the queued tests' changed files again**: only the files of the
+   tests it queues, and only those whose stamp is not the one the test was
+   last read at — into the project's scan and the scan cache, by the
+   re-merge the rescan uses, so the `spec` event redraws the test's row
+   and page and every later re-merge (`_update_waiting`) hands a waiting
+   item that test. A test that only the spec declares has its model looked
+   for again (`mo_parser.find_class`). A test whose file is gone, or no
+   longer holds it, is refused with one sentence — `<model>: its file
+   <path> is gone` / `… no longer holds it` — and the click's other tests
+   are queued. A test that is already waiting when a later click names it
+   is handed what that click read, and that click's state.
+3. **Is read off the UI loop**: with a loop, `Session.apply(Enqueue)`
+   returns at once, the sweep and the file reads run on the Session's
+   background thread (the one that writes `status.json` and the
+   dashboard), and the tests are queued by a call posted to the loop; a
+   refusal found by the read is a notice. `Session.enqueue` itself stays
+   synchronous for a Session without a loop.
+
+Before a worker runs an item whose state is newer than the one it read,
+it reads the library again — once per state, not per item; a worker
+started or brought back after the sweep read the files as they are
+(`Worker.reload(changes)`, `backends/persistent.py`). The default restarts
+the worker, on the dispatch thread and uncharged, as Julia does. Dymola
+and OpenModelica read in place, on the test's exec thread under its
+watchdog — a reload that hangs is the test's timeout, a cancel during it
+the test's: Dymola by `openModel(<package.mo>, changeDirectory=False)` for
+the library and for each path dependency holding a changed file;
+OpenModelica by `loadFile`. omc KEEPS the classes it holds when a load
+fails, so **a failed reload fails the item** with omc's message
+(`MyLib does not load: Examples/Pipe.mo: [syntax:error:2] …`) and leaves
+the worker as it was, and the next item asks again. omc loads the whole
+library again when a file was added or removed, a `package.mo` or
+`package.order` changed, or one file at a time would cost more; else each
+changed file by itself, as strictly as the whole load: `parseFile` must
+name exactly the class the file's path implies, that class is deleted,
+the file loaded, and the class must then exist. (Executed on a model
+file, a component's and a base class's — the model ran the new text each
+time — and on a syntax error, a renamed class, a wrong `within`, a second
+class in the file and an empty file: refused wherever the whole load
+refuses. A dependency given as a path is always loaded whole: its
+directory need not carry its package's name.) While a worker reads, its
+item's row says `running · reading the library`, the strip `Running on
+worker 1 — reading the library`, and the panel `worker 1 reading the
+library — loadFile("…/package.mo") · 12 s` (`queue_rows.READING`,
+`StartingWorker.reload`).
+
+*Costs, measured over a library of 3,270 `.mo` files (4,117 swept files,
+331 tests).* The sweep: 0.06 s on a native file system on one thread; on
+/mnt/d 6.9 s on one thread and 1.3 s on eight, so a root whose own listing
+is slow is walked on threads. A click, native: the tests are queued 0.09
+to 0.17 s after it, 0.71 s when all 331 are queued for the first time
+(each file read once); on /mnt/d 1.2 s, and 3.6 s the first time. On the
+loop: `apply` 0.2 to 2.4 ms, the posted call that queues 0.3 to 5 ms, the
+longest stall of a 5 ms heartbeat during a click 18 ms. Reading again,
+native: Dymola 0.01 to 0.02 s; OpenModelica 0.33 s for one file, 1.1 to
+1.3 s for the whole library. On /mnt/d: Dymola 8 to 9.5 s (the spike's
+figure, not re-measured), OpenModelica 0.39 s for one file and 107 to
+110 s for the whole library — what its first load took (92 s with the
+mount idle).
+
+**Known limits of it.** A dependency given by NAME (`"Modelica"`) is found
+by the simulator and not swept. `testing.json` itself — `backend_setup`,
+`dependencies` — is read when the tool opens. An edit made after a click
+is seen by the next click; the test queued before it runs what the worker
+holds when its turn comes. A file rewritten with the same modification
+time and size is not seen. A test that did not exist when the tool opened
+is listed by the next open. Dymola's message for a model that no longer
+parses is its generic "Translation failed", the parser's words in the
+translation log; an emptied or garbage BASE-CLASS file reads the same on
+Dymola (the model misses what it declared) and `MyLib does not load:
+[grammar:error:234] …` on OpenModelica. A test's OWN file emptied or
+turned to garbage never reaches the simulator: the click refuses it (`no
+longer holds it`). What still gets through: a test only the spec declares
+whose model was replaced by an EMPTY class of the same name runs on both
+simulators and, tracking a variable the result no longer holds, is scored
+PASS with nothing scored — the comparator's reading of a run that records
+none of its variables, not the queue's.
+
 **What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
 refusal of Save, Discard and Reload while one runs. D129's capability
 contract loses the `Job` outcome and gains `Enqueue`.
