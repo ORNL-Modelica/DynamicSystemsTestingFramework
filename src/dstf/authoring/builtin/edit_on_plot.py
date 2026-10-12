@@ -536,8 +536,10 @@ def clicked_row(
     span = None
     if reference is not None and len(reference[0]):
         span = float(reference[0][0]), float(reference[0][-1])
+    # No leaf is handed over: it decides only a tube's FIRST control point,
+    # and a click adds none to a tube without one (`place_tube_row`).
     blanks = {
-        field: _new_row(columns, copy.deepcopy(raw.get(field) or []), span, raw)
+        field: _new_row(columns, copy.deepcopy(raw.get(field) or []), span)
         for field, columns in _list_fields(desc.name)
     }
     actual = None
