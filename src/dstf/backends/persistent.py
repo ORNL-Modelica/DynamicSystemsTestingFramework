@@ -71,6 +71,9 @@ class WorkerStartError(RuntimeError):
     :meth:`Worker.process_detail` beside it."""
 
 
+#: Why a start was given up when the test it was for was cancelled.
+START_CANCELLED = "its start was given up: the test it was for was cancelled"
+
 #: The ``testing.json`` key that bounds a worker's start, as a sentence that
 #: ends every "did not start within" message: the bound is a guess about the
 #: library, and the reader of the message is the one who can correct it.
@@ -442,6 +445,12 @@ class Worker(ABC):
                 break
             if self._start_abort.is_set():
                 reason = "its start was abandoned"
+            elif self._cancel is not None:
+                # The test this (re)start is for was cancelled
+                # (:meth:`request_cancel`; armed before the restart, so the
+                # request is on record): nobody waits for the tool any
+                # more, and the start's own bound is minutes.
+                reason = START_CANCELLED
             elif process_gone(self.pids):
                 reason = self._safe_detail() or "its process exited during start"
             elif remaining <= 0:
@@ -1012,6 +1021,12 @@ class WorkerRunner(ItemRunner):
         # the worker's permanent-broken budget — the worker was healthy, the
         # test was slow.
         self._prev_killed_worker = False
+        #: Why the worker's last (re)start failed, in the backend's own
+        #: words; None once one succeeded. What a worker is retired with
+        #: (:meth:`_dead`): "restart exhausted" alone sent the reader to
+        #: stderr for the reason — no licence, a library that no longer
+        #: loads — and the tool has no stderr to read.
+        self._start_failure: str | None = None
 
     def start(self) -> None:
         self.worker.start_within()
@@ -1075,6 +1090,7 @@ class WorkerRunner(ItemRunner):
             try:
                 w.reload(changes)
             except Exception as exc:
+                self._start_failure = str(exc)
                 if not self.backend.quiet:
                     print(
                         f"  Worker {w.worker_id}: restart to read the library "
@@ -1082,6 +1098,8 @@ class WorkerRunner(ItemRunner):
                         file=sys.stderr,
                     )
                 w._close_quietly()
+            else:
+                self._start_failure = None
             return None
 
         def reload() -> None:
@@ -1125,7 +1143,9 @@ class WorkerRunner(ItemRunner):
                     )
                 w._close_quietly()
             if not self._restart(count_against_budget=not self._prev_killed_worker):
-                self.retired = "Worker dead; restart exhausted"
+                if w._cancel is not None:
+                    return self._cancelled_while_restarting(test, test_key)
+                self.retired = self._dead()
                 return TestRunResult(
                     model_id=test.model_id,
                     test_key=test_key,
@@ -1182,6 +1202,49 @@ class WorkerRunner(ItemRunner):
         self._prev_killed_worker = bool(tr.timed_out or tr.worker_killed)
         return tr
 
+    def _cancelled_while_restarting(
+        self, test: TestModel, test_key: str
+    ) -> TestRunResult:
+        """The test was cancelled while its worker was being brought back,
+        and the worker is not up: the test ends CANCELLED — at once, where
+        the cancel gave up a start in flight (:data:`START_CANCELLED`), not
+        at that start's bound — and the worker is NOT retired for it.
+
+        A :class:`Worker` whose start was given up is spent: its
+        ``start()`` may still be parked on a thread that writes its state,
+        so it is never started again (:meth:`Worker.start_within`). The
+        runner takes a new one for its slot — with a restart budget of its
+        own — and the old one closes whatever its start still brings up
+        (``_start_bounded``, ``_track_launch``). A start that failed by
+        itself while the cancel was on record leaves the worker as any
+        failed restart does: charged, and tried again by the next test."""
+        w = self.worker
+        if w._start_abandoned:
+            if not self.backend.quiet:
+                print(
+                    f"  Worker {w.worker_id}: its start was given up for the "
+                    f"cancel of {test.model_id}",
+                    file=sys.stderr,
+                )
+            self.worker = self.backend.make_worker(w.worker_id)
+        self._start_failure = None
+        return TestRunResult(
+            model_id=test.model_id,
+            test_key=test_key,
+            success=False,
+            elapsed=0.0,
+            error_message="Cancelled",
+            cancelled=True,
+        )
+
+    def _dead(self) -> str:
+        """The sentence a worker that could not be brought back is retired
+        with — the test in hand's failure, and what the pool says of every
+        test still waiting (``No <Backend> worker could start — worker 0:
+        …``): that it is dead, and the reason its last start gave."""
+        said = "Worker dead; restart exhausted"
+        return f"{said} — {self._start_failure}" if self._start_failure else said
+
     def _restart(self, count_against_budget: bool = True) -> bool:
         """Bring the worker back up after a death.
 
@@ -1202,6 +1265,12 @@ class WorkerRunner(ItemRunner):
           for the rest of the queue.
         """
         w, backend = self.worker, self.backend
+        if w._start_abandoned:
+            # Its last start never returned (a reload's restart, given up at
+            # its bound): this object is not started again, and the reason
+            # is the one that start was given up with — not the "previous
+            # start never returned" a second try would add over it.
+            return False
         n_restarts = w._n_restarts
         if count_against_budget and n_restarts >= backend.max_restarts_per_worker:
             return False
@@ -1231,6 +1300,7 @@ class WorkerRunner(ItemRunner):
                 w.start_within()
             except Exception as exc:
                 last_exc = exc
+                self._start_failure = str(exc)
                 if not backend.quiet:
                     print(
                         f"  Worker {w.worker_id}: restart FAILED — {exc}",
@@ -1245,6 +1315,10 @@ class WorkerRunner(ItemRunner):
                             f"returned — retiring the worker",
                             file=sys.stderr,
                         )
+                    return False
+                if w._cancel is not None:
+                    # The test this restart is for was cancelled: no pause
+                    # and no second attempt for a test nobody waits for.
                     return False
                 continue
             if not backend.quiet:
@@ -1261,6 +1335,7 @@ class WorkerRunner(ItemRunner):
                         f"({time.monotonic() - t0:.1f}s — not counted)",
                         file=sys.stderr,
                     )
+            self._start_failure = None
             return True
         if not backend.quiet:
             print(

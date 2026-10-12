@@ -7650,7 +7650,23 @@ Before a worker runs an item whose state is newer than the one it read,
 it reads the library again — once per state, not per item; a worker
 started or brought back after the sweep read the files as they are
 (`Worker.reload(changes)`, `backends/persistent.py`). The default restarts
-the worker, on the dispatch thread and uncharged, as Julia does. Dymola
+the worker, on the dispatch thread and uncharged, as Julia does. A restart
+that fails — for a reload or after a death — retires the worker with the
+backend's own reason in the sentence: `Worker dead; restart exhausted — no
+licence: FlexNet error -15` on the item, and `No <Backend> worker could
+start — worker 0: Worker dead; restart exhausted — no licence: …` on every
+item still waiting (until 2026-10-12 the reason reached stderr only, which
+the tool does not have). A restart given up at its bound says the bound
+(`… — did not start within 600 s (raise "worker_startup_timeout" …)`) and
+is not tried a second time. **A Cancel while the worker is being brought
+back ends the item at once**: the request, on record from the moment the
+item is armed, gives up the start in flight (`Worker._start_bounded` looks
+for it at each poll), the item ends CANCELLED — 0.26 s on real omc, where
+it had waited out the start's bound, 600 s by default — and the worker is
+not retired: a `Worker` whose start was given up is never started again
+(its `start()` may still be parked on a thread), so the runner takes a new
+one for its slot, and the old one closes whatever its start still brings
+up. Dymola
 and OpenModelica read in place, on the test's exec thread under its
 watchdog — a reload that hangs is the test's timeout, a cancel during it
 the test's: Dymola by `openModel(<package.mo>, changeDirectory=False)` for

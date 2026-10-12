@@ -10,12 +10,13 @@ the default — a restart."""
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from conftest import make_test_model
-from dstf.backends.persistent import LibraryReloadError
+from dstf.backends.persistent import STARTUP_TIMEOUT_HINT, LibraryReloadError
 from dstf.backends.pool import ItemState, SimulationPool, StartingWorker
 from dstf.discovery.library_state import LibraryChanges, LibraryState
 from dstf.pipeline import ItemRun
@@ -423,3 +424,150 @@ def test_a_restart_to_read_again_that_fails_is_retried_as_a_dead_workers(restart
     _wait_until(lambda: _ended(b))
     assert b.state is ItemState.FINISHED
     assert backend.starts == [0, 0, 0]
+
+
+def test_a_restart_to_read_again_that_fails_says_the_backends_reason(restarting):
+    """Both sentences carry it: the item's, and what every waiting item is
+    failed with once no worker is left."""
+    backend, pool = restarting
+    a = pool.submit(_t("A"), S1)
+    _wait_until(lambda: _ended(a))
+
+    def no_licence(worker):
+        raise RuntimeError("no licence: FlexNet error -15")
+
+    backend.start_script = no_licence
+    b, c = pool.submit(_t("B"), S2), pool.submit(_t("C"), S2)
+    _wait_until(lambda: _ended(b, c))
+    dead = "Worker dead; restart exhausted — no licence: FlexNet error -15"
+    assert (b.state, b.message) == (ItemState.FAILED, dead)
+    stopped = f"No Stub worker could start — worker 0: {dead}"
+    assert (c.state, c.message) == (ItemState.FAILED, stopped)
+    assert pool.stopped == stopped
+
+
+def test_a_restart_to_read_again_that_never_returns_says_its_bound(tmp_path):
+    before = set(threading.enumerate())
+    backend, pool = _pool(tmp_path, _RestartingBackend, worker_startup_timeout=0.2)
+    release = threading.Event()
+    try:
+        a = pool.submit(_t("A"), S1)
+        _wait_until(lambda: _ended(a))
+        backend.start_script = lambda worker: release.wait(60)
+        b = pool.submit(_t("B"), S2)
+        _wait_until(lambda: _ended(b))
+        assert b.state is ItemState.FAILED and b.message == (
+            "Worker dead; restart exhausted — did not start within 0.2 s "
+            f"{STARTUP_TIMEOUT_HINT}"
+        )
+        assert backend.starts == [0, 0]  # the one given up is not tried again
+    finally:
+        release.set()
+        _close(backend, pool, before)
+
+
+def test_a_start_that_then_works_forgets_the_reason_of_the_one_that_failed(
+    restarting,
+):
+    """A worker retired at its budget, with no start attempted, says no
+    reason of a start it had recovered from."""
+    backend, pool = restarting
+    a = pool.submit(_t("A"), S1)
+    _wait_until(lambda: _ended(a))
+    fail = [True]
+
+    def once(worker):
+        if fail.pop() if fail else False:
+            raise RuntimeError("licence seat taken")
+
+    backend.start_script = once  # the reload's restart fails, the retry works
+    b = pool.submit(_t("B"), S2)
+    _wait_until(lambda: _ended(b))
+    assert b.state is ItemState.FINISHED, b.message
+    (slot,) = pool._slots.values()
+    assert slot.runner._start_failure is None and slot.runner._dead() == (
+        "Worker dead; restart exhausted"
+    )
+
+
+def test_a_cancel_while_the_worker_restarts_ends_the_item_at_once(tmp_path):
+    """The start's bound is minutes (600 s by default): a cancel asked
+    while the worker is brought back gives that start up, and the item
+    ends CANCELLED within the start's poll — not at the bound. The worker
+    is not retired for it: the next item runs, on a new tool."""
+    before = set(threading.enumerate())
+    backend, pool = _pool(tmp_path, _RestartingBackend, worker_startup_timeout=60.0)
+    release = threading.Event()
+    try:
+        a = pool.submit(_t("A"), S1)
+        _wait_until(lambda: _ended(a))
+        restarting = threading.Event()
+        backend.start_script = lambda worker: (restarting.set(), release.wait(60))
+        b = pool.submit(_t("B"), S2)
+        assert restarting.wait(15)
+        first = backend.workers[0]
+        began = time.monotonic()
+        assert pool.cancel(b) is True
+        _wait_until(lambda: _ended(b), what="the cancel")
+        assert time.monotonic() - began < 5.0  # of a 60 s bound
+        assert (b.state, b.message) == (ItemState.CANCELLED, "Cancelled")
+        assert [model for model, _ in backend.ran] == ["Lib.A"]
+        assert pool.stopped is None and len(pool._slots) == 1
+
+        # The worker whose start was given up is spent; its slot has a new
+        # one, started for the next item, which read the files as they are.
+        backend.start_script = None
+        c = pool.submit(_t("C"), S2)
+        _wait_until(lambda: _ended(c))
+        assert c.state is ItemState.FINISHED, c.message
+        (slot,) = pool._slots.values()
+        assert slot.runner.worker is backend.workers[-1] is not first
+        assert first._start_abandoned and not slot.runner.worker._start_abandoned
+        assert [model for model, _ in backend.ran] == ["Lib.A", "Lib.C"]
+        # The start that was given up comes back: it closes what it brought
+        # up, and touches nothing of the worker that replaced it.
+        release.set()
+        _wait_until(lambda: not first.is_alive(), what="the old start closed")
+        assert slot.runner.worker.is_alive()
+        d = pool.submit(_t("D"), S2)
+        _wait_until(lambda: _ended(d))
+        assert d.state is ItemState.FINISHED
+    finally:
+        release.set()
+        _close(backend, pool, before)
+
+
+def test_a_cancel_while_a_restart_fails_is_cancelled_and_retires_nothing(tmp_path):
+    """The start raised by itself while a cancel was on record: the item
+    is cancelled all the same, with no retry and no pause for it, and the
+    next item tries the worker again."""
+    before = set(threading.enumerate())
+    backend, pool = _pool(tmp_path, _RestartingBackend)
+    backend.restart_retry_backoff_seconds = 30.0
+    try:
+        a = pool.submit(_t("A"), S1)
+        _wait_until(lambda: _ended(a))
+        entered, go = threading.Event(), threading.Event()
+
+        def fails(worker):
+            entered.set()
+            assert go.wait(30)
+            raise RuntimeError("licence seat taken")
+
+        backend.start_script = fails
+        b = pool.submit(_t("B"), S2)
+        assert entered.wait(15)
+        worker = backend.workers[0]
+        with worker._run_lock:  # the request, without the give-up it causes
+            worker._cancel = "soft"
+        worker._START_POLL_SECONDS = 30.0
+        go.set()
+        _wait_until(lambda: _ended(b), what="the cancel")
+        assert (b.state, b.message) == (ItemState.CANCELLED, "Cancelled")
+        assert pool.stopped is None
+        backend.start_script = None
+        c = pool.submit(_t("C"), S2)
+        _wait_until(lambda: _ended(c))
+        assert c.state is ItemState.FINISHED and backend.workers == [worker]
+    finally:
+        _close(backend, pool, before)

@@ -462,7 +462,10 @@ def test_a_restart_that_never_returns_retires_the_worker(tmp_path):
     result = runner.run(make_test_model("Lib.A"), "test_0001")
     release.set()
 
-    assert runner.retired == "Worker dead; restart exhausted"
+    assert runner.retired == (
+        f"Worker dead; restart exhausted — did not start within 0.1 s "
+        f"{STARTUP_TIMEOUT_HINT}"
+    )
     assert result.error_message == runner.retired
     assert worker.n_started == 1
 

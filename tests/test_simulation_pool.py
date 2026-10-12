@@ -1017,7 +1017,8 @@ class TestWorkerDeath:
 
             assert b.state is ItemState.FINISHED and c.state is ItemState.FAILED
             assert pool.stopped == (
-                "No Stub worker could start — worker 1: Worker dead; restart exhausted"
+                "No Stub worker could start — worker 1: Worker dead; restart "
+                "exhausted — licence seat taken"
             )
         finally:
             for gate in backend.gates.values():
@@ -1039,10 +1040,11 @@ class TestWorkerDeath:
         _wait_until(lambda: _ended(b, c))
 
         assert b.state is ItemState.FAILED
-        assert b.message == "Worker dead; restart exhausted"  # the CLI's words
-        message = (
-            "No Stub worker could start — worker 0: Worker dead; restart exhausted"
-        )
+        # The CLI's words, and the reason the backend gave for the start
+        # that failed: stderr is all that said it, and the tool has none.
+        dead = "Worker dead; restart exhausted — licence server down"
+        assert b.message == dead
+        message = f"No Stub worker could start — worker 0: {dead}"
         assert c.state is ItemState.FAILED and c.message == message
         assert pool.stopped == message
         assert events.of("Lib.C") == ["end"]
