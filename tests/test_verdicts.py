@@ -153,6 +153,60 @@ def test_a_finished_test_is_in_the_terminal_phase(tmp_path):
     assert rows["Lib.B"]["phase"] is None and rows["Lib.B"]["verdict"] is None
 
 
+@pytest.mark.parametrize("parallel", ["1", "2"])
+def test_a_test_that_failed_before_it_simulated_has_ended_too(tmp_path, parallel):
+    """A test its backend could not start — no source file — is returned
+    as failed without a word to the reporter: its row stayed `"status":
+    "queued", "phase": null` beside `"verdict": "SIM_FAIL"`."""
+    from test_session import A, B, _project
+
+    cfg, work = _project(tmp_path)
+    (cfg.parent.parent / "Examples" / "A.py").unlink()
+    assert main(
+        ["--config", str(cfg), "run", "--no-browser", "--work-dir", str(work)]
+        + ["--parallel", parallel]
+    )
+    rows = {r["model_id"]: r for r in read_status(work)["tests"]}
+    row = rows[A]
+    assert (row["status"], row["phase"], row["verdict"]) == (
+        "failed",
+        DONE_PHASE,
+        "SIM_FAIL",
+    )
+    assert row["detail"].startswith(f"Python source not found for {A}.")
+    # every row of a finished run has ended
+    assert {r["phase"] for r in rows.values()} == {DONE_PHASE}
+    assert rows[B]["status"] == "failed" and "simulate()" in rows[B]["detail"]
+
+
+def test_a_result_ends_a_row_once(tmp_path):
+    """`on_result` is for the caller that holds a run's result: it ends a
+    row its backend left open, and leaves one the backend ended as it is."""
+    pr = ProgressReporter(tmp_path, total=3)
+    for key, model in (("t1", "Lib.A"), ("t2", "Lib.B"), ("t3", "Lib.C")):
+        pr.register(key, model)
+    pr.on_start("t1")
+    pr.on_finish("t1", success=False, elapsed=2.0, detail="the solver's own words")
+    pr.on_result("t1", success=False, elapsed=9.0, detail="a second saying")
+    pr.on_result("t2", success=False, elapsed=0.0, detail="no source", timed_out=False)
+    rows = {r["model_id"]: r for r in read_status(tmp_path)["tests"]}
+    assert (rows["Lib.A"]["detail"], rows["Lib.A"]["elapsed"]) == (
+        "the solver's own words",
+        2.0,
+    )
+    assert (
+        rows["Lib.B"]["status"],
+        rows["Lib.B"]["phase"],
+        rows["Lib.B"]["detail"],
+    ) == (
+        "failed",
+        DONE_PHASE,
+        "no source",
+    )
+    # a test nothing has a result for was never run: it has not ended
+    assert (rows["Lib.C"]["status"], rows["Lib.C"]["phase"]) == ("queued", None)
+
+
 def test_stamping_sets_only_the_named_tests_verdict(tmp_path):
     pr = ProgressReporter(tmp_path, total=2)
     pr.register("test_0001", "Lib.A")

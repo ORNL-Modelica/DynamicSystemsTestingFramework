@@ -858,6 +858,17 @@ class Backend(ABC):
                 return "timeout"
             return "ok" if rr.success else "fail"
 
+        def _end_row(test_key: str, rr: TestRunResult) -> None:
+            # A result that came back without a word to the reporter — a
+            # test its backend could not start — ends its row here.
+            setup.progress.on_result(
+                test_key,
+                rr.success,
+                rr.elapsed,
+                detail=rr.error_message,
+                timed_out=rr.timed_out,
+            )
+
         run_results: list[TestRunResult] = []
         wall_start = time.monotonic()
         completed = 0
@@ -870,6 +881,7 @@ class Backend(ABC):
                 # Persist the verdict as it lands, not in an epilogue an
                 # abort would skip (see BatchManifest.record_result).
                 manifest.record_result(result)
+                _end_row(test_key, result)
                 completed += 1
                 _print_progress(
                     completed,
@@ -895,6 +907,7 @@ class Backend(ABC):
                     completed += 1
                     model_id = futures[future]
                     test_key = key_lookup.get(model_id, "")
+                    _end_row(test_key, result)
                     _print_progress(
                         completed,
                         total,

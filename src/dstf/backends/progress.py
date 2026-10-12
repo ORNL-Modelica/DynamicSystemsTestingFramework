@@ -167,6 +167,30 @@ class ProgressReporter:
                 ts.phase = DONE_PHASE
         self._write()
 
+    def on_result(
+        self,
+        test_key: str,
+        success: bool,
+        elapsed: float,
+        detail: str | None = None,
+        timed_out: bool = False,
+    ) -> None:
+        """End the row of a test whose run has ended, for the caller that
+        holds the run's RESULT: as :meth:`on_finish` ends it — unless the
+        backend already did, whose words then stand.
+
+        A backend returns a failed result without starting anything for a
+        test it cannot run (no source file, no FMU), and says nothing here
+        on the way: such a row stayed ``"status": "queued"``, ``"phase":
+        null`` in a finished run's status.json, beside its verdict
+        ``SIM_FAIL``. The run loop that collects every result calls this,
+        so no path of a backend's can leave a row open."""
+        with self._lock:
+            ts = self._tests.get(test_key)
+            if ts is None or ts.phase == DONE_PHASE:
+                return
+        self.on_finish(test_key, success, elapsed, detail=detail, timed_out=timed_out)
+
     def load(
         self, tests: list[TestStatus], *, started_wall: float, ended_wall: float
     ) -> None:
