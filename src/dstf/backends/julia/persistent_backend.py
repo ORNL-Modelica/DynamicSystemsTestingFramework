@@ -186,7 +186,9 @@ class JuliaWorker(Worker):
                 error_message="Julia worker not running",
             )
         if before is not None:
-            before()
+            failed = self._run_before(before, test, test_key)
+            if failed is not None:
+                return failed
         user_file = resolve_source_file(test, self.config, JuliaBackend.source_suffix)
         if user_file is None or not user_file.exists():
             return TestRunResult(

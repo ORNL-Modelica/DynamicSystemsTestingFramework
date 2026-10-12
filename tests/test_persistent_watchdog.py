@@ -1737,3 +1737,31 @@ class TestBefore:
         assert back.wait(5)
         time.sleep(0.05)
         assert ran == []
+
+    def test_a_stop_the_tool_took_during_it_ends_the_test_unstarted(self, tmp_path):
+        """A soft stop asked while `before` runs, and the tool comes through
+        it: the test is not started, and the worker is as it was."""
+        worker = _template_worker(tmp_path)
+        ran: list[str] = []
+        worker.run_test = lambda test, key, progress=None: ran.append(key)
+        inside, release = threading.Event(), threading.Event()
+        worker.cancel_running = lambda key: bool(release.set() or True)
+
+        def stop():
+            assert inside.wait(15)
+            assert worker.request_cancel("test_0001") is True
+
+        stopper = threading.Thread(target=stop)
+        stopper.start()
+        try:
+            tr = worker.run_test_with_timeout(
+                _tm(),
+                "test_0001",
+                timeout=30.0,
+                before=lambda: (inside.set(), release.wait(15)),
+            )
+        finally:
+            release.set()
+            stopper.join(15)
+        assert tr.cancelled and not tr.worker_killed and not tr.success
+        assert ran == [] and worker.is_alive() and worker.closed == 0

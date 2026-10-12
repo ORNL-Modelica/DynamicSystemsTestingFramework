@@ -1580,6 +1580,64 @@ def test_a_julia_worker_whose_process_died_idle_is_restarted(tmp_path, monkeypat
             _kill_quietly(proc)
 
 
+def test_a_julia_worker_is_restarted_to_read_a_changed_project(tmp_path, monkeypatch):
+    """Julia's worker keeps `Worker.reload`'s default: a test queued against
+    source files newer than the ones its process loaded gets a new process,
+    once per state, and the driver's own watched run is handed no reload."""
+    from pathlib import Path
+
+    from dstf.backends.julia import persistent_backend as jpr
+    from dstf.discovery.library_state import LibraryState
+
+    launched: list[subprocess.Popen] = []
+    real_popen = subprocess.Popen
+
+    def popen(cmd, **kw):
+        launched.append(real_popen([sys.executable, "-c", _SLEEP], **kw))
+        return launched[-1]
+
+    monkeypatch.setattr(jpr.subprocess, "Popen", popen)
+    monkeypatch.setattr(jpr.JuliaWorker, "_wait_for_ready", lambda self, timeout: True)
+    monkeypatch.setattr(jpr.JuliaWorker, "kill_name_hint", None)  # a python stand-in
+    ran: list[tuple[str, int, object]] = []
+
+    def run(self, test, test_key, timeout, progress=None, before=None):
+        ran.append((test.model_id, self.proc.pid, before))
+        return _ok(test, test_key)
+
+    monkeypatch.setattr(jpr.JuliaWorker, "run_test_with_timeout", run)
+    backend = _Backend(_config(tmp_path))
+    backend.quiet = True
+    worker = jpr.JuliaWorker(
+        0,
+        backend.config,
+        SimpleNamespace(julia_binary=Path("julia"), project_dir=tmp_path),
+    )
+    assert not worker.reloads_in_place
+    runner = WorkerRunner(backend, worker)
+    src = tmp_path / "src" / "Lib.jl"
+    s1, s2 = LibraryState(1, {src: (1, 10)}), LibraryState(2, {src: (2, 11)})
+    try:
+        worker.start()
+        runner.library = s1  # what the pool notes of a start
+        assert runner.run(make_test_model("Lib.A"), "test_0001", s1).success
+        assert runner.run(make_test_model("Lib.B"), "test_0002", s2).success
+        assert runner.run(make_test_model("Lib.C"), "test_0003", s2).success
+
+        first, second = launched
+        assert ran == [
+            ("Lib.A", first.pid, None),
+            ("Lib.B", second.pid, None),
+            ("Lib.C", second.pid, None),
+        ]
+        assert first.poll() is not None and worker.is_alive()
+        assert worker._n_restarts == 0  # not a death: nothing is charged
+    finally:
+        worker.close(grace=0.5)
+        for proc in launched:
+            _kill_quietly(proc)
+
+
 def test_every_cancel_flag_has_a_stop_behind_it():
     """The flag is what the queue gates on: a registered class that declares
     it stops its own single-test path, a persistent variant's worker runs

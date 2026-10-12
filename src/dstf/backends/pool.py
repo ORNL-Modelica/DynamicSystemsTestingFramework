@@ -33,6 +33,7 @@ from .base import ItemRunner, no_worker_message
 from .types import Capability, TestResult, TestRunResult
 
 if TYPE_CHECKING:
+    from ..discovery.library_state import LibraryState
     from ..discovery.test_registry import TestModel
     from .base import Backend
 
@@ -68,6 +69,11 @@ class QueueItem:
     after ``on_end``, all of them are final."""
 
     test: TestModel
+    #: The source files as swept at the Queue click that submitted it: it
+    #: runs on a worker that has read them as they were then, or later.
+    #: ``None``: nothing is asked of the worker (a source no worker keeps
+    #: loaded).
+    library: LibraryState | None = None
     state: ItemState = ItemState.WAITING
     #: The test's key in the work dir, once it started.
     test_key: str | None = None
@@ -122,20 +128,24 @@ class ItemPath(Protocol):
 
 @dataclass(frozen=True)
 class StartingWorker:
-    """A worker that is being brought up right now — its first start, or a
-    restart after a death."""
+    """A worker that is not ready for a test right now: being brought up —
+    its first start, or a restart after a death — or up and reading the
+    library again for the item it is about to run (``reload``)."""
 
     worker_id: int
-    #: The step the start is in, in the backend's own words
+    #: The step the start (or the reload) is in, in the backend's own words
     #: (``loadFile("/lib/package.mo")``, ``its launch``); ``""`` when the
     #: backend names none.
     phase: str
-    #: Seconds since this start began.
+    #: Seconds since this start (or reload) began.
     seconds: float
     #: Whether it is being brought BACK: a worker that died is restarted
     #: under the item it is to run, which is running meanwhile; a first
     #: start has no item yet.
     restart: bool = False
+    #: Whether it is up and reading the library again: its files changed
+    #: since it read them, and its item is running meanwhile.
+    reload: bool = False
 
 
 @dataclass(eq=False)
@@ -151,8 +161,10 @@ class _Slot:
 class SimulationPool:
     """A FIFO queue of tests over a backend's runners.
 
-    ``submit`` appends and returns the item; ``update`` hands a waiting item
-    its test as it stands now; ``remove`` takes a waiting item back;
+    ``submit`` appends and returns the item — with the state of the source
+    files it is to run against, which a live worker that read them earlier
+    reads again first; ``update`` hands a waiting item its test as it
+    stands now; ``remove`` takes a waiting item back;
     ``cancel`` stops a running one where the backend can
     (:attr:`Capability.CANCEL`); ``close`` ends everything. All five are
     safe from any thread and return promptly (``close`` waits for the
@@ -174,7 +186,8 @@ class SimulationPool:
     there are items to run, up to ``workers`` (``Config.parallel`` unless
     given). Setting ``workers`` higher starts more as items need them;
     lower lets the surplus go as each finishes its item. ``starting`` lists
-    the ones still coming up, with the phase each is in. They live until
+    the ones still coming up, and the ones reading the library again, with
+    the phase each is in. They live until
     ``close`` — which the owner must call: the pool's threads are daemons
     and do not keep a dying process open, but nothing else ends the
     workers' tool processes.
@@ -215,6 +228,9 @@ class SimulationPool:
         self._stopped: str | None = None
         #: Why each worker that left for good did, by worker id.
         self._failures: dict[int, str] = {}
+        #: The latest state an item was submitted with: what a worker that
+        #: starts NOW reads at least.
+        self._library: LibraryState | None = None
         backend.prepare_item_runners()
 
     # -- the caller's side ---------------------------------------------
@@ -260,9 +276,10 @@ class SimulationPool:
 
     @property
     def starting(self) -> tuple[StartingWorker, ...]:
-        """The workers being brought up right now, by worker id — empty once
-        each has started or failed to. A large library is minutes of load in
-        a live tool: this is what says so while the items wait."""
+        """The workers being brought up right now and the ones reading the
+        library again, by worker id — empty once each is ready or has
+        failed. A large library is minutes of load in a live tool: this is
+        what says so while the items wait."""
         with self._cond:
             runners = [
                 (slot_id, slot.runner, slot.item is not None)
@@ -274,11 +291,21 @@ class SimulationPool:
             state = runner.starting()
             if state is not None:
                 found.append(StartingWorker(slot_id, *state, restart=restart))
+                continue
+            state = runner.reloading()
+            if state is not None:
+                found.append(StartingWorker(slot_id, *state, reload=True))
         return tuple(found)
 
-    def submit(self, test: TestModel) -> QueueItem:
+    def submit(self, test: TestModel, library: LibraryState | None = None) -> QueueItem:
         """Append *test*. Raises :class:`Refused` when it is already waiting
-        or running, and when the pool is closed or stopped."""
+        or running, and when the pool is closed or stopped.
+
+        *library* is the state of the source files as the caller swept them
+        for this submit (one state per Queue click, shared by its items).
+        Before the item runs, a worker that read the files at an older
+        state reads them again (``ItemRunner.run``); one that read them at
+        this state or a later one does nothing."""
         with self._cond:
             if self._closing:
                 raise Refused("the simulation queue is closed")
@@ -288,25 +315,46 @@ class SimulationPool:
             if active is not None:
                 doing = "running" if active.state is ItemState.RUNNING else "queued"
                 raise Refused(f"{test.model_id} is already {doing}")
-            item = QueueItem(test)
+            item = QueueItem(test, library)
+            self._note(library)
             self._active[test.model_id] = item
             self._waiting.append(item)
             self._spawn_slots()
             self._cond.notify()
         return item
 
-    def update(self, item: QueueItem, test: TestModel) -> bool:
+    def update(
+        self, item: QueueItem, test: TestModel, library: LibraryState | None = None
+    ) -> bool:
         """Hand a waiting *item* the test as it stands now — the same model,
         its settings as they are at this call — keeping its place: an item
         runs with the last test it was given before it started. ``False``
-        once it has started (or ended): nothing is changed."""
+        once it has started (or ended): nothing is changed.
+
+        Its library state stays the one it was submitted with — a test's
+        settings follow the spec, the files it was queued against do not —
+        unless *library* is given and is a later one: a click that read
+        the test's file again hands the item what it read, and the state
+        it read it at. A state never moves back."""
         if test.model_id != item.model_id:
             raise ValueError(f"{test.model_id} is not {item.model_id}")
         with self._cond:
             if item.state is not ItemState.WAITING:
                 return False
             item.test = test
+            if library is not None and (
+                item.library is None or library.serial > item.library.serial
+            ):
+                item.library = library
+                self._note(library)
         return True
+
+    def _note(self, library: LibraryState | None) -> None:
+        """Under the lock: *library* is a state an item carries."""
+        if library is not None and (
+            self._library is None or library.serial > self._library.serial
+        ):
+            self._library = library
 
     def remove(self, item: QueueItem) -> bool:
         """Take a waiting *item* out. ``False`` once it has started (or
@@ -411,7 +459,13 @@ class SimulationPool:
                     slot.runner = runner
                     if self._closing:
                         return
+                    # Read BEFORE the start reads the files: each is then
+                    # read as it was at this state or later. (A click
+                    # during the start is a later state, and the worker
+                    # reads the library again for its items.)
+                    library = self._library
                 runner.start()
+                runner.library = library
             except Exception as exc:
                 left_because = str(exc) or type(exc).__name__
                 return
@@ -495,7 +549,7 @@ class SimulationPool:
                     cancelled=True,
                 )
             else:
-                run_result = runner.run(item.test, test_key)
+                run_result = runner.run(item.test, test_key, item.library)
             if item._stop_asked and not run_result.success:
                 # Whatever a stopped run reports — a failed record, a dead
                 # pipe — is the stop's doing, not a failure of the test.

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import Config
+from ..discovery.library_state import LibraryChanges, LibraryState
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import BatchManifest
 from .base import (
@@ -54,6 +55,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Abstract persistent-worker interface
 # ---------------------------------------------------------------------------
+
+
+class LibraryReloadError(RuntimeError):
+    """The live tool could not read the library again (:meth:`Worker.reload`);
+    ``str()`` is the tool's own message. The test in hand fails with it and
+    the worker stays up, holding what it held — so the next test asks
+    again."""
 
 
 class WorkerStartError(RuntimeError):
@@ -197,6 +205,9 @@ class Worker(ABC):
         self._step: str = ""
         #: ``time.monotonic()`` of the :meth:`start_within` in flight.
         self._start_began: float | None = None
+        #: ``time.monotonic()`` of the :meth:`reload` in flight in the live
+        #: tool.
+        self._reload_began: float | None = None
 
     @abstractmethod
     def start(self) -> None:
@@ -245,6 +256,48 @@ class Worker(ABC):
             f"{type(self).__name__} must implement run_test() or override "
             f"run_test_with_timeout()."
         )
+
+    def reload(self, changes: LibraryChanges | None) -> None:
+        """Make this worker hold the library as it is on disk now. Asked
+        before a test queued against a state of the source files newer than
+        the one this worker read (the tool's queue); *changes* are the
+        files that differ from what it read, ``None`` when that is not
+        known.
+
+        The default is right for any tool: restart it — a start reads
+        everything. It runs on the dispatch thread, as the restart of a
+        worker that died does: bounded by the start's own bound and given
+        up by :meth:`abandon_start`, not by the test's watchdog (which
+        watches the very process this replaces).
+
+        A backend whose live tool can read files again OVERRIDES this, and
+        an override is a promise to leave the process in place: it is
+        called on the test's exec thread, under its watchdog (``before`` of
+        :meth:`run_test_with_timeout`) — a reload that hangs is the test's
+        timeout, a cancel during it is the test's. It raises
+        :class:`LibraryReloadError` with the tool's message when the
+        library does not load, and must then not leave the tool running a
+        class the files no longer hold as if it were read: the test fails
+        with the message, and the next one asks again with the same
+        changes (and any since). It sets ``self._step`` as it goes — what
+        :meth:`reloading` shows."""
+        self.close()
+        self.start_within()
+
+    @property
+    def reloads_in_place(self) -> bool:
+        """Whether :meth:`reload` is this backend's own: the live tool
+        reads the files again, and the process stays."""
+        return type(self).reload is not Worker.reload
+
+    def reloading(self) -> tuple[str, float] | None:
+        """While an in-place :meth:`reload` is in flight: the step it is
+        in, in the tool's own spelling, and the seconds since it began —
+        as :meth:`starting`. ``None`` otherwise. Read from any thread."""
+        began = self._reload_began
+        if began is None:
+            return None
+        return self._step, time.monotonic() - began
 
     def _evaluate_from_disk(
         self,
@@ -635,8 +688,10 @@ class Worker(ABC):
 
         *before*, when given, runs first — on the thread the test runs on and
         under the same watchdog, so one that hangs is the test's timeout and
-        a cancel during it is the test's. An override of this method owes
-        that call too.
+        a cancel during it is the test's. A :class:`LibraryReloadError` from
+        it is the test's failure and nothing else: the test does not run and
+        the worker is as it was. An override of this method owes that call
+        too (:meth:`_run_before`).
 
         ``run_test`` executes on a daemon thread the watchdog abandons on
         expiry; ``self`` is closed and its PIDs killed, then
@@ -663,9 +718,9 @@ class Worker(ABC):
         exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
         done = threading.Event()
-        # Set once the watchdog has returned: a body still inside *before*
-        # then was given up on, and must not go on to run the test — by the
-        # time it comes back, this worker may be a new tool on its next one.
+        # Set when the watchdog gives the body up: one still inside
+        # *before* then must not go on to run the test — by the time it
+        # comes back, this worker is closed, or a new tool on its next test.
         left = threading.Event()
         self.arm(test_key)
         with self._run_lock:
@@ -687,8 +742,20 @@ class Worker(ABC):
         def _worker_body():
             try:
                 if before is not None:
-                    before()
-                    if left.is_set():
+                    result_box[0] = self._run_before(before, test, test_key)
+                    if result_box[0] is not None or left.is_set():
+                        return
+                    if self._cancel is not None:
+                        # Asked to stop while *before* ran, and the tool
+                        # came through it: the test is not started.
+                        result_box[0] = TestRunResult(
+                            model_id=test.model_id,
+                            test_key=test_key,
+                            success=False,
+                            elapsed=time.monotonic() - start_ts,
+                            error_message="Cancelled",
+                            cancelled=True,
+                        )
                         return
                 result_box[0] = self.run_test(test, test_key, progress=progress)
             except BaseException as e:
@@ -715,6 +782,7 @@ class Worker(ABC):
                 t,
                 done,
                 wake,
+                left,
                 result_box,
                 exc_box,
                 tool_born,
@@ -726,6 +794,25 @@ class Worker(ABC):
             # death is never said to have happened "during" an earlier test.
             self._step = ""
 
+    def _run_before(
+        self, before: Callable[[], None], test: TestModel, test_key: str
+    ) -> "TestRunResult | None":
+        """Call *before* of :meth:`run_test_with_timeout`: ``None`` when the
+        test is to run, the test's failed result when the library did not
+        load."""
+        began = time.monotonic()
+        try:
+            before()
+        except LibraryReloadError as e:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=time.monotonic() - began,
+                error_message=str(e),
+            )
+        return None
+
     def _watch_test(
         self,
         test: TestModel,
@@ -735,6 +822,7 @@ class Worker(ABC):
         t: threading.Thread,
         done: threading.Event,
         wake: threading.Event,
+        left: threading.Event,
         result_box: list,
         exc_box: list,
         tool_born: float | None,
@@ -782,12 +870,14 @@ class Worker(ABC):
                     if done.wait(0.05):
                         break
             if not done.is_set():
+                left.set()
                 with self._quiet():
                     self.close(grace=1.0)
                     t.join(0.5)
                 return _cancelled(worker_killed=True)
 
         if gone and not done.is_set():
+            left.set()
             # Read before the kill: the exit code and the log are the
             # backend's, and close() drops the handle they hang off.
             detail = self._safe_detail()
@@ -811,6 +901,7 @@ class Worker(ABC):
             )
 
         if not done.is_set():
+            left.set()
             with self._quiet():
                 self.close(grace=self.timeout_kill_grace)
                 t.join(0.5)
@@ -927,6 +1018,9 @@ class WorkerRunner(ItemRunner):
     def starting(self) -> tuple[str, float] | None:
         return self.worker.starting()
 
+    def reloading(self) -> tuple[str, float] | None:
+        return self.worker.reloading()
+
     def expect(self, test_key: str, token: object) -> None:
         super().expect(test_key, token)
         self.worker.arm(test_key)
@@ -944,19 +1038,67 @@ class WorkerRunner(ItemRunner):
     def close(self) -> None:
         self.worker.close()
 
-    def _run(self, test: TestModel, test_key: str) -> TestRunResult:
+    def _run(
+        self, test: TestModel, test_key: str, library: LibraryState | None
+    ) -> TestRunResult:
         """Run *test* on this worker. Never raises: a worker that cannot be
         restarted, and one that raises, are both a failed result."""
         # Armed before the restart below, so a cancel that arrives while the
         # worker is being brought back is heard when the test would start.
         self.worker.arm(test_key)
         try:
-            return self._run_armed(test, test_key)
+            return self._run_armed(test, test_key, library)
         finally:
             self.worker.disarm()
 
-    def _run_armed(self, test: TestModel, test_key: str) -> TestRunResult:
+    def _newer(self, library: LibraryState | None) -> bool:
+        """Whether *library* is a state the worker has not read yet."""
+        if library is None:
+            return False
+        return self.library is None or library.serial > self.library.serial
+
+    def _reload(self, library: LibraryState) -> Callable[[], None] | None:
+        """The live worker read the source files before *library* was
+        swept: make it read them again. Returns what does so under the
+        test's watchdog, for a worker that reads them in place; ``None``
+        for one that is restarted instead — done here, or failed here and
+        left closed for the restart of a dead worker to pick up."""
+        w = self.worker
+        held = self.library
+        # Every file that differs from what this worker read, across
+        # however many clicks it sat out; all of it when nobody knows what
+        # it read.
+        changes = library.changes_since(held) if held is not None else None
+        if not w.reloads_in_place:
+            try:
+                w.reload(changes)
+            except Exception as exc:
+                if not self.backend.quiet:
+                    print(
+                        f"  Worker {w.worker_id}: restart to read the library "
+                        f"again FAILED — {exc}",
+                        file=sys.stderr,
+                    )
+                w._close_quietly()
+            return None
+
+        def reload() -> None:
+            w._reload_began = time.monotonic()
+            try:
+                w.reload(changes)
+            finally:
+                w._reload_began = None
+            self.library = library
+
+        return reload
+
+    def _run_armed(
+        self, test: TestModel, test_key: str, library: LibraryState | None
+    ) -> TestRunResult:
         w, backend = self.worker, self.backend
+        before: Callable[[], None] | None = None
+        if library is not None and self._newer(library) and w.is_alive():
+            before = self._reload(library)
         if not w.is_alive():
             if w.tool_gone():
                 # Not closed by the test before: its tool died while it sat
@@ -982,6 +1124,10 @@ class WorkerRunner(ItemRunner):
                     error_message=self.retired,
                 )
             self._prev_killed_worker = False  # consumed by restart
+        if before is None and self._newer(library):
+            # A tool started just now — for this test, or back from a death
+            # — read the files after the click that swept *library*.
+            self.library = library
         if backend.progress is not None:
             backend.progress.on_start(test_key, worker_id=w.worker_id)
         timeout = float(
@@ -993,7 +1139,7 @@ class WorkerRunner(ItemRunner):
                 test_key,
                 timeout,
                 progress=backend.progress,
-                before=None,
+                before=before,
             )
         except Exception as exc:
             # review 2026-07-06 (finding 21): the Worker ABC contract permits

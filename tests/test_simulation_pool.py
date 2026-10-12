@@ -517,10 +517,10 @@ class TestCancel:
         keyed, go = threading.Event(), threading.Event()
         real_run = ItemRunner.run
 
-        def held(runner, test, test_key):
+        def held(runner, test, test_key, library=None):
             keyed.set()
             go.wait(15)
-            return real_run(runner, test, test_key)
+            return real_run(runner, test, test_key, library)
 
         monkeypatch.setattr(ItemRunner, "run", held)
         pool = SimulationPool(

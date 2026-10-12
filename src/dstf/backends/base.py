@@ -35,6 +35,7 @@ from .common.result_variables import merge_timing_stats, run_timing
 from .types import Capability, DatasetType, TestResult, TestRunResult
 
 if TYPE_CHECKING:
+    from ..discovery.library_state import LibraryState
     from .progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
@@ -373,6 +374,12 @@ class ItemRunner:
     #: pool then lets its thread go.
     retired: str | None = None
 
+    #: The state of the source files that the thing that runs tests has
+    #: read AT LEAST, for a runner whose tool stays alive between tests;
+    #: ``None`` while nobody said (it is then read again for the first test
+    #: that names a state).
+    library: "LibraryState | None" = None
+
     def __init__(self, backend: "Backend", worker_id: int):
         self.backend = backend
         self.worker_id = worker_id
@@ -397,8 +404,18 @@ class ItemRunner:
         this runner has nothing to start."""
         return None
 
-    def _run(self, test: TestModel, test_key: str) -> TestRunResult:
-        """Run *test* to its end on the calling thread."""
+    def reloading(self) -> tuple[str, float] | None:
+        """While a tool that is up reads the library again for the test it
+        is about to run: ``(phase, seconds so far)``, as :meth:`starting`.
+        ``None`` otherwise, and always here: this runner keeps no tool."""
+        return None
+
+    def _run(
+        self, test: TestModel, test_key: str, library: "LibraryState | None"
+    ) -> TestRunResult:
+        """Run *test* to its end on the calling thread. *library* is
+        nothing to this runner: its backend starts a process per test,
+        which reads the source as it is."""
         if self._cancel_asked:
             return TestRunResult(
                 model_id=test.model_id,
@@ -440,16 +457,28 @@ class ItemRunner:
         with self._lock:
             self._key, self._token, self._cancel_asked = test_key, token, False
 
-    def run(self, test: TestModel, test_key: str) -> TestRunResult:
+    def run(
+        self,
+        test: TestModel,
+        test_key: str,
+        library: "LibraryState | None" = None,
+    ) -> TestRunResult:
         """Run *test* to its end on the calling thread. Never raises on a
         test-level failure; a ``cancel`` makes it return promptly. A run
         nobody announced (``expect``) has no token and cannot be
-        cancelled."""
+        cancelled.
+
+        With *library* — the source files as swept when the test was queued
+        — the test runs against those files as they were then or later: a
+        runner whose live tool read them earlier reads them again first,
+        and a library that does not load is the test's failure, with the
+        tool's message. Without one (a CLI run, whose tools started for it)
+        nothing is asked."""
         with self._lock:
             if self._key != test_key:
                 self._key, self._token, self._cancel_asked = test_key, None, False
         try:
-            return self._run(test, test_key)
+            return self._run(test, test_key, library)
         finally:
             with self._lock:
                 self._key = self._token = None
