@@ -412,6 +412,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # --accept returns without a report, whatever --report says.
     if getattr(args, "accept", False) or not getattr(args, "report", False):
         _say_removed_pages(pages_removed)
+    # The verdicts status.json holds for these tests are of an earlier
+    # compare: cleared here, and stamped again below by a route that scores
+    # (an --accept scores nothing, and leaves none standing).
+    from ..backends.progress import stamp_verdicts
+
+    stamp_verdicts(config.work_dir, {t.model_id: None for t in tests})
 
     results = backend.read_last_results(tests)
 
@@ -463,7 +469,8 @@ def _show_reports(comparisons, results, tests, store, config, args) -> None:
     """What a scored ``run`` or ``compare`` shows — three independent
     things, and any combination does all of what it asks:
 
-    * the console verdict table, ALWAYS;
+    * ``verdicts.json`` in the work dir and the console verdict table,
+      ALWAYS;
     * ``--report``: the per-test pages;
     * ``--report-format junit|html``: that file, at ``--output``.
 
@@ -474,7 +481,11 @@ def _show_reports(comparisons, results, tests, store, config, args) -> None:
     is the caller's: ``_exit_code``.
     """
     from ..reporting.console_report import print_report
+    from ..reporting.verdicts import write_verdicts
 
+    # What was decided, for a script: one file, on every scoring route, and
+    # each test's verdict beside its simulation status in status.json.
+    write_verdicts(config.work_dir, comparisons, tests, results)
     print_report(comparisons)
     if getattr(args, "report", False):
         _generate_report_suite(

@@ -846,7 +846,34 @@ DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the
 - **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE — the worst among the test's criteria that are scored by `nrmse`, `—` for a test with none: a tube's, a range's or a checkpoint's own number is not an NRMSE and is not shown as one — Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/ref_NNNN/interactive.html` (`reports/test_NNNN/` for a test with no baseline), linked from the Test column. A name is a link only where this page read that test's report: a run clears the report pages of the tests it runs, so after a plain `run` or `compare`, and for a test the queue of `dstf author` ran, the name is plain text until a `--report` writes its page again. A `run` or `compare` that removed pages and is not writing them again says so in one line: ``Removed 12 per-test report pages written by an earlier --report (now stale); `compare --report` writes them again.``
 - **Which rows**: a live page lists the tests the running run holds. A final page lists the last run's tests and then every other test the command scored, in the work dir's manifest order. So `compare` after a `--filter` run, a `--merge` run, and a drained queue in `dstf author` list every test with its verdict; a plain `--filter` run without `--merge` lists only its own tests, because those are all it scored. A test the last run did not run keeps its per-test report (and its Reference link) while that report is newer than the test's own last run. The status bar of such a page names both counts: `Final report · 331 tests · last run: 1 test in 0.4s` — for a drained queue, the time from its first test's start to its last one's end.
 
-`status.json` and `batch_manifest.json`, beside the dashboard in the work dir, record the RUN: a test's `status` in `status.json` and its `last_run_status` in `batch_manifest.json` say whether its simulation ran. `"passed"` there means the simulation finished — not that the comparison passed. The verdict is on the console, in the JUnit file, on the dashboard and, after `--report`, in `reports/<dir>/comparison_data.json`.
+`status.json` and `batch_manifest.json`, beside the dashboard in the work dir, record the RUN: a test's `status` in `status.json` and its `last_run_status` in `batch_manifest.json` say whether its simulation ran. `"passed"` there means the simulation finished — not that the comparison passed. The comparison's verdict is the test's `verdict` in `status.json`, beside that `status`, once a `run` or `compare` has scored it — and in `verdicts.json`, on the console, in the JUnit file and on the dashboard (see "Reading results from a script").
+
+### Reading results from a script
+
+Four files say what a run decided; none needs the HTML parsed.
+
+| File | Written by | Holds |
+|---|---|---|
+| `<work_dir>/verdicts.json` | every `run` and `compare` that scores (not `--accept`, not `-i`), with or without `--report` | one entry per scored test — `model_id`, `test_id`, `status` (the console's word: `PASS`, `FAIL`, `SIM_FAIL`, `NO_REF`, `NOT RUN`), `message` (a failed simulation's error, a refusal), `warnings`, and `tree`, its criteria tree — plus `totals` by status word, the `exit_code` they give, and the run's `metadata` (backend, tool version, os) |
+| `<work_dir>/status.json` | the run, as it goes; the scoring command adds the verdicts | per test: `status` — what became of its SIMULATION (`queued`, `running`, `passed`, `failed`, `timed_out`, `cancelled`) — `verdict`, the comparison's word (`null` until it is scored), `phase` (`"done"` once its run has ended), `elapsed`, `worker_id` |
+| JUnit XML | `--report-format junit --output results.xml` | one testcase per test; a `<failure>` per FAIL with its failed criteria, an `<error>` per failed simulation |
+| `<work_dir>/reports/<dir>/comparison_data.json` | `--report`, one per test | that test's `summary` and its `tree_view` — the same tree as in `verdicts.json` — beside what its page draws |
+
+A node of `tree` is a group (`"kind": "combinator"`, with `combinator`, `children`, `passed`) or a criterion (`"kind": "leaf"`): `path` (the JSON pointer a `spec-update` patch names it by), `metric`, `variable`, `window`, `against` (the baseline it is scored against), `passed`, `advisory` (true under a `warn`: it cannot fail the test), `score` and `score_display` (its measure), `tolerance` (the tolerance it was scored with — its own, else the test's — for a metric that takes one; a tube's width and a range's bounds are in `params`), `criterion` (the sentence the console prints) and `details`. `tree` is `null` for a test nothing was compared for.
+
+```bash
+dstf --config testing.json run --no-browser
+python - <<'PY'
+import json
+doc = json.load(open("testing_output/MyLib/Dymola/linux/verdicts.json"))
+print(doc["totals"])
+for test in doc["tests"]:
+    if test["status"] == "FAIL":
+        print(test["model_id"])
+PY
+```
+
+`verdicts.json` holds the tests the last scoring command scored — a `--filter`ed run's are the filtered ones. It is removed, like the per-test pages, by the next run or compare of the work dir (and by a queue run of `dstf author`), which writes it again if it scores.
 
 The **Translate (s) / Sim (s) / Total (s)** columns — on the dashboard and on the Suite page of `dstf author` — are wall-clock seconds. Total is always the whole test; what Translate and Sim time depends on the backend:
 

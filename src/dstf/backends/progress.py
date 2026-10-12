@@ -16,16 +16,28 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+#: A test's ``phase`` once its run has ended. It used to keep the last
+#: phase it was seen in: a finished run's status.json said every test was
+#: still "finalizing".
+DONE_PHASE = "done"
 
 
 @dataclass
 class TestStatus:
     test_key: str
     model_id: str
-    # queued | running | passed | failed | timed_out | cancelled
+    #: What became of the test's SIMULATION: queued | running | passed |
+    #: failed | timed_out | cancelled. ``passed`` says the simulation
+    #: finished — NOT that the comparison passed: that is ``verdict``.
     status: str = "queued"
+    #: The comparison's verdict, as the console prints it (``PASS``,
+    #: ``FAIL``, ``SIM_FAIL``, ``NO_REF``, ``NOT RUN``), once a ``run`` or
+    #: ``compare`` has scored the test (`stamp_verdicts`); None until then.
+    verdict: str | None = None
     started_at: float | None = None  # time.monotonic — for accurate elapsed computation
     started_wall: float | None = (
         None  # time.time (epoch) — for JS to compute live "running for Ns"
@@ -36,9 +48,10 @@ class TestStatus:
     report_dir: str | None = (
         None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
     )
-    phase: str | None = (
-        None  # "translating" / "simulating" / ... while status == "running"
-    )
+    #: Where a RUNNING test is: "translating" / "simulating" / ... — and
+    #: ``DONE_PHASE`` once it has ended, however it ended. None before it
+    #: starts.
+    phase: str | None = None
     # Per-field provenance, plumbed from TestModel.field_sources via register().
     # Surfaced in the dashboard's Resolution column.
     field_sources: dict = field(default_factory=dict)
@@ -151,6 +164,7 @@ class ProgressReporter:
                     ts.status = "failed"
                 ts.elapsed = elapsed
                 ts.detail = detail
+                ts.phase = DONE_PHASE
         self._write()
 
     def load(
@@ -272,6 +286,32 @@ class ProgressReporter:
         written.
         """
         self._write(closing=True)
+
+
+def stamp_verdicts(work_dir: Path, verdicts: Mapping[str, str | None]) -> None:
+    """Set each test's ``verdict`` in ``status.json`` — ``{model_id: word}``,
+    None to clear one — beside its simulation ``status``, and leave every
+    other key as it is. For the command that scored the run, after the
+    reporter that wrote the snapshot has closed (and for a ``compare``,
+    which has no reporter at all). No snapshot, or no test of it named:
+    nothing is written."""
+    snapshot = read_status(work_dir)
+    if snapshot is None:
+        return
+    changed = False
+    for row in snapshot.get("tests") or []:
+        if isinstance(row, dict) and row.get("model_id") in verdicts:
+            verdict = verdicts[row["model_id"]]
+            if row.get("verdict") != verdict or "verdict" not in row:
+                row["verdict"] = verdict
+                changed = True
+    if not changed:
+        return
+    from ..storage.ref_index import _atomic_write_text
+
+    _atomic_write_text(
+        work_dir / "status.json", json.dumps(snapshot, indent=2, default=str)
+    )
 
 
 def read_status(work_dir: Path) -> dict | None:

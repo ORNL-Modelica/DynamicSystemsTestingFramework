@@ -98,7 +98,9 @@ def wipe_stale_state_for_scope(
     bleed through. Out-of-scope tests' directories are left untouched —
     that's what makes ``--merge`` and ``--rerun`` work.
 
-    Two layers of state to clear:
+    ``verdicts.json`` goes too, whole (:func:`remove_verdicts`).
+
+    Two layers of state to clear per test:
 
     1. Per-test report dir at ``<work_dir>/reports/<report_dir>/``. Holds
        the ``comparison_data.json`` sidecar (read by the dashboard's
@@ -120,7 +122,12 @@ def wipe_stale_state_for_scope(
     work_dir = config.work_dir
     assert work_dir is not None  # resolved in Config.__post_init__
     from .backends.base import last_test_keys
+    from .reporting.verdicts import remove_verdicts
 
+    # One file for every test: whatever this invocation re-processes, what
+    # it says of the run is about to be stale. A scoring run or compare
+    # writes it again.
+    remove_verdicts(work_dir)
     model_to_key = last_test_keys(work_dir)
 
     reports_root = work_dir / "reports"
@@ -343,7 +350,7 @@ class ItemRun:
         each row passed / failed / timed_out / cancelled. Items that never
         ran (removed, or failed before a worker started) have no row. The
         caller renders the final page (``render_final``) as after a run."""
-        from .backends.progress import ProgressReporter, TestStatus
+        from .backends.progress import DONE_PHASE, ProgressReporter, TestStatus
         from .reporting.dashboard_render import build_rerun_prefix
 
         work_dir = self.config.work_dir
@@ -369,6 +376,7 @@ class ItemRun:
                     test_key=item.test_key,
                     model_id=item.model_id,
                     status=status,
+                    phase=DONE_PHASE,
                     started_wall=item.started_at,
                     elapsed=rr.elapsed,
                     detail=None if rr.success else item.message,

@@ -129,6 +129,9 @@ uv run dstf --config testing.json run --rerun failed,sim-failed --report
 
 # Compare without re-running simulations (uses last results)
 uv run dstf --config testing.json compare
+# Every scoring run/compare writes work_dir/verdicts.json (per test: the console's status word and its
+# criteria tree with each node's verdict, measure and tolerance; the totals) and stamps each test's
+# `verdict` into status.json beside `status`, which is the SIMULATION's (docs/usage.md "Reading results from a script")
 
 # Machine-readable reports to a chosen path (--output works on run and compare). A run that scores (not `--accept`, not `-i`) prints the console verdict table;
 # --report and --report-format each add what they name, and together both.

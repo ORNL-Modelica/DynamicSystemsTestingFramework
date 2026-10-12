@@ -2273,9 +2273,14 @@ class Session:
         theme = project.config.theme
 
         def run() -> None:
+            from ..backends.progress import stamp_verdicts
             from ..reporting.dashboard_render import render_final
+            from ..reporting.verdicts import status_word
 
             write(items)
+            # Each row's verdict beside its simulation status, as a `run`
+            # leaves it: "passed" there says only that the simulation ran.
+            stamp_verdicts(work_dir, {c.model_id: status_word(c) for c in comparisons})
             # The page lists every test the Session scored, with its
             # verdict — not the queue's items alone.
             render_final(

@@ -115,6 +115,26 @@ def _in_effect(view: dict, base: tuple[float, str] | None) -> dict:
     return {"tolerance": {"value": float(value), "source": source}}
 
 
+def _leaf_tolerance(view: dict, vc: VariableComparison) -> float | dict | None:
+    """The tolerance a leaf was scored with, as written (`sides.as_written`),
+    for a metric that takes one — its config has the field — and scored by
+    it: a scalar with bounds does not. None otherwise: a tube's width, a
+    range's bounds and a table's rows are the leaf's own ``params``, and
+    the base tolerance the evaluator handed such a mode decided nothing."""
+    from ..comparison.mode_schema import derive_schema
+    from ..comparison.registry import metric
+    from ..comparison.sides import Sides, as_written
+
+    desc = metric(vc.mode or view.get("metric", ""))
+    if desc is None or {"min_value", "max_value"} & set(view.get("params") or {}):
+        return None
+    fields = {f.name for f in derive_schema(desc.config_cls, mode=desc.name).fields}
+    if "tolerance" not in fields:
+        return None
+    used = vc.tolerance_used
+    return as_written(used) if isinstance(used, Sides) else float(used)
+
+
 def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
@@ -164,6 +184,13 @@ def _augment_tree_view(
                 "error": (vc.diagnostics or {}).get("error"),
             }
         )
+        tolerance = _leaf_tolerance(view, vc)
+        if tolerance is not None:
+            # The tolerance the criterion was scored with — its own, else
+            # the test's — as data (a number, or a lower/upper pair): what
+            # a script reads off `verdicts.json` and the sidecar without
+            # parsing the criterion sentence.
+            view["tolerance"] = tolerance
         in_effect = _in_effect(view, base_tolerance)
         if in_effect:
             view["in_effect"] = in_effect
