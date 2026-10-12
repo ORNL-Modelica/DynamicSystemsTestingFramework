@@ -571,14 +571,16 @@ def _build_key_stats(
 
 def _build_warning_rows(warnings: list | None) -> list:
     """Translate :class:`StructuralWarning` instances into the row dicts
-    the template iterates over. Trivial wrapper, kept as a helper for
-    symmetry with the other ``_build_*`` extractors.
+    the template iterates over: a change as its three cells, a statement
+    (``is_change`` false) as its one sentence, ``text``.
     """
     return [
         {
             "field": w.field,
             "reference": str(w.reference_value),
             "current": str(w.current_value),
+            "is_change": w.is_change,
+            "text": w.text,
         }
         for w in (warnings or [])
     ]

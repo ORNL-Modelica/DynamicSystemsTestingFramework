@@ -157,6 +157,90 @@ def _warned(model_id="Lib.Examples.E"):
     )
 
 
+def _stated(model_id="Lib.Examples.S"):
+    """A warning that states something about this run, beside one that
+    reports a change from the baseline."""
+    return TestComparison(
+        model_id=model_id,
+        passed=True,
+        variables=[_var()],
+        warnings=[
+            StructuralWarning(
+                "Tracked but not scored by any criterion", statement="unitTests.x[2]"
+            ),
+            StructuralWarning("Event count", "3", "5"),
+        ],
+    )
+
+
+_STATED = "Tracked but not scored by any criterion: unitTests.x[2]"
+
+
+class TestAStatementIsNotAChange:
+    """A structural warning with no baseline side is said as a sentence on
+    every surface that prints warnings; only a change reads `ref -> cur`."""
+
+    def test_the_two_forms(self):
+        stated, changed = _stated().warnings
+        assert (stated.text, stated.is_change) == (_STATED, False)
+        assert (changed.text, changed.is_change) == ("Event count: 3 -> 5", True)
+
+    def test_the_console_report(self, capsys):
+        print_report([_stated()])
+        lines = capsys.readouterr().out.splitlines()
+        assert f"    {_STATED}" in lines
+        assert "    Event count: 3 -> 5" in lines
+
+    def test_the_interactive_review(self, capsys):
+        from dstf.cli.review import _print_detail
+
+        _print_detail(_stated())
+        lines = capsys.readouterr().out.splitlines()
+        assert f"      {_STATED}" in lines
+        assert "      Event count: 3 -> 5" in lines
+
+    def test_the_report_page(self, tmp_path):
+        import re
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 5)
+        ref = {
+            "test_id": "0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "h", "values": t.tolist()}],
+        }
+        result = TestResult(
+            model_id="Lib.Examples.S",
+            success=True,
+            variables=[VariableResult(index=1, name="h", time=t, values=t)],
+        )
+        comp = _stated()
+        html = generate_comparison_plots(
+            comp.model_id,
+            ref,
+            result,
+            comp.variables,
+            tmp_path / "plots",
+            warnings=comp.warnings,
+            plots=[],
+        )
+        page = Path(html).read_text(encoding="utf-8")
+        block = re.search(
+            r'<div class="warnings-prominent">(.*?)</div>', page, re.DOTALL
+        ).group(1)
+        assert "Structural Warnings (2)" in block
+        # the statement: one sentence, in no Reference / Current column
+        assert f'<p class="warning-statement">{_STATED}</p>' in block
+        # the change: its row of three cells, and only it
+        assert re.findall(r"<tr><td>(.*?)</td></tr>", block) == [
+            "Event count</td><td>3</td><td>5"
+        ]
+
+
 # --------------------------------------------------------------------------
 # JUnit XML — the external-contract formatter
 # --------------------------------------------------------------------------

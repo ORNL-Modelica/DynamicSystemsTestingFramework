@@ -122,7 +122,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
         for comp in warned:
             print(f"\n  {comp.model_id}")
             for w in comp.warnings:
-                print(f"    {w.field}: {w.reference_value} -> {w.current_value}")
+                print(f"    {w.text}")
 
     return exit_code(comparisons)
 

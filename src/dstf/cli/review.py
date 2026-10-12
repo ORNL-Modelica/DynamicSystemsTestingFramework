@@ -370,5 +370,5 @@ def _print_detail(comp) -> None:
     if comp.warnings:
         print("    Structural warnings:")
         for w in comp.warnings:
-            print(f"      {w.field}: {w.reference_value} -> {w.current_value}")
+            print(f"      {w.text}")
     print()

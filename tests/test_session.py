@@ -1183,8 +1183,7 @@ class TestRescoreAndStage:
         comp = session.comparisons[G]
         assert classify(comp) == PASS  # y is not judged
         (warning,) = comp.warnings
-        assert warning.field == "Tracked variables without a criterion"
-        assert warning.current_value == "y" and "1 scored" in warning.reference_value
+        assert warning.text == "Tracked but not scored by any criterion: y"
         # Cover it and the warning goes.
         session.stage(
             [

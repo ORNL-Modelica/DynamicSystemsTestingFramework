@@ -385,9 +385,8 @@ def _tracked_but_not_scored(
     if not unscored:
         return None
     return StructuralWarning(
-        field="Tracked variables without a criterion",
-        reference_value=f"{len(covered)} scored by the tree",
-        current_value=", ".join(unscored),
+        field="Tracked but not scored by any criterion",
+        statement=", ".join(unscored),
     )
 
 

@@ -69,6 +69,7 @@ details summary:hover { color: var(--dstf-text); }
 .warnings-prominent { margin-bottom: 1.5em; padding: 1em; background: var(--dstf-warn-tint); border: 1px solid var(--dstf-warn-border); border-radius: 4px; }
 .warnings-prominent h2 { margin-top: 0; border: none; padding: 0 0 0.4em 0; }
 .warnings-prominent table { margin: 0; }
+.warnings-prominent .warning-statement { margin: 0 0 0.6em 0; }
 .meta-table { width: auto; min-width: 400px; }
 .meta-table td:first-child { font-weight: 500; white-space: nowrap; }
 /* Advisory (warn-wrapped) failure marker — C-v item (c). A leaf under a
@@ -228,12 +229,20 @@ details summary:hover { color: var(--dstf-text); }
 {% if warnings %}
 <div class="warnings-prominent">
   <h2>Structural Warnings ({{ warnings | length }})</h2>
+  {# A statement about this run is a sentence; only a change from the
+     baseline has a Reference and a Current to put in columns. #}
+  {% for w in warnings if not w.is_change %}
+  <p class="warning-statement">{{ w.text }}</p>
+  {% endfor %}
+  {% set changes = warnings | selectattr('is_change') | list %}
+  {% if changes %}
   <table>
     <tr><th>Field</th><th>Reference</th><th>Current</th></tr>
-    {% for w in warnings %}
+    {% for w in changes %}
     <tr><td>{{ w.field }}</td><td>{{ w.reference }}</td><td>{{ w.current }}</td></tr>
     {% endfor %}
   </table>
+  {% endif %}
 </div>
 {% endif %}
 

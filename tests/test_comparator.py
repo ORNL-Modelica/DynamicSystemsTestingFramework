@@ -3061,9 +3061,11 @@ class TestTheFlatPathScoresWhatTheTestTracks:
 
 
 def test_a_tree_warns_only_of_the_tracked_variables_it_does_not_score():
-    """ "Tracked variables without a criterion" names what the test TRACKS
+    """ "Tracked but not scored by any criterion" names what the test TRACKS
     and no leaf covers — never a variable the result merely holds (one a
-    discarded criterion had re-read, or a rerun with it pending recorded)."""
+    discarded criterion had re-read, or a rerun with it pending recorded).
+    It is a statement about this run, not a change from the baseline: the
+    old `1 scored by the tree -> y` read as if `y` were the scored one."""
     test = _make_test()
     test.variable_patterns = ["x", "y"]
     test.metric_tree_spec = parse_metric_tree(
@@ -3072,9 +3074,10 @@ def test_a_tree_warns_only_of_the_tracked_variables_it_does_not_score():
     comp = compare_test(
         test, _tracked_result("x", "y", "w"), _tracked_reference("x", "y"), 1e-4
     )
-    assert [(w.field, w.current_value) for w in comp.warnings] == [
-        ("Tracked variables without a criterion", "y")
-    ]
+    (warning,) = comp.warnings
+    assert warning.text == "Tracked but not scored by any criterion: y"
+    assert not warning.is_change
+    assert (warning.reference_value, warning.current_value) == ("", "")
 
 
 # ---------------------------------------------------------------------------

@@ -99,11 +99,34 @@ class ScoreSummary:
 
 @dataclass
 class StructuralWarning:
-    """Warning about structural changes between reference and current run."""
+    """A warning beside a test's verdict, in one of two forms.
+
+    A CHANGE between the baseline and this run: ``field`` with
+    ``reference_value`` and ``current_value`` — ``Event count: 3 -> 5``.
+
+    A STATEMENT about this run alone: ``field`` and ``statement`` —
+    ``Tracked but not scored by any criterion: unitTests.x[2]``. It has no
+    baseline side; laid out as a change (``1 scored by the tree ->
+    unitTests.x[2]``) it read as one between two runs, and backwards.
+
+    A surface prints :attr:`text`, or asks :attr:`is_change` before it
+    lays the two values out in columns.
+    """
 
     field: str
-    reference_value: str
-    current_value: str
+    reference_value: str = ""
+    current_value: str = ""
+    statement: str = ""
+
+    @property
+    def is_change(self) -> bool:
+        return not self.statement
+
+    @property
+    def text(self) -> str:
+        if self.statement:
+            return f"{self.field}: {self.statement}"
+        return f"{self.field}: {self.reference_value} -> {self.current_value}"
 
 
 @dataclass

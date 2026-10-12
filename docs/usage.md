@@ -354,8 +354,9 @@ The `scalar` metric scores a single number instead of a trajectory. Its required
 
 A tree scores only what its leaves name. Every other tracked variable — one the
 `variables` list or a pattern in it still matches — is stored, plotted and
-never judged, and the comparison carries a structural warning, "Tracked
-variables without a criterion", naming it on the console and the report page.
+never judged, and the comparison carries a structural warning naming it on
+the console and the report page: `Tracked but not scored by any criterion:
+tank.level`.
 The flat path (no `metrics` block) has no such gap: it scores every tracked
 variable. So a pattern such as `"variables": ["tank.*"]` keeps tracking new
 matches after a tree exists, and the warning is how you learn one needs a leaf.
