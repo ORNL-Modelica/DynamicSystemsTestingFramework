@@ -232,16 +232,35 @@ def test_a_refused_testing_json_is_one_line_and_exit_two(tmp_path, capsys):
 @pytest.mark.parametrize(
     ("keys", "rows", "sampling"),
     [
-        ({}, 5000, {"setting": "all", "source_points": 5000, "stored_points": 5000}),
+        (
+            {},
+            5000,
+            {
+                "setting": "all",
+                "source_points": 5000,
+                "stored_points": 5000,
+                "precision": "double",
+            },
+        ),
         (
             {"baseline_points": 2000},
             5000,
-            {"setting": 2000, "source_points": 5000, "stored_points": 2000},
+            {
+                "setting": 2000,
+                "source_points": 5000,
+                "stored_points": 2000,
+                "precision": "double",
+            },
         ),
         (
             {"baseline_points": 2000},
             1500,
-            {"setting": 2000, "source_points": 1500, "stored_points": 1500},
+            {
+                "setting": 2000,
+                "source_points": 1500,
+                "stored_points": 1500,
+                "precision": "double",
+            },
         ),
     ],
     ids=["all", "thinned", "a number over the rows"],
@@ -297,11 +316,217 @@ def test_the_key_changes_an_existing_baseline_only_when_it_is_accepted_again(
         "setting": 50,
         "source_points": 5000,
         "stored_points": 50,
+        "precision": "double",
     }
     assert len(again["time"]) == 50
 
 
 # -- test_spec.json: a test's own value ---------------------------------------
+
+# -- a baseline holds its run's own numbers -----------------------------------
+#
+# Dymola writes single-precision result files. A float32 written at 7
+# significant digits is a different float32 more often than not, and read
+# as a double it is a different number than the run holds every time:
+# a baseline accepted from a run scored up to 6e-2 against that same run.
+
+
+def _single(time, **variables) -> TestResult:
+    """A single-precision run: every array float32, as a Dymola file's."""
+    time = np.asarray(time, dtype=np.float32)
+    return TestResult(
+        model_id=M,
+        success=True,
+        variables=[
+            VariableResult(
+                index=i, time=time, values=np.asarray(v, dtype=np.float32), name=name
+            )
+            for i, (name, v) in enumerate(variables.items(), start=1)
+        ],
+    )
+
+
+def _bits(values) -> bytes:
+    return np.asarray(values, dtype=np.float32).tobytes()
+
+
+def _awkward(rows: int = 4000) -> TestResult:
+    """Random single-precision numbers of every size, with the ones a
+    round trip gets wrong first: subnormals, both zeros, the largest and
+    the smallest; and a time vector with event rows (a time written
+    twice)."""
+    rng = np.random.default_rng(20261012)
+    spread = (rng.standard_normal(rows) * 10.0 ** rng.uniform(-30, 30, rows)).astype(
+        np.float32
+    )
+    tiny = np.float32(1e-45)  # the smallest subnormal
+    edge = np.array(
+        [0.0, -0.0, tiny, -tiny, 7e-42, 1.17549435e-38, 3.4028235e38, -3.4028235e38],
+        dtype=np.float32,
+    )
+    spread[: edge.size] = edge
+    # the measured case: a level of 130450 over a range of 0.4
+    level = (130450.0 + 0.4 * rng.random(rows)).astype(np.float32)
+    step = rng.uniform(1e-4, 3.0, rows).astype(np.float32)
+    step[::97] = 0.0  # an event: this row repeats the time of the last
+    time = np.cumsum(step, dtype=np.float32)
+    return _single(time, spread=spread, level=level, i=np.arange(rows))
+
+
+def test_a_single_precision_run_round_trips_bit_for_bit(tmp_path):
+    result = _awkward()
+    reference = _stored(
+        _config(tmp_path), result, make_test_model(M, variable_patterns=["*"])
+    )
+    assert reference["sampling"]["precision"] == "single"
+    time = result.variables[0].time
+    assert sum(a == b for a, b in zip(time, time[1:])) >= 40  # events are in it
+    assert _bits(reference["time"]) == time.tobytes()
+    for stored, var in zip(reference["variables"], result.variables, strict=True):
+        assert _bits(stored["values"]) == var.values.tobytes(), var.name
+        # ... and what is handed on IS that number, as a Python float:
+        # not the double its 9 digits spell
+        assert stored["values"] == var.values.astype(np.float64).tolist(), var.name
+        assert all(type(v) is float for v in stored["values"][:5])
+
+
+@pytest.mark.parametrize("points", ["all", 300], ids=["every point", "thinned"])
+def test_a_single_precision_baseline_scores_exactly_zero_against_its_run(
+    tmp_path, points
+):
+    config = _config(tmp_path, baseline_points=points)
+    result = _awkward()
+    test = make_test_model(M, variable_patterns=["spread", "level", "i"])
+    _stored(config, result, test)
+    (comp,) = compare_all([test], {M: result}, ReferenceStore(config))
+    assert comp.passed
+    assert [(v.name, v.nrmse) for v in comp.variables] == [
+        ("spread", 0.0),
+        ("level", 0.0),
+        ("i", 0.0),
+    ]
+
+
+def test_a_single_precision_value_is_written_with_nine_digits(tmp_path):
+    """The fewest that identify a float32. `0.1f` is 0.100000001490116…:
+    seven digits wrote `0.1`."""
+    config = _config(tmp_path)
+    _stored(config, _single([0.0, 1.0], x=[0.1, 16777217.0]))
+    (path,) = config.reference_dir.glob("ref_*.json")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["variables"][0]["values"] == [0.100000001, 16777216.0]
+
+
+def test_a_double_precision_run_is_stored_and_read_as_it_always_was(tmp_path):
+    third = 1.0 / 3.0
+    result = _run(8)
+    result.variables[1].values = result.variables[1].values + third
+    config = _config(tmp_path)
+    reference = _stored(config, result)
+    assert reference["sampling"]["precision"] == "double"
+    # 15 significant digits, and no trip through float32 on the way back
+    assert reference["variables"][1]["values"][0] == float("%.15g" % third)
+    assert reference["variables"][1]["values"][0] != float(np.float32(third))
+
+
+def test_one_double_array_among_single_ones_is_a_double_baseline(tmp_path):
+    """The reader takes EVERY array of a `single` file through float32,
+    which would move a double: the mark is for a run with none."""
+    time = np.array([0.0, 0.5, 1.0])  # float64
+    result = TestResult(
+        model_id=M,
+        success=True,
+        variables=[
+            VariableResult(
+                index=1,
+                time=time,
+                values=np.array([0.1, 0.2, 0.3], dtype=np.float32),
+                name="x",
+            )
+        ],
+    )
+    reference = _stored(
+        _config(tmp_path), result, make_test_model(M, variable_patterns=["x"])
+    )
+    assert reference["sampling"]["precision"] == "double"
+    # its single-precision values: nine digits, read as the doubles they spell
+    assert reference["variables"][0]["values"] == [
+        0.100000001,
+        0.200000003,
+        0.300000012,
+    ]
+
+
+def test_a_reference_without_the_precision_is_read_as_it_always_was(tmp_path):
+    """Old data: every baseline stored before the field has none, holds
+    seven digits, and is the JSON's own doubles."""
+    config = _config(tmp_path)
+    _stored(config, _single([0.0, 1.0], x=[0.1, 0.2]))
+    (path,) = config.reference_dir.glob("ref_*.json")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["sampling"].pop("precision") == "single"
+    raw["variables"][0]["values"] = [0.1, 0.2]  # as seven digits wrote them
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    reference = ReferenceStore(config).get_reference(M)
+    assert reference["variables"][0]["values"] == [0.1, 0.2]
+    assert reference["variables"][0]["values"] != [
+        float(np.float32(0.1)),
+        float(np.float32(0.2)),
+    ]
+
+
+def test_every_reader_of_a_reference_file_reads_it_through_the_one_function(
+    tmp_path,
+):
+    """The sibling-partition overlays and `import-baseline` read a
+    reference file too: a single-precision one gives them the same
+    numbers."""
+    from dstf.reporting.overlay_loader import _ref_data_to_overlay_vars
+    from dstf.storage.reference_store import read_reference_file
+
+    config = _config(tmp_path)
+    _stored(config, _single([0.0, 1.0], x=[0.1, 0.2]))
+    (path,) = config.reference_dir.glob("ref_*.json")
+    data = read_reference_file(path)
+    assert data["variables"][0]["values"] == [
+        float(np.float32(0.1)),
+        float(np.float32(0.2)),
+    ]
+    overlay = _ref_data_to_overlay_vars(data)["x"]
+    assert list(overlay.values) == data["variables"][0]["values"]
+
+
+# -- a run with no rows -------------------------------------------------------
+
+
+def test_a_result_with_no_rows_is_not_stored_and_the_accept_says_so(tmp_path):
+    """It was stored: a baseline of no points, which nothing can be scored
+    against."""
+    config = _config(tmp_path)
+    empty = np.array([], dtype=float)
+    result = TestResult(
+        model_id=M,
+        success=True,
+        variables=[VariableResult(index=1, time=empty, values=empty, name="x")],
+    )
+    test = make_test_model(M, variable_patterns=["x"])
+    store = ReferenceStore(config)
+    with pytest.raises(ValueError, match="no rows to store"):
+        store.store_reference(test, result)
+    stored, skipped = store.accept_results([test], {M: result})
+    assert stored == []
+    assert skipped == [
+        (M, f"refusing to store baseline for {M}: the result has no rows to store")
+    ]
+    assert list(config.reference_dir.glob("ref_*.json")) == []
+
+
+def test_thinning_no_rows_gives_no_rows():
+    """`_downsample` returns a run within its budget whole — a run of none
+    included (its thinning indexes the first and the last row)."""
+    empty = np.array([], dtype=float)
+    assert _downsample(empty, empty, 5) == ([], [])
+
 
 #: A key that is not written at all.
 ABSENT = object()
@@ -345,14 +570,23 @@ def test_the_tests_key_beats_the_projects(tmp_path, project, entry, setting, sto
     (test,) = discover_tests(config)
     assert test.baseline_points == (None if entry is ABSENT else entry)
 
-    reference = _stored(config, _run(5000, EVENTS), test)
+    result = _run(5000, EVENTS)
+    reference = _stored(config, result, test)
 
     assert len(reference["time"]) == stored
     assert reference["sampling"] == {
         "setting": setting,
         "source_points": 5000,
         "stored_points": stored,
+        "precision": "double",
     }
+    # The VALUES are thinned by the same number as the time — the same
+    # rows, for every variable: a baseline whose values were thinned by the
+    # project's number under a time thinned by the test's would pass the
+    # length of its time alone.
+    kept = _kept(reference)
+    assert len(kept) == stored
+    assert _holds_rows(reference, result, kept)
 
 
 def test_a_test_found_in_the_source_takes_the_key_from_its_spec_entry():
@@ -436,12 +670,14 @@ def test_the_tools_accept_stores_the_points_the_tests_key_says(tmp_path):
         "setting": 3,
         "source_points": 5,
         "stored_points": 3,
+        "precision": "double",
     }
     assert store.get_reference(A)["time"] == [0.0, 0.5, 1.0]
     assert store.get_reference(B)["sampling"] == {
         "setting": "all",
         "source_points": 5,
         "stored_points": 5,
+        "precision": "double",
     }
 
 

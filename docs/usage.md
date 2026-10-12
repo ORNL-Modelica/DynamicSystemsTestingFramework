@@ -592,7 +592,7 @@ compare reads them as they are. Each reference JSON says what its file holds,
 under `sampling`:
 
 ```json
-"sampling": {"setting": "all", "source_points": 5021, "stored_points": 5021}
+"sampling": {"setting": "all", "source_points": 5021, "stored_points": 5021, "precision": "single"}
 ```
 
 `setting` is the `baseline_points` in effect for the test when it was accepted,
@@ -600,6 +600,16 @@ under `sampling`:
 reference with no `sampling` was stored before the key existed, when every
 baseline was thinned to at most 2000 points; it loads and scores as it always
 did. To keep storing baselines that way, set `"baseline_points": 2000`.
+
+**A baseline holds its run's own numbers.** `precision` says what the run's
+arrays were. A `"single"` baseline — Dymola writes single-precision result
+files — is written with 9 significant digits, the fewest that identify a
+single-precision number, and read back through single precision: each stored
+value is the run's, bit for bit, so a baseline scores exactly `0` against the
+run it was accepted from. A `"double"` one is written with 15 digits, as
+always. A reference without the field was written with 7 digits for a
+single-precision run; it is read as the numbers its file spells, as before,
+and scores as it did until its test is accepted again.
 
 **A large baseline is said when it is accepted.** Keeping every point of a
 very long run makes a large file. When a baseline file just written is
@@ -2089,7 +2099,7 @@ ReferenceResults/
 
 References are partitioned by backend and OS because different solvers and platforms produce numerically different results. The bundled examples ship these partitions: `examples/modelica` — `Dymola/linux`, `Dymola/windows`, `OpenModelica/linux`; `examples/fmu` — `FMPy/linux`, `FMPy/windows`; `examples/julia` — `Julia/linux`; `examples/python` — `Python/linux`. A first run on an OS the backend has no partition for reports every test `NO_REF` until `run --accept` stores its baselines there. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
 
-Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. Its `sampling` record says how many of the run's points the file keeps (see "The points a baseline stores"); a file without one was stored before the record existed. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key was produced by a version older than that rule, which `dstf migrate-variable-names` brings forward.
+Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. Its `sampling` record says how many of the run's points the file keeps and the precision they were written from (see "The points a baseline stores"); a file without one was stored before the record existed. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key was produced by a version older than that rule, which `dstf migrate-variable-names` brings forward.
 
 **Status field:** Each ref file has a `status` field:
 - `active` — normal, included in test runs

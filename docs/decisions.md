@@ -8256,8 +8256,14 @@ kept points. A baseline has ONE time vector for all its variables: the
 points are chosen per test, not per variable. An existing baseline keeps
 the points it has until its test is accepted again, whatever the key says
 now; its `sampling` record, or the lack of one, says how it was stored.
-"Every point" is every row: the values are written at 15 significant
-digits (7 for a single-precision result file), as they always were.
+"Every point" is every row. The values of a double-precision run are
+written at 15 significant digits, as they always were; a single-precision
+run's (every Dymola result file measured here) are written at 9 and read
+back through single precision — see the 2026-10-12 addendum below. This
+entry first said 7, "as they always were": at 7 digits a stored value is a
+different float32 than the run's more often than not (56–67 % of random
+values, measured; 0.7–1.2 % at 8; none at 9), and a baseline accepted from
+a run did not score 0 against it.
 
 **What is not built.** Sampling by region — segments, chosen times, a
 different density in different parts of a run — is deferred
@@ -8280,6 +8286,39 @@ the next time it is accepted, and its `nrmse` is then an average over more
 points — the score of such a test can differ from the one its thinned
 baseline gave. A project that wants its baselines stored as before sets
 `"baseline_points": 2000`.
+
+**Addendum, 2026-10-12 — a baseline holds its run's own numbers.** A
+baseline accepted from a run must score exactly 0 against that run, and
+did not: `_to_json_list` wrote a float32 array at 7 significant digits,
+and a JSON reader makes a double of what it reads. On the 330 real runs —
+all single precision — 665 of the 873 scored criteria were non-zero
+against their own run: median 4.8e-8, 74 above 1e-6, the largest 6.28e-2
+(a signal of range 0.4 at a level of 130450, where the seventh digit is
+the signal). Three changes, in one place each:
+
+- a float32 array is written at **9** significant digits
+  (`reference_store.SINGLE_DIGITS`), the fewest that identify a float32;
+  float64 stays at 15;
+- `sampling` gains **`precision`**, always written: `"single"` when the
+  time vector and EVERY stored value array were float32, else `"double"`;
+- `reference_store.read_reference_file`, the one reader of a
+  reference-shape file (the store, the sibling-partition overlays,
+  `import-baseline`), takes each stored number of a `"single"` file back
+  through float32. The arrays stay lists of Python floats: each is the
+  run's own single-precision number, widened.
+
+A file without the field reads exactly as before — the same 873 scores,
+bit for bit, against the baselines stored before this. Measured after an
+accept of the 330: every one of the 873 criteria is exactly 0.0; verdicts
+unchanged (330 PASS, 1 SIM_FAIL); the reference directory goes from 24.7
+MB (every point, 7 digits) to 27.2 MB, its two largest files from 5.4 and
+5.2 MB to 5.8 and 5.5 MB — the same two files the 5 MB warning named; and
+`"baseline_points": 2000` keeps the same rows as before for all 330 (11
+of them thinned). Known limit: a run of mixed precision is `"double"`,
+and its single-precision arrays are then the doubles their 9 digits
+spell — within 1e-9 of the run, not equal to it. And a result with NO
+rows is refused at accept (`no rows to store`): it was stored as a
+baseline of no points.
 
 ## D154 — What nothing reads is an error; an unscorable criterion is refused by the write that makes it (2026-10-12)
 

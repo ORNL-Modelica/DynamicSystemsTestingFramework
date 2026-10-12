@@ -33,6 +33,19 @@ from .roles import _companion_dir, _RolesMixin, _soft_check_dir
 logger = logging.getLogger(__name__)
 
 
+#: Significant digits a value is written with, by the precision it has. 9
+#: identify a single-precision number (IEEE 754 binary32 needs at most 9
+#: decimal digits to round-trip); 15 is what a double was always written
+#: with.
+SINGLE_DIGITS = 9
+DOUBLE_DIGITS = 15
+
+#: ``sampling.precision`` of a reference JSON whose time and value arrays
+#: were ALL single precision in the run it was accepted from.
+SINGLE = "single"
+DOUBLE = "double"
+
+
 def read_reference_file(path: Path) -> dict:
     """A reference-shape JSON file as the dict it holds — THE reader of a
     baseline's arrays (``time``, each variable's ``values``): a primary
@@ -40,9 +53,36 @@ def read_reference_file(path: Path) -> dict:
     a sibling one (the report's overlays) and the source of an
     ``import-baseline`` all come through here. ``OSError`` and
     ``json.JSONDecodeError`` are the caller's: each says its own thing
-    about a file it could not read."""
+    about a file it could not read.
+
+    A file that says its run was single precision (``sampling.precision``)
+    is read back THROUGH single precision: each stored number becomes the
+    nearest float32, as a Python float. Those are the run's own values, bit
+    for bit — the 9 digits written identify a float32, not the double a
+    JSON reader would otherwise make of them, which is a different number
+    than the one the run holds (and scored a baseline against its own run
+    at up to 6e-2 where the signal's range was small beside its level).
+    The arrays stay lists of floats: nothing downstream sees another type.
+    A file without the field is read exactly as it always was."""
     data = json.loads(path.read_text(encoding="utf-8"))
+    sampling = data.get("sampling") if isinstance(data, dict) else None
+    if isinstance(sampling, dict) and sampling.get("precision") == SINGLE:
+        if isinstance(data.get("time"), list):
+            data["time"] = _through_single(data["time"])
+        for entry in data.get("variables") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("values"), list):
+                entry["values"] = _through_single(entry["values"])
     return data
+
+
+def _through_single(values: list) -> list:
+    """``values`` as the float32 nearest each, widened back: Python floats
+    that ARE single-precision numbers. Anything that is not all numbers is
+    returned as it is — what such a list means is its reader's to say."""
+    try:
+        return np.asarray(values, dtype=np.float32).astype(np.float64).tolist()
+    except (TypeError, ValueError):
+        return values
 
 
 def _baseline_from_flat(data: dict) -> Baseline:
@@ -183,7 +223,8 @@ class ReferenceStore(_RolesMixin):
         """Store simulation results as a new reference baseline.
 
         Raises :class:`ValueError` when the trajectory contains non-finite
-        values — callers that accept in bulk should catch it per test.
+        values or no rows at all — callers that accept in bulk should catch
+        it per test.
         """
         if not result.success or not result.variables:
             return False
@@ -195,6 +236,13 @@ class ReferenceStore(_RolesMixin):
         # that strict parsers reject. Name the model + variable so accept
         # flows can skip it and tell the user which signal is bad.
         time_arr = np.asarray(result.variables[0].time, dtype=float)
+        if time_arr.size == 0:
+            # A baseline of no points is one nothing can be scored against:
+            # said here, where an accept skips the test with the reason.
+            raise ValueError(
+                f"refusing to store baseline for {test.model_id}: the result "
+                "has no rows to store"
+            )
         if time_arr.size and not np.all(np.isfinite(time_arr)):
             raise ValueError(
                 f"refusing to store baseline for {test.model_id}: the time "
@@ -286,6 +334,16 @@ class ReferenceStore(_RolesMixin):
                 "setting": setting,
                 "source_points": len(shared_time),
                 "stored_points": len(shared_time_list),
+                # Always written. "single" only when the time vector and
+                # EVERY value array were single precision: the reader then
+                # takes each stored number back through float32
+                # (`read_reference_file`), which would move a double.
+                "precision": SINGLE
+                if all(
+                    np.asarray(a).dtype == np.float32
+                    for a in (shared_time, *(v.values for v in result.variables))
+                )
+                else DOUBLE,
             },
         }
 
@@ -580,11 +638,14 @@ def _downsample(
 def _to_json_list(arr: np.ndarray) -> list[float]:
     """Convert numpy array to JSON-serializable list of Python floats.
 
-    Rounds to significant digits matching the source precision:
-    - float32 (older Dymola): 7 significant digits
-    - float64 (newer Dymola): 15 significant digits
-    This avoids noise from float32→float64 promotion while preserving
-    full precision for native float64 data.
+    Rounds to the significant digits that identify a value of the source's
+    precision (:data:`SINGLE_DIGITS`, :data:`DOUBLE_DIGITS`):
+    - float32 (Dymola's single-precision result files): 9 — the fewest
+      that round-trip every float32, so the reader can give the run's own
+      number back (`read_reference_file`). At 7, which this wrote before,
+      a stored value was a different float32 than the run's more often
+      than not.
+    - float64: 15, as always.
     """
-    sig = 7 if arr.dtype == np.float32 else 15
+    sig = SINGLE_DIGITS if arr.dtype == np.float32 else DOUBLE_DIGITS
     return [float(f"%.{sig}g" % v) for v in arr]
