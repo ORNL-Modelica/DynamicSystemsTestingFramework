@@ -387,7 +387,8 @@ class OpenModelicaWorker(Worker):
         """``loadFile`` again, in the live omc: each changed file of the
         library by itself where that is enough and the cheaper way, else
         its ``package.mo`` — the whole library; a dependency given as a
-        path that holds a changed file is loaded whole.
+        path that holds a changed file is loaded whole, and the classes
+        that must exist after it are the ones its file names.
 
         omc KEEPS the classes it holds when a load fails — a run would
         then pass on the old model — so every failure here raises
@@ -418,7 +419,14 @@ class OpenModelicaWorker(Worker):
                 continue  # by name: omc found it, and nothing swept it
             if touched is None or any(under(path, root) for path in touched):
                 _, dep_file = classify_dependency(dep)
-                self._load_whole(dep_file, root.stem)
+                # Its classes are named by its file, never by its
+                # directory: `Lib 1.0.0`, a symbolic link of any name.
+                names, error = self._classes_in(dep_file)
+                if error is None and not names:
+                    error = "it holds no class"
+                if error is not None:
+                    raise LibraryReloadError(f"{root.name} does not load: {error}")
+                self._load_whole(dep_file, *names)
         files = self._files_to_load_again(changes)
         if files is None:
             began = time.monotonic()
@@ -449,13 +457,31 @@ class OpenModelicaWorker(Worker):
             return None
         return sorted(changed)
 
-    def _load_whole(self, package_file: str, name: str) -> None:
+    def _classes_in(self, file: str) -> tuple[list[str], str | None]:
+        """The top-level classes *file* holds, as ``parseFile`` names them
+        — which loads nothing — or omc's message for a file it cannot
+        parse."""
+        self._step = f'parseFile("{file}")'
+        holds, error = _raw_reply(self.session, self._step)
+        if error is not None:
+            return [], error
+        return [n.strip() for n in holds.strip("{}").split(",") if n.strip()], None
+
+    def _load_whole(self, package_file: str, *names: str) -> None:
+        """``loadFile`` a library's file; each of *names* must be a class
+        after it (a load that fails leaves the old ones, and says so)."""
         self._step = f'loadFile("{package_file}")'
         _, error = _raw_reply(self.session, self._step)
-        if error is None and not _raw_exec_bool(self.session, f"existClass({name})"):
-            error = f"loadFile left no class {name}"
+        if error is None:
+            missing = [
+                name
+                for name in names
+                if not _raw_exec_bool(self.session, f"existClass({name})")
+            ]
+            if missing:
+                error = f"loadFile left no class {', '.join(missing)}"
         if error is not None:
-            raise LibraryReloadError(f"{name} does not load: {error}")
+            raise LibraryReloadError(f"{', '.join(names)} does not load: {error}")
 
     def _load_file_again(self, path: Path) -> None:
         """Read one changed file of the library again, as strictly as the
@@ -479,13 +505,11 @@ class OpenModelicaWorker(Worker):
                 f"{library} does not load: {relative.as_posix()}: {why}"
             )
 
-        self._step = f'parseFile("{file}")'
-        holds, error = _raw_reply(session, self._step)
+        names, error = self._classes_in(file)
         if error is not None:
             # The class omc holds is the old file's and stays, and the
             # caller fails the test.
             raise refuse(error)
-        names = [n.strip() for n in holds.strip("{}").split(",") if n.strip()]
         if names != [name]:
             raise refuse(f"it holds {', '.join(names) or 'no class'}, not {name}")
         self._step = f"deleteClass({name})"

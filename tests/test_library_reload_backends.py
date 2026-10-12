@@ -196,16 +196,22 @@ class TestOpenModelica:
     def test_a_dependency_given_as_a_path_is_loaded_whole_when_a_file_of_it_changed(
         self, lib, tmp_path
     ):
-        other = tmp_path / "deps" / "Other"
+        # Its directory does not carry its package's name: the class that
+        # must exist after the load is the one its package.mo names.
+        other = tmp_path / "deps" / "Other 1.0.0"
         other.mkdir(parents=True)
-        worker = _om_worker(
-            lib, {"parseFile": _holds(A)}, dependencies=["Modelica", str(other)]
-        )
-        worker.reload(LibraryChanges(changed=(other / "Sub" / "X.mo",)))
-        assert worker.session.calls == [
+        dep = [
+            f'parseFile("{other}/package.mo")',
             f'loadFile("{other}/package.mo")',
             "existClass(Other)",
         ]
+        worker = _om_worker(
+            lib,
+            {dep[0]: _holds("Other"), "parseFile": _holds(A)},
+            dependencies=["Modelica", str(other)],
+        )
+        worker.reload(LibraryChanges(changed=(other / "Sub" / "X.mo",)))
+        assert worker.session.calls == dep
         # A change in the library alone leaves the dependency as it is.
         worker.session.calls.clear()
         worker.reload(LibraryChanges(changed=(lib / "Examples" / "A.mo",)))
@@ -214,19 +220,53 @@ class TestOpenModelica:
         worker.session.calls.clear()
         worker.reload(None)
         assert worker.session.calls == [
-            f'loadFile("{other}/package.mo")',
-            "existClass(Other)",
+            *dep,
             f'loadFile("{lib}/package.mo")',
             "existClass(Lib)",
         ]
+
+    @pytest.mark.parametrize(
+        ("reply", "said"),
+        [
+            (_holds(), "Other 1.0.0 does not load: it holds no class"),
+            (
+                _omc_error("parseFile", "[syntax:error:2] Missing token: ;"),
+                "Other 1.0.0 does not load: [syntax:error:2] Missing token: ;",
+            ),
+            ("load", "Other does not load: no such package"),
+            ("exist", "Other does not load: loadFile left no class Other"),
+        ],
+        ids=["empty", "does not parse", "does not load", "left no class"],
+    )
+    def test_a_dependency_that_does_not_load_says_so(self, lib, tmp_path, reply, said):
+        other = tmp_path / "deps" / "Other 1.0.0"
+        replies: dict[str, object] = {"parseFile": _holds("Other")}
+        if reply == "load":
+            replies["loadFile"] = _omc_error("loadFile", "no such package")
+        elif reply == "exist":
+            replies["existClass"] = "false\n"
+        else:
+            replies["parseFile"] = reply
+        worker = _om_worker(lib, replies, dependencies=[str(other)])
+        with pytest.raises(LibraryReloadError) as raised:
+            worker.reload(LibraryChanges(changed=(other / "X.mo",)))
+        assert str(raised.value) == said
+        # The library is not loaded over a dependency that did not load.
+        assert not any(str(lib) in call for call in worker.session.calls)
 
     def test_a_dependency_that_is_one_file_is_loaded_when_that_file_changed(
         self, lib, tmp_path
     ):
         single = tmp_path / "deps" / "Single.mo"
-        worker = _om_worker(lib, dependencies=[str(single)])
+        worker = _om_worker(
+            lib, {"parseFile": _holds("Single")}, dependencies=[str(single)]
+        )
         worker.reload(LibraryChanges(changed=(single,)))
-        assert worker.session.calls[0] == f'loadFile("{single}")'
+        assert worker.session.calls == [
+            f'parseFile("{single}")',
+            f'loadFile("{single}")',
+            "existClass(Single)",
+        ]
 
 
 class _Dymola:

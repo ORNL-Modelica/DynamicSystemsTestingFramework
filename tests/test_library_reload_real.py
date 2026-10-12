@@ -395,7 +395,7 @@ def test_a_sub_package_behind_a_symbolic_link_is_read_again(tmp_path, backend):
         _closed(tool)
 
 
-@pytest.mark.parametrize("backend", _SIMULATORS[1:])
+@pytest.mark.parametrize("backend", _SIMULATORS)
 def test_a_dependency_whose_path_is_not_its_resolved_one_is_read_again(
     tmp_path, backend
 ):
@@ -449,5 +449,23 @@ def test_openmodelica_reads_everything_after_a_reload_that_failed_part_way(
         assert tool.x() == 1111.0
         assert set(tool.worker().pids) == pids
         assert tool.fresh() == 1111.0
+    finally:
+        _closed(tool)
+
+
+@pytest.mark.ompython
+@pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
+def test_openmodelica_reads_a_dependency_whose_directory_is_not_its_name(tmp_path):
+    """`DepLib 1.0.0/package.mo` holds `package DepLib`: the directory of a
+    library carries its version, and omc loads it. The reload must look
+    for the class the FILE names."""
+    tool = Parts(tmp_path, "OpenModelica", dep_dir="DepLib 1.0.0")
+    try:
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        _sub(tool.dep / "C.mo", "c=1", "c=2")
+        assert tool.x() == 2111.0
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 2111.0
     finally:
         _closed(tool)

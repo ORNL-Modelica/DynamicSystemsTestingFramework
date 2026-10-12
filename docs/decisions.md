@@ -7676,8 +7676,12 @@ the file loaded, and the class must then exist. (Executed on a model
 file, a component's and a base class's — the model ran the new text each
 time — and on a syntax error, a renamed class, a wrong `within`, a second
 class in the file and an empty file: refused wherever the whole load
-refuses. A dependency given as a path is always loaded whole: its
-directory need not carry its package's name.) While a worker reads, its
+refuses. A dependency given as a path is always loaded whole, and the
+classes that must exist after it are the ones `parseFile` of its file
+names: its directory need not carry its package's name — `DepLib 1.0.0`,
+a symbolic link called anything. Until 2026-10-12 the directory's name
+was looked for, and every item after an edit in such a dependency failed
+with `DepLib 1.0 does not load: loadFile left no class DepLib 1.0`.) While a worker reads, its
 item's row says `running · reading the library`, the strip `Running on
 worker 1 — reading the library`, and the panel `worker 1 reading the
 library — loadFile("…/package.mo") · 12 s` (`queue_rows.READING`,
