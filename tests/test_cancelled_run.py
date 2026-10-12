@@ -137,7 +137,6 @@ def drained(tmp_path, monkeypatch):
     from dstf.storage.reference_store import ReferenceStore
 
     config, tests = python_example_copy(tmp_path)
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
 
     def dstf(*args: str) -> int:
         return main(

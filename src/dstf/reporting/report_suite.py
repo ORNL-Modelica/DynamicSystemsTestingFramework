@@ -1025,16 +1025,27 @@ def generate_report_suite(
     return config.work_dir / "dashboard.html"
 
 
-def open_in_browser(path: Path) -> None:
+def open_in_browser(path: Path, *, launch: bool = True) -> None:
     """Open a file in the system's default browser/viewer.
 
     Always prints a ``file://`` URL so the user has a clickable fallback
-    (most terminals make it clickable). Subprocess stdout/stderr are
+    (most terminals make it clickable); ``launch=False`` — ``run`` and
+    ``compare`` under ``--no-browser`` — stops there.
+    """
+    print(f"View: {path.resolve().as_uri()}")
+    if launch:
+        _launch_opener(path)
+
+
+def _launch_opener(path: Path) -> None:
+    """Hand ``path`` to the system's opener. Subprocess stdout/stderr are
     silenced — on headless Linux/WSL ``xdg-open`` prints a long list of
     "Permission denied" candidates when no browser is registered, and
     that noise has no actionable signal for the user.
+
+    The one place a process is started for a browser: the test suite
+    replaces it (``tests/conftest.py``), so no test opens one.
     """
-    print(f"View: {path.resolve().as_uri()}")
     system = platform.system()
     silent = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     try:

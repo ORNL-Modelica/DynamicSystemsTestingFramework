@@ -107,6 +107,8 @@ uv run dstf --config testing.json run --accept
 
 # Generate per-test interactive deep-dive plots. The unified dashboard.html always exists; --report (a flag: it takes no path) adds <work_dir>/reports/ref_NNNN/interactive.html per test (test_NNNN for a test with no baseline).
 uv run dstf --config testing.json run --report
+# `run` opens dashboard.html in a browser tab as it starts, and --report (on run and compare) opens it again once the pages are written; --no-browser prints the page's link and opens nothing
+uv run dstf --config testing.json run --report --no-browser
 
 # Parallel run (--parallel on compare = render threads). --batch-size is read by Dymola's --batch path only: small batches, queue-dispatched
 uv run dstf --config testing.json run --parallel 4

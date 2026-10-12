@@ -71,6 +71,12 @@ def _report_accept(
     return 0
 
 
+def _browser(args: argparse.Namespace) -> bool:
+    """Whether this command opens a browser tab on the pages it writes:
+    yes, unless ``--no-browser``."""
+    return not getattr(args, "no_browser", False)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
@@ -137,7 +143,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # Exit code stays 0 regardless of prior-result verdicts:
                 # "nothing to rerun" is this invocation's whole outcome.
                 _generate_report_suite(
-                    prior_comps, prior_results, scope_tests, store, config
+                    prior_comps,
+                    prior_results,
+                    scope_tests,
+                    store,
+                    config,
+                    browser=_browser(args),
                 )
             return 0
 
@@ -176,7 +187,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     comparisons = None
     results = None
     try:
-        open_in_browser(config.work_dir / "dashboard.html")
+        open_in_browser(config.work_dir / "dashboard.html", launch=_browser(args))
 
         try:
             outcome = run_pipeline(
@@ -235,6 +246,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 store,
                 config,
                 review_filter=args.interactive,
+                browser=_browser(args),
             )
         else:
             from ..comparison.comparator import compare_all
@@ -265,7 +277,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
             if args.report:
                 return _generate_report_suite(
-                    comparisons, results, scope_tests, store, config
+                    comparisons,
+                    results,
+                    scope_tests,
+                    store,
+                    config,
+                    browser=_browser(args),
                 )
 
             return _output_report(comparisons, args, config, results)
@@ -395,13 +412,18 @@ def cmd_compare(args: argparse.Namespace) -> int:
     )
 
     if getattr(args, "report", False):
-        return _generate_report_suite(comparisons, results, tests, store, config)
+        return _generate_report_suite(
+            comparisons, results, tests, store, config, browser=_browser(args)
+        )
 
     return _output_report(comparisons, args, config, results)
 
 
-def _generate_report_suite(comparisons, results, tests, store, config) -> int:
-    """Generate per-test reports + refresh the unified dashboard.
+def _generate_report_suite(
+    comparisons, results, tests, store, config, *, browser: bool
+) -> int:
+    """Generate per-test reports + refresh the unified dashboard, and open
+    it in a browser tab when ``browser``.
 
     generate_report_suite (in report_suite) writes per-test
     interactive.html + comparison_data.json sidecars under
@@ -421,7 +443,7 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     )
     dashboard_path = config.work_dir / "dashboard.html"
     print(f"Report: {dashboard_path}")
-    open_in_browser(dashboard_path)
+    open_in_browser(dashboard_path, launch=browser)
 
     # A test NOT RUN, or with no baseline, does not fail the run; a run in
     # which nothing ran does (D145).

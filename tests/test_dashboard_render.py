@@ -1952,7 +1952,6 @@ def test_a_merge_run_keeps_the_other_tests_reference_links(
 
     config, tests = python_example_copy(tmp_path)
     work = config.work_dir
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
     argv = ["--config", str(config.config_file), "run", "--work-dir", str(work)]
     main([*argv, "--report"])
 
@@ -2005,7 +2004,6 @@ def test_a_failed_simulation_s_row_keeps_its_reference(tmp_path, monkeypatch):
         "def simulate(stop_time, tolerance):\n    raise RuntimeError('boom')\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
     for command in ("run", "compare"):
         main(
             ["--config", str(config.config_file), command, "--work-dir", str(work)]

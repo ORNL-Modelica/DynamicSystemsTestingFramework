@@ -221,6 +221,28 @@ def _restore_dstf_modules_after_a_ui_simulation():
     sys.modules.update(before)
 
 
+#: The paths the system's opener was asked for (`_no_system_opener`).
+_LAUNCHED: list[Path] = []
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_system_opener():
+    """No test opens a browser: the one function that starts the system's
+    opener (``start`` / ``open`` / ``xdg-open``) is replaced by a recorder
+    for the whole session — a module-scoped fixture that runs `dstf run`
+    is covered too, which a function-scoped patch would not be."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("dstf.reporting.report_suite._launch_opener", _LAUNCHED.append)
+        yield
+
+
+@pytest.fixture
+def launched_openers():
+    """The paths this test asked the system's opener for, in order."""
+    _LAUNCHED.clear()
+    return _LAUNCHED
+
+
 @pytest.fixture(autouse=True)
 def _scan_cache_home(tmp_path_factory, monkeypatch):
     """Point ``XDG_CACHE_HOME`` at a per-test temporary dir. Any test that

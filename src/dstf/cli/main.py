@@ -157,6 +157,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "always renders regardless of this flag — it just doesn't link to "
         "per-test pages without --report.",
     )
+    report_parent.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Open no browser tab on the dashboard or a report page; the "
+        "file:// link is still printed.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 

@@ -115,7 +115,7 @@ To see the interactive HTML reporter:
 uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --report
 ```
 
-The dashboard URL is printed as a run starts (`Live progress: file://…`); the page reloads itself every 5s during the run. `--report` writes the per-test pages under `<work_dir>/reports/`.
+The dashboard URL is printed as a run starts (`Live progress: file://…`) and the page is opened in a browser tab; it reloads itself every 5s during the run. `--report` writes the per-test pages under `<work_dir>/reports/` and opens the dashboard again when they are written. `--no-browser` (on `run` and `compare`) opens no tab and still prints the link.
 
 To repeat with another backend's demo library, swap the config path:
 

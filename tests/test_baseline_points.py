@@ -596,7 +596,6 @@ def example(tmp_path, monkeypatch):
     from conftest import python_example_copy
 
     config, _ = python_example_copy(tmp_path, baselines=False)
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
 
     def dstf(command: str, *extra: str) -> int:
         return main(

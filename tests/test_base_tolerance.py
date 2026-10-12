@@ -128,16 +128,13 @@ def _ran(tmp_path_factory):
     config, _ = python_example_copy(root)
     pristine = root / "pristine"
     project = Project(config, pristine)
-    with pytest.MonkeyPatch.context() as m:
-        m.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
-        assert project.dstf("run") == 0
+    assert project.dstf("run") == 0
     shutil.copytree(project.ref_root, pristine)
     return project
 
 
 @pytest.fixture
 def project(_ran, monkeypatch):
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
     _ran.reset()
     yield _ran
     _ran.reset()

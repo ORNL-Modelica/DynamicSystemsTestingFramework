@@ -720,7 +720,6 @@ def test_the_drain_s_page_links_no_wiped_report_and_says_how_long_it_ran(
     the elapsed was the time it took to WRITE the snapshot."""
     from dstf.cli import main
 
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: 0)
     main(["--config", str(h.cfg), "compare", "--work-dir", str(h.work), "--report"])
     page = h.work / "dashboard.html"
 

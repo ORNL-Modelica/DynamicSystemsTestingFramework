@@ -743,6 +743,7 @@ uv run dstf --config testing.json run -i
 | `--timeout SECS` | Per-test timeout in seconds (default: 60) |
 | `--work-dir PATH` | Override output directory |
 | `--report-format` | `console` (default), `junit`, or `html` (the dashboard page, written to `--output`) |
+| `--no-browser` | Open no browser tab. `run` opens the dashboard as the run starts, `--report` (on `run` and `compare`) opens it again once the pages are written, and `p` in the interactive review opens that test's page; with this flag each only prints its `file://` link. Also on `compare`. |
 
 **Interactive mode (`-i`) actions:**
 

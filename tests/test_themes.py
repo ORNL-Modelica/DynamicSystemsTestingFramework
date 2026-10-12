@@ -740,7 +740,6 @@ class TestGeneratedPages:
         """The dashboard, then every per-test page."""
         from dstf.cli import main
 
-        monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: 0)
         cfg, work = themed_project(tmp_path, name)
         main(["--config", str(cfg), "compare", "--work-dir", str(work), "--report"])
         pages = sorted(work.glob("reports/*/interactive.html"))

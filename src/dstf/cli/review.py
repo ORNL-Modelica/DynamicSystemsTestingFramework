@@ -23,8 +23,10 @@ def _interactive_review(
     store,
     config,
     review_filter: str = "all",
+    browser: bool = True,
 ) -> int:
-    """Interactively review each test and accept/reject results."""
+    """Interactively review each test and accept/reject results. A plot a
+    review asks for is opened in a browser tab when ``browser``."""
     from ..backends import resolve_variable_patterns
 
     # review 2026-07-06 (found while testing finding 62): the old import
@@ -240,7 +242,9 @@ def _interactive_review(
                 _print_detail(comp)
 
             elif choice == "p":
-                _generate_and_open_plots(model_id, comp, result, store, config, test)
+                _generate_and_open_plots(
+                    model_id, comp, result, store, config, test, browser=browser
+                )
 
             elif choice == "q":
                 auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
@@ -268,8 +272,11 @@ def _interactive_review(
     return 1 if n_unresolved else 0
 
 
-def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -> None:
-    """Generate comparison plots and open in browser."""
+def _generate_and_open_plots(
+    model_id, comp, result, store, config, test=None, *, browser: bool = True
+) -> None:
+    """Generate comparison plots, print their link and — when ``browser`` —
+    open them in a browser tab."""
     from ..reporting.report_suite import (
         generate_comparison_plots,
         open_in_browser,
@@ -329,7 +336,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
 
     if html_path:
         print(f"  Plots saved to {plot_dir}")
-        open_in_browser(html_path)
+        open_in_browser(html_path, launch=browser)
     else:
         print("  Plot generation failed")
 

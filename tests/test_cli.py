@@ -525,7 +525,6 @@ def run_env(tmp_config_dir, tmp_path, monkeypatch):
     """Wire cmd_run to fakes: no simulator, no browser, tmp work dir."""
     work_dir = tmp_path / "work"
     work_dir.mkdir()
-    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
 
     def make(tests, results, prior_results=None, manifest_map=None):
         backend = _FakeBackend(work_dir, results, prior_results, manifest_map)
@@ -623,7 +622,7 @@ class TestRerunEmptySetIsSuccess:
     ):
         called = {}
 
-        def fake_suite(comparisons, results, tests, store, config):
+        def fake_suite(comparisons, results, tests, store, config, *, browser):
             called["comparisons"] = list(comparisons)
             return 1  # per-test failures must NOT flip the empty-rerun success
 
@@ -757,9 +756,6 @@ class TestEveryRunEndsOnAStaticPage:
         from conftest import python_example_copy
 
         config, _ = python_example_copy(tmp_path, baselines=baselines)
-        monkeypatch.setattr(
-            "dstf.reporting.report_suite.open_in_browser", lambda p: None
-        )
         monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # stdin closed
         rc = main(
             ["--config", str(config.config_file), "run"]
@@ -897,9 +893,6 @@ class TestAFinalPageListsEveryScoredTest:
         from conftest import python_example_copy
 
         config, _ = python_example_copy(tmp_path)
-        monkeypatch.setattr(
-            "dstf.reporting.report_suite.open_in_browser", lambda p: None
-        )
         head = ["--config", str(config.config_file)]
         wd = ["--work-dir", str(config.work_dir)]
 
@@ -1119,9 +1112,6 @@ class TestNothingRanOverTheRealLibrary:
         from conftest import python_example_copy
 
         config, _ = python_example_copy(tmp_path)
-        monkeypatch.setattr(
-            "dstf.reporting.report_suite.open_in_browser", lambda p: None
-        )
 
         def dstf(command: str, *extra: str) -> int:
             return main(
@@ -2070,3 +2060,81 @@ def test_id_mapping_written_with_lf(tmp_path, monkeypatch):
     write_id_mapping(_Store(), _Config())
 
     assert seen["reference_manifest.json"] == "\n"
+
+
+# =========================================================================
+# --no-browser: `run` and `compare` open no tab, and still print the link
+# =========================================================================
+
+
+class TestNoBrowser:
+    @pytest.fixture
+    def lib(self, tmp_path):
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path)
+
+        def dstf(command: str, *extra: str) -> int:
+            return main(
+                ["--config", str(config.config_file), command]
+                + ["--work-dir", str(config.work_dir), *extra]
+            )
+
+        return dstf, config.work_dir / "dashboard.html"
+
+    def test_the_opener_itself(self, tmp_path, capsys, launched_openers):
+        from dstf.reporting.report_suite import open_in_browser
+
+        page = tmp_path / "p.html"
+        open_in_browser(page, launch=False)
+        assert launched_openers == []
+        assert capsys.readouterr().out == f"View: {page.resolve().as_uri()}\n"
+        open_in_browser(page)
+        assert launched_openers == [page]
+
+    @pytest.mark.parametrize(
+        "command,extra,opened",
+        [
+            ("run", [], 1),  # the live dashboard, before the run
+            ("run", ["--report"], 2),  # and the report, after it
+            ("compare", [], 0),
+            ("compare", ["--report"], 1),
+        ],
+    )
+    def test_the_default_opens_the_dashboard(
+        self, lib, launched_openers, command, extra, opened
+    ):
+        dstf, dashboard = lib
+        if command == "compare":
+            assert dstf("run", "--no-browser") == 0
+            launched_openers.clear()
+        assert dstf(command, *extra) == 0
+        assert launched_openers == [dashboard] * opened
+
+    @pytest.mark.parametrize(
+        "command,extra",
+        [("run", []), ("run", ["--report"]), ("compare", ["--report"])],
+    )
+    def test_no_browser_opens_nothing_and_prints_the_link(
+        self, lib, launched_openers, capsys, command, extra
+    ):
+        dstf, dashboard = lib
+        if command == "compare":
+            assert dstf("run", "--no-browser") == 0
+        capsys.readouterr()
+        assert dstf(command, *extra, "--no-browser") == 0
+        assert launched_openers == []
+        assert f"View: {dashboard.resolve().as_uri()}" in capsys.readouterr().out
+
+    def test_the_review_plot_follows_the_flag(
+        self, lib, launched_openers, monkeypatch, capsys
+    ):
+        """`p` in the interactive review writes the test's page; under
+        --no-browser it prints the link and opens nothing."""
+        dstf, _ = lib
+        answers = iter(["p", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+        dstf("run", "-i", "all", "--no-browser")
+        assert launched_openers == []
+        out = capsys.readouterr().out
+        assert "Plots saved to" in out and out.count("View: file://") == 2
