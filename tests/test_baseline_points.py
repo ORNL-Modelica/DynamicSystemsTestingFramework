@@ -496,6 +496,87 @@ def test_every_reader_of_a_reference_file_reads_it_through_the_one_function(
     assert list(overlay.values) == data["variables"][0]["values"]
 
 
+#: What a single-precision run holds for 0.1 and 0.2, as Python floats —
+#: not the doubles the nine digits a `single` file writes spell.
+_AS_SINGLE = [float(np.float32(0.1)), float(np.float32(0.2))]
+
+
+def _single_reference(tmp_path) -> tuple[Config, Path]:
+    """A project with one `single` baseline of `M`, and that file."""
+    config = _config(tmp_path)
+    _stored(config, _single([0.0, 1.0], x=[0.1, 0.2]))
+    (path,) = config.reference_dir.glob("ref_*.json")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["sampling"]["precision"] == "single"
+    assert raw["variables"][0]["values"] == [0.100000001, 0.200000003] != _AS_SINGLE
+    return config, path
+
+
+def test_a_soft_check_file_is_read_through_the_one_function(tmp_path):
+    """A `single` reference file copied in as a soft check was read as the
+    doubles its digits spell: up to 5e-4 off the run on a signal at 1e5."""
+    config, path = _single_reference(tmp_path)
+    soft = config.reference_dir / "soft_checks" / path.stem / "other.json"
+    soft.parent.mkdir(parents=True)
+    soft.write_bytes(path.read_bytes())
+    (baseline,) = ReferenceStore(config).get_soft_checks(M).values()
+    assert baseline.variables[0]["values"] == _AS_SINGLE
+    assert baseline.time == [0.0, 1.0]
+
+
+def test_a_companion_that_is_a_reference_file_is_read_through_it_too(tmp_path):
+    """The Modelica example's `julia-mtk-*` companions point at another
+    library's `ref_NNNN.json`: a `single` one drew the doubles."""
+    from dstf.reporting.overlay_loader import load_overlays
+
+    config, path = _single_reference(tmp_path)
+    store = ReferenceStore(config)
+    other = tmp_path / "other-library-ref.json"
+    other.write_bytes(path.read_bytes())
+    assert store.add_companion(M, "other", other, format="json")
+    (overlay,) = [o for o in load_overlays(store, M) if o.role == "companion"]
+    assert overlay.status == "loaded"
+    assert overlay.variables["x"].values == _AS_SINGLE
+    assert overlay.variables["x"].time == [0.0, 1.0]
+
+
+def test_import_baseline_stores_the_runs_own_numbers(tmp_path, capsys):
+    """`import-baseline` of a `single` reference file: the soft check it
+    stores holds what the run held."""
+    from dstf.cli import main
+
+    config, path = _single_reference(tmp_path)
+    source = tmp_path / "from-elsewhere.json"
+    source.write_bytes(path.read_bytes())
+    assert (
+        main(
+            ["--config", str(config.config_file), "import-baseline", M, "other"]
+            + [str(source)]
+        )
+        == 0
+    )
+    (baseline,) = ReferenceStore(config).get_soft_checks(M).values()
+    assert baseline.variables[0]["values"] == _AS_SINGLE
+
+
+def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):
+    from dstf.reporting.overlay_loader import (
+        _sibling_backend_index,
+        load_sibling_backend_overlays,
+    )
+
+    config, _path = _single_reference(tmp_path)
+    assert config.reference_dir.parent.name == "Python"
+    elsewhere = Config(
+        config_file=config.config_file,
+        work_dir=tmp_path / "work",
+        backend_name="OpenModelica",
+    )
+    _sibling_backend_index.cache_clear()
+    (overlay,) = load_sibling_backend_overlays(elsewhere, M)
+    assert overlay.variables["x"].values == _AS_SINGLE
+
+
 # -- a run with no rows -------------------------------------------------------
 
 

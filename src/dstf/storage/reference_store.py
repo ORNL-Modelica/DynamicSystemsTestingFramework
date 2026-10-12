@@ -50,8 +50,9 @@ def read_reference_file(path: Path) -> dict:
     """A reference-shape JSON file as the dict it holds — THE reader of a
     baseline's arrays (``time``, each variable's ``values``): a primary
     reference of this partition (:meth:`ReferenceStore.get_reference`), of
-    a sibling one (the report's overlays) and the source of an
-    ``import-baseline`` all come through here. ``OSError`` and
+    a sibling one (the report's overlays), a soft check's file, a JSON
+    companion's (another library's reference file, or a frozen copy) and
+    the source of an ``import-baseline`` all come through here. ``OSError`` and
     ``json.JSONDecodeError`` are the caller's: each says its own thing
     about a file it could not read.
 

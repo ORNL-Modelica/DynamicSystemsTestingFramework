@@ -459,8 +459,11 @@ def _resolve_companion_path(store, model_id: str, companion) -> Path | None:
 
 
 def _load_json(path: Path) -> dict[str, OverlayVariable]:
-    """Parse a JSON companion file. Expects ``time: [...]`` + ``variables: [...]``."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    """Parse a JSON companion file. Expects ``time: [...]`` + ``variables:
+    [...]`` — the shape of a reference file, which is what a companion that
+    points at another library's baseline IS: read by the one reader of
+    that shape, so a ``single`` file draws its run's own numbers."""
+    data = read_reference_file(path)
     time = list(data.get("time") or [])
     out: dict[str, OverlayVariable] = {}
     for entry in data.get("variables", []) or []:

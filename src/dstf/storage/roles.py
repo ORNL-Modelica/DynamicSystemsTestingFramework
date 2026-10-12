@@ -233,6 +233,9 @@ class _RolesMixin:
         Empty dict if the model has no primary baseline or no
         soft_checks are registered.
         """
+        # Late: `reference_store` builds its class on this mixin.
+        from .reference_store import read_reference_file
+
         sc_dir = self._soft_check_dir_for(model_id)
         if sc_dir is None or not sc_dir.is_dir():
             return {}
@@ -240,7 +243,10 @@ class _RolesMixin:
         for sc_file in sorted(sc_dir.glob("*.json")):
             name = sc_file.stem
             try:
-                entry = json.loads(sc_file.read_text(encoding="utf-8"))
+                # The one reader of a reference-shape file: a soft check is
+                # one, and a `single` file's numbers are its run's only
+                # through it.
+                entry = read_reference_file(sc_file)
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Skipping unreadable soft_check %s: %s", sc_file, e)
                 continue
