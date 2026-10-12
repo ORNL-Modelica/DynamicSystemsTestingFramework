@@ -29,10 +29,11 @@ import time
 from pathlib import Path
 
 from ...config import Config
+from ...discovery.library_state import LibraryChanges
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import read_mat_time_extents
 from ..common.proc_kill import live_children
-from ..persistent import PersistentBackendBase, Worker
+from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import DymolaBackend, DymolaConfig
 from .interface_loader import load_dymola_interface
@@ -701,6 +702,40 @@ class DymolaWorker(Worker):
                 cmd,
                 err.strip()[:200],
             )
+
+    def reload(self, changes: LibraryChanges | None) -> None:
+        """``openModel(package.mo)`` again, in the live Dymola: it then
+        discards the library it holds and reads each file as it is next
+        needed — a changed model, a base class or a component of it, an
+        added file, a removed one (its class is gone, and its test fails to
+        translate). The library always, whatever changed, and before it
+        each dependency that holds a changed file (all of them when nothing
+        is known of what changed). Opening one file of a library costs what
+        opening its ``package.mo`` does (0.01 to 0.05 s on a native file
+        system, 8 to 9.5 s on /mnt/d for a 3 270-file library), so nothing
+        is opened file by file.
+
+        ``changeDirectory=False``: a reopen must not leave Dymola's working
+        directory in the library. A file Dymola cannot parse is NOT an
+        error of this call (it returns true): its test fails to translate,
+        with the parser's message in the translation log."""
+        touched = (
+            None
+            if changes is None
+            else (*changes.changed, *changes.added, *changes.removed)
+        )
+        packages: list[Path] = []
+        for dep_path in self.config.dependencies or []:
+            dep = Path(dep_path).resolve()
+            if touched is None or any(dep in path.parents for path in touched):
+                packages.append(dep)
+        for package in (*packages, self.config.library_dir):
+            main_pkg = package / "package.mo"
+            self._step = f"openModel({main_pkg})"
+            if not self.dymola.openModel(str(main_pkg), changeDirectory=False):
+                raise LibraryReloadError(
+                    f"{package.name} does not load: {self._last_error().strip()[:400]}"
+                )
 
     def _last_error(self) -> str:
         try:

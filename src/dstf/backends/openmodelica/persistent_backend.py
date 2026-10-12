@@ -35,10 +35,11 @@ import time
 from pathlib import Path
 
 from ...config import Config
+from ...discovery.library_state import LibraryChanges, dependency_root
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import mat_reaches_time
 from ..common.proc_kill import live_children
-from ..persistent import PersistentBackendBase, Worker
+from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import OpenModelicaBackend, OpenModelicaConfig
 from .log_parser import _TIMING_KEYS, ParsedOmcOutput, parse_omc_stdout
@@ -68,6 +69,20 @@ def _raw_exec_bool(session, expr: str) -> bool:
     except Exception:
         return False
     return (raw or "").strip() == "true"
+
+
+def _raw_reply(session, expr: str) -> tuple[str, str | None]:
+    """Send an expression: ``(omc's raw reply, None)``, or ``("", omc's
+    message)`` when the call reported an error. OMPython raises with the
+    error's text then (and that empties ``getErrorString()``), so the
+    exception's text IS the message — less OMPython's own prefix."""
+    try:
+        raw = session.sendExpression(expr, parsed=False)
+    except Exception as exc:
+        # "[OMC log for 'sendExpression(...)']: <message>"
+        text = str(exc).split("']: ", 1)[-1].strip()
+        return "", text or type(exc).__name__
+    return (raw or "").strip(), None
 
 
 def _raw_get_error_string(session) -> str:
@@ -221,6 +236,11 @@ def _last_log_line(log: str) -> str:
     return ""
 
 
+def _under(path: Path, root: Path) -> bool:
+    """Whether *path* is *root* or a file below it."""
+    return path == root or root in path.parents
+
+
 def _is_notice_line(line: str) -> bool:
     lower = line.lower()
     return (
@@ -248,6 +268,14 @@ class OpenModelicaWorker(Worker):
         self._OMCSession = session_cls
         self.session = None  # the OMCSessionZMQ instance
         self._n_tests_run = 0
+        #: Seconds the last whole ``loadFile(package.mo)`` of the library
+        #: took in this omc: what :meth:`reload` weighs a file-by-file
+        #: load against.
+        self._library_load_seconds = 0.0
+        #: Files whose class was deleted for a load that then failed: omc
+        #: holds neither their old class nor a new one, so they are loaded
+        #: again with the next reload whatever it is asked for.
+        self._unread: set[Path] = set()
 
     def start(self) -> None:
         """Launch omc via OMCSessionZMQ and apply the load/setup sequence.
@@ -317,7 +345,10 @@ class OpenModelicaWorker(Worker):
 
         main_pkg = self.config.library_dir / "package.mo"
         main_pkg_fwd = str(main_pkg.resolve()).replace("\\", "/")
+        began = time.monotonic()
         ok = self._exec(f'loadFile("{main_pkg_fwd}")')
+        self._library_load_seconds = time.monotonic() - began
+        self._unread = set()
         if not ok:
             err = _raw_get_error_string(self.session)
             raise RuntimeError(
@@ -353,6 +384,130 @@ class OpenModelicaWorker(Worker):
         assert self.session is not None
         self._step = expr
         return _raw_exec_bool(self.session, expr)
+
+    #: Seconds one file of the library costs to read again in an omc that
+    #: holds the library: ``parseFile`` (0.01 measured), ``deleteClass``
+    #: (0.08 to 0.13) and ``loadFile`` of the file (0.07 to 0.25), on a
+    #: native file system and on /mnt/d alike. The whole library again is
+    #: what its first load was — 1 s for a 3 270-file library on the first,
+    #: 92 s on the second — which is what :meth:`reload` weighs this with.
+    _FILE_LOAD_SECONDS = 0.4
+
+    def reload(self, changes: LibraryChanges | None) -> None:
+        """``loadFile`` again, in the live omc: each changed file of the
+        library by itself where that is enough and the cheaper way, else
+        its ``package.mo`` — the whole library; a dependency given as a
+        path that holds a changed file is loaded whole.
+
+        omc KEEPS the classes it holds when a load fails — a run would
+        then pass on the old model — so every failure here raises
+        :class:`LibraryReloadError` with omc's message, and the caller
+        fails the test.
+
+        The whole library is what replaces everything: a deleted file's
+        class is gone after it, and a file whose class does not carry the
+        file's name is refused. It is used when a file was added or
+        removed, when a ``package.mo`` or a ``package.order`` changed (a
+        ``package.mo`` is not a file omc loads by itself), when nothing is
+        known of what changed, and when the changed files are too many
+        for one-by-one to be cheaper. One file is read as strictly as
+        that (:meth:`_load_file_again`)."""
+        assert self.session is not None
+        config = self.config
+        touched = (
+            None
+            if changes is None
+            else (*changes.changed, *changes.added, *changes.removed)
+        )
+        for dep in config.dependencies:
+            root = dependency_root(dep)
+            if root is None:
+                continue  # by name: omc found it, and nothing swept it
+            if touched is None or any(_under(path, root) for path in touched):
+                _, dep_file = classify_dependency(dep)
+                self._load_whole(dep_file, root.stem)
+        files = self._files_to_load_again(changes)
+        if files is None:
+            began = time.monotonic()
+            main_pkg = str((config.library_dir / "package.mo").resolve())
+            self._load_whole(main_pkg.replace("\\", "/"), str(config.library_name))
+            self._library_load_seconds = time.monotonic() - began
+            self._unread = set()
+            return
+        for path in files:
+            self._load_file_again(path)
+
+    def _files_to_load_again(self, changes: LibraryChanges | None) -> list[Path] | None:
+        """The library's own files to read one by one for *changes*, in
+        order; ``None`` when the whole library is to be loaded."""
+        if changes is None:
+            return None
+        library_dir = self.config.library_dir
+        added_or_removed = [
+            path
+            for path in (*changes.added, *changes.removed)
+            if _under(path, library_dir)
+        ]
+        changed = {path for path in changes.changed if _under(path, library_dir)}
+        changed |= {path for path in self._unread if path.is_file()}
+        if added_or_removed or any(
+            path.name in ("package.mo", "package.order") for path in changed
+        ):
+            return None
+        if len(changed) * self._FILE_LOAD_SECONDS > self._library_load_seconds:
+            return None
+        return sorted(changed)
+
+    def _load_whole(self, package_file: str, name: str) -> None:
+        self._step = f'loadFile("{package_file}")'
+        _, error = _raw_reply(self.session, self._step)
+        if error is None and not _raw_exec_bool(self.session, f"existClass({name})"):
+            error = f"loadFile left no class {name}"
+        if error is not None:
+            raise LibraryReloadError(f"{name} does not load: {error}")
+
+    def _load_file_again(self, path: Path) -> None:
+        """Read one changed file of the library again, as strictly as the
+        whole library's load reads it: the file must hold exactly the
+        class its path names (``parseFile`` says what it holds, without
+        loading it), that class is deleted — so it cannot outlive a file
+        that fails to load — the file is loaded, and the class must then
+        exist. Measured against the library's whole load on a model file,
+        a component's and a base class's (the models using it saw the new
+        text), and on a syntax error, a renamed class, a wrong ``within``,
+        a second class in the file and an empty file: refused each time
+        the whole load refuses."""
+        session, config = self.session, self.config
+        library = str(config.library_name)
+        relative = path.relative_to(config.library_dir)
+        name = ".".join((library, *relative.with_suffix("").parts))
+        file = str(path.resolve()).replace("\\", "/")
+
+        def refuse(why: str) -> LibraryReloadError:
+            return LibraryReloadError(
+                f"{library} does not load: {relative.as_posix()}: {why}"
+            )
+
+        self._step = f'parseFile("{file}")'
+        holds, error = _raw_reply(session, self._step)
+        if error is not None:
+            # The class omc holds is the old file's and stays: nothing of
+            # the new one was taken, and the caller fails the test.
+            raise refuse(error)
+        names = [n.strip() for n in holds.strip("{}").split(",") if n.strip()]
+        if names != [name]:
+            raise refuse(f"it holds {', '.join(names) or 'no class'}, not {name}")
+        self._step = f"deleteClass({name})"
+        # false for a class omc does not hold: nothing to delete.
+        _raw_exec_bool(session, self._step)
+        self._unread.add(path)
+        self._step = f'loadFile("{file}")'
+        _, error = _raw_reply(session, self._step)
+        if error is None and not _raw_exec_bool(session, f"existClass({name})"):
+            error = f"loadFile left no class {name}"
+        if error is not None:
+            raise refuse(error)
+        self._unread.discard(path)
 
     def process_detail(self) -> str:
         omc = getattr(self.session, "omc_process", None)
