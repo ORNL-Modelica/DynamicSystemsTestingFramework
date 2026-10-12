@@ -17,6 +17,7 @@ from dstf.backends.dymola.persistent_backend import DymolaWorker
 from dstf.backends.openmodelica.persistent_backend import (
     OpenModelicaWorker,
     _last_error,
+    _load_refused,
     _place,
     _raw_located,
 )
@@ -438,6 +439,24 @@ class TestWhereAnErrorIs:
         # No error: the reply, and no place.
         fine = SimpleNamespace(omc_zmq=_Socket({"parseFile": "{Lib.A}\n"}, {}))
         assert _raw_located(fine, 'parseFile("x")') == ("{Lib.A}", None, None)
+
+    def test_a_refused_load_is_its_error_led_by_its_place(self, lib):
+        """The one reading of a load omc refused — a worker's start and its
+        reload: None when omc took it, else the error with the file and
+        line under the root, and omc's answer when it gave no error."""
+        expr = f'loadFile("{lib}/package.mo")'
+        broken = BROKEN.replace("{root}", str(lib))
+        refused = SimpleNamespace(
+            omc_zmq=_Socket({"loadFile": "false\n"}, {"loadFile": broken})
+        )
+        why = "[syntax:error:2] No viable alternative near token: *"
+        assert _load_refused(refused, expr, lib) == f"Examples/A.mo:5: {why}"
+        # No root (a library omc found by name): the file as omc names it.
+        assert _load_refused(refused, expr, None) == f"{lib}/Examples/A.mo:5: {why}"
+        taken = SimpleNamespace(omc_zmq=_Socket({}, {}))
+        assert _load_refused(taken, expr, lib) is None
+        silent = SimpleNamespace(omc_zmq=_Socket({"loadFile": "false\n"}, {}))
+        assert _load_refused(silent, expr, lib) == "omc answered false"
 
     def test_a_session_without_the_socket_is_asked_the_usual_way(self, lib):
         expr = f'loadFile("{lib}/package.mo")'

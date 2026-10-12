@@ -537,6 +537,51 @@ def test_openmodelica_loads_whole_for_a_file_two_links_reach(tmp_path, monkeypat
 
 @pytest.mark.ompython
 @pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
+@pytest.mark.parametrize("broken", ["the library", "a dependency"])
+def test_openmodelica_says_why_a_worker_cannot_start(tmp_path, broken):
+    """The library does not parse when the first worker starts. The item
+    said where and stopped at the dash — `failed to load library
+    …/package.mo — ` — because the message had been read already."""
+
+    def arrange(parts: Parts) -> None:
+        if broken == "the library":
+            _sub(parts.lib / "Parts" / "K.mo", "k=1;", "k=;")
+        else:
+            _sub(parts.dep / "C.mo", "c=1;", "c=;")
+
+    tool = Parts(tmp_path, "OpenModelica", arrange=arrange)
+    try:
+        (item,) = tool.session.enqueue([T1])
+        tool.loop.until(
+            lambda: (
+                tool.session.item_state(item)
+                not in (ItemState.WAITING, ItemState.RUNNING)
+            ),
+            timeout=120,
+            what="the start failed",
+        )
+        assert item.state is ItemState.FAILED
+        said = item.message or ""
+        assert said.startswith("No OpenModelica worker could start — worker 0: "), said
+        if broken == "the library":
+            # The file under the library, as a reload names it.
+            where = f"failed to load library {tool.lib / 'package.mo'} — Parts/K.mo:3: "
+            assert where + "[syntax:error:2] " in said, said
+        else:
+            where = f"failed to load dependency {str(tool.dep)!r} — C.mo:3: "
+            assert where + "[syntax:error:2] " in said, said
+        # Repaired: the next click starts a worker and runs.
+        if broken == "the library":
+            _sub(tool.lib / "Parts" / "K.mo", "k=;", "k=1;")
+        else:
+            _sub(tool.dep / "C.mo", "c=;", "c=1;")
+        assert tool.x() == 1111.0
+    finally:
+        _closed(tool)
+
+
+@pytest.mark.ompython
+@pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
 def test_openmodelica_reads_a_dependency_whose_directory_is_not_its_name(tmp_path):
     """`DepLib 1.0.0/package.mo` holds `package DepLib`: the directory of a
     library carries its version, and omc loads it. The reload must look

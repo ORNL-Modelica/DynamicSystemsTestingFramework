@@ -143,18 +143,40 @@ def _raw_located(session, expr: str) -> tuple[str, str | None, tuple[str, int] |
     return "", text, (file, line) if file else None
 
 
-def _place(where: tuple[str, int] | None, root: Path) -> str:
+def _place(where: tuple[str, int] | None, root: Path | None) -> str:
     """``Examples/Pipe.mo:12: `` — the file an error points at, as its path
-    under the library's *root* (whole, for one outside it), and the line
-    where omc gives one; ``""`` without a place."""
+    under the library's *root* (whole, for one outside it or with no root:
+    a library omc found by its name), and the line where omc gives one;
+    ``""`` without a place."""
     if where is None:
         return ""
     file, line = Path(where[0]), where[1]
     try:
+        if root is None:
+            raise ValueError
         shown = file.resolve().relative_to(root.resolve()).as_posix()
     except (OSError, ValueError):
         shown = str(file)
     return f"{shown}:{line}: " if line else f"{shown}: "
+
+
+def _load_refused(session, expr: str, root: Path | None) -> str | None:
+    """Why omc refused the load *expr* (a ``loadFile`` or a ``loadModel``),
+    or None when it took it: omc's error, led by the file and the line it
+    points at — under *root*, the directory of what is loaded, where there
+    is one (:func:`_place`). THE one reading of a refused load, for a
+    worker's start and for its reload.
+
+    Asked through :func:`_raw_located`, never as a bool followed by
+    ``getErrorString()``: OMPython reads omc's messages to decide that the
+    call failed, which empties them, and a worker that could not start
+    said `failed to load library …/package.mo — ` and nothing after."""
+    reply, error, where = _raw_located(session, expr)
+    if error is None and reply != "true":
+        error = f"omc answered {reply or 'nothing'}"
+    if error is None:
+        return None
+    return _place(where, root) + error
 
 
 def _raw_get_error_string(session) -> str:
@@ -396,26 +418,24 @@ class OpenModelicaWorker(Worker):
         for dep in deps:
             kind, arg = classify_dependency(dep)
             if kind == "loadModel":
-                ok = self._exec(f"loadModel({arg})")
+                why = self._load(f"loadModel({arg})", None)
             else:
-                ok = self._exec(f'loadFile("{arg}")')
-            if not ok:
-                err = _raw_get_error_string(self.session)
+                why = self._load(f'loadFile("{arg}")', Path(arg).parent)
+            if why is not None:
                 raise RuntimeError(
                     f"Worker {self.worker_id}: failed to load dependency "
-                    f"{dep!r} — {err.strip()[:400]}"
+                    f"{dep!r} — {why[:400]}"
                 )
 
         main_pkg = self.config.library_dir / "package.mo"
         main_pkg_fwd = str(main_pkg.resolve()).replace("\\", "/")
         began = time.monotonic()
-        ok = self._exec(f'loadFile("{main_pkg_fwd}")')
+        why = self._load(f'loadFile("{main_pkg_fwd}")', main_pkg.parent)
         self._library_load_seconds = time.monotonic() - began
-        if not ok:
-            err = _raw_get_error_string(self.session)
+        if why is not None:
             raise RuntimeError(
                 f"Worker {self.worker_id}: failed to load library {main_pkg} "
-                f"— {err.strip()[:400]}"
+                f"— {why[:400]}"
             )
 
         # User setup commands — best-effort; warn on failure but don't abort.
@@ -446,6 +466,14 @@ class OpenModelicaWorker(Worker):
         assert self.session is not None
         self._step = expr
         return _raw_exec_bool(self.session, expr)
+
+    def _load(self, expr: str, root: Path | None) -> str | None:
+        """Send a ``loadFile`` / ``loadModel``: None when omc took it, else
+        why it did not (:func:`_load_refused`). The expression is recorded
+        as the step, as :meth:`_exec` records its own."""
+        assert self.session is not None
+        self._step = expr
+        return _load_refused(self.session, expr, root)
 
     #: Seconds one file of the library costs to read again in an omc that
     #: holds the library: ``parseFile`` (0.01 measured), ``deleteClass``
@@ -576,21 +604,17 @@ class OpenModelicaWorker(Worker):
     def _load_whole(self, package_file: str, *names: str) -> None:
         """``loadFile`` a library's file; each of *names* must be a class
         after it (a load that fails leaves the old ones, and says so)."""
-        self._step = f'loadFile("{package_file}")'
-        _, error, where = _raw_located(self.session, self._step)
-        if error is None:
+        why = self._load(f'loadFile("{package_file}")', Path(package_file).parent)
+        if why is None:
             missing = [
                 name
                 for name in names
                 if not _raw_exec_bool(self.session, f"existClass({name})")
             ]
             if missing:
-                error = f"loadFile left no class {', '.join(missing)}"
-        if error is not None:
-            place = _place(where, Path(package_file).parent)
-            raise LibraryReloadError(
-                f"{', '.join(names)} does not load: {place}{error}"
-            )
+                why = f"loadFile left no class {', '.join(missing)}"
+        if why is not None:
+            raise LibraryReloadError(f"{', '.join(names)} does not load: {why}")
 
     def _load_file_again(self, path: Path) -> None:
         """Read one changed file of the library again, as strictly as the

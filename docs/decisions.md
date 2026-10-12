@@ -7825,6 +7825,19 @@ recognizer's mark alone — the tool's add form is grey on a marked test,
 where a staged criterion would never be scored, and open on one that only
 declares nothing, where the criterion is what makes it a scored test.
 
+**A worker that cannot start says why** (2026-10-12). On OpenModelica a
+library that did not parse when a worker STARTED — the first click, or
+the click after a kill — failed the waiting items with `No OpenModelica
+worker could start — worker 0: failed to load library …/package.mo — `
+and nothing after the dash: the start asked `loadFile` for a bool and
+then `getErrorString()`, which OMPython had emptied to decide the call
+failed. A refused load is read in ONE place, for the start and for the
+reload (`_load_refused`: the error with the file and line it points at,
+under the directory loaded): `… failed to load library
+/work/MyLib/package.mo — Parts/K.mo:3: [syntax:error:2] No viable
+alternative near token: ;`, and the same after `failed to load
+dependency '…' — ` for a dependency.
+
 **An earlier run's row is a run's record** (2026-10-12). A test queued
 twice has two rows, and both read the test's verdict as it stands — the
 later run's — beside the words of a run that had ended otherwise, and

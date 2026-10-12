@@ -593,15 +593,15 @@ def test_omc_killed_during_start_fails_the_items_with_its_words(
     from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
 
     config, tests, backend = _project(tmp_path, "OpenModelica", "pool")
-    real_exec = OpenModelicaWorker._exec
+    real_load = OpenModelicaWorker._load
 
-    def exec_after_the_kill(self, expr):
+    def load_after_the_kill(self, expr, root):
         if expr.startswith("loadModel"):
             for pid in self.pids:
                 os.kill(pid, signal.SIGKILL)
-        return real_exec(self, expr)
+        return real_load(self, expr, root)
 
-    monkeypatch.setattr(OpenModelicaWorker, "_exec", exec_after_the_kill)
+    monkeypatch.setattr(OpenModelicaWorker, "_load", load_after_the_kill)
     pool = open_pool(config, backend=backend, store=ReferenceStore(config), workers=1)
     try:
         t0 = time.monotonic()

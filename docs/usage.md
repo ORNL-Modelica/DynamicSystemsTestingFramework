@@ -1397,7 +1397,10 @@ worker 2 — t = 42 / 100 s" with Cancel (the running view, below); "Cancelled
 at t = 19.2 of 200 s — not scored" for a run that was stopped and left rows,
 "Cancelled — no result (its earlier result was replaced when the run
 started)." for one that left none and, where no worker could start, the
-backend's message, each with Queue again filled; "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
+backend's message (on OpenModelica a library that does not load names the
+file and the line: `No OpenModelica worker could start — worker 0: failed
+to load library …/package.mo — Parts/K.mo:3: [syntax:error:2] …`), each
+with Queue again filled; "2 unsaved edits · verdict would change PASS → FAIL" (amber; Preview
 and save opens the preview on this test, and Discard drops this test's edits
 only — the header's Discard drops every test's); "Passes against its
 baseline." (grey, Accept in the strip's ⋮ menu: there is nothing new to
