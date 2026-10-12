@@ -52,6 +52,7 @@ from ..discovery.spec_update import (
     is_literal_variable,
     needs_materialization,
     unknown_override_modes,
+    validate_entry_keys,
     validate_entry_metric_tree,
 )
 from ..discovery.test_registry import (
@@ -1400,6 +1401,9 @@ class Session:
         )
         effective = candidate.effective()  # PatchError on a bad path
         for model_id in models:
+            # A key nothing reads, a criterion that can never be scored: as
+            # Save's own checks refuse them, with the sentence alone.
+            validate_entry_keys(effective, model_id)  # PatchError
             validate_entry_metric_tree(
                 effective, model_id, project.config, project.store
             )  # PatchError

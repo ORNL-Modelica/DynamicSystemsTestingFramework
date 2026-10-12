@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import subprocess
 import sys
@@ -279,15 +280,18 @@ class TestSchemaModeRefs:
         defs = build_schema()["$defs"]
         for def_name in _MODE_DEF_NAMES.values():
             mode = defs[def_name]
-            # Lenient posture: unknown keys must remain valid.
-            assert mode.get("additionalProperties") is not False, def_name
-            for co in ("metric", "variable", "against", "window", "label"):
+            # Closed, as the parser is: a key nothing reads is refused. (It
+            # was lenient until a misspelled bound scored as no bound.)
+            assert mode["additionalProperties"] is False, def_name
+            for co in ("metric", "variable", "against", "window"):
                 assert co in mode["properties"], f"{def_name} missing {co}"
+            # `label` was advertised here and read by nothing.
+            assert "label" not in mode["properties"], def_name
         # Mode-specific knobs still present for autocomplete.
         assert "tube_rel" in defs["mode_tube"]["properties"]
         assert "min_value" in defs["mode_range"]["properties"]
 
-    def test_valid_tube_leaf_validates_and_stays_lenient(self):
+    def test_valid_tube_leaf_validates_and_an_unknown_key_does_not(self):
         # jsonschema is NOT a project dependency (checked 2026-07-06: absent
         # from the dev env) — skip the validation half there; run it via
         # `uv run --with jsonschema pytest -k schema` or any env that has it.
@@ -310,10 +314,12 @@ class TestSchemaModeRefs:
             ]
         }
         jsonschema.validate(spec, schema)
-        # Documented lenient posture: unknown extra keys stay valid.
-        spec["tests"][0]["metrics"]["future_knob"] = 123
-        jsonschema.validate(spec, schema)
-        # But the $refs are real: a type violation in a mode field rejects.
+        # As strict as the parser: a key the metric does not read rejects.
+        unknown = copy.deepcopy(spec)
+        unknown["tests"][0]["metrics"]["future_knob"] = 123
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(unknown, schema)
+        # And the $refs are real: a type violation in a mode field rejects.
         bad = {
             "tests": [
                 {

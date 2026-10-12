@@ -3,8 +3,8 @@
 The one read-modify-write both ``dstf spec-update`` and the authoring
 Session's ``save`` go through: materialize the implicit tree where a
 per-leaf op needs one, apply each model's ops to its entry, refuse a base
-tolerance the patch made no number, run the D66 validator on every touched
-tree, then write once. Nothing is written
+tolerance the patch made no number, refuse a key nothing reads, run the
+D66 validator on every touched tree, then write once. Nothing is written
 unless every group passes.
 """
 
@@ -176,6 +176,20 @@ def validate_entry_metric_tree(
         )
 
 
+def validate_entry_keys(data: dict, model_id: str) -> None:
+    """The patched entry holds no key nothing reads (``check_entry_keys``,
+    the spec parser's own check)."""
+    from .spec_parser import EntryKeyError, check_entry_keys
+
+    entry = spec_entry(data, model_id)
+    if entry is None:
+        return
+    try:
+        check_entry_keys(entry, model_id)
+    except EntryKeyError as e:
+        raise PatchError(f"patched entry is invalid: {e}", reason=e.message) from e
+
+
 def _base_tolerance(entry: dict | None) -> object:
     """The entry's ``comparison.tolerance`` as written, or ``None``."""
     comparison = (entry or {}).get("comparison")
@@ -243,6 +257,7 @@ def apply_validated_patches(
         before = _base_tolerance(spec_entry(data, model_id))
         apply_patch_to_document(data, model_id, full)
         validate_entry_base_tolerance(data, model_id, before)
+        validate_entry_keys(data, model_id)
         validate_entry_metric_tree(data, model_id, config, store)
         validate_entry_plots(data, model_id)
         applied.append((model_id, full))

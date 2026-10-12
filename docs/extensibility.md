@@ -590,7 +590,12 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    metadata (`label`/`help`) drives the exported JSON-Schema and the authoring
    tool's auto-derived forms. Both read the same `derive_schema` in
    `comparison/mode_schema.py`. A tolerance that takes two sides is a field
-   typed `Sides` (item 11).
+   typed `Sides` (item 11). The config's field names are also the keys a
+   leaf or a flat override of the metric may carry: any other key is a spec
+   error that names it (`comparison/strict_keys.py`), and a list field's
+   `columns` metadata closes the keys of its rows the same way. A metric
+   registered with a `config_cls` that is not a dataclass is not checked —
+   nothing says what it reads.
 5. `score_direction` declares which way a better score runs (`"lower"` for
    error-like, `"higher"` for coverage-like). The validator uses it to reject
    `weighted` nodes mixing directions.
@@ -600,7 +605,8 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    statistics / diagnostics instead of a trajectory, and only then may
    `variable` be omitted in the spec. Leave it `False` and an unrecognized
    `quantity` stays an inert param — a trajectory metric keeps scoring
-   trajectories.
+   trajectories. It is the one key a leaf may carry that its metric does
+   not read (`strict_keys.EVERY_METRIC`).
 7. `edit_handle` (default `None`) is the inverse of the metric's
    `kind="handle"` geometry: what the authoring tool calls when a user drags
    one of its handles on the plot (`comparison/handles.py`). It takes a

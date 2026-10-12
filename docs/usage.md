@@ -144,6 +144,28 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 
 **Baseline points**: add a top-level `"baseline_points"` to an entry — `"all"` or a whole number of 2 or more — to say how many points THIS test's stored baseline keeps, over `testing.json`'s `baseline_points` (see "The points a baseline stores").
 
+#### A key nothing reads is an error
+
+`test_spec.json` is strict about its keys: one that nothing reads stops the command and is named, with the nearest key there is when one is close.
+
+```
+Config error: …/test_spec.json: tests[MyLib.Examples.SimpleTest].metrics.children[1]: range · pipe.T[1]: unknown field "max_val" — did you mean "max_value"?
+```
+
+It used to be kept and ignored, and that leaf scored as a range with no upper bound. The check covers:
+
+- a test entry's own keys, and those of its `simulation` and `comparison` blocks;
+- a `comparison.variable_overrides` entry: `mode` and that mode's fields (with no `mode`, the default metric's — or `points`'s, which `--default-points` scores it with);
+- a `metrics` leaf: `metric`, `variable`, `against`, `window`, and its metric's fields; a combinator: `combinator`, `children` and what its kind takes (`k` on a `k-of-n`; `weights`, `threshold`, `direction` on a `weighted`); a `window`: `start`, `end`;
+- each row of a metric's table — `points`, `peaks`, `events`, `tube_points`;
+- `plots` (see "Plot layout").
+
+`tolerance` is a key of every leaf and override. `quantity` is one too: on a metric other than `scalar` it is the one param that is taken and not used. For your own notes there are `description`, `info` and `metadata` (an object of any shape), on an entry and on its `comparison` block; nothing reads them.
+
+`run`, `compare` and `discover` report it as a `Config error` and exit 2, as for a malformed `metrics` tree; `dstf author` shows it in place of the project. `spec-update` refuses a patch that would write such a key (`Patch failed: …`, exit 1, the file untouched), and the tool refuses to stage one, saying the same sentence. `export-schema` publishes the same rules: its objects are closed (`additionalProperties: false`) wherever the parser is strict.
+
+The `comparison` section a baseline stores in its reference JSON is not checked this way: it is merged under the spec's at compare, as before.
+
 #### Two-layer contract: annotation vs `test_spec.json`
 
 Modelica simulation parameters resolve from two layers, in order:

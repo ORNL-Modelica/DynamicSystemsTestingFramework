@@ -36,7 +36,7 @@ from .comparator import (
     _compare_trajectories,
     _compare_tube,
 )
-from .registry import DEFAULT_METRIC
+from .registry import DEFAULT_METRIC, DEFAULT_POINTS_METRIC
 from .registry import metric as registry_metric
 from .registry import metrics as registered_metrics
 from .sides import Sides, parse_sides
@@ -761,7 +761,7 @@ def resolve_mode(
     ``register_metric`` resolves here without touching this function.
     """
     mode_name = var_override.get("mode", "") or (
-        "points" if default_points else DEFAULT_METRIC
+        DEFAULT_POINTS_METRIC if default_points else DEFAULT_METRIC
     )
 
     desc = registry_metric(mode_name)

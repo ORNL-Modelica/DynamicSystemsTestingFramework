@@ -37,6 +37,18 @@ if TYPE_CHECKING:
 #: no ``{"mode": "nrmse"}`` in stored specs — no key means NRMSE).
 DEFAULT_METRIC = "nrmse"
 
+#: The metric a flat override with no ``mode`` gets under ``--default-points``
+#: instead (``modes.resolve_mode``).
+DEFAULT_POINTS_METRIC = "points"
+
+
+def unnamed_metrics() -> tuple[str, str]:
+    """The metrics an override that names no ``mode`` may be scored by: the
+    default, or ``points`` under ``--default-points``. What such an override
+    may carry is what either reads."""
+    return (DEFAULT_METRIC, DEFAULT_POINTS_METRIC)
+
+
 #: Default ``accepted_datasets`` — every backend produces time series today.
 TIME_SERIES_ONLY = frozenset({DatasetType.TIME_SERIES})
 

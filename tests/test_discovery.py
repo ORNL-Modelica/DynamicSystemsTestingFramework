@@ -404,9 +404,11 @@ class TestSpecParser:
         tests = parse_test_spec(Path("/nonexistent/test_spec.json"))
         assert tests == []
 
-    def test_fmu_key_is_not_a_source(self, tmp_path, caplog):
-        """`source` is the only source-file key; `fmu` warns and is ignored."""
-        import logging
+    def test_fmu_key_is_not_a_source(self, tmp_path):
+        """`source` is the only source-file key. `fmu` is a key nothing
+        reads: an error that names it and lists the keys there are — it
+        used to warn, and the test ran without a source file."""
+        from dstf.config import ConfigError
 
         fmu = tmp_path / "Model.fmu"
         fmu.write_bytes(b"")
@@ -417,11 +419,13 @@ class TestSpecParser:
             )
         )
 
-        with caplog.at_level(logging.WARNING, logger="dstf.discovery.spec_parser"):
-            tests = parse_test_spec(spec_path)
-
-        assert tests[0].source_file == Path("")
-        assert any("'source'" in r.getMessage() for r in caplog.records)
+        with pytest.raises(ConfigError) as caught:
+            parse_test_spec(spec_path)
+        assert str(caught.value).endswith(
+            'tests[Model]: unknown field "fmu"; the fields here are: '
+            "baseline_points, comparison, description, info, metadata, metrics, "
+            "model, plots, simulation, source, variables"
+        )
 
 
 # ---------------------------------------------------------------------------

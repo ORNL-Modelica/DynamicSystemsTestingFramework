@@ -11,15 +11,30 @@ Derives a JSON-Schema document from:
 Emits JSON-Schema draft 2020-12 shape. Thin layer — no validation
 logic here (that lives in ``comparison/validator.py`` + parse-time).
 Downstream uses: IDE autocomplete, LLM authoring, tool handoff.
+
+The schema is as strict as the parser: wherever a key nobody reads is a
+spec error (``comparison/strict_keys.py``) the object says
+``additionalProperties: false``, and its property names come from the
+same data the parser checks against — a metric's config dataclass, the
+tree parser's key tables, ``discovery/spec_shape.py`` for the entry.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import Any
 
 from ..comparison.mode_schema import derive_schema
-from ..comparison.registry import combinator_names, metric_names, metrics
+from ..comparison.registry import (
+    combinator_names,
+    metric_names,
+    metrics,
+    unnamed_metrics,
+)
+from ..comparison.strict_keys import EVERY_METRIC, row_fields
+from ..comparison.tree_spec import COMBINATOR_KIND_KEYS
+from ..discovery import spec_shape
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 
@@ -35,9 +50,6 @@ _SIDES = [
         "additionalProperties": False,
     },
 ]
-
-#: One variable of the result: not blank, not a pattern.
-_PLOT_NAME = {"type": "string", "pattern": "^[^*?]*[^*?\\s][^*?]*$"}
 
 
 def _field_to_schema(field) -> dict:
@@ -153,28 +165,134 @@ def _leaf_common_properties() -> dict[str, Any]:
             },
             "additionalProperties": False,
         },
-        "label": {
-            "type": "string",
-            "description": "Human-readable label shown in reports.",
-        },
     }
+
+
+def _param_properties(config_cls: type, mode_name: str) -> dict[str, Any] | None:
+    """One metric's params as schema properties: its config's fields — a
+    row table's rows closed to its ``columns`` — and the two params read
+    off every leaf (``strict_keys.EVERY_METRIC``). None for a metric whose
+    config is not a dataclass: nothing says what it reads, the parser
+    does not check it, and neither does the schema."""
+    if not dataclasses.is_dataclass(config_cls):
+        return None
+    props: dict[str, Any] = {
+        # A leaf's own tolerance, a number or a pair, where the metric's
+        # config does not type it itself; `quantity` of any shape.
+        "tolerance": {"oneOf": copy.deepcopy(_SIDES)},
+        "quantity": {},
+    }
+    assert set(props) == set(EVERY_METRIC)
+    for f in derive_schema(config_cls, mode=mode_name).fields:
+        props[f.name] = _field_to_schema(f)
+    for name, columns in row_fields(mode_name).items():
+        props[name] = {
+            **props[name],
+            "type": ["array", "null"],
+            "items": {
+                "type": "object",
+                "properties": {column: {} for column in sorted(columns)},
+                "additionalProperties": False,
+            },
+        }
+    return props
 
 
 def _mode_def(config_cls: type, mode_name: str) -> dict:
-    sch = derive_schema(config_cls, mode=mode_name)
-    # review 2026-07-06 finding 72: deliberately NO "additionalProperties":
-    # false — the spec's posture is lenient (unknown keys pass through as
-    # metric params so newer specs still validate against older schemas).
-    # The complete properties map — mode knobs plus the leaf's co-resident
-    # keys — exists for autocomplete and type-checking, not hard rejection.
-    props: dict[str, Any] = _leaf_common_properties()
-    for f in sch.fields:
-        props[f.name] = _field_to_schema(f)
-    return {
+    """A leaf of one metric, whole: the leaf's own keys and the metric's
+    params, and nothing else — the parser refuses any other key (it was
+    lenient until a misspelled bound scored as no bound at all)."""
+    params = _param_properties(config_cls, mode_name)
+    node: dict[str, Any] = {
         "type": "object",
         "title": f"{mode_name} mode config",
-        "properties": props,
+        "properties": {**_leaf_common_properties(), **(params or {})},
     }
+    if params is not None:
+        node["additionalProperties"] = False
+    return node
+
+
+def _override_def_name(mode_name: str) -> str:
+    return f"override_{mode_name.replace('-', '_')}"
+
+
+def _override_def(config_clss: list[tuple[str, type]], title: str) -> dict:
+    """A flat ``comparison.variable_overrides`` entry scored by one of
+    ``config_clss`` (more than one for an entry with no ``mode``): ``mode``
+    and those metrics' params, and nothing else."""
+    props: dict[str, Any] = {"mode": {"type": "string", "enum": sorted(metric_names())}}
+    closed = True
+    for name, config_cls in config_clss:
+        params = _param_properties(config_cls, name)
+        closed = closed and params is not None
+        props.update(params or {})
+    node: dict[str, Any] = {"type": "object", "title": title, "properties": props}
+    if closed:
+        node["additionalProperties"] = False
+    return node
+
+
+def _override_defs(modes: list[tuple[str, type]]) -> dict[str, dict]:
+    """``override`` — one entry of ``variable_overrides`` — and the def per
+    mode it selects by its ``mode`` key. With no ``mode`` the entry is
+    scored by the default metric, or by ``points`` under
+    ``--default-points`` (``registry.unnamed_metrics``): it may carry
+    what either reads."""
+    by_name = dict(modes)
+    defs = {
+        _override_def_name(name): _override_def([(name, cls)], f"{name} override")
+        for name, cls in modes
+    }
+    defs["override_without_mode"] = _override_def(
+        [(name, by_name[name]) for name in unnamed_metrics() if name in by_name],
+        "override with no mode",
+    )
+    defs["override"] = {
+        "type": "object",
+        "title": "Flat per-variable override",
+        "allOf": [
+            {
+                "if": {"required": ["mode"]},
+                "else": {"$ref": "#/$defs/override_without_mode"},
+            },
+            *(
+                {
+                    "if": {
+                        "properties": {"mode": {"const": name}},
+                        "required": ["mode"],
+                    },
+                    "then": {"$ref": f"#/$defs/{_override_def_name(name)}"},
+                }
+                for name, _ in modes
+            ),
+        ],
+    }
+    return defs
+
+
+def _combinator_kind_rules() -> list[dict]:
+    """Each key only some kinds read (``k``, ``weights``, ...) is forbidden
+    on every other kind — the parser's own table, so the two agree."""
+    keys = sorted({key for kind in COMBINATOR_KIND_KEYS.values() for key in kind})
+    return [
+        {
+            "if": {
+                "properties": {
+                    "combinator": {
+                        "enum": sorted(
+                            kind
+                            for kind, takes in COMBINATOR_KIND_KEYS.items()
+                            if key in takes
+                        )
+                    }
+                },
+                "required": ["combinator"],
+            },
+            "else": {"properties": {key: False}},
+        }
+        for key in keys
+    ]
 
 
 def build_schema() -> dict:
@@ -194,10 +312,11 @@ def build_schema() -> dict:
         # historical override shape — e.g., a leaf with metric=tube may set
         # tube_rel, tube_width_mode, etc. (typed via the allOf below).
         "properties": _leaf_common_properties(),
-        "additionalProperties": True,
         # review 2026-07-06 finding 72: make the mode $defs real — the
         # ``metric`` discriminator selects the matching mode definition, so
         # validators type-check mode knobs and editors get autocomplete.
+        # Each of those defs is closed (``additionalProperties: false``):
+        # that is where a leaf's unknown key is refused.
         "allOf": [
             _leaf_identity_rule(),
             *(
@@ -241,90 +360,16 @@ def build_schema() -> dict:
             "direction": {"type": "string", "enum": ["less", "greater"]},
         },
         "additionalProperties": False,
+        "allOf": _combinator_kind_rules(),
     }
 
     test_entry = {
         "type": "object",
         "required": ["model"],
-        "properties": {
-            "model": {"type": "string"},
-            "source": {
-                "type": "string",
-                "description": (
-                    "Path to the simulation source file "
-                    "(.jl / .py / .fmu), relative to the spec file."
-                ),
-            },
-            "variables": {"type": "array", "items": {"type": "string"}},
-            "simulation": {
-                "type": "object",
-                "properties": {
-                    "stop_time": {"type": "number"},
-                    "tolerance": {"type": "number"},
-                    "method": {"type": "string"},
-                    "number_of_intervals": {"type": "integer"},
-                    "output_interval": {"type": "number"},
-                    "timeout": {"type": "integer"},
-                },
-                "additionalProperties": True,
-            },
-            "comparison": {
-                "type": "object",
-                "properties": {
-                    "tolerance": {"type": "number"},
-                    "variable_overrides": {
-                        "type": "object",
-                        "additionalProperties": True,
-                    },
-                    "description": {"type": "string"},
-                    "info": {"type": "string"},
-                    "metadata": {"type": "object"},
-                },
-                "additionalProperties": True,
-            },
-            "metrics": {"$ref": "#/$defs/tree_node"},
-            "plots": {
-                "type": "array",
-                "description": (
-                    "A person's plot extras, read by the report and the authoring "
-                    "tool and ignored by scoring. A test's plots are derived from "
-                    "its criteria tree; an entry on a scored variable adds grey "
-                    "context series to its plot, an entry on an unscored one is a "
-                    "watch plot. Absent or []: no extras."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        # One variable, not blank, not a pattern — what
-                        # `parse_plots` accepts.
-                        "var": _PLOT_NAME,
-                        "context": {
-                            "type": "array",
-                            "uniqueItems": True,
-                            "items": _PLOT_NAME,
-                        },
-                    },
-                    "required": ["var"],
-                    "additionalProperties": False,
-                },
-            },
-            "baseline_points": {
-                "description": (
-                    "The points this test's stored baseline keeps of its run: "
-                    '"all" — every point the simulator wrote — or a whole '
-                    "number of 2 or more, which thins a longer run to at most "
-                    "that many. Overrides testing.json's baseline_points; "
-                    "absent, that one applies."
-                ),
-                # What `config.baseline_points_refused` accepts — but for
-                # `2000.0`, an integer to JSON Schema and refused there.
-                "oneOf": [{"const": "all"}, {"type": "integer", "minimum": 2}],
-            },
-            "description": {"type": "string"},
-            "info": {"type": "string"},
-            "metadata": {"type": "object"},
-        },
-        "additionalProperties": True,
+        # The entry's keys, and its simulation and comparison blocks': the
+        # one table the spec parser checks an entry against.
+        "properties": copy.deepcopy(spec_shape.ENTRY),
+        "additionalProperties": False,
     }
 
     return {
@@ -349,5 +394,6 @@ def build_schema() -> dict:
             "leaf": leaf_spec,
             "combinator": combinator_spec,
             **mode_defs,
+            **_override_defs(modes),
         },
     }

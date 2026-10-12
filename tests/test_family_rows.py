@@ -214,7 +214,7 @@ def test_the_variable_is_the_one_thing_two_members_may_differ_in():
     base = [_leaf(1), _leaf(2)]
     assert len(fold_rows(_all_rows(_and(*base)))) == 1
     for other in (
-        _leaf(2, metric="tube", tube_width_mode="band", tube_band=1.0),
+        _leaf(2, metric="tube", tube_width_mode="band", tube_abs=1.0),
         _leaf(2, tolerance=0.5),
         _leaf(2, window={"start": 0.0, "end": 1.0}),
         _leaf(2, against="other"),
@@ -240,7 +240,10 @@ def test_a_number_is_compared_as_json_not_as_python():
         len(fold_rows(_all_rows(_and(_leaf(1, tolerance=1), _leaf(2, tolerance=1.0)))))
         == 1
     )
-    tree = _and(_leaf(1, flag=True), _leaf(2, flag=1))
+    tree = _and(
+        _leaf(1, metric="event-timing", count_must_match=True),
+        _leaf(2, metric="event-timing", count_must_match=1),
+    )
     assert len(fold_rows(_all_rows(tree))) == 2
 
 

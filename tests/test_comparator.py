@@ -1596,11 +1596,15 @@ class TestTreeConfigErrorIsALeafFailure:
         assert "misconfigured" in error
         return error
 
-    def test_range_leaf_with_min_max_shorthand(self):
-        """Deleted `min`/`max` shorthand → leaf failure naming the real keys."""
-        bad, good = self._two_test_run(
-            {"metric": "range", "variable": "x", "min": 0, "max": 2}
-        )
+    def test_range_leaf_with_no_bound(self):
+        """A range that declares neither bound → leaf failure naming the keys.
+        (The deleted `min` / `max` shorthand, which used to end here too, is
+        refused where the tree is parsed: a key nothing reads.)"""
+        from dstf.comparison.tree_spec import MetricSpecError
+
+        with pytest.raises(MetricSpecError, match='unknown field "min" — did you'):
+            self._tree_test({"metric": "range", "variable": "x", "min": 0, "max": 2})
+        bad, good = self._two_test_run({"metric": "range", "variable": "x"})
         assert not bad.passed
         # The sibling leaf still evaluated, and the other test still ran.
         assert bad.metric_tree.children[1].passed
@@ -1613,14 +1617,29 @@ class TestTreeConfigErrorIsALeafFailure:
         assert good.passed
         assert "quantity" in self._error_text(bad)
 
-    def test_tube_leaf_with_symmetric_control_points(self):
-        """Raised from mode.compare, not resolve_mode — the second catch."""
+    def test_tube_leaf_whose_control_points_give_no_width(self):
+        """Raised from mode.compare, not resolve_mode — the second catch.
+        (A row of the old symmetric `abs` / `rel` shorthand is refused at
+        the parse now; a row with no width at all still parses.)"""
+        from dstf.comparison.tree_spec import MetricSpecError
+
+        with pytest.raises(
+            MetricSpecError, match='tube_points row 1: unknown field "abs"'
+        ):
+            self._tree_test(
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "band",
+                    "tube_points": [{"time": 0.0, "abs": 1.0, "rel": 0.0}],
+                }
+            )
         bad, good = self._two_test_run(
             {
                 "metric": "tube",
                 "variable": "x",
                 "tube_width_mode": "band",
-                "tube_points": [{"time": 0.0, "abs": 1.0, "rel": 0.0}],
+                "tube_points": [{"time": 0.0}],
             }
         )
         assert not bad.passed
@@ -3311,10 +3330,9 @@ _COMPARE_TIME_ERRORS = [
         {
             "metric": "tube",
             "tube_width_mode": "band",
-            "tube_points": [{"time": 0.0, "abs": 1.0}],
+            "tube_points": [{"time": 0.0}],
         },
-        "tube_points entries need 'upper' and/or 'lower' widths; "
-        "got keys ['abs', 'time']",
+        "tube_points entries need 'upper' and/or 'lower' widths; got keys ['time']",
     ),
 ]
 

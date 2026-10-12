@@ -25,6 +25,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
 │   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/),
+│   │                             #      spec_shape.py (a spec entry's keys: the ONE table the parser refuses by and export-schema publishes),
 │   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
@@ -35,7 +36,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
 │   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf),
 │   │                             #      sides.py (Sides — the ONE place a tolerance's number-or-pair is read or written),
-│   │                             #      snap.py (the one snap rule: a value the pointer placed is written at a readable step, D149)
+│   │                             #      snap.py (the one snap rule: a value the pointer placed is written at a readable step, D149),
+│   │                             #      strict_keys.py (a key nothing reads is an error that names it — the ONE check, from each metric's config)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
 │   │                             #      migrate_names.py (the `migrate-variable-names` rewrite; deleted at the v1.0 tag)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
@@ -278,6 +280,8 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 ### test_spec.json format
 
 Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. An entry's optional top-level `baseline_points` (`"all"` or a whole number ≥ 2) is that test's own value over `testing.json`'s (D153). A criterion's tolerance is one number or a pair `{"lower": a, "upper": b}` (D147; `docs/usage.md` lists the fields that take one), while a base tolerance — `comparison.tolerance`, `testing.json`'s `tolerance`, `--tolerance` — is ONE finite number or its test is refused. A variable a `metrics` leaf names is tracked too: every backend records, stores and scores it after the `UnitTests` variables and the `variables` patterns (D142), with no change to `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. A test declared only in `test_spec.json` gets its model's annotation too: the model is looked up in the library by name. Full contract details in `docs/usage.md`.
+
+**A key nothing reads is an error that names it** (`comparison/strict_keys.py`): an entry's own keys and its `simulation` / `comparison` blocks' (`discovery/spec_shape.py`, the table `export-schema` publishes), a flat override's and a leaf's (its metric's config dataclass fields, plus `tolerance` and `quantity`), a table row's (the field's `columns`), a window's and a combinator's. `run` / `compare` / `discover` stop with `Config error: … unknown field "max_val" — did you mean "max_value"?` (exit 2); `spec-update` and the tool refuse to write one. `description` / `info` / `metadata` on an entry or its `comparison` block are for notes.
 
 **A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
 

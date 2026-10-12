@@ -392,19 +392,24 @@ class TestLeafEval:
         assert tree.passed
 
     def test_range_leaf_rejects_min_max_shorthand(self):
-        """Bounds are `min_value` / `max_value` — the short names don't score.
+        """Bounds are `min_value` / `max_value` — the short names are keys
+        nothing reads, refused where the tree is parsed."""
+        from dstf.comparison.tree_spec import MetricSpecError
 
-        The leaf hard-fails with the error named (D107), rather than raising
-        out of the evaluator and taking the whole comparison with it.
-        """
-        spec = parse_metric_tree(
-            {
-                "metric": "range",
-                "variable": "x",
-                "min": 0.0,
-                "max": 2.0,
-            }
+        with pytest.raises(MetricSpecError) as caught:
+            parse_metric_tree(
+                {"metric": "range", "variable": "x", "min": 0.0, "max": 2.0}
+            )
+        assert caught.value.message == (
+            'range · x: unknown field "min" — did you mean "min_value"?'
         )
+
+    def test_range_leaf_with_no_bound_fails_its_leaf(self):
+        """A range that parses and cannot be built hard-fails with the error
+        named (D107), rather than raising out of the evaluator and taking
+        the whole comparison with it.
+        """
+        spec = parse_metric_tree({"metric": "range", "variable": "x"})
         t, act_vals = _linear()
         tree = evaluate_spec(
             spec,
@@ -1014,9 +1019,7 @@ class TestSentinelLeavesKeepTheirName:
         assert "nrmse" in error
 
     def test_config_error_sentinel(self):
-        spec = parse_metric_tree(
-            {"metric": "range", "variable": "x", "min": 0.0, "max": 2.0}
-        )
+        spec = parse_metric_tree({"metric": "range", "variable": "x"})
         t, vals = _linear()
         tree = evaluate_spec(
             spec,

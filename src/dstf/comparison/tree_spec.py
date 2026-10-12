@@ -28,6 +28,22 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
+from .strict_keys import unknown_field, unread_param
+
+#: The keys the parser itself reads off a leaf; every other key of a leaf
+#: is one of its metric's params.
+_LEAF_KEYS = ("metric", "variable", "against", "window")
+
+#: A window's keys.
+_WINDOW_KEYS = ("start", "end")
+
+#: The keys every combinator has, and what each kind reads beyond them
+#: (``_parse_combinator``). A kind not named here reads nothing more.
+_COMBINATOR_KEYS = ("combinator", "children")
+COMBINATOR_KIND_KEYS: dict[str, tuple[str, ...]] = {
+    "k-of-n": ("k",),
+    "weighted": ("weights", "threshold", "direction"),
+}
 
 
 class MetricSpecError(ValueError):
@@ -469,6 +485,14 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
             f"unknown combinator {name!r}; valid: {sorted(combinator_names())}",
         )
 
+    # A key this kind does not read is an error, not a note (`strict_keys`):
+    # `k` on an `and` says something the node will never do.
+    problem = unknown_field(
+        raw, (*_COMBINATOR_KEYS, *COMBINATOR_KIND_KEYS.get(name, ()))
+    )
+    if problem is not None:
+        raise MetricSpecError(path, f"{name} group: {problem}")
+
     children_raw = raw.get("children")
     if not isinstance(children_raw, list) or not children_raw:
         raise MetricSpecError(
@@ -608,6 +632,11 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
                 f"expected an object with 'start'/'end', "
                 f"got {type(window_raw).__name__}",
             )
+        problem = unknown_field(window_raw, _WINDOW_KEYS)
+        if problem is not None:
+            raise MetricSpecError(
+                f"{path}.window", f"{metric_name} · {variable}: window: {problem}"
+            )
         if "start" in window_raw:
             window_start = float(window_raw["start"])
         if "end" in window_raw:
@@ -623,12 +652,13 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
                 f"and ends at {window_end}.",
             )
 
-    # Everything else is metric-specific params (tolerance, tube_rel, ...).
-    params = {
-        k: v
-        for k, v in raw.items()
-        if k not in {"metric", "variable", "against", "window"}
-    }
+    # Everything else is metric-specific params (tolerance, tube_rel, ...) —
+    # and each has to be one the metric reads. A misspelled one used to ride
+    # along unread: `"max_val": 0.5` on a range scored with no upper bound.
+    params = {k: v for k, v in raw.items() if k not in _LEAF_KEYS}
+    problem = unread_param(metric_name, params, beside=_LEAF_KEYS)
+    if problem is not None:
+        raise MetricSpecError(path, f"{metric_name} · {variable}: {problem}")
     return LeafSpec(
         metric=metric_name,
         variable=variable,

@@ -2,13 +2,71 @@
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
 from ..config import ConfigError, baseline_points_refused
 from ..storage.ref_index import _atomic_write_text
+from . import spec_shape
 from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
+
+
+class EntryKeyError(ValueError):
+    """A key in a test entry that nothing reads: ``where`` it sits
+    (``tests[Lib.M].simulation``) and the ``message`` that names it."""
+
+    def __init__(self, where: str, message: str) -> None:
+        self.where = where
+        self.message = message
+        super().__init__(f"{where}: {message}")
+
+
+def check_entry_keys(entry: dict, model_id: str) -> None:
+    """Refuse a key of ``entry`` that nothing reads (``strict_keys``): one
+    of its own, of its ``simulation`` or ``comparison`` block, or of a flat
+    override — which is one metric's params, as a leaf's are. The
+    ``metrics`` tree and ``plots`` have their own parsers, each as strict.
+
+    ``"simulaton": {"stop_time": 100}`` used to be skipped without a word
+    and the test ran for the default second. The known keys are
+    ``spec_shape``'s — the table ``export-schema`` publishes.
+
+    Raises :class:`EntryKeyError`. A block that is not an object, and an
+    override that is not one, are not this check's: the parser below says
+    what it does with each.
+    """
+    from ..comparison.strict_keys import unknown_field, unread_override_key
+
+    here = f"tests[{model_id}]"
+
+    def refuse(where: str, keys: Iterable[str], known: Iterable[str]) -> None:
+        problem = unknown_field(keys, known)
+        if problem is not None:
+            raise EntryKeyError(where, problem)
+
+    refuse(here, entry, spec_shape.ENTRY)
+    simulation = entry.get("simulation")
+    if isinstance(simulation, dict):
+        refuse(f"{here}.simulation", simulation, spec_shape.SIMULATION)
+    comparison = entry.get("comparison")
+    if not isinstance(comparison, dict):
+        return
+    refuse(f"{here}.comparison", comparison, spec_shape.COMPARISON)
+    overrides = comparison.get("variable_overrides")
+    if not isinstance(overrides, dict):
+        return
+    for variable, override in overrides.items():
+        if not isinstance(override, dict):
+            continue
+        found = unread_override_key(override)
+        if found is not None:
+            mode, problem = found
+            raise EntryKeyError(
+                f"{here}.comparison.variable_overrides[{variable}]",
+                f"{mode} · {variable}: {problem}",
+            )
 
 
 def _load_spec_for_edit(spec_path: Path) -> dict:
@@ -187,6 +245,13 @@ def spec_models_from_document(
             logger.warning("Skipping spec entry with no 'model' field")
             continue
 
+        # A key nothing reads is an error that names it, like a malformed
+        # tree: one "Config error: ..." line and exit 2.
+        try:
+            check_entry_keys(entry, model_id)
+        except EntryKeyError as e:
+            raise ConfigError(f"{label}: {e}") from e
+
         variables = entry.get("variables", [])
         if not isinstance(variables, list):
             logger.warning("'variables' must be a list for %s", model_id)
@@ -201,12 +266,6 @@ def spec_models_from_document(
         # Modelica tests omit this and source_file stays empty (the .mo
         # lives in the package discovered via source_package).
         source_file = Path("")
-        if "fmu" in entry and "source" not in entry:
-            logger.warning(
-                "Test '%s' declares 'fmu' — not a spec field; rename it to "
-                "'source'. The test will run without a source file.",
-                model_id,
-            )
         source_rel = entry.get("source")
         if source_rel:
             source_path_resolved = (base_dir / source_rel).resolve()
