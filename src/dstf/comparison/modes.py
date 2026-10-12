@@ -612,9 +612,7 @@ class RangeMode(ComparisonMode):
 
     def __init__(self, config: RangeConfig):
         if config.min_value is None and config.max_value is None:
-            raise ValueError(
-                "RangeConfig requires at least one of min_value / max_value"
-            )
+            raise ValueError("needs at least one of min_value / max_value")
         self.config = config
 
     @property
@@ -684,7 +682,7 @@ def _validate_scalar_config(config: ScalarConfig) -> None:
     quantity = config.quantity
     if quantity is None or quantity == "":
         raise ValueError(
-            "ScalarConfig requires a 'quantity': a dotted statistics path or "
+            "needs a 'quantity': a dotted statistics path or "
             '{"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|"integral"}'
         )
     if not isinstance(quantity, str):

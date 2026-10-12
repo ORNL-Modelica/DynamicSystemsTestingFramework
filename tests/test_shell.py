@@ -1004,6 +1004,26 @@ async def test_a_dialog_reload_that_fails_on_a_bug_is_logged_and_notified(
         assert isinstance(record.exc_info[1], KeyError)
 
 
+async def test_a_save_refused_for_an_unscorable_criterion_says_one_sentence(shell):
+    """A bare `range` is staged for its editor to fill; a Save with it
+    still bare is refused in the dialog the stale-file refusal uses, with
+    the one sentence — never `save failed: …` with the patch's path."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        bare = {"metric": "range", "variable": "x"}
+        shell.session.stage([PatchOp(A, "add", "/metrics/children/-", bare)])
+        before = shell.session.spec.path.read_bytes()
+        _suite(shell, user).header._save()
+        await user.should_see(
+            "range · x: needs at least one of min_value / max_value"
+            " — fill it or remove it before saving",
+            retries=20,
+        )
+        await user.should_not_see("save failed")
+        assert shell.session.spec.path.read_bytes() == before
+        assert len(shell.session.spec.pending) == 2  # the tree written out, the leaf
+
+
 def test_shutdown_waits_for_a_drained_queues_render_still_running(
     tmp_path, monkeypatch
 ):

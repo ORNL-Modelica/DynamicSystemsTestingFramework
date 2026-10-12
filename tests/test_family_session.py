@@ -14,7 +14,12 @@ from dstf.authoring.builtin.edit_criteria import EditCriteria
 from dstf.authoring.builtin.edit_family import EMPTY, EditFamily
 from dstf.authoring.builtin.edit_tree import EditTree
 from dstf.authoring.family_rows import Fold, fold_rows, tally
-from dstf.authoring.session import Selection, Session, SessionView
+from dstf.authoring.session import (
+    Selection,
+    Session,
+    SessionView,
+    UnscorableSaveError,
+)
 from dstf.authoring.spec_document import PatchOp
 from dstf.authoring.tree_pointer import node_or_none
 from dstf.discovery.patch_apply import PatchError
@@ -806,10 +811,12 @@ def test_each_gesture_says_what_it_did_for_the_preview(tmp_path):
         "mode → range on 6 criteria of pipe.T[1:6]",
         "min_value cleared on 6 criteria of pipe.T[1:6]",
     ]
-    # the last bound cannot be cleared: a range with neither can never be
-    # scored, and is refused where it is written
-    with pytest.raises(PatchError) as refused:
-        session.apply(_edit(session, members, metric="range", params={}))
-    assert refused.value.reason == (
-        "range · pipe.T[1]: RangeConfig requires at least one of min_value / max_value"
+    # the last bound may be cleared in the editor: the bare range is staged,
+    # for the editor to fill, and it is Save that refuses to write it
+    session.apply(_edit(session, members, metric="range", params={}))
+    with pytest.raises(UnscorableSaveError) as refused:
+        session.save()
+    assert str(refused.value) == (
+        "range · pipe.T[1]: needs at least one of min_value / max_value"
+        " — fill it or remove it before saving"
     )

@@ -646,8 +646,9 @@ def build_leaf_mode(leaf: LeafSpec, base_tolerance: float) -> ComparisonMode:
     builds it. ``ValueError`` — the leaf's config error at compare time —
     when the leaf can never be scored: a tolerance that is no number or
     pair, a ``range`` with neither bound, a ``scalar`` with no quantity.
-    An update asks before it writes a leaf (``discovery.spec_update``), so
-    such a leaf is refused where it is written."""
+    An update asks before it writes a file
+    (``discovery.spec_update.refuse_newly_unscorable``): a write that makes
+    such a leaf is refused."""
     return resolve_mode(
         _leaf_override_dict(leaf),
         _leaf_tolerance(leaf, base_tolerance),

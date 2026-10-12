@@ -53,11 +53,11 @@ def _baselines(**kwargs) -> dict[str, BaselineView]:
 
 class TestScalarConfigValidation:
     def test_quantity_is_required(self):
-        with pytest.raises(ValueError, match="requires a 'quantity'"):
+        with pytest.raises(ValueError, match="needs a 'quantity'"):
             ScalarMode(ScalarConfig())
 
     def test_empty_string_quantity_rejected(self):
-        with pytest.raises(ValueError, match="requires a 'quantity'"):
+        with pytest.raises(ValueError, match="needs a 'quantity'"):
             ScalarMode(ScalarConfig(quantity=""))
 
     def test_both_shapes_at_once_rejected(self):

@@ -35,7 +35,7 @@ from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..errors import user_text
 from ..queue_rows import stop_reason
-from ..session import StaleSpecError
+from ..session import StaleSpecError, UnscorableSaveError
 from ..situation import SEP, verdict_phrase
 from ..spec_document import PatchOp
 from ..spec_preview import entry_lines, spans
@@ -408,6 +408,16 @@ class Header:
                     ui.button("Keep my edits", on_click=self.dialog.close).props(
                         "flat dense no-caps"
                     )
+            self.dialog.open()
+        except UnscorableSaveError as e:
+            # The other refusal of a Save: said where the stale one is, in
+            # the dialog — a sentence to act on, not a toast that goes.
+            self.dialog.clear()
+            with self.dialog, ui.card():
+                ui.label(str(e)).mark("save-refused")
+                ui.button("Close", on_click=self.dialog.close).props(
+                    "flat dense no-caps"
+                )
             self.dialog.open()
         except Exception as e:
             ui.notify(f"save failed: {e}", type="negative")

@@ -113,7 +113,7 @@ def _not_run(model_id="Lib.Examples.N"):
 def _sentinel_var(
     name="h",
     error=(
-        "metric 'range' misconfigured: RangeConfig requires at least one of "
+        "metric 'range' misconfigured: needs at least one of "
         "min_value / max_value"
     ),
 ):

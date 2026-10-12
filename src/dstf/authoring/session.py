@@ -54,6 +54,7 @@ from ..discovery.plots import (
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
+    UnscorableCriterion,
     apply_validated_patches,
     has_metrics,
     implicit_tree_op,
@@ -351,6 +352,16 @@ class StaleSpecError(RuntimeError):
         super().__init__(
             f"{path} changed on disk since it was loaded; reload before saving"
         )
+
+
+class UnscorableSaveError(RuntimeError):
+    """Save refused: a pending edit leaves a criterion that can never be
+    scored. One sentence naming it; nothing was written and every edit is
+    still pending."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"{reason} — fill it or remove it before saving")
 
 
 class PendingEditsError(RuntimeError):
@@ -1544,8 +1555,14 @@ class Session:
         )
         effective = candidate.effective()  # PatchError on a bad path
         for model_id in models:
-            # A key nothing reads, a criterion that can never be scored: as
-            # Save's own checks refuse them, with the sentence alone.
+            # A key nothing reads is refused at once, as Save's own check
+            # refuses it, with the sentence alone. A criterion that can
+            # never be scored is NOT refused here: it is staged, its row
+            # says why it is not scored, and Save refuses the write that
+            # makes it (`spec_update.refuse_newly_unscorable`). Refused
+            # here, a bare `range` could not be added for its editor to
+            # fill, and an entry that already held one took no edit at all
+            # — not the one that filled it.
             validate_entry_keys(effective, model_id)  # PatchError
             validate_entry_metric_tree(
                 effective, model_id, project.config, project.store
@@ -1662,15 +1679,20 @@ class Session:
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s
         read-modify-write, then reload. Refuses when the file changed on
-        disk since it was loaded."""
+        disk since it was loaded, and when the edits leave a criterion that
+        can never be scored (`UnscorableSaveError`: `stage` took it, for its
+        editor to fill)."""
         project = self._require_project()
         if self.spec.on_disk_changed():
             raise StaleSpecError(self.spec.path)
         groups = self.spec.grouped()
         if groups:
-            apply_validated_patches(
-                self.spec.path, groups, project.config, project.store
-            )
+            try:
+                apply_validated_patches(
+                    self.spec.path, groups, project.config, project.store
+                )
+            except UnscorableCriterion as e:
+                raise UnscorableSaveError(e.reason) from e
         models = {model_id for model_id, _ in groups}
         self.spec = SpecDocument.load(self.spec.path)
         self._rebuild_tests(models)

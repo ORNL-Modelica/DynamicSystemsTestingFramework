@@ -32,6 +32,8 @@ from dstf.discovery.spec_parser import spec_models_from_document
 REPO = Path(__file__).parent.parent
 EXAMPLE = REPO / "examples" / "modelica" / "ModelicaTestingLib"
 MODEL = "ModelicaTestingLib.Examples.MetricTreeTest"
+#: An entry of the same example with no `metrics` tree: its flat overrides score.
+FLAT = "ModelicaTestingLib.Examples.TubeToleranceTest"
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +642,7 @@ class TestSpecUpdateRefuses:
             tmp_path, _add_leaf({"metric": "range", "variable": "unitTests.x[2]"})
         )
         assert self._refused(example, patch, capsys).endswith(
-            "range · unitTests.x[2]: RangeConfig requires at least one of min_value / max_value"
+            "range · unitTests.x[2]: needs at least one of min_value / max_value"
         )
 
     def test_the_misspelled_only_bound(self, example, tmp_path, capsys):
@@ -658,9 +660,8 @@ class TestSpecUpdateRefuses:
         patch = _patch(
             tmp_path, _add_leaf({"metric": "scalar", "variable": "unitTests.x[1]"})
         )
-        assert (
-            "scalar · unitTests.x[1]: ScalarConfig requires a 'quantity'"
-            in self._refused(example, patch, capsys)
+        assert "scalar · unitTests.x[1]: needs a 'quantity'" in self._refused(
+            example, patch, capsys
         )
 
     def test_a_misspelled_override_key(self, example, tmp_path, capsys):
@@ -689,6 +690,30 @@ class TestSpecUpdateRefuses:
         )
 
     def test_an_override_that_can_never_score(self, example, tmp_path, capsys):
+        """On an entry scored by its flat overrides (no `metrics` tree)."""
+        patch = tmp_path / "patch.json"
+        op = {
+            "op": "add",
+            "path": "/comparison/variable_overrides/unitTests.x[1]",
+            "value": {"mode": "range"},
+        }
+        patch.write_text(
+            json.dumps({"patches": [{"model": FLAT, "patch": [op]}]}),
+            encoding="utf-8",
+        )
+        assert self._refused(example, patch, capsys) == (
+            f"Patch failed: patched entry is invalid: tests[{FLAT}].comparison."
+            "variable_overrides[unitTests.x[1]]: range · unitTests.x[1]: "
+            "needs at least one of min_value / max_value"
+        )
+
+    def test_an_override_under_a_tree_scores_nothing_and_is_not_checked(
+        self, example, tmp_path, capsys
+    ):
+        """MODEL has a `metrics` tree: its flat overrides are read by
+        nothing, so one that could not be built fails nothing — the tool
+        itself leaves the overrides beside the tree it writes out. Its KEYS
+        are still checked (`test_a_misspelled_override_key`)."""
         patch = _patch(
             tmp_path,
             {
@@ -697,8 +722,19 @@ class TestSpecUpdateRefuses:
                 "value": {"variable_overrides": {"unitTests.x[1]": {"mode": "range"}}},
             },
         )
-        assert "range · unitTests.x[1]: RangeConfig requires" in self._refused(
-            example, patch, capsys
+        assert main(["--config", str(example), "spec-update", str(patch)]) == 0
+
+    def test_the_place_is_written_as_a_parse_error_writes_it(
+        self, example, tmp_path, capsys
+    ):
+        """Dotted — `metrics.children[3]` — never the op's JSON pointer."""
+        patch = _patch(
+            tmp_path, _add_leaf({"metric": "range", "variable": "unitTests.x[2]"})
+        )
+        assert self._refused(example, patch, capsys) == (
+            f"Patch failed: patched entry is invalid: tests[{MODEL}].metrics."
+            "children[3]: range · unitTests.x[2]: needs at least one of "
+            "min_value / max_value"
         )
 
     def test_the_validators_own_refusal_is_as_it_was(self, example, tmp_path, capsys):
@@ -743,6 +779,144 @@ class TestSpecUpdateRefuses:
         )
         (entry,) = [e for e in spec["tests"] if e["model"] == MODEL]
         assert entry["metrics"]["children"][-1]["max_value"] == 0.5
+
+
+BARE_RANGE = {"metric": "range", "variable": "unitTests.x[2]"}
+BARE_SCALAR = {"metric": "scalar", "variable": "unitTests.x[1]"}
+
+
+class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
+    """The delta rule (`spec_update.refuse_newly_unscorable`): a criterion
+    that is unscorable after the patch is refused only when it was not
+    already there, with the same content, before it. Refusing EVERY one of
+    the patched entry refused each edit of an entry that already held one —
+    the edit that filled it too — and two of them blocked each other."""
+
+    def _held(self, example, model, change) -> Path:
+        """The example with ``change`` made to ``model``'s entry on disk —
+        a spec written by hand, or by the tool before the check."""
+        spec = example.parent / "test_spec.json"
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        (entry,) = [e for e in data["tests"] if e["model"] == model]
+        change(entry)
+        spec.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return spec
+
+    def _update(self, example, tmp_path, model, *ops) -> int:
+        patch = tmp_path / "patch.json"
+        patch.write_text(
+            json.dumps({"patches": [{"model": model, "patch": list(ops)}]}),
+            encoding="utf-8",
+        )
+        return main(["--config", str(example), "spec-update", str(patch)])
+
+    def _entry(self, spec, model) -> dict:
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        (entry,) = [e for e in data["tests"] if e["model"] == model]
+        return entry
+
+    def _two(self, entry):
+        entry["metrics"]["children"] += [dict(BARE_RANGE), dict(BARE_SCALAR)]
+
+    def test_an_untouched_one_does_not_block_another_edit(self, example, tmp_path):
+        spec = self._held(example, MODEL, self._two)
+        op = {"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+        assert self._entry(spec, MODEL)["metrics"]["children"][0]["tolerance"] == 0.5
+
+    def test_nor_a_plots_edit(self, example, tmp_path):
+        self._held(example, MODEL, self._two)
+        op = {"op": "add", "path": "/plots", "value": [{"var": "unitTests.x[1]"}]}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+
+    def test_one_of_two_may_be_filled(self, example, tmp_path):
+        spec = self._held(example, MODEL, self._two)
+        op = {"op": "add", "path": "/metrics/children/3/min_value", "value": 0.0}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+        assert self._entry(spec, MODEL)["metrics"]["children"][3]["min_value"] == 0.0
+
+    def test_one_of_two_may_be_removed_and_the_other_only_moves(
+        self, example, tmp_path
+    ):
+        """The scalar leaf is at children[3] afterwards, where the range
+        was: a rule that looked a place up would call it new."""
+        spec = self._held(example, MODEL, self._two)
+        op = {"op": "remove", "path": "/metrics/children/3"}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+        assert self._entry(spec, MODEL)["metrics"]["children"][3] == BARE_SCALAR
+
+    def test_an_edit_that_leaves_one_unscorable_is_refused(
+        self, example, tmp_path, capsys
+    ):
+        """It touched the criterion and did not fill it: its content is
+        not what was there."""
+        spec = self._held(example, MODEL, self._two)
+        before = spec.read_bytes()
+        op = {"op": "add", "path": "/metrics/children/3/tolerance", "value": 0.5}
+        assert self._update(example, tmp_path, MODEL, op) == 1
+        assert "children[3]: range · unitTests.x[2]: needs at least one" in (
+            capsys.readouterr().out
+        )
+        assert spec.read_bytes() == before
+
+    def test_a_second_equal_one_is_a_new_one(self, example, tmp_path, capsys):
+        """Counted: one bare range before, two after."""
+        spec = self._held(example, MODEL, self._two)
+        before = spec.read_bytes()
+        assert self._update(example, tmp_path, MODEL, _add_leaf(BARE_RANGE)) == 1
+        assert "children[5]: range · unitTests.x[2]" in capsys.readouterr().out
+        assert spec.read_bytes() == before
+
+    def _override(self, entry):
+        entry["comparison"]["variable_overrides"]["unitTests.x[1]"] = {"mode": "range"}
+
+    def test_a_held_override_takes_its_fix_and_any_other_edit(self, example, tmp_path):
+        spec = self._held(example, FLAT, self._override)
+        op = {"op": "add", "path": "/comparison/tolerance", "value": 0.05}
+        assert self._update(example, tmp_path, FLAT, op) == 0
+        fix = {
+            "op": "add",
+            "path": "/comparison/variable_overrides/unitTests.x[1]/min_value",
+            "value": 0.0,
+        }
+        assert self._update(example, tmp_path, FLAT, fix) == 0
+        overrides = self._entry(spec, FLAT)["comparison"]["variable_overrides"]
+        assert overrides["unitTests.x[1]"] == {"mode": "range", "min_value": 0.0}
+
+    def test_writing_the_entrys_tree_out_makes_no_new_one(self, example, tmp_path):
+        """A per-leaf op on a flat entry writes its implicit tree first: the
+        held override is then a bare leaf of that tree — the same
+        criterion, not a new one."""
+
+        def held(entry):
+            entry["variables"] = ["unitTests.x[1]", "unitTests.x[2]"]
+            self._override(entry)
+
+        spec = self._held(example, FLAT, held)
+        op = {"op": "add", "path": "/metrics/children/1/tolerance", "value": 0.5}
+        assert self._update(example, tmp_path, FLAT, op) == 0
+        first = self._entry(spec, FLAT)["metrics"]["children"][0]
+        assert first == {"metric": "range", "variable": "unitTests.x[1]"}
+
+    def test_removing_the_tree_over_a_bare_override_makes_it_score(
+        self, example, tmp_path, capsys
+    ):
+        """Under the tree the override scored nothing and was not looked
+        at; with the tree gone it is a criterion, and a new one."""
+
+        def held(entry):
+            entry["comparison"] = {
+                "variable_overrides": {"unitTests.x[1]": {"mode": "range"}}
+            }
+
+        spec = self._held(example, MODEL, held)
+        before = spec.read_bytes()
+        op = {"op": "remove", "path": "/metrics"}
+        assert self._update(example, tmp_path, MODEL, op) == 1
+        assert "comparison.variable_overrides[unitTests.x[1]]" in (
+            capsys.readouterr().out
+        )
+        assert spec.read_bytes() == before
 
 
 @pytest.mark.parametrize("command", ["discover", "run", "compare"])
@@ -964,17 +1138,192 @@ class TestTheToolRefusesToStage:
             'tube · x: unknown field "tube_rell" — did you mean "tube_rel"?'
         )
 
-    def test_a_criterion_that_could_never_be_scored(self, session):
+
+# ---------------------------------------------------------------------------
+# the authoring tool and a criterion that could never be scored: staged,
+# said by its row, refused by Save — and only when an edit made it
+# ---------------------------------------------------------------------------
+
+BARE_TREE = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        {"metric": "range", "variable": "pipe.T[1]"},
+    ],
+}
+
+
+class TestTheToolStagesAnUnscorableCriterionAndSaveRefusesIt:
+    @pytest.fixture
+    def project(self, tmp_path):
+        pytest.importorskip("nicegui")
+        from family_project import family_project
+
+        return family_project(tmp_path, 3, tracked=(1, 2), fail=())
+
+    def _open(self, project, change=None):
+        """A Session over ``project``, ``change`` first made to A's entry on
+        disk."""
+        from dstf.authoring.session import Session
+        from test_session import A
+
+        cfg, work = project
+        if change is not None:
+            spec = cfg.parent / "test_spec.json"
+            data = json.loads(spec.read_text(encoding="utf-8"))
+            (entry,) = [e for e in data["tests"] if e["model"] == A]
+            change(entry)
+            spec.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        session = Session()
+        session.open(cfg, work_dir=work)
+        return session
+
+    def _saved(self, session) -> dict:
+        from test_session import A
+
+        data = json.loads(session.spec.path.read_text(encoding="utf-8"))
+        (entry,) = [e for e in data["tests"] if e["model"] == A]
+        return entry
+
+    def test_it_is_staged_and_its_row_says_why_it_is_not_scored(self, project):
         from dstf.authoring.spec_document import PatchOp
         from test_session import A
 
-        tree = {
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x"},
-                {"metric": "range", "variable": "pipe.T[1]"},
-            ],
-        }
-        assert self._refused(session, PatchOp(A, "add", "/metrics", tree)) == (
-            "range · pipe.T[1]: RangeConfig requires at least one of min_value / max_value"
+        session = self._open(project)
+        session.stage([PatchOp(A, "add", "/metrics", BARE_TREE)])
+        assert len(session.spec.pending) == 1
+        comparison = session.comparisons[A]
+        assert comparison.passed is False
+        (bare,) = [v for v in comparison.variables if v.name == "pipe.T[1]"]
+        assert bare.diagnostics["error"] == (
+            "metric 'range' misconfigured: needs at least one of min_value / max_value"
         )
+
+    def test_save_refuses_it_in_one_sentence_and_keeps_the_edits(self, project):
+        from dstf.authoring.session import UnscorableSaveError
+        from dstf.authoring.spec_document import PatchOp
+        from test_session import A
+
+        session = self._open(project)
+        before = session.spec.path.read_bytes()
+        session.stage([PatchOp(A, "add", "/metrics", BARE_TREE)])
+        with pytest.raises(UnscorableSaveError) as refused:
+            session.save()
+        assert str(refused.value) == (
+            "range · pipe.T[1]: needs at least one of min_value / max_value"
+            " — fill it or remove it before saving"
+        )
+        assert session.spec.path.read_bytes() == before
+        assert len(session.spec.pending) == 1
+        # filled, it saves
+        session.stage([PatchOp(A, "add", "/metrics/children/1/min_value", 0.0)])
+        session.save()
+        assert self._saved(session)["metrics"]["children"][1]["min_value"] == 0.0
+
+    @pytest.mark.parametrize("metric", ["range", "scalar"])
+    def test_a_criterion_is_added_on_a_variable_with_no_data_to_seed_it(
+        self, project, metric
+    ):
+        """The add form's leaf has nothing to be seeded from: it is staged
+        bare, for its editor to fill."""
+        from dstf.authoring.builtin.edit_tree import EditTree
+        from dstf.authoring.session import Selection, SessionView
+        from test_session import A
+
+        session = self._open(project)
+        view = SessionView(session, Selection(tests=frozenset({A})))
+        session.apply(
+            EditTree().act(
+                view,
+                action="add",
+                model_id=A,
+                path="/metrics",
+                variable="nosuch.y",
+                metric=metric,
+            )
+        )
+        added = session.tree(A)["children"][-1]
+        assert (added["metric"], added["variable"]) == (metric, "nosuch.y")
+
+    def _bare_override(self, entry):
+        entry["comparison"] = {"variable_overrides": {"x": {"mode": "range"}}}
+
+    def test_an_entry_that_holds_one_takes_the_edit_that_fills_it(self, project):
+        from dstf.authoring.builtin.edit_criteria import EditCriteria
+        from dstf.authoring.session import Selection, SessionView
+        from test_session import A
+
+        session = self._open(project, self._bare_override)
+        view = SessionView(session, Selection(tests=frozenset({A}), variable="x"))
+        session.apply(
+            EditCriteria().act(
+                view,
+                model_id=A,
+                path="/metrics/children/0",
+                metric="range",
+                variable="x",
+                params={"min_value": -5.0},
+                against="primary",
+                window={},
+            )
+        )
+        session.save()
+        assert self._saved(session)["metrics"]["children"][0] == {
+            "metric": "range",
+            "variable": "x",
+            "min_value": -5.0,
+        }
+
+    def test_and_the_edit_that_removes_it_and_one_that_adds_beside_it(self, project):
+        from dstf.authoring.builtin.edit_tree import EditTree
+        from dstf.authoring.session import Selection, SessionView
+        from test_session import A
+
+        session = self._open(project, self._bare_override)
+        view = SessionView(session, Selection(tests=frozenset({A})))
+        session.apply(
+            EditTree().act(
+                view,
+                action="add",
+                model_id=A,
+                path="/metrics",
+                variable="pipe.T[2]",
+                metric="nrmse",
+            )
+        )
+        session.save()  # the bare one is the one that was there
+        assert self._saved(session)["metrics"]["children"][0] == {
+            "metric": "range",
+            "variable": "x",
+        }
+        session.apply(
+            EditTree().act(
+                view, action="remove", model_id=A, path="/metrics/children/0"
+            )
+        )
+        session.save()
+        assert all(
+            leaf["metric"] != "range"
+            for leaf in self._saved(session)["metrics"]["children"]
+        )
+
+    def test_a_spec_the_tool_saved_with_an_override_left_under_its_tree(self, project):
+        """What the tool wrote before the check: the entry's tree, filled,
+        and the flat override it came from still beside it, scoring
+        nothing. Every edit of that entry was refused."""
+        from dstf.authoring.spec_document import PatchOp
+        from test_session import A
+
+        def left(entry):
+            self._bare_override(entry)
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [{"metric": "range", "variable": "x", "min_value": -5.0}],
+            }
+
+        session = self._open(project, left)
+        session.stage([PatchOp(A, "add", "/metrics/children/0/max_value", 9.0)])
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x"}])])
+        session.stage([PatchOp(A, "remove", "/comparison/variable_overrides/x")])
+        session.save()
+        assert self._saved(session)["metrics"]["children"][0]["max_value"] == 9.0

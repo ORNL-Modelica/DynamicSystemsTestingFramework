@@ -3,16 +3,19 @@
 The one read-modify-write both ``dstf spec-update`` and the authoring
 Session's ``save`` go through: materialize the implicit tree where a
 per-leaf op needs one, apply each model's ops to its entry, refuse a base
-tolerance the patch made no number, refuse a key nothing reads and a
-criterion that could never be scored, run the D66 validator on every
-touched tree, then write once. Nothing is written
-unless every group passes.
+tolerance the patch made no number, refuse a key nothing reads, run the
+D66 validator on every touched tree, refuse a criterion the patch left
+unscorable (:func:`refuse_newly_unscorable` — the delta rule), then write
+once. Nothing is written unless every group passes.
 """
 
 from __future__ import annotations
 
+import copy
 import json
+from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,7 +25,6 @@ from ..storage.ref_index import _atomic_write_text
 from .patch_apply import PatchError, apply_patch_to_document, load_spec_document
 
 if TYPE_CHECKING:
-    from ..comparison.tree_spec import SpecNode
     from ..storage.reference_store import ReferenceStore
 
 
@@ -164,7 +166,6 @@ def validate_entry_metric_tree(
         ) from e
     except Exception as e:
         raise PatchError(f"patched metric tree is invalid: {e}", reason=str(e)) from e
-    _refuse_unscorable_leaves(tree)
 
     if store is None:
         store = ReferenceStore(config)
@@ -179,31 +180,142 @@ def validate_entry_metric_tree(
         )
 
 
-def _refuse_unscorable_leaves(tree: SpecNode) -> None:
-    """Build every leaf's mode, as the comparison will: a leaf that cannot
-    be built — a ``range`` with neither bound, a ``scalar`` with no
-    quantity, a tolerance that is no number — parses, and then fails at
-    every compare. It is refused here, where it is written."""
+class UnscorableCriterion(PatchError):
+    """A write refused by :func:`refuse_newly_unscorable`. ``reason`` is the
+    criterion and what it lacks — ``range · pipe.T[1]: needs at least one of
+    min_value / max_value`` — and ``str()`` leads with where it is."""
+
+
+@dataclass(frozen=True)
+class Unscorable:
+    """One criterion of an entry that can never be scored."""
+
+    #: What it IS — its metric, variable, baseline, window and params as
+    #: sorted JSON — and nothing of where: the same text for a flat
+    #: override and for the leaf its entry's implicit tree gives it.
+    content: str
+    #: Where it is, as a parse error says it: ``metrics.children[1]``.
+    place: str
+    #: ``range · pipe.T[1]: needs at least one of min_value / max_value``.
+    reason: str
+
+
+def _dotted(pointer: str) -> str:
+    """A leaf's JSON-pointer path as the spec parser names a node:
+    ``/metrics/children/3/children/0`` → ``metrics.children[3].children[0]``."""
+    parts = pointer.strip("/").split("/")
+    out = parts[0]
+    for part in parts[1:]:
+        out += f"[{part}]" if part.isdigit() else f".{part}"
+    return out
+
+
+def unscorable_criteria(entry: dict | None) -> list[Unscorable]:
+    """Every criterion of ``entry`` whose mode cannot be built, as the
+    comparison builds it: a ``range`` with neither bound, a ``scalar`` with
+    no quantity, a tolerance that is no number or pair. Each parses, and
+    then fails at every compare.
+
+    What SCORES is what is looked at. With a ``metrics`` tree that is its
+    leaves, and the flat ``comparison.variable_overrides`` are not checked
+    at all: under a tree they score nothing (``comparator``: the tree
+    "fully replaces" them), so one that could not be built there fails
+    nothing — the tool itself leaves the overrides beside the tree it
+    writes out. Without a tree it is the overrides. A tree that does not
+    parse and an override naming a mode nothing is registered under are
+    said by their own checks, not here."""
+    from ..comparison.modes import resolve_mode
+    from ..comparison.registry import DEFAULT_METRIC
     from ..comparison.tree_eval import build_leaf_mode
-    from ..comparison.tree_spec import _walk_leaves_with_paths
+    from ..comparison.tree_spec import (
+        LeafSpec,
+        MetricSpecError,
+        _walk_leaves_with_paths,
+        parse_metric_tree,
+        spec_to_raw,
+    )
     from ..comparison.types import DEFAULT_TOLERANCE
 
-    for leaf, path in _walk_leaves_with_paths(tree, "/metrics"):
+    def found(leaf: LeafSpec, place: str, why: Exception) -> Unscorable:
+        return Unscorable(
+            content=json.dumps(spec_to_raw(leaf), sort_keys=True, default=str),
+            place=place,
+            reason=f"{leaf.metric} · {leaf.variable}: {why}",
+        )
+
+    if entry is None:
+        return []
+    out: list[Unscorable] = []
+    if has_metrics(entry):
         try:
-            build_leaf_mode(leaf, DEFAULT_TOLERANCE)
+            tree = parse_metric_tree(entry["metrics"])
+        except (MetricSpecError, ValueError, TypeError, AttributeError):
+            return []
+        for leaf, path in _walk_leaves_with_paths(tree, "/metrics"):
+            try:
+                build_leaf_mode(leaf, DEFAULT_TOLERANCE)
+            except ValueError as e:
+                out.append(found(leaf, _dotted(path), e))
+        return out
+    comparison = entry.get("comparison")
+    overrides = (
+        comparison.get("variable_overrides") if isinstance(comparison, dict) else None
+    )
+    if not isinstance(overrides, dict):
+        return []
+    unknown = unknown_override_modes(entry)
+    for variable, override in overrides.items():
+        if not isinstance(override, dict) or variable in unknown:
+            continue  # a mode nothing is registered under fails at compare
+        try:
+            resolve_mode(override, override.get("tolerance", DEFAULT_TOLERANCE))
         except ValueError as e:
-            reason = f"{leaf.metric} · {leaf.variable}: {e}"
-            raise PatchError(
-                f"patched metric tree is invalid: {path}: {reason}", reason=reason
-            ) from e
+            # As the leaf `synthesize_implicit_tree` makes of it, so that a
+            # patch which writes the entry's tree out changes nothing here.
+            params = {k: v for k, v in override.items() if k != "mode"}
+            leaf = LeafSpec(
+                str(override.get("mode") or DEFAULT_METRIC), variable, params
+            )
+            place = f"comparison.variable_overrides[{variable}]"
+            out.append(found(leaf, place, e))
+    return out
+
+
+def refuse_newly_unscorable(
+    before: dict | None, after: dict | None, model_id: str
+) -> None:
+    """THE rule for a criterion that can never be scored, applied where a
+    FILE is written (``spec-update`` and the tool's Save, both through
+    :func:`apply_validated_patches`): the write is refused only for a
+    criterion that is unscorable in ``after`` and was not already there,
+    with the same content, in ``before``.
+
+    So an entry that already holds one — written by hand, or by an earlier
+    version of the tool — takes every other edit, the edit that fills it
+    and the edit that removes it; two of them do not block each other; and
+    one that only MOVED (a removed sibling shifts its index, the entry's
+    implicit tree is written out) is the one that was there. A patch that
+    adds one, or edits one and leaves it unscorable, is refused: that is
+    the write that could know better. Counted, not looked up by place: two
+    equal bare leaves before and three after is one new one.
+
+    Refusing every unscorable criterion of the patched entry — the rule
+    this replaces — refused the patch that fixed one of two, and every
+    edit of an entry that held one it did not touch."""
+    was = Counter(item.content for item in unscorable_criteria(before))
+    for item in unscorable_criteria(after):
+        if was[item.content] > 0:
+            was[item.content] -= 1
+            continue
+        raise UnscorableCriterion(
+            f"patched entry is invalid: tests[{model_id}].{item.place}: {item.reason}",
+            reason=item.reason,
+        )
 
 
 def validate_entry_keys(data: dict, model_id: str) -> None:
     """The patched entry holds no key nothing reads (``check_entry_keys``,
-    the spec parser's own check), and none of its flat overrides is one
-    that could never be scored."""
-    from ..comparison.modes import resolve_mode
-    from ..comparison.types import DEFAULT_TOLERANCE
+    the spec parser's own check)."""
     from .spec_parser import EntryKeyError, check_entry_keys
 
     entry = spec_entry(data, model_id)
@@ -213,21 +325,6 @@ def validate_entry_keys(data: dict, model_id: str) -> None:
         check_entry_keys(entry, model_id)
     except EntryKeyError as e:
         raise PatchError(f"patched entry is invalid: {e}", reason=e.message) from e
-    overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
-    if not isinstance(overrides, dict):
-        return
-    for variable, override in overrides.items():
-        if not isinstance(override, dict) or variable in unknown_override_modes(entry):
-            continue  # a mode nothing is registered under fails at compare
-        try:
-            resolve_mode(override, override.get("tolerance", DEFAULT_TOLERANCE))
-        except ValueError as e:
-            reason = f"{override.get('mode') or 'nrmse'} · {variable}: {e}"
-            raise PatchError(
-                f"patched entry is invalid: tests[{model_id}].comparison."
-                f"variable_overrides[{variable}]: {reason}",
-                reason=reason,
-            ) from e
 
 
 def _base_tolerance(entry: dict | None) -> object:
@@ -294,11 +391,12 @@ def apply_validated_patches(
     applied: list[tuple[str, list[dict]]] = []
     for model_id, ops in groups:
         full = materialize_implicit_metrics(spec_entry(data, model_id), ops)
-        before = _base_tolerance(spec_entry(data, model_id))
+        was = copy.deepcopy(spec_entry(data, model_id))
         apply_patch_to_document(data, model_id, full)
-        validate_entry_base_tolerance(data, model_id, before)
+        validate_entry_base_tolerance(data, model_id, _base_tolerance(was))
         validate_entry_keys(data, model_id)
         validate_entry_metric_tree(data, model_id, config, store)
+        refuse_newly_unscorable(was, spec_entry(data, model_id), model_id)
         validate_entry_plots(data, model_id)
         applied.append((model_id, full))
     spec_path.parent.mkdir(parents=True, exist_ok=True)
