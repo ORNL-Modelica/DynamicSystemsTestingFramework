@@ -8182,7 +8182,8 @@ and the queue panel's are one capability). Soft-checks and companions are
 written by their own commands and are not thinned, as before.
 
 **Consequences.** `Config` and `TestModel` gain `baseline_points`; a
-primary reference JSON gains `sampling`. A long run's baseline is larger the next time it is
-accepted, and its `nrmse` is then an average over more points — the score
-of such a test can differ from the one its thinned baseline gave. A project
-that wants its baselines stored as before sets `"baseline_points": 2000`.
+primary reference JSON gains `sampling`. A long run's baseline is larger
+the next time it is accepted, and its `nrmse` is then an average over more
+points — the score of such a test can differ from the one its thinned
+baseline gave. A project that wants its baselines stored as before sets
+`"baseline_points": 2000`.
