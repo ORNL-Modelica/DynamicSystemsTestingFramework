@@ -630,8 +630,22 @@ class TestSpecUpdateRefuses:
             'range · unitTests.x[2]: unknown field "max_val" — did you mean "max_value"?'
         )
 
+    def test_a_range_with_no_bound_is_refused_when_it_is_written(
+        self, example, tmp_path, capsys
+    ):
+        """Every key is one the metric reads, and the leaf can never be
+        scored: refused here, where it used to be written and to fail at
+        compare time."""
+        patch = _patch(
+            tmp_path, _add_leaf({"metric": "range", "variable": "unitTests.x[2]"})
+        )
+        assert self._refused(example, patch, capsys).endswith(
+            "range · unitTests.x[2]: RangeConfig requires at least one of min_value / max_value"
+        )
+
     def test_the_misspelled_only_bound(self, example, tmp_path, capsys):
-        """The second evidence patch: `max_val` alone."""
+        """The second evidence patch: `max_val` alone — an unknown key AND a
+        range left with neither bound. The key is named first."""
         patch = _patch(
             tmp_path,
             _add_leaf(
@@ -639,6 +653,15 @@ class TestSpecUpdateRefuses:
             ),
         )
         assert 'unknown field "max_val"' in self._refused(example, patch, capsys)
+
+    def test_a_scalar_leaf_with_no_quantity(self, example, tmp_path, capsys):
+        patch = _patch(
+            tmp_path, _add_leaf({"metric": "scalar", "variable": "unitTests.x[1]"})
+        )
+        assert (
+            "scalar · unitTests.x[1]: ScalarConfig requires a 'quantity'"
+            in self._refused(example, patch, capsys)
+        )
 
     def test_a_misspelled_override_key(self, example, tmp_path, capsys):
         patch = _patch(
@@ -662,6 +685,19 @@ class TestSpecUpdateRefuses:
             tmp_path, {"op": "add", "path": "/comparison", "value": {"tolerence": 0.1}}
         )
         assert 'comparison: unknown field "tolerence"' in self._refused(
+            example, patch, capsys
+        )
+
+    def test_an_override_that_can_never_score(self, example, tmp_path, capsys):
+        patch = _patch(
+            tmp_path,
+            {
+                "op": "add",
+                "path": "/comparison",
+                "value": {"variable_overrides": {"unitTests.x[1]": {"mode": "range"}}},
+            },
+        )
+        assert "range · unitTests.x[1]: RangeConfig requires" in self._refused(
             example, patch, capsys
         )
 
@@ -926,4 +962,19 @@ class TestTheToolRefusesToStage:
         )
         assert self._refused(session, op) == (
             'tube · x: unknown field "tube_rell" — did you mean "tube_rel"?'
+        )
+
+    def test_a_criterion_that_could_never_be_scored(self, session):
+        from dstf.authoring.spec_document import PatchOp
+        from test_session import A
+
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "range", "variable": "pipe.T[1]"},
+            ],
+        }
+        assert self._refused(session, PatchOp(A, "add", "/metrics", tree)) == (
+            "range · pipe.T[1]: RangeConfig requires at least one of min_value / max_value"
         )

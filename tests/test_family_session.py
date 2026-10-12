@@ -798,10 +798,18 @@ def test_each_gesture_says_what_it_did_for_the_preview(tmp_path):
     ]
     session.discard()
     members = _members(session, range(1, 7))
-    session.apply(_edit(session, members, metric="range", params={"min_value": 0}))
+    bounds = {"min_value": 0, "max_value": 9}
+    session.apply(_edit(session, members, metric="range", params=bounds))
     assert _notes(session) == ["mode → range on 6 criteria of pipe.T[1:6]"]
-    session.apply(_edit(session, members, metric="range", params={}))
+    session.apply(_edit(session, members, metric="range", params={"max_value": 9}))
     assert _notes(session) == [
         "mode → range on 6 criteria of pipe.T[1:6]",
         "min_value cleared on 6 criteria of pipe.T[1:6]",
     ]
+    # the last bound cannot be cleared: a range with neither can never be
+    # scored, and is refused where it is written
+    with pytest.raises(PatchError) as refused:
+        session.apply(_edit(session, members, metric="range", params={}))
+    assert refused.value.reason == (
+        "range · pipe.T[1]: RangeConfig requires at least one of min_value / max_value"
+    )

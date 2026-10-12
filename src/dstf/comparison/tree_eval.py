@@ -29,7 +29,7 @@ from .metric_tree import (
     leaf_from_variable,
     stamp_leaf_path,
 )
-from .modes import resolve_mode
+from .modes import ComparisonMode, resolve_mode
 from .registry import DEFAULT_METRIC, MetricDescriptor
 from .registry import combinator as registry_combinator
 from .registry import metric as registry_metric
@@ -639,6 +639,20 @@ def _slice_window(
     if end is not None:
         mask &= t <= end
     return t[mask], v[mask]
+
+
+def build_leaf_mode(leaf: LeafSpec, base_tolerance: float) -> ComparisonMode:
+    """The mode ``leaf`` is scored with, built as :func:`_evaluate_leaf`
+    builds it. ``ValueError`` — the leaf's config error at compare time —
+    when the leaf can never be scored: a tolerance that is no number or
+    pair, a ``range`` with neither bound, a ``scalar`` with no quantity.
+    An update asks before it writes a leaf (``discovery.spec_update``), so
+    such a leaf is refused where it is written."""
+    return resolve_mode(
+        _leaf_override_dict(leaf),
+        _leaf_tolerance(leaf, base_tolerance),
+        default_points=False,
+    )
 
 
 def _leaf_tolerance(leaf: LeafSpec, base: float) -> Sides:

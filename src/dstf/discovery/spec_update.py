@@ -3,8 +3,9 @@
 The one read-modify-write both ``dstf spec-update`` and the authoring
 Session's ``save`` go through: materialize the implicit tree where a
 per-leaf op needs one, apply each model's ops to its entry, refuse a base
-tolerance the patch made no number, refuse a key nothing reads, run the
-D66 validator on every touched tree, then write once. Nothing is written
+tolerance the patch made no number, refuse a key nothing reads and a
+criterion that could never be scored, run the D66 validator on every
+touched tree, then write once. Nothing is written
 unless every group passes.
 """
 
@@ -21,6 +22,7 @@ from ..storage.ref_index import _atomic_write_text
 from .patch_apply import PatchError, apply_patch_to_document, load_spec_document
 
 if TYPE_CHECKING:
+    from ..comparison.tree_spec import SpecNode
     from ..storage.reference_store import ReferenceStore
 
 
@@ -162,6 +164,7 @@ def validate_entry_metric_tree(
         ) from e
     except Exception as e:
         raise PatchError(f"patched metric tree is invalid: {e}", reason=str(e)) from e
+    _refuse_unscorable_leaves(tree)
 
     if store is None:
         store = ReferenceStore(config)
@@ -176,9 +179,31 @@ def validate_entry_metric_tree(
         )
 
 
+def _refuse_unscorable_leaves(tree: SpecNode) -> None:
+    """Build every leaf's mode, as the comparison will: a leaf that cannot
+    be built — a ``range`` with neither bound, a ``scalar`` with no
+    quantity, a tolerance that is no number — parses, and then fails at
+    every compare. It is refused here, where it is written."""
+    from ..comparison.tree_eval import build_leaf_mode
+    from ..comparison.tree_spec import _walk_leaves_with_paths
+    from ..comparison.types import DEFAULT_TOLERANCE
+
+    for leaf, path in _walk_leaves_with_paths(tree, "/metrics"):
+        try:
+            build_leaf_mode(leaf, DEFAULT_TOLERANCE)
+        except ValueError as e:
+            reason = f"{leaf.metric} · {leaf.variable}: {e}"
+            raise PatchError(
+                f"patched metric tree is invalid: {path}: {reason}", reason=reason
+            ) from e
+
+
 def validate_entry_keys(data: dict, model_id: str) -> None:
     """The patched entry holds no key nothing reads (``check_entry_keys``,
-    the spec parser's own check)."""
+    the spec parser's own check), and none of its flat overrides is one
+    that could never be scored."""
+    from ..comparison.modes import resolve_mode
+    from ..comparison.types import DEFAULT_TOLERANCE
     from .spec_parser import EntryKeyError, check_entry_keys
 
     entry = spec_entry(data, model_id)
@@ -188,6 +213,21 @@ def validate_entry_keys(data: dict, model_id: str) -> None:
         check_entry_keys(entry, model_id)
     except EntryKeyError as e:
         raise PatchError(f"patched entry is invalid: {e}", reason=e.message) from e
+    overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
+    if not isinstance(overrides, dict):
+        return
+    for variable, override in overrides.items():
+        if not isinstance(override, dict) or variable in unknown_override_modes(entry):
+            continue  # a mode nothing is registered under fails at compare
+        try:
+            resolve_mode(override, override.get("tolerance", DEFAULT_TOLERANCE))
+        except ValueError as e:
+            reason = f"{override.get('mode') or 'nrmse'} · {variable}: {e}"
+            raise PatchError(
+                f"patched entry is invalid: tests[{model_id}].comparison."
+                f"variable_overrides[{variable}]: {reason}",
+                reason=reason,
+            ) from e
 
 
 def _base_tolerance(entry: dict | None) -> object:

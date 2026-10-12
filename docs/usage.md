@@ -162,7 +162,7 @@ It used to be kept and ignored, and that leaf scored as a range with no upper bo
 
 `tolerance` is a key of every leaf and override. `quantity` is one too: on a metric other than `scalar` it is the one param that is taken and not used. For your own notes there are `description`, `info` and `metadata` (an object of any shape), on an entry and on its `comparison` block; nothing reads them.
 
-`run`, `compare` and `discover` report it as a `Config error` and exit 2, as for a malformed `metrics` tree; `dstf author` shows it in place of the project. `spec-update` refuses a patch that would write such a key (`Patch failed: …`, exit 1, the file untouched), and the tool refuses to stage one, saying the same sentence. `export-schema` publishes the same rules: its objects are closed (`additionalProperties: false`) wherever the parser is strict.
+`run`, `compare` and `discover` report it as a `Config error` and exit 2, as for a malformed `metrics` tree; `dstf author` shows it in place of the project. `spec-update` refuses a patch that would write such a key (`Patch failed: …`, exit 1, the file untouched), and the tool refuses to stage one, saying the same sentence. Both also refuse a criterion that could never be scored — a `range` with neither bound, a `scalar` with no `quantity` — when it is written, not at the next compare. `export-schema` publishes the same rules: its objects are closed (`additionalProperties: false`) wherever the parser is strict.
 
 The `comparison` section a baseline stores in its reference JSON is not checked this way: it is merged under the spec's at compare, as before.
 
