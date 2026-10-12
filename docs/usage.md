@@ -153,6 +153,8 @@ Modelica simulation parameters resolve from two layers, in order:
 
 Resolution rule: **user omits the field → annotation if present, else simulator default. User provides the field → it is used.** No third layer; no per-field "force annotation" toggle (delete the override to defer to the annotation).
 
+The rule is the same for a test declared only in `test_spec.json` (`dstf add MyLib.Examples.Rod`): its model is looked up in the library by name — its own `.mo` file, or the `package.mo` or parent-class file that holds it — and what the entry does not set comes from that model's `experiment(...)`. A model of another library (a dependency) is not looked up, and neither is a short class definition (`model A = B(...)`). When neither layer gives a stop time, the test runs to the framework's default of 1 s, and `run` says so before it starts: `MyLib.Examples.Rod: neither test_spec.json nor the model's experiment annotation gives a stop time; it runs to the default, 1 s.`
+
 Use case for the two layers: a model author can write `experiment(StopTime=100)` so the model demos cleanly in Dymola/OMEdit, then set `simulation.stop_time = 10` in `test_spec.json` so CI runs fast — no need to edit the source.
 
 **Known gap**: `StartTime` from the annotation is not honored — every backend assumes `t=0`. Authoring `StartTime=5.0` in the annotation will be silently ignored. If you need a non-zero start, file an issue with the use case.

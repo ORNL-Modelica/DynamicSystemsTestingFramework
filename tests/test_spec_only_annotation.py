@@ -1,0 +1,396 @@
+"""A test declared only in ``test_spec.json`` takes its model's
+``experiment(...)`` annotation, as a scanned test does: the entry's own
+``simulation.*`` wins, and what it omits comes from the model (docs/usage.md,
+"Two-layer contract"). Before this a spec-only entry was taken as written,
+and a model annotated ``StopTime=200`` ran for the framework's 1 s."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from dstf.cli import main
+from dstf.config import Config
+from dstf.discovery.mo_parser import find_class
+from dstf.discovery.test_registry import SpecModelLocator, discover_tests
+
+ROD = """\
+within RodLib;
+model Rod "Twenty-node rod, heated at one end"
+  Real T[20](each start=300, each fixed=true);
+equation
+  der(T) = fill(0, 20);
+  annotation (experiment(StopTime=200, Tolerance=1e-6));
+end Rod;
+"""
+
+PACKAGE = """\
+within ;
+package RodLib "A small library"
+  // experiment(StopTime=77) in a comment is no annotation
+  model InPackageFile
+    Real x;
+  equation
+    der(x) = 1;
+    annotation (Documentation(info="experiment(StopTime=78)"),
+      experiment(StopTime=11, __Dymola_Algorithm="Cvode"));
+  end InPackageFile;
+
+  package Sub
+    model Deep
+      Real x;
+      annotation (experiment(StopTime=12, Interval=0.5));
+    end Deep;
+  end Sub;
+
+  model Short = RodLib.Rod(n=5) "a short class has no body and no end";
+
+  model Outer "its own annotation comes after its nested class's"
+    model Inner
+      Real x;
+      annotation (experiment(StopTime=13));
+    end Inner;
+    Real y;
+    annotation (experiment(StopTime=14, NumberOfIntervals=250));
+  end Outer;
+
+  model NoAnnotation
+    Real x;
+  end NoAnnotation;
+  annotation (experiment(StopTime=99));
+end RodLib;
+"""
+
+PARENT_FILE = """\
+within RodLib;
+package Parts "a parent class stored as its own file"
+  model Shared
+    Real x;
+    annotation (experiment(StopTime=21));
+  end Shared;
+  package Other
+    model Leaf
+      Real x;
+      annotation (experiment(StopTime=22));
+    end Leaf;
+  end Other;
+  model Leaf
+    Real x;
+    annotation (experiment(StopTime=23));
+  end Leaf;
+end Parts;
+"""
+
+
+@pytest.fixture
+def rodlib(tmp_path) -> Path:
+    """`RodLib/` beside `RodLib-Tests/` (testing.json + an empty spec)."""
+    lib = tmp_path / "RodLib"
+    lib.mkdir()
+    (lib / "package.mo").write_text(PACKAGE, encoding="utf-8")
+    (lib / "Rod.mo").write_text(ROD, encoding="utf-8")
+    (lib / "Parts.mo").write_text(PARENT_FILE, encoding="utf-8")
+    tests = tmp_path / "RodLib-Tests"
+    tests.mkdir()
+    (tests / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_path": "../RodLib",
+                "backend": "OpenModelica",
+                "backends": {},
+                "test_spec": "test_spec.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tests / "test_spec.json").write_text('{"tests": []}\n', encoding="utf-8")
+    return tests / "testing.json"
+
+
+def _write_spec(config_file: Path, *entries: dict) -> None:
+    (config_file.parent / "test_spec.json").write_text(
+        json.dumps({"tests": list(entries)}), encoding="utf-8"
+    )
+
+
+def _discovered(config_file: Path) -> dict:
+    return {t.model_id: t for t in discover_tests(Config(config_file=config_file))}
+
+
+# ---------------------------------------------------------------------------
+# find_class: where a class of the library is, and its own experiment
+# ---------------------------------------------------------------------------
+
+
+class TestFindClass:
+    def _find(self, rodlib: Path, model_id: str):
+        return find_class(rodlib.parent.parent / "RodLib", "RodLib", model_id)
+
+    def test_a_class_in_its_own_file(self, rodlib):
+        found = self._find(rodlib, "RodLib.Rod")
+        assert found.mo_file.name == "Rod.mo"
+        assert (found.experiment.stop_time, found.experiment.tolerance) == (200, 1e-6)
+
+    def test_a_class_inside_package_mo(self, rodlib):
+        found = self._find(rodlib, "RodLib.InPackageFile")
+        assert found.mo_file.name == "package.mo"
+        # not the comment's 77, not the documentation string's 78, not the
+        # package's own 99
+        assert found.experiment.stop_time == 11
+        assert found.experiment.method == "Cvode"
+
+    def test_a_class_two_levels_inside_package_mo(self, rodlib):
+        found = self._find(rodlib, "RodLib.Sub.Deep")
+        assert (found.experiment.stop_time, found.experiment.output_interval) == (
+            12,
+            0.5,
+        )
+
+    def test_a_class_inside_a_parent_classes_file(self, rodlib):
+        found = self._find(rodlib, "RodLib.Parts.Shared")
+        assert found.mo_file.name == "Parts.mo"
+        assert found.experiment.stop_time == 21
+
+    def test_a_name_is_looked_for_at_its_own_depth(self, rodlib):
+        """`Parts.Leaf` is the class declared DIRECTLY in `Parts`, not the
+        `Leaf` of `Parts.Other` that the file spells first."""
+        assert self._find(rodlib, "RodLib.Parts.Leaf").experiment.stop_time == 23
+        assert self._find(rodlib, "RodLib.Parts.Other.Leaf").experiment.stop_time == 22
+
+    def test_the_annotation_is_the_classes_own(self, rodlib):
+        """A nested class's annotation, spelled first, is not its parent's."""
+        outer = self._find(rodlib, "RodLib.Outer").experiment
+        assert (outer.stop_time, outer.number_of_intervals) == (14, 250)
+        assert self._find(rodlib, "RodLib.Outer.Inner").experiment.stop_time == 13
+
+    def test_a_class_with_no_annotation_is_found_with_none(self, rodlib):
+        found = self._find(rodlib, "RodLib.NoAnnotation")
+        assert found.mo_file.name == "package.mo" and found.experiment is None
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "RodLib.Missing",
+            "RodLib.Sub.Missing",
+            "RodLib.Short",  # a short class: no body to read
+            "RodLib.Rod.T",  # a component, not a class
+            "Modelica.Blocks.Examples.PID_Controller",  # another library's
+            "OtherLib.Rod",  # another library's, of a name this one has too
+            "RodLib",
+        ],
+    )
+    def test_what_is_not_a_class_of_the_library_is_not_found(self, rodlib, model_id):
+        assert self._find(rodlib, model_id) is None
+
+    def test_it_agrees_with_the_scan_on_every_scanned_model_of_the_example(self):
+        """One reader, two ways in: a model the scan recognizes is found by
+        name in the same file, with the same experiment."""
+        from dstf.discovery.test_registry import scan_source_tests
+
+        example = Path(__file__).parent.parent / "examples/modelica/ModelicaTestingLib"
+        config = Config(
+            config_file=example / "Resources" / "ReferenceResults" / "testing.json"
+        )
+        scanned = scan_source_tests(config)
+        assert len(scanned) >= 11
+        for model_id, test in scanned.items():
+            found = find_class(config.library_dir, config.library_name, model_id)
+            assert found is not None, model_id
+            assert found.mo_file == test.source_file, model_id
+            experiment = found.experiment
+            assert (
+                experiment.stop_time,
+                experiment.tolerance,
+                experiment.method,
+                experiment.number_of_intervals,
+                experiment.output_interval,
+            ) == (
+                test.stop_time,
+                test.tolerance,
+                test.method,
+                test.number_of_intervals,
+                test.output_interval,
+            ), model_id
+
+    def test_a_file_that_says_it_belongs_elsewhere_is_not_trusted(self, rodlib):
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Moved.mo").write_text(
+            ROD.replace("within RodLib;", "within OtherLib.Somewhere;").replace(
+                "Rod", "Moved"
+            ),
+            encoding="utf-8",
+        )
+        assert self._find(rodlib, "RodLib.Moved") is None
+
+
+# ---------------------------------------------------------------------------
+# discovery: a spec-only entry is filled from its model
+# ---------------------------------------------------------------------------
+
+
+class TestASpecOnlyEntryTakesItsAnnotation:
+    def test_what_the_entry_omits_comes_from_the_model(self, rodlib):
+        _write_spec(rodlib, {"model": "RodLib.Rod", "variables": ["T[1]"]})
+        rod = _discovered(rodlib)["RodLib.Rod"]
+        assert (rod.stop_time, rod.tolerance) == (200, 1e-6)
+        assert rod.source == "spec"
+        assert rod.source_file == rodlib.parent.parent / "RodLib" / "Rod.mo"
+        assert rod.field_sources == {
+            "stop_time": "annotation",
+            "tolerance": "annotation",
+            "method": "default",
+            "number_of_intervals": "default",
+            "output_interval": "default",
+        }
+        # it has no UnitTests component: the annotation adds no variable
+        assert rod.n_vars == 0 and rod.variable_patterns == ["T[1]"]
+
+    def test_the_entrys_own_simulation_block_still_wins(self, rodlib):
+        _write_spec(
+            rodlib,
+            {
+                "model": "RodLib.Rod",
+                "variables": ["T[1]"],
+                "simulation": {"stop_time": 1.0, "method": "Euler"},
+            },
+        )
+        rod = _discovered(rodlib)["RodLib.Rod"]
+        # 1.0 is also the framework default: set is set
+        assert (rod.stop_time, rod.tolerance, rod.method) == (1.0, 1e-6, "Euler")
+        assert rod.field_sources["stop_time"] == "test_spec"
+        assert rod.field_sources["tolerance"] == "annotation"
+        assert rod.field_sources["method"] == "test_spec"
+
+    def test_every_annotation_field_is_filled(self, rodlib):
+        _write_spec(
+            rodlib,
+            {"model": "RodLib.InPackageFile"},
+            {"model": "RodLib.Sub.Deep"},
+            {"model": "RodLib.Outer"},
+        )
+        tests = _discovered(rodlib)
+        assert tests["RodLib.InPackageFile"].method == "Cvode"
+        assert tests["RodLib.Sub.Deep"].output_interval == 0.5
+        assert tests["RodLib.Outer"].number_of_intervals == 250
+
+    def test_a_model_that_is_not_found_keeps_the_defaults(self, rodlib):
+        _write_spec(rodlib, {"model": "RodLib.Missing", "variables": ["x"]})
+        missing = _discovered(rodlib)["RodLib.Missing"]
+        assert (missing.stop_time, missing.method) == (1.0, "Dassl")
+        assert missing.field_sources["stop_time"] == "default"
+        assert missing.source_file == Path("")
+
+    def test_the_bundled_examples_spec_only_test(self, tmp_path):
+        """`NoUnitTest` is annotated `StopTime=5, Tolerance=1e-4`; with its
+        `simulation` block removed the entry still runs to 5."""
+        import shutil
+
+        src = Path(__file__).parent.parent / "examples/modelica/ModelicaTestingLib"
+        lib = tmp_path / "ModelicaTestingLib"
+        shutil.copytree(src, lib)
+        refs = lib / "Resources" / "ReferenceResults"
+        spec = json.loads((refs / "test_spec.json").read_text(encoding="utf-8"))
+        model = "ModelicaTestingLib.Examples.NoUnitTest"
+        (entry,) = [e for e in spec["tests"] if e["model"] == model]
+        del entry["simulation"]
+        (refs / "test_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+        test = _discovered(refs / "testing.json")[model]
+        assert (test.stop_time, test.tolerance) == (5, 1e-4)
+        assert test.source_file == lib / "Examples" / "NoUnitTest.mo"
+
+    def test_dstf_add_then_discover(self, rodlib, capsys):
+        """The newcomer's path: `dstf add` writes a bare entry, and
+        `discover` shows the model's stop time, not 1."""
+        argv = ["--config", str(rodlib)]
+        assert main([*argv, "add", "RodLib.Rod", "--variables", "T[1]"]) == 0
+        capsys.readouterr()
+        assert main([*argv, "discover"]) == 0
+        (row,) = [
+            ln for ln in capsys.readouterr().out.splitlines() if "RodLib.Rod" in ln
+        ]
+        assert row.split()[1:] == ["1", "pattern", "200", "Dassl", "spec"]
+
+    def test_a_non_modelica_source_is_unchanged(self, tmp_path, monkeypatch):
+        """No annotation is looked for — the library is not even probed —
+        and an entry with no stop time keeps the default."""
+        from conftest import python_example_copy
+        from dstf.discovery import mo_parser
+
+        def not_asked(*a, **k):
+            raise AssertionError("a non-Modelica library was searched for a class")
+
+        monkeypatch.setattr(mo_parser, "find_class", not_asked)
+        config, _ = python_example_copy(tmp_path)
+        spec = json.loads(config.spec_path.read_text(encoding="utf-8"))
+        del spec["tests"][0]["simulation"]
+        config.spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        test = _discovered(config.config_file)[spec["tests"][0]["model"]]
+        assert test.stop_time == 1.0
+        assert test.field_sources["stop_time"] == "default"
+        assert SpecModelLocator(config)(test.model_id) is None
+
+
+class TestTheLocatorReadsAModelOnce:
+    """The authoring Session re-merges the scan against the spec on every
+    edit; the locator it holds must not read the library again each time."""
+
+    def test_a_second_ask_reads_nothing(self, rodlib, monkeypatch):
+        config = Config(config_file=rodlib)
+        locate = SpecModelLocator(config)
+        first = locate("RodLib.Rod")
+        assert first.experiment.stop_time == 200
+
+        def no_read(*a, **k):
+            raise AssertionError("the library was read again")
+
+        monkeypatch.setattr(Path, "read_text", no_read)
+        monkeypatch.setattr(Path, "is_file", no_read)
+        assert locate("RodLib.Rod") is first
+        # a miss is remembered too
+        monkeypatch.undo()
+        assert locate("RodLib.Missing") is None
+        monkeypatch.setattr(Path, "is_file", no_read)
+        assert locate("RodLib.Missing") is None
+
+
+# ---------------------------------------------------------------------------
+# the authoring tool: the same merge, and the library read once
+# ---------------------------------------------------------------------------
+
+
+def test_the_tool_fills_a_spec_only_test_and_reads_its_model_once(
+    rodlib, tmp_path, monkeypatch
+):
+    """`dstf author` merges the scan against the spec on every edit. A
+    spec-only test shows its model's stop time there too, and an edit does
+    not send the Session back to the library's files."""
+    pytest.importorskip("nicegui")
+    from dstf.authoring.session import Session
+    from dstf.authoring.spec_document import PatchOp
+    from dstf.discovery import mo_parser
+
+    cfg = json.loads(rodlib.read_text(encoding="utf-8"))
+    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    rodlib.write_text(json.dumps(cfg), encoding="utf-8")
+    _write_spec(rodlib, {"model": "RodLib.Rod", "variables": ["T[1]"]})
+
+    asked = []
+    real = mo_parser.find_class
+
+    def spy(library_dir, library_name, model_id):
+        asked.append(model_id)
+        return real(library_dir, library_name, model_id)
+
+    monkeypatch.setattr(mo_parser, "find_class", spy)
+    session = Session()
+    session.open(rodlib, work_dir=tmp_path / "work")
+    rod = session.project.test("RodLib.Rod")
+    assert (rod.stop_time, rod.field_sources["stop_time"]) == (200, "annotation")
+    session.stage([PatchOp("RodLib.Rod", "add", "/comparison/tolerance", 0.5)])
+    session.stage([PatchOp("RodLib.Rod", "add", "/comparison/tolerance", 0.25)])
+    rod = session.project.test("RodLib.Rod")
+    assert rod.comparison_tolerance == 0.25  # re-merged, twice
+    assert (rod.stop_time, rod.tolerance) == (200, 1e-6)  # still the model's
+    assert asked == ["RodLib.Rod"]

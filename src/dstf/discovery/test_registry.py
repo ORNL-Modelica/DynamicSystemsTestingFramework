@@ -17,6 +17,7 @@ from .recognizer import RecognizerResult, get_recognizers
 
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
+    from .mo_parser import LocatedClass
     from .plots import PlotExtra
 
 logger = logging.getLogger(__name__)
@@ -268,12 +269,81 @@ def spec_tests_by_model(models: list[TestModel]) -> dict[str, TestModel]:
     return spec_tests
 
 
+#: The simulation fields an ``experiment(...)`` annotation can give.
+_SIMULATION_FIELDS = (
+    "stop_time",
+    "tolerance",
+    "method",
+    "number_of_intervals",
+    "output_interval",
+)
+
+
+class SpecModelLocator:
+    """Finds the model of a test that only ``test_spec.json`` declares: its
+    file and its ``experiment(...)`` annotation
+    (:func:`~.mo_parser.find_class`), which :func:`merge_tests` fills the
+    entry's unset simulation fields from.
+
+    Modelica sources only — any other source type has no annotation to
+    read, and every ask answers None.
+
+    Each model is looked for ONCE per locator, a miss included: the
+    authoring Session re-merges on every edit of the spec, and on a slow
+    mount the probes for a few spec-only models are not something to repeat
+    at every keystroke. A locator therefore shows a model file as it was
+    when first asked; whoever holds one replaces it when the library is
+    scanned again.
+    """
+
+    def __init__(self, config: Config):
+        self._config = config
+        self._found: dict[str, LocatedClass | None] = {}
+
+    def __call__(self, model_id: str) -> "LocatedClass | None":
+        if self._config.source_type != "modelica":
+            return None
+        if model_id not in self._found:
+            from .mo_parser import find_class
+
+            config = self._config
+            assert config.library_name is not None  # resolved in __post_init__
+            self._found[model_id] = find_class(
+                config.library_dir, config.library_name, model_id
+            )
+        return self._found[model_id]
+
+
+def _fill_from_model(test: TestModel, located: "LocatedClass") -> None:
+    """Give a spec-only ``test`` what its model says: the file, and every
+    simulation field the entry left unset that the model's ``experiment``
+    annotation sets — the two-layer contract a scanned test already gets
+    (docs/usage.md). The entry's own ``simulation.*`` and ``source`` stay."""
+    if test.source_file == Path(""):
+        test.source_file = located.mo_file
+    experiment = located.experiment
+    if experiment is None:
+        return
+    for name in _SIMULATION_FIELDS:
+        value = getattr(experiment, name)
+        if getattr(test, name) is None and value is not None:
+            setattr(test, name, value)
+            test.field_sources[name] = "annotation"
+
+
 def merge_tests(
-    scanned: dict[str, TestModel], spec_tests: dict[str, TestModel]
+    scanned: dict[str, TestModel],
+    spec_tests: dict[str, TestModel],
+    *,
+    locate: Callable[[str], "LocatedClass | None"] | None = None,
 ) -> list[TestModel]:
     """Step 3: union by model_id; the spec wins per field. Copies both
     inputs, so a caller (the authoring Session) can keep one scan and
-    re-merge it against every edit of the spec."""
+    re-merge it against every edit of the spec.
+
+    ``locate`` finds the model of an entry the scan did not recognize
+    (:class:`SpecModelLocator`); such a test takes its model's file and
+    annotation. Without it a spec-only entry is taken as written."""
     merged: dict[str, TestModel] = {
         model_id: copy.deepcopy(test) for model_id, test in scanned.items()
     }
@@ -322,6 +392,9 @@ def merge_tests(
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults — review
             # 2026-07-06 finding 57 (the old blanket "test_spec" stamp lied).
+            located = locate(model_id) if locate is not None else None
+            if located is not None:
+                _fill_from_model(spec_test, located)
             merged[model_id] = spec_test
 
     # Sort by model_id for consistent ordering; resolve remaining None sim
@@ -343,7 +416,9 @@ def discover_tests(config: Config) -> list[TestModel]:
        provided recognizers (PTA.3) layer on top.
     2. External test_spec.json (the configured file, else
        ``<reference_root>/test_spec.json`` when it exists; overrides
-       recognizer values).
+       recognizer values). A model only the spec names is looked up in the
+       library (:class:`SpecModelLocator`) for its file and its
+       ``experiment`` annotation.
 
     When a model appears in both recognizers and spec, variable patterns
     from the spec are added alongside the recognizer-derived variables, and
@@ -361,4 +436,6 @@ def discover_tests(config: Config) -> list[TestModel]:
         models = parse_test_spec(config.spec_path)
     else:
         models = []
-    return merge_tests(scanned, spec_tests_by_model(models))
+    return merge_tests(
+        scanned, spec_tests_by_model(models), locate=SpecModelLocator(config)
+    )

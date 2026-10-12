@@ -55,6 +55,7 @@ from ..discovery.spec_update import (
     validate_entry_metric_tree,
 )
 from ..discovery.test_registry import (
+    SpecModelLocator,
     TestModel,
     merge_tests,
     scan_source_tests,
@@ -122,6 +123,9 @@ class Project:
     store: ReferenceStore
     backend: Backend
     scanned: dict[str, TestModel]  # the source scan, merged against every spec edit
+    #: Where a spec-only test's model is, with its experiment annotation —
+    #: asked on every merge and read once per model; replaced with the scan.
+    locate: SpecModelLocator
     tests: list[TestModel]
     results: dict[str, TestResult]
     dataset_kind: DatasetType
@@ -416,7 +420,8 @@ class Session:
                     ),
                 )
                 store_scan(config, scanned)
-            tests = self._merge(config, scanned, spec.effective())
+            locate = SpecModelLocator(config)
+            tests = self._merge(config, scanned, spec.effective(), locate)
             # The queue is the open project's, and its workers the open
             # backend's: both end here, at the commit point (nothing is
             # queued or running — refused above).
@@ -426,6 +431,7 @@ class Session:
                 store=store,
                 backend=backend_obj,
                 scanned=scanned,
+                locate=locate,
                 tests=tests,
                 results={},
                 dataset_kind=dataset_kind_for(backend_obj),
@@ -1433,7 +1439,7 @@ class Session:
         if gone or put_back:
             effective = candidate.effective()
         tests = self._merge(
-            project.config, project.scanned, effective
+            project.config, project.scanned, effective, project.locate
         )  # ConfigError on a bad tree
         # A criterion on a variable the result file holds but the last read
         # did not extract: read again with the merged TestModel, which now
@@ -1497,7 +1503,9 @@ class Session:
             project = self._require_project()
             tests = {
                 t.model_id: t
-                for t in self._merge(project.config, project.scanned, self.spec.loaded)
+                for t in self._merge(
+                    project.config, project.scanned, self.spec.loaded, project.locate
+                )
             }
             for m in rest:
                 test = tests.get(m)
@@ -1915,14 +1923,18 @@ class Session:
         return self.project
 
     def _merge(
-        self, config: Config, scanned: dict[str, TestModel], document: dict
+        self,
+        config: Config,
+        scanned: dict[str, TestModel],
+        document: dict,
+        locate: SpecModelLocator,
     ) -> list[TestModel]:
         models = spec_models_from_document(
             document,
             base_dir=config.spec_path.parent,
             label=f"{config.spec_path} (in memory)",
         )
-        return merge_tests(scanned, spec_tests_by_model(models))
+        return merge_tests(scanned, spec_tests_by_model(models), locate=locate)
 
     def _rebuild_tests(
         self, models: set[str], *, scanned: dict[str, TestModel] | None = None
@@ -1938,11 +1950,13 @@ class Session:
         raises (the disk went away) leaves the Session as it was."""
         project = self._require_project()
         scan = project.scanned if scanned is None else scanned
-        tests = self._merge(project.config, scan, self.spec.effective())
+        # A new scan is the library read again: so are the spec-only models.
+        locate = project.locate if scanned is None else SpecModelLocator(project.config)
+        tests = self._merge(project.config, scan, self.spec.effective(), locate)
         current = {t.model_id for t in tests}
         reread = models & current if scanned is not None else set()
         fresh = self._read_again(reread, tests) if reread else {}
-        project.scanned, project.tests = scan, tests
+        project.scanned, project.locate, project.tests = scan, locate, tests
         self._update_waiting()
         gone = set(self.comparisons) - current
         new = current - set(self.comparisons)

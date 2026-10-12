@@ -2317,3 +2317,58 @@ class TestRemovedReportPagesAreSaid:
         assert _removed_lines(capsys.readouterr().out) == [
             _REMOVED.format(n=2, s="s", them="them")
         ]
+
+
+# =========================================================================
+# A Modelica test whose stop time came from nowhere — neither test_spec.json
+# nor the model's experiment annotation — runs to the framework's default,
+# and `run` says so before it starts
+# =========================================================================
+
+
+class TestRunSaysWhenAStopTimeIsTheDefault:
+    LINE = (
+        "{model}: neither test_spec.json nor the model's experiment annotation "
+        "gives a stop time; it runs to the default, 1 s."
+    )
+
+    @staticmethod
+    def _said(out: str) -> list[str]:
+        return [ln for ln in out.splitlines() if "gives a stop time" in ln]
+
+    def _tests(self):
+        return [
+            _mk_test(_T1, stop_time=1.0, field_sources={"stop_time": "default"}),
+            # 1.0 here too, but the model said so
+            _mk_test(_T2, stop_time=1.0, field_sources={"stop_time": "annotation"}),
+            _mk_test("Lib.T3", stop_time=1.0, field_sources={"stop_time": "test_spec"}),
+        ]
+
+    def test_one_line_names_the_model_and_the_default(self, run_env, capsys):
+        tests = self._tests()
+        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
+        cmd_run(_run_args(run_env, "--no-browser"))
+        assert self._said(capsys.readouterr().out) == [self.LINE.format(model=_T1)]
+
+    def test_only_the_tests_that_run_are_named(self, run_env, capsys):
+        tests = self._tests()
+        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
+        cmd_run(_run_args(run_env, "--no-browser", "--filter", _T2))
+        assert self._said(capsys.readouterr().out) == []
+
+    def test_a_non_modelica_source_is_not_told_about_an_annotation(
+        self, tmp_path, capsys
+    ):
+        """The Python example with a `simulation` block removed: it runs to
+        the default as before, and nothing speaks of a model's annotation."""
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path)
+        spec = json.loads(config.spec_path.read_text(encoding="utf-8"))
+        del spec["tests"][0]["simulation"]
+        config.spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        main(
+            ["--config", str(config.config_file), "run", "--no-browser"]
+            + ["--work-dir", str(config.work_dir)]
+        )
+        assert self._said(capsys.readouterr().out) == []

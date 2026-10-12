@@ -518,6 +518,142 @@ def parse_mo_file(path: Path) -> MoParseResult | None:
 
 
 # ---------------------------------------------------------------------------
+# A class by its name: where it is stored, and its own experiment annotation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LocatedClass:
+    """A class of the library found by its qualified name: the file that
+    holds it and its own ``experiment(...)`` annotation (None when it has
+    none)."""
+
+    mo_file: Path
+    experiment: ExperimentInfo | None
+
+
+@dataclass(frozen=True)
+class _ClassSpan:
+    """One class declaration in stripped source: ``start`` at its keyword,
+    ``body`` just past its name, ``end`` past its ``end Name;``."""
+
+    name: str
+    start: int
+    body: int
+    end: int
+
+
+#: A class declaration or an ``end Name;``, in comment/string-stripped text.
+#: The kinds are :data:`_CLASS_DECL_RE`'s — the ones that can hold a model.
+#: Group 2 marks a SHORT class (``model A = B(...)``), which has no body and
+#: no ``end``; ``model extends A`` is named by what it extends.
+_CLASS_TOKEN_RE = re.compile(
+    r"\b(?:model|block|class|package)\s+(?:extends\s+)?(\w+)(\s*=)?"
+    r"|\bend\s+(\w+)\s*;"
+)
+
+
+def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
+    """The classes declared DIRECTLY in ``stripped[start:end]`` — a file, or
+    one class's body — in source order; a class nested deeper belongs to
+    the one that holds it.
+
+    A stack of open declarations, closed by the ``end`` that names the top
+    one: ``end if;`` / ``end for;`` and the ``end`` of a kind not tracked
+    here (a function, a record) name nothing on it and close nothing.
+    """
+    out: list[_ClassSpan] = []
+    stack: list[tuple[str, int, int]] = []
+    for m in _CLASS_TOKEN_RE.finditer(stripped, start, end):
+        closed = m.group(3)
+        if closed is not None:
+            if stack and stack[-1][0] == closed:
+                name, at, body = stack.pop()
+                if not stack:
+                    out.append(_ClassSpan(name, at, body, m.end()))
+        elif m.group(2) is None:
+            stack.append((m.group(1), m.start(), m.end()))
+    return out
+
+
+def find_class(
+    library_dir: Path, library_name: str, model_id: str
+) -> LocatedClass | None:
+    """Locate the class ``model_id`` in the library's files and read its
+    own ``experiment(...)`` annotation — for a test that names a model no
+    recognizer found (declared in ``test_spec.json`` only).
+
+    A Modelica class is stored as its own file (``A/B/C.mo``), as a
+    directory (``A/B/C/package.mo``), or inside the file of a class that
+    holds it (``A/B/package.mo``, ``A/B.mo``, ... up to the library's
+    ``package.mo``). Those are tried from the most specific: a handful of
+    path probes per name, never a walk of the library. A file is trusted
+    only when its ``within`` clause and its class say it is the one looked
+    for. None when the name is not a class of this library (another
+    library's model, a component, a short class definition).
+
+    The annotation is the class's OWN: the text of the classes nested in
+    it is blanked first, so a nested model's ``experiment`` — which the
+    source spells before the enclosing class's annotation — is not read as
+    the parent's. It is then read by :func:`_parse_experiment`, the reader
+    a scanned test's goes through.
+    """
+    names = model_id.split(".")
+    if len(names) < 2 or names[0] != library_name:
+        return None
+    inner = names[1:]
+    for k in range(len(inner), -1, -1):
+        owner, nested = inner[:k], inner[k:]
+        folder = library_dir.joinpath(*owner)
+        candidates = [folder / "package.mo"]
+        if owner:
+            candidates.insert(0, folder.parent / f"{owner[-1]}.mo")
+        for path in candidates:
+            if not path.is_file():
+                continue
+            found = _class_in_file(path, [library_name, *owner], nested)
+            if found is not None:
+                return found
+    return None
+
+
+def _class_in_file(
+    path: Path, top: list[str], nested: list[str]
+) -> LocatedClass | None:
+    """The class ``nested`` deep inside the file's top class ``top`` (the
+    top class itself for an empty ``nested``), or None when the file does
+    not declare it."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if _extract_within(text) != ".".join(top[:-1]):
+        return None
+    stripped = _strip_modelica_literals(text)
+    span = _named(_direct_classes(stripped, 0, len(stripped)), top[-1])
+    for name in nested:
+        if span is None:
+            return None
+        span = _named(_direct_classes(stripped, span.body, span.end), name)
+    if span is None:
+        return None
+    # Blanked 1:1, so `_parse_experiment`'s offsets into the original text
+    # (its string-valued fields) still hold.
+    own = list(text[span.start : span.end])
+    for child in _direct_classes(stripped, span.body, span.end):
+        for i in range(child.start - span.start, child.end - span.start):
+            if own[i] != "\n":
+                own[i] = " "
+    return LocatedClass(
+        mo_file=path, experiment=_parse_experiment("".join(own), source=path)
+    )
+
+
+def _named(spans: list[_ClassSpan], name: str) -> _ClassSpan | None:
+    return next((s for s in spans if s.name == name), None)
+
+
+# ---------------------------------------------------------------------------
 # Bundled recognizer (PTA.1)
 # ---------------------------------------------------------------------------
 

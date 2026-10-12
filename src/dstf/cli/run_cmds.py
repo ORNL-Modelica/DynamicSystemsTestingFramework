@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..backends import dataset_kind_for
 from ..backends.progress import recorded_backend
-from ..config import ConfigError
+from ..config import DEFAULT_STOP_TIME, ConfigError
 from ..discovery.test_registry import discover_tests
 from ..pipeline import run_pipeline, wipe_stale_state_for_scope, write_id_mapping
 from .common import (
@@ -89,6 +89,23 @@ def _say_removed_pages(n: int) -> None:
         )
 
 
+def _default_stop_time_notes(tests: list, config) -> list[str]:
+    """One line per Modelica test about to run to the framework's default
+    stop time because nothing gave it one: a model with no ``experiment``
+    annotation and an entry with no ``simulation.stop_time`` runs for 1 s,
+    which is rarely what its author meant. Other source types have no
+    annotation layer and are not told about one."""
+    if config.source_type != "modelica":
+        return []
+    return [
+        f"{t.model_id}: neither test_spec.json nor the model's experiment "
+        f"annotation gives a stop time; it runs to the default, "
+        f"{DEFAULT_STOP_TIME:g} s."
+        for t in tests
+        if t.field_sources.get("stop_time") == "default"
+    ]
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
@@ -160,6 +177,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not tests:
         print("No tests matched the filter.")
         return 1
+
+    for line in _default_stop_time_notes(tests, config):
+        print(line)
 
     # Open the unified dashboard *before* the run starts so the user sees
     # live progress as tests register. The first ProgressReporter.register
