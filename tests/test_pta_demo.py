@@ -65,10 +65,27 @@ def test_simulate_only_model_does_not_trigger_bundled():
     tests = discover_tests(config)
     by_id = {t.model_id: t for t in tests}
     sim_only = by_id["ModelicaTestingLib.Examples.SimulateOnlyTest"]
-    # n_vars stays at TestModel default since neither bundled (no match)
-    # nor demo recognizer (no n_vars field) sets it.
-    assert sim_only.n_vars == 1
+    # No recognizer declared a UnitTests variable for it (bundled: no match;
+    # demo: no n_vars field), so it has none — and no run goes looking for
+    # a `unitTests.x[1]` the model never had.
+    assert sim_only.n_vars == 0
     assert sim_only.x_expressions == []
+
+
+def test_simulate_only_model_extracts_without_a_missing_variable_warning(caplog):
+    """The demo's simulate-only test has no UnitTests component: extracting
+    its result must not warn that `unitTests.x[1]` is missing from it."""
+    import logging
+
+    from dstf.backends.common.result_variables import extract_variables
+
+    config = Config(config_file=str(TESTING_JSON))
+    by_id = {t.model_id: t for t in discover_tests(config)}
+    sim_only = by_id["ModelicaTestingLib.Examples.SimulateOnlyTest"]
+    with caplog.at_level(logging.WARNING):
+        variables, _ = extract_variables({}, sim_only, [])
+    assert variables == []
+    assert "not found in simulation output" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

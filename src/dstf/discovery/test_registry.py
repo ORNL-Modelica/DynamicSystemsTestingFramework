@@ -142,6 +142,12 @@ def _build_test_model_from_recognizer_results(
     registers first; user-provided recognizers (PTA.3) append, so user values
     win on conflicts. Fields no recognizer set fall back to TestModel's
     dataclass defaults.
+
+    The UnitTests variables are the ones a recognizer DECLARED: ``n_vars``
+    when one gave it, else as many as the expressions one gave, else none.
+    A test recognized by something other than the component (``extends
+    *Icons.Example``) has no ``<instance>.x[i]``, and a default of one made
+    every run look for ``unitTests.x[1]`` in its result and warn.
     """
     parts = model_id.rsplit(".", 1)
     source_package = parts[0] if len(parts) > 1 else ""
@@ -152,15 +158,17 @@ def _build_test_model_from_recognizer_results(
         source_file=Path(""),
         source_package=source_package,
         short_name=short_name,
-        n_vars=1,
+        n_vars=0,
         result_file=short_name,
     )
 
+    counted = False
     for r in results:
         if r.source_file is not None:
             model.source_file = r.source_file
         if r.n_vars is not None:
             model.n_vars = r.n_vars
+            counted = True
         if r.unit_tests_instance:
             model.unit_tests_instance = r.unit_tests_instance
         if r.x_expressions:
@@ -191,6 +199,8 @@ def _build_test_model_from_recognizer_results(
         if r.requested_baselines is not None:
             model.requested_baselines = list(r.requested_baselines)
 
+    if not counted:
+        model.n_vars = len(model.x_expressions)
     return model
 
 
