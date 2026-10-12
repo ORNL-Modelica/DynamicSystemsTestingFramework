@@ -18,8 +18,8 @@ Criteria are written in **`dstf author`**, a local browser tool over the same fi
 
   | Backend | Source kind | Persistent | Notes |
   |---|---|---|---|
-  | Dymola | Modelica `.mo` | ✓ default | Python interface; `--batch` selects the `.mos` path |
-  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; `--batch` selects the `omc -s` path |
+  | Dymola | Modelica `.mo` | ✓ default | Python interface; `--batch` selects the `.mos` path. Records translation statistics, so a change in a model's state count is a structural warning |
+  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; `--batch` selects the `omc -s` path. Records timing statistics only: no structural warning when a model's state count changes |
   | FMPy | Pre-built FMU | per-test thread | `fmpy.simulate_fmu` in-process |
   | Julia / MTK | `.jl` ModelingToolkit | ✓ default | stdin-JSON pipe; Dyad untested |
   | Python | Any `simulate(stop_time, tol) -> dict` | subprocess-per-test | scipy, pandas, CSV loader, HTTP — anything |
@@ -116,6 +116,8 @@ uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceRes
 ```
 
 The dashboard URL is printed as a run starts (`Live progress: file://…`) and the page is opened in a browser tab; it reloads itself every 5s during the run. `--report` writes the per-test pages under `<work_dir>/reports/` and opens the dashboard again when they are written. `--no-browser` (on `run` and `compare`) opens no tab and still prints the link.
+
+The examples ship baselines for these `<Backend>/<os>` partitions: Modelica — `Dymola/linux`, `Dymola/windows` and `OpenModelica/linux`; FMU — `FMPy/linux` and `FMPy/windows`; Julia — `Julia/linux`; Python — `Python/linux`. A first run on an OS a backend has no partition for (OpenModelica, Julia or Python on Windows, say) reports every test `NO_REF` until `run --accept` stores its baselines there.
 
 To repeat with another backend's demo library, swap the config path:
 
