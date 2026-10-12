@@ -508,13 +508,14 @@
       for (const k of s.activeStatuses) activeStatuses.add(k);
       syncPillStates();
     }
-    if (s.colFilterValues && typeof s.colFilterValues === 'object') {
-      Object.assign(colFilterValues, s.colFilterValues);
-      colFilters.forEach(inp => {
-        const k = inp.dataset.colFilter;
-        if (s.colFilterValues[k]) inp.value = s.colFilterValues[k];
-      });
-    }
+    // Only the filters of columns this page has (DstfFilters.known): a
+    // column renamed since the view was stored has no input to show it in.
+    Object.assign(colFilterValues, DstfFilters.known(
+      s.colFilterValues, Array.from(colFilters, inp => inp.dataset.colFilter)));
+    colFilters.forEach(inp => {
+      const k = inp.dataset.colFilter;
+      if (colFilterValues[k]) inp.value = colFilterValues[k];
+    });
     // The toggles BEFORE applyFilters below: a restored regex filter is
     // compiled as a regex, not as the text it would read without .* on.
     if (s.toggles && typeof s.toggles === 'object') {

@@ -204,6 +204,35 @@ def test_a_state_saved_under_the_old_pill_keys_hides_nothing(
     ctx.close()
 
 
+def test_a_stored_filter_on_no_column_is_dropped(tmp_path, playwright_browser):
+    """A stored filter whose column the page does not have (the Criteria
+    column was `vars`) is not kept: the page has no input to show it in.
+    The filter of a column it has is restored. `DstfFilters.known` — the
+    rule the tool's Suite table reads its stored view by."""
+    html = _four_verdicts(tmp_path)
+    ctx = playwright_browser.new_context()
+    page = ctx.new_page()
+    page.goto(html.as_uri())
+    page.evaluate(
+        "() => localStorage.setItem('dstf-dashboard-v2:' + location.pathname,"
+        " JSON.stringify({colFilterValues: {vars: '>20', model: 'Lib.A'}}))"
+    )
+    page.reload()
+    assert _visible(page) == ["Lib.A"]
+    _type(page, "model", "Lib.B")  # any act stores the view as the page holds it
+    assert _visible(page) == ["Lib.B"]
+    stored = page.evaluate(
+        "() => JSON.parse(localStorage.getItem("
+        "'dstf-dashboard-v2:' + location.pathname)).colFilterValues"
+    )
+    assert stored == {"model": "Lib.B"}, stored
+    assert page.evaluate("() => DstfFilters.known({a: '1', b: '2'}, ['b', 'c'])") == {
+        "b": "2"
+    }
+    assert page.evaluate("() => DstfFilters.known(null, ['b'])") == {}
+    ctx.close()
+
+
 # ---- filters.js, alone ------------------------------------------------------
 
 CASES = [

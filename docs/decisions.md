@@ -5111,7 +5111,12 @@ and checkboxes, rebuilt from Python on a layout toggle.
    grouping, names, sort, columns, closed groups — is the viewer's, in
    `localStorage` under `dstf-suite-v1:<config file>` (per project; two tabs
    on one project share it; a storage that refuses leaves the table
-   working). The resolved config path, because it is known before the open
+   working). A stored view is older than the page that reads it: a filter, a
+   sort, a column state or a pill whose key the page does not have is dropped
+   when the grid is ready and the storage rewritten (`DstfFilters.known`,
+   which the dashboard reads its stored filters by too) — a filter stored
+   under the Criteria column's earlier key emptied the table and had no
+   input to undo it. The resolved config path, because it is known before the open
    and the same after it: keyed by the work dir, the key before an open
    without `--work-dir` was the config path and after it the derived work
    dir. `dstf author` needs `--config`, so there always is one; a reopen on

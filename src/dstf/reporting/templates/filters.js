@@ -15,6 +15,9 @@
 //            value (null / '') never matches.
 // A status column is not a typed filter: the count pills filter it.
 //
+// DstfFilters.known(stored, keys) is what a page keeps of a stored map of
+// filters: the entries whose key is one of its columns.
+//
 // Same semantics as the Python `_glob`, not the same cost: JS globs and
 // regexes backtrack (`_glob` exists because `*a*a*a*b` took >20 s there),
 // so a runaway pattern can freeze the browser tab it is typed in — only
@@ -82,5 +85,16 @@
     return compileText(query, opts || {});
   }
 
-  window.DstfFilters = { compile, BadFilter };
+  // A stored view is older than the page that reads it: `known(stored,
+  // keys)` is the part of a stored map (column -> query) whose key is a
+  // column the page has. A column renamed since would otherwise filter over
+  // nothing, with no input on the page to empty.
+  function known(stored, keys) {
+    const has = new Set(keys), out = {};
+    if (!stored || typeof stored !== 'object') return out;
+    for (const [k, v] of Object.entries(stored)) if (has.has(k)) out[k] = v;
+    return out;
+  }
+
+  window.DstfFilters = { compile, known, BadFilter };
 })();

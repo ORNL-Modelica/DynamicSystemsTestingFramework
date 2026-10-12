@@ -613,6 +613,62 @@ def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
             proc.wait(10)
 
 
+def test_a_stored_view_naming_no_column_is_dropped(tmp_path, playwright_browser):
+    """A view stored by a page whose columns were named otherwise (the
+    Criteria column was `vars`): a filter, a sort, a column state or a pill
+    whose key the page does not have is dropped as the grid becomes ready —
+    it was compiled as a text filter over nothing and emptied the table,
+    with no input on the page to undo it. What the page does have is kept,
+    and the storage is rewritten without the rest."""
+    proc, url, page, context, errors, cfg = _served(tmp_path, playwright_browser)
+    try:
+        key = f"dstf-suite-v1:{cfg.resolve()}"
+        seed = "([k, v]) => localStorage.setItem(k, JSON.stringify(v))"
+        read = "(k) => JSON.parse(localStorage.getItem(k))"
+        old = {
+            "grouped": True,
+            "short": True,
+            "regex": False,
+            "case": False,
+            "pills": ["passed"],
+            "filters": {"vars": ">20", "model": "Fake"},
+            "collapsed": [],
+            "columns": [{"colId": "vars", "hide": False}],
+            "sort": [{"colId": "vars", "sort": "asc"}],
+        }
+        page.evaluate(seed, [key, old])
+        page.reload()
+        expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        _shown(page, ALL)
+        expect(_filter(page, "model")).to_have_value("Fake")
+        expect(page.locator("button[data-pill][aria-pressed='true']")).to_have_count(0)
+        # Nothing here made the grid store its own state: this is the drop.
+        stored = page.evaluate(read, key)
+        assert stored["filters"] == {"model": "Fake"}, stored
+        assert stored["columns"] == [] and stored["sort"] == [], stored
+        assert stored["pills"] == [], stored
+        # Beside a column the page has, only the other one goes.
+        old["columns"].append({"colId": "detail", "hide": True})
+        old["sort"].append({"colId": "nrmse", "sort": "desc"})
+        page.evaluate(seed, [key, old])
+        page.reload()
+        expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".ag-header-cell[col-id='detail']")).to_have_count(0)
+        expect(
+            page.locator(".ag-header-cell[col-id='nrmse'][role='columnheader']")
+        ).to_have_attribute("aria-sort", "descending")
+        stored = page.evaluate(read, key)
+        assert "vars" not in {c["colId"] for c in stored["columns"]}, stored
+        assert {"colId": "detail", "hide": True} in stored["columns"], stored
+        assert stored["sort"] == [{"colId": "nrmse", "sort": "desc"}], stored
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
     """An edit staged before the page is drawn: the EDITED pill counts it
     and filters to it; its Edits cell says how many are unsaved."""

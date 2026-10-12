@@ -33,6 +33,20 @@
     } catch (e) { /* none */ }
   }
   load();
+  // The stored view may be older than this page: what names a column or a
+  // pill the page does not have is dropped, and the storage rewritten (the
+  // filters by DstfFilters.known, the dashboard's rule). A filter on a
+  // column renamed since was compiled as a text filter over nothing and
+  // emptied the table, with no input to undo it.
+  function known(api) {
+    const col = (c) => !!(c && api.getColumn(c.colId));
+    const pill = new Set(PILLS.map(p => p[0]));
+    S.filters = DstfFilters.known(S.filters, Object.keys(D.kinds));
+    if (Array.isArray(S.columns)) S.columns = S.columns.filter(col);
+    if (Array.isArray(S.sort)) S.sort = S.sort.filter(col);
+    S.pills = (Array.isArray(S.pills) ? S.pills : []).filter(k => pill.has(k));
+    try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* none */ }
+  }
 
   // -- filtering --------------------------------------------------------------
   function value(r, key) {
@@ -383,6 +397,7 @@
   D.ready = (p, kinds, selected) => {
     D.api = p.api;
     D.kinds = kinds;
+    known(p.api);
     if (S.columns) p.api.applyColumnState({ state: S.columns });
     if (S.sort) p.api.applyColumnState({ state: S.sort, defaultState: { sort: null } });
     regroup(p.api);
