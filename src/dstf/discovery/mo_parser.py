@@ -563,15 +563,20 @@ _OPENERS, _CLOSERS = "([{", ")]}"
 
 def _statement_end(stripped: str, start: int, end: int) -> int:
     """Just past the ``;`` that ends the statement at ``start`` — the first
-    one outside every bracket — or ``end`` when there is none."""
+    one outside every bracket — or ``end`` when there is none. A short
+    class written INSIDE a modification (``A(redeclare model M = B
+    annotation(...))``) ends before the bracket that closes the list it
+    sits in: what follows that bracket is the enclosing statement's."""
     depth = 0
     for i in range(start, end):
         c = stripped[i]
         if c in _OPENERS:
             depth += 1
         elif c in _CLOSERS:
+            if depth == 0:
+                return i
             depth -= 1
-        elif c == ";" and depth <= 0:
+        elif depth == 0 and c == ";":
             return i + 1
     return end
 
@@ -619,7 +624,9 @@ def find_class(
     path probes per name, never a walk of the library. A file is trusted
     only when its ``within`` clause and its class say it is the one looked
     for. None when the name is not a class of this library (another
-    library's model, a component, a short class definition).
+    library's model, a component). A short class (``model S = L.Rod
+    annotation(...);``) is one, read like any other: its own annotation,
+    not the one of the class it is made from.
 
     The annotation is the class's OWN: the text of the classes nested in
     it — a short class's one statement and a class of a quoted name
@@ -680,9 +687,12 @@ def _class_in_file(
 
 
 def _named(spans: list[_ClassSpan], name: str) -> _ClassSpan | None:
-    """The class of that name with a body: a short class is not one to
-    locate — it has no annotation layer of its own to read as a test's."""
-    return next((s for s in spans if s.name == name and not s.short), None)
+    """The class of that name — a short class too: ``model S = L.Rod
+    annotation(experiment(StopTime=13));`` is a class of the library with an
+    annotation of its own, in its one statement. (It was passed over, and a
+    run said of ``Examples/ShortOne.mo`` that the model was "not found
+    under source_path".) It has no body: nothing is found inside it."""
+    return next((s for s in spans if s.name == name), None)
 
 
 # ---------------------------------------------------------------------------

@@ -204,7 +204,70 @@ class TestFindClass:
             encoding="utf-8",
         )
         assert self._find(rodlib, "RodLib.Holder.After").experiment.stop_time == 15
-        assert self._find(rodlib, "RodLib.Holder.S") is None  # short: no body
+        # ... and the short class is found too, with the annotation it carries
+        short = self._find(rodlib, "RodLib.Holder.S")
+        assert short.mo_file.name == "Holder.mo" and short.experiment.stop_time == 12
+
+    @pytest.mark.parametrize(
+        ("statement", "stop_time"),
+        [
+            ("model ShortOne = RodLib.Rod annotation(experiment(StopTime=13));", 13),
+            (
+                "model ShortOne = RodLib.Rod(T(start={1, 2}), k = f(a; b))\n"
+                '  "with a description"\n  annotation(experiment(StopTime=13));',
+                13,
+            ),
+            # its own annotation: not the one of a class it redeclares
+            (
+                "model ShortOne = RodLib.Rod(redeclare model M = RodLib.Rod\n"
+                "    annotation(experiment(StopTime=7))) "
+                "annotation(experiment(StopTime=13));",
+                13,
+            ),
+            ("model ShortOne = RodLib.Rod;", None),
+        ],
+        ids=["annotation", "modifiers", "redeclared-short", "none"],
+    )
+    def test_a_short_class_that_is_its_files_class_is_found_with_its_own_annotation(
+        self, rodlib, statement, stop_time
+    ):
+        """`model ShortOne = Rod annotation(experiment(StopTime=13));` in
+        `ShortOne.mo` IS a class of the library with an annotation of its
+        own: it was not found, and a run told its author it was "not found
+        under source_path, so its experiment annotation was not read"."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "ShortOne.mo").write_text(
+            f"within RodLib;\n{statement}\n", encoding="utf-8"
+        )
+        found = self._find(rodlib, "RodLib.ShortOne")
+        assert found is not None and found.mo_file.name == "ShortOne.mo"
+        if stop_time is None:
+            assert found.experiment is None
+        else:
+            assert found.experiment.stop_time == stop_time
+        # it has no body: a component of what it is made from is no class
+        assert self._find(rodlib, "RodLib.ShortOne.T") is None
+
+    def test_short_classes_inside_a_modification_keep_their_own(self, rodlib):
+        """Two redeclared in one list: each is found with its own
+        annotation, and neither's is the enclosing class's."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "ShortOne.mo").write_text(
+            "within RodLib;\nmodel ShortOne = RodLib.Rod(\n"
+            "    redeclare model M = RodLib.Rod annotation(experiment(StopTime=7)),\n"
+            "    redeclare model N = RodLib.Rod annotation(experiment(StopTime=8)))\n"
+            "  annotation(experiment(StopTime=13));\n",
+            encoding="utf-8",
+        )
+        stop = {
+            name: self._find(rodlib, f"RodLib.ShortOne{name}").experiment.stop_time
+            for name in ("", ".M", ".N")
+        }
+        assert stop == {"": 13, ".M": 7, ".N": 8}
+
+    def test_a_short_class_in_package_mo_is_found(self, rodlib):
+        found = self._find(rodlib, "RodLib.Short")
+        assert found.mo_file.name == "package.mo" and found.experiment is None
 
     def test_a_class_with_no_annotation_is_found_with_none(self, rodlib):
         found = self._find(rodlib, "RodLib.NoAnnotation")
@@ -215,7 +278,6 @@ class TestFindClass:
         [
             "RodLib.Missing",
             "RodLib.Sub.Missing",
-            "RodLib.Short",  # a short class: no body to read
             "RodLib.Rod.T",  # a component, not a class
             "Modelica.Blocks.Examples.PID_Controller",  # another library's
             "OtherLib.Rod",  # another library's, of a name this one has too
@@ -272,6 +334,41 @@ class TestFindClass:
 
 
 class TestASpecOnlyEntryTakesItsAnnotation:
+    @pytest.mark.parametrize(
+        ("annotation", "said"),
+        [
+            (" annotation(experiment(StopTime=13))", []),
+            (
+                "",
+                [
+                    "RodLib.ShortOne: neither test_spec.json nor the model's "
+                    "experiment annotation gives a stop time; it runs to the "
+                    "default, 1 s."
+                ],
+            ),
+        ],
+        ids=["its-own-annotation", "none"],
+    )
+    def test_a_run_says_what_is_true_of_a_short_class(self, rodlib, annotation, said):
+        """With its own `experiment(StopTime=13)` it runs to 13 s and nothing
+        is said; with none, what is said is that nothing gives a stop time —
+        never that the class was not found."""
+        from dstf.cli.run_cmds import _default_stop_time_notes
+
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "ShortOne.mo").write_text(
+            f"within RodLib;\nmodel ShortOne = RodLib.Rod{annotation};\n",
+            encoding="utf-8",
+        )
+        _write_spec(rodlib, {"model": "RodLib.ShortOne", "variables": ["T[1]"]})
+        config = Config(config_file=rodlib)
+        (test,) = discover_tests(config)
+        assert test.source_file == lib / "ShortOne.mo"
+        assert _default_stop_time_notes([test], config) == said
+        if annotation:
+            assert test.stop_time == 13
+            assert test.field_sources["stop_time"] == "annotation"
+
     def test_what_the_entry_omits_comes_from_the_model(self, rodlib):
         _write_spec(rodlib, {"model": "RodLib.Rod", "variables": ["T[1]"]})
         rod = _discovered(rodlib)["RodLib.Rod"]
