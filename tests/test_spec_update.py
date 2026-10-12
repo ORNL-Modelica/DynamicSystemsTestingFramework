@@ -295,6 +295,41 @@ class TestAPatchIsAppliedOnceToTheFileThatIsWritten:
         ((_, applied),) = apply_validated_patches(spec, [("M", ops)], _config(tmp_path))
         assert applied == given and ops == given
 
+    def test_the_tree_written_out_shares_nothing_with_the_overrides_it_was_read_from(
+        self, tmp_path
+    ):
+        """The implicit tree's op is built from the entry's flat overrides.
+        A later op of the same patch that edits an override's rows edits
+        the override, and not the tree's leaf that was made from it — nor
+        the op the caller is handed back."""
+        points = [{"time": 1.0, "value": 2.0}]
+        entry = {
+            "model": "M",
+            "variables": ["x"],
+            "comparison": {
+                "variable_overrides": {"x": {"mode": "points", "points": points}}
+            },
+        }
+        spec = _spec(tmp_path, entry)
+        ops = [
+            {"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5},
+            {
+                "op": "add",
+                "path": "/comparison/variable_overrides/x/points/-",
+                "value": {"time": 3.0, "value": 4.0},
+            },
+        ]
+        ((_, applied),) = apply_validated_patches(spec, [("M", ops)], _config(tmp_path))
+        written = json.loads(spec.read_text(encoding="utf-8"))["tests"][0]
+        leaf = {
+            "metric": "points",
+            "variable": "x",
+            "points": [{"time": 1.0, "value": 2.0}],
+        }
+        assert written["metrics"]["children"] == [{**leaf, "tolerance": 0.5}]
+        assert len(written["comparison"]["variable_overrides"]["x"]["points"]) == 2
+        assert applied[0]["value"]["children"] == [leaf]
+
 
 def test_a_patch_that_leaves_plots_invalid_writes_nothing(tmp_path):
     config = _config(tmp_path)

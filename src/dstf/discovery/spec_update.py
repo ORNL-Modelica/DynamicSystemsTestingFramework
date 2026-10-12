@@ -96,7 +96,10 @@ def implicit_tree_op(entry: dict, *, variables: Sequence[str] | None = None) -> 
         )
     overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
     tree = synthesize_implicit_tree(variables, variable_overrides=overrides)
-    return {"op": "add", "path": "/metrics", "value": spec_to_raw(tree)}
+    # A copy: a leaf's params are its override's own values (a `points`
+    # table, a tolerance pair), and an op that shared them with the entry it
+    # was read from would change when a later op edits that override.
+    return {"op": "add", "path": "/metrics", "value": copy.deepcopy(spec_to_raw(tree))}
 
 
 def materialize_implicit_metrics(
