@@ -6,7 +6,7 @@
 - `startup.mos`: `cd()`, load dependencies, load main library, framework settings (`OutputCPUtime`, `Advanced.UI.TranslationInCommandLog`), user setup commands
 - `simulate.mos`: `cd()` to test subdir, `clearlog()`, `simulateModel(...)`, `savelog("translation_log.txt")` — result saved as `dsres.mat` (Dymola default)
 - `shutdown.mos`: `Modelica.Utilities.System.exit()`
-- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}`; after the run each entry records `last_run_status` (passed/failed/timed_out) — the verdict compare trusts (status.json survives as the fallback for pre-field manifests)
+- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}`; each in-scope entry is stamped `last_run_status: "pending"` when a run starts and records passed / failed / timed_out / cancelled as that test's result lands — the verdict compare trusts (status.json is the cross-check for an entry still pending)
 - `reference_manifest.json`: written before simulation, maps ref IDs to model names
 - `batch.mos`: `RunScript()` calls chaining startup + all tests + shutdown
 - Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt`, `dsres.mat`, `translation_log.txt` are per-simulation)
@@ -35,20 +35,19 @@
 - Alternative to NRMSE: the tube defines an upper/lower envelope around the reference trajectory
 - Configured per-variable via `variable_overrides` with `"mode": "tube"`
 - Three width modes via `tube_width_mode`:
-  - `"rel"` (default in interactive UI): width = fraction of |reference| (e.g., `"tube_rel": 0.02` = 2%)
-  - `"band"` (or legacy `"abs"`): width = offset in signal units (e.g., `"tube_abs": 500`)
-  - `"absolute"`: upper/lower are literal y-axis bounds, not offsets from reference
-- Legacy format (no `tube_width_mode`): width = `max(tube_abs, tube_rel * |reference|)`
+  - `"rel"`: width = fraction of |reference| (e.g., `"tube_rel": 0.02` = 2%)
+  - `"band"`: width = offset in signal units (e.g., `"tube_abs": 500`)
+  - `"abs"`: upper/lower are literal y-axis bounds, not offsets from reference; needs `tube_points`
+- `tube_width_mode` is required: a tube without one of the three is that criterion's config error
+- A constant width (`tube_abs` / `tube_rel`) is a number or a `{"lower", "upper"}` pair (D147); `tube_min_width` floors both sides
 - Pass/fail is strict: the actual signal must stay inside the tube at every interpolated point
 - Constant tube: `{"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.02}` — uniform width over all time
 - Time-varying tube: `tube_points` with `{"time", "upper", "lower"}` control points, interpolated via `tube_interpolation` (`"constant"` for stepwise, `"linear"` for linear — default is `"linear"`)
-- Mixed-mode control points: each point can use a different width mode. Bounds are resolved to absolute y-values at each control point first, then interpolated — no discontinuities at mode boundaries
+- One width mode per tube: the control points' `upper` / `lower` are interpolated first, then read in that mode
 - Before the first control point: hold first point values. After the last: hold last point values
 - Metrics reported: `tube_points_inside` (fraction 0-1), `tube_worst_violation` (largest distance outside tube), `tube_worst_violation_time`
 - NRMSE is still computed for reference even in tube mode
-- Constant variables (2-point signals) hide the tube mode selector — NRMSE tolerance is the right tool for these
-- HTML reports show "tube (95% in)" style labels; tolerance input disabled in tube mode (tube has its own pass/fail)
-- Per-test reports are read-only Plotly pages built from the geometry each metric emits (D125); criteria are authored in the spec file or, once it lands, the Python-side authoring tool
+- Per-test reports are read-only Plotly pages built from the geometry each metric emits (D125); criteria are authored in the spec file or in `dstf author`
 - Tube visualization: `fill:'toself'` polygon for the shaded band + separate upper/lower line traces for hover readout
 - All plot traces share the reference time grid for unified hover alignment
 - Tube rendering grid = ref grid ∪ control point times — ensures tube lines pass through CP markers when zoomed in.
@@ -66,8 +65,8 @@
 
 ### Comparison mode resolution via strategy pattern
 - Per-variable comparison mode is resolved via `resolve_mode(var_override, tolerance, default_points)` in `comparison/modes.py`
-- Three modes: `NrmseMode` (default, piecewise NRMSE), `TubeMode` (envelope), `PointsMode` (declared checkpoints; empty list ⇒ final value only)
-- Each mode has a typed frozen config dataclass: `NrmseConfig`, `TubeConfig`, `PointsConfig`
+- Seven modes: `NrmseMode` (default, piecewise NRMSE), `TubeMode` (envelope), `PointsMode` (declared checkpoints; empty list ⇒ final value only), `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode` — each registered as a `MetricDescriptor` in `comparison/builtins.py`
+- Each mode has a typed frozen config dataclass: `NrmseConfig`, `TubeConfig`, `PointsConfig`, …
 - Resolution: explicit `mode` key in override → that mode; no explicit mode + `default_points=True` → PointsMode; otherwise → NrmseMode
 - Explicit `mode: "tube"` is never overridden by the `default_points` flag — per-variable mode always wins
 
@@ -75,7 +74,6 @@
 - When signal range < epsilon (constant signals), NRMSE normalizes by `max(|ref_values|)` instead of signal range
 - Avoids false failures from float32 quantization on large-magnitude constants (e.g., 512-unit error on 37e9 gives nrmse ≈ 1.4e-8, not 512)
 - Falls back to raw RMSE only when magnitude is also near-zero (true zero constant)
-- Consistent with how `_compare_final_values` normalizes by `|ref_final|`
 
 ### Backend registry and lazy imports
 - Backends self-register via `@register(name)` class decorator in `backends/__init__.py`
@@ -98,8 +96,10 @@
 - The expression rides beside the name on `VariableResult`, in the reference
   JSON entry and on `VariableComparison`. It is soft-checked on compare — a
   changed expression under the same name is a warning, never a failure — and
-  it is a key of nothing, except overlay matching (name first, then
-  expression: another source names the quantity its own way).
+  it is a key of nothing, except overlay matching for a COMPANION with no
+  recorded `--map` (name first, then expression: another source names the
+  quantity its own way). A soft_check and a sibling-backend overlay match by
+  name alone.
 
 ### Config resolution order
 - CLI args > `testing.json` file > defaults
@@ -122,9 +122,9 @@
 - Python's `%g` format auto-switches to scientific notation for very large/small values
 
 ### Two-phase .mat reading: names first, then selective data
-- Phase 1: `list_dymola_mat_variables()` reads only the `name` matrix from the MAT4 headers — fast even for 36MB files
-- Phase 2: `_compute_needed_variables()` resolves patterns against the name list to determine exactly which variables are needed
-- Phase 3: `read_dymola_mat(variable_names=needed)` memory-maps `data_2` and reads only the needed rows
+- Phase 1: `list_result_mat_variables()` reads only the `name` matrix from the MAT4 headers — fast even for 36MB files
+- Phase 2: `compute_needed_variables()` (`backends/common/result_variables.py`) resolves patterns against the name list to determine exactly which variables are needed
+- Phase 3: `read_result_mat(variable_names=needed)` memory-maps `data_2` and reads only the needed rows
 - For 76,992 variables where only 10 are needed, this reads ~0.01% of the trajectory data
 - Critical for WSL2 where 9P filesystem I/O is slow for large files
 
@@ -150,14 +150,14 @@
 - One report per test: `interactive.html` (Plotly.js interactive charts); the suite-wide page is the dashboard
 - Per-test reports open `interactive.html` by default
 - A `comparison_data.json` sidecar is written alongside the HTML, containing the same data plus full trajectory time series (`act_time`, `act_values`, `ref_time`, `ref_values` per variable) for downstream tooling
-- The static template uses progressive disclosure: key stats cards at top, condensed variable table, then collapsible `<details>` sections for full variable details, statistics, simulation parameters, diagnostics, and reference info
+- The template uses progressive disclosure: key stats cards at top, structural warnings, then collapsible `<details>` sections for reference info, simulation artifacts, simulation parameters, overlays, statistics and diagnostics; the metric tree and the plots are open
 - Simulation parameters show current vs reference values with change highlighting when they differ
 - Statistics sections iterate over whatever keys exist in the dicts rather than hardcoding field names — new stats from future Dymola versions appear automatically
 - Trajectory plots open by default; metadata sections are collapsed
 
 ### Interactive Plotly report UX
 - `interactive.html` uses a vendored Plotly.js (cartesian bundle, one copy per report suite at reports/plotly.min.js — offline-capable) for interactive charts — zoom, pan, hover tooltips on all data points
-- One chart per variable: actual vs reference, plus the overlays the picker toggles
+- One chart per plot of the test (D140: one per scored variable or array family, then the watch plots): actual vs reference, plus the overlays the picker toggles
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart — signed and absolute error on the right axis "Error [signal units]", NRMSE on its own "NRMSE [–]", each shown while a series on it is visible
 - `dstf spec-update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
 
@@ -168,11 +168,11 @@
 - Use the custom `_pattern_to_regex()` instead
 
 ### Backend-agnostic live progress via meta-refresh dashboard
-- `ProgressReporter` (`backends/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out`) plus elapsed/detail/worker_id
-- Writes `status.json` (structured, for tooling) + `dashboard.html` (auto-refreshes via `<meta http-equiv="refresh" content="2">`) to `work_dir` on every state change — no server needed, works over `file://`
+- `ProgressReporter` (`backends/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out` / `cancelled`) plus elapsed/detail/worker_id
+- Writes `status.json` (structured, for tooling) + `dashboard.html` (auto-refreshes via `<meta http-equiv="refresh" content="5">`) to `work_dir` on every state change — no server needed, works over `file://`
 - Atomic write pattern: unique tmp filenames (`status.json.{pid}.{uuid}.tmp`) + a dedicated `_write_lock` serializing the write+replace. Both are required on Windows where `replace` fails when another thread holds the file
-- `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_NNNN"` or `"test_NNNN"`) so the dashboard's model-name link points at the canonical per-test report (`reports/{report_dir}/interactive.html`) — matches `generate_report_suite` naming
-- `backend.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); the backend consults it at registration time so links work even mid-run before the report is generated
+- `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_NNNN"` or `"test_NNNN"`): the name a page would have — matches `generate_report_suite` naming. It is a guess made before the run, so it is not a link: a row's model name links to `reports/{dir}/interactive.html` only where the final page's writer read that test's sidecar (`TestRow.report_page`), which only `--report` writes; a live page links none
+- `backend.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by `run_pipeline` before `run_tests` (from `ReferenceStore.index`); the backend consults it at registration time
 - `finalize()` writes the last snapshot and leaves the page LIVE: the compare phase has not scored anything yet, and a static page there is where a watching browser stops. The command that ends the run (`run`, `run -i`, `run --accept`, `compare`, an aborted run, the tool's queue once it has drained) renders the static final page
 
 ### Per-phase timing on the persistent backend
@@ -209,21 +209,19 @@
 - Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup --orphans` lists them with their on-disk dirs (work + report); `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
 
 ### Index-page batch actions feed the CLI filter
-- Index template (`reporting/templates/dashboard.html`) has a checkbox column + action panel. All selection state lives client-side in the DOM (rows get `.selected` class + a checked input)
-- Bulk selectors (`+ Failed`, `+ Sim Failed`, `+ No Baseline`, `+ With Warnings`, `+ Stale`) operate over **visible** rows so the existing filter buttons act as a pre-filter for selection
-- Stale detection reuses the `last_run_at` heuristic (>60s older than newest); the row's `data-stale="1"` attribute is set by the same JS that renders the relative-time column
-- Three export formats: clipboard comma-list, downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more)
-- Live command preview in a textarea so users see exactly what they'll get before clicking Copy
+- Index template (`reporting/templates/dashboard.html`) has a checkbox column + a selection footer. All selection state lives client-side in the DOM
+- The count pills and the column filters narrow the rows; the header checkbox selects the rows they show
+- Two exports: a downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more). A Command menu picks what the string asks for: `run` (with `--merge --report`), `compare`, `compare --accept`, `run --rerun failed,sim-failed` or `author`
+- Live command preview in a read-only field so users see exactly what they'll get before clicking Copy
 - No server, no API — composes with the static HTML report design (works over `file://`)
 
 ### --merge expands report scope to the full manifest
 - `run --merge` keeps the *run* scope as `tests` (filtered) but expands the *read/compare/report* scope to every model in `manifest.manifest`
 - `backend.read_results` already handles `rr=None` for non-rerun tests by reading whatever `dsres.mat` exists in the test_dir on disk — so prior results merge naturally with fresh ones, no special path needed
 - `--rerun` always sets `args.merge = True` since rerunning failed tests in isolation defeats the goal (you want to see them in context of the whole suite)
-- Stale-data visibility: `last_run_at` is rendered as a relative time on the index (with ISO tooltip); rows >60s older than the newest run are greyed out and tagged "Stale: from a prior run; rerun to refresh"
 
 ### Configurable batch size with queue dispatch
-- `Config.batch_size` (CLI: `--batch-size N`). Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
+- `Config.batch_size` (CLI: `--batch-size N`), read by Dymola's `--batch` path only — a persistent worker takes one test at a time. Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
 - Crash/timeout blast radius is bounded by `batch_size` — a hung test only takes down its batch, not its worker's whole share
 - `worker_id` for the dashboard comes from the actual pool thread slot via `threading.current_thread().name` (regex-matched suffix), not the batch index — stable attribution across many batches per worker
 - Tradeoff: smaller batches reload Dymola's library more often. Sweet spot is ~3-10 depending on per-test runtime
@@ -233,7 +231,7 @@
 
 ### No-baseline plot generation
 - When a test has no reference baseline, variable plots are still generated showing the simulated trajectory
-- Plots display a "NEW" badge and use a single panel (no error panels since there is no reference to compare against)
+- The plots draw the actual alone, since there is no reference to compare against
 - Enables visual review of new tests before accepting them as baselines
 
 ### Don't store simulation artifacts in shared directories during parallel runs
@@ -251,8 +249,8 @@
 
 ## Forward hooks
 
-### `comparison_data.json` sidecar is the stable contract for future interactive UI
-- Every per-test report directory writes `comparison_data.json` alongside `comparison.html` / `interactive.html` — the full render context serialized to JSON
-- Any future interactive viewer (client-side JS single-page app, tolerance playground, tree-editor) can be built against this file without touching the Python side
+### `comparison_data.json` sidecar is the stable contract for downstream tooling
+- Every per-test report directory writes `comparison_data.json` alongside `interactive.html` — the full render context serialized to JSON, trajectories at full resolution
+- A downstream viewer or tool can be built against this file without touching the Python side; the dashboard's final page reads its summary for each row's numbers and its report link
 - **Preserve this** when extending reports: new context fields go into the dict, old fields stay JSON-serializable
-- If you ever need richer client interaction (live tolerance editing, tree drag-and-drop), the upgrade path is JS in the existing templates reading the sidecar — not a GUI rewrite
+- Editing is not built on it: the report page computes nothing and mutates nothing (D125), and criteria are edited in `dstf author`, which scores in Python
