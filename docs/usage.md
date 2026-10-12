@@ -1334,9 +1334,16 @@ the baseline would
 not hold it yet). Where the result FILE already holds the variable — Dymola's
 and the JSON driver's (Julia, Python) record every variable — the tool reads it
 again the moment the criterion is staged and scores it at once; the strip asks
-for a new run only on OpenModelica and FMPy, or for a name the file lacks. The count is of pending ops, so a flat test's first criterion edit
-reads 2 — its tree written out, and the edit — and none again once that edit
-is put back (see the preview, above).
+for a new run only on OpenModelica and FMPy, or for a name the file lacks. The
+count is of EDITS — the things you did, not the patch ops they took — and it
+is the one count the header ("N pending edits"), Save's and Discard's
+captions, the Suite's Edits cell, the Tests drawer and the preview show. A
+flat test's first criterion edit also writes its tree out, and reads 1 (the
+preview says Save writes the tree); so does one Add over twenty Indices, one
+change of a folded row's twenty criteria, one Ctrl+click on a plot, one drag,
+one wrap, one move. An edit that lands where the last one did — a value typed
+over, a second row clicked into the same table, a second move — replaces it
+and stays one, and an edit put back leaves none (see the preview, above).
 
 **While a test runs** its page keeps the plots and the criteria it had — its
 earlier result went when the run started, and the verdict beside the model id
@@ -1556,8 +1563,9 @@ line, so their input lines sit level. Structured fields — tube control points,
 checkpoints, declared events and peaks — are shown read-only here and edited in
 Edit on plot. Every control change stages one `replace` of the whole leaf and
 rescores the test, so the figure and the verdicts follow the edit; consecutive
-replaces of one leaf collapse into one pending op, so the pending count and the
-exported patch carry one edit per leaf rather than a keystroke log (the preview
+replaces of one leaf collapse into one pending op, so the exported patch
+carries one op per leaf rather than a keystroke log, and the pending count one
+edit (the preview
 shows the entry as it will be saved either way), and an edit that puts the
 leaf back as the file holds it leaves no pending op at all.
 

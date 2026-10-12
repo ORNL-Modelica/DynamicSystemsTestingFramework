@@ -21,7 +21,12 @@ from dstf.authoring.session import (
     SessionView,
     StaleSpecError,
 )
-from dstf.authoring.spec_document import PatchOp, SpecDocument
+from dstf.authoring.spec_document import (
+    PatchOp,
+    SpecDocument,
+    edit_count,
+    edit_counts,
+)
 from dstf.backends.pool import ItemState
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config, ConfigError
@@ -1925,7 +1930,7 @@ class TestOutcomes:
         from dstf.authoring.session import PendingEditsError
 
         session.stage([LOOSEN])
-        with pytest.raises(PendingEditsError, match="2 staged"):
+        with pytest.raises(PendingEditsError, match="1 staged"):
             session.close()
         other_cfg, other_work = _project(tmp_path / "other")
         with pytest.raises(PendingEditsError):
@@ -3251,6 +3256,93 @@ def _session_with_plots(tmp_path: Path, plots: list) -> Session:
     s = Session()
     s.open(cfg, work_dir=work)
     return s
+
+
+class TestOneStageIsOneEdit:
+    """What every count of pending edits counts (`spec_document.edit_counts`):
+    the things done, not the ops they took."""
+
+    def test_a_flat_tests_first_edit_is_two_ops_and_one_edit(self, session):
+        session.stage([LOOSEN])
+        pending = session.spec.pending
+        assert [(op.path, op.materializes) for op in pending] == [
+            ("/metrics", True),
+            (LOOSEN.path, False),
+        ]
+        assert edit_counts(pending) == {A: 1} and edit_count(pending) == 1
+
+    def test_a_second_thing_done_is_a_second_edit_and_a_value_typed_over_is_not(
+        self, session
+    ):
+        session.stage([LOOSEN])
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x"}])])
+        assert edit_count(session.spec.pending) == 2
+        typed = PatchOp(A, "replace", "/plots", [{"var": "x", "context": []}])
+        session.stage([typed])  # lands where the last op did: the same edit
+        assert [op.path for op in session.spec.pending] == [
+            "/metrics",
+            LOOSEN.path,
+            "/plots",
+        ]
+        assert edit_count(session.spec.pending) == 2
+        session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        assert edit_counts(session.spec.pending) == {A: 2, D: 1}
+
+    def test_an_op_that_supersedes_the_last_is_the_edit_that_one_was(
+        self, session, tmp_path
+    ):
+        """Each fold of `Session.stage` keeps the number of the op it
+        replaces: that op may be one of several its act took, and a new
+        number would make the act two edits."""
+        # replace after add: a flat test's tolerance typed, then typed over
+        session.stage([LOOSEN])
+        session.stage([PatchOp(A, "replace", LOOSEN.path, 0.25)])
+        assert len(session.spec.pending) == 2
+        assert edit_counts(session.spec.pending) == {A: 1}
+        session.discard()
+        # add after add of an object member
+        both = [
+            PatchOp(A, "add", "/plots", L1),
+            PatchOp(A, "add", "/comparison/tolerance", 0.25),
+        ]
+        session.stage(both)
+        session.stage([PatchOp(A, "add", "/comparison/tolerance", 0.5)])
+        assert len(session.spec.pending) == 2
+        assert edit_counts(session.spec.pending) == {A: 1}
+        # remove after replace
+        s = _session_with_plots(tmp_path / "with-plots", L1)
+        s.stage(
+            [
+                PatchOp(A, "add", "/comparison/tolerance", 0.25),
+                PatchOp(A, "replace", "/plots", L2),
+            ]
+        )
+        s.stage([PatchOp(A, "remove", "/plots")])
+        assert [op.op for op in s.spec.pending] == ["add", "remove"]
+        assert edit_counts(s.spec.pending) == {A: 1}
+
+    def test_one_stage_over_two_tests_is_one_edit_of_each(self, session):
+        session.stage(
+            [
+                PatchOp(D, "add", "/comparison", {"tolerance": 0.5}),
+                PatchOp(A, "add", "/plots", [{"var": "x"}]),
+                PatchOp(A, "add", "/comparison/tolerance", 0.25),
+            ]
+        )
+        assert len(session.spec.pending) == 3
+        assert edit_counts(session.spec.pending) == {A: 1, D: 1}
+        # A discard of one test leaves the other's.
+        session.discard({A})
+        assert edit_counts(session.spec.pending) == {D: 1}
+
+    def test_the_refusal_to_close_counts_edits(self, session):
+        from dstf.authoring.session import PendingEditsError
+
+        session.stage([LOOSEN])
+        with pytest.raises(PendingEditsError) as raised:
+            session.close()
+        assert raised.value.count == 1
+        session.discard()
 
 
 class TestStageCollapses:

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from ...backends.pool import ItemState
 from ..capabilities import Emphasis, Enqueue, Panel, Placement, plural
 from ..situation import Situation
+from ..spec_document import edit_counts
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -109,7 +110,8 @@ class EnqueueTests:
         if held:
             notes.append(f"{len(held)} already queued")
         models = set(new)
-        edits = sum(1 for op in s.pending if op.model_id in models)
+        counts = edit_counts(s.pending)
+        edits = sum(counts[model_id] for model_id in models)
         if edits:
             notes.append(
                 f"with {plural(edits, 'unsaved edit')}, as they stand when each starts"

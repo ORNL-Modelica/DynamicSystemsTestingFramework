@@ -37,7 +37,7 @@ from ..errors import user_text
 from ..queue_rows import stop_reason
 from ..session import StaleSpecError, UnscorableSaveError
 from ..situation import SEP, verdict_phrase
-from ..spec_document import PatchOp
+from ..spec_document import PatchOp, edit_count, edit_counts
 from ..spec_preview import entry_lines, spans
 from .actions import log_unless_users
 from .queue_panel import QueueIndicator
@@ -64,7 +64,7 @@ def save_caption(pending: Sequence[PatchOp], loaded: dict, file_name: str) -> st
     new = sum(1 for m in models if spec_entry(loaded, m) is None)
     tests = plural(len(models), "test")
     what = f"{tests}, {plural(new, 'new entry', 'new entries')}" if new else tests
-    return f"Save {plural(len(pending), 'spec edit')} ({what}) to {file_name}"
+    return f"Save {plural(edit_count(pending), 'spec edit')} ({what}) to {file_name}"
 
 
 def backend_caption(
@@ -291,7 +291,7 @@ class Header:
         self.backend_why.set_visibility(why is not None)
         self.other.set_enabled(project is not None)
         self.queue.refresh()
-        n = len(s.spec.pending)
+        n = edit_count(s.spec.pending)
         self.pending.set_text(plural(n, "pending edit"))
         reason = "no pending edits" if n == 0 else shell.busy_reason()
         self.save.set(
@@ -320,7 +320,7 @@ class Header:
         busy = self.shell.busy_reason() or stop_reason(s)
         if busy is not None:
             return f"backend change waits: {busy}"
-        n = len(s.spec.pending)
+        n = edit_count(s.spec.pending)
         if n:
             return (
                 f"backend change waits: save or discard {plural(n, 'pending edit')} "
@@ -669,7 +669,7 @@ class PendingDrawer:
         self.body.clear()
         self.sections = {}
         self.summary.set_text(
-            f"{plural(len(spec.pending), 'pending edit')} · "
+            f"{plural(edit_count(spec.pending), 'pending edit')} · "
             f"{plural(len(groups), 'test')}"
         )
         self.summary.set_visibility(bool(groups))
@@ -679,7 +679,8 @@ class PendingDrawer:
                 ui.label("nothing staged").classes("text-secondary")
                 return
             saved = self._saved_statuses([m for m, _ in groups])
-            for model_id, ops in groups:
+            counts = edit_counts(spec.pending)
+            for model_id, _ops in groups:
                 comp = session.comparisons.get(model_id)
                 with (
                     ui.column()
@@ -687,7 +688,7 @@ class PendingDrawer:
                     .mark(f"drawer-test:{model_id}") as section
                 ):
                     self.sections[model_id] = section
-                    self._section(model_id, len(ops), comp, saved[model_id])
+                    self._section(model_id, counts[model_id], comp, saved[model_id])
 
     def _section(
         self, model_id: str, n: int, comp: Any, saved_status: str | None

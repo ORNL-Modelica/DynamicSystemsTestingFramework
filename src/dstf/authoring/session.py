@@ -88,7 +88,7 @@ from .capabilities import (
 from .live_rows import Partial, unscored_view
 from .live_runs import LiveRuns
 from .situation import unrecorded_variables
-from .spec_document import PatchOp, SpecDocument, json_equal
+from .spec_document import PatchOp, SpecDocument, edit_count, json_equal
 
 if TYPE_CHECKING:
     import numpy as np
@@ -513,6 +513,8 @@ class Session:
         #: The models of the Queue clicks whose read of the library is
         #: still running off the UI loop: a second click on one is refused.
         self._reading: set[str] = set()
+        #: The number of the last `stage` call (`PatchOp.gesture`).
+        self._gesture = 0
         #: Counts `stop_queue`: a click read before one is not queued after
         #: it (the tool stopping must leave no worker behind).
         self._queue_epoch = 0
@@ -1508,6 +1510,10 @@ class Session:
                     "locked until its run ends"
                 )
         staged: list[PatchOp] = []
+        # One call is one act of the user's, however many ops it takes
+        # (`PatchOp.gesture`): what every count of pending edits counts.
+        self._gesture += 1
+        gesture = self._gesture
         for model_id in _in_order(op.model_id for op in ops):
             raw = [op.raw() for op in ops if op.model_id == model_id]
             entry = self.spec.entry(model_id) or {"model": model_id}
@@ -1539,13 +1545,14 @@ class Session:
                         tree_op["path"],
                         tree_op.get("value"),
                         materializes=self._saved_scoring_tree(self.spec, model_id),
+                        gesture=gesture,
                     )
                 )
             # The ops as given: `rescore`'s materialization carries its mark.
             # Each value a copy: the caller's dict stays the caller's, and
             # editing it after staging changes neither export nor Save.
             staged += [
-                replace(op, value=copy.deepcopy(op.value))
+                replace(op, value=copy.deepcopy(op.value), gesture=gesture)
                 for op in ops
                 if op.model_id == model_id
             ]
@@ -1571,17 +1578,30 @@ class Session:
             new, last = staged[0], pending[-1]
             same = (new.model_id, new.path) == (last.model_id, last.path)
             if same and not new.path.endswith("/-"):
+                # The op that supersedes is the SAME edit as the one it
+                # replaces (its `gesture`): a value typed over is one.
                 if new.op == "replace" and last.op in ("add", "replace"):
                     pending.pop()
-                    staged = [PatchOp(new.model_id, last.op, new.path, new.value)]
+                    staged = [
+                        PatchOp(
+                            new.model_id,
+                            last.op,
+                            new.path,
+                            new.value,
+                            gesture=last.gesture,
+                        )
+                    ]
                 elif (new.op, last.op) == ("remove", "replace"):
                     pending.pop()
+                    staged = [replace(new, gesture=last.gesture)]
                 elif (new.op, last.op) == ("add", "add") and not new.path.rsplit(
                     "/", 1
                 )[-1].isdigit():
                     pending.pop()
                     said = {**dict(last.notes), **dict(new.notes)}
-                    staged = [replace(new, notes=tuple(said.items()))]
+                    staged = [
+                        replace(new, notes=tuple(said.items()), gesture=last.gesture)
+                    ]
         candidate = SpecDocument(
             self.spec.path,
             self.spec.loaded,
@@ -2687,7 +2707,7 @@ class Session:
                 f"{_queued_or_running(len(self._live))}; remove or cancel them, or wait"
             )
         if self.spec.pending:
-            raise PendingEditsError(len(self.spec.pending))
+            raise PendingEditsError(edit_count(self.spec.pending))
 
     def _emit_spec(self, models: set[str]) -> None:
         """The `spec` event for ``models``, numbered one up from the last

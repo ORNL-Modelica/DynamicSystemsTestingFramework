@@ -393,7 +393,7 @@ async def test_patch_reaches_the_pending_ops_and_nothing_else(shell, tmp_path):
         await _check(shell, user, A)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
-        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
         after = _effects(shell, tmp_path)
     assert cap.inputs == [{"who": "patch"}] and _suite(shell, user).actions.errors == {}
     assert _changed(before, after) == ["pending"]
@@ -568,7 +568,7 @@ async def test_a_capability_registered_through_the_plugin_hook_attaches(
         await _check(shell, user, A)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
-        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
         after = _effects(shell, tmp_path)
     assert _suite(shell, user).actions.errors == {}
     assert _changed(before, after) == ["pending"]

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from test_author_test_page_playwright import (  # noqa: E402
     _staged_tree,
     _table_cell,
 )
+from test_session import A  # noqa: E402
 
 #: A data position of plot ``card``'s panel ``sub`` (`xy`: the time plot;
 #: `x2y2`: the spectrum) in viewport pixels, with what its axes show.
@@ -185,6 +187,58 @@ def test_a_ctrl_click_adds_a_checkpoint_on_the_reference_at_the_click(
         assert abs(ring["yanchor"] - baseline) < 1e-9, (ring, baseline)
         _note(tmp_path, "placed-row", {"dx_px": ring["x"] - again["x"]})
         _shot(page, tmp_path, "onplot-row-added")
+
+
+def _flat_wave(tmp_path: Path) -> tuple[Path, Path]:
+    """`wave_project` with A's criterion written as most specs write one —
+    a `variable_overrides` entry, no `metrics` tree."""
+    cfg, work = wave_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            leaf = dict(entry.pop("metrics")["children"][0])
+            del leaf["metric"], leaf["variable"]
+            entry["variables"] = ["x"]
+            entry["comparison"] = {
+                "variable_overrides": {"x": {"mode": "points", **leaf}}
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+def test_one_ctrl_click_on_a_flat_tests_plot_is_one_pending_edit(
+    tmp_path, playwright_browser
+):
+    """A test with no `metrics` tree has its tree written out under its
+    first edit: two ops, and the header read "2 pending edits" for one
+    click. One gesture is one edit — in the header, on the strip, in the
+    preview and in Save's caption — and the preview still says that Save
+    writes the tree."""
+    with _served(tmp_path, playwright_browser, project=_flat_wave, hooks=True) as page:
+        page.wait_for_timeout(700)
+        _open_for_grips(page, 0, "points · x")
+        assert _rows(page) == 2 and _pending(page) == "0 pending edits"
+        _click_at(page, _at(page, 0.78, 0.4), "Control")
+        header = page.locator(".dstf-header-row")
+        expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        expect(header).to_contain_text("Save 1 spec edit (1 test) to test_spec.json")
+        expect(page.locator(".dstf-editor .dstf-table-row")).to_have_count(3)
+        expect(page.locator(".dstf-strip-text")).to_contain_text("1 unsaved edit · ")
+        header.get_by_role("button", name=re.compile(r"pending edit")).click()
+        drawer = page.locator(".dstf-pending-drawer")
+        expect(drawer).to_contain_text("1 pending edit · 1 test")
+        expect(drawer.locator(".dstf-drawer-status")).to_contain_text("1 edit · ")
+        expect(drawer).to_contain_text("Save also writes this test's 1 criterion out")
+        _shot(page, tmp_path, "onplot-flat-one-edit")
+        drawer.get_by_role("button", name="close").click()
+        # A second row is the same table edited again: an edit that lands
+        # where the last one did replaces it (as a value typed over does),
+        # and stays one.
+        _click_at(page, _at(page, 0.45, 0.4), "Control")
+        expect(page.locator(".dstf-editor .dstf-table-row")).to_have_count(4)
+        page.wait_for_timeout(500)
+        expect(header).to_contain_text("1 pending edit")
 
 
 def test_a_ctrl_click_on_the_spectrum_adds_the_nearest_spectral_peak(

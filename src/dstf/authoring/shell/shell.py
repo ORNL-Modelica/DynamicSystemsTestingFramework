@@ -30,6 +30,7 @@ from ..capabilities import Capability, Placement, plural, registered_capabilitie
 from ..errors import user_text
 from ..queue_rows import stop_reason
 from ..session import Selection, Session, SessionView
+from ..spec_document import edit_count
 from .actions import log_unless_users
 from .style import QUASAR, STYLE
 from .tab_theme import TabTheme
@@ -360,7 +361,7 @@ class Shell:
         """What Stop server would lose (brief §3.3, §3.6): pending edits, and
         the tests the queue still holds."""
         reasons: list[str] = []
-        n = len(self.session.spec.pending)
+        n = edit_count(self.session.spec.pending)
         if n:
             reasons.append(f"{plural(n, 'unsaved edit')} will be lost")
         held = stop_reason(self.session)

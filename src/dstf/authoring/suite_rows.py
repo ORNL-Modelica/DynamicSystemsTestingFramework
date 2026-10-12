@@ -8,7 +8,6 @@ full-resolution context, one JSON parse per test. No UI framework here
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -22,13 +21,14 @@ from ..reporting.status import (
     SIM_FAIL,
     scored_status,
 )
+from .spec_document import edit_counts
 
 if TYPE_CHECKING:
     from .session import Session
 
 
 def _edits(session: Session) -> Mapping[str, int]:
-    return Counter(op.model_id for op in session.spec.pending)
+    return edit_counts(session.spec.pending)
 
 
 def suite_row(
@@ -46,7 +46,7 @@ def suite_row(
     row is cleared); then a scoring failure the open announced (``failed`` —
     the shell's set, kept until the next open, so a model a later rescore
     scored reads its verdict, not the failure); else the row waits for its
-    verdict. ``edits`` is the pending-op count per model; ``suite_rows``
+    verdict. ``edits`` is the pending-edit count per model; ``suite_rows``
     counts it once for every row."""
     counts = _edits(session) if edits is None else edits
     project = session.project

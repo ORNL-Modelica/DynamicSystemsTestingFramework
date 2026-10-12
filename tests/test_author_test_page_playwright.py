@@ -422,7 +422,8 @@ def test_the_strips_preview_opens_the_drawer_on_this_tests_section(
         )
         page.get_by_role("button", name="Preview and save").click()
         drawer = page.locator(".dstf-pending-drawer")
-        expect(drawer).to_contain_text("6 pending edits · 3 tests")
+        # One edit a test: each took two ops (its tree written out too).
+        expect(drawer).to_contain_text("3 pending edits · 3 tests")
         sections = drawer.locator(".dstf-drawer-section")
         expect(sections).to_have_count(3, timeout=EXPECT_TIMEOUT)
         expect(sections.nth(1)).to_contain_text(A)
@@ -473,7 +474,7 @@ def test_the_pending_drawer_closes_by_its_button_and_by_escape(
         drawer = page.locator(".dstf-pending-drawer")
         status = drawer.locator(".dstf-drawer-status")
         expect(status).to_have_count(1, timeout=EXPECT_TIMEOUT)
-        assert status.inner_text() == "2 edits · verdict stays FAIL"
+        assert status.inner_text() == "1 edit · verdict stays FAIL"
         page.wait_for_timeout(400)  # the drawer's slide
         assert _drawer_open(page)
         _shot(page, tmp_path, f"pending-drawer-{width}")
@@ -2364,8 +2365,9 @@ def test_a_watch_plot_beside_a_tolerance_typed_and_cleared_saves_the_plot_alone(
         editor = page.locator(".dstf-editor")
         tolerance = editor.get_by_label("Tolerance", exact=True)
         _retype(page, tolerance, "0.5")
-        # The tree written out, the leaf's edit, and the plot's.
-        expect(header).to_contain_text("3 pending edits", timeout=EXPECT_TIMEOUT)
+        # The plot's edit, and the leaf's (with the tree written out
+        # under it, which is no edit of its own).
+        expect(header).to_contain_text("2 pending edits", timeout=EXPECT_TIMEOUT)
         _retype(page, tolerance, "")
         expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
         expect(tolerance).to_have_value("")

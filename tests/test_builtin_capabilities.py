@@ -2684,15 +2684,15 @@ def test_queue_caption_counts_what_it_queues_what_is_held_and_the_unsaved_edits(
     # not this click's.
     session.stage([PatchOp(D, "add", "/comparison/tolerance", 0.5)])
     assert cap.caption(three) == "Queue 1 (2 already queued)"
-    session.stage([LOOSEN])  # two ops on A: the materialization and the edit
+    session.stage([LOOSEN])  # two ops on A — its tree, and the edit: ONE edit
     assert cap.caption(three) == (
-        "Queue 1 (2 already queued; with 2 unsaved edits, as they stand when "
+        "Queue 1 (2 already queued; with 1 unsaved edit, as they stand when "
         "each starts)"
     )
     for item in held:
         drop_item(session, item)
     assert cap.caption(two) == (
-        "Queue 2 (with 3 unsaved edits, as they stand when each starts)"
+        "Queue 2 (with 2 unsaved edits, as they stand when each starts)"
     )
     other = SessionView(session, Selection(tests=frozenset({D})))
     assert cap.caption(other) == (
@@ -3992,6 +3992,36 @@ def test_a_tree_criterion_is_edited_by_edit_criteria_alone():
     }
     assert at == {EditCriteria.name}
     assert Placement.TREE_CRITERION not in EditOnPlot.placements
+
+
+# -- one act, one pending edit ------------------------------------------------
+
+
+def test_each_act_on_a_flat_tests_tree_is_one_pending_edit(session):
+    """A (no `metrics` in the file) through the acts that take more than
+    one op: each adds ONE to what the header counts, whatever it took."""
+    from dstf.authoring.spec_document import edit_count
+    from dstf.authoring.tree_move import Dest
+
+    def act(path: str, **inputs) -> tuple[int, int]:
+        view = SessionView(session, _node(A, path))
+        outcome = EditTree().act(view, model_id=A, path=path, **inputs)
+        session.apply(outcome)
+        return len(session.spec.pending), edit_count(session.spec.pending)
+
+    assert "metrics" not in session.spec.saved_entry(A)
+    # A criterion added: the tree written out under it, and the leaf.
+    assert act(ROOT, action="add", variable="x", metric="range") == (2, 1)
+    # A criterion wrapped.
+    assert act(f"{ROOT}/children/1", action="wrap", kind="or") == (3, 2)
+    # That group unwrapped again: the same node written again, where the
+    # wrap wrote it — the edit that one was (a value typed over is one).
+    assert act(f"{ROOT}/children/1", action="unwrap") == (3, 2)
+    # A move: the whole tree, given as one op.
+    assert act(f"{ROOT}/children/1", action="move", dest=Dest("at", ROOT, 0)) == (4, 3)
+    # The added criterion removed: the entry scores as saved again, and an
+    # entry as saved has no pending edit at all.
+    assert act(f"{ROOT}/children/0", action="remove") == (0, 0)
 
 
 # -- move a subtree (U4) ----------------------------------------------------

@@ -68,10 +68,10 @@ def test_a_staged_edit_counts_and_rescores(session):
     assert suite_row(session, A).status == "FAIL"
     session.stage([LOOSEN])
     row = suite_row(session, A)
-    # A first LOOSEN materializes A's implicit tree too: every pending op on
-    # A counts, as the header's count does.
-    assert row.edits == len([op for op in session.spec.pending if op.model_id == A])
-    assert row.edits >= 1
+    # A first LOOSEN writes A's implicit tree out too: two ops, and ONE
+    # edit — what the user did — as the header counts it.
+    assert len([op for op in session.spec.pending if op.model_id == A]) == 2
+    assert row.edits == 1
     assert row.status == "PASS"
 
 

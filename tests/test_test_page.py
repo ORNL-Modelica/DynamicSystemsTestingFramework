@@ -4814,8 +4814,8 @@ async def test_a_value_typed_and_cleared_again_is_no_pending_edit(scored_shell):
 
 async def test_a_value_typed_and_cleared_on_a_flat_test_is_no_pending_edit(shell):
     """D's entry holds no tree (every TRANSFORM test's shape): the first
-    value typed writes its tree out under the edit — two ops — and the value
-    cleared left that tree, "1 pending edit" and a Save that added a
+    value typed writes its tree out under the edit — two ops, one edit — and
+    the value cleared left that tree, "1 pending edit" and a Save that added a
     `metrics` block scoring as the entry already did. An entry as saved but
     for the tree it scores by is as saved: nothing pending, Save disabled."""
     before = shell.session.spec.path.read_bytes()
@@ -4827,9 +4827,10 @@ async def test_a_value_typed_and_cleared_on_a_flat_test_is_no_pending_edit(shell
         (tolerance,) = _numbers(page, "Tolerance")
         with page.client:
             tolerance.set_value(0.5)
-        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
+        assert len(shell.session.spec.pending) == 2  # the tree, and the value
         assert _one(user, "save").enabled
-        assert page.rail.tests.list.rows[D].pending == 2
+        assert page.rail.tests.list.rows[D].pending == 1
         with page.client:
             tolerance.set_value(None)
         await _settled(lambda: _one(user, "pending").text == "0 pending edits")
@@ -4847,7 +4848,7 @@ async def test_a_value_typed_and_cleared_on_a_flat_test_is_no_pending_edit(shell
         (again,) = _numbers(page, "Tolerance")
         with page.client:
             again.set_value(0.25)
-        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
         assert shell.session.tree(D)["children"][0]["tolerance"] == 0.25
     assert shell.session.spec.path.read_bytes() == before
 
@@ -8709,7 +8710,7 @@ async def test_the_strip_asks_to_queue_the_test_for_a_criterions_new_variable(sh
         shell.session.stage([PatchOp(D, "add", "/metrics/children/-", leaf)])
         await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
         assert _one(user, "strip-text").text == (
-            "2 unsaved edits · verdict would change PASS → FAIL"
+            "1 unsaved edit · verdict would change PASS → FAIL"
             " · 1 new variable: queue the test to score it"
         )
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
@@ -8765,7 +8766,7 @@ async def test_a_criterion_on_a_variable_the_file_has_is_scored_without_a_new_ru
         leaf = {"metric": "range", "variable": "w", "min_value": 0, "max_value": 1}
         shell.session.stage([PatchOp(D, "add", "/metrics/children/-", leaf)])
         await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
-        assert _one(user, "strip-text").text == ("2 unsaved edits · verdict stays PASS")
+        assert _one(user, "strip-text").text == ("1 unsaved edit · verdict stays PASS")
         assert page.strip.situation.value == "edits"
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
 

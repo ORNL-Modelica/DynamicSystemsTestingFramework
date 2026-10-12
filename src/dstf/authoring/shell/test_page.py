@@ -39,6 +39,7 @@ from ..family_rows import is_fold, leaf_of
 from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..queue_rows import queue_row
 from ..situation import Situation, Strip, new_variables, strip_for
+from ..spec_document import edit_counts
 from ..tree_pointer import node_or_none
 from .actions import ActionBar, RowBuild, RowTarget
 from .family_fold import Folding
@@ -1155,7 +1156,7 @@ class TestPage:
         session, model_id = self.shell.session, self.model_id
         project = session.project
         assert project is not None  # `_paint` returned before without one
-        edits = sum(1 for op in session.spec.pending if op.model_id == model_id)
+        edits = edit_counts(session.spec.pending)[model_id]
         saved_status: str | None = None
         if edits:
             # The saved spec is scored afresh here, and its scoring may raise

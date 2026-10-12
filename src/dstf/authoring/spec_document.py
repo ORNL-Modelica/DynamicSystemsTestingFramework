@@ -6,6 +6,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,6 +52,14 @@ class PatchOp:
     #: sentence and any other is kept, so a value typed over is one line
     #: and two gestures are two. Not part of the op.
     notes: tuple[tuple[str, str], ...] = field(default=(), compare=False)
+    #: Which act of the user's staged it (`Session.stage` numbers its
+    #: calls): one Ctrl+click on a flat test's plot is two ops — the tree
+    #: written out, and the row — and one edit; so is an add over twenty
+    #: Indices, and a change of a folded row's twenty criteria. An op that
+    #: supersedes the last one keeps that one's number: a value typed over
+    #: is the same edit. None for an op nothing staged (a test's own list):
+    #: it counts as itself (`edit_counts`). Not part of the op.
+    gesture: int | None = field(default=None, compare=False)
 
     def raw(self) -> dict:
         """The op as ``apply_patch`` and the envelope carry it."""
@@ -57,6 +67,24 @@ class PatchOp:
         if self.op != "remove":
             raw["value"] = copy.deepcopy(self.value)
         return raw
+
+
+def edit_counts(pending: Iterable[PatchOp]) -> Counter[str]:
+    """By model, how many EDITS ``pending`` holds of its entry: the things
+    a person did (`PatchOp.gesture`), not the ops they took. The ONE count
+    — the header's ``N pending edits``, Save's caption, the Suite's Edits
+    cell, the Tests drawer's mark, the strip's ``N unsaved edits`` and the
+    preview's ``N edits`` all read it, so no two of them can disagree."""
+    edits = {
+        (op.model_id, ("op", index) if op.gesture is None else op.gesture)
+        for index, op in enumerate(pending)
+    }
+    return Counter(model_id for model_id, _ in edits)
+
+
+def edit_count(pending: Iterable[PatchOp]) -> int:
+    """How many edits ``pending`` holds in all (`edit_counts`)."""
+    return sum(edit_counts(pending).values())
 
 
 def content_hash(path: Path) -> str | None:

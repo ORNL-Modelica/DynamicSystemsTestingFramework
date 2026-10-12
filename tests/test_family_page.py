@@ -325,7 +325,8 @@ async def test_a_folded_field_changes_every_member_and_the_count_follows(six):
         ] == [("add", ROOT, True), ("add", ROOT, False)]
         await _settled(lambda: _one(user, f"family-count:1:{FOLD}").text == "6 pass")
         assert _one(user, f"family-pill:1:{FOLD}").text == "pass"
-        assert _one(user, "pending").text == "2 pending edits"
+        # one field typed, twenty criteria changed, two ops: ONE edit
+        assert _one(user, "pending").text == "1 pending edit"
         # the editor being typed in is not rebuilt, nor closed
         assert _numbers(page, "Tolerance") == [field]
         assert page.open == (1, FOLD)
@@ -750,7 +751,8 @@ async def test_add_over_a_slice_draws_one_folded_row_and_opens_its_editor(tmp_pa
         card = page.cards[1]
         assert card.rows[key].name.text == "nrmse · pipe.T[1:5:16]"
         assert _one(user, f"family-count:1:{key}").text == "3 pass · 1 fail"
-        assert _one(user, "pending").text == "2 pending edits"
+        # one Add over four Indices: ONE edit
+        assert _one(user, "pending").text == "1 pending edit"
         assert _hidden(card) == [leaf(i) for i in range(1, 5)]
 
 
@@ -1132,7 +1134,7 @@ async def test_the_preview_says_what_a_fold_gesture_did_and_that_save_writes_the
             field.set_value(0.05)
             _one(user, "edit-family:indices").set_value("1:5")
         _enter(user, "edit-family:indices")
-        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
         _click(user, _one(user, "pending"))
         await user.should_see(marker=f"drawer-test:{A}", retries=20)
         assert _one(user, "drawer-note").text == (

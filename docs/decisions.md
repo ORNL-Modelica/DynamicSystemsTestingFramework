@@ -8507,3 +8507,58 @@ whatever an entry holds through a patch — it is `apply_validated_patches`
 above it that refuses the result. `export-schema` is as strict as the
 parser wherever it types a value, so a file that validates there is not
 stopped for a key.
+
+## D155 — One act is one pending edit (2026-10-12)
+
+**Context.** The tool counted pending OPS: the header's "N pending edits",
+Save's caption, Discard's, the Suite's Edits cell, the Tests drawer's mark,
+the strip's "N unsaved edits", the preview's "N edits", the Queue caption's
+"with N unsaved edits" and the refusal to close a project. A test with no
+`metrics` tree has that tree written out under its first per-criterion
+edit, so ONE Ctrl+click on a `points` criterion's plot of the shipped
+example read `2 pending edits` and `2 unsaved edits · verdict stays PASS`
+(a first-time user's finding, reproduced in a browser). D139's controller
+call had said so on purpose ("N unsaved edits" counts ops, so the first
+criterion edit on a flat test reads 2), and D152 §9 kept it for a fold's
+gesture ("On a FLAT test it counts 2").
+
+**Decision.** What is counted is what the user did. `Session.stage`
+numbers its calls, and every op of one call carries the number
+(`PatchOp.gesture`: no part of the op — not in `raw()`, not in its
+equality — like `materializes` and `notes`). `spec_document.edit_counts`
+is the ONE count, by entry: the distinct numbers among its pending ops;
+every surface named above reads it. An op that supersedes the last one
+(the collapse rules of D134's `Session.stage`) keeps the number of the op
+it replaces: a value typed over is the edit it was. An op nothing staged
+counts as itself.
+
+What the header reads, each on a test with no `metrics` in the file, where
+the act takes two ops or more (executed: `test_each_act_on_a_flat_tests_
+tree_is_one_pending_edit`, `TestOneStageIsOneEdit`, the family pages, and
+a real Ctrl+click in Chromium):
+
+| act | ops | header |
+|---|---|---|
+| a tolerance typed; a handle dragged; a Ctrl+click that adds a row | 2 | 1 pending edit |
+| the same field typed over, a second row clicked into the same table | 2 | 1 (it replaces the last op) |
+| a criterion added | 2 | 1 |
+| Add over twenty Indices | 2 (the tree, given whole) | 1 |
+| a folded row's field changed; its Indices edited | 2 | 1 |
+| a criterion wrapped, then unwrapped in place | 3 | 1 for the wrap; the unwrap rewrites the same node and stays that edit |
+| a move | +1 (the tree, given whole) | +1; a second move right after replaces it |
+| the edit put back | 0 | 0 pending edits |
+| one act over two tests | n | 1 of each test |
+
+**What it reverses.** D139's "counts ops" and D152 §9's "On a FLAT test
+it counts 2": both read 1 now. The preview's note "Save also writes this
+test's N criteria out as a tree" is unchanged and is what says the second
+op is there.
+
+**Consequences.** `Export N edits to spec_patch.json` counts edits; the
+envelope it writes holds the ops, which can be more. `PendingEditsError.
+count` is edits. A plug-in capability's `Patch(ops=[...])` is one edit,
+however many ops it returns. Two Ctrl+clicks that add two rows to one
+table are ONE pending edit — the table's — because the second lands on
+the path of the first; that is the collapse rule's reading of "the same
+field", not this entry's.
+

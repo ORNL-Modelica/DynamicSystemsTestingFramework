@@ -262,7 +262,7 @@ async def test_a_staged_edit_sends_its_rescored_row_once(shell, sent):
         await _open(user)
         shell.session.stage([LOOSEN])
         shell.tick()
-        assert sent == [_tx(update=[(A, "PASS", 2)])]
+        assert sent == [_tx(update=[(A, "PASS", 1)])]
 
 
 async def test_a_spec_event_adds_and_removes_rows(shell, sent):

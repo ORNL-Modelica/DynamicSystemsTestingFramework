@@ -118,8 +118,9 @@ def test_the_add_form_takes_a_slice_and_add_draws_one_folded_row(
         expect(form.get_by_role("button", name="Add 4 criteria")).to_be_visible()
         expect(form).to_contain_text("Add a criterion for pipe.T[1:5:16]")
         indices.press("Enter")  # Enter in Indices is Add
-        # the flat test's own tree written out, and the ONE op of the add
-        expect(_pending(page)).to_have_text("2 pending edits", timeout=EXPECT_TIMEOUT)
+        # the flat test's own tree written out and the op of the add: ONE
+        # Add, one edit
+        expect(_pending(page)).to_have_text("1 pending edit", timeout=EXPECT_TIMEOUT)
         expect(page.locator(".dstf-plot")).to_have_count(2, timeout=EXPECT_TIMEOUT)
         fold = _fold(page)
         expect(fold).to_have_count(1)
@@ -136,7 +137,7 @@ def test_the_add_form_takes_a_slice_and_add_draws_one_folded_row(
         )
         _pending(page).click()
         drawer = page.locator(".dstf-pending-drawer")
-        expect(drawer).to_contain_text("2 pending edits")
+        expect(drawer).to_contain_text("1 pending edit · 1 test")
         # what the gesture did, in words, and that Save writes the tree too
         expect(drawer).to_contain_text("added 4 criteria: pipe.T[1:5:16]")
         expect(drawer).to_contain_text(
@@ -178,15 +179,15 @@ def test_a_folded_field_changes_every_member_and_the_count_follows(
         tolerance.fill("0.5")
         expect(fold).to_contain_text("6 pass", timeout=EXPECT_TIMEOUT)
         expect(fold.locator(".dstf-pill")).to_have_text(re.compile("pass", re.I))
-        # this test is flat: its tree written out, and the one edit
-        expect(_pending(page)).to_have_text("2 pending edits")
+        # this test is flat: its tree written out under the one edit
+        expect(_pending(page)).to_have_text("1 pending edit")
         assert tolerance.evaluate("e => document.activeElement === e")
         _card(page).scroll_into_view_if_needed()
         _shot(page, tmp_path, "fold-open")
         # typed over, on the same field: every member fails at 1e-4
         tolerance.fill("0.0001")
         expect(fold).to_contain_text("0 pass · 6 fail", timeout=EXPECT_TIMEOUT)
-        expect(_pending(page)).to_have_text("2 pending edits")
+        expect(_pending(page)).to_have_text("1 pending edit")  # typed over: the same
         assert tolerance.evaluate("e => document.activeElement === e")
         # unfolded, each member's own row says what the fold's count said
         fold.get_by_role("button", name="Unfold nrmse · pipe.T[1:6]").click()
@@ -299,7 +300,7 @@ def test_indices_in_the_folded_editor_add_and_remove_by_the_keyboard(
         indices.press("Enter")
         expect(fold).to_contain_text("nrmse · pipe.T[2:4,8]", timeout=EXPECT_TIMEOUT)
         expect(fold).to_contain_text("4 pass")
-        expect(_pending(page)).to_have_text("2 pending edits")
+        expect(_pending(page)).to_have_text("1 pending edit")
         # redrawn (leaves came and went), and open again on what it holds
         editor = _card(page).locator(".dstf-editor")
         expect(editor).to_contain_text(HINT.format(n=4), timeout=EXPECT_TIMEOUT)
@@ -320,7 +321,8 @@ def test_indices_in_the_folded_editor_add_and_remove_by_the_keyboard(
         expect(
             _card(page).locator(".dstf-editor").get_by_label("Indices")
         ).to_have_count(0)
-        expect(_pending(page)).to_have_text("2 pending edits")
+        # The tree given whole again, over the one just given: the same edit.
+        expect(_pending(page)).to_have_text("1 pending edit")
 
 
 def test_the_chevron_answers_the_keyboard(tmp_path, playwright_browser):

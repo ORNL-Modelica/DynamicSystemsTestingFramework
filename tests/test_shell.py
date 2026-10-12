@@ -213,15 +213,17 @@ async def test_save_discard_and_export_say_their_object_effect_and_count(shell):
         assert _one(user, "pending").text == "0 pending edits"
         shell.session.stage([LOOSEN])
         await _settled(lambda: save.enabled)
-        assert save.text == "Save 2 spec edits (1 test) to test_spec.json"
-        assert discard.text == "Discard 2 edits" and discard.enabled
+        # One edit: the two ops it took (A's tree written out, and the
+        # tolerance) are not what the user did.
+        assert save.text == "Save 1 spec edit (1 test) to test_spec.json"
+        assert discard.text == "Discard 1 edit" and discard.enabled
         # Export is an item of the header's menu (3c): a `ui.menu_item` has
         # no `.text`, and its caption is a label of its own.
         assert _suite(shell, user).header.export_text.text == (
-            "Export 2 edits to spec_patch.json"
+            "Export 1 edit to spec_patch.json"
         )
         assert export.enabled
-        assert _one(user, "pending").text == "2 pending edits"
+        assert _one(user, "pending").text == "1 pending edit"
         # Hidden elements are not found by `find`; the why-line is read
         # through the page object.
         assert not _suite(shell, user).header.save.why.visible
@@ -304,9 +306,9 @@ async def test_stop_server_confirms_with_its_reasons_and_stops_on_the_second_wor
         await _open(user)
         shell.session.stage([LOOSEN])
         _hold(shell, D, ItemState.RUNNING)
-        await _settled(lambda: _one(user, "pending").text == "2 pending edits")
+        await _settled(lambda: _one(user, "pending").text == "1 pending edit")
         user.find(marker="stop").click()
-        await user.should_see("2 unsaved edits will be lost")
+        await user.should_see("1 unsaved edit will be lost")
         await user.should_see("1 test is queued or running — stop anyway?")
         assert stopped == []
         user.find("Keep running").click()
@@ -384,13 +386,14 @@ async def test_a_first_edit_on_a_flat_test_diffs_against_its_tree_as_scored(shel
     """A's entry is flat: its first per-leaf edit stages the implicit tree
     written out, then the edit. The diff is against that tree — it scores
     the same — so it shows the edit, not the whole tree added; a note says
-    Save writes the tree too. The count is the ops', as the header's."""
+    Save writes the tree too. The count is the edits', as the header's:
+    one, for the two ops it took."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         _open_drawer(user)
         shell.session.stage([LOOSEN])
         await user.should_see(marker=f"drawer-test:{A}", retries=20)
-        assert _one(user, "drawer-count").text == "2 edits"
+        assert _one(user, "drawer-count").text == "1 edit"
         assert _one(user, "drawer-verdict").text == "verdict would change FAIL → PASS"
         assert _one(user, "drawer-note").text == (
             "Save also writes this test's 1 criterion out as a tree; it scores "
@@ -477,8 +480,8 @@ async def test_the_drawer_shows_every_edited_test_in_staging_order(shell):
         await user.should_see(marker=f"drawer-test:{D}", retries=20)
         models = sorted(user.find(marker="drawer-model").elements, key=lambda e: e.id)
         assert [e.text for e in models] == [D, A]
-        # LOOSEN materializes A's tree: 2 ops, and D's 1, over 2 tests.
-        assert _one(user, "drawer-summary").text == "3 pending edits · 2 tests"
+        # LOOSEN writes A's tree out too — 2 ops, 1 edit — and D's is 1.
+        assert _one(user, "drawer-summary").text == "2 pending edits · 2 tests"
 
 
 async def test_save_these_writes_the_effective_entry_and_empties_the_drawer(shell):
@@ -1254,7 +1257,7 @@ async def test_change_backend_is_greyed_with_its_sentence_while_edits_are_pendin
         assert not _one(user, "backend").enabled
         assert (
             _one(user, "backend:why").text
-            == "backend change waits: save or discard 2 pending edits first"
+            == "backend change waits: save or discard 1 pending edit first"
         )
         assert change in list(_ancestors(_one(user, "backend:why")))
         shell.session.discard()

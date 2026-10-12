@@ -16,6 +16,7 @@ from nicegui.elements.mixins.text_element import TextElement
 from ...reporting.rows import unsaved_text
 from ...reporting.status import SCORING_CLASS, SCORING_FAILED, classify_with_class
 from ...reporting.theme import STATUS
+from ..spec_document import edit_counts
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -153,9 +154,7 @@ class TestList:
         else:
             verdict, css = "", SCORING_CLASS
         row.verdict = verdict
-        row.pending = sum(
-            1 for op in self.shell.session.spec.pending if op.model_id == model_id
-        )
+        row.pending = edit_counts(self.shell.session.spec.pending)[model_id]
         row.edits.set_text(unsaved_text(row.pending))
         row.edits.set_visibility(row.pending > 0)
         row.badge.set_text(verdict or "…")

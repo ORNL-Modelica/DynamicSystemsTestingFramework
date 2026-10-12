@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from dstf.authoring.spec_document import PatchOp, SpecDocument, content_hash
+from dstf.authoring.spec_document import (
+    PatchOp,
+    SpecDocument,
+    content_hash,
+    edit_count,
+    edit_counts,
+)
 from dstf.config import ConfigError
 from dstf.discovery.patch_apply import PatchError
 
@@ -159,3 +165,34 @@ def test_the_preview_base_without_a_materialization_is_the_saved_entry(tmp_path)
     doc = SpecDocument.load(_spec(tmp_path, ENTRY))
     doc.pending.append(PatchOp("M", "add", "/metrics", TREE_X))
     assert doc.preview_base("M") == ENTRY
+
+
+def test_the_edits_are_counted_by_what_was_done_not_by_the_ops_it_took():
+    """One act of the user's is one edit of each entry it touched: a flat
+    test's tree written out under its first edit, an add over twenty
+    Indices and a folded row's twenty criteria are each ONE."""
+    pending = [
+        PatchOp("A", "add", "/metrics", {"combinator": "and"}, gesture=1),
+        PatchOp("A", "add", "/metrics/children/0/tolerance", 0.5, gesture=1),
+        PatchOp("B", "add", "/comparison", {}, gesture=2),
+        *(
+            PatchOp("B", "add", "/metrics/children/-", {"i": i}, gesture=3)
+            for i in range(20)
+        ),
+        PatchOp("A", "add", "/plots", [], gesture=3),  # the same act, another entry
+    ]
+    assert edit_counts(pending) == {"A": 2, "B": 2}
+    assert edit_count(pending) == 4
+    assert edit_counts([]) == {} and edit_count([]) == 0
+
+
+def test_an_op_that_nothing_staged_is_an_edit_of_its_own():
+    pending = [PatchOp("A", "add", f"/plots/{i}", {}) for i in range(3)]
+    assert all(op.gesture is None for op in pending)
+    assert edit_counts(pending) == {"A": 3} and edit_count(pending) == 3
+
+
+def test_the_gesture_is_no_part_of_the_op():
+    one = PatchOp("A", "replace", "/x", 1, gesture=1)
+    assert one == PatchOp("A", "replace", "/x", 1, gesture=7)
+    assert "gesture" not in one.raw()
