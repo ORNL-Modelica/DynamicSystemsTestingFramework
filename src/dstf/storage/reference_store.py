@@ -208,11 +208,16 @@ class ReferenceStore(_RolesMixin):
         # Build the reference JSON
         # All variables share the same time vector (Modelica spec).
         shared_time = result.variables[0].time
-        shared_time_list, _ = _downsample(shared_time, shared_time)
+        # The points kept (D153): every row the run wrote, unless
+        # `baseline_points` gives a number. "all" is the run's own row
+        # count — a budget `_downsample` returns every row within.
+        setting = self.config.baseline_points
+        max_points = setting if isinstance(setting, int) else len(shared_time)
+        shared_time_list, _ = _downsample(shared_time, shared_time, max_points)
 
         variables = []
         for var in result.variables:
-            _, values_list = _downsample(shared_time, var.values)
+            _, values_list = _downsample(shared_time, var.values, max_points)
             variables.append(
                 {
                     "index": var.index,
@@ -251,6 +256,14 @@ class ReferenceStore(_RolesMixin):
                 "method": test.method,
                 "number_of_intervals": n_intervals,
                 "output_interval": out_interval,
+            },
+            # What was done to the run's rows, always written: a reference
+            # WITHOUT the key was stored before it existed, under a cap of
+            # 2000 points that no key set.
+            "sampling": {
+                "setting": setting,
+                "source_points": len(shared_time),
+                "stored_points": len(shared_time_list),
             },
         }
 
@@ -481,9 +494,10 @@ class ReferenceStore(_RolesMixin):
 
 
 def _downsample(
-    time: np.ndarray, values: np.ndarray, max_points: int = 2000
+    time: np.ndarray, values: np.ndarray, max_points: int
 ) -> tuple[list[float], list[float]]:
-    """Downsample a time series to at most max_points.
+    """Downsample a time series to at most max_points; one of at most
+    max_points rows is returned whole, so no point is ever invented.
 
     Always preserves the first and last samples. Event boundaries (duplicate
     time points) are preserved whenever they fit within the budget; if event

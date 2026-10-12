@@ -1935,7 +1935,7 @@ planning.
   would not.
 
 - **Sampling a baseline by region (owner, 2026-10-11; deferred to its own
-  session — grill before planning)**: the simple half is being built now —
+  session — grill before planning)**: the simple half is built (D153) —
   a baseline keeps every point the simulator wrote unless `baseline_points`
   gives a number. What is deferred is the flexible half the owner described:
   uniform sampling, chosen times, or a different density in different parts

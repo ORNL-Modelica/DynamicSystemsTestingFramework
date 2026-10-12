@@ -44,6 +44,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
 | `max_embedded_samples` | No | The most samples a per-test report page embeds per trace (default: `1000`); longer ones are decimated, and the page's banner says which. |
 | `tolerance` | No | The project's comparison tolerance (default: `1e-4`): what a test with no `comparison.tolerance` of its own, in its spec entry or its baseline, is scored with. One finite number — anything else is a config error (see "Tolerances with two sides"). `--tolerance` overrides it. |
+| `baseline_points` | No | The points a stored baseline keeps of its run: `"all"` (the default) — every point the simulator wrote — or a whole number of 2 or more, which thins a longer run to at most that many. Anything else is a config error. A baseline is what a run is compared against, point by point, so this is also the resolution at which a regression can be seen (see "The points a baseline stores"). There is no flag for it. |
 | `worker_startup_timeout` | No | Seconds a persistent worker (Dymola, OpenModelica, Julia) may take to start before the run fails with the backend's message. One positive number; default 600 on every backend. The bound is for a tool that hangs — a tool that died fails the start at once — so raise it only for a library whose load takes longer (a large library is minutes of `loadFile` in OpenModelica); the message of a start that ran out names this key and the step the tool was in. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 | `work_dir` | No | Where runs write their output, relative to `testing.json` location (default: `testing_output/<library>/<backend>/<os>/` under the current directory). `--work-dir` overrides it. |
@@ -492,6 +493,58 @@ one down:
   others of a selection. Nothing writes one either: an accept never stores a
   base tolerance that is no number, and `spec-update` — the tool's Save too —
   refuses a patch that sets `comparison.tolerance` to one.
+
+### The points a baseline stores (`baseline_points`)
+
+Accepting a result stores its trajectory as the test's baseline. A baseline
+keeps **every point the simulator wrote** — in order, the two samples of each
+event included — unless `baseline_points` in `testing.json` gives a number
+(D153):
+
+```json
+{
+  "baseline_points": 2000
+}
+```
+
+- `"all"` (the default, and what an absent key means) — every row of the run.
+- **A whole number of 2 or more** — at most that many points. The first and
+  the last row are always kept, and both samples of every event while they
+  fit (events are thinned evenly only when they alone are more than the
+  number); the rest are spread evenly **by row number** — not by time, and
+  not by what the signal does. A run with no more rows than the number is
+  stored whole: a point is never invented.
+
+Anything else — `true`, `2000.0`, `0`, `1`, a negative, `"ALL"`, `null` — is a
+config error: one line, `Config error: testing.json baseline_points is 1: the
+points a baseline keeps are "all" or a whole number of 2 or more`, and exit
+code 2 before anything runs.
+
+**What the stored points mean for scoring.** A baseline is its stored points
+and nothing else. `nrmse`, the default mode, compares the run **at the
+baseline's time points**: the run is read there (interpolated between its own
+samples), and the score is the root mean square of the error over those
+points, each counting once, divided by the baseline's range. So the stored
+points are both the resolution at which a regression can be seen and the
+weighting of the score: what a run does between two stored points is not
+looked at, and a stretch the solver sampled densely counts for more than a
+sparse one. Thinning a baseline changes both — a spike between two kept
+points is gone from it.
+
+**Changing the key changes nothing in an existing baseline** until its test
+is accepted again: a baseline holds the points it was stored with, and a
+compare reads them as they are. Each reference JSON says what its file holds,
+under `sampling`:
+
+```json
+"sampling": {"setting": "all", "source_points": 5021, "stored_points": 5021}
+```
+
+`setting` is the `baseline_points` in effect when it was accepted,
+`source_points` the rows the run had and `stored_points` the points stored. A
+reference with no `sampling` was stored before the key existed, when every
+baseline was thinned to at most 2000 points; it loads and scores as it always
+did. To keep storing baselines that way, set `"baseline_points": 2000`.
 
 ### Multiple named baselines
 
@@ -1917,7 +1970,7 @@ ReferenceResults/
 
 References are partitioned by backend and OS because different solvers and platforms produce numerically different results. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
 
-Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key was produced by a version older than that rule, which `dstf migrate-variable-names` brings forward.
+Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. Its `sampling` record says how many of the run's points the file keeps (see "The points a baseline stores"); a file without one was stored before the record existed. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key was produced by a version older than that rule, which `dstf migrate-variable-names` brings forward.
 
 **Status field:** Each ref file has a `status` field:
 - `active` — normal, included in test runs

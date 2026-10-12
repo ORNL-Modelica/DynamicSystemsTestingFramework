@@ -19,6 +19,9 @@ DEFAULT_NUMBER_OF_INTERVALS = 500
 # Comparison defaults
 DEFAULT_COMPARISON_TOLERANCE = 1e-4
 
+# `baseline_points` for every point the run wrote — the default (D153).
+ALL_POINTS = "all"
+
 # Config filename looked for near the package or in working directory
 CONFIG_FILENAME = "testing.json"
 
@@ -111,6 +114,21 @@ def read_package_name(package_dir: Path) -> str:
 class ConfigError(ValueError):
     """A testing.json problem the user must fix (malformed, unreadable, or a
     missing explicit --config path)."""
+
+
+def baseline_points_refused(named: str, value: object) -> str | None:
+    """Why ``value`` is no ``baseline_points`` — ``named`` saying where it
+    was written — or ``None``. It is ``"all"`` or a whole number of 2 or
+    more: a thinned baseline keeps both ends of its run. ``true`` is no
+    number, and neither is ``2000.0``."""
+    if isinstance(value, str) and value == ALL_POINTS:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 2:
+        return None
+    return (
+        f"{named} is {json.dumps(value, default=str)}: the points a baseline "
+        f'keeps are "{ALL_POINTS}" or a whole number of 2 or more'
+    )
 
 
 #: testing.json keys renamed when the "simulator" vocabulary became Backend.
@@ -374,6 +392,13 @@ class Config:
     # will let this rise to 2000 at the same budget.
     max_embedded_samples: int = 1000
 
+    # The points a stored baseline keeps of its run (D153, testing.json
+    # `baseline_points`): "all" — every row the simulator wrote — or a whole
+    # number of 2 or more, which thins the run to at most that many.
+    # Scoring reads the run AT the baseline's time points, so this is also
+    # the resolution at which a regression can be seen.
+    baseline_points: int | str = ALL_POINTS
+
     # The bundled theme (D148) the dashboard and the report pages are
     # generated in and `dstf author` opens with: a NAME of
     # reporting.theme.THEMES — no path, no inline colours, no CLI flag.
@@ -592,6 +617,18 @@ class Config:
         # Reporter payload budget
         if "max_embedded_samples" in file_config:
             self.max_embedded_samples = int(file_config["max_embedded_samples"])
+
+        # A baseline's points: "all" or a whole number of 2 or more,
+        # wherever it was said. `null` is no value of it: absent is the
+        # only way to leave it unset.
+        if "baseline_points" in file_config:
+            self.baseline_points = file_config["baseline_points"]
+            named = "testing.json baseline_points"
+        else:
+            named = "baseline_points"
+        refused = baseline_points_refused(named, self.baseline_points)
+        if refused is not None:
+            raise ConfigError(refused)
 
         # The theme: one of the bundled names, wherever it was said.
         from .reporting.theme import THEMES

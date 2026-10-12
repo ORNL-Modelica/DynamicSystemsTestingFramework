@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family, D153 the baseline's points). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -261,6 +261,7 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `test_spec` — path to external test definitions file
 - `recognizers` — custom JSON recognizers appended to the bundled list (see `discovery/json_recognizer.py`)
 - `tolerance` — global NRMSE comparison tolerance (default: `1e-4`)
+- `baseline_points` — the points a stored baseline keeps of its run: `"all"` (the default, every point the simulator wrote) or a whole number ≥ 2, which thins a longer run to at most that many; anything else is a config error. Scoring reads the run at the baseline's time points, so this is also the resolution of the comparison; the reference JSON records it under `sampling` (D153)
 - `worker_startup_timeout` — seconds a persistent worker may take to start before the run fails with the backend's message, which names this key (default: 600 on every backend — the bound is for a tool that hangs; one that died fails at once)
 - `max_embedded_samples` — LTTB decimation cap per variable in `interactive.html` (default: 1000)
 - `diagnostic_variables` — variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`)

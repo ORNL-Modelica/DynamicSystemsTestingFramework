@@ -8083,3 +8083,70 @@ names FAMILY_CRITERION and handles `leaf_paths`. `Panel` gains `retitle`;
 `PatchOp` gains two fields that are no part of the op (`edits_tree`,
 `notes`). The TRANSFORM gate is the controller's; nothing of it is
 recorded here.
+
+## D153 — A baseline keeps every point its run wrote, unless a number is given (2026-10-11)
+
+**Context.** `ReferenceStore.store_reference` thinned every baseline it
+wrote to at most 2000 points: `_downsample(time, values, max_points=2000)`,
+a default argument that no decision set and no key could change. `nrmse`
+reads the run AT the baseline's time points and averages the squared error
+over them, so the cap was also the resolution at which a regression could
+be seen — and nobody had chosen it. The owner ruled on 2026-10-11: a stored
+baseline keeps every point the simulator wrote, unless a number is given.
+
+**Decision.**
+
+1. *`baseline_points` in `testing.json`* is the project's value: the string
+   `"all"` — the default, and what an absent key means — or a whole number
+   of 2 or more (a thinned baseline keeps both ends of its run). Anything
+   else — `true`, `2000.0`, `0`, `1`, a negative, another string, `null` —
+   is a config error in one sentence that names the key, the value given
+   and the two forms: `testing.json baseline_points is 1: the points a
+   baseline keeps are "all" or a whole number of 2 or more`
+   (`config.baseline_points_refused`). There is no CLI flag.
+2. *Where a baseline is written.* `store_reference` is the one place a
+   primary baseline is written, and the only caller of `_downsample`.
+   `"all"` stores every sample the run has, in order, the two samples of
+   each event included. A number N calls the thinning that was already
+   there with `max_points=N`: the first and the last row, and both rows of
+   every event, are kept (events are thinned evenly only when they alone
+   are more than N), and the rest are spread evenly by row number. N at or
+   over the run's rows stores them all — a point is never invented.
+   `_downsample` has no default argument: every call says its number. With
+   `baseline_points: 2000` the stored arrays are exactly what the code
+   before this stored — a test pins the kept rows against that function's
+   output, over runs with and without events, with more events than
+   points, and shorter and longer than the number.
+3. *The reference JSON records what was done*, under a top-level key that
+   is always written: `"sampling": {"setting": "all" | N, "source_points":
+   <rows the run had>, "stored_points": <points stored>}`. A reference
+   without it — every one stored before this — loads and scores exactly as
+   before: old data is read as it is, and nothing is migrated.
+
+**What was measured.** On a real library of 330 tests: 11 of the 330
+baselines had been thinned by the cap; the median run has 502 rows; keeping
+every point takes the baselines from 10.7 MB to about 24.6 MB, two runs of
+about 74,000 rows being about 5 MB each.
+
+**Known limits.** A number thins evenly by row number — not by time, and
+not by what the signal does — so it can drop a spike that lies between two
+kept points. A baseline has ONE time vector for all its variables: the
+points are chosen per test, not per variable. An existing baseline keeps
+the points it has until its test is accepted again, whatever the key says
+now; its `sampling` record, or the lack of one, says how it was stored.
+"Every point" is every row: the values are written at 15 significant
+digits (7 for a single-precision result file), as they always were.
+
+**What is not built.** Sampling by region — segments, chosen times, a
+different density in different parts of a run — is deferred
+(`docs/ideas.md`). Uniform resampling, or any interpolation: a stored point
+is always a row the simulator wrote. A CLI flag. A notice at compare for a
+baseline stored under another setting than the one now in effect. A check
+for a baseline that ends before its stop time. Any change to a scoring
+function.
+
+**Consequences.** `Config` gains `baseline_points`; a primary reference
+JSON gains `sampling`. A long run's baseline is larger the next time it is
+accepted, and its `nrmse` is then an average over more points — the score
+of such a test can differ from the one its thinned baseline gave. A project
+that wants its baselines stored as before sets `"baseline_points": 2000`.
