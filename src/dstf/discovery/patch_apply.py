@@ -23,6 +23,7 @@ each), so the RFC 6901 unescape rules fit in ~10 lines.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -167,7 +168,12 @@ def _apply_one_op(entry: dict, op: dict, whitelist: tuple[str, ...]) -> None:
         return
     if "value" not in op:
         raise PatchError(f"{op_name!r} requires 'value'", path=path)
-    value = op["value"]
+    # A copy: the document never shares an object with the op that put it
+    # there. Written in by reference, a later op of the same patch edits the
+    # earlier op's own value — and the list a caller still holds is then no
+    # longer the patch it gave: applied again (a replay, a second document)
+    # it does those later ops twice.
+    value = copy.deepcopy(op["value"])
     if op_name == "replace":
         _set_at(entry, tokens, value, path, must_exist=True)
     elif op_name == "add":

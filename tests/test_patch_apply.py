@@ -792,3 +792,63 @@ def test_variables_is_still_outside_the_whitelist(tmp_path):
     spec.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(PatchError, match="whitelist"):
         apply_patch(spec, "M", op)
+
+
+def _containers(value) -> set[int]:
+    """The id of every dict and list in ``value``."""
+    found: set[int] = set()
+    if isinstance(value, dict | list):
+        found.add(id(value))
+        for inner in value.values() if isinstance(value, dict) else value:
+            found |= _containers(inner)
+    return found
+
+
+class TestADocumentSharesNothingWithThePatchThatWroteIt:
+    """An op's value is written into the document as a copy. Written in by
+    reference, a later op of the same patch edited the earlier op's own
+    value: the list the caller held was then another patch, and applied
+    again — `spec_update`'s replay over a marked copy, on the way to the
+    file — it did its later ops twice."""
+
+    @staticmethod
+    def _ops() -> list[dict]:
+        return [
+            {"op": "add", "path": "/metrics", "value": {"children": [{"k": [1]}]}},
+            {"op": "add", "path": "/metrics/b", "value": 1},
+            {"op": "add", "path": "/metrics/children/-", "value": {"k": [2]}},
+            {"op": "replace", "path": "/metrics/children/0", "value": {"k": [3]}},
+            {"op": "add", "path": "/metrics/children/0/k/-", "value": 4},
+            {"op": "remove", "path": "/metrics/children/1/k"},
+        ]
+
+    def test_applying_a_patch_leaves_its_ops_as_they_were(self):
+        import copy
+
+        from dstf.discovery.patch_apply import apply_patch_to_document
+
+        ops = self._ops()
+        given = copy.deepcopy(ops)
+        data = {"tests": [{"model": "M"}]}
+        apply_patch_to_document(data, "M", ops)
+        assert ops == given
+        assert data["tests"][0]["metrics"] == {
+            "children": [{"k": [3, 4]}, {}],
+            "b": 1,
+        }
+
+    def test_the_same_ops_give_two_documents_that_share_no_object(self):
+        from dstf.discovery.patch_apply import apply_patch_to_document
+
+        ops = self._ops()
+        first = {"tests": [{"model": "M"}]}
+        second = {"tests": [{"model": "M"}]}
+        apply_patch_to_document(first, "M", ops)
+        apply_patch_to_document(second, "M", ops)
+        assert first == second
+        assert not _containers(first) & _containers(second)
+        assert not _containers(first) & _containers(ops)
+        # and an edit of one is no edit of the other, nor of the patch
+        first["tests"][0]["metrics"]["children"][0]["k"].append(5)
+        assert second["tests"][0]["metrics"]["children"][0]["k"] == [3, 4]
+        assert ops == self._ops()

@@ -1,6 +1,7 @@
 """The spec-update read-modify-write as a library: materialization, validation,
 one read and one write for every model in a patch set."""
 
+import copy
 import json
 from pathlib import Path
 
@@ -201,6 +202,98 @@ class TestApplyValidatedPatches:
         )
         apply_validated_patches(spec, [("M", [LEAF_OP])], _config(tmp_path))
         assert json.loads(spec.read_text(encoding="utf-8")) == expected
+
+
+NRMSE = {"metric": "nrmse", "variable": "x"}
+#: A criterion that can never be scored. An entry that holds one makes the
+#: write's check replay the patch (`refuse_newly_unscorable`).
+BARE = {"metric": "range", "variable": "x"}
+
+
+def _bounded(minimum: int) -> dict:
+    return {"metric": "range", "variable": "x", "min_value": minimum}
+
+
+class TestAPatchIsAppliedOnceToTheFileThatIsWritten:
+    """The unscorable-criterion check replays the patch over a marked copy
+    of the entry. While an op's value went into the document by reference,
+    that replay ran its later ops inside the earlier ops' values — the
+    objects the document to be written held — after every check had
+    passed: the file got them twice. Each test reads the WRITTEN file."""
+
+    @staticmethod
+    def _held(tmp_path) -> Path:
+        tree = {"combinator": "and", "children": [dict(NRMSE), dict(BARE)]}
+        return _spec(tmp_path, {"model": "M", "variables": ["x"], "metrics": tree})
+
+    @staticmethod
+    def _tree(spec: Path) -> dict:
+        return json.loads(spec.read_text(encoding="utf-8"))["tests"][0]["metrics"]
+
+    def test_a_remove_after_the_replace_that_wrote_its_list_removes_one(self, tmp_path):
+        spec = self._held(tmp_path)
+        children = [dict(NRMSE), dict(BARE), _bounded(1), _bounded(2)]
+        ops = [
+            {
+                "op": "replace",
+                "path": "/metrics",
+                "value": {"combinator": "and", "children": children},
+            },
+            {"op": "remove", "path": "/metrics/children/2"},
+        ]
+        apply_validated_patches(spec, [("M", ops)], _config(tmp_path))
+        assert self._tree(spec)["children"] == [NRMSE, BARE, _bounded(2)]
+
+    def test_a_remove_inside_the_group_the_patch_added_removes_one(self, tmp_path):
+        spec = self._held(tmp_path)
+        group = {
+            "combinator": "k-of-n",
+            "k": 1,
+            "children": [dict(NRMSE), _bounded(1)],
+        }
+        ops = [
+            {"op": "add", "path": "/metrics/children/-", "value": group},
+            {"op": "remove", "path": "/metrics/children/2/children/0"},
+        ]
+        apply_validated_patches(spec, [("M", ops)], _config(tmp_path))
+        assert self._tree(spec)["children"][2] == {**group, "children": [_bounded(1)]}
+
+    def test_an_add_inside_the_group_the_patch_added_adds_one(self, tmp_path):
+        spec = self._held(tmp_path)
+        ops = [
+            {
+                "op": "add",
+                "path": "/metrics/children/-",
+                "value": {"combinator": "or", "children": [dict(NRMSE)]},
+            },
+            {
+                "op": "add",
+                "path": "/metrics/children/2/children/-",
+                "value": _bounded(0),
+            },
+        ]
+        apply_validated_patches(spec, [("M", ops)], _config(tmp_path))
+        assert self._tree(spec)["children"][2]["children"] == [NRMSE, _bounded(0)]
+
+    def test_the_ops_it_returns_are_the_ops_it_was_given(self, tmp_path):
+        """What a caller says it did is what it was asked to do: the ops
+        are not changed by the apply, nor by the check's replay."""
+        spec = self._held(tmp_path)
+        ops = [
+            {
+                "op": "add",
+                "path": "/metrics/children/-",
+                "value": {"combinator": "or", "children": [dict(NRMSE)]},
+            },
+            {
+                "op": "add",
+                "path": "/metrics/children/2/children/-",
+                "value": _bounded(0),
+            },
+        ]
+        given = copy.deepcopy(ops)
+        ((_, applied),) = apply_validated_patches(spec, [("M", ops)], _config(tmp_path))
+        assert applied == given and ops == given
 
 
 def test_a_patch_that_leaves_plots_invalid_writes_nothing(tmp_path):
