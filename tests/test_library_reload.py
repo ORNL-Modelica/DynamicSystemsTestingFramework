@@ -202,6 +202,53 @@ def test_a_worker_started_after_the_change_does_not_read_it_again(reloading):
     assert _kinds(backend.log) == ["run", "run"]
 
 
+def test_a_second_worker_started_later_holds_the_latest_state_the_pool_was_told(
+    tmp_path,
+):
+    """The pool keeps the NEWEST state an item carried: a worker started
+    after S2 was submitted read the files at S2 or later, whatever older
+    state the pool had seen before it."""
+    before = set(threading.enumerate())
+    backend, pool = _pool(tmp_path, _ReloadingBackend)
+    try:
+        backend.gate("Lib.A")
+        a = pool.submit(_t("A"), S1)
+        _wait_until(lambda: len(backend.ran) == 1)  # worker 0 holds S1, and is busy
+        b = pool.submit(_t("B"), S2)
+        c = pool.submit(_t("C"), S1)  # an older state, told after the newer
+        pool.workers = 2  # worker 1 starts now, and takes B
+        _wait_until(lambda: _ended(b, c))
+        backend.gates["Lib.A"].set()
+        _wait_until(lambda: _ended(a))
+        assert sorted(backend.starts) == [0, 1]
+        # Nothing was read again: worker 1 started on the files as they are.
+        assert "reload" not in _kinds(backend.log)
+        assert pool._library is S2
+    finally:
+        _close(backend, pool, before)
+
+
+def test_a_state_told_while_a_worker_starts_is_read_again_by_it(tmp_path):
+    """The worker is held to the state the pool knew BEFORE its start began:
+    a click during the start may have found files the start had already
+    read, so its items make the worker read again."""
+    before = set(threading.enumerate())
+    backend, pool = _pool(tmp_path, _ReloadingBackend)
+    starting, go = threading.Event(), threading.Event()
+    backend.start_script = lambda worker: (starting.set(), go.wait(30))
+    try:
+        a = pool.submit(_t("A"), S1)
+        assert starting.wait(15)
+        b = pool.submit(_t("B"), S2)  # during the start
+        go.set()
+        _wait_until(lambda: _ended(a, b))
+        assert _kinds(backend.log) == ["run", "reload", "run"]
+        assert backend.log[1][1] == S2.changes_since(S1)
+    finally:
+        go.set()
+        _close(backend, pool, before)
+
+
 def test_a_worker_brought_back_from_a_death_read_the_files_as_they_are(reloading):
     backend, pool = reloading
     backend.raises.add("Lib.A")  # leaves the worker dead

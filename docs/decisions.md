@@ -7705,7 +7705,12 @@ the RESOLVED path until 2026-10-12, so a dependency reached through a
 symbolic link, or given as an absolute path holding `..`, was never
 reopened. omc KEEPS the classes it holds when a load
 fails, so **a failed reload fails the item** with omc's message
-(`MyLib does not load: Examples/Pipe.mo: [syntax:error:2] …`), and the
+(`MyLib does not load: Examples/Pipe.mo:12: [syntax:error:2] …`: the
+file under the library and the line, whether one file was read or the
+whole library — the whole load's message named no file until 2026-10-12,
+because OMPython's own check of omc's messages keeps what each says and
+drops where it points; the load and the read of the messages are sent on
+the session's socket, `_raw_located`), and the
 next item asks again. **After a failed reload what the worker holds is
 unknown, and its next reload reads everything** — the whole library and
 each path dependency, whatever has changed by then
@@ -7737,7 +7742,9 @@ was looked for, and every item after an edit in such a dependency failed
 with `DepLib 1.0 does not load: loadFile left no class DepLib 1.0`.) While a worker reads, its
 item's row says `running · reading the library`, the strip `Running on
 worker 1 — reading the library`, and the panel `worker 1 reading the
-library — loadFile("…/package.mo") · 12 s` (`queue_rows.READING`,
+library — loadFile("…/package.mo") · 12 s` — on Dymola `openModel("…/
+package.mo")`, quoted too, so the panel cuts both to the path's last part
+(`queue_rows.READING`,
 `StartingWorker.reload`).
 
 *Costs, measured over a library of 3,270 `.mo` files (4,117 swept files,
@@ -7748,7 +7755,8 @@ to 0.17 s after it, 0.71 s when all 331 are queued for the first time
 (each file read once); on /mnt/d 1.2 s, and 3.6 s the first time. On the
 loop: `apply` 0.2 to 2.4 ms, the posted call that queues 0.3 to 5 ms, the
 longest stall of a 5 ms heartbeat during a click 18 ms. Reading again,
-native: Dymola 0.01 to 0.02 s; OpenModelica 0.33 s for one file, 1.1 to
+native: Dymola 0.01 to 0.02 s on the build's own runs and 0.07 s in the
+review's, over the same library; OpenModelica 0.33 s for one file, 1.1 to
 1.3 s for the whole library. On /mnt/d: Dymola 8 to 9.5 s (the spike's
 figure, not re-measured), OpenModelica 0.39 s for one file and 107 to
 110 s for the whole library — what its first load took (92 s with the
@@ -7759,13 +7767,23 @@ by the simulator and not swept. `testing.json` itself — `backend_setup`,
 `dependencies` — is read when the tool opens. An edit made after a click
 is seen by the next click; the test queued before it runs what the worker
 holds when its turn comes. A file rewritten with the same modification
-time and size is not seen. A test that did not exist when the tool opened
+time and size is not seen (a rewrite of the same length within one tick of
+the file system's clock, or one whose time is put back). An editor's lock
+or temporary file whose name ends in `.mo` (Emacs's `.#A.mo`) is a source
+file to the sweep: an added file, so a reload — the whole library on
+OpenModelica — and no error. A rescan that lands after a click does not
+take back what the click read of a test: a file edited again between the
+two shows the click's values until that test's next click. A test that did
+not exist when the tool opened
 is listed by the next open. Dymola's message for a model that no longer
 parses is its generic "Translation failed", the parser's words in the
 translation log; an emptied or garbage BASE-CLASS file reads the same on
 Dymola (the model misses what it declared) and `MyLib does not load:
 [grammar:error:234] …` on OpenModelica. A test's OWN file emptied or
-turned to garbage never reaches the simulator: the click refuses it (`no
+turned to garbage never reaches the simulator: the click refuses it — a
+file that cannot be opened with `cannot be read: Permission denied`, the
+system's words — and a refusal's note leaves the panel when that test is
+next queued (`no
 longer holds it`). A test only the spec declares whose model was replaced
 by an EMPTY class of the same name still runs on both simulators, and its
 result holds none of the variables it tracks. The comparator read that as

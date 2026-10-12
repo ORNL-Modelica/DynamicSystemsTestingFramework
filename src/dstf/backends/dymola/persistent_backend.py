@@ -199,6 +199,15 @@ def _classify_translation_error(log_path: Path) -> str:
     return "Translation failed"
 
 
+def _open_model_step(package_file: Path) -> str:
+    """The step a worker is in while Dymola opens *package_file*, as the
+    queue panel and a start's failure say it: the call with its path
+    QUOTED, as OpenModelica's ``loadFile("…")`` is — the one form the
+    panel cuts to the path's last part (``queue_rows.starting_text``).
+    Unquoted, the whole path stood in the panel's line."""
+    return f'openModel("{package_file.as_posix()}")'
+
+
 class DymolaWorker(Worker):
     """One live Dymola process wrapped as a test worker."""
 
@@ -250,7 +259,7 @@ class DymolaWorker(Worker):
         # Load dependencies
         for dep_path in self.config.dependencies or []:
             dep_pkg = Path(dep_path).resolve() / "package.mo"
-            self._step = f"openModel({dep_pkg})"
+            self._step = _open_model_step(dep_pkg)
             ok = self.dymola.openModel(str(dep_pkg))
             if not ok:
                 raise RuntimeError(
@@ -260,7 +269,7 @@ class DymolaWorker(Worker):
 
         # Load main library
         main_pkg = self.config.library_dir / "package.mo"
-        self._step = f"openModel({main_pkg})"
+        self._step = _open_model_step(main_pkg)
         ok = self.dymola.openModel(str(main_pkg))
         if not ok:
             raise RuntimeError(
@@ -735,7 +744,7 @@ class DymolaWorker(Worker):
                 packages.append(Path(entry).resolve())
         for package in (*packages, self.config.library_dir):
             main_pkg = package / "package.mo"
-            self._step = f"openModel({main_pkg})"
+            self._step = _open_model_step(main_pkg)
             if not self.dymola.openModel(str(main_pkg), changeDirectory=False):
                 raise LibraryReloadError(
                     f"{package.name} does not load: {self._last_error().strip()[:400]}"

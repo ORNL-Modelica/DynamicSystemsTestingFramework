@@ -225,9 +225,14 @@ def test_openmodelica_runs_the_model_as_it_is_on_disk(tmp_path, monkeypatch, how
         monkeypatch.setattr(OpenModelicaWorker, "_FILE_LOAD_SECONDS", 0.0)
     tool = Tool(tmp_path, "OpenModelica")
     try:
+        # Whole or one file at a time, the message names the file and the
+        # line: a library of thousands of files has ONE that does not parse.
         _edit_and_queue_again(
             tool,
-            ("ModelicaTestingLib does not load", "[syntax:error:"),
+            (
+                "ModelicaTestingLib does not load: Examples/SimpleTest.mo:",
+                ": [syntax:error:",
+            ),
         )
         # Six clicks found a changed file (the broken one twice over).
         # File by file, the two after the one that failed are whole loads:

@@ -12,9 +12,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from dstf.authoring.queue_rows import starting_text
 from dstf.backends.dymola.persistent_backend import DymolaWorker
-from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+from dstf.backends.openmodelica.persistent_backend import (
+    OpenModelicaWorker,
+    _last_error,
+    _place,
+    _raw_located,
+)
 from dstf.backends.persistent import LibraryReloadError, Worker
+from dstf.backends.pool import StartingWorker
 from dstf.discovery.library_state import LibraryChanges, LibraryState, source_stamps
 
 
@@ -269,6 +276,159 @@ class TestOpenModelica:
         ]
 
 
+# -- where a load error is ------------------------------------------------------
+
+
+def _record(message: str, level: str, kind: str, ident: int, file="", line=0) -> str:
+    """One record of omc's `getMessagesStringInternal()`, as omc 1.27
+    writes it."""
+    return (
+        "record OpenModelica.Scripting.ErrorMessage\n"
+        "    info = record OpenModelica.Scripting.SourceInfo\n"
+        f'    filename = "{file}",\n'
+        "    readonly = false,\n"
+        f"    lineStart = {line},\n"
+        "    columnStart = 7,\n"
+        f"    lineEnd = {line},\n"
+        "    columnEnd = 7\n"
+        "end OpenModelica.Scripting.SourceInfo;,\n"
+        f'    message = "{message}",\n'
+        f"    kind = .OpenModelica.Scripting.ErrorKind.{kind},\n"
+        f"    level = .OpenModelica.Scripting.ErrorLevel.{level},\n"
+        f"    id = {ident}\n"
+        "end OpenModelica.Scripting.ErrorMessage;"
+    )
+
+
+def _messages(*records: str) -> str:
+    return "{" + ", ".join(records) + "}\n"
+
+
+#: What omc says of a library one of whose files does not parse: that the
+#: package failed to load — no file — and then the syntax error, with it.
+BROKEN = _messages(
+    _record(
+        "Failed to load package Lib () using MODELICAPATH /x.",
+        "error",
+        "scripting",
+        184,
+    ),
+    _record(
+        "No viable alternative near token: *",
+        "error",
+        "syntax",
+        2,
+        "{root}/Examples/A.mo",
+        5,
+    ),
+)
+
+
+class _Socket:
+    """The session's socket: each expression sent is answered from
+    ``replies`` (by its start), the messages after it from ``messages``."""
+
+    def __init__(self, replies: dict[str, str], messages: dict[str, str]):
+        self.replies, self.messages = replies, messages
+        self.sent: list[str] = []
+        self._next = ""
+
+    def send_string(self, expr: str) -> None:
+        if expr == "getMessagesStringInternal()":
+            asked = self.sent[-1]
+            self._next = next(
+                (m for key, m in self.messages.items() if asked.startswith(key)), "{}\n"
+            )
+        else:
+            self.sent.append(expr)
+            self._next = next(
+                (r for key, r in self.replies.items() if expr.startswith(key)), "true\n"
+            )
+
+    def recv_string(self) -> str:
+        return self._next
+
+
+class TestWhereAnErrorIs:
+    def test_the_error_ompython_raises_is_read_with_its_file_and_line(self):
+        text, file, line = _last_error(BROKEN.replace("{root}", "/lib"))
+        assert text == "[syntax:error:2] No viable alternative near token: *"
+        assert (file, line) == ("/lib/Examples/A.mo", 5)
+
+    def test_warnings_alone_are_no_error_and_a_message_is_unescaped(self):
+        warned = _messages(
+            _record("Lexer: odd", "warning", "syntax", 9, "/lib/A.mo", 3)
+        )
+        assert _last_error(warned) is None and _last_error("{}\n") is None
+        quoted = _messages(_record('Class \\"A\\" not found', "error", "scripting", 3))
+        assert _last_error(quoted) == ('[scripting:error:3] Class "A" not found', "", 0)
+
+    def test_the_place_is_the_path_under_the_library(self, lib):
+        assert _place((str(lib / "Examples" / "A.mo"), 5), lib) == "Examples/A.mo:5: "
+        assert _place((str(lib / "Examples" / "A.mo"), 0), lib) == "Examples/A.mo: "
+        assert _place(("/elsewhere/B.mo", 2), lib) == "/elsewhere/B.mo:2: "
+        assert _place(None, lib) == ""
+
+    def test_a_reply_and_its_error_are_read_on_the_socket(self, lib):
+        expr = f'loadFile("{lib}/package.mo")'
+        socket = _Socket(
+            {"loadFile": "false\n"}, {"loadFile": BROKEN.replace("{root}", str(lib))}
+        )
+        session = SimpleNamespace(omc_zmq=socket)
+        assert _raw_located(session, expr) == (
+            "",
+            "[syntax:error:2] No viable alternative near token: *",
+            (f"{lib}/Examples/A.mo", 5),
+        )
+        assert socket.sent == [expr]
+        # No error: the reply, and no place.
+        fine = SimpleNamespace(omc_zmq=_Socket({"parseFile": "{Lib.A}\n"}, {}))
+        assert _raw_located(fine, 'parseFile("x")') == ("{Lib.A}", None, None)
+
+    def test_a_session_without_the_socket_is_asked_the_usual_way(self, lib):
+        expr = f'loadFile("{lib}/package.mo")'
+        message = "[syntax:error:2] No viable alternative near token: ;"
+        session = _Omc({expr: _omc_error(expr, message)})
+        assert _raw_located(session, expr) == ("", message, None)
+        assert _raw_located(_Omc(), "existClass(Lib)") == ("true", None, None)
+
+    def test_a_whole_load_that_fails_names_the_file_and_the_line(self, lib):
+        """`Lib does not load: [syntax:error:2] …` said that a library of
+        thousands of files has a syntax error, and not where."""
+        worker = _om_worker(lib)
+        worker.session = SimpleNamespace(
+            omc_zmq=_Socket(
+                {"loadFile": "false\n"},
+                {"loadFile": BROKEN.replace("{root}", str(lib))},
+            )
+        )
+        with pytest.raises(LibraryReloadError) as raised:
+            worker.reload(None)
+        assert str(raised.value) == (
+            "Lib does not load: Examples/A.mo:5: [syntax:error:2] No viable "
+            "alternative near token: *"
+        )
+
+    def test_one_file_that_does_not_parse_says_its_line(self, lib):
+        path = lib / "Examples" / "A.mo"
+        worker = _om_worker(lib)
+        worker.session = SimpleNamespace(
+            omc_zmq=_Socket(
+                {"parseFile": "{}\n"},
+                {
+                    "parseFile": _messages(
+                        _record("Missing token: ;", "error", "syntax", 2, str(path), 7)
+                    )
+                },
+            )
+        )
+        with pytest.raises(LibraryReloadError) as raised:
+            worker.reload(LibraryChanges(changed=(path,)))
+        assert str(raised.value) == (
+            "Lib does not load: Examples/A.mo:7: [syntax:error:2] Missing token: ;"
+        )
+
+
 class _Dymola:
     def __init__(self, fails: str | None = None):
         self.opened: list[tuple[str, bool]] = []
@@ -300,7 +460,13 @@ class TestDymola:
         worker = _dymola_worker(lib, dymola)
         worker.reload(LibraryChanges(changed=(lib / "Examples" / "A.mo",)))
         assert dymola.opened == [(str(lib / "package.mo"), False)]
-        assert worker._step == f"openModel({lib / 'package.mo'})"
+        # Quoted, as OpenModelica's loadFile is: the panel cuts a quoted
+        # path to its last part, and showed this one whole.
+        assert worker._step == f'openModel("{lib}/package.mo")'
+        shown = starting_text(StartingWorker(0, worker._step, 12.0, reload=True))
+        assert shown == (
+            'worker 1 reading the library — openModel("…/package.mo") · 12 s'
+        )
 
     def test_a_dependency_is_opened_first_when_a_file_of_it_changed(
         self, lib, tmp_path

@@ -312,6 +312,76 @@ def test_a_test_whose_file_no_longer_holds_it_is_refused(lib):
     assert lib.session.queue == []
 
 
+def test_the_note_of_a_refused_test_goes_when_it_is_next_queued(lib):
+    """`<model>: its file … is gone` stood in the panel after the file was
+    back and the test had run and passed again."""
+    text = (lib.dir / "B.mo").read_text(encoding="utf-8")
+    (lib.dir / "B.mo").unlink()
+    (a,) = lib.session.enqueue([A, B])
+    said = f"{B}: its file {lib.dir / 'B.mo'} is gone"
+    assert lib.session.notices == [said]
+    lib.ended(a)
+    # Queued again with the file still gone: said once more, each time.
+    (c,) = lib.session.enqueue([C, B])
+    assert lib.session.notices == [said, said]
+    lib.ended(c)
+    lib.events.clear()
+
+    (lib.dir / "B.mo").write_text(text, encoding="utf-8")
+    (b,) = lib.session.enqueue([B])
+    assert lib.session.notices == []
+    # ...and the panel is told: a `notice` event with no message.
+    assert [e for e in lib.events if e["event"] == "notice"] == [{"event": "notice"}]
+    lib.ended(b)
+    # Another test's note is not this test's to take.
+    (lib.dir / "C.mo").unlink()
+    with pytest.raises(QueueError):
+        lib.session.enqueue([C])
+    (again,) = lib.session.enqueue([B])
+    lib.ended(again)
+    assert lib.session._refusals == {C: f"{C}: its file {lib.dir / 'C.mo'} is gone"}
+
+
+def test_with_a_loop_a_note_that_says_two_refusals_loses_the_one_that_is_over(looped):
+    lib = looped
+    texts = {m: (lib.dir / f"{m[-1]}.mo").read_text(encoding="utf-8") for m in (B, C)}
+    for name in ("B", "C"):
+        (lib.dir / f"{name}.mo").unlink()
+    lib.session.apply(Enqueue(models=(B, C)))  # all refused: one notice
+    gone = {m: f"{m}: its file {lib.dir / (m[-1] + '.mo')} is gone" for m in (B, C)}
+    lib.loop.until(lambda: lib.notices() != [], what="the notice")
+    assert lib.session.notices == [f"{gone[B]}; {gone[C]}"]
+    (lib.dir / "B.mo").write_text(texts[B], encoding="utf-8")
+    lib.session.apply(Enqueue(models=(B,)))
+    lib.loop.until(lambda: len(lib.session.queue) == 1, what="queued")
+    assert lib.session.notices == [gone[C]]
+    lib.ended(*lib.session.queue)
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="a file mode that denies its owner the read",
+)
+@pytest.mark.parametrize("model", [B, SPEC], ids=["scanned", "spec only"])
+def test_a_file_that_cannot_be_read_is_refused_in_the_systems_words(lib, model):
+    """Not "no longer holds it": the file was not edited, it cannot be
+    opened."""
+    path = lib.dir / ("B.mo" if model == B else "Parts.mo")
+    _touch_later(path)
+    path.chmod(0)
+    try:
+        with pytest.raises(QueueError) as refused:
+            lib.session.enqueue([model])
+    finally:
+        path.chmod(0o644)
+    assert str(refused.value) == (
+        f"{model}: its file {path} cannot be read: Permission denied"
+    )
+    (item,) = lib.session.enqueue([model])  # readable again: queued
+    lib.ended(item)
+    assert lib.session.notices == []
+
+
 def test_a_spec_only_tests_model_is_found_again_when_its_file_changed(lib):
     (first,) = lib.session.enqueue([SPEC])
     lib.ended(first)
@@ -626,6 +696,29 @@ def test_a_click_still_being_read_when_the_queue_stops_queues_nothing(
     assert lib.session.queue == [] and lib.session._pool is None
     assert [e["state"] for e in lib.events] == ["stopped"]  # and nothing after
     assert not [t for t in threading.enumerate() if "-pool-" in t.name]
+    # The stop forgot the click: the test can be queued again.
+    monkeypatch.setattr(session_module, "source_stamps", real)
+    lib.session.apply(Enqueue(models=(A,)))
+    lib.loop.until(lambda: len(lib.session.queue) == 1, what="queued again")
+    lib.ended(*lib.session.queue)
+
+
+def test_a_project_opened_again_starts_from_no_state_of_the_library(lib):
+    """The swept state and the stamps the tests were read at are the
+    project's: a reopen reads its tests anew, at a moment nobody stamped."""
+    (item,) = lib.session.enqueue([A])
+    lib.ended(item)
+    _write(lib.dir / "B.mo", _model("B", stop_time=4))
+    (again,) = lib.session.enqueue([B])
+    lib.ended(again)
+    assert lib.session._library.serial == 2 and B in lib.session._read_at
+    lib.session.stop_queue()
+    lib.session.open(lib.cfg, work_dir=lib.cfg.parent.parent / "work")
+    lib.session.rescan_done.wait(30)
+    assert lib.session._library is None and lib.session._read_at == {}
+    (first,) = lib.session.enqueue([A])
+    assert first.library.serial == 1
+    lib.ended(first)
 
 
 # ---------------------------------------------------------------------------

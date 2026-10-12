@@ -320,7 +320,7 @@ def _read_click(config: Config, asks: Sequence[_Ask]) -> _ClickRead:
         located = find_class(config.library_dir, config.library_name, ask.model_id)
         if located is None:
             read.refused[ask.model_id] = _unreadable(
-                ask, "is gone" if now is None else "no longer holds it"
+                ask, "is gone" if now is None else _no_longer(ask.path)
             )
             continue
         read.located[ask.model_id] = located
@@ -334,7 +334,7 @@ def _read_click(config: Config, asks: Sequence[_Ask]) -> _ClickRead:
                 test = fresh.get(model_id)
                 if test is None:
                     read.refused[model_id] = (
-                        f"{model_id}: its file {path} no longer holds it"
+                        f"{model_id}: its file {path} {_no_longer(path)}"
                     )
                 else:
                     read.scanned[model_id] = test
@@ -344,6 +344,19 @@ def _read_click(config: Config, asks: Sequence[_Ask]) -> _ClickRead:
 
 def _unreadable(ask: _Ask, why: str) -> str:
     return f"{ask.model_id}: its file {ask.path} {why}"
+
+
+def _no_longer(path: Path) -> str:
+    """Why a file that is there gave no test: ``no longer holds it`` — or,
+    for one that cannot be opened, ``cannot be read: Permission denied``
+    in the system's own words. A file made unreadable read as one edited
+    until the test was gone from it."""
+    try:
+        with open(path, "rb"):
+            pass
+    except OSError as e:
+        return f"cannot be read: {e.strerror or type(e).__name__}"
+    return "no longer holds it"
 
 
 def resolve_project(
@@ -520,6 +533,9 @@ class Session:
         self._reading: set[str] = set()
         #: The number of the last `stage` call (`PatchOp.gesture`).
         self._gesture = 0
+        #: By model, the sentence a Queue click's read refused it with,
+        #: while it stands among the notices (`_forget_refusals`).
+        self._refusals: dict[str, str] = {}
         #: Counts `stop_queue`: a click read before one is not queued after
         #: it (the tool stopping must leave no worker behind).
         self._queue_epoch = 0
@@ -2034,6 +2050,7 @@ class Session:
         pool = self._open_pool()
         added: list[QueueItem] = []
         said = list(read.refused.values())
+        self._refusals.update(read.refused)
         for model_id in model_ids:
             test = project.test(model_id)
             if model_id in read.refused or test is None:
@@ -2051,6 +2068,11 @@ class Session:
             self._live[model_id] = item
             self.queue.append(item)
             added.append(item)
+        # A test that is queued again was read: what an earlier click said
+        # of its file — gone, unreadable, no longer holding it — is over,
+        # and stood in the panel after the file was back and the test had
+        # passed.
+        self._forget_refusals([item.model_id for item in added])
         if not added:
             if said:
                 raise QueueError("; ".join(said))
@@ -2059,6 +2081,22 @@ class Session:
             self._say(sentence)
         self._emit("queue", state="queued", models={i.model_id for i in added})
         return added
+
+    def _forget_refusals(self, model_ids: Sequence[str]) -> None:
+        """Take the notes the read's refusals of ``model_ids`` left out of
+        the notices — each its own notice, or one part of a notice that
+        says several (a click all of whose tests were refused)."""
+        gone = {s for m in model_ids if (s := self._refusals.pop(m, None)) is not None}
+        if not gone:
+            return
+        kept = []
+        for notice in self.notices:
+            parts = [part for part in notice.split("; ") if part not in gone]
+            if parts:
+                kept.append("; ".join(parts))
+        if kept != self.notices:
+            self.notices = kept
+            self._emit("notice")
 
     def _store_scan_later(self, config: Config, scan: dict[str, TestModel]) -> None:
         """The scan cache follows the project's scan, off the UI loop."""
@@ -2173,6 +2211,7 @@ class Session:
         self.stop_queue()
         self.live_runs.clear()
         self._library, self._read_at = None, {}
+        self._refusals = {}
         self.queue, self._unwritten = [], []
         self._workers = self.queue_refusal = self.queue_stopped = None
         self._write_status = None

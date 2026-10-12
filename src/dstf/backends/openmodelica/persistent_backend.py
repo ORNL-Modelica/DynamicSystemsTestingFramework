@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -83,6 +84,77 @@ def _raw_reply(session, expr: str) -> tuple[str, str | None]:
         text = str(exc).split("']: ", 1)[-1].strip()
         return "", text or type(exc).__name__
     return (raw or "").strip(), None
+
+
+#: One record of omc's ``getMessagesStringInternal()``: where the message
+#: points, what it says, and its kind, level and id — the three OMPython
+#: prints as ``[kind:level:id]``.
+_OMC_MESSAGE = re.compile(
+    r"record OpenModelica\.Scripting\.ErrorMessage\s+"
+    r"info = record OpenModelica\.Scripting\.SourceInfo\s+"
+    r'filename = "(?P<file>.*?)",\s+readonly = \w+,\s+'
+    r"lineStart = (?P<line>\d+),.*?"
+    r"end OpenModelica\.Scripting\.SourceInfo;,\s+"
+    r'message = "(?P<message>.*?)",\n\s+'
+    r"kind = \.OpenModelica\.Scripting\.ErrorKind\.(?P<kind>\w+),\n\s+"
+    r"level = \.OpenModelica\.Scripting\.ErrorLevel\.(?P<level>\w+),\n\s+"
+    r"id = (?P<id>\d+)",
+    re.DOTALL,
+)
+
+
+def _last_error(messages: str) -> tuple[str, str, int] | None:
+    """The error among omc's *messages* that OMPython raises for them —
+    the last record of level ``error`` — as ``(its text, the file it
+    points at, the line)``: the text as OMPython words it (``[syntax:
+    error:2] No viable alternative near token: ;``), the file ``""`` and
+    the line 0 where omc names none. None without an error."""
+    for found in reversed(list(_OMC_MESSAGE.finditer(messages))):
+        if found["level"] != "error":
+            continue
+        message = found["message"].encode().decode("unicode_escape")
+        text = f"[{found['kind']}:{found['level']}:{found['id']}] {message}"
+        return text, found["file"], int(found["line"])
+    return None
+
+
+def _raw_located(session, expr: str) -> tuple[str, str | None, tuple[str, int] | None]:
+    """:func:`_raw_reply`, with WHERE the error is when omc says: ``(reply,
+    error, (file, line))``. OMPython's own check of the messages keeps
+    what each says and drops where it points — a whole library that does
+    not load then names no file — so the expression and the read of the
+    messages are sent on the session's socket here, and the records are
+    read whole. A session without that socket (another OMPython) is asked
+    the usual way: the same error, no place."""
+    socket = getattr(session, "omc_zmq", None)
+    if socket is None:
+        return (*_raw_reply(session, expr), None)
+    try:
+        socket.send_string(expr)
+        raw = socket.recv_string()
+        socket.send_string("getMessagesStringInternal()")
+        messages = socket.recv_string()
+    except Exception as exc:
+        return "", str(exc) or type(exc).__name__, None
+    error = _last_error(messages)
+    if error is None:
+        return (raw or "").strip(), None, None
+    text, file, line = error
+    return "", text, (file, line) if file else None
+
+
+def _place(where: tuple[str, int] | None, root: Path) -> str:
+    """``Examples/Pipe.mo:12: `` — the file an error points at, as its path
+    under the library's *root* (whole, for one outside it), and the line
+    where omc gives one; ``""`` without a place."""
+    if where is None:
+        return ""
+    file, line = Path(where[0]), where[1]
+    try:
+        shown = file.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        shown = str(file)
+    return f"{shown}:{line}: " if line else f"{shown}: "
 
 
 def _raw_get_error_string(session) -> str:
@@ -421,11 +493,14 @@ class OpenModelicaWorker(Worker):
                 _, dep_file = classify_dependency(dep)
                 # Its classes are named by its file, never by its
                 # directory: `Lib 1.0.0`, a symbolic link of any name.
-                names, error = self._classes_in(dep_file)
+                names, error, where = self._classes_in(dep_file)
                 if error is None and not names:
                     error = "it holds no class"
                 if error is not None:
-                    raise LibraryReloadError(f"{root.name} does not load: {error}")
+                    place = _place(where, Path(dep_file).parent)
+                    raise LibraryReloadError(
+                        f"{root.name} does not load: {place}{error}"
+                    )
                 self._load_whole(dep_file, *names)
         files = self._files_to_load_again(changes)
         if files is None:
@@ -457,21 +532,24 @@ class OpenModelicaWorker(Worker):
             return None
         return sorted(changed)
 
-    def _classes_in(self, file: str) -> tuple[list[str], str | None]:
+    def _classes_in(
+        self, file: str
+    ) -> tuple[list[str], str | None, tuple[str, int] | None]:
         """The top-level classes *file* holds, as ``parseFile`` names them
         — which loads nothing — or omc's message for a file it cannot
-        parse."""
+        parse, and where in it (:func:`_raw_located`)."""
         self._step = f'parseFile("{file}")'
-        holds, error = _raw_reply(self.session, self._step)
+        holds, error, where = _raw_located(self.session, self._step)
         if error is not None:
-            return [], error
-        return [n.strip() for n in holds.strip("{}").split(",") if n.strip()], None
+            return [], error, where
+        names = [n.strip() for n in holds.strip("{}").split(",") if n.strip()]
+        return names, None, None
 
     def _load_whole(self, package_file: str, *names: str) -> None:
         """``loadFile`` a library's file; each of *names* must be a class
         after it (a load that fails leaves the old ones, and says so)."""
         self._step = f'loadFile("{package_file}")'
-        _, error = _raw_reply(self.session, self._step)
+        _, error, where = _raw_located(self.session, self._step)
         if error is None:
             missing = [
                 name
@@ -481,7 +559,10 @@ class OpenModelicaWorker(Worker):
             if missing:
                 error = f"loadFile left no class {', '.join(missing)}"
         if error is not None:
-            raise LibraryReloadError(f"{', '.join(names)} does not load: {error}")
+            place = _place(where, Path(package_file).parent)
+            raise LibraryReloadError(
+                f"{', '.join(names)} does not load: {place}{error}"
+            )
 
     def _load_file_again(self, path: Path) -> None:
         """Read one changed file of the library again, as strictly as the
@@ -500,27 +581,28 @@ class OpenModelicaWorker(Worker):
         name = ".".join((library, *relative.with_suffix("").parts))
         file = str(path.resolve()).replace("\\", "/")
 
-        def refuse(why: str) -> LibraryReloadError:
+        def refuse(why: str, line: int = 0) -> LibraryReloadError:
+            at = f":{line}" if line else ""
             return LibraryReloadError(
-                f"{library} does not load: {relative.as_posix()}: {why}"
+                f"{library} does not load: {relative.as_posix()}{at}: {why}"
             )
 
-        names, error = self._classes_in(file)
+        names, error, where = self._classes_in(file)
         if error is not None:
             # The class omc holds is the old file's and stays, and the
             # caller fails the test.
-            raise refuse(error)
+            raise refuse(error, where[1] if where is not None else 0)
         if names != [name]:
             raise refuse(f"it holds {', '.join(names) or 'no class'}, not {name}")
         self._step = f"deleteClass({name})"
         # false for a class omc does not hold: nothing to delete.
         _raw_exec_bool(session, self._step)
         self._step = f'loadFile("{file}")'
-        _, error = _raw_reply(session, self._step)
+        _, error, where = _raw_located(session, self._step)
         if error is None and not _raw_exec_bool(session, f"existClass({name})"):
             error = f"loadFile left no class {name}"
         if error is not None:
-            raise refuse(error)
+            raise refuse(error, where[1] if where is not None else 0)
 
     def process_detail(self) -> str:
         omc = getattr(self.session, "omc_process", None)

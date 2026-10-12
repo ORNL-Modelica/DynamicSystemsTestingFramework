@@ -1286,21 +1286,28 @@ it, is not queued and the panel says so (`<model>: its file <path> is gone`).
 Before a worker runs a test queued after a change it reads the library again:
 Dymola reopens it (hundredths of a second on a local disk, 8 to 9.5 s for a
 3,000-file library on a slow mount), OpenModelica loads each changed file (a
-third of a second) or — when a file was added or removed, or a `package.mo` or
-`package.order` changed — the whole library, which takes as long as its first
-load (a second on a local disk, over a minute and a half for that library on
-a slow mount), and Julia restarts its worker. Meanwhile the test's row reads `running ·
-reading the library` and the panel `worker 1 reading the library —
-loadFile("…/package.mo") · 12 s`. A library that no longer loads FAILS the
-test with the simulator's own message — `MyLib does not load:
-Examples/Pipe.mo: [syntax:error:2] …` on OpenModelica; on Dymola the test's
-translation fails ("Translation failed", the parser's message in the
-translation log) — and never runs the model the simulator still held. Not
-looked at: a dependency given by NAME (`"Modelica"`: the simulator finds it);
-`testing.json` itself (`backend_setup` and `dependencies` are read when the
-tool opens); an edit made after the click (the next click sees it); a file
-rewritten with the same modification time and size; and a test that did not
-exist when the tool opened (open the tool again to list it).
+third of a second) or the whole library — when a file was added or removed,
+when a `package.mo` or `package.order` changed, when one file at a time would
+cost more than the whole load did (a small library is always loaded whole),
+and for the click after a reload that failed, since nobody then knows what
+the simulator holds — which takes as long as its first load (a second on a
+local disk, over a minute and a half for that library on a slow mount), and
+Julia restarts its worker. Meanwhile the test's row reads `running · reading
+the library` and the panel `worker 1 reading the library —
+loadFile("…/package.mo") · 12 s` (`openModel("…/package.mo")` on Dymola). A
+library that no longer loads FAILS the test with the simulator's own message
+— `MyLib does not load: Examples/Pipe.mo:12: [syntax:error:2] …` on
+OpenModelica, the file and the line whether one file or the whole library was
+read; on Dymola the test's translation fails ("Translation failed", the
+parser's message in the translation log) — and does not run the model the
+simulator still held. Not looked at: a dependency given by NAME (`"Modelica"`:
+the simulator finds it); `testing.json` itself (`backend_setup` and
+`dependencies` are read when the tool opens); an edit made after the click
+(the next click sees it); a file rewritten with the same modification time and
+size; and a test that did not exist when the tool opened (open the tool again
+to list it). A test whose file is gone, unreadable (`cannot be read:
+Permission denied`) or no longer holds it is not queued; the panel's note of
+it goes when that test is next queued.
 
 The header of every page carries the queue's indicator — `3 running · 5
 queued`, or `idle` — and a click on it opens the Suite page at the queue. When
