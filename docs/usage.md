@@ -1245,7 +1245,11 @@ so instead). Until the simulation has ended the row reads `cancelling…` and
 the test's strip "Cancelling on worker 2…", with no second Cancel: usually a
 moment, but on Dymola a model blocked in an external call does not see the
 request and is stopped with its worker after about 12 s; an ended row has **Open test** and the Suite's own actions for
-that one test, Accept and Queue. The panel's header counts the rows, holds
+that one test, Accept and Queue. A test queued again keeps the rows of its
+earlier runs until Clear finished: such a row says how that run ended
+(`finished · 3 s`) and has Open test alone — the verdict's badge, Accept and
+Queue are on the test's latest row, since a verdict is the test's as it stands
+and Accept stores its latest results. The panel's header counts the rows, holds
 the **workers** field — how many tests run at once: 1 when the tool starts,
 between 1 and the machine's cores; a change applies to workers
 started after it — **Clear finished**, which drops the ended rows and leaves

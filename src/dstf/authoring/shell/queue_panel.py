@@ -274,20 +274,24 @@ class QueuePanel:
 
     def _row(self, row: QueueRow) -> None:
         model_id = row.model_id
-        css = STATUS_CLASSES[row.status]
+        # An earlier run's row of a test that ran again wears no verdict
+        # (`QueueRow.status`): no tint, no badge.
+        css = STATUS_CLASSES[row.status] if row.status is not None else None
+        tint = f" dstf-tint-{css}" if css is not None else ""
         with (
             ui.row()
-            .classes(
-                f"dstf-queue-row dstf-tint-{css} items-center gap-2 w-full no-wrap"
-            )
+            .classes(f"dstf-queue-row{tint} items-center gap-2 w-full no-wrap")
             # The row's test, for a script that reads the page.
             .props(f'data-model="{model_id}"')
             .mark(f"queue-row:{model_id}")
         ):
             ui.label(str(row.number)).classes("dstf-queue-num")
-            ui.badge(STATUS_LABELS[row.status], color=None).classes("dstf-badge").style(
-                f"background-color: var(--dstf-{css}-fill)"
-            ).mark(f"queue-status:{model_id}")
+            if row.status is not None:
+                ui.badge(STATUS_LABELS[row.status], color=None).classes(
+                    "dstf-badge"
+                ).style(f"background-color: var(--dstf-{css}-fill)").mark(
+                    f"queue-status:{model_id}"
+                )
             with ui.column().classes("dstf-queue-what gap-0"):
                 with ui.link(
                     model_id.rpartition(".")[2], f"/test/{quote(model_id, safe='')}"
@@ -337,6 +341,10 @@ class QueuePanel:
         ui.button("Open test", on_click=lambda: ui.navigate.to(url)).props(
             "flat dense no-caps"
         ).mark(f"queue-open:{model_id}")
+        if not row.latest:
+            # An earlier run of a test that ran again: what acts on the
+            # TEST is on its latest row (`QueueRow.latest`).
+            return
         # What the Suite's batch bar offers, for this one test: Accept on a
         # finished row, Queue again on any. The panel knows neither by name.
         view = self.shell.view_for(Selection(tests=frozenset({model_id})))

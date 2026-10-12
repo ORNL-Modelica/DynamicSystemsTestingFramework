@@ -183,6 +183,51 @@ def test_a_click_shows_its_tests_as_taken_while_the_library_is_checked(
         _stop(proc)
 
 
+def test_an_earlier_runs_row_says_how_it_ended_and_the_latest_carries_the_verdict(
+    tmp_path, playwright_browser
+):
+    """A test queued twice has two rows. Both read the test's verdict as it
+    stands — the later run's — and both offered Accept, which accepts the
+    later run's results under the earlier row's name. The earlier row says
+    how its run ended and opens the test; the verdict and what acts on the
+    test are the latest row's."""
+    proc, _url, page, _context, errors, _cfg = _served(
+        tmp_path, playwright_browser, setup=_gated()
+    )
+    try:
+        _box(page, D).click()
+        _queue(page, "Queue 1")
+        expect(_words(page, D)).to_have_text(
+            re.compile(r"^finished"), timeout=RUN_TIMEOUT
+        )
+        expect(_badge(page, D)).to_have_text("PASS")
+        only = page.locator(f".dstf-queue-row[data-model='{D}']")
+        expect(only).to_have_count(1)
+        assert only.get_by_role("button").count() == 3  # Open test, Accept, Queue
+
+        _queue(page, "Queue 1")  # the same test again
+        rows = page.locator(f".dstf-queue-row[data-model='{D}']")
+        expect(rows).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        expect(rows.last.locator(".dstf-queue-words")).to_have_text(
+            re.compile(r"^finished"), timeout=RUN_TIMEOUT
+        )
+        first, last = rows.first, rows.last
+        expect(first.locator(".dstf-queue-words")).to_have_text(
+            re.compile(r"^finished · \d+ s$")
+        )
+        expect(first.locator(".dstf-badge")).to_have_count(0)
+        expect(first.get_by_role("button")).to_have_count(1)
+        expect(first.get_by_role("button", name="Open test")).to_have_count(1)
+        expect(last.locator(".dstf-badge")).to_have_text("PASS")
+        assert last.get_by_role("button").count() == 3
+        assert page.evaluate(NUMBERS) == ["1", "2"]
+        expect(page.locator(COUNTS)).to_have_text("2 finished")
+        _keep(page, tmp_path, "queue-two-runs")
+        assert _console(errors) == []
+    finally:
+        _stop(proc)
+
+
 def test_three_queued_one_removed_one_cancelled_one_finished_and_accepted(
     tmp_path, playwright_browser
 ):

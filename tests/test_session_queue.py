@@ -248,6 +248,47 @@ def test_the_queue_runs_first_in_first_out_and_numbers_its_rows(h):
     assert indicator(h.session).text == "idle" and stop_reason(h.session) is None
 
 
+def test_only_the_latest_row_of_a_test_carries_its_verdict_and_its_actions(h):
+    """A verdict is the TEST's, as it stands: two rows of one test both
+    read the later run's, the earlier one beside the words of a run that
+    had ended otherwise — and an Accept on that earlier row would accept
+    the later run's results."""
+    h.session.enqueue([D])
+    h.ended(D)
+    (only,) = queue_rows(h.session)
+    assert (only.latest, only.status, only.actions) == (True, PASS, ("open",))
+
+    h.hold(D)
+    h.session.enqueue([D])  # the same test again: its second item
+    h.running(D)
+    first, second = queue_rows(h.session)
+    # From the moment a later item is listed, the earlier row is a run's
+    # record: how it ended, its Test page, nothing else.
+    assert (first.latest, first.status, first.actions) == (False, None, ("open",))
+    assert first.words.startswith("finished · ")
+    assert (second.latest, second.status) == (True, RUNNING)
+    h.release(D)
+    h.ended(D)
+    first, second = queue_rows(h.session)
+    assert (first.latest, first.status) == (False, None)
+    assert (second.latest, second.status, second.actions) == (True, PASS, ("open",))
+    assert queue_row(h.session, D) == second  # the strip's row is the latest
+    assert counts_text([first, second]) == "2 finished"
+
+    # An earlier run that was cancelled keeps its own word — CANCELLED is
+    # how THAT run ended, no verdict of the test — and is not the latest.
+    h.hold(A)
+    (a,) = h.session.enqueue([A])
+    h.running(A)
+    h.session.cancel(a)
+    h.ended(A)
+    h.release(A)
+    h.session.enqueue([A])
+    h.ended(A)
+    rows = [r for r in queue_rows(h.session) if r.model_id == A]
+    assert [(r.latest, r.status) for r in rows] == [(False, "CANCELLED"), (True, FAIL)]
+
+
 def test_a_test_is_never_queued_twice(h):
     h.hold(A)
     h.session.enqueue([A, B])

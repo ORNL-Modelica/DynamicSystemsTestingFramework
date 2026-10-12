@@ -56,8 +56,12 @@ class QueueRow:
     words: str
     #: The badge: QUEUED / RUNNING while the queue holds it, the test's
     #: verdict once it finished, SIM_FAIL for a run that failed, CANCELLED,
-    #: and NOT RUN for an item no worker could start.
-    status: str
+    #: and NOT RUN for an item no worker could start. None for a finished
+    #: row that is not its test's `latest`: a verdict is the TEST's, as it
+    #: stands now, and one test has one — on the row of its last run. Two
+    #: rows of one test both read the later run's verdict, the earlier
+    #: one beside the words of a run that had ended otherwise.
+    status: str | None
     #: The worker it runs on, from 1, while it runs.
     worker: int | None = None
     #: A running item a stop was asked of (`QueueItem.stopping`): it
@@ -81,6 +85,12 @@ class QueueRow:
     #: can stop a test, ``open`` (its Test page) once it has ended; none
     #: while its click is being read — there is no item to act on yet.
     actions: tuple[str, ...] = ()
+    #: Whether no later item of its test is listed. An ended row that is
+    #: not the latest says how its own run ended (``finished · 3 s``) and
+    #: offers its Test page, nothing else: what acts on the TEST — Accept,
+    #: Queue again — acts on the test's latest results, and under an
+    #: earlier row's name that reads as accepting that run's.
+    latest: bool = True
     #: Why a running item has no ``cancel``: the backend's sentence.
     cancel_why: str | None = None
 
@@ -154,6 +164,7 @@ def _row(
     ahead: int,
     now: float,
     starting: Mapping[int, StartingWorker],
+    latest: bool,
 ) -> QueueRow:
     state = session.item_state(item)
     started = item.started_at is not None
@@ -211,7 +222,10 @@ def _row(
         fields = {"elapsed": ran, "actions": (OPEN,)}
         if state is ItemState.FINISHED:
             comp = session.comparisons.get(item.model_id)
-            fields["status"] = classify(comp) if comp is not None else SIM_FAIL
+            # The test's verdict as it stands — the latest row's alone.
+            fields["status"] = (
+                None if not latest else classify(comp) if comp is not None else SIM_FAIL
+            )
             fields["words"] = "finished" + (
                 f" · {ran:.0f} s" if ran is not None else ""
             )
@@ -225,7 +239,12 @@ def _row(
                 message=message,
             )
     return QueueRow(
-        number=number, model_id=item.model_id, state=state, started=started, **fields
+        number=number,
+        model_id=item.model_id,
+        state=state,
+        started=started,
+        latest=latest,
+        **fields,
     )
 
 
@@ -239,8 +258,10 @@ def queue_rows(session: Session, *, now: float | None = None) -> list[QueueRow]:
     starting = {w.worker_id: w for w in session.starting_workers}
     rows: list[QueueRow] = []
     ahead = 0
+    last = {item.model_id: item for item in session.queue}
     for number, item in enumerate(session.queue, start=1):
-        row = _row(session, item, number, ahead, clock, starting)
+        latest = last[item.model_id] is item
+        row = _row(session, item, number, ahead, clock, starting, latest)
         if row.state in (ItemState.WAITING, ItemState.RUNNING):
             ahead += 1
         rows.append(row)

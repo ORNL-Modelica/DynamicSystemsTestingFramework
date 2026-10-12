@@ -7756,6 +7756,17 @@ does not hold — and a simulate-only test passes by having run. A result
 that holds SOME of a flat test's tracked variables is scored on those, as
 before: the backend's log line is all that says one was missing.
 
+**An earlier run's row is a run's record** (2026-10-12). A test queued
+twice has two rows, and both read the test's verdict as it stands — the
+later run's — beside the words of a run that had ended otherwise, and
+both offered Accept, which stores the test's LATEST results: under the
+earlier row's name that read as accepting that run's. Only the latest
+item of a test carries the verdict and what acts on the test
+(`QueueRow.latest`, `QueueRow.status` None): an earlier finished row says
+`finished · 3 s`, wears no badge and no tint, and offers Open test alone.
+An earlier CANCELLED or failed row keeps its word — it is how that run
+ended, no verdict of the test.
+
 **What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
 refusal of Save, Discard and Reload while one runs. D129's capability
 contract loses the `Job` outcome and gains `Enqueue`.

@@ -547,6 +547,36 @@ async def test_a_finished_row_s_badge_follows_a_rescore(shell):
         assert _one(user, f"queue-words:{A}").text.startswith("finished")
 
 
+async def test_an_earlier_run_s_row_has_no_verdict_and_no_accept(shell):
+    """A test that ran twice has two rows. The verdict and what acts on
+    the test — Accept, Queue again — are on its latest row alone: the
+    earlier one says how its own run ended and opens the test."""
+    session = shell.session
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _end(shell, _hold(shell, A, ItemState.RUNNING), ItemState.FINISHED)
+        assert _one(user, f"queue-status:{A}").text == "FAIL"
+        for marker in ("queue-open", "queue-accept", "queue-enqueue"):
+            assert len(user.find(marker=f"{marker}:{A}").elements) == 1, marker
+
+        _end(shell, _hold(shell, A, ItemState.RUNNING), ItemState.FINISHED)
+        rows = user.find(marker=f"queue-row:{A}").elements
+        assert len(rows) == 2 and len(session.queue) == 2
+        # One badge — the latest row's — and one of each action on the test.
+        assert [e.text for e in user.find(marker=f"queue-status:{A}").elements] == [
+            "FAIL"
+        ]
+        words = [e.text for e in user.find(marker=f"queue-words:{A}").elements]
+        assert len(words) == 2 and all(w.startswith("finished") for w in words)
+        assert len(user.find(marker=f"queue-open:{A}").elements) == 2
+        for marker in ("queue-accept", "queue-enqueue"):
+            assert len(user.find(marker=f"{marker}:{A}").elements) == 1, marker
+        first, second = sorted(rows, key=lambda e: e.id)
+        assert "dstf-tint-fail" not in first.classes
+        assert "dstf-tint-fail" in second.classes
+        assert _one(user, "queue-counts").text == "2 finished"
+
+
 async def test_a_refused_stop_workers_says_the_session_s_sentence(shell):
     async with user_simulation(root=shell.index) as user:
         await _open(user)
