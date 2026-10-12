@@ -5,8 +5,9 @@ the scorer does not read used to be kept and ignored: a ``range`` leaf
 spelled ``"max_val": 0.5`` scored as if it had no upper bound and passed;
 an ``"agianst"`` scored against the primary baseline. This module is the
 ONE check every part of a spec entry goes through — a leaf, a flat
-override, the rows of a metric's tables, and (through
-:func:`unknown_field`) a window, a combinator and the entry's own blocks.
+override, the rows of a metric's tables, the keys inside a ``quantity``
+object and a tolerance pair, and (through :func:`unknown_field`) a window,
+a combinator, the entry's own blocks and the spec's root.
 
 What is known is never listed here. It is read from what already says it:
 a metric's config dataclass (its fields, and the ``columns`` metadata of
@@ -109,6 +110,9 @@ def unread_param(
     problem = unknown_field(params, (*known, *beside))
     if problem is not None:
         return problem
+    problem = _unread_inside(params, declares_quantity(metric_name))
+    if problem is not None:
+        return problem
     for name, columns in row_fields(metric_name).items():
         rows = params.get(name)
         if not isinstance(rows, list):
@@ -116,9 +120,51 @@ def unread_param(
         for i, row in enumerate(rows, start=1):
             if not isinstance(row, dict):
                 continue  # the mode's own reader says what a row must be
-            problem = unknown_field(row, columns)
+            problem = unknown_field(row, columns) or _unread_inside(row, False)
             if problem is not None:
                 return f"{name} row {i}: {problem}"
+    return None
+
+
+def declares_quantity(metric_name: str) -> bool:
+    """Whether the metric's config has a ``quantity`` field of its own —
+    ``scalar`` — and so reads the object's keys. On any other metric
+    ``quantity`` is the inert param (:data:`EVERY_METRIC`): of any shape,
+    read by nothing, and not looked into."""
+    desc = metric(metric_name)
+    return (
+        desc is not None
+        and dataclasses.is_dataclass(desc.config_cls)
+        and any(f.name == "quantity" for f in dataclasses.fields(desc.config_cls))
+    )
+
+
+def _unread_inside(values: Mapping[str, object], quantity_is_read: bool) -> str | None:
+    """What to say about the first key INSIDE one of ``values`` — a leaf's
+    params, or the cells of a table row — that nothing reads, or None:
+    ``tolerance: unknown field "uper" — did you mean "upper"?``.
+
+    Two kinds of value are objects. A ``quantity`` holds ``reduce``
+    (``modes.QUANTITY_KEYS``): ``{"reduce": "max", "over": "x"}`` scored the
+    max and dropped ``over``. Every other object is a tolerance's
+    lower/upper pair, and ``sides.parse_sides`` — the one place a pair is
+    read — takes exactly those two keys: ``{"lower": 0.1, "uper": 0.2}`` was
+    found at compare, as a criterion that could not be configured. Both are
+    said here, where the spec is read."""
+    from .modes import QUANTITY_KEYS
+    from .sides import PAIR_KEYS
+
+    for name, value in values.items():
+        if not isinstance(value, dict):
+            continue
+        if name == "quantity":
+            if not quantity_is_read:
+                continue
+            problem = unknown_field(value, QUANTITY_KEYS)
+        else:
+            problem = unknown_field(value, PAIR_KEYS)
+        if problem is not None:
+            return f"{name}: {problem}"
     return None
 
 

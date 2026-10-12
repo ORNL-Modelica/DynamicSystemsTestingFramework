@@ -74,6 +74,10 @@ def base_tolerance_refused(where: str, value: object) -> str:
     return f"{rule} ({where} is {_as_json(value)})"
 
 
+#: The keys of a pair, and of nothing else: what :func:`parse_sides` reads.
+PAIR_KEYS = ("lower", "upper")
+
+
 def parse_sides(value: object, what: str) -> Sides:
     """``value`` as :class:`Sides`: a number is both sides, a dict whose keys
     are exactly ``lower`` and ``upper`` is the pair, a :class:`Sides` is
@@ -85,7 +89,7 @@ def parse_sides(value: object, what: str) -> Sides:
         return value
     if _is_number(value):
         return Sides(float(value), float(value))
-    if isinstance(value, dict) and set(value) == {"lower", "upper"}:
+    if isinstance(value, dict) and set(value) == set(PAIR_KEYS):
         lower, upper = value["lower"], value["upper"]
         if _is_number(lower) and _is_number(upper):
             return Sides(float(lower), float(upper))

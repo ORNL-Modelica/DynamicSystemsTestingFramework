@@ -98,6 +98,11 @@ class ReferenceStore(_RolesMixin):
             return None
         return self.ref_dir / RefIndex.ref_filename(test_id)
 
+    def reference_file(self, model_id: str) -> Path | None:
+        """The file a model's baseline is read from — what an error about
+        its contents names — or None for a model with none."""
+        return self._ref_file_for_model(model_id)
+
     def get_reference(self, model_id: str) -> dict | None:
         """Load reference data for a model. Returns None if not found.
 

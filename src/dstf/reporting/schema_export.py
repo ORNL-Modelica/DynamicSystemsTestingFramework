@@ -26,13 +26,14 @@ import dataclasses
 from typing import Any
 
 from ..comparison.mode_schema import derive_schema
+from ..comparison.modes import QUANTITY_KEYS
 from ..comparison.registry import (
     combinator_names,
     metric_names,
     metrics,
     unnamed_metrics,
 )
-from ..comparison.strict_keys import EVERY_METRIC, row_fields
+from ..comparison.strict_keys import EVERY_METRIC, declares_quantity, row_fields
 from ..comparison.tree_spec import COMBINATOR_KIND_KEYS
 from ..discovery import spec_shape
 
@@ -185,6 +186,21 @@ def _param_properties(config_cls: type, mode_name: str) -> dict[str, Any] | None
     assert set(props) == set(EVERY_METRIC)
     for f in derive_schema(config_cls, mode=mode_name).fields:
         props[f.name] = _field_to_schema(f)
+    if declares_quantity(mode_name):
+        # Read here: a path, or an object closed to the keys the parser
+        # takes inside one (`strict_keys`).
+        props["quantity"] = {
+            **props["quantity"],
+            "oneOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "properties": {key: {} for key in QUANTITY_KEYS},
+                    "additionalProperties": False,
+                },
+                {"type": "null"},
+            ],
+        }
     for name, columns in row_fields(mode_name).items():
         props[name] = {
             **props[name],
@@ -377,12 +393,10 @@ def build_schema() -> dict:
         "title": "DSTF test_spec.json",
         "type": "object",
         "required": ["tests"],
-        "properties": {
-            "tests": {
-                "type": "array",
-                "items": {"$ref": "#/$defs/test_entry"},
-            },
-        },
+        # The root's own keys — `tests`, and the `$schema` that points an
+        # editor here — and no other: the parser refuses one (`spec_shape`).
+        "properties": copy.deepcopy(spec_shape.ROOT),
+        "additionalProperties": False,
         "$defs": {
             "test_entry": test_entry,
             "tree_node": {

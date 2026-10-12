@@ -33,10 +33,16 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
     and the test ran for the default second. The known keys are
     ``spec_shape``'s — the table ``export-schema`` publishes.
 
-    Raises :class:`EntryKeyError`. A block that is not an object, and an
-    override that is not one, are not this check's: the parser below says
-    what it does with each.
+    And refuse a block that is no object where one is read — ``simulation``,
+    ``comparison``, ``variable_overrides`` and each override in it; a
+    ``null`` too: absent is the only "not set". ``"simulation":
+    "stop_time=5"`` was a warning and a run on defaults,
+    ``"variable_overrides": [1]`` and ``{"x": "tube"}`` a traceback — the
+    second one at compare.
+
+    Raises :class:`EntryKeyError`.
     """
+    from ..comparison.sides import _as_json
     from ..comparison.strict_keys import unknown_field, unread_override_key
 
     here = f"tests[{model_id}]"
@@ -46,27 +52,57 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
         if problem is not None:
             raise EntryKeyError(where, problem)
 
+    def block(where: str, holder: dict, key: str) -> dict | None:
+        """``holder[key]`` when it is there; an object, or refused."""
+        if key not in holder:
+            return None
+        value = holder[key]
+        if not isinstance(value, dict):
+            raise EntryKeyError(
+                f"{where}.{key}", f"must be an object, got {_as_json(value)}"
+            )
+        return value
+
     refuse(here, entry, spec_shape.ENTRY)
-    simulation = entry.get("simulation")
-    if isinstance(simulation, dict):
+    simulation = block(here, entry, "simulation")
+    if simulation is not None:
         refuse(f"{here}.simulation", simulation, spec_shape.SIMULATION)
-    comparison = entry.get("comparison")
-    if not isinstance(comparison, dict):
+    comparison = block(here, entry, "comparison")
+    if comparison is None:
         return
     refuse(f"{here}.comparison", comparison, spec_shape.COMPARISON)
-    overrides = comparison.get("variable_overrides")
-    if not isinstance(overrides, dict):
+    overrides = block(f"{here}.comparison", comparison, "variable_overrides")
+    if overrides is None:
         return
     for variable, override in overrides.items():
+        where = f"{here}.comparison.variable_overrides[{variable}]"
         if not isinstance(override, dict):
-            continue
+            raise EntryKeyError(where, f"must be an object, got {_as_json(override)}")
         found = unread_override_key(override)
         if found is not None:
             mode, problem = found
-            raise EntryKeyError(
-                f"{here}.comparison.variable_overrides[{variable}]",
-                f"{mode} · {variable}: {problem}",
-            )
+            raise EntryKeyError(where, f"{mode} · {variable}: {problem}")
+
+
+def check_root_keys(data: object, label: str) -> list:
+    """The spec document's ``tests`` list, or :class:`ConfigError` naming
+    ``label`` when the document cannot hold one: a root that is no object,
+    a root key nothing reads (``spec_shape.ROOT``), a ``tests`` that is no
+    list. Each used to be a spec of NO tests — an error in the log, or
+    nothing at all for ``{"Tests": [...]}`` — and the command went on
+    without them, exit 0."""
+    from ..comparison.sides import _as_json
+    from ..comparison.strict_keys import unknown_field
+
+    if not isinstance(data, dict):
+        raise ConfigError(f"{label}: must be an object, got {_as_json(data)}")
+    problem = unknown_field(data, spec_shape.ROOT)
+    if problem is not None:
+        raise ConfigError(f"{label}: {problem}")
+    tests = data.get("tests", [])
+    if not isinstance(tests, list):
+        raise ConfigError(f"{label}: tests: must be a list, got {_as_json(tests)}")
+    return tests
 
 
 def _load_spec_for_edit(spec_path: Path) -> dict:
@@ -217,19 +253,12 @@ def spec_models_from_document(
     """TestModels from an already-parsed spec document.
 
     ``base_dir`` anchors each entry's relative ``source``; ``label`` names the
-    document in log messages and in the ``ConfigError`` a bad ``metrics``
-    tree raises (a path on disk, or "in memory" for the Session's copy).
-    A non-list ``tests`` yields ``[]`` with an error logged, as it always
-    has; a non-object root does the same (it used to raise). Not named
-    ``test_...``: pytest collects such a name when a test module imports it.
+    document in log messages and in the ``ConfigError`` a bad spec raises —
+    a root that holds no ``tests`` list (:func:`check_root_keys`), an entry
+    key nothing reads, a bad ``metrics`` tree. Not named ``test_...``:
+    pytest collects such a name when a test module imports it.
     """
-    if not isinstance(data, dict):
-        logger.error("Spec root must be an object in %s", label)
-        return []
-    tests_data = data.get("tests", [])
-    if not isinstance(tests_data, list):
-        logger.error("'tests' must be a list in %s", label)
-        return []
+    tests_data = check_root_keys(data, label)
 
     tests = []
     for i, entry in enumerate(tests_data):
@@ -291,14 +320,7 @@ def spec_models_from_document(
         # provenance "test_spec" here (review 2026-07-06 finding 57) — unset
         # fields stay None and get provenance "default" when
         # TestModel.finalize_defaults runs at the end of discover_tests.
-        sim = entry.get("simulation", {})
-        if not isinstance(sim, dict):
-            logger.warning(
-                "Test '%s': 'simulation' must be an object, got %r — ignored",
-                model_id,
-                sim,
-            )
-            sim = {}
+        sim = entry.get("simulation", {})  # an object: `check_entry_keys`
         stop_time = _spec_number(sim, "stop_time", float, model_id)
         if stop_time is not None:
             test.stop_time = stop_time
@@ -323,14 +345,7 @@ def spec_models_from_document(
             test.timeout = timeout
 
         # Comparison settings
-        comp = entry.get("comparison", {})
-        if not isinstance(comp, dict):
-            logger.warning(
-                "Test '%s': 'comparison' must be an object, got %r — ignored",
-                model_id,
-                comp,
-            )
-            comp = {}
+        comp = entry.get("comparison", {})  # an object: `check_entry_keys`
         # The base tolerance is carried as written, number or not. One that
         # is no number (a lower/upper pair, a string, a list) refuses the
         # test at compare (`refused_base_tolerance`); dropped here like a simulation
@@ -413,7 +428,7 @@ def add_to_test_spec(
             return False
         # review 2026-07-06 finding 52: overwrite replaces only
         # model + variables — hand-authored comparison/simulation/metrics
-        # (and any unknown keys) must survive.
+        # and notes must survive.
         entry = data["tests"][matches[0]]
         entry["model"] = model_id
         entry["variables"] = variables

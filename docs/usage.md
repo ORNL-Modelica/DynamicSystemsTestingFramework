@@ -154,17 +154,25 @@ Config error: …/test_spec.json: tests[MyLib.Examples.SimpleTest].metrics.child
 
 It used to be kept and ignored, and that leaf scored as a range with no upper bound. The check covers:
 
+- the file's own keys: `tests`, and `$schema` for an editor (`{"Tests": [...]}` used to be a spec of no tests);
 - a test entry's own keys, and those of its `simulation` and `comparison` blocks;
 - a `comparison.variable_overrides` entry: `mode` and that mode's fields (with no `mode`, the default metric's — or `points`'s, which `--default-points` scores it with);
 - a `metrics` leaf: `metric`, `variable`, `against`, `window`, and its metric's fields; a combinator: `combinator`, `children` and what its kind takes (`k` on a `k-of-n`; `weights`, `threshold`, `direction` on a `weighted`); a `window`: `start`, `end`;
 - each row of a metric's table — `points`, `peaks`, `events`, `tube_points`;
+- the keys inside a tolerance pair (`lower`, `upper`) and inside a `scalar`'s `quantity` object (`reduce`);
 - `plots` (see "Plot layout").
 
 `tolerance` is a key of every leaf and override. `quantity` is one too: on a metric other than `scalar` it is the one param that is taken and not used. For your own notes there are `description`, `info` and `metadata` (an object of any shape), on an entry and on its `comparison` block; nothing reads them.
 
 `run`, `compare` and `discover` report it as a `Config error` and exit 2, as for a malformed `metrics` tree; `dstf author` shows it in place of the project. `spec-update` refuses a patch that would write such a key (`Patch failed: …`, exit 1, the file untouched), and the tool refuses to stage one, saying the same sentence. A criterion that could never be scored — a `range` with neither bound, a `scalar` with no `quantity` — is refused where the file is written, and only by the write that makes it: `spec-update` refuses the patch (`Patch failed: … tests[M].metrics.children[3]: range · pipe.T[1]: needs at least one of min_value / max_value`), and the tool stages it — its row says why it is not scored — and refuses the Save with one sentence until it is filled or removed. One the file already holds blocks no other edit of its entry, the edit that fills it and the edit that removes it included. Under a `metrics` tree the flat `variable_overrides` score nothing, and are not checked for this. `export-schema` publishes the same rules: its objects are closed (`additionalProperties: false`) wherever the parser is strict.
 
-The `comparison` section a baseline stores in its reference JSON is not checked this way: it is merged under the spec's at compare, as before.
+A block that is not an object where one is read — `"simulation": "stop_time=5"`, `"comparison": null`, `"variable_overrides": [1]`, an override written `"x": "tube"` — is the same error, naming the block and what it holds; leave a block out to not set it.
+
+The `comparison` section a baseline stores in its reference JSON goes through the same check when the test is compared: its `variable_overrides` are merged under the spec's, so a stored override with a key nothing reads stops the command, naming the reference file.
+
+```
+Config error: …/Dymola/linux/ref_0007.json: comparison.variable_overrides[pipe.T[1]]: range · pipe.T[1]: unknown field "max_val" — did you mean "max_value"?
+```
 
 #### Two-layer contract: annotation vs `test_spec.json`
 

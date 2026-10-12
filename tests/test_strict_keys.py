@@ -563,9 +563,9 @@ class TestNoShippedFileBreaks:
     )
     def test_every_reference_json_holds_only_keys_that_are_read(self, path):
         """A baseline keeps the comparison settings it was accepted with,
-        and they are merged under the spec's at compare. They are not
-        refused at load — and no shipped one would be: each stored override
-        builds, and holds no key its mode does not read."""
+        and they are merged under the spec's at compare — where a key
+        nothing reads stops the command (`TestAStoredBaselinesOverride`).
+        No shipped one holds one, and each stored override builds."""
         from dstf.comparison.modes import resolve_mode
 
         ref = json.loads(path.read_text(encoding="utf-8"))
@@ -574,6 +574,222 @@ class TestNoShippedFileBreaks:
             mode = resolve_mode(override, override.get("tolerance", 1e-4))
             params = {k: v for k, v in override.items() if k != "mode"}
             assert unread_param(mode.name, params) is None, (variable, override)
+
+
+# ---------------------------------------------------------------------------
+# one level out: the spec's root, a block that is no object, the keys inside
+# a quantity and a tolerance pair, a stored baseline's override
+# ---------------------------------------------------------------------------
+
+
+def _root_error(document: object) -> str:
+    with pytest.raises(ConfigError) as caught:
+        spec_models_from_document(document, base_dir=Path("."), label="test_spec.json")
+    return str(caught.value)
+
+
+class TestTheSpecsRoot:
+    def test_a_root_key_nothing_reads(self):
+        """`{"Tests": [...]}` was a spec of no tests, with no word said."""
+        assert _root_error({"Tests": [{"model": "L.M", "variables": ["x"]}]}) == (
+            'test_spec.json: unknown field "Tests" — did you mean "tests"?'
+        )
+
+    def test_a_key_beside_tests(self):
+        assert _root_error({"tests": [], "defaults": {}}) == (
+            'test_spec.json: unknown field "defaults"; the fields here are: '
+            "$schema, tests"
+        )
+
+    def test_a_root_that_is_no_object(self):
+        assert _root_error([{"model": "L.M"}]) == (
+            'test_spec.json: must be an object, got [{"model": "L.M"}]'
+        )
+
+    def test_a_tests_that_is_no_list(self):
+        assert _root_error({"tests": {"L.M": {}}}) == (
+            'test_spec.json: tests: must be a list, got {"L.M": {}}'
+        )
+
+    def test_the_schema_pointer_and_an_empty_root_are_taken(self):
+        assert _load_root({"$schema": "./test_spec.schema.json", "tests": []}) == []
+        assert _load_root({}) == []
+
+
+def _load_root(document: object):
+    return spec_models_from_document(
+        document, base_dir=Path("."), label="test_spec.json"
+    )
+
+
+@pytest.mark.parametrize(
+    "entry,sentence",
+    [
+        (
+            {"model": "L.M", "simulation": "stop_time=5"},
+            'tests[L.M].simulation: must be an object, got "stop_time=5"',
+        ),
+        (
+            {"model": "L.M", "simulation": None},
+            "tests[L.M].simulation: must be an object, got null",
+        ),
+        (
+            {"model": "L.M", "comparison": [0.01]},
+            "tests[L.M].comparison: must be an object, got [0.01]",
+        ),
+        (
+            {"model": "L.M", "comparison": None},
+            "tests[L.M].comparison: must be an object, got null",
+        ),
+        (
+            {"model": "L.M", "comparison": {"variable_overrides": [1]}},
+            "tests[L.M].comparison.variable_overrides: must be an object, got [1]",
+        ),
+        (
+            {"model": "L.M", "comparison": {"variable_overrides": {"x": "tube"}}},
+            'tests[L.M].comparison.variable_overrides[x]: must be an object, got "tube"',
+        ),
+    ],
+    ids=[
+        "simulation-a-string",
+        "simulation-null",
+        "comparison-a-list",
+        "comparison-null",
+        "overrides-a-list",
+        "an-override-a-string",
+    ],
+)
+def test_a_block_that_is_no_object_is_a_config_error(entry, sentence):
+    """Each was a warning and a run on defaults, or a traceback — the
+    string override's at compare."""
+    assert _config_error(entry) == f"test_spec.json: {sentence}"
+
+
+def _scalar(**params) -> dict:
+    return {"metric": "scalar", "variable": "x", **params}
+
+
+@pytest.mark.parametrize(
+    "leaf,sentence",
+    [
+        (
+            _scalar(quantity={"reduse": "max"}),
+            'scalar · x: quantity: unknown field "reduse" — did you mean "reduce"?',
+        ),
+        (
+            _scalar(quantity={"reduce": "max", "over": "x"}),
+            'scalar · x: quantity: unknown field "over"; the fields here are: '
+            "expr, reduce",
+        ),
+        (
+            _scalar(quantity={"reduce": "max"}, tolerance={"lower": 0.1, "uper": 0.2}),
+            'scalar · x: tolerance: unknown field "uper" — did you mean "upper"?',
+        ),
+        (
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "rel",
+                "tube_rel": {"lower": 0.1, "upper": 0.2, "middle": 0},
+            },
+            'tube · x: tube_rel: unknown field "middle"; the fields here are: '
+            "lower, upper",
+        ),
+        (
+            {
+                "metric": "points",
+                "variable": "x",
+                "points": [
+                    {"time": 1},
+                    {"time": 2, "tolerance": {"lowr": 1, "upper": 2}},
+                ],
+            },
+            'points · x: points row 2: tolerance: unknown field "lowr" — did you mean '
+            '"lower"?',
+        ),
+    ],
+    ids=["quantity-reduse", "quantity-over", "pair-uper", "pair-third-key", "row-pair"],
+)
+def test_a_key_inside_a_quantity_or_a_pair_is_refused_at_parse(leaf, sentence):
+    """`{"reduce": "max", "over": "x"}` scored the max and dropped `over`;
+    the others were found at compare, as a criterion that failed."""
+    tree = {"combinator": "and", "children": [leaf]}
+    error = _refused(tree)
+    assert error.message == sentence
+    # and on the flat path: the same params as an override
+    override = {k: v for k, v in leaf.items() if k not in ("metric", "variable")}
+    override["mode"] = leaf["metric"]
+    entry = {"model": "L.M", "comparison": {"variable_overrides": {"x": override}}}
+    assert _config_error(entry) == (
+        f"test_spec.json: tests[L.M].comparison.variable_overrides[x]: {sentence}"
+    )
+
+
+def test_a_pair_and_a_quantity_as_they_are_read_are_taken():
+    tree = {
+        "combinator": "and",
+        "children": [
+            _scalar(quantity={"reduce": "max"}, tolerance={"lower": 0.1, "upper": 0.2}),
+            _scalar(quantity="CPUtime.final"),
+            # inert on a trajectory metric, of any shape: not looked into
+            {"metric": "nrmse", "variable": "x", "quantity": {"anything": 1}},
+        ],
+    }
+    assert len(parse_metric_tree(tree).children) == 3
+
+
+class TestAStoredBaselinesOverride:
+    """The reference JSON keeps the comparison settings its baseline was
+    accepted with, and the flat path merges them under the spec's."""
+
+    def _project(self, tmp_path, override):
+        from test_session import D, _project
+
+        cfg, work = _project(tmp_path)
+        (ref,) = [
+            p
+            for p in cfg.parent.rglob("ref_*.json")
+            if json.loads(p.read_text(encoding="utf-8"))["model_id"] == D
+        ]
+        data = json.loads(ref.read_text(encoding="utf-8"))
+        data["comparison"] = {"variable_overrides": {"x": override}}
+        ref.write_text(json.dumps(data), encoding="utf-8")
+        return cfg, work, ref
+
+    def _compare(self, cfg, work, capsys) -> tuple[int, str]:
+        capsys.readouterr()
+        code = main(["--config", str(cfg), "compare", "--work-dir", str(work)])
+        return code, capsys.readouterr().err
+
+    def test_a_key_nothing_reads_stops_the_compare_and_names_the_file(
+        self, tmp_path, capsys
+    ):
+        """It scored as a range with no upper bound: PASS at any value."""
+        cfg, work, ref = self._project(
+            tmp_path, {"mode": "range", "min_value": -1, "max_val": 0.5}
+        )
+        code, err = self._compare(cfg, work, capsys)
+        assert code == 2
+        assert err.strip().splitlines()[-1] == (
+            f"Config error: {ref}: comparison.variable_overrides[x]: range · x: "
+            'unknown field "max_val" — did you mean "max_value"?'
+        )
+
+    def test_an_override_that_is_no_object(self, tmp_path, capsys):
+        cfg, work, ref = self._project(tmp_path, "tube")
+        code, err = self._compare(cfg, work, capsys)
+        assert code == 2
+        assert err.strip().splitlines()[-1] == (
+            f"Config error: {ref}: comparison.variable_overrides[x]: must be an "
+            'object, got "tube"'
+        )
+
+    def test_one_that_is_read_scores_as_it_did(self, tmp_path, capsys):
+        cfg, work, _ref = self._project(
+            tmp_path, {"mode": "range", "min_value": -1, "max_value": 0.5}
+        )
+        code, _err = self._compare(cfg, work, capsys)
+        assert code == 1  # the suite's own failures; x reaches 1.001 > 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -1040,6 +1256,32 @@ class TestTheSchemaIsAsStrictAsTheParser:
             _load(entry)
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({"tests": [entry]}, schema)
+
+    def test_the_root_is_closed_to_the_parsers_keys(self, schema):
+        from dstf.discovery import spec_shape
+
+        jsonschema = pytest.importorskip("jsonschema")
+        assert schema["additionalProperties"] is False
+        assert set(schema["properties"]) == set(spec_shape.ROOT) == {"$schema", "tests"}
+        jsonschema.validate({"$schema": "./s.json", "tests": []}, schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"Tests": [], "tests": []}, schema)
+
+    @pytest.mark.parametrize(
+        "quantity", [{"reduse": "max"}, {"reduce": "max", "over": "x"}]
+    )
+    def test_a_scalars_quantity_object_is_closed(self, schema, quantity):
+        jsonschema = pytest.importorskip("jsonschema")
+        leaf = {"metric": "scalar", "variable": "x", "quantity": quantity}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"tests": [{"model": "L.M", "metrics": leaf}]}, schema)
+        override = {"mode": "scalar", "quantity": quantity}
+        entry = {"model": "L.M", "comparison": {"variable_overrides": {"x": override}}}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"tests": [entry]}, schema)
+        for taken in ({"reduce": "max"}, "CPUtime.final"):
+            leaf = {"metric": "scalar", "variable": "x", "quantity": taken}
+            jsonschema.validate({"tests": [{"model": "L.M", "metrics": leaf}]}, schema)
 
     def test_what_the_parser_takes_the_schema_takes(self, schema):
         jsonschema = pytest.importorskip("jsonschema")

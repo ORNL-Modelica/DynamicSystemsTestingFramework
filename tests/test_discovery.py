@@ -1236,14 +1236,15 @@ class TestSpecFromDocument:
             ) == (b.variable_patterns, b.stop_time, b.variable_overrides, b.source_file)
         assert from_doc[1].source_file == (tmp_path / "Examples" / "B.py").resolve()
 
-    def test_non_object_root_yields_nothing(self):
+    def test_a_root_that_can_hold_no_tests_is_a_config_error(self):
+        """It was a spec of no tests, with an error in the log."""
+        from dstf.config import ConfigError
         from dstf.discovery.spec_parser import spec_models_from_document
 
-        assert spec_models_from_document([], base_dir=Path("."), label="x") == []
-        assert (
+        with pytest.raises(ConfigError, match="x: must be an object"):
+            spec_models_from_document([], base_dir=Path("."), label="x")
+        with pytest.raises(ConfigError, match="x: tests: must be a list"):
             spec_models_from_document({"tests": "no"}, base_dir=Path("."), label="x")
-            == []
-        )
 
     def test_bad_metric_tree_names_the_label(self):
         from dstf.config import ConfigError

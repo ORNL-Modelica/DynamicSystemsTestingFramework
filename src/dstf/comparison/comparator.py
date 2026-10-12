@@ -121,6 +121,52 @@ def refused_base_tolerance(
     )
 
 
+def refuse_stored_override_keys(
+    reference: dict, store: ReferenceStore, model_id: str
+) -> None:
+    """``ConfigError`` naming the reference file when a baseline's stored
+    ``comparison.variable_overrides`` holds what nothing reads: an override
+    that is no object, or a key its mode does not read — the check a spec's
+    override goes through (``strict_keys.unread_override_key``).
+
+    A baseline keeps the comparison settings it was accepted with, and they
+    are merged under the spec's at compare. A stored ``{"mode": "range",
+    "min_value": -1, "max_val": 0.5}`` scored as a range with no upper
+    bound, and passed with the value at 10 — the spec file's own hole, one
+    file over. Every stored override is checked, read by this comparison or
+    not (a ``metrics`` tree reads none, the spec's own replaces one): the
+    file holds it either way, and an accept keeps it."""
+    from ..config import ConfigError
+    from .sides import _as_json
+    from .strict_keys import unread_override_key
+
+    comparison = reference.get("comparison")
+    overrides = (
+        comparison.get("variable_overrides") if isinstance(comparison, dict) else None
+    )
+    if overrides is None:
+        return
+
+    def refuse(place: str, problem: str) -> ConfigError:
+        # The file is asked for only here: a refusal names it.
+        ref_file = store.reference_file(model_id)
+        return ConfigError(
+            f"{ref_file}: comparison.variable_overrides{place}: {problem}"
+        )
+
+    if not isinstance(overrides, dict):
+        raise refuse("", f"must be an object, got {_as_json(overrides)}")
+    for variable, override in overrides.items():
+        if not isinstance(override, dict):
+            raise refuse(
+                f"[{variable}]", f"must be an object, got {_as_json(override)}"
+            )
+        found = unread_override_key(override)
+        if found is not None:
+            mode, problem = found
+            raise refuse(f"[{variable}]", f"{mode} · {variable}: {problem}")
+
+
 def _check_structural_changes(
     reference: dict,
     result: TestResult,
@@ -862,6 +908,8 @@ def compare_one(
         )
 
     reference = store.get_reference(test.model_id)
+    if reference is not None:
+        refuse_stored_override_keys(reference, store, test.model_id)
     # The base tolerance is judged HERE, before the test is anything else: a
     # test with no baseline is not NO_REF over a base no accept may store.
     refused = refused_base_tolerance(test, reference, default_tolerance)

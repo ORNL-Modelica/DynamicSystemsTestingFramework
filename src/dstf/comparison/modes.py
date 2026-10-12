@@ -367,6 +367,12 @@ class DominantFrequencyConfig:
     )
 
 
+#: The keys a ``quantity`` OBJECT may hold — one of them — on a metric whose
+#: config declares the field (``ScalarConfig``). ``expr`` is reserved: named
+#: here so it is refused as "not implemented", not as a misspelling.
+QUANTITY_KEYS = ("reduce", "expr")
+
+
 @dataclass(frozen=True)
 class ScalarConfig:
     """Configuration for scalar comparison — one number, not a trajectory.
@@ -691,7 +697,7 @@ def _validate_scalar_config(config: ScalarConfig) -> None:
                 f"ScalarConfig quantity must be a string path or an object, "
                 f"got {type(quantity).__name__}"
             )
-        shapes = [k for k in ("reduce", "expr") if k in quantity]
+        shapes = [k for k in QUANTITY_KEYS if k in quantity]
         if len(shapes) != 1:
             raise ValueError(
                 f"ScalarConfig quantity object must declare exactly one of "

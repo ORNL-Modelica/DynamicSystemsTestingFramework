@@ -1,6 +1,7 @@
-"""The shape of one ``test_spec.json`` entry: its keys, and what each holds.
+"""The shape of ``test_spec.json`` — its root and one entry: the keys, and
+what each holds.
 
-ONE table, read twice. The spec parser refuses an entry key that is not in
+ONE table, read twice. The spec parser refuses a key that is not in
 it — ``"simulaton"`` used to be skipped in silence, and the test ran on
 defaults — and ``export-schema`` publishes it with ``additionalProperties:
 false``. So the grammar an editor checks and the one the CLI enforces
@@ -110,4 +111,12 @@ ENTRY: dict[str, Any] = {
         "oneOf": [{"const": "all"}, {"type": "integer", "minimum": 2}],
     },
     **NOTES,
+}
+
+#: The spec file's own keys: the tests, and the ``$schema`` an editor reads
+#: to check the file as it is typed (``export-schema`` writes the schema to
+#: point it at). ``{"Tests": [...]}`` used to be a spec of no tests.
+ROOT: dict[str, Any] = {
+    "$schema": {"type": "string"},
+    "tests": {"type": "array", "items": {"$ref": "#/$defs/test_entry"}},
 }
