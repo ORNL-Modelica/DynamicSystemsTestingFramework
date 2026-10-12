@@ -17,7 +17,7 @@ design canvas on 2026-09-15 (brief §3.9). It is the default theme.
 Every neutral, the accent and the status tints are CSS variables named as in
 the tables below, on `:root` in the shared stylesheet and mirrored in the
 tool's Quasar palette. A theme is a NAME of a bundled table that sets the
-fifteen tokens below (`reporting/theme.py`); there are two, `default` — this
+sixteen tokens below (`reporting/theme.py`); there are two, `default` — this
 document's values — and `dark` (D148). No theme file, no inline colours.
 
 What a theme may change is what sits BEHIND meaning. The status fills, the
@@ -30,15 +30,18 @@ the light value does not read there:
   surface, and the status's pastel — the light table's pill border; for
   warnings the lighter amber `#ffd54f` — as the text. The light tints would
   be light islands on a dark page.
-- Five plot colours under 2.2:1 on the dark plot are lightened ("Plot series"
-  below). No other series colour moves.
+- Eight plot colours are lightened ("Plot series" below): five under 2.2:1
+  on the dark plot, and three a person reads against other series, held to
+  4.5:1 there — the actual's event line, the sibling-backend overlay and the
+  companion overlay. No other series colour moves.
 
 Each theme has one plot layout template in the figure layer
 (`figures/palette.py`): the plot's ground, grid, zero line, axis lines, ticks
 and titles, legend, hover label and toolbar. `default` has none — its plot is
 plotly.js's own. The figure's chrome follows the theme too: a reference
 event's guide line, an open criterion's ring and handle markers, the grey of a
-context series.
+context series, a marker's outline and the tint of a region drawn over the
+plot's whole height.
 
 The theme is chosen in `testing.json` (`"theme"`): the dashboard and the
 report pages are generated in it, with no switch in those pages, and the tool
@@ -65,6 +68,7 @@ Tokens (neutrals, accent, selection)
 | accent-hover | `#1565C0` | `#90caf9` | the accent, hovered |
 | selection | `#e3f2fd` | `#1d3a57` | the selection tint |
 | shadow | `rgba(0,0,0,0.1)` | `rgba(0,0,0,0.5)` | elevation |
+| shadow-menu | `rgba(0,0,0,0.15)` | `rgba(0,0,0,0.6)` | under a floating menu that lies over content (the Suite table's column chooser) |
 | on-accent | `#ffffff` | `#0b1a2b` | text on a FILLED accent (the primary button) |
 
 One accent only; never a second. The dark neutrals are neutral grey, not
@@ -84,7 +88,7 @@ text colour, and a **tint** row background.
 | no-ref | `#FF9800` | `#E65100` | `#fff8e1` | `#ffe0b2` |
 | warnings / advisory | `#ffc107` | `#8a6d00` | `#fff3cd` | `#ffc107` |
 | timed-out | `#9C27B0` | `#6A1B9A` | `#f3e5f5` | `#e1bee7` |
-| queued | `#888888` | `#555555` | `#f5f5f5` | `#dddddd` |
+| queued / not-run / scoring | `#888888` | `#555555` | `#f5f5f5` | `#dddddd` |
 | running | `#2196F3` | `#1976D2` | `#e3f2fd` | `#90caf9` |
 | pending / info | `#607D8B` | `#607D8B` | `#eceff1` | `#b0bec5` |
 
@@ -110,7 +114,7 @@ Plot series (the figure layer; literal hex in figures, never CSS variables)
 | error axis and traces | `#f44336` |
 | muted / out-of-window | `rgba(117,117,117,0.35)` |
 | drag handle | ring `#2e7d32`, fill `rgba(46,125,50,0.25)` |
-| scalar lines | `#7B1FA2` dot · `#1976D2` dash · `#388E3C` dashdot |
+| overlays | soft check `#7B1FA2` dot · sibling backend `#1976D2` dash · companion `#388E3C` dashdot |
 | live (running) trace | actual colour; the unfinished end carries a marker in `#2196F3` |
 
 On `dark` (`figures/palette.py`; contrast on the dark plot `#1e1e1e`):
@@ -118,6 +122,8 @@ On `dark` (`figures/palette.py`; contrast on the dark plot `#1e1e1e`):
 | What | default | dark |
 |---|---|---|
 | soft-check overlay (the dotted line above) | `#7B1FA2` (2.0) | `#ba68c8` (4.7) |
+| sibling-backend overlay (the dashed line above), the actual's event line | `#1976D2` (3.6) | `#64b5f6` (7.5) |
+| companion overlay (the dash-dot line above) | `#388E3C` (4.0) | `#81c784` (8.3) |
 | blue ramp, darkest stop | `#0d47a1` (1.9) | `#1264e2` (3.1) |
 | green ramp, darkest stop | `#1b5e20` (2.1) | `#237b2a` (3.1) |
 | purple ramp, third stop | `#7b1fa2` (2.0) | `#a631d8` (3.2) |
@@ -125,6 +131,8 @@ On `dark` (`figures/palette.py`; contrast on the dark plot `#1e1e1e`):
 | drag handle (chrome) | ring `#2e7d32` | ring `#66bb6a`, fill `rgba(102,187,106,0.25)` |
 | reference event line (chrome) | `#757575` | `#a8a8a8` |
 | context series (chrome) | `#888888` | `#9e9e9e` — the theme's text-muted |
+| marker outline (chrome) | `white` | `#1e1e1e` — the plot's own ground |
+| whole-height region tint (chrome) | `rgba(117,117,117,0.09)` | `rgba(158,158,158,0.09)` |
 
 A ramp stop is lightened at its own hue and saturation until it clears 3:1 and
 still stands darker than the stop before it; the eight other stops are the
@@ -242,8 +250,8 @@ rows; only the rows scroll, so "Add row" below them is never scrolled out of
 reach.
 
 **The Variables drawer.** The Test page's left rail holds two drawers, Tests
-and Variables, one open at a time; open, a drawer is 320px and the plots
-narrow, since they are fluid. The Variables drawer lists every variable in
+and Variables, one open at a time; open, a drawer is 320px at first (its
+right edge resizes it) and the plots narrow, since they are fluid. The Variables drawer lists every variable in
 the last result, grouped by dot prefix, tracked first, diagnostics last, with
 a filter box: substring match with no wildcard, glob with `*` and `?`, square
 brackets literal because `T[1]` is a name; regex (`.*`) and match-case (`Aa`)
@@ -262,17 +270,18 @@ the page never scrolls sideways. Which drawer is open, and the Tests drawer's
 filter, are remembered per browser tab, so a switch of test keeps the drawer
 open. The Tests drawer is the Suite page's list without checkboxes: grouped
 by package, short names, status badges, the open test's row on the selection
-tint, and a filter of its own (the Suite page's chips and toggles stay on the
-Suite page). A click opens that test in the same tab; pending edits survive
-the switch.
+tint, and a control set of its own — a filter with `.*` / `Aa`, sort and
+names menus, a group toggle and the count pills. A click opens that test in
+the same tab; pending edits survive the switch.
 
-The Variables drawer adds and takes off series and makes new plots, acting on
+The Variables drawer adds and takes off context series and makes watch plots
+(D140: the plots themselves are derived from the criteria), acting on
 the *selected plot*: the first, until a click on a card outside its plot area
 selects another — its toolbar, its title, its margin, or a criteria row, whose
 click also opens its editor. A criterion's swatch and its `+` / wrap / `−` do
-not select, and the plot area keeps its zooms and handle drags. Add series
-selects its plot and opens the drawer. The target line, "Checkboxes act on
-plot 2 of 3", is a tag on the selection tint with the selected card's ring
+not select, and the plot area keeps its zooms and handle drags. The target
+line, "Checkboxes add context to plot 2 of 3", is a tag on the selection tint
+with the selected card's ring
 inside it; a click on it scrolls that card into view. With no plot it reads
 "No plot yet: + new plot adds one" and the checks are grey. Groups: Tracked,
 then each dot prefix (the component before any bracket: `port[2, 1].C[1]` is
@@ -285,15 +294,13 @@ chevron that opens it to its members, each a row with its own check, at most
 on the selected plot, and the row's text as its `aria-label`, with the muted
 name after it in parentheses when the row shows one (`a.Q (x)`); it is not a
 checkbox, whose repaint would stage an edit. A click adds whatever the plot
-lacks (a mixed row adds), or takes the row off when the plot holds all of it;
-taking off a plot's last series removes the plot. "+ new plot" shows on the
-row's hover and while focus is in the row; it puts the row on a new plot below
-the selected one, selects that plot, and leaves the variable where it was.
-Other plots holding the row read "plot 1, 3" at its right. A variable a
-criterion scores cannot leave its last plot: the check greys, and its tooltip
-is the one sentence Remove plot uses too — "x is scored
-by 1 criterion and this is the only plot that shows it. Add it to another plot
-first, or remove its criteria." (in the plural for several). The filter keeps
+lacks as context (a mixed row adds), or takes the row off when the plot holds
+all of it; the plot's own variable is checked and grey ("The plot's
+subject"): a plot cannot lose it. "+ new plot" shows on the
+row's hover and while focus is in the row; it makes a watch plot of that one
+variable after the others — grey, with why, on a variable that already is a
+plot's subject and on a family's row (open it and pick one).
+Other plots holding the row read "plot 1, 3" at its right. The filter keeps
 a variable whose name or label matches: a substring; with `*` or `?`, a glob
 matched against the whole text with brackets literal, as a spec's `variables`
 list reads it, and matched without backtracking; with `.*` on, a Python
@@ -321,12 +328,13 @@ legend.
 
 **Plots are modular.** A test page is a list of plots; a plot is a list of
 series; a series is a variable name from the result plus an optional
-expression (later: `T - 273.15`, `p / 1e5`, a unit label). The default layout
-is one plot per tracked variable. Users add and remove plots, add series to a
-plot, or separate them. A plot has a `kind`; only the time plot exists now,
-and profile, x-y, heat-map and 3-D kinds are reserved on the same model. A tracked variable's criteria rows follow it onto
-whichever plot shows it; a plot-only series has no criteria until it is
-tracked. The legend sits above the plot area and holds the signals: actual,
+expression (later: `T - 273.15`, `p / 1e5`, a unit label). The plots are
+derived from the criteria (D140): one per scored variable or array family,
+in tree order — one per tracked variable or array where nothing is scored.
+Users add grey context series to a plot and watch plots of one variable. Only
+the time plot exists now; profile, x-y, heat-map and 3-D kinds are not built.
+A scored variable's criteria rows sit under its plot; a context series and a
+watch plot have none. The legend sits above the plot area and holds the signals: actual,
 reference and any overlays. Secondary axes appear only while a series on them
 is visible; a second unit family on one plot gets one. A plot of several
 series shows no overlays and no error traces — both belong to a plot of one
@@ -340,19 +348,23 @@ criterion's drawing is shown or hidden by the swatch on its criteria row; the
 overlays are in the figure as hidden traces, and the legend toggles them. The
 wheel scrolls the page, never the plot: plots are stacked full-width, and a
 plot that ate the wheel stopped the page dead (the report, one figure to a
-page, keeps wheel zoom). After Focus come **Add series**, which selects the
-plot and opens the Variables drawer on it, and **Remove plot**, grey with the
-drawer's sentence when it would leave a scored variable on no plot; its click
+page, keeps wheel zoom), and it shows no plotly.js tip: after a box zoom the
+"Double-click to zoom back out" box lay over the sticky strip's buttons (the
+double-click reset stays). After Focus comes **Remove plot**, on a watch
+plot only — a derived plot has an icon there saying "This plot exists because
+of its criteria." and goes when its last criterion goes; its click
 does not select the card, and the selection stays on the same plot (the one
-now in the removed plot's place, when the removed one was selected). There
-are no series chips (the owner's ruling): the Variables drawer does every
+now in the removed plot's place, when the removed one was selected). A plot's
+context series are listed in a row above it, each with a `×` that takes it
+off; the Variables drawer does every
 other layout edit. **Reset layout** ends the tree card's closed line while
 the test's effective entry has a `plots` key, and stages removing it. Every
-layout edit stages ONE op on the entry's `plots` key, the first on a test
-without the key writing out the default layout with its change, and a run of
-them reads as one pending edit (D134 names the one pair that stays two); a
-refused edit is a notification with the reason, and nothing moves. "Set
-window" is scheduled with the rest of the gesture work.
+layout edit stages ONE op on the entry's `plots` key, which holds the extras
+alone, and a run of
+them reads as one pending edit; a
+refused edit is a notification with the reason, and nothing moves. A
+criterion's window is set from its fields, each with a ⌖ that takes the next
+click on the plot (D149).
 
 **Icons.** Material Icons in the tool (Quasar ships them). In mockups, inline
 stroke SVG on a 16px grid. Never emoji.
@@ -364,13 +376,14 @@ Discard, then a ⋮ menu holding Export (grey, with "no pending edits" under it,
 while nothing is pending), Change backend… (a dialog holding the backend
 select; grey, with the sentence that says why under it, while an edit is
 pending or a run is in flight), Open in another backend…, dashboard (a link
-into a new tab) and Stop server, each with its full label — one layout at
+into a new tab), the other theme (Dark theme / Default theme) and Stop server,
+each with its full label — one layout at
 every width. The backend was a select in the header's left side; the owner
 moved it into the menu (Q13) when a rerun running, an edit pending and a
 caption naming a new entry put Save on four lines at 900px and two at 1280px. Save's caption counts the entries it creates: a
 pending edit to a test with no entry in the file as loaded writes one, "Save 2
 spec edits (2 tests, 1 new entry) to test_spec.json". In every state,
-including the busiest (a rerun running, an edit pending and a caption naming a
+including the busiest (a test running, an edit pending and a caption naming a
 new entry), a header button takes at most two lines at 900px and one at
 1280px, the count keeps one, and nothing is cut off or scrolls sideways. One
 line at 900px is not the rule: it needs 960px. The header is never a solid
