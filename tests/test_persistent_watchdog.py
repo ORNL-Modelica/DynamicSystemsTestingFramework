@@ -1211,7 +1211,9 @@ class _GoodWorker(Worker):
     def is_alive(self):
         return True
 
-    def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+    def run_test_with_timeout(
+        self, test, test_key, timeout, progress=None, before=None
+    ):
         if self.delay:
             time.sleep(self.delay)
         self.ran.append(test_key)
@@ -1235,7 +1237,9 @@ class _DeadWorker(Worker):
     def is_alive(self):
         return False
 
-    def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+    def run_test_with_timeout(
+        self, test, test_key, timeout, progress=None, before=None
+    ):
         raise AssertionError("a dead worker must never run tests")
 
 
@@ -1244,11 +1248,13 @@ class _RaiseOnceWorker(_GoodWorker):
         super().__init__(worker_id, config)
         self.calls = 0
 
-    def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+    def run_test_with_timeout(
+        self, test, test_key, timeout, progress=None, before=None
+    ):
         self.calls += 1
         if self.calls == 1:
             raise RuntimeError("kaboom")
-        return super().run_test_with_timeout(test, test_key, timeout, progress)
+        return super().run_test_with_timeout(test, test_key, timeout, progress, before)
 
 
 def _scratch_manifest(tmp_path, items=()) -> BatchManifest:
@@ -1343,7 +1349,9 @@ class _FailStartWorker(Worker):
     def is_alive(self):
         return False
 
-    def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+    def run_test_with_timeout(
+        self, test, test_key, timeout, progress=None, before=None
+    ):
         raise AssertionError("never runs")
 
 
@@ -1463,9 +1471,11 @@ class _FlakyStartWorker(_GoodWorker):
     def is_alive(self):
         return self.alive
 
-    def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+    def run_test_with_timeout(
+        self, test, test_key, timeout, progress=None, before=None
+    ):
         self.alive = False  # dies after every test, forcing a restart
-        return super().run_test_with_timeout(test, test_key, timeout, progress)
+        return super().run_test_with_timeout(test, test_key, timeout, progress, before)
 
 
 class TestRestartRetry:
@@ -1516,7 +1526,9 @@ class TestRestartRetry:
         """
 
         class _FailingTest(_FlakyStartWorker):
-            def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+            def run_test_with_timeout(
+                self, test, test_key, timeout, progress=None, before=None
+            ):
                 self.alive = False
                 return TestRunResult(
                     model_id=test.model_id,
@@ -1562,13 +1574,17 @@ class TestDispatchRecordsIncrementally:
         seen: list[dict] = []
 
         class _Observing(_GoodWorker):
-            def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+            def run_test_with_timeout(
+                self, test, test_key, timeout, progress=None, before=None
+            ):
                 seen.append(
                     json.loads((tmp_path / "batch_manifest.json").read_text())
                     if (tmp_path / "batch_manifest.json").exists()
                     else {}
                 )
-                return super().run_test_with_timeout(test, test_key, timeout, progress)
+                return super().run_test_with_timeout(
+                    test, test_key, timeout, progress, before
+                )
 
         backend._dispatch_with_restart(
             [_Observing(0, backend.config)], items, total=3, manifest=manifest
@@ -1613,7 +1629,9 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
     assert len(long_msg) > 120, "the regression needs an over-120-char message"
 
     class _TimeoutWorker(_GoodWorker):
-        def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+        def run_test_with_timeout(
+            self, test, test_key, timeout, progress=None, before=None
+        ):
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -1650,7 +1668,9 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
     backend.progress = _Progress()
 
     class _FailWorker(_GoodWorker):
-        def run_test_with_timeout(self, test, test_key, timeout, progress=None):
+        def run_test_with_timeout(
+            self, test, test_key, timeout, progress=None, before=None
+        ):
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -1667,3 +1687,53 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
     )
 
     assert len(captured["detail"]) == 120
+
+
+# ---------------------------------------------------------------------------
+# What runs before the test (``before``): on the test's thread, under its
+# watchdog
+# ---------------------------------------------------------------------------
+
+
+class TestBefore:
+    def test_it_runs_first_on_the_thread_the_test_runs_on(self, tmp_path):
+        worker = _template_worker(tmp_path)
+        seen: list[tuple[str, str]] = []
+        ran = worker.run_test
+        worker.run_test = lambda test, key, progress=None: (
+            seen.append(("test", threading.current_thread().name))
+            or ran(test, key, progress)
+        )
+        tr = worker.run_test_with_timeout(
+            _tm(),
+            "test_0001",
+            timeout=5.0,
+            before=lambda: seen.append(("before", threading.current_thread().name)),
+        )
+        assert tr.success
+        assert [what for what, _ in seen] == ["before", "test"]
+        assert seen[0][1] == seen[1][1] != threading.current_thread().name
+
+    def test_one_that_hangs_is_the_tests_timeout_and_the_test_never_runs(
+        self, tmp_path
+    ):
+        worker = _template_worker(tmp_path)
+        ran: list[str] = []
+        worker.run_test = lambda test, key, progress=None: ran.append(key)
+        release, back = threading.Event(), threading.Event()
+
+        def before():
+            release.wait(15)
+            back.set()
+
+        try:
+            tr = worker.run_test_with_timeout(
+                _tm(), "test_0001", timeout=0.1, before=before
+            )
+            assert tr.timed_out and tr.worker_killed and not tr.success
+        finally:
+            release.set()
+        # The body comes back after the watchdog left: it runs nothing.
+        assert back.wait(5)
+        time.sleep(0.05)
+        assert ran == []

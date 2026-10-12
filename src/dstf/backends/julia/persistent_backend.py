@@ -36,6 +36,7 @@ import queue
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from ...config import Config
@@ -158,6 +159,7 @@ class JuliaWorker(Worker):
         test_key: str,
         timeout: float,
         progress: object | None = None,
+        before: Callable[[], None] | None = None,
     ) -> TestRunResult:
         """Dispatch one test, wait ``timeout`` seconds for the response.
 
@@ -165,6 +167,8 @@ class JuliaWorker(Worker):
         backends' workers (Dymola/OM emit ``on_phase`` updates from inside
         the worker). Julia today reports phases via the dispatch loop's
         ``_record`` helper instead, so this argument is currently ignored.
+        ``before`` runs first, as the base's does; nothing bounds it here —
+        the deadline below starts with the request.
 
         Overrides the base watchdog: the response arrives on a queue, so a
         deadline poll reads it directly instead of parking a blocking call
@@ -181,6 +185,8 @@ class JuliaWorker(Worker):
                 success=False,
                 error_message="Julia worker not running",
             )
+        if before is not None:
+            before()
         user_file = resolve_source_file(test, self.config, JuliaBackend.source_suffix)
         if user_file is None or not user_file.exists():
             return TestRunResult(

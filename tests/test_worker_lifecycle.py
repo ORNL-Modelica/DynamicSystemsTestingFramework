@@ -1548,7 +1548,7 @@ def test_a_julia_worker_whose_process_died_idle_is_restarted(tmp_path, monkeypat
     monkeypatch.setattr(jpr.JuliaWorker, "kill_name_hint", None)  # a python stand-in
     ran: list[tuple[str, int]] = []
 
-    def run(self, test, test_key, timeout, progress=None):
+    def run(self, test, test_key, timeout, progress=None, before=None):
         ran.append((test.model_id, self.proc.pid))
         return _ok(test, test_key)
 

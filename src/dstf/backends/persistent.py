@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -624,12 +625,18 @@ class Worker(ABC):
         test_key: str,
         timeout: float,
         progress: Optional["object"] = None,
+        before: Callable[[], None] | None = None,
     ) -> "TestRunResult":
         """Run *test* with a watchdog. On timeout, hard-kill the worker
         process and return ``TestRunResult(timed_out=True, success=False)``.
         Test-level failures (sim error, missing variable) return a
         ``success=False`` result, not a raise. Worker-level catastrophes
         (subprocess died, pipe broken) MAY raise so the caller restarts.
+
+        *before*, when given, runs first — on the thread the test runs on and
+        under the same watchdog, so one that hangs is the test's timeout and
+        a cancel during it is the test's. An override of this method owes
+        that call too.
 
         ``run_test`` executes on a daemon thread the watchdog abandons on
         expiry; ``self`` is closed and its PIDs killed, then
@@ -656,6 +663,10 @@ class Worker(ABC):
         exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
         done = threading.Event()
+        # Set once the watchdog has returned: a body still inside *before*
+        # then was given up on, and must not go on to run the test — by the
+        # time it comes back, this worker may be a new tool on its next one.
+        left = threading.Event()
         self.arm(test_key)
         with self._run_lock:
             wake = self._wake
@@ -675,6 +686,10 @@ class Worker(ABC):
 
         def _worker_body():
             try:
+                if before is not None:
+                    before()
+                    if left.is_set():
+                        return
                 result_box[0] = self.run_test(test, test_key, progress=progress)
             except BaseException as e:
                 exc_box[0] = e
@@ -705,6 +720,7 @@ class Worker(ABC):
                 tool_born,
             )
         finally:
+            left.set()
             self.disarm()
             # The step was this test's: an idle tool is in no call, and a
             # death is never said to have happened "during" an earlier test.
@@ -977,6 +993,7 @@ class WorkerRunner(ItemRunner):
                 test_key,
                 timeout,
                 progress=backend.progress,
+                before=None,
             )
         except Exception as exc:
             # review 2026-07-06 (finding 21): the Worker ABC contract permits
