@@ -54,10 +54,18 @@ class TestTheCheck:
             == 'unknown field "fmu"; the fields here are: model, source'
         )
 
-    def test_the_start_of_a_known_name_is_close(self):
+    def test_the_start_of_a_one_word_name_is_close(self):
+        assert (
+            unknown_field(["tol"], ["time", "tolerance"])
+            == 'unknown field "tol" — did you mean "tolerance"?'
+        )
+
+    def test_a_whole_word_that_starts_a_longer_name_is_another_field(self):
+        """`time` is not a slip of `time_tolerance`, nor `min` of
+        `min_value`: the fields are listed."""
         assert (
             unknown_field(["min"], ["min_value", "max_value"])
-            == 'unknown field "min" — did you mean "min_value"?'
+            == 'unknown field "min"; the fields here are: max_value, min_value'
         )
 
     @pytest.mark.parametrize(
@@ -75,9 +83,25 @@ class TestTheCheck:
             ("contxt", ["var", "context"], "context"),
             ("K", ["k", "children", "combinator"], "k"),
             ("Tests", ["tests", "$schema"], "tests"),
-            # the start of one name: as typed, or but for its last letter
-            ("min", ["min_value", "max_value"], "min_value"),
+            # the start of one ONE-WORD name, three letters or more: as
+            # typed, or but for its last letter
+            ("tol", ["time", "tolerance"], "tolerance"),
+            ("thresh", ["weights", "threshold", "direction"], "threshold"),
             ("childs", ["children", "combinator"], "children"),
+            ("chi", ["children", "k"], "children"),
+            ("ch", ["children", "k"], None),
+            ("c", ["children", "k"], None),
+            # ... and never the start of a name of several words: the word
+            # typed is whole, and names another thing than the longer field
+            # (each of these three was offered, to a person who meant a
+            # row's time, a tube's width and `against`)
+            ("time", ["time_tolerance", "points", "tolerance"], None),
+            ("tube_width", ["tube_width_mode", "tube_abs", "tube_rel"], None),
+            ("baseline", ["baseline_points", "model", "variables"], None),
+            ("min", ["min_value", "max_value"], None),
+            ("tube_w", ["tube_width_mode", "tube_abs", "tube_rel"], None),
+            # two one-word names start so: neither is THE one
+            ("var", ["variable", "variables"], None),
             # and what read as close and was not: a hint to the wrong field
             ("start_time", ["stop_time", "tolerance", "method"], None),
             ("notes", ["plots", "model", "metrics", "variables"], None),

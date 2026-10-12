@@ -401,7 +401,8 @@ class TestLeafEval:
                 {"metric": "range", "variable": "x", "min": 0.0, "max": 2.0}
             )
         assert caught.value.message == (
-            'range · x: unknown field "min" — did you mean "min_value"?'
+            'range · x: unknown field "min"; the fields here are: against, '
+            "max_value, metric, min_value, quantity, tolerance, variable, window"
         )
 
     def test_range_leaf_with_no_bound_fails_its_leaf(self):

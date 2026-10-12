@@ -8498,9 +8498,16 @@ it.
 2. *A hint is offered only for a near miss of one field*
    (`strict_keys.near_miss`): the same name in another case; else at most
    two edits and at most one per three letters typed, with no other name
-   as near; else the start of exactly one name. Anything else lists the
-   fields. A wrong hint sends the reader to the wrong field: `start_time`
-   was offered `stop_time`.
+   as near; else the start, three letters or more, of exactly one name
+   that is ONE word (`tol` → `tolerance`, `childs` → `children`).
+   Anything else lists the fields. A wrong hint sends the reader to the
+   wrong field: `start_time` was offered `stop_time`, and the first build
+   of the last rule — the start of any one name — offered `time_tolerance`
+   for `time`, `tube_width_mode` for `tube_width` and `baseline_points`
+   for `baseline`, three in about a hundred typos a review tried. A whole
+   word that begins a longer name is another thing's name, not a slip of
+   the longer one; `min` is no longer offered `min_value` either, since
+   nothing tells it from `time`.
 3. *Where it is refused.*
    - **At parse** — `run`, `compare`, `discover` and `dstf author` (before
      it serves): one `Config error: <file>: <place>: …` line, exit 2, the

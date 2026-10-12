@@ -68,9 +68,14 @@ def near_miss(key: str, names: Iterable[str]) -> str | None:
       → ``tolerance``, ``frq`` → ``freq``, ``agianst`` → ``against`` — with
       no other name as near: ``m_value`` is as far from ``min_value`` as
       from ``max_value``, and gets neither;
-    - else the start of exactly one name, three letters or more — itself
-      (``min`` for ``min_value``) or less its last letter (``childs`` for
-      ``children``).
+    - else the start, three letters or more, of exactly one name that is
+      ONE word — itself (``tol`` for ``tolerance``) or less its last letter
+      (``childs`` for ``children``). Never the start of a name of several
+      words: ``time`` was offered ``time_tolerance``, ``tube_width``
+      ``tube_width_mode`` and ``baseline`` ``baseline_points``, each to a
+      person who had typed a whole word for another thing (a row's time, a
+      tube's width, ``against``). ``min`` for ``min_value`` goes with them:
+      nothing tells it from ``time``.
 
     ``difflib``'s ratio, which this replaces, called these close:
     ``start_time`` → ``stop_time`` (a different field), ``notes`` →
@@ -91,7 +96,7 @@ def near_miss(key: str, names: Iterable[str]) -> str | None:
     for stem in (key, key[:-1]):
         starts = [name for name in names if len(stem) >= 3 and name.startswith(stem)]
         if starts:
-            return starts[0] if len(starts) == 1 else None
+            return starts[0] if len(starts) == 1 and "_" not in starts[0] else None
     return None
 
 
