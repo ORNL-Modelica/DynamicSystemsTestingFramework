@@ -228,12 +228,19 @@ def _strip_modelica_literals(text: str) -> str:
     that swallowed the real ``experiment(StopTime=10)`` — StopTime silently
     defaulted to 1.0 and the sim ran a tenth of its length (regression found
     2026-07-07). A stateful scan is the only correct model: at each position we
-    are in exactly one of code / string / line-comment / block-comment, and
-    the delimiters that matter depend on which.
+    are in exactly one of code / string / line-comment / block-comment /
+    quoted name, and the delimiters that matter depend on which.
+
+    A quoted name (``'a"b'``, ``'in ner'``) is CODE and is kept as it is,
+    but what it holds delimits nothing: a ``"``, ``//`` or ``/*`` inside one
+    starts no string and no comment. ``model 'a"b'`` was read as a string
+    running to the ``"`` of its own ``end 'a"b';``. It ends at its closing
+    ``'`` — or at the end of its line, which no quoted name crosses, so an
+    apostrophe astray in code costs one line and not the rest of the file.
     """
     out: list[str] = []
     i, n = 0, len(text)
-    NORMAL, STRING, LINE, BLOCK = 0, 1, 2, 3
+    NORMAL, STRING, LINE, BLOCK, QUOTED = 0, 1, 2, 3, 4
     state = NORMAL
     while i < n:
         c = text[i]
@@ -254,6 +261,17 @@ def _strip_modelica_literals(text: str) -> str:
             else:
                 out.append(c)
                 i += 1
+                if c == "'":
+                    state = QUOTED
+        elif state == QUOTED:
+            if c == "\\" and i + 1 < n and text[i + 1] != "\n":
+                out.append(text[i : i + 2])  # an escape: `\'` closes nothing
+                i += 2
+            else:
+                out.append(c)
+                i += 1
+                if c in "'\n":
+                    state = NORMAL
         elif state == STRING:
             if c == "\\" and i + 1 < n:
                 # escape: blank the backslash + the escaped char together, so a

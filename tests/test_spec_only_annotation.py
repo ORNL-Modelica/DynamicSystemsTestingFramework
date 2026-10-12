@@ -194,6 +194,52 @@ class TestFindClass:
         else:
             assert found.experiment is None
 
+    @pytest.mark.parametrize(
+        "name",
+        ["'a\"b'", "'it''s'".replace("''", "\\'"), "'a//b'", "'a/*b'", "'x\"'"],
+        ids=["quote", "escaped-apostrophe", "line-comment", "block-comment", "odd"],
+    )
+    def test_a_nested_class_named_with_a_delimiter_does_not_hide_its_parent(
+        self, rodlib, name
+    ):
+        """A quoted name may hold a `"`, a `//` or a `/*`: none of them
+        starts a string or a comment there. `model 'a"b'` was read as a
+        string running to the `"` of its own `end 'a"b';`, the class never
+        closed, and its PARENT was not found."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Holder.mo").write_text(
+            f"within RodLib;\nmodel Holder\n"
+            f"  model {name}\n    annotation(experiment(StopTime=12));\n  end {name};\n"
+            "  model After\n    annotation(experiment(StopTime=15));\n  end After;\n"
+            '  Real x "a string with an apostrophe: it\'s";\n'
+            "  annotation(experiment(StopTime=13));\nend Holder;\n",
+            encoding="utf-8",
+        )
+        found = self._find(rodlib, "RodLib.Holder")
+        assert found is not None and found.experiment.stop_time == 13
+        assert self._find(rodlib, "RodLib.Holder.After").experiment.stop_time == 15
+        assert self._find(rodlib, f"RodLib.Holder.{name}").experiment.stop_time == 12
+
+    @pytest.mark.parametrize(
+        ("source", "stripped"),
+        [
+            # a quoted name is code, kept whole; the string after it is blanked
+            ('model \'a"b\' "doc" x', "model 'a\"b'       x"),
+            ("'a//b' // tail", "'a//b'        "),
+            ("'a/*b' /* c */ d", "'a/*b'         d"),
+            # an escaped apostrophe closes nothing
+            ("'a\\'\"b' \"s\"", "'a\\'\"b'    "),
+            # an apostrophe astray costs its line, not the file
+            ('x \' "kept\ny "s" z', "x ' \"kept\ny     z"),
+            # one inside a string or a comment opens nothing
+            ("\"it's\" 'q' // it's\n\"t\"", "       'q'        \n   "),
+        ],
+    )
+    def test_what_a_quoted_name_holds_delimits_nothing(self, source, stripped):
+        from dstf.discovery.mo_parser import _strip_modelica_literals
+
+        assert _strip_modelica_literals(source) == stripped
+
     def test_a_class_after_a_nested_short_class_is_still_found(self, rodlib):
         lib = rodlib.parent.parent / "RodLib"
         (lib / "Holder.mo").write_text(
