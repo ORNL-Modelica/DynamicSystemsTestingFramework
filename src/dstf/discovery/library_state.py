@@ -142,13 +142,24 @@ def _julia_source(name: str) -> bool:
 def dependency_root(entry: str) -> Path | None:
     """Where a ``dependencies`` entry's files are: the directory of a
     library given by its directory or its ``package.mo``, the one file of a
-    library given as ``Name.mo``; None for a library given by name."""
+    library given as ``Name.mo``; None for a library given by name. Spelled
+    as the entry is, and the ONE place that says it: the sweep keys a
+    dependency's files under this, and a backend asks :func:`under` with
+    this which of them a change touched."""
     from ..config import dependency_is_path
 
     if not dependency_is_path(entry):
         return None
     path = Path(entry)
     return path.parent if path.name == "package.mo" else path
+
+
+def under(path: Path, root: Path) -> bool:
+    """Whether a swept *path* is *root* or a file below it — both as the
+    sweep spells them: *root* is the library's directory or a
+    :func:`dependency_root`, never a resolved form of either (a path
+    through a symbolic link, or one holding ``..``, has another)."""
+    return path == root or root in path.parents
 
 
 def source_stamps(config: Config) -> dict[Path, Stamp] | None:
@@ -220,4 +231,5 @@ __all__ = [
     "source_stamps",
     "stamp",
     "sweep",
+    "under",
 ]

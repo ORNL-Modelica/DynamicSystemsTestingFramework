@@ -7645,7 +7645,12 @@ and OpenModelica read in place, on the test's exec thread under its
 watchdog — a reload that hangs is the test's timeout, a cancel during it
 the test's: Dymola by `openModel(<package.mo>, changeDirectory=False)` for
 the library and for each path dependency holding a changed file;
-OpenModelica by `loadFile`. omc KEEPS the classes it holds when a load
+OpenModelica by `loadFile`. Which dependency a changed file belongs to is
+asked in the sweep's own spelling, by one function for the sweep and both
+backends (`library_state.dependency_root` and `under`): Dymola compared
+the RESOLVED path until 2026-10-12, so a dependency reached through a
+symbolic link, or given as an absolute path holding `..`, was never
+reopened. omc KEEPS the classes it holds when a load
 fails, so **a failed reload fails the item** with omc's message
 (`MyLib does not load: Examples/Pipe.mo: [syntax:error:2] …`) and leaves
 the worker as it was, and the next item asks again. omc loads the whole

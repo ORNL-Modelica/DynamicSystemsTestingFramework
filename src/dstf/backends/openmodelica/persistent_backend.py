@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 
 from ...config import Config
-from ...discovery.library_state import LibraryChanges, dependency_root
+from ...discovery.library_state import LibraryChanges, dependency_root, under
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import mat_reaches_time
 from ..common.proc_kill import live_children
@@ -236,11 +236,6 @@ def _last_log_line(log: str) -> str:
     return ""
 
 
-def _under(path: Path, root: Path) -> bool:
-    """Whether *path* is *root* or a file below it."""
-    return path == root or root in path.parents
-
-
 def _is_notice_line(line: str) -> bool:
     lower = line.lower()
     return (
@@ -423,7 +418,7 @@ class OpenModelicaWorker(Worker):
             root = dependency_root(dep)
             if root is None:
                 continue  # by name: omc found it, and nothing swept it
-            if touched is None or any(_under(path, root) for path in touched):
+            if touched is None or any(under(path, root) for path in touched):
                 _, dep_file = classify_dependency(dep)
                 self._load_whole(dep_file, root.stem)
         files = self._files_to_load_again(changes)
@@ -446,9 +441,9 @@ class OpenModelicaWorker(Worker):
         added_or_removed = [
             path
             for path in (*changes.added, *changes.removed)
-            if _under(path, library_dir)
+            if under(path, library_dir)
         ]
-        changed = {path for path in changes.changed if _under(path, library_dir)}
+        changed = {path for path in changes.changed if under(path, library_dir)}
         changed |= {path for path in self._unread if path.is_file()}
         if added_or_removed or any(
             path.name in ("package.mo", "package.order") for path in changed

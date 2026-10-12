@@ -393,3 +393,26 @@ def test_a_sub_package_behind_a_symbolic_link_is_read_again(tmp_path, backend):
         assert tool.fresh() == 1121.0
     finally:
         _closed(tool)
+
+
+@pytest.mark.parametrize("backend", _SIMULATORS[1:])
+def test_a_dependency_whose_path_is_not_its_resolved_one_is_read_again(
+    tmp_path, backend
+):
+    def arrange(parts: Parts) -> str:
+        os.symlink(parts.dep, parts.root / "deps" / "link")
+        # Absolute, so the config keeps it as written: a link, and `..`.
+        return str(parts.root / "deps" / ".." / "deps" / "link")
+
+    tool = Parts(tmp_path, backend, arrange=arrange)
+    try:
+        (entry,) = tool.session.project.config.dependencies
+        assert "/../" in entry and entry.endswith("/link")
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        _sub(tool.dep / "C.mo", "c=1", "c=2")
+        assert tool.x() == 2111.0, "the live simulator ran the old dependency"
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 2111.0
+    finally:
+        _closed(tool)

@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 from ...config import Config
-from ...discovery.library_state import LibraryChanges
+from ...discovery.library_state import LibraryChanges, dependency_root, under
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import read_mat_time_extents
 from ..common.proc_kill import live_children
@@ -725,10 +725,14 @@ class DymolaWorker(Worker):
             else (*changes.changed, *changes.added, *changes.removed)
         )
         packages: list[Path] = []
-        for dep_path in self.config.dependencies or []:
-            dep = Path(dep_path).resolve()
-            if touched is None or any(dep in path.parents for path in touched):
-                packages.append(dep)
+        for entry in self.config.dependencies or []:
+            # Which files are the dependency's is asked as the sweep
+            # spelled them; what is opened is what ``start`` opened.
+            root = dependency_root(entry)
+            if root is None:
+                continue
+            if touched is None or any(under(path, root) for path in touched):
+                packages.append(Path(entry).resolve())
         for package in (*packages, self.config.library_dir):
             main_pkg = package / "package.mo"
             self._step = f"openModel({main_pkg})"

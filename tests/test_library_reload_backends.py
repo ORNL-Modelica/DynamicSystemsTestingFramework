@@ -6,6 +6,7 @@ real tools are driven in `test_library_reload_real.py`."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ import pytest
 from dstf.backends.dymola.persistent_backend import DymolaWorker
 from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
 from dstf.backends.persistent import LibraryReloadError, Worker
-from dstf.discovery.library_state import LibraryChanges
+from dstf.discovery.library_state import LibraryChanges, LibraryState, source_stamps
 
 
 class _Omc:
@@ -235,6 +236,14 @@ class TestOpenModelica:
             "existClass(Lib)",
         ]
 
+    def test_a_dependency_that_is_one_file_is_loaded_when_that_file_changed(
+        self, lib, tmp_path
+    ):
+        single = tmp_path / "deps" / "Single.mo"
+        worker = _om_worker(lib, dependencies=[str(single)])
+        worker.reload(LibraryChanges(changed=(single,)))
+        assert worker.session.calls[0] == f'loadFile("{single}")'
+
 
 class _Dymola:
     def __init__(self, fails: str | None = None):
@@ -288,6 +297,37 @@ class TestDymola:
             str(lib / "package.mo"),
         ]
         assert all(change is False for _, change in dymola.opened)
+
+    @pytest.mark.parametrize("how", ["a symbolic link", "a path with .."])
+    def test_a_dependency_is_found_by_the_spelling_the_sweep_gave_its_files(
+        self, lib, tmp_path, how
+    ):
+        """The changes a worker is handed are the SWEEP's paths: a
+        dependency whose configured path is not its resolved one (a link;
+        an absolute path with ``..``, which the config keeps as written)
+        is still the one a changed file belongs to."""
+        real = tmp_path / "deps" / "Other"
+        real.mkdir(parents=True)
+        (real / "X.mo").write_text("", encoding="utf-8")
+        if how == "a symbolic link":
+            entry = tmp_path / "deps" / "link"
+            os.symlink(real, entry)
+        else:
+            entry = tmp_path / "deps" / ".." / "deps" / "Other"
+        dymola = _Dymola()
+        worker = _dymola_worker(lib, dymola, [str(entry)])
+        config = SimpleNamespace(
+            source_type="modelica", library_dir=lib, dependencies=[str(entry)]
+        )
+        before = LibraryState(1, source_stamps(config))
+        (real / "X.mo").write_text("package X end X;", encoding="utf-8")
+        changes = LibraryState(2, source_stamps(config)).changes_since(before)
+        assert changes.changed == (entry / "X.mo",)
+        worker.reload(changes)
+        assert [path for path, _ in dymola.opened] == [
+            str(real / "package.mo"),
+            str(lib / "package.mo"),
+        ]
 
     def test_a_library_dymola_does_not_open_fails_with_its_message(self, lib):
         worker = _dymola_worker(lib, _Dymola(fails=str(lib)))
