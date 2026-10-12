@@ -859,7 +859,11 @@ class Session:
         op, _why = self._materialization(model_id)
         if op is not None:
             # Marked as `stage` marks its own: the drawer previews it as
-            # nothing changed, with the note that Save writes it.
+            # nothing changed, with the note that Save writes it. And no
+            # act of its own: where it stays, a pending op of this test
+            # edited what it is built from, and it is part of THAT edit —
+            # one override staged, then a rescore, read "2 pending edits".
+            mine = [o.gesture for o in self.spec.pending if o.model_id == model_id]
             self.stage(
                 [
                     PatchOp(
@@ -869,7 +873,8 @@ class Session:
                         op["value"],
                         materializes=self._saved_scoring_tree(self.spec, model_id),
                     )
-                ]
+                ],
+                part_of=mine[-1] if mine else None,
             )
             return self.comparisons[model_id]
         comp = self._score(model_id)
@@ -1534,7 +1539,7 @@ class Session:
 
     # -- the spec ----------------------------------------------------------
 
-    def stage(self, ops: Sequence[PatchOp]) -> None:
+    def stage(self, ops: Sequence[PatchOp], *, part_of: int | None = None) -> None:
         """Stage ``ops`` and rescore their models. Materializes the implicit
         tree where a per-leaf op needs one — or an op that edits the tree
         whole (`PatchOp.edits_tree`); validates each touched entry
@@ -1542,7 +1547,10 @@ class Session:
         is unchanged. A queued test takes every edit, and runs with the spec
         as it stands when it starts; a running one takes its criteria's —
         scored when its result arrives — and none of its simulation
-        settings', which its run has already taken (D150)."""
+        settings', which its run has already taken (D150).
+
+        One call is one edit (`PatchOp.gesture`), unless ``part_of`` names
+        the edit these ops belong to: `rescore`'s, which no one did."""
         project = self._require_project()
         models = {op.model_id for op in ops}
         for op in ops:
@@ -1555,7 +1563,7 @@ class Session:
         # One call is one act of the user's, however many ops it takes
         # (`PatchOp.gesture`): what every count of pending edits counts.
         self._gesture += 1
-        gesture = self._gesture
+        gesture = self._gesture if part_of is None else part_of
         for model_id in _in_order(op.model_id for op in ops):
             raw = [op.raw() for op in ops if op.model_id == model_id]
             entry = self.spec.entry(model_id) or {"model": model_id}

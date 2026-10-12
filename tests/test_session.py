@@ -3332,6 +3332,16 @@ def _session_with_plots(tmp_path: Path, plots: list) -> Session:
     return s
 
 
+#: A saved tree of two criteria on A's one variable.
+TWO_CRITERIA = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+        {"metric": "range", "variable": "x", "min_value": -1.0, "max_value": 2.0},
+    ],
+}
+
+
 class TestOneStageIsOneEdit:
     """What every count of pending edits counts (`spec_document.edit_counts`):
     the things done, not the ops they took."""
@@ -3408,6 +3418,69 @@ class TestOneStageIsOneEdit:
         # A discard of one test leaves the other's.
         session.discard({A})
         assert edit_counts(session.spec.pending) == {D: 1}
+
+    def test_a_rescore_that_writes_the_tree_out_is_no_act_of_the_users(self, session):
+        """An op on a flat entry's overrides — a capability's — and then a
+        `rescore`: it stages the tree those overrides now give, which
+        stays (it is no longer the tree the saved entry scores by). That
+        op is part of the edit that made it necessary: the count read 2
+        after one act."""
+        overrides = {"variable_overrides": {"x": {"tolerance": 0.5}}}
+        session.stage([PatchOp(G, "add", "/comparison", overrides)])
+        assert edit_counts(session.spec.pending) == {G: 1}
+        # Another test's edit in between: the tree is part of ITS test's.
+        session.stage([PatchOp(D, "add", "/plots", [{"var": "x"}])])
+        session.rescore(G)
+        assert [(op.model_id, op.path) for op in session.spec.pending] == [
+            (G, "/comparison"),
+            (D, "/plots"),
+            (G, "/metrics"),
+        ]
+        assert edit_counts(session.spec.pending) == {G: 1, D: 1}
+        # A second act is a second edit, and a rescore still adds none.
+        session.stage([PatchOp(G, "add", "/plots", [{"var": "x"}])])
+        session.rescore(G)
+        assert edit_counts(session.spec.pending) == {G: 2, D: 1}
+
+    def test_two_acts_on_one_criterion_in_a_row_read_one_edit(self, tmp_path):
+        """The collapse rule's reading (D155): an editor writes its
+        criterion whole, so a tolerance and then a window of ONE criterion
+        land on one path, and the second replaces the first."""
+        s = _session_with_entry(tmp_path, {"metrics": dict(TWO_CRITERIA)})
+        leaf = {"metric": "nrmse", "variable": "x", "tolerance": 0.05}
+        s.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
+        windowed = {**leaf, "window": {"start": 0.0, "end": 0.5}}
+        s.stage([PatchOp(A, "replace", "/metrics/children/0", windowed)])
+        assert s.spec.pending == [
+            PatchOp(A, "replace", "/metrics/children/0", windowed)
+        ]
+        assert edit_count(s.spec.pending) == 1
+
+    def test_a_criterion_revisited_after_another_is_its_own_edit_until_all_is_as_saved(
+        self, tmp_path
+    ):
+        """The collapse rule's other reading (D155): only the LAST pending
+        op is superseded. Criterion 0, criterion 1, criterion 0 again are
+        three edits, and putting criterion 0 back lands on the third — the
+        count stays 3 while only criterion 1 differs from the file. Put
+        that back too and the entry is as saved: 0."""
+        s = _session_with_entry(tmp_path, {"metrics": dict(TWO_CRITERIA)})
+        first, second = TWO_CRITERIA["children"]
+
+        def stage(index: int, **fields) -> int:
+            leaf = {**TWO_CRITERIA["children"][index], **fields}
+            s.stage([PatchOp(A, "replace", f"/metrics/children/{index}", leaf)])
+            return edit_count(s.spec.pending)
+
+        assert stage(0, tolerance=0.05) == 1
+        assert stage(1, max_value=3.0) == 2
+        assert stage(0, tolerance=0.06) == 3
+        assert stage(0) == 3  # criterion 0 as saved: the third edit, rewritten
+        assert s.spec.entry(A)["metrics"]["children"][0] == first
+        assert stage(1) == 0  # the entry is the file's
+        assert (
+            s.spec.pending == [] and s.spec.entry(A)["metrics"]["children"][1] == second
+        )
 
     def test_the_refusal_to_close_counts_edits(self, session):
         from dstf.authoring.session import PendingEditsError

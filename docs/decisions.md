@@ -8773,3 +8773,28 @@ table are ONE pending edit — the table's — because the second lands on
 the path of the first; that is the collapse rule's reading of "the same
 field", not this entry's.
 
+**Addendum, 2026-10-12 — what the collapse rule makes of two acts, and a
+rescore that is none.** The count is of acts only up to the collapse
+rule, which folds an op into the LAST pending one when it lands on its
+path — and an editor writes its criterion whole, at the criterion's path.
+Two readings follow, each executed
+(`TestOneStageIsOneEdit`):
+
+- *Two acts on one criterion in a row read 1.* A tolerance typed, then a
+  window set on the same criterion: the second op replaces the first, and
+  the header reads `1 pending edit` — the criterion's.
+- *A criterion revisited after another is its own edit.* Criterion 0,
+  criterion 1, criterion 0 again read 3, since only the last op is
+  superseded; criterion 0 put back as saved lands on the third and the
+  count stays 3 while only criterion 1 differs from the file. Put that
+  back too and the entry is as saved: 0.
+
+Both are the rule's and stay: the preview's diff is what says what Save
+writes, whatever the number. One count was wrong: `Session.rescore` —
+`SessionView.rescore`, a capability's call — stages a flat test's tree,
+and that op STAYS where a pending op edited the overrides the tree is
+built from. It was staged as a call of its own, so one override staged
+and a rescore read `2 pending edits`. The tree is part of the edit that
+made it necessary (`Session.stage(part_of=…)`: the number of the test's
+last pending op): 1.
+
