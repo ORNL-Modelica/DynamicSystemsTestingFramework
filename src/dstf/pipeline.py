@@ -58,6 +58,10 @@ class RunOutcome:
     results: dict[str, TestResult]
     scope_tests: list[TestModel]
     notices: list[str]
+    #: How many per-test report pages the run removed as stale
+    #: (:func:`wipe_stale_state_for_scope`). The pipeline writes none back —
+    #: the caller says so unless it is about to.
+    report_pages_removed: int = 0
 
 
 def write_id_mapping(store: ReferenceStore, config: Config) -> None:
@@ -83,9 +87,12 @@ def wipe_stale_state_for_scope(
     ref_id_map: dict,
     *,
     wipe_sim_dirs: bool,
-) -> None:
+) -> int:
     """Clear per-test report sidecars (and optionally sim work dirs) for
-    the tests this invocation is about to (re-)process.
+    the tests this invocation is about to (re-)process. Returns how many
+    report PAGES (``interactive.html``) went with them: a caller that will
+    not write them again tells the user, who otherwise finds a `--report`'s
+    pages gone after a plain run.
 
     A run cleans its own footprint so a prior run's stale state cannot
     bleed through. Out-of-scope tests' directories are left untouched —
@@ -117,6 +124,7 @@ def wipe_stale_state_for_scope(
     model_to_key = last_test_keys(work_dir)
 
     reports_root = work_dir / "reports"
+    pages_removed = 0
     for test in tests:
         test_key = model_to_key.get(test.model_id)
         report_dir = ref_id_map.get(test.model_id) or test_key
@@ -127,7 +135,9 @@ def wipe_stale_state_for_scope(
         if report_dir:
             rep_dir = reports_root / report_dir
             if rep_dir.exists():
+                pages_removed += (rep_dir / "interactive.html").exists()
                 shutil.rmtree(rep_dir)
+    return pages_removed
 
 
 def run_cross_backend_chains(tests, backend, config, store) -> list[str]:
@@ -220,7 +230,9 @@ def run_pipeline(
     # dashboard. Out-of-scope tests are untouched so
     # `merge` keeps working.
     work_dir.mkdir(parents=True, exist_ok=True)
-    wipe_stale_state_for_scope(config, tests, backend.ref_id_map, wipe_sim_dirs=True)
+    pages_removed = wipe_stale_state_for_scope(
+        config, tests, backend.ref_id_map, wipe_sim_dirs=True
+    )
 
     # Paint the unified dashboard before the run starts, so a reader sees
     # live progress as tests register. The first ProgressReporter.register
@@ -267,6 +279,7 @@ def run_pipeline(
         results=results,
         scope_tests=scope_tests,
         notices=notices,
+        report_pages_removed=pages_removed,
     )
 
 

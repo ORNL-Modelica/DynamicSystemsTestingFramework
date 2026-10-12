@@ -169,3 +169,26 @@ def test_wipe_only_sim_dir_when_only_sim_dir_exists(tmp_path):
     )
 
     assert not (tmp_path / "test_0001").exists()
+
+
+def test_wipe_returns_how_many_report_pages_it_removed(tmp_path):
+    """The count is of PAGES, what a reader misses: a report dir that held
+    only a sidecar (no `interactive.html`) is removed and counts for none,
+    and a test with no report dir counts for none."""
+    _seed_batch_manifest(
+        tmp_path, {"test_0001": "Lib.A", "test_0002": "Lib.B", "test_0003": "Lib.C"}
+    )
+    _seed_dir(tmp_path / "reports" / "ref_0042")
+    (tmp_path / "reports" / "ref_0042" / "interactive.html").write_text("<html>")
+    _seed_dir(tmp_path / "reports" / "test_0002")  # a sidecar's dir, no page
+
+    removed = wipe_stale_state_for_scope(
+        _FakeConfig(tmp_path),
+        [_FakeTest("Lib.A"), _FakeTest("Lib.B"), _FakeTest("Lib.C")],
+        ref_id_map={"Lib.A": "ref_0042"},
+        wipe_sim_dirs=False,
+    )
+
+    assert removed == 1
+    assert not (tmp_path / "reports" / "ref_0042").exists()
+    assert not (tmp_path / "reports" / "test_0002").exists()

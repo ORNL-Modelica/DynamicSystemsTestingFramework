@@ -77,6 +77,18 @@ def _browser(args: argparse.Namespace) -> bool:
     return not getattr(args, "no_browser", False)
 
 
+def _say_removed_pages(n: int) -> None:
+    """One line for the per-test report pages a run or compare removed and
+    is not writing again. The removal is intended — a stale page must not
+    survive the run that outdated it — but silent, it read as lost work."""
+    if n:
+        pages, them = ("page", "it") if n == 1 else ("pages", "them")
+        print(
+            f"Removed {n} per-test report {pages} written by an earlier --report "
+            f"(now stale); --report writes {them} again."
+        )
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
@@ -201,6 +213,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         for line in outcome.notices:
             print(line)
         results, scope_tests = outcome.results, outcome.scope_tests
+        # Only the scoring route below writes pages; --accept and -i return
+        # without, whatever --report says.
+        if not (args.report and not args.accept and args.interactive is None):
+            _say_removed_pages(outcome.report_pages_removed)
 
         if args.accept:
             # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
@@ -346,12 +362,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
         if ref_id:
             backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
     config.work_dir.mkdir(parents=True, exist_ok=True)
-    wipe_stale_state_for_scope(
+    pages_removed = wipe_stale_state_for_scope(
         config,
         tests,
         backend.ref_id_map,
         wipe_sim_dirs=False,
     )
+    # --accept returns without a report, whatever --report says.
+    if getattr(args, "accept", False) or not getattr(args, "report", False):
+        _say_removed_pages(pages_removed)
 
     results = backend.read_last_results(tests)
 

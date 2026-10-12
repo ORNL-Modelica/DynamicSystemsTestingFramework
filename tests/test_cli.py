@@ -2145,33 +2145,34 @@ class TestNoBrowser:
 # =========================================================================
 
 
+@pytest.fixture
+def scored(run_env):
+    """Two tests with a baseline; T1 will pass and T2 fail. Returns a runner
+    of one command with the given flags."""
+    tests = [_mk_test(_T1), _mk_test(_T2)]
+    run_env.make(tests, results={m: _mk_result(m) for m in (_T1, _T2)})
+    assert cmd_run(_run_args(run_env, "--accept")) == 0
+    results = {
+        _T1: _mk_result(_T1),
+        _T2: _mk_result(_T2, values=np.cos(np.linspace(0.0, 1.0, 11))),
+    }
+
+    def dstf(command: str, *extra: str) -> int:
+        run_env.make(tests, results=results, prior_results=results)
+        args = build_arg_parser().parse_args(
+            ["--config", str(run_env.config_dir), command]
+            + ["--work-dir", str(run_env.work_dir), "--no-browser", *extra]
+        )
+        return (cmd_run if command == "run" else cmd_compare)(args)
+
+    return dstf
+
+
+def _pages(run_env) -> int:
+    return len(list(run_env.work_dir.glob("reports/*/interactive.html")))
+
+
 class TestTheThreeReportsAreIndependent:
-    @pytest.fixture
-    def scored(self, run_env, tmp_path):
-        """Two tests with a baseline; T1 will pass and T2 fail. Returns a
-        runner of one command with the given flags."""
-        tests = [_mk_test(_T1), _mk_test(_T2)]
-        run_env.make(tests, results={m: _mk_result(m) for m in (_T1, _T2)})
-        assert cmd_run(_run_args(run_env, "--accept")) == 0
-        results = {
-            _T1: _mk_result(_T1),
-            _T2: _mk_result(_T2, values=np.cos(np.linspace(0.0, 1.0, 11))),
-        }
-
-        def dstf(command: str, *extra: str) -> int:
-            run_env.make(tests, results=results, prior_results=results)
-            args = build_arg_parser().parse_args(
-                ["--config", str(run_env.config_dir), command]
-                + ["--work-dir", str(run_env.work_dir), "--no-browser", *extra]
-            )
-            return (cmd_run if command == "run" else cmd_compare)(args)
-
-        return dstf
-
-    @staticmethod
-    def _pages(run_env) -> int:
-        return len(list(run_env.work_dir.glob("reports/*/interactive.html")))
-
     @pytest.mark.parametrize("command", ["run", "compare"])
     @pytest.mark.parametrize("report", [False, True])
     @pytest.mark.parametrize("fmt", ["console", "junit", "html"])
@@ -2194,7 +2195,7 @@ class TestTheThreeReportsAreIndependent:
         assert "Failure Details:" in lines
 
         # --report's pages, when asked and only then
-        assert self._pages(run_env) == (2 if report else 0)
+        assert _pages(run_env) == (2 if report else 0)
         assert ("Report: " in out) is report
 
         # --report-format's file, when asked and only then
@@ -2238,3 +2239,81 @@ class TestTheThreeReportsAreIndependent:
         out = capsys.readouterr().out
         assert "Nothing to rerun" in out and "Results: 1/2 passed" in out
         assert ET.parse(out_file).getroot().get("failures") == "1"
+
+
+# =========================================================================
+# A run or compare without --report removes the per-test pages of the tests
+# in its scope (a stale page must not survive) — and says that it did
+# =========================================================================
+
+_REMOVED = (
+    "Removed {n} per-test report page{s} written by an earlier --report (now "
+    "stale); --report writes {them} again."
+)
+
+
+def _removed_lines(out: str) -> list[str]:
+    return [ln for ln in out.splitlines() if ln.startswith("Removed ")]
+
+
+class TestRemovedReportPagesAreSaid:
+    @pytest.mark.parametrize("command", ["run", "compare"])
+    def test_the_pages_go_and_one_line_says_how_many(
+        self, scored, run_env, capsys, command
+    ):
+        scored("run", "--report")
+        assert _pages(run_env) == 2
+        capsys.readouterr()
+        scored(command)
+        assert _pages(run_env) == 0
+        assert _removed_lines(capsys.readouterr().out) == [
+            _REMOVED.format(n=2, s="s", them="them")
+        ]
+        # nothing left to remove: nothing said
+        scored(command)
+        assert _removed_lines(capsys.readouterr().out) == []
+
+    @pytest.mark.parametrize("command", ["run", "compare"])
+    def test_pages_that_are_written_again_are_not_announced(
+        self, scored, run_env, capsys, command
+    ):
+        scored("run", "--report")
+        capsys.readouterr()
+        scored(command, "--report")
+        assert _pages(run_env) == 2
+        assert _removed_lines(capsys.readouterr().out) == []
+
+    def test_one_page_is_one_page(self, scored, run_env, capsys):
+        scored("run", "--report")
+        capsys.readouterr()
+        scored("run", "--filter", _T1)
+        assert _pages(run_env) == 1  # T2's is out of scope and stays
+        assert _removed_lines(capsys.readouterr().out) == [
+            _REMOVED.format(n=1, s="", them="it")
+        ]
+
+    @pytest.mark.parametrize("command", ["run", "compare"])
+    def test_an_accept_writes_no_pages_and_says_so_too(
+        self, scored, run_env, capsys, command
+    ):
+        """`--accept` returns before any report: with `--report` beside it
+        the pages are still gone, and the line still says so."""
+        scored("run", "--report")
+        capsys.readouterr()
+        scored(command, "--accept", "--report")
+        assert _pages(run_env) == 0
+        assert _removed_lines(capsys.readouterr().out) == [
+            _REMOVED.format(n=2, s="s", them="them")
+        ]
+
+    def test_a_review_writes_no_pages_and_says_so_too(
+        self, scored, run_env, capsys, monkeypatch
+    ):
+        scored("run", "--report")
+        capsys.readouterr()
+        monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+        scored("run", "-i", "all", "--report")
+        assert _pages(run_env) == 0
+        assert _removed_lines(capsys.readouterr().out) == [
+            _REMOVED.format(n=2, s="s", them="them")
+        ]
