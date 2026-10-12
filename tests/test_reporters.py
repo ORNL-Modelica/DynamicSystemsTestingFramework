@@ -718,7 +718,7 @@ class TestConsoleReport:
         assert heads == [
             "    x: nrmse · window 0–0.6 s · against primary",
             "    advisory — x: tube · against primary",
-            "    x: range · against primary",
+            "    x: range",
         ]
         # under each head, the measured value against what it is held to
         said = [ln.strip() for ln in details.splitlines() if "→ FAIL" in ln]
@@ -818,6 +818,76 @@ class TestConsoleReport:
         assert block[0].split(" · ")[0] == f"    x: {metric}"
         (leaf,) = test_verdict(comp, test, result)["tree"]["children"]
         assert leaf["metric"] == leaf["mode_effective"] == metric
+
+    @pytest.mark.parametrize(
+        ("leaf", "against"),
+        [
+            # reads the baseline
+            ({"metric": "nrmse"}, "primary"),
+            (
+                {"metric": "tube", "tube_width_mode": "band", "tube_abs": 1e-9},
+                "primary",
+            ),
+            ({"metric": "points", "tolerance": 1e-9}, "primary"),
+            (
+                {"metric": "scalar", "quantity": {"reduce": "max"}, "tolerance": 1e-9},
+                "primary",
+            ),
+            # scored from the spec alone: there is no baseline to name
+            ({"metric": "range", "max_value": 2.0}, None),
+            (
+                {"metric": "scalar", "quantity": {"reduce": "max"}, "max_value": 2.0},
+                None,
+            ),
+            (
+                {"metric": "points", "points": [{"time": 1.0, "value": 9.0}]},
+                None,
+            ),
+            # a config that is an error read nothing, whenever it was found:
+            # when the mode is built, or only when it scores
+            ({"metric": "tube", "tube_abs": "wide"}, None),
+            ({"metric": "tube", "tube_width_mode": "absolute"}, None),
+        ],
+        ids=[
+            "nrmse",
+            "tube",
+            "points",
+            "scalar",
+            "range",
+            "scalar-bounds",
+            "points-own",
+            "unbuildable",
+            "refused-when-scored",
+        ],
+    )
+    @pytest.mark.parametrize("flat", [True, False], ids=["flat", "tree"])
+    def test_a_baseline_is_named_only_where_the_criterion_reads_one(
+        self, leaf, against, flat
+    ):
+        """ONE rule, on both paths and both surfaces. The console named
+        `against primary` on a leaf of a written tree and not on the same
+        criterion of a test with none, and named it — as verdicts.json did —
+        for a `range`, which reads no baseline at all."""
+        from dstf.reporting.console_report import failure_blocks
+        from dstf.reporting.verdicts import test_verdict
+
+        if flat:
+            override = {k: v for k, v in leaf.items() if k != "metric"}
+            comp, test, result = _flat({"x": {"mode": leaf["metric"], **override}})
+        else:
+            comp = _scored(
+                {"combinator": "and", "children": [{**leaf, "variable": "x"}]}
+            )
+            test = result = None
+        assert not comp.passed
+        (block,) = failure_blocks(comp)
+        said = f"    x: {leaf['metric']}" + (f" · against {against}" if against else "")
+        assert block[0] == said
+        (vc,) = comp.variables
+        assert vc.against == against
+        if flat:
+            (view,) = test_verdict(comp, test, result)["tree"]["children"]
+            assert view["against"] == against
 
     @pytest.mark.parametrize("override", [{}, {"tolerance": "wide"}])
     def test_a_criterion_scored_by_points_by_default_says_points(self, override):

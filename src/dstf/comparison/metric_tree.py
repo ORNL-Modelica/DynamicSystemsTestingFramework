@@ -282,16 +282,20 @@ def leaf_from_variable(vc: VariableComparison) -> MetricResult:
         score = vc.tube_points_inside
     else:
         score = vc.nrmse
+    diagnostics = {
+        "mode": vc.mode,
+        "tolerance": as_written(vc.tolerance_used),
+        "max_abs_error": vc.max_abs_error,
+        "variable": vc,
+    }
+    if vc.against is not None:
+        # The baseline the criterion read; none where it reads none.
+        diagnostics["against"] = vc.against
     return MetricResult(
         passed=vc.passed,
         score=score,
         label=vc.name,
-        diagnostics={
-            "mode": vc.mode,
-            "tolerance": as_written(vc.tolerance_used),
-            "max_abs_error": vc.max_abs_error,
-            "variable": vc,
-        },
+        diagnostics=diagnostics,
         children=[],
     )
 

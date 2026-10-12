@@ -67,6 +67,14 @@ class VariableComparison:
     # Open-ended structured extras — future metrics attach here instead of
     # growing this dataclass (event-timing, spectral, domain-specific scores).
     diagnostics: dict = field(default_factory=dict)
+    #: The baseline this criterion READ — ``"primary"``, a soft check's name
+    #: — or ``None`` for one that reads none: a ``range``, a criterion with
+    #: declared events / peaks / values, one whose config could not be
+    #: built. Stamped by the comparator and the tree evaluator from the mode
+    #: they built (``is_baseline_free``); THE one source of the baseline a
+    #: surface names beside a criterion (the console's and JUnit's ``·
+    #: against primary``, the tree view's ``against``), on both paths.
+    against: str | None = None
     # The scored variable's expression (see ``VariableResult.expression``): a
     # label, never a key. Stamped by the comparator and the tree evaluator
     # from the result variable the leaf scored; "" when there is none.

@@ -839,8 +839,10 @@ A run that scores (not `--accept`, not `-i`) always prints the verdict table —
 a `PASS` / `FAIL` line per test, `Results: 11/12 passed` and the failure
 details: under each failed test one block per criterion that did not pass, in
 the tree's order. A block's first line says which criterion it is — the
-variable, the metric, its window if it has one and the baseline it is scored
-against — and starts `advisory — ` when the criterion is under a `warn` and
+variable, the metric, its window if it has one and the baseline it reads,
+where it reads one (`x: range` names none; a criterion of a test with no
+`metrics` tree names `primary` like any other) — and starts `advisory — `
+when the criterion is under a `warn` and
 cannot fail the test; the next line is the measured value against what it is
 held to, in the metric's own words, then that metric's details:
 
@@ -913,7 +915,7 @@ Four files say what a run decided; none needs the HTML parsed.
 | JUnit XML | `--report-format junit --output results.xml` | one testcase per test; a `<failure>` per FAIL with its failed criteria, an `<error>` per failed simulation |
 | `<work_dir>/reports/<dir>/comparison_data.json` | `--report`, one per test | that test's `summary` and its `tree_view` — the same tree as in `verdicts.json` — beside what its page draws |
 
-A node of `tree` is a group (`"kind": "combinator"`, with `combinator`, `children`, `passed`) or a criterion (`"kind": "leaf"`): `path` (the JSON pointer a `spec-update` patch names it by), `metric`, `variable`, `window`, `against` (the baseline it is scored against), `passed`, `advisory` (true under a `warn`: it cannot fail the test), `score` and `score_display` (its measure), `tolerance` (the tolerance it was scored with — its own, else the test's — for a metric that takes one; a tube's width and a range's bounds are in `params`), `criterion` (the sentence the console prints) and `details`. `tree` is `null` for a test nothing was compared for.
+A node of `tree` is a group (`"kind": "combinator"`, with `combinator`, `children`, `passed`) or a criterion (`"kind": "leaf"`): `path` (the JSON pointer a `spec-update` patch names it by), `metric`, `variable`, `window`, `against` (the baseline it READ — `"primary"`, a soft check's name — and `null` for a criterion that reads none: a `range`, a `scalar` with bounds, a criterion scored from its own declared events, peaks or values), `passed`, `advisory` (true under a `warn`: it cannot fail the test), `score` and `score_display` (its measure), `tolerance` (the tolerance it was scored with — its own, else the test's — for a metric that takes one; a tube's width and a range's bounds are in `params`), `criterion` (the sentence the console prints) and `details`. `tree` is `null` for a test nothing was compared for.
 
 ```bash
 dstf --config testing.json run --no-browser

@@ -33,6 +33,7 @@ from ..backends.common.result_variables import tracked_results
 from ..backends.types import DatasetType, VariableResult
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
+from ..storage.baseline import PRIMARY_BASELINE
 from ..storage.reference_store import ReferenceStore
 
 # Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
@@ -383,7 +384,6 @@ def _named_baseline_expression_warnings(
     at all — nothing compares those two numbers, so a difference between
     them is not a finding about this run.
     """
-    from ..storage.baseline import PRIMARY_BASELINE
     from .tree_spec import collect_variables_by_baseline
 
     out: list[StructuralWarning] = []
@@ -667,6 +667,8 @@ def compare_test(
     )
 
     tracked = tracked_results(test, result)
+    #: Per tracked variable, the baseline its criterion reads (None: none).
+    baselines_read: list[str | None] = []
     for var_result in tracked:
         # A variable is paired with the baseline entry carrying its name.
         # There is no index fallback: a result variable always has the name
@@ -695,6 +697,9 @@ def compare_test(
         # The metric this criterion is scored by — or, where its config is
         # an error, could not be: what a sentinel below is named by.
         metric_name = override_metric(var_override, default_points)
+        # The baseline it reads: none until its mode is built, and none for
+        # a mode that scores from its own config.
+        baselines_read.append(None)
         try:
             tolerance = parse_sides(
                 var_override.get("tolerance", base_tolerance), "tolerance"
@@ -703,6 +708,8 @@ def compare_test(
         except ValueError as exc:
             comparisons.append(_config_error_comparison(var_result, exc, metric_name))
             continue
+        if not mode.is_baseline_free():
+            baselines_read[-1] = PRIMARY_BASELINE
 
         # A stats-path quantity is resolved by the tree evaluator from the
         # run's statistics/diagnostics; this flat path only has the
@@ -792,6 +799,9 @@ def compare_test(
             vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
         except ValueError as exc:
             comparisons.append(_config_error_comparison(var_result, exc, metric_name))
+            # A criterion whose config is an error read nothing, whenever
+            # the error was found.
+            baselines_read[-1] = None
             continue
         vc.index = var_result.index
         vc.name = name
@@ -804,10 +814,12 @@ def compare_test(
     # trees from test_spec.json.
     #
     # The loop appends exactly one comparison per tracked variable, in
-    # order, so the expression rides onto each of them here rather than at
-    # all five of the loop's append sites.
-    for vc, var_result in zip(comparisons, tracked, strict=True):
+    # order, so the expression — and the baseline the criterion read —
+    # rides onto each of them here rather than at all five of the loop's
+    # append sites.
+    for vc, var_result, read in zip(comparisons, tracked, baselines_read, strict=True):
         vc.expression = var_result.expression
+        vc.against = read
     tree = implicit_and_tree(comparisons)
 
     return TestComparison(

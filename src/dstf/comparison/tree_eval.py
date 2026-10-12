@@ -372,6 +372,11 @@ def _evaluate_leaf(
     )
     expression = var_result.expression if var_result is not None else ""
 
+    #: The baseline this leaf reads: its `against`, once its mode is built
+    #: and is one that reads a baseline. None until then, and for a mode
+    #: that scores from its own config.
+    reads: str | None = None
+
     def _leaf(vc: VariableComparison) -> MetricResult:
         vc.expression = expression
         # The tolerance this leaf applies, on every return: one that fails
@@ -379,6 +384,10 @@ def _evaluate_leaf(
         # does not have) reports the one it would have applied, never the
         # comparison's 0.0 default.
         vc.tolerance_used = tolerance
+        # A criterion whose config is an error read nothing, whenever the
+        # error was found: the flat path's sentinel says the same.
+        config_error = (vc.diagnostics or {}).get("config_error")
+        vc.against = None if config_error else reads
         return leaf_from_variable(vc)
 
     try:
@@ -414,6 +423,7 @@ def _evaluate_leaf(
     # the leaf is baseline-free (range / declared-events / declared-peaks)
     # — then we don't need any baseline at all (idea #59 / D83).
     baseline = baselines.get(leaf.against)
+    reads = None if mode.is_baseline_free() else leaf.against
     if baseline is None and not mode.is_baseline_free():
         return _leaf(_missing_baseline_comparison(leaf))
 
@@ -518,9 +528,6 @@ def _evaluate_leaf(
             Window(id="window", start=leaf.window_start, end=leaf.window_end),
         )
     leaf_result = _leaf(vc)
-    # Record which baseline this leaf scored against, so the reporter can
-    # show "against=experiment" on non-primary leaves.
-    leaf_result.diagnostics["against"] = leaf.against
     if quantity is not None:
         leaf_result.diagnostics["quantity"] = quantity
     if windowed:

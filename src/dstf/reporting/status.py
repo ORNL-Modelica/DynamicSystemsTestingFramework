@@ -328,8 +328,9 @@ def failed_criteria(comp: TestComparison) -> list[FailedCriterion]:
         window = _window_text(leaf.get("window"))
         if window:
             what.append(window)
-        if leaf.get("against"):
-            what.append(f"against {leaf['against']}")
+        # The baseline it READ, where it reads one: a `range` names none.
+        if vc.against:
+            what.append(f"against {vc.against}")
         under_warn = id(vc) in advisory
         lead = "advisory — " if under_warn else ""
         head = f"{lead}{': '.join([name, ' · '.join(what)] if what else [name])}"

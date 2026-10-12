@@ -171,6 +171,11 @@ def _augment_tree_view(
                 # spec's: a flat test's default is written `nrmse` there
                 # while `default_points` scores it by `points`.
                 "mode_effective": vc.mode,
+                # The baseline the criterion READ (`VariableComparison.
+                # against`), null where it reads none — a `range`, a
+                # criterion scored from its own declared values. The spec's
+                # `against` said "primary" of each of those.
+                "against": vc.against,
                 "name": var_label,
                 # What the leaf's row READS (`metric · pipe.T[1]`), on both
                 # tiers: the report's node macro and the tool's `leaf_name`
