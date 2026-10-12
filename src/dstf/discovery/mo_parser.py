@@ -535,22 +535,45 @@ class LocatedClass:
 @dataclass(frozen=True)
 class _ClassSpan:
     """One class declaration in stripped source: ``start`` at its keyword,
-    ``body`` just past its name, ``end`` past its ``end Name;``."""
+    ``body`` just past its name, ``end`` past its ``end Name;`` — or, for a
+    ``short`` class (``model A = B(...) annotation(...);``), past the ``;``
+    that ends its one statement."""
 
     name: str
     start: int
     body: int
     end: int
+    short: bool = False
 
+
+#: A Modelica name: an identifier, or a quoted one (``'in ner'``).
+_NAME = r"(\w+|'(?:[^'\\]|\\.)*')"
 
 #: A class declaration or an ``end Name;``, in comment/string-stripped text.
 #: The kinds are :data:`_CLASS_DECL_RE`'s — the ones that can hold a model.
 #: Group 2 marks a SHORT class (``model A = B(...)``), which has no body and
 #: no ``end``; ``model extends A`` is named by what it extends.
 _CLASS_TOKEN_RE = re.compile(
-    r"\b(?:model|block|class|package)\s+(?:extends\s+)?(\w+)(\s*=)?"
-    r"|\bend\s+(\w+)\s*;"
+    rf"\b(?:model|block|class|package)\s+(?:extends\s+)?{_NAME}(\s*=)?"
+    rf"|\bend\s+{_NAME}\s*;"
 )
+
+_OPENERS, _CLOSERS = "([{", ")]}"
+
+
+def _statement_end(stripped: str, start: int, end: int) -> int:
+    """Just past the ``;`` that ends the statement at ``start`` — the first
+    one outside every bracket — or ``end`` when there is none."""
+    depth = 0
+    for i in range(start, end):
+        c = stripped[i]
+        if c in _OPENERS:
+            depth += 1
+        elif c in _CLOSERS:
+            depth -= 1
+        elif c == ";" and depth <= 0:
+            return i + 1
+    return end
 
 
 def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
@@ -560,7 +583,10 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
 
     A stack of open declarations, closed by the ``end`` that names the top
     one: ``end if;`` / ``end for;`` and the ``end`` of a kind not tracked
-    here (a function, a record) name nothing on it and close nothing.
+    here (a function, a record) name nothing on it and close nothing. A
+    short class opens nothing: it is one statement, and its span runs to
+    that statement's ``;`` — it carries an ``annotation(...)`` of its own,
+    which is not the enclosing class's.
     """
     out: list[_ClassSpan] = []
     stack: list[tuple[str, int, int]] = []
@@ -573,6 +599,9 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
                     out.append(_ClassSpan(name, at, body, m.end()))
         elif m.group(2) is None:
             stack.append((m.group(1), m.start(), m.end()))
+        elif not stack:
+            after = _statement_end(stripped, m.end(), end)
+            out.append(_ClassSpan(m.group(1), m.start(), m.end(), after, short=True))
     return out
 
 
@@ -593,9 +622,10 @@ def find_class(
     library's model, a component, a short class definition).
 
     The annotation is the class's OWN: the text of the classes nested in
-    it is blanked first, so a nested model's ``experiment`` — which the
-    source spells before the enclosing class's annotation — is not read as
-    the parent's. It is then read by :func:`_parse_experiment`, the reader
+    it — a short class's one statement and a class of a quoted name
+    included — is blanked first, so a nested model's ``experiment`` — which
+    the source spells before the enclosing class's annotation — is not read
+    as the parent's. It is then read by :func:`_parse_experiment`, the reader
     a scanned test's goes through.
     """
     names = model_id.split(".")
@@ -650,7 +680,9 @@ def _class_in_file(
 
 
 def _named(spans: list[_ClassSpan], name: str) -> _ClassSpan | None:
-    return next((s for s in spans if s.name == name), None)
+    """The class of that name with a body: a short class is not one to
+    locate — it has no annotation layer of its own to read as a test's."""
+    return next((s for s in spans if s.name == name and not s.short), None)
 
 
 # ---------------------------------------------------------------------------

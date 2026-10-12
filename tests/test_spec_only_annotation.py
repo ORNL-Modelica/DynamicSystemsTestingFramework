@@ -165,6 +165,47 @@ class TestFindClass:
         assert (outer.stop_time, outer.number_of_intervals) == (14, 250)
         assert self._find(rodlib, "RodLib.Outer.Inner").experiment.stop_time == 13
 
+    @pytest.mark.parametrize(
+        "nested",
+        [
+            "model S = RodLib.Rod annotation(experiment(StopTime=12));",
+            "model S = RodLib.Rod(T(start={1, 2}), k = f(a; b)) "
+            "annotation(experiment(StopTime=12));",
+            "model 'in ner'\n    annotation(experiment(StopTime=12));\n  end 'in ner';",
+        ],
+        ids=["short", "short-with-modifiers", "quoted-name"],
+    )
+    @pytest.mark.parametrize("own", ["annotation(experiment(StopTime=13));", ""])
+    def test_a_nested_short_or_quoted_class_is_not_its_parents_annotation(
+        self, rodlib, nested, own
+    ):
+        """`model S = L.Par annotation(experiment(...));` has no `end S;`,
+        and `model 'in ner'` no plain name: neither was seen as nested, and
+        its annotation was read as the enclosing class's."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Holder.mo").write_text(
+            f"within RodLib;\nmodel Holder\n  {nested}\n  Real x;\n  {own}\nend Holder;\n",
+            encoding="utf-8",
+        )
+        found = self._find(rodlib, "RodLib.Holder")
+        assert found.mo_file.name == "Holder.mo"
+        if own:
+            assert found.experiment.stop_time == 13
+        else:
+            assert found.experiment is None
+
+    def test_a_class_after_a_nested_short_class_is_still_found(self, rodlib):
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Holder.mo").write_text(
+            "within RodLib;\nmodel Holder\n"
+            "  model S = RodLib.Rod annotation(experiment(StopTime=12));\n"
+            "  model After\n    annotation(experiment(StopTime=15));\n  end After;\n"
+            "end Holder;\n",
+            encoding="utf-8",
+        )
+        assert self._find(rodlib, "RodLib.Holder.After").experiment.stop_time == 15
+        assert self._find(rodlib, "RodLib.Holder.S") is None  # short: no body
+
     def test_a_class_with_no_annotation_is_found_with_none(self, rodlib):
         found = self._find(rodlib, "RodLib.NoAnnotation")
         assert found.mo_file.name == "package.mo" and found.experiment is None
