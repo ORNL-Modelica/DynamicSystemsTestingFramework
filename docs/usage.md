@@ -705,7 +705,7 @@ uv run dstf --config testing.json discover --package MyLib.Fluid
 uv run dstf --config testing.json discover --filter "*Pipe*"
 ```
 
-Output shows model ID, variable count, stop time, solver method, and source (unit_tests, spec, or both).
+Output shows, per test, its model ID, what it tracks, its stop time, its solver method and its source (unit_tests, spec, or both). **Vars** is the count of the test's `UnitTests` variables, and its `variables` entries as patterns — `2`, `1 pattern`, `2 + 3 patterns`: a pattern names no variable until it is matched against a result, after the run. **Method** is `—` for a test that names no solver on a source other than Modelica: the default, `Dassl`, is what a Modelica tool is given, and not something an FMU, a Julia or a Python test uses. The totals count the same two things, `UnitTests variables` and `Variable patterns`.
 
 ### `run` — Simulate and compare
 

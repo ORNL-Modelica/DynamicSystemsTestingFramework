@@ -3,13 +3,39 @@
 import argparse
 from pathlib import Path
 
-from ..discovery.test_registry import discover_tests
+from ..config import Config
+from ..discovery.test_registry import TestModel, discover_tests
+from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
 from .common import (
     _build_config,
     _filter_tests,
     _find_orphan_manifest_entries,
 )
+
+
+def _vars_text(test: TestModel) -> str:
+    """What a test tracks, as far as discovery knows it: the count of its
+    UnitTests variables, and its ``variables`` entries as PATTERNS — `2`,
+    `1 pattern`, `2 + 3 patterns`. A pattern names no variable until it is
+    matched against a result; counted as variables they read `0`."""
+    declared = len(unit_test_variables(test))
+    patterns = len(test.variable_patterns)
+    if not patterns:
+        return str(declared)
+    text = f"{patterns} pattern{'' if patterns == 1 else 's'}"
+    return f"{declared} + {text}" if declared else text
+
+
+def _method_text(test: TestModel, config: Config) -> str:
+    """The solver the test names, or `—` where it names none and the
+    framework's default would not be true: ``Dassl`` is what a Modelica tool
+    is handed, while FMPy maps it to its own solver and a Julia or Python
+    source has no solver setting at all."""
+    defaulted = test.field_sources.get("method") == "default"
+    if defaulted and config.source_type != "modelica":
+        return "—"
+    return str(test.method)
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
@@ -22,21 +48,26 @@ def cmd_discover(args: argparse.Namespace) -> int:
         print("No tests found.")
         return 1
 
-    # Print summary table
+    # Print summary table. Every cell is something true before any run:
+    # see `_vars_text` and `_method_text`.
     print(
-        f"{'Model ID':<90} {'Vars':>4}  {'StopTime':>10}  {'Method':<10}  {'Source':<10}"
+        f"{'Model ID':<90} {'Vars':>16}  {'StopTime':>10}  {'Method':<10}  {'Source':<10}"
     )
-    print("-" * 130)
+    print("-" * 142)
     for t in tests:
         stop = f"{t.stop_time:g}"
         print(
-            f"{t.model_id:<90} {t.n_vars:>4}  {stop:>10}  {t.method:<10}  {t.source:<10}"
+            f"{t.model_id:<90} {_vars_text(t):>16}  {stop:>10}  "
+            f"{_method_text(t, config):<10}  {t.source:<10}"
         )
 
     print(f"\nTotal: {len(tests)} tests")
 
-    total_vars = sum(t.n_vars for t in tests)
-    print(f"  Total tracked variables: {total_vars}")
+    print(f"  UnitTests variables: {sum(len(unit_test_variables(t)) for t in tests)}")
+    print(
+        f"  Variable patterns: {sum(len(t.variable_patterns) for t in tests)} "
+        f"(each is matched against its test's result after the run)"
+    )
 
     by_source = {}
     for t in tests:
