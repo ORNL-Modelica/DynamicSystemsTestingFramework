@@ -757,6 +757,32 @@ def test_the_drain_s_page_links_no_wiped_report_and_says_how_long_it_ran(
     assert f"last run: 1 test in {wall:.1f}s" in html
 
 
+def test_a_drain_of_two_tests_ran_from_the_first_start_to_the_last_end(h):
+    """The snapshot's wall time is its items': the first one's start to the
+    last one's end. With one item, as above, its start is also the last
+    start and its end the first end."""
+    h.hold(A, D)
+    first, second = h.session.enqueue([A, D])
+    h.running(A)
+    time.sleep(0.3)
+    h.release(A)
+    h.running(D)  # one worker: A has ended
+    time.sleep(0.3)
+    h.release(D)
+    h.ended(A, D)
+    assert h.session.wait_background(30)
+
+    assert first.started_at < first.ended_at <= second.started_at < second.ended_at
+    written = json.loads((h.work / "status.json").read_text(encoding="utf-8"))
+    assert [t["model_id"] for t in written["tests"]] == [A, D]
+    wall = second.ended_at - first.started_at
+    assert wall >= 0.6
+    assert written["start_wall"] == first.started_at
+    assert written["elapsed"] == pytest.approx(wall)
+    html = (h.work / "dashboard.html").read_text(encoding="utf-8")
+    assert f"last run: 2 tests in {wall:.1f}s" in html
+
+
 def test_the_drain_writes_both_its_pages_in_the_project_s_theme(tmp_path):
     """`testing.json` says dark: the dashboard a drained queue leaves is
     dark — the final page the Session renders, and the live one the
