@@ -242,7 +242,8 @@ def test_leaf_identity_rule_matches_the_parser(payload, valid):
 # 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
 #
 # Finding 72 — the exported JSON-Schema wires the per-mode ``$defs`` into
-# the leaf spec via if/then, with a lenient posture (unknown keys valid).
+# the leaf spec via if/then. Its posture was lenient (unknown keys valid)
+# until D154 closed every def the parser is strict about.
 # =========================================================================
 
 

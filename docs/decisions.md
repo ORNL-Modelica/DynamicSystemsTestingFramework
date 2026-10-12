@@ -8280,3 +8280,129 @@ the next time it is accepted, and its `nrmse` is then an average over more
 points — the score of such a test can differ from the one its thinned
 baseline gave. A project that wants its baselines stored as before sets
 `"baseline_points": 2000`.
+
+## D154 — What nothing reads is an error; an unscorable criterion is refused by the write that makes it (2026-10-12)
+
+**Context.** `test_spec.json` is written by hand as well as by the tool,
+and a key the scorer does not read was kept and ignored. A `range` leaf
+written `"max_val": 0.5` was accepted by `spec-update`, written to the
+file and scored as a range with no upper bound: PASS. The same hole took
+a point row's `tolerence`, a window's `strt`, a leaf's `agianst` (scored
+against the primary baseline), an entry's `simulaton` (a run on
+defaults), and — one level out — `{"Tests": [...]}` (a spec of no tests,
+exit 0), `"simulation": "stop_time=5"`, a `quantity` of `{"reduce":
+"max", "over": "x"}`, and a stored baseline's own override. The posture
+until then was the opposite one, on purpose: the exported schema left
+its objects open (the 2026-07-06 review's finding 72 wired the mode
+`$defs` in "with a lenient posture"), `docs/vision.md` said `spec-update`
+preserved unknown keys, and this log's Phase 6 notes count tests of
+"unknown-key preservation at every nesting level". This entry reverses
+it.
+
+**Decision.**
+
+1. *A key nothing reads is an error that names it* — `unknown field
+   "max_val" — did you mean "max_value"?`. ONE check
+   (`comparison/strict_keys.py`), and what is known is never listed in
+   it: it is read from what already says it — a metric's config dataclass
+   (its fields, and the `columns` of its row tables), the tree parser's
+   key tables, and `discovery/spec_shape.py`, the table `export-schema`
+   publishes. Checked: the file's root (`tests`, and `$schema` for an
+   editor); an entry's keys and its `simulation` / `comparison` blocks';
+   a flat override's and a leaf's; a table row's; a window's and a
+   combinator's; the keys inside a tolerance pair (`lower`, `upper`) and
+   inside the `quantity` object of a metric that declares one
+   (`reduce`); a `plots` entry's. A block that is no object where one is
+   read (`"simulation": "stop_time=5"`, `null`, `"variable_overrides":
+   [1]`, an override written `"x": "tube"`) is the same error. `tolerance`
+   is a key of every leaf and override; `quantity` on a metric that does
+   not declare it stays the one documented inert param.
+   `description` / `info` / `metadata` on an entry and on its
+   `comparison` block are the place for notes, so no other unread key has
+   to be tolerated to leave room for one.
+2. *A hint is offered only for a near miss of one field*
+   (`strict_keys.near_miss`): the same name in another case; else at most
+   two edits and at most one per three letters typed, with no other name
+   as near; else the start of exactly one name. Anything else lists the
+   fields. A wrong hint sends the reader to the wrong field: `start_time`
+   was offered `stop_time`.
+3. *Where it is refused.*
+   - **At parse** — `run`, `compare`, `discover` and `dstf author` (before
+     it serves): one `Config error: <file>: <place>: …` line, exit 2, the
+     path a malformed `metrics` tree already took.
+   - **At compare, for a stored baseline** — the `variable_overrides` a
+     reference JSON keeps are merged under the spec's, so each goes
+     through the override check when its test is compared: the same
+     `Config error`, naming the reference file.
+   - **At a file write** — `spec-update` (`Patch failed: …`, exit 1, the
+     file untouched) and the tool's Save, both through
+     `spec_update.apply_validated_patches`.
+   - **At a stage** — the tool's in-memory `Session.stage` refuses an
+     unknown key at once, with the sentence alone.
+4. *A criterion that can never be scored* — a `range` with neither bound,
+   a `scalar` with no `quantity`, a tolerance that is no number or pair —
+   has every key right and fails at every compare. The rule for it is the
+   DELTA rule, in one place (`spec_update.refuse_newly_unscorable`),
+   applied where a file is written: **a write is refused only for a
+   criterion that is unscorable after the patch and was not already
+   there, with the same content, before it.** Counted by content — the
+   metric, variable, baseline, window and params — not looked up by
+   place: a sibling's removal shifts an index, and a flat entry's implicit
+   tree being written out turns its override into a leaf, without making
+   either a new criterion. So an entry that already holds one takes every
+   other edit, the edit that fills it and the edit that removes it; two of
+   them do not block each other; a patch that adds one, or edits one and
+   leaves it unscorable, is refused. The first build refused EVERY
+   unscorable criterion of the patched entry, at every patch and every
+   stage: an entry holding one took no edit at all — not the fix — and the
+   tool could no longer add a bare `range` for its editor to fill.
+5. *The tool stages an unscorable criterion and Save refuses it.* A stage
+   is not a write: the leaf is staged, its row says why it is not scored
+   (`metric 'range' misconfigured: needs at least one of min_value /
+   max_value`), and Save refuses in the dialog its stale-file refusal
+   uses, with one sentence — `range · pipe.T[1]: needs at least one of
+   min_value / max_value — fill it or remove it before saving`
+   (`Session.save` → `UnscorableSaveError`); nothing is written and every
+   edit stays pending.
+
+**What is deliberately NOT checked.**
+
+- A flat `comparison.variable_overrides` entry under a `metrics` tree is
+  not checked for scorability: the tree replaces the overrides there, they
+  score nothing, and the tool itself leaves them beside the tree it
+  writes out. Its keys are still checked. Remove the tree and such an
+  override scores again — that patch is then the write that makes it.
+- A metric whose `config_cls` is not a dataclass, and a `metric` / `mode`
+  name nothing is registered under: nothing says what such a metric
+  reads, so nothing is refused for it here (the parser and the flat path
+  each say an unknown name themselves).
+- `quantity` on a metric that does not declare it: of any shape, read by
+  nothing, by the documented contract (`docs/extensibility.md`).
+- An unscorable criterion already in a file is not refused at parse: the
+  test is compared, and that criterion fails with its reason, as before.
+- A value an editor of the tool refuses to stage (a negative tolerance,
+  bounds out of order: `authoring/unscorable.py`) is the editor's rule and
+  not the parser's: a spec written by hand that holds one is read and
+  scored as it always was.
+- `testing.json`'s own keys are not part of this entry.
+
+**Known limits.** The exported schema closes the root, the entry, its
+blocks, every mode and override def, a table's rows, a pair and a
+scalar's `quantity`; a pair written inside a table ROW's cell is refused
+by the parser and not by the schema (a row's cells are untyped there).
+The delta rule compares content: a patch that rewrites an unscorable
+criterion into a different unscorable one is refused, and one that
+reorders the keys of an untouched one is not. A reference JSON's stored
+override with an unknown key stops the whole compare, not that test
+alone — it is a file to repair, and no accept repairs it (an accept keeps
+the stored overrides it does not replace). A non-object entry of `tests`,
+an entry with no `model`, a `variables` that is no list and a
+non-numeric `simulation` value are still warnings, as before.
+
+**Consequences.** A `test_spec.json` or a reference JSON holding a key
+nothing reads no longer loads: it is named, and the command exits 2.
+The low-level patch applier (`discovery/patch_apply.py`) still carries
+whatever an entry holds through a patch — it is `apply_validated_patches`
+above it that refuses the result. `export-schema` is as strict as the
+parser wherever it types a value, so a file that validates there is not
+stopped for a key.
