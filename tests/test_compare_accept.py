@@ -312,7 +312,7 @@ def test_compare_accept_still_refuses_a_test_whose_last_run_failed(tmp_path):
         method="Dassl",
     )
     stored, skipped = ReferenceStore(config).accept_results([test], results)
-    assert stored == 0
+    assert stored == []
     assert [m_id for m_id, _reason in skipped] == ["FakeLib.A"]
 
 
@@ -559,9 +559,10 @@ class TestAcceptRefusesPending:
         from dstf.storage.accept import accept_run_results
         from dstf.storage.reference_store import ReferenceStore
 
-        return accept_run_results(
+        stored, skipped, _warnings = accept_run_results(
             ReferenceStore(config), tests, results, config.work_dir
         )
+        return stored, skipped
 
     def test_pending_plus_running_is_refused(self, tmp_path):
         """The reviewer's case: nothing marks it failed, its .mat parses, and

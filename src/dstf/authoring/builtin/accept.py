@@ -11,8 +11,9 @@ function declines — with one exception it cannot see from here: a trajectory
 carrying NaN/Inf is refused by ``store_reference`` as it writes, and shows up
 in the write's own line instead. The button's own availability is read off
 those same rows, so an enabled Accept always has at least one baseline to
-write. The write reports one line (§4.6 amendment 1): what it stored, and
-every refusal with its reason.
+write. The write reports one line (§4.6 amendment 1): what it stored, every
+refusal with its reason, and the shared function's warning for a baseline
+file that is large (D153).
 """
 
 from __future__ import annotations
@@ -96,11 +97,19 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
     return rows
 
 
-def _report(stored: int, skipped: list[tuple[str, str]], *, reference_dir: Path) -> str:
+def _report(
+    stored: int,
+    skipped: list[tuple[str, str]],
+    warnings: list[str],
+    *,
+    reference_dir: Path,
+) -> str:
     """The one line the queue panel shows. A partial accept has no other way
-    to say which tests it refused and why."""
+    to say which tests it refused and why — or that a baseline file it
+    wrote is large, in the sentence the CLI prints."""
     parts = [f"Accept: stored {stored} baseline(s) to {reference_dir}"]
     parts += [f"; skipped {model_id}: {reason}" for model_id, reason in skipped]
+    parts += [f"; {line}" for line in warnings]
     return "".join(parts)
 
 

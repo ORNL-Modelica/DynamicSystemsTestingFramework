@@ -170,12 +170,16 @@ def _interactive_review(
                 # and to this function, and `RunOutcome.results` is keyed by
                 # exactly those models — so a model with a comparison and a
                 # result has an entry in `test_lookup`.
-                stored, skipped = accept_run_results(
+                stored, skipped, warnings = accept_run_results(
                     store, [test], {test.model_id: result}, config.work_dir
                 )
                 if stored:
                     n_vars = len(result.variables) if result.variables else 0
-                    print(f"  {GREEN}Accepted ({n_vars} variables).{RESET}\n")
+                    print(f"  {GREEN}Accepted ({n_vars} variables).{RESET}")
+                    # A large baseline file: stored, and said.
+                    for line in warnings:
+                        print(f"  {YELLOW}{line}{RESET}")
+                    print()
                     n_accepted += 1
                 else:
                     reason = (

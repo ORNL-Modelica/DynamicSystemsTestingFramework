@@ -568,6 +568,20 @@ reference with no `sampling` was stored before the key existed, when every
 baseline was thinned to at most 2000 points; it loads and scores as it always
 did. To keep storing baselines that way, set `"baseline_points": 2000`.
 
+**A large baseline is said when it is accepted.** Keeping every point of a
+very long run makes a large file. When a baseline file just written is
+larger than 5 MB, the accept says so, once per file:
+
+```
+Warning: ref_0123.json (MyLib.Examples.LongTransient) is 5.3 MB (74,167 points × 3 variables) — set "baseline_points" for this test to store fewer.
+```
+
+It is a warning: the baseline IS stored, and the exit code is what it would
+have been. `run --accept` and `compare --accept` print it under their
+`Accepted N test baselines` line, the interactive review under its
+`Accepted (…)`, and `dstf author`'s Accept carries the same sentence in its
+notice. The threshold is fixed — there is no key for it.
+
 ### Multiple named baselines
 
 A test can be scored against more than one baseline: the `primary` baseline (what the framework writes on `--accept`, stored at the flat top level of `ref_NNNN.json`) plus any number of named soft_checks, each its own file under `<reference_root>/<Backend>/<os>/soft_checks/ref_NNNN/<name>.json` — `experiment`, `analytical`, `dymola`, etc. MetricTree leaves pick which baseline to score against via `"against": "<name>"` (default is `"primary"`):

@@ -338,18 +338,18 @@ class ReferenceStore(_RolesMixin):
         self,
         tests: list[TestModel],
         results: dict[str, TestResult],
-    ) -> tuple[int, list[tuple[str, str]]]:
+    ) -> tuple[list[str], list[tuple[str, str]]]:
         """Accept simulation results as new baselines.
 
-        Returns ``(stored, skipped)`` where ``skipped`` lists
-        ``(model_id, reason)`` for tests that should have produced a
-        baseline but didn't — review 2026-07-06 finding 30: the CLI exits
-        nonzero (and says why) when an --accept run stores fewer baselines
-        than it attempted. Simulate-only tests never store a baseline by
-        design, so a successful simulate-only run is neither stored nor
-        skipped.
+        Returns ``(stored, skipped)``: the model ids whose baseline was
+        written, in the order given, and ``(model_id, reason)`` for tests
+        that should have produced a baseline but didn't — review 2026-07-06
+        finding 30: the CLI exits nonzero (and says why) when an --accept
+        run stores fewer baselines than it attempted. Simulate-only tests
+        never store a baseline by design, so a successful simulate-only run
+        is neither stored nor skipped.
         """
-        stored = 0
+        stored: list[str] = []
         skipped: list[tuple[str, str]] = []
         for test in tests:
             result = results.get(test.model_id)
@@ -370,7 +370,7 @@ class ReferenceStore(_RolesMixin):
                 skipped.append((test.model_id, str(exc)))
                 continue
             if ok:
-                stored += 1
+                stored.append(test.model_id)
             else:
                 skipped.append((test.model_id, "no tracked variables in result"))
         return stored, skipped

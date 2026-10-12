@@ -8136,6 +8136,21 @@ baseline keeps every point the simulator wrote, unless a number is given.
    <rows the run had>, "stored_points": <points stored>}`. A reference
    without it — every one stored before this — loads and scores exactly as
    before: old data is read as it is, and nothing is migrated.
+5. *A large baseline is said at accept.* When a baseline file just
+   written is larger than 5 MB (`storage.accept.LARGE_BASELINE_BYTES`, a
+   constant and not a key), the accept says so once per file:
+   `ref_0123.json (<model>) is 5.3 MB (74,167 points × 3 variables) — set
+   "baseline_points" for this test to store fewer.` It is a warning: the
+   baseline IS stored and the exit code is unchanged. The sentence is made
+   in the one accept path (`accept_run_results`, which now returns
+   `(stored, skipped, warnings)`), so `run --accept`, `compare --accept`
+   and the interactive review print it and the tool's Accept carries it in
+   its notice. It names the model beside the file: the remedy is that
+   test's key, and a file name alone does not say whose. The size is the
+   file's on disk and the counts are read back from it, only for a file
+   that is over. To tell the accept path which files it wrote,
+   `ReferenceStore.accept_results` returns the stored model ids, where it
+   returned their count.
 
 **What was measured.** On a real library of 330 tests: 11 of the 330
 baselines had been thinned by the cap; the median run has 502 rows; keeping
@@ -8158,6 +8173,13 @@ is always a row the simulator wrote. A CLI flag. A notice at compare for a
 baseline stored under another setting than the one now in effect. A check
 for a baseline that ends before its stop time. Any change to a scoring
 function.
+
+**Every path that stores a primary baseline** goes through
+`accept_run_results` and from there `ReferenceStore.accept_results` and
+`store_reference`: `run --accept`, `compare --accept`, the interactive
+review's `[a]`, and the tool's Accept (the Suite page's, the Test page's
+and the queue panel's are one capability). Soft-checks and companions are
+written by their own commands and are not thinned, as before.
 
 **Consequences.** `Config` and `TestModel` gain `baseline_points`; a
 primary reference JSON gains `sampling`. A long run's baseline is larger the next time it is

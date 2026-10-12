@@ -1,6 +1,8 @@
 """`accept_run_results`: `ReferenceStore.accept_results` plus the refusal of a
 test whose last run never reached a verdict — the guard that used to live
-only in `cmd_compare`, now the one function every accept path calls."""
+only in `cmd_compare`, now the one function every accept path calls. Its
+third value, the warning for a large baseline file, is tested in
+tests/test_baseline_points.py."""
 
 import json
 
@@ -55,9 +57,11 @@ def test_a_pending_test_is_refused_with_the_reason_and_the_rest_are_stored(tmp_p
     ]
     results = {t.model_id: _result(t.model_id) for t in tests}
 
-    stored, skipped = accept_run_results(store, tests, results, config.work_dir)
+    stored, skipped, warnings = accept_run_results(
+        store, tests, results, config.work_dir
+    )
 
-    assert stored == 1
+    assert stored == 1 and warnings == []
     assert [m for m, _ in skipped] == ["FakeLib.InFlight"]
     assert "re-run before accepting" in skipped[0][1]
     assert str(config.work_dir) in skipped[0][1]
@@ -84,27 +88,28 @@ def test_a_pending_test_outside_the_scope_is_not_refused(tmp_path):
         },
     )
     tests = [make_test_model("FakeLib.Done", variable_patterns=["x"])]
-    stored, skipped = accept_run_results(
+    assert accept_run_results(
         store, tests, {"FakeLib.Done": _result("FakeLib.Done")}, config.work_dir
-    )
-    assert (stored, skipped) == (1, [])
+    ) == (1, [], [])
 
 
 def test_no_manifest_means_no_refusal(tmp_path):
     config, store = _env(tmp_path, {})
     (config.work_dir / "batch_manifest.json").unlink()
     tests = [make_test_model("FakeLib.A", variable_patterns=["x"])]
-    stored, skipped = accept_run_results(
+    assert accept_run_results(
         store, tests, {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
-    )
-    assert (stored, skipped) == (1, [])
+    ) == (1, [], [])
 
 
 def test_store_skips_still_come_through(tmp_path):
     config, store = _env(tmp_path, {})
     tests = [make_test_model("FakeLib.A", variable_patterns=["x"])]
-    stored, skipped = accept_run_results(store, tests, {}, config.work_dir)
-    assert stored == 0 and skipped == [("FakeLib.A", "no simulation result")]
+    assert accept_run_results(store, tests, {}, config.work_dir) == (
+        0,
+        [("FakeLib.A", "no simulation result")],
+        [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +141,12 @@ def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
     ) == (
         0,
         [("FakeLib.A", "simulation failed")],
+        [],
     )
     assert accept_run_results(store, [test], {}, config.work_dir) == (
         0,
         [("FakeLib.A", "no simulation result")],
+        [],
     )
     assert store.get_reference("FakeLib.A") is None
 
@@ -147,7 +154,7 @@ def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
     test.comparison_tolerance = None
     assert accept_run_results(
         store, [test], {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
-    ) == (1, [])
+    ) == (1, [], [])
     path = _reference_file(config)
     data = json.loads(path.read_text(encoding="utf-8"))
     data["comparison"] = {"tolerance": PAIR}
@@ -159,6 +166,7 @@ def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
     ) == (
         0,
         [("FakeLib.A", "simulation failed")],
+        [],
     )
     assert path.read_bytes() == before
 
@@ -180,7 +188,7 @@ def test_an_unfinished_test_with_a_bad_base_is_listed_once(tmp_path):
     test.comparison_tolerance = PAIR
     results = {"FakeLib.InFlight": _result("FakeLib.InFlight")}
 
-    stored, skipped = accept_run_results(store, [test], results, config.work_dir)
+    stored, skipped, _ = accept_run_results(store, [test], results, config.work_dir)
 
     assert stored == 0
     assert [model_id for model_id, _ in skipped] == ["FakeLib.InFlight"]

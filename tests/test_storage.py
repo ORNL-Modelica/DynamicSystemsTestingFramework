@@ -1312,7 +1312,7 @@ class TestStoreReferenceRejectsNonFinite:
         }
         with caplog.at_level(logging.WARNING):
             stored, skipped = store.accept_results([bad, good], results)
-        assert stored == 1
+        assert stored == ["Lib.Good"]
         assert [m for m, _ in skipped] == ["Lib.Bad"]
         assert "non-finite" in skipped[0][1]
         assert store.get_reference("Lib.Good") is not None
@@ -1325,7 +1325,7 @@ class TestStoreReferenceRejectsNonFinite:
             "Lib.T2": _mk_valued_result("Lib.T2", success=False),
         }
         stored, skipped = store.accept_results([t1, t2], results)
-        assert stored == 1
+        assert stored == ["Lib.T1"]
         assert skipped == [("Lib.T2", "simulation failed")]
 
     def test_accept_results_simulate_only_not_counted_as_skip(
@@ -1335,5 +1335,5 @@ class TestStoreReferenceRejectsNonFinite:
         sim_only = _mk_test("Lib.SimOnly", simulate_only=True)
         result = TestResult(model_id="Lib.SimOnly", success=True)
         stored, skipped = store.accept_results([sim_only], {"Lib.SimOnly": result})
-        assert stored == 0
+        assert stored == []
         assert skipped == []

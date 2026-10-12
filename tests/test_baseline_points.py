@@ -1,23 +1,27 @@
 """``baseline_points`` (D153): a stored baseline keeps every point its run
 wrote unless a number is given — in ``testing.json`` for the project, on a
-``test_spec.json`` entry for one test — and its reference JSON says what was
-done under ``sampling``."""
+``test_spec.json`` entry for one test — its reference JSON says what was
+done under ``sampling``, and an accept says so when the file it wrote is
+large."""
 
 from __future__ import annotations
 
 import hashlib
 import inspect
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from conftest import make_test_model
+from dstf.authoring.session import Session
 from dstf.backends.types import TestResult, VariableResult
 from dstf.cli.main import main
 from dstf.comparison.comparator import compare_all
 from dstf.config import Config, ConfigError
 from dstf.discovery.test_registry import discover_tests, merge_tests
+from dstf.storage.accept import LARGE_BASELINE_BYTES, accept_run_results
 from dstf.storage.reference_store import ReferenceStore, _downsample
 
 M = "Lib.Run"
@@ -462,3 +466,245 @@ def test_the_key_is_written_by_hand_a_patch_may_not_touch_it(tmp_path):
 def _session_test(session, model_id):
     (test,) = [t for t in session.project.tests if t.model_id == model_id]
     return test
+
+
+# -- a large baseline is said at accept ----------------------------------------
+
+
+def _said(name: str, model_id: str, megabytes: str, points: str, variables: str) -> str:
+    return (
+        f"{name} ({model_id}) is {megabytes} MB ({points} points × {variables}) — "
+        'set "baseline_points" for this test to store fewer.'
+    )
+
+
+def _megabytes(path) -> str:
+    return f"{path.stat().st_size / 1e6:.1f}"
+
+
+def test_a_baseline_file_over_five_megabytes_is_said_and_is_stored(tmp_path):
+    """The real threshold, on a run the size of the two that prompted it:
+    75,000 rows of three variables at full precision."""
+    assert LARGE_BASELINE_BYTES == 5_000_000
+    config = _config(tmp_path)
+    rng = np.random.default_rng(153)
+    time = np.arange(75_000) / 8.0
+    big = TestResult(
+        model_id="Lib.Big",
+        success=True,
+        variables=[
+            VariableResult(index=i, time=time, values=rng.normal(size=75_000), name=n)
+            for i, n in enumerate("abc", 1)
+        ],
+    )
+    tests = [make_test_model("Lib.Big"), make_test_model(M)]
+    results = {"Lib.Big": big, M: _run(5000, EVENTS)}
+    store = ReferenceStore(config)
+
+    stored, skipped, warnings = accept_run_results(
+        store, tests, results, config.work_dir
+    )
+
+    assert (stored, skipped) == (2, [])
+    path = config.reference_dir / "ref_0001.json"
+    assert path.stat().st_size > LARGE_BASELINE_BYTES
+    assert warnings == [
+        _said("ref_0001.json", "Lib.Big", _megabytes(path), "75,000", "3 variables")
+    ]
+    assert len(store.get_reference("Lib.Big")["time"]) == 75_000  # stored whole
+
+
+def test_the_warning_is_one_per_file_over_the_threshold(tmp_path, monkeypatch):
+    """With the threshold between the files' sizes, each larger one is said
+    once — with the points its file HOLDS, not the rows its run had — and a
+    smaller one is not: a short run, and a long one its test's key thins."""
+    config = _config(tmp_path)
+    small = TestResult(
+        model_id="Lib.Small",
+        success=True,
+        variables=[
+            VariableResult(
+                index=1, time=np.arange(5.0), values=np.arange(5.0), name="i"
+            )
+        ],
+    )
+
+    def long_run(model_id: str) -> TestResult:
+        result = _run(5000, EVENTS)
+        result.model_id = model_id
+        return result
+
+    tests = [
+        make_test_model("Lib.Small"),
+        make_test_model(M),
+        make_test_model("Lib.Thin", baseline_points=2),
+        make_test_model("Lib.Half", baseline_points=500),
+    ]
+    results = {"Lib.Small": small} | {
+        model_id: long_run(model_id) for model_id in (M, "Lib.Thin", "Lib.Half")
+    }
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 5_000)
+
+    stored, skipped, warnings = accept_run_results(
+        ReferenceStore(config), tests, results, config.work_dir
+    )
+
+    assert (stored, skipped) == (4, [])
+    whole, half = (config.reference_dir / f"ref_000{n}.json" for n in (2, 4))
+    assert warnings == [
+        _said(whole.name, M, _megabytes(whole), "5,000", "2 variables"),
+        _said(half.name, "Lib.Half", _megabytes(half), "500", "2 variables"),
+    ]
+
+
+def test_a_file_exactly_at_the_threshold_is_not_said(tmp_path, monkeypatch):
+    """Larger than, not at."""
+    config = _config(tmp_path)
+    store = ReferenceStore(config)
+    test, results = make_test_model(M), {M: _run(50)}
+    accept_run_results(store, [test], results, config.work_dir)
+    (path,) = config.reference_dir.glob("ref_*.json")
+    size = path.stat().st_size
+
+    def warnings(threshold: int) -> list[str]:
+        monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", threshold)
+        return accept_run_results(store, [test], results, config.work_dir)[2]
+
+    # An accept writes the same bytes but its timestamp: the size holds.
+    assert warnings(size) == [] and path.stat().st_size == size
+    assert warnings(size - 1) == [
+        _said(path.name, M, _megabytes(path), "50", "2 variables")
+    ]
+
+
+def test_a_baseline_of_one_variable_reads_in_the_singular(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    result = _run(50)
+    del result.variables[1]
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
+    warnings = accept_run_results(
+        ReferenceStore(config), [make_test_model(M)], {M: result}, config.work_dir
+    )[2]
+    (path,) = config.reference_dir.glob("ref_*.json")
+    assert warnings == [_said(path.name, M, _megabytes(path), "50", "1 variable")]
+
+
+@pytest.fixture
+def example(tmp_path, monkeypatch):
+    """The Python example library, run once without baselines: ``dstf(...)``
+    runs a command on it, ``refs()`` lists its reference files by model."""
+    from conftest import python_example_copy
+
+    config, _ = python_example_copy(tmp_path, baselines=False)
+    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
+
+    def dstf(command: str, *extra: str) -> int:
+        return main(
+            ["--config", str(config.config_file), command]
+            + ["--work-dir", str(config.work_dir), *extra]
+        )
+
+    def refs() -> dict[str, object]:
+        paths = sorted(config.reference_dir.glob("ref_*.json"))
+        return {json.loads(p.read_text(encoding="utf-8"))["model_id"]: p for p in paths}
+
+    return SimpleNamespace(dstf=dstf, refs=refs, config=config)
+
+
+def _warning_lines(out: str) -> list[str]:
+    return [line for line in out.splitlines() if "baseline_points" in line]
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_the_cli_prints_the_warning_once_per_file_and_exits_as_before(
+    example, capsys, monkeypatch, command
+):
+    assert example.dstf("run", "--accept") == 0
+    first = capsys.readouterr().out
+    assert "Accepted 3 test baselines" in first
+    assert _warning_lines(first) == []  # three small files, the real threshold
+
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
+    assert example.dstf(command, "--accept") == 0
+    out = capsys.readouterr().out
+    assert "Accepted 3 test baselines" in out
+    refs = example.refs()
+    assert len(refs) == 3
+    assert sorted(_warning_lines(out)) == sorted(
+        "Warning: "
+        + _said(
+            path.name,
+            model_id,
+            _megabytes(path),
+            f"{len(json.loads(path.read_text(encoding='utf-8'))['time']):,}",
+            "1 variable",
+        )
+        for model_id, path in refs.items()
+    )
+
+
+def test_the_warning_does_not_hide_a_skipped_test_or_change_its_exit_code(
+    example, capsys, monkeypatch
+):
+    """Two warnings beside one skip: the accept exits 1 for the skip, as it
+    did, and names all three."""
+    assert example.dstf("run", "--accept") == 0
+    ramp = "PythonTestingLib.Examples.SimpleRamp"
+    spec = json.loads(example.config.spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == ramp:
+            entry["comparison"] = {"tolerance": {"lower": 0.1, "upper": 0.2}}
+    example.config.spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    capsys.readouterr()
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
+
+    assert example.dstf("compare", "--accept") == 1
+    out = capsys.readouterr().out
+    assert "Accepted 2 test baselines" in out
+    assert f"Skipped 1 test(s):\n  {ramp}: " in out
+    assert len(_warning_lines(out)) == 2 and ramp not in "".join(_warning_lines(out))
+
+
+def test_the_interactive_review_prints_the_warning_under_its_accept(
+    example, capsys, monkeypatch
+):
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "a")
+    assert example.dstf("run", "-i", "all") == 0
+    out = capsys.readouterr().out
+    refs = example.refs()
+    assert len(refs) == 3 and out.count("Accepted (1 variables).") == 3
+    lines = _warning_lines(out)
+    assert len(lines) == 3
+    for model_id, path in refs.items():
+        assert sum(f"{path.name} ({model_id}) is " in line for line in lines) == 1
+
+
+def test_the_tools_accept_notice_carries_the_warning(tmp_path, monkeypatch):
+    from dstf.authoring.builtin.accept import Accept
+    from dstf.authoring.session import Selection, SessionView
+    from test_session import A, B, C, _project
+
+    cfg, work = _project(tmp_path)
+    session = Session()
+    session.open(cfg, work_dir=work)
+    view = SessionView(session, Selection(tests=frozenset({A, B, C})))
+
+    session.apply(Accept().act(view))
+    assert session.notices[-1].startswith("Accept: stored 2 baseline(s) to ")
+    assert "baseline_points" not in session.notices[-1]  # two small files
+
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
+    session.apply(Accept().act(view))
+    notice = session.notices[-1]
+    reference_dir = session.project.config.reference_dir
+    said = [
+        _said(path.name, model_id, _megabytes(path), "5", "1 variable")
+        for model_id, path in (
+            (A, reference_dir / "ref_0001.json"),
+            (B, reference_dir / "ref_0004.json"),
+        )
+    ]
+    assert notice.startswith("Accept: stored 2 baseline(s) to ")
+    assert f"skipped {C}: " in notice  # the refusal is still said
+    assert notice.endswith("".join(f"; {line}" for line in said))

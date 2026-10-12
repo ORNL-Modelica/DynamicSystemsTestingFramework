@@ -54,10 +54,15 @@ def _get_backend(config, persistent: bool = False):
         sys.exit(1)
 
 
-def _report_accept(config, stored: int, skipped: list[tuple[str, str]]) -> int:
+def _report_accept(
+    config, stored: int, skipped: list[tuple[str, str]], warnings: list[str]
+) -> int:
     """Print the accept outcome; nonzero when anything was skipped (review
-    2026-07-06 finding 30: a partial accept is a failure CI must see)."""
+    2026-07-06 finding 30: a partial accept is a failure CI must see). A
+    warning — a large baseline file, which IS stored — changes no exit code."""
     print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
+    for line in warnings:
+        print(f"Warning: {line}")
     if skipped:
         print(f"Skipped {len(skipped)} test(s):")
         for model_id, reason in skipped:
@@ -201,8 +206,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             # and stale results must never become baselines.
             from ..storage.accept import accept_run_results
 
-            stored, skipped = accept_run_results(store, tests, results, config.work_dir)
-            return _report_accept(config, stored, skipped)
+            return _report_accept(
+                config, *accept_run_results(store, tests, results, config.work_dir)
+            )
         elif args.interactive is not None:
             from ..comparison.comparator import compare_all
 
@@ -360,8 +366,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
         # exits nonzero).
         from ..storage.accept import accept_run_results
 
-        stored, skipped = accept_run_results(store, tests, results, config.work_dir)
-        return _report_accept(config, stored, skipped)
+        return _report_accept(
+            config, *accept_run_results(store, tests, results, config.work_dir)
+        )
 
     comparisons = compare_all(
         tests,

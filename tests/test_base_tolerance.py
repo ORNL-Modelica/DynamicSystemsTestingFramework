@@ -479,7 +479,7 @@ def test_the_one_accept_path_refuses_only_what_the_comparison_refuses(project):
     store = ReferenceStore(project.config)
     assert accept_run_results(
         store, tests, session_results, project.config.work_dir
-    ) == (1, [])
+    ) == (1, [], [])
     stored = json.loads(project.reference(RAMP).read_text(encoding="utf-8"))
     assert stored["comparison"]["tolerance"] == 0
 

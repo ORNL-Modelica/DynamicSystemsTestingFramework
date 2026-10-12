@@ -10,7 +10,37 @@ from ..backends.types import TestResult
 from ..comparison.comparator import refused_base_tolerance
 from ..discovery.test_registry import TestModel
 from .batch_manifest import unfinished_run_models
+from .ref_index import RefIndex
 from .reference_store import ReferenceStore
+
+#: A baseline file larger than this many bytes — 5 MB — is said by the accept
+#: that wrote it (D153). A constant, not a key: the remedy it names is the key.
+LARGE_BASELINE_BYTES = 5_000_000
+
+
+def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
+    """The sentence for ``model_id``'s reference file when it is larger than
+    `LARGE_BASELINE_BYTES`, else ``None``. A warning: the baseline IS stored.
+    The size is the file's, and its counts are read back from it — only for
+    a file that is over, so an accept of small baselines reads nothing."""
+    test_id = store.index.get_id(model_id)
+    if test_id is None:
+        return None
+    ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+    try:
+        size = ref_file.stat().st_size
+    except OSError:
+        return None
+    if size <= LARGE_BASELINE_BYTES:
+        return None
+    reference = store.get_reference(model_id) or {}
+    points = len(reference.get("time", []))
+    n_vars = len(reference.get("variables", []))
+    return (
+        f"{ref_file.name} ({model_id}) is {size / 1e6:.1f} MB ({points:,} points "
+        f"× {n_vars:,} variable{'' if n_vars == 1 else 's'}) — set "
+        '"baseline_points" for this test to store fewer.'
+    )
 
 
 def accept_refusal(
@@ -33,8 +63,8 @@ def accept_run_results(
     tests: list[TestModel],
     results: dict[str, TestResult],
     work_dir: Path,
-) -> tuple[int, list[tuple[str, str]]]:
-    """:meth:`ReferenceStore.accept_results` plus two refusals.
+) -> tuple[int, list[tuple[str, str]], list[str]]:
+    """:meth:`ReferenceStore.accept_results` plus two refusals and a warning.
 
     A test the batch manifest in ``work_dir`` still records as pending was
     in flight when a run was aborted: it has no recorded verdict, and its
@@ -49,9 +79,15 @@ def accept_run_results(
     baseline written would carry — or keep — a base no comparison reads.
     Its reference file is not touched.
 
-    Returns ``(stored, skipped)`` exactly as ``accept_results`` does, with
-    the refusals appended: the refused tests in the order given, then the
-    unfinished ones in model order.
+    A baseline file just written that is larger than `LARGE_BASELINE_BYTES`
+    is said once (`large_baseline_warning`): it IS stored, and counts as
+    stored. Every accept path prints what this returns, so the CLI and the
+    tool say the same sentence.
+
+    Returns ``(stored, skipped, warnings)``: how many baselines were written;
+    ``accept_results``'s skips with the refusals appended — the refused
+    tests in the order given, then the unfinished ones in model order; and
+    one sentence per large file, in the order written.
     """
     unfinished = unfinished_run_models(work_dir) & {t.model_id for t in tests}
     refused = {
@@ -68,16 +104,24 @@ def accept_run_results(
         ],
         results,
     )
-    return stored, [
-        *skipped,
-        *refused.items(),
-        *(
-            (
-                model_id,
-                f"last run did not complete for this test (aborted or "
-                f"cancelled while it was in flight; {work_dir} records no "
-                f"verdict for it) — re-run before accepting",
-            )
-            for model_id in sorted(unfinished)
-        ),
-    ]
+    return (
+        len(stored),
+        [
+            *skipped,
+            *refused.items(),
+            *(
+                (
+                    model_id,
+                    f"last run did not complete for this test (aborted or "
+                    f"cancelled while it was in flight; {work_dir} records no "
+                    f"verdict for it) — re-run before accepting",
+                )
+                for model_id in sorted(unfinished)
+            ),
+        ],
+        [
+            warning
+            for model_id in stored
+            if (warning := large_baseline_warning(store, model_id)) is not None
+        ],
+    )
