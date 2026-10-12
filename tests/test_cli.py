@@ -2248,7 +2248,7 @@ class TestTheThreeReportsAreIndependent:
 
 _REMOVED = (
     "Removed {n} per-test report page{s} written by an earlier --report (now "
-    "stale); --report writes {them} again."
+    "stale); `compare --report` writes {them} again."
 )
 
 
@@ -2297,7 +2297,8 @@ class TestRemovedReportPagesAreSaid:
         self, scored, run_env, capsys, command
     ):
         """`--accept` returns before any report: with `--report` beside it
-        the pages are still gone, and the line still says so."""
+        the pages are still gone, and the line still says so — naming
+        `compare --report`, not the `--report` just given."""
         scored("run", "--report")
         capsys.readouterr()
         scored(command, "--accept", "--report")
@@ -2320,55 +2321,83 @@ class TestRemovedReportPagesAreSaid:
 
 
 # =========================================================================
-# A Modelica test whose stop time came from nowhere — neither test_spec.json
-# nor the model's experiment annotation — runs to the framework's default,
-# and `run` says so before it starts
+# A test whose stop time came from nowhere runs to the framework's default,
+# and `run` says so before it starts — with the reason that is true of it
 # =========================================================================
 
 
 class TestRunSaysWhenAStopTimeIsTheDefault:
-    LINE = (
+    NEITHER = (
         "{model}: neither test_spec.json nor the model's experiment annotation "
         "gives a stop time; it runs to the default, 1 s."
     )
+    NOT_FOUND = (
+        "{model}: not found under source_path, so its experiment annotation "
+        "was not read; it runs to the default, 1 s."
+    )
+    DEPENDENCY = "Modelica.Blocks.Examples.PID_Controller"
 
     @staticmethod
     def _said(out: str) -> list[str]:
-        return [ln for ln in out.splitlines() if "gives a stop time" in ln]
+        return [ln for ln in out.splitlines() if "runs to the default" in ln]
 
-    def _tests(self):
-        return [
+    def _made(self, run_env):
+        found = Path("Lib") / "T.mo"  # a model the scan or the lookup found
+        tests = [
             _mk_test(_T1, stop_time=1.0, field_sources={"stop_time": "default"}),
             # 1.0 here too, but the model said so
             _mk_test(_T2, stop_time=1.0, field_sources={"stop_time": "annotation"}),
             _mk_test("Lib.T3", stop_time=1.0, field_sources={"stop_time": "test_spec"}),
         ]
+        for t in tests:
+            t.source_file = found
+        # declared in the spec only, and not a class of this library: no file
+        tests.append(
+            _mk_test(
+                self.DEPENDENCY, stop_time=1.0, field_sources={"stop_time": "default"}
+            )
+        )
+        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
 
     def test_one_line_names_the_model_and_the_default(self, run_env, capsys):
-        tests = self._tests()
-        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
-        cmd_run(_run_args(run_env, "--no-browser"))
-        assert self._said(capsys.readouterr().out) == [self.LINE.format(model=_T1)]
+        self._made(run_env)
+        cmd_run(_run_args(run_env, "--no-browser", "--filter", "Lib.*"))
+        assert self._said(capsys.readouterr().out) == [self.NEITHER.format(model=_T1)]
+
+    def test_a_model_that_was_not_found_is_not_said_to_have_no_annotation(
+        self, run_env, capsys
+    ):
+        """`Modelica.Blocks.Examples.PID_Controller` says `StopTime=4`: its
+        file is a dependency's and was never read. The line said its
+        annotation gave no stop time."""
+        self._made(run_env)
+        cmd_run(_run_args(run_env, "--no-browser", "--filter", "Modelica.*"))
+        assert self._said(capsys.readouterr().out) == [
+            self.NOT_FOUND.format(model=self.DEPENDENCY)
+        ]
 
     def test_only_the_tests_that_run_are_named(self, run_env, capsys):
-        tests = self._tests()
-        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
+        self._made(run_env)
         cmd_run(_run_args(run_env, "--no-browser", "--filter", _T2))
         assert self._said(capsys.readouterr().out) == []
 
-    def test_a_non_modelica_source_is_not_told_about_an_annotation(
+    def test_a_non_modelica_source_is_told_too_and_not_about_an_annotation(
         self, tmp_path, capsys
     ):
         """The Python example with a `simulation` block removed: it runs to
-        the default as before, and nothing speaks of a model's annotation."""
+        the same default, and the line speaks of no model's annotation —
+        there is no such layer for it."""
         from conftest import python_example_copy
 
         config, _ = python_example_copy(tmp_path)
         spec = json.loads(config.spec_path.read_text(encoding="utf-8"))
         del spec["tests"][0]["simulation"]
+        model = spec["tests"][0]["model"]
         config.spec_path.write_text(json.dumps(spec), encoding="utf-8")
         main(
             ["--config", str(config.config_file), "run", "--no-browser"]
             + ["--work-dir", str(config.work_dir)]
         )
-        assert self._said(capsys.readouterr().out) == []
+        assert self._said(capsys.readouterr().out) == [
+            f"{model}: test_spec.json gives no stop time; it runs to the default, 1 s."
+        ]

@@ -80,27 +80,48 @@ def _browser(args: argparse.Namespace) -> bool:
 def _say_removed_pages(n: int) -> None:
     """One line for the per-test report pages a run or compare removed and
     is not writing again. The removal is intended — a stale page must not
-    survive the run that outdated it — but silent, it read as lost work."""
+    survive the run that outdated it — but silent, it read as lost work.
+    `compare --report` is what writes them again from EVERY caller: under
+    `--accept --report` and `-i … --report` the line used to say "--report
+    writes them again", of the flag that had just been given and wrote
+    none."""
     if n:
         pages, them = ("page", "it") if n == 1 else ("pages", "them")
         print(
             f"Removed {n} per-test report {pages} written by an earlier --report "
-            f"(now stale); --report writes {them} again."
+            f"(now stale); `compare --report` writes {them} again."
         )
 
 
 def _default_stop_time_notes(tests: list, config) -> list[str]:
-    """One line per Modelica test about to run to the framework's default
-    stop time because nothing gave it one: a model with no ``experiment``
-    annotation and an entry with no ``simulation.stop_time`` runs for 1 s,
-    which is rarely what its author meant. Other source types have no
-    annotation layer and are not told about one."""
-    if config.source_type != "modelica":
-        return []
+    """One line per test about to run to the framework's default stop time
+    because nothing gave it one: it runs for 1 s, which is rarely what its
+    author meant. Why nothing did is said as it is:
+
+    - a Modelica model that was found, with no ``experiment`` annotation
+      and no ``simulation.stop_time`` in its entry — neither layer gives one;
+    - a Modelica model that was NOT found under ``source_path`` (a
+      dependency's: ``Modelica.Blocks.Examples.PID_Controller``, whose
+      annotation says ``StopTime=4``) — its annotation was never read, and
+      "the model's annotation gives no stop time" was false of it;
+    - any other source type, which has no annotation layer: the entry
+      gives none. Every backend runs such a test to the same default."""
+    ran = f"it runs to the default, {DEFAULT_STOP_TIME:g} s."
+
+    def why(test) -> str:
+        if config.source_type != "modelica":
+            return "test_spec.json gives no stop time"
+        if test.source_file == Path(""):
+            return (
+                "not found under source_path, so its experiment annotation was not read"
+            )
+        return (
+            "neither test_spec.json nor the model's experiment annotation "
+            "gives a stop time"
+        )
+
     return [
-        f"{t.model_id}: neither test_spec.json nor the model's experiment "
-        f"annotation gives a stop time; it runs to the default, "
-        f"{DEFAULT_STOP_TIME:g} s."
+        f"{t.model_id}: {why(t)}; {ran}"
         for t in tests
         if t.field_sources.get("stop_time") == "default"
     ]
