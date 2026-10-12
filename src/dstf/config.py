@@ -280,19 +280,29 @@ def _looks_like_path(entry: str) -> bool:
     return bool(_WINDOWS_DRIVE_RE.match(entry))
 
 
+def dependency_is_path(entry: str) -> bool:
+    """True if a ``dependencies`` entry is SPELLED as a filesystem path: a
+    separator, a ``.mo`` suffix, or a ``.``/``~`` prefix. Every entry of a
+    resolved ``Config.dependencies`` that names a path is (a relative one
+    was made absolute); a bare library name ("Modelica") is not — the
+    backend loads it by name."""
+    return (
+        "/" in entry
+        or "\\" in entry
+        or entry.endswith(".mo")
+        or entry.startswith((".", "~"))
+    )
+
+
 def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
     """True if a ``dependencies`` entry denotes a filesystem path.
 
     review 2026-07-06 finding 17: bare library names ("Modelica") must NOT
-    be absolutized — backends load them by name. Path signals: a separator,
-    a ``.mo`` suffix, a ``.``/``~`` prefix, or an existing file/dir relative
+    be absolutized — backends load them by name. Path signals: how it is
+    spelled (:func:`dependency_is_path`), or an existing file/dir relative
     to the config file's directory.
     """
-    if "/" in entry or "\\" in entry:
-        return True
-    if entry.endswith(".mo"):
-        return True
-    if entry.startswith(".") or entry.startswith("~"):
+    if dependency_is_path(entry):
         return True
     try:
         return (base_dir / entry).exists()
