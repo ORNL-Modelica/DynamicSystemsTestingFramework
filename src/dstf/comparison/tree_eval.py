@@ -188,6 +188,30 @@ def leaf_comparisons_by_path(tree: MetricResult) -> dict[str, VariableComparison
     return out
 
 
+def advisory_comparisons(tree: MetricResult | None) -> list[VariableComparison]:
+    """The leaf comparisons under a ``warn``, in tree order — the same
+    objects :func:`collect_leaf_variables` returns. ``warn`` never fails its
+    parent, so a failure among them informs and cannot fail the test: a
+    surface that counts failures leaves these out, or calls them advisory.
+    ``[]`` for no tree.
+
+    A ``warn`` node is the one whose diagnostics carry ``warned``
+    (``WarnCombinator.combine`` always sets it, to either value)."""
+    out: list[VariableComparison] = []
+
+    def _walk(node: MetricResult, under_warn: bool) -> None:
+        if not node.children:
+            if under_warn:
+                _walk_leaves(node, out)
+            return
+        for child in node.children:
+            _walk(child, under_warn or "warned" in (node.diagnostics or {}))
+
+    if tree is not None:
+        _walk(tree, False)
+    return out
+
+
 def flatten_evaluation(
     tree: MetricResult,
     *,

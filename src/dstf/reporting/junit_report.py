@@ -5,7 +5,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from ..backends.types import label_with_name
-from ..comparison.comparator import TestComparison
+from ..comparison.comparator import TestComparison, VariableComparison
+from ..comparison.tree_eval import advisory_comparisons
 from .status import (
     FAIL,
     NO_REF,
@@ -16,6 +17,36 @@ from .status import (
     not_scored_reason,
     refusal,
 )
+
+
+def _failure_line(var: VariableComparison) -> str:
+    """One failing criterion, for a reader with no plot beside it: the
+    expression names the quantity, the name is what a criterion or a
+    --filter is written against."""
+    name = label_with_name(var.name, var.expression)
+    reason = not_scored_reason(var)
+    if reason:
+        # Sentinel leaf: the numbers are all inf/nan, so CI sees the
+        # variable's name and the reason instead of a wall of them.
+        return f"{name}: not scored — {reason}"
+    return (
+        f"{name}: "
+        f"NRMSE={var.nrmse:.6e}, "
+        f"max_abs={var.max_abs_error:.6e} at t={var.max_abs_error_time:g}, "
+        f"ref_final={var.reference_final:.6e}, "
+        f"act_final={var.actual_final:.6e}"
+    )
+
+
+def _failure_message(failed: list[str], advisory: list[str]) -> str:
+    """`1 criterion failed`, and `, with 1 advisory failure` when some
+    comparison under a `warn` failed beside it."""
+    n = len(failed)
+    text = f"{n} {'criterion' if n == 1 else 'criteria'} failed"
+    if advisory:
+        m = len(advisory)
+        text += f", with {m} advisory failure{'' if m == 1 else 's'}"
+    return text
 
 
 def generate_junit_report(
@@ -94,39 +125,32 @@ def generate_junit_report(
                     },
                 )
             elif state == FAIL:
-                msgs = []
+                # A failure under `warn` cannot fail the test: it is not
+                # counted with the ones that do, and its line says so.
+                # Each entry of `comp.variables` is one CRITERION — two
+                # leaves on one variable are two of them.
+                advisory_ids = {id(v) for v in advisory_comparisons(comp.metric_tree)}
+                failed: list[str] = []
+                advisory: list[str] = []
                 for var in comp.variables:
-                    if not var.passed:
-                        # CI reads this line without a plot beside it: the
-                        # expression names the quantity, the name is what a
-                        # criterion or a --filter is written against.
-                        name = label_with_name(var.name, var.expression)
-                        reason = not_scored_reason(var)
-                        if reason:
-                            # Sentinel leaf: the numbers are all inf/nan, so
-                            # CI sees the variable's name and the reason
-                            # instead of a wall of them.
-                            msgs.append(f"{name}: not scored — {reason}")
-                            continue
-                        msgs.append(
-                            f"{name}: "
-                            f"NRMSE={var.nrmse:.6e}, "
-                            f"max_abs={var.max_abs_error:.6e} at t={var.max_abs_error_time:g}, "
-                            f"ref_final={var.reference_final:.6e}, "
-                            f"act_final={var.actual_final:.6e}"
-                        )
-                # A test the comparison refused has no failing variable to
+                    if var.passed:
+                        continue
+                    if id(var) in advisory_ids:
+                        advisory.append(f"advisory — {_failure_line(var)}")
+                    else:
+                        failed.append(_failure_line(var))
+                # A test the comparison refused has no failing criterion to
                 # count: its reason is the message and the body.
                 refused = refusal(comp)
                 fail = ET.SubElement(
                     tc,
                     "failure",
                     {
-                        "message": refused or f"{len(msgs)} variable(s) failed",
+                        "message": refused or _failure_message(failed, advisory),
                         "type": "RegressionFailure",
                     },
                 )
-                fail.text = refused or "\n".join(msgs)
+                fail.text = refused or "\n".join(failed + advisory)
 
         total_tests += n_tests
         total_failures += n_failures

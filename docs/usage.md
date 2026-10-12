@@ -1990,6 +1990,12 @@ uv run dstf --config testing.json run --report-format junit
 uv run dstf --config testing.json run --report-format html --output report.html
 ```
 
+A failed testcase's `<failure message>` counts the criteria that failed
+(`2 criteria failed`), one line each in the body. A failure under a `warn`
+cannot fail the test and is not one of them: the message names it beside them
+(`1 criterion failed, with 1 advisory failure`) and its line starts
+`advisory —`.
+
 ---
 
 ## Reference file structure

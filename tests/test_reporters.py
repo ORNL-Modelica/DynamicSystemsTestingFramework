@@ -157,6 +157,41 @@ def _warned(model_id="Lib.Examples.E"):
     )
 
 
+def _scored(tree: dict) -> TestComparison:
+    """A real comparison of one variable, `x`, off its baseline by 0.005,
+    scored by `tree`."""
+    import numpy as np
+
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.comparator import compare_test
+    from dstf.comparison.tree_spec import parse_metric_tree
+    from dstf.discovery.test_registry import TestModel
+
+    t = np.array([0.0, 0.5, 1.0])
+    values = np.array([1.0, 2.0, 3.0])
+    test = TestModel(
+        model_id="Lib.Examples.T",
+        source_file=Path(""),
+        source_package="Lib.Examples",
+        short_name="T",
+        n_vars=0,
+        source="spec",
+        variable_patterns=["x"],
+        metric_tree_spec=parse_metric_tree(tree),
+    )
+    result = TestResult(
+        model_id=test.model_id,
+        success=True,
+        variables=[VariableResult(index=1, name="x", time=t, values=values + 0.005)],
+    )
+    reference = {
+        "test_id": "0001",
+        "time": t.tolist(),
+        "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
+    }
+    return compare_test(test, result, reference, 1e-4)
+
+
 def _stated(model_id="Lib.Examples.S"):
     """A warning that states something about this run, beside one that
     reports a change from the baseline."""
@@ -280,6 +315,64 @@ class TestJUnitReport:
         assert "h:" in failure.text
         assert "NRMSE=" in failure.text
 
+    def test_an_advisory_failure_is_not_counted_as_a_failure(self, tmp_path):
+        """One criterion failed and one comparison under `warn` differed:
+        the message counts the one that fails the test, and the body calls
+        the other advisory. It read "2 variable(s) failed" — of one
+        variable, one of whose two criteria cannot fail anything."""
+        comp = _scored(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x", "tolerance": 1e-8}
+                        ],
+                    },
+                    {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+                ],
+            }
+        )
+        assert not comp.passed and [v.passed for v in comp.variables] == [
+            False,
+            False,
+            True,
+        ]
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "1 criterion failed, with 1 advisory failure"
+        failing, advisory = failure.text.splitlines()
+        assert failing.startswith("x: NRMSE=")
+        assert advisory.startswith("advisory — x: NRMSE=")
+
+    def test_the_message_counts_criteria(self, tmp_path):
+        """Two failing criteria on one variable are two criteria — and no
+        advisory clause where nothing advisory failed."""
+        comp = _scored(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-8},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x", "tolerance": 10.0}
+                        ],
+                    },
+                ],
+            }
+        )
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "2 criteria failed"
+        assert len(failure.text.splitlines()) == 2
+        assert "advisory" not in failure.text
+
     def test_config_error_failure_names_the_reason(self, tmp_path):
         """A sentinel leaf's reason reaches CI, not a wall of inf/nan."""
         out = tmp_path / "junit.xml"
@@ -309,7 +402,7 @@ class TestJUnitReport:
         out = tmp_path / "junit.xml"
         generate_junit_report([_failing()], out)
         failure = ET.parse(out).getroot().find(".//failure")
-        assert failure.get("message") == "1 variable(s) failed"
+        assert failure.get("message") == "1 criterion failed"
 
     def test_sim_failure_becomes_error_element(self, tmp_path):
         out = tmp_path / "junit.xml"
