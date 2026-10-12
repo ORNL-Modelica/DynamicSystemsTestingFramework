@@ -709,6 +709,109 @@ def test_a_block_that_is_no_object_is_a_config_error(entry, sentence):
     assert _config_error(entry) == f"test_spec.json: {sentence}"
 
 
+def _leaf(**params) -> dict:
+    return {"metric": "nrmse", "variable": "x", **params}
+
+
+@pytest.mark.parametrize(
+    "entry,sentence",
+    [
+        (
+            {"model": "L.M", "metrics": None},
+            "tests[L.M].metrics: must be an object, got null",
+        ),
+        (
+            {"model": "L.M", "metrics": "and"},
+            'tests[L.M].metrics: must be an object, got "and"',
+        ),
+        (
+            {"model": "L.M", "metrics": {"combinator": "and", "children": [None]}},
+            "tests[L.M].metrics.children[0]: must be an object, got null",
+        ),
+        (
+            {"model": "L.M", "metrics": _leaf(window=None)},
+            "tests[L.M].metrics.window: nrmse · x: window: must be an object "
+            "with start / end, got null",
+        ),
+        (
+            {"model": "L.M", "metrics": _leaf(window="0-5")},
+            "tests[L.M].metrics.window: nrmse · x: window: must be an object "
+            'with start / end, got "0-5"',
+        ),
+        (
+            {"model": "L.M", "metrics": _leaf(window={"start": None})},
+            "tests[L.M].metrics.window: nrmse · x: window: start must be a "
+            "number, got null",
+        ),
+        (
+            {"model": "L.M", "metrics": _leaf(window={"start": 0, "end": "5"})},
+            "tests[L.M].metrics.window: nrmse · x: window: end must be a "
+            'number, got "5"',
+        ),
+        (
+            {"model": "L.M", "metrics": _leaf(window={"start": True})},
+            "tests[L.M].metrics.window: nrmse · x: window: start must be a "
+            "number, got true",
+        ),
+        (
+            {"model": "L.M", "metrics": _leaf(window={"end": float("nan")})},
+            "tests[L.M].metrics.window: nrmse · x: window: end must be a "
+            "number, got NaN",
+        ),
+    ],
+    ids=[
+        "metrics-null",
+        "metrics-a-string",
+        "a-child-null",
+        "window-null",
+        "window-a-string",
+        "start-null",
+        "end-a-string",
+        "start-true",
+        "end-nan",
+    ],
+)
+def test_a_tree_or_a_window_that_is_no_object_is_a_config_error(entry, sentence):
+    """`"metrics": null` was a test scored by the flat path and `"window":
+    null` a leaf with no window — while the exported schema refuses both;
+    `"start": null` was a traceback. Absent is the only "not set"."""
+    assert _config_error(entry) == f"test_spec.json: {sentence}"
+
+
+def test_a_window_as_it_is_read_is_taken():
+    (test,) = _load({"model": "L.M", "metrics": _leaf(window={"start": 1, "end": 2.5})})
+    leaf = test.metric_tree_spec
+    assert (leaf.window_start, leaf.window_end) == (1.0, 2.5)
+    (test,) = _load({"model": "L.M", "metrics": _leaf(window={})})
+    assert test.metric_tree_spec.window_start is None
+
+
+def test_spec_update_refuses_to_write_a_null_tree(example, tmp_path, capsys):
+    """It was written, and the entry then scored by the flat path."""
+    spec = example.parent / "test_spec.json"
+    before = spec.read_bytes()
+    patch = tmp_path / "patch.json"
+    patch.write_text(
+        json.dumps(
+            {
+                "patches": [
+                    {
+                        "model": FLAT,
+                        "patch": [{"op": "add", "path": "/metrics", "value": None}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(["--config", str(example), "spec-update", str(patch)]) == 1
+    assert capsys.readouterr().out.strip() == (
+        "Patch failed: patched metric tree is invalid: metrics: must be an "
+        "object, got null"
+    )
+    assert spec.read_bytes() == before
+
+
 def _scalar(**params) -> dict:
     return {"metric": "scalar", "variable": "x", **params}
 

@@ -8484,7 +8484,12 @@ it.
    inside the `quantity` object of a metric that declares one
    (`reduce`); a `plots` entry's. A block that is no object where one is
    read (`"simulation": "stop_time=5"`, `null`, `"variable_overrides":
-   [1]`, an override written `"x": "tube"`) is the same error. `tolerance`
+   [1]`, an override written `"x": "tube"`) is the same error — `metrics`
+   and a leaf's `window` among them: `"metrics": null` was a test scored
+   by the flat path and `"window": null` a leaf with no window, both
+   refused by the exported schema, and `spec-update` wrote the first. A
+   window's `start` / `end` is a number or is left out (`null` there was
+   a `TypeError` out of the parser). `tolerance`
    is a key of every leaf and override; `quantity` on a metric that does
    not declare it stays the one documented inert param.
    `description` / `info` / `metadata` on an entry and on its

@@ -120,9 +120,11 @@ def materialize_implicit_metrics(
 
 def has_metrics(entry: dict | None) -> bool:
     """Whether ``entry`` has a ``metrics`` tree of its own. ``"metrics":
-    null`` is none: spec_parser scores such an entry by the flat path, so
-    every "has it a tree" question — here and in the authoring Session —
-    asks this, and none tests the key."""
+    null`` is none — and is no entry a file may hold: the parser refuses it,
+    and so does every write (:func:`validate_entry_metric_tree`). Every "has
+    it a tree" question — here and in the authoring Session — asks this,
+    and none tests the key: it is asked of a patched entry before that
+    entry is checked."""
     return entry is not None and entry.get("metrics") is not None
 
 
@@ -144,12 +146,14 @@ def needs_materialization(entry: dict | None, patch: Sequence[dict]) -> bool:
 def validate_entry_metric_tree(
     data: dict, model_id: str, config: Config, store: ReferenceStore | None = None
 ) -> None:
-    """When the patched entry has a ``metrics`` tree, run the D66 validator
-    against the reference store's baseline roles. Skipped when the entry has
-    no tree (implicit AND). ``store`` saves the caller that already holds one
-    (the Session) a rescan of the whole partition per call."""
+    """When the patched entry has a ``metrics`` key, parse it as the spec
+    parser does — a ``null`` there is refused, like any other value that is
+    no tree — and run the D66 validator against the reference store's
+    baseline roles. Skipped when the entry has no such key (implicit AND).
+    ``store`` saves the caller that already holds one (the Session) a
+    rescan of the whole partition per call."""
     entry = spec_entry(data, model_id)
-    if entry is None or not has_metrics(entry):
+    if entry is None or "metrics" not in entry:
         return
 
     from ..comparison.tree_spec import MetricSpecError, parse_metric_tree

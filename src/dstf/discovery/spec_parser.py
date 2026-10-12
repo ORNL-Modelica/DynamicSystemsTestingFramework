@@ -435,13 +435,12 @@ def spec_models_from_document(
         # Phase 3.2: optional MetricTree spec. Parse-only — Phase 3.3 wires
         # it into compare_test. Errors here are raised so a malformed spec
         # is loud at discovery, not silently ignored at compare time.
-        metrics_raw = entry.get("metrics")
-        if metrics_raw is not None:
+        if "metrics" in entry:  # null is refused: absent is the only "no tree"
             from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
 
             try:
                 test.metric_tree_spec = parse_metric_tree(
-                    metrics_raw,
+                    entry["metrics"],
                     _path=f"tests[{model_id}].metrics",
                 )
             except MetricSpecError as e:

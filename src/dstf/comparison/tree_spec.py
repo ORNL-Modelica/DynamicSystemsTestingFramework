@@ -23,11 +23,13 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
+from .sides import _as_json
 from .strict_keys import unknown_field, unread_param
 
 #: The keys the parser itself reads off a leaf; every other key of a leaf
@@ -458,7 +460,8 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
     or semantic problem (unknown combinator, missing field, wrong type).
     """
     if not isinstance(raw, dict):
-        raise MetricSpecError(_path, f"expected an object, got {type(raw).__name__}")
+        # `null` too: an absent `metrics` is the only "no tree".
+        raise MetricSpecError(_path, f"must be an object, got {_as_json(raw)}")
 
     has_combinator = "combinator" in raw
     has_metric = "metric" in raw
@@ -624,23 +627,34 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
     # composes uniformly with the window.
     window_start: float | None = None
     window_end: float | None = None
-    window_raw = raw.get("window")
-    if window_raw is not None:
+    # Absent is the only "no window": `"window": null` was taken for one,
+    # and `"start": null` was a TypeError out of the parser — the exported
+    # schema refuses both.
+    if "window" in raw:
+        window_raw = raw["window"]
+
+        def refused(problem: str) -> MetricSpecError:
+            return MetricSpecError(
+                f"{path}.window", f"{metric_name} · {variable}: window: {problem}"
+            )
+
         if not isinstance(window_raw, dict):
-            raise MetricSpecError(
-                f"{path}.window",
-                f"expected an object with 'start'/'end', "
-                f"got {type(window_raw).__name__}",
+            raise refused(
+                f"must be an object with start / end, got {_as_json(window_raw)}"
             )
         problem = unknown_field(window_raw, _WINDOW_KEYS)
         if problem is not None:
-            raise MetricSpecError(
-                f"{path}.window", f"{metric_name} · {variable}: window: {problem}"
-            )
-        if "start" in window_raw:
-            window_start = float(window_raw["start"])
-        if "end" in window_raw:
-            window_end = float(window_raw["end"])
+            raise refused(problem)
+        ends: dict[str, float] = {}
+        for end, value in window_raw.items():
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise refused(f"{end} must be a number, got {_as_json(value)}")
+            ends[end] = float(value)
+        window_start, window_end = ends.get("start"), ends.get("end")
         if (
             window_start is not None
             and window_end is not None

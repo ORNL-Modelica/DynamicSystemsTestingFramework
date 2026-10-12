@@ -108,7 +108,7 @@ class TestWindowParsing:
             )
 
     def test_window_not_dict_rejected(self):
-        with pytest.raises(MetricSpecError, match="expected an object"):
+        with pytest.raises(MetricSpecError, match="must be an object with start / end"):
             parse_metric_tree(
                 {
                     "metric": "nrmse",

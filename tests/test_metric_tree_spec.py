@@ -284,7 +284,7 @@ class TestNesting:
 
 class TestShape:
     def test_root_must_be_dict(self):
-        with pytest.raises(MetricSpecError, match="expected an object"):
+        with pytest.raises(MetricSpecError, match=r"must be an object, got \[\]"):
             parse_metric_tree([])  # type: ignore[arg-type]
 
     def test_node_with_both_combinator_and_metric_rejected(self):
