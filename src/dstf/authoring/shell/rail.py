@@ -530,8 +530,8 @@ class Rail:
         """Show ``kind``'s panel and hide the other; None closes both. The
         drawer widens to hold the panel, which is what narrows the plots.
         The Variables drawer is built again only when it was not the one
-        open: an open one follows the page by `refresh`, and Add series
-        (a select, then this) built it twice."""
+        open: an open one follows the page by `refresh`, and building it on
+        a select and again here built it twice."""
         was = self.page.state.drawer
         for name, panel in self.panels.items():
             panel.set_visibility(name == kind)

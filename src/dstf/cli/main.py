@@ -387,12 +387,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_spec_update = subparsers.add_parser(
         "spec-update",
         parents=[global_parent],
-        help="Update comparison tolerances in test_spec.json from a JSON file",
+        help="Apply a JSON-Patch envelope to test_spec.json",
     )
     p_spec_update.add_argument(
         "json_file",
         type=str,
-        help="Path to JSON file with tolerance settings (e.g., from interactive report export)",
+        help="Path to the patch envelope (e.g. spec_patch.json from dstf author's Export)",
     )
 
     # companion — manage plot-only overlays (D66 baseline-role split)

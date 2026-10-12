@@ -182,7 +182,6 @@ Typical location (Windows):
 Fix one of:
   1. Pass --dymola-interface <path-to-archive-or-dir>
   2. Set environment variable DYMOLA_INTERFACE_PATH
-  3. Add "dymola_interface_path" to testing.json
 """
 
 

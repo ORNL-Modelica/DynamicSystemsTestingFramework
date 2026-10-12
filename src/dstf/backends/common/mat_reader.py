@@ -469,7 +469,7 @@ def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
     finish. This is the verdict's reading; :func:`read_result_mat` is the
     one that shows what is there.
 
-    Bypasses the full variable-iteration in read_dymola_mat — Dymola stores
+    Bypasses the full variable-iteration in read_result_mat — Dymola stores
     time as row 0 of data_2, so we only need two values from disk.
     """
     try:

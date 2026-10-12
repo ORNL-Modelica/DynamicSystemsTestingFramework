@@ -248,7 +248,6 @@ def cmd_check_dymola(args: argparse.Namespace) -> int:
     print("\nFAIL — fix one of:")
     print("  1. Pass --dymola-interface <path>")
     print("  2. Set DYMOLA_INTERFACE_PATH env var")
-    print("  3. Add 'dymola_interface_path' to testing.json")
     return 1
 
 

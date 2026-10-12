@@ -268,7 +268,7 @@ class ProgressReporter:
         command that ends the run renders the final page: with the
         comparisons it holds (``run``, ``run -i``, ``compare``), or
         without them when it scores nothing (``run --accept``, an aborted
-        run, the tool's Rerun). Nothing this reporter hears after it is
+        run, the tool's queue as it drains). Nothing this reporter hears after it is
         written.
         """
         self._write(closing=True)

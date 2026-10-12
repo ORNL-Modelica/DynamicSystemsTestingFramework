@@ -155,7 +155,6 @@ class QueuePanel:
                 )
                 with self.workers:
                     ui.tooltip(WORKERS_HINT)
-                self.workers_note = ui.label().classes("dstf-why").mark("queue-note")
                 self.clear = (
                     ui.button("Clear finished", on_click=self._clear)
                     .props("flat dense no-caps")
@@ -249,9 +248,6 @@ class QueuePanel:
         self.workers.set_enabled(project is not None)
         if project is not None and self.workers.value != session.workers:
             self.workers.set_value(session.workers)
-        self.workers_note.set_text(
-            f"of {project.config.parallel} in testing.json" if project else ""
-        )
         ended = any(r.state not in (ItemState.WAITING, ItemState.RUNNING) for r in rows)
         self.clear.set_visibility(ended or stopped is not None)
         self.error.set_text(stopped or "")

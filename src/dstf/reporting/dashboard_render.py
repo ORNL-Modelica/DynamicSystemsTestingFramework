@@ -13,7 +13,7 @@ comment in `templates/dashboard.js`. Between reloads a 1s JS timer
 ticks the elapsed counters so they don't look frozen.
 
 Final mode is rendered by the command that ends a run (cli.cmd_run /
-cmd_compare, the tool's Rerun); it drops the refresh meta tag (the page
+cmd_compare, the tool's queue as it drains); it drops the refresh meta tag (the page
 becomes static) and adds each test's verdict and numbers (from the
 comparisons the caller holds), per-test report links + post-run columns
 (worst score, warnings, translate/sim/total wall times) from the
@@ -286,7 +286,7 @@ def build_dashboard_context(
     the last run's scope, which each run rewrites — then every other test
     the caller holds a comparison for, in ``batch_manifest.json``'s order,
     then by model id (D136's amendment: ``compare`` after a ``--filter``
-    run, a ``--merge`` and the tool's Rerun list every test they
+    run, a ``--merge`` and the tool's queue list every test they
     scored). Such a row takes its key and baseline from the manifest.
     A row whose result the caller holds (``results``, by model id) takes
     its CPU time from it: Sim (s) shows that, marked, where no wall time

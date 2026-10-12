@@ -363,7 +363,6 @@ async def test_the_workers_field_sets_the_session_s_workers(shell):
         await _open(user)
         panel = _suite(shell, user).queue
         assert panel.workers.value == shell.session.workers == 1
-        assert _one(user, "queue-note").text == "of 1 in testing.json"
 
         panel.workers.set_value(2)
         shell.tick()
