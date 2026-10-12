@@ -1933,3 +1933,29 @@ planning.
   at the plot's own edge are drawn in the margin by a stylesheet rule that
   needs CSS `:has` (D147's limits), which a pinned range with a margin
   would not.
+
+- **How many points a baseline keeps is nobody's decision yet (owner,
+  2026-10-11)**: a stored baseline is thinned to at most 2000 points
+  (`storage/reference_store.py::_downsample`, `max_points=2000`), a default
+  that has stood since the first upload and has no `testing.json` key. It is
+  more than a file-size setting: scoring reads the run AT the baseline's time
+  points, so the cap is also the resolution at which a regression can be
+  seen. The owner's point: plenty of simulations want what the simulator
+  wrote, not a thinned copy. The small form is a `testing.json` key (default
+  2000, with a value that means "keep every sample") read where a baseline
+  is stored; the questions to settle first are what the default should be,
+  whether it can be set per test, and what a baseline stored at one setting
+  means when the run is later compared at another. Found beside it: two
+  baselines stored before the 2026-07-06 tail fix still end short of their
+  stop time, so the end of those runs is compared against nothing until they
+  are accepted again — a baseline whose last time is earlier than its
+  recorded stop time could be reported by `manifest dump` or on compare.
+
+- **Small things the release gates saw and left (2026-10-11)**: a cancelled
+  run's "stopped at t = …" note is anchored in the legend's band and can
+  overprint a legend entry; a cancelled test's Suite row says "No simulation
+  results found" under the status CANCELLED while its page says where it was
+  cancelled; after a plain `compare`, a test with no result can still link to
+  a report page left by an earlier `--report`; a failed run's own sentence
+  ("exceeded 6.0 s") does not survive a restart, only its recorded verdict
+  does — keeping it means one more stored field per run.
