@@ -6,6 +6,8 @@ Regression and unit testing for time-dependent system behavior. Discovers tests,
 
 Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across backends without ref drift.
 
+Criteria are written in **`dstf author`**, a local browser tool over the same figures the report draws: edit a criterion beside the plot it scores — drag a handle, or Ctrl+click to add a row that settles on the data — give a tolerance a lower and an upper side, put one criterion on many elements of an array, queue tests on simulator workers that stay alive, and watch a running test's trace as Dymola or OpenModelica writes it. A default and a dark theme cover the tool, the dashboard and the report pages.
+
 ![DSTF dashboard](docs/img/dashboard.png)
 
 *The unified dashboard — live progress during a run, a static report after. Each report is stamped with the backend, tool + MSL version, and OS that produced it; the table gives per-test verdicts, worst-NRMSE, and phase timing.*
@@ -36,7 +38,18 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
 
   Combinators: `and`, `or`, `k-of-n`, `warn` (relax to advisory), `weighted`. Leaves can scope to a time window and target named baselines (`primary`, soft-checks, companions).
 
-- **Read-only reports** — per-test Plotly HTML drawn from figures Python built: the trajectory with its criterion geometry (tube band, range bounds, point boxes, event windows, FFT spectrum), overlay picker, error overlays, and the metric tree with the CLI's verdict and score text per leaf. Plus a live dashboard during runs and JUnit XML for CI. Authoring criteria is a separate Python-side tool (in progress) — the report shows, the CLI decides.
+- **Read-only reports** — per-test Plotly HTML drawn from figures Python built: the trajectory with its criterion geometry (tube band, range bounds, point boxes, event windows, FFT spectrum), overlay picker, error overlays, and the metric tree with the CLI's verdict and score text per leaf. Plus a live dashboard during runs and JUnit XML for CI. The report shows, the CLI decides.
+
+- **An authoring tool** — `dstf author` (the `[author]` extra) serves a Suite page and a Test page on `127.0.0.1`. Criteria are edited inline under the plot they score, staged, and written to `test_spec.json` on Save:
+
+  | Feature | What it does |
+  |---|---|
+  | Two-sided tolerance | A tolerance is one number or `{"lower": a, "upper": b}`; on the plot, an arrow outside each side sets it |
+  | On-plot editing | Drag a ring, an arrow or a bound line; Ctrl+click adds a row that settles on the data; a field's ⌖ arms it for the next click; a placed value is snapped to a readable step |
+  | Simulation queue | Queue the selected tests: first in, first out, on workers that stay alive between runs; Remove a waiting test, Cancel a running one |
+  | Live results | A running test's trace is drawn as Dymola or OpenModelica writes its result file; a cancelled or timed-out run is shown, never scored or accepted |
+  | Criteria over an array | One criterion on the elements `1:5:20` of an array; identical criteria fold into one row, edited as one |
+  | Themes | `"theme": "dark"` in `testing.json` for the dashboard, the report pages and the tool; the tool's ⋮ menu switches a browser tab live |
 
 - **Three baseline roles** per test, partitioned on disk: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
 
@@ -54,7 +67,7 @@ Developers:
 
 ```bash
 uv sync --extra dev --locked                             # core + pytest, from uv.lock
-uv sync --extra dev --extra fmpy --extra om --locked     # plus FMPy + OpenModelica extras
+uv sync --extra dev --extra author --extra fmpy --extra om --locked   # plus the authoring tool, FMPy + OpenModelica extras
 uv run dstf --help
 ```
 
@@ -99,15 +112,15 @@ What this does:
 To see the interactive HTML reporter:
 
 ```bash
-uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --report ./reports
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --report
 ```
 
-The dashboard URL is printed when a parallel run starts (`--parallel N`); auto-refreshes every 2s.
+The dashboard URL is printed as a run starts (`Live progress: file://…`); the page reloads itself every 5s during the run. `--report` writes the per-test pages under `<work_dir>/reports/`.
 
 To repeat with another backend's demo library, swap the config path:
 
 ```bash
-# OpenModelica or Dymola, depending on which binaries the demo finds
+# Julia/MTK, Python, and prebuilt FMUs through FMPy
 uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
 uv run dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
 uv run dstf --config examples/fmu/testing.json run    # needs reference-fmus-binaries/
@@ -149,8 +162,8 @@ uv run dstf --config testing.json run -i failed
 uv run dstf --config testing.json run --filter "Foo.A,Foo.B"
 uv run dstf --config testing.json run --filter @rerun.txt
 
-# Parallel + small-batch dispatch + interactive HTML report
-uv run dstf --config testing.json run --parallel 4 --batch-size 3 --report ./reports
+# Parallel + interactive HTML report (--batch-size N splits a Dymola --batch run into small batches)
+uv run dstf --config testing.json run --parallel 4 --report
 
 # Rerun only previously-failed tests, merge with last full run, regen report
 uv run dstf --config testing.json run --rerun failed,sim-failed --merge --report
@@ -168,7 +181,7 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # Manage the other baseline roles
 uv run dstf --config testing.json companion add <model> <name> <path>
 uv run dstf --config testing.json soft-check list <model>
-uv run dstf --config testing.json import-baseline <model> <role> <name> <source>
+uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only
 
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
@@ -204,8 +217,8 @@ uv run dstf check-dymola
     path: test-results.xml
 ```
 
-For HTML reports as build artifacts, also pass `--report ./reports` and upload the `reports/` directory.
+For HTML reports as build artifacts, also pass `--report` and upload `dashboard.html` and the `reports/` directory from the work dir (`--work-dir` sets it).
 
 ## Status
 
-5 backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The report is read-only and mutates nothing: every number it draws comes from a figure Python built or a string the server rendered. Criteria authoring is moving to a Python-side tool driven by the same figures.
+v1.0. 5 backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset drives the report pages and the authoring tool in a real browser). The report is read-only and mutates nothing: every number it draws comes from a figure Python built or a string the server rendered. Criteria are authored in `dstf author`, driven by the same figures and the same scorer as the CLI. Nothing is published to PyPI yet.
