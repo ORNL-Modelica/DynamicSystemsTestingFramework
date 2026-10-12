@@ -718,6 +718,12 @@ def _megabytes(path) -> str:
     return f"{path.stat().st_size / 1e6:.1f}"
 
 
+def _tracking_all(model_id: str, **fields):
+    """A test that tracks every variable of its result: an accept stores no
+    baseline for one that tracks none of them (nothing would be scored)."""
+    return make_test_model(model_id, variable_patterns=["*"], **fields)
+
+
 def test_a_baseline_file_over_five_megabytes_is_said_and_is_stored(tmp_path):
     """The real threshold, on a run the size of the two that prompted it:
     75,000 rows of three variables at full precision."""
@@ -733,7 +739,7 @@ def test_a_baseline_file_over_five_megabytes_is_said_and_is_stored(tmp_path):
             for i, n in enumerate("abc", 1)
         ],
     )
-    tests = [make_test_model("Lib.Big"), make_test_model(M)]
+    tests = [_tracking_all("Lib.Big"), _tracking_all(M)]
     results = {"Lib.Big": big, M: _run(5000, EVENTS)}
     store = ReferenceStore(config)
 
@@ -771,10 +777,10 @@ def test_the_warning_is_one_per_file_over_the_threshold(tmp_path, monkeypatch):
         return result
 
     tests = [
-        make_test_model("Lib.Small"),
-        make_test_model(M),
-        make_test_model("Lib.Thin", baseline_points=2),
-        make_test_model("Lib.Half", baseline_points=500),
+        _tracking_all("Lib.Small"),
+        _tracking_all(M),
+        _tracking_all("Lib.Thin", baseline_points=2),
+        _tracking_all("Lib.Half", baseline_points=500),
     ]
     results = {"Lib.Small": small} | {
         model_id: long_run(model_id) for model_id in (M, "Lib.Thin", "Lib.Half")
@@ -797,7 +803,7 @@ def test_a_file_exactly_at_the_threshold_is_not_said(tmp_path, monkeypatch):
     """Larger than, not at."""
     config = _config(tmp_path)
     store = ReferenceStore(config)
-    test, results = make_test_model(M), {M: _run(50)}
+    test, results = _tracking_all(M), {M: _run(50)}
     accept_run_results(store, [test], results, config.work_dir)
     (path,) = config.reference_dir.glob("ref_*.json")
     size = path.stat().st_size
@@ -819,7 +825,7 @@ def test_a_baseline_of_one_variable_reads_in_the_singular(tmp_path, monkeypatch)
     del result.variables[1]
     monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
     warnings = accept_run_results(
-        ReferenceStore(config), [make_test_model(M)], {M: result}, config.work_dir
+        ReferenceStore(config), [_tracking_all(M)], {M: result}, config.work_dir
     )[2]
     (path,) = config.reference_dir.glob("ref_*.json")
     assert warnings == [_said(path.name, M, _megabytes(path), "50", "1 variable")]
