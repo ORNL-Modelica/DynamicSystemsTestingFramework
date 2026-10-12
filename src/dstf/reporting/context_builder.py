@@ -74,9 +74,7 @@ def worst_nrmse(comparisons: list) -> tuple[float | None, int]:
     say that criteria went unscored.
     """
     scored = [
-        vc.nrmse
-        for vc in comparisons
-        if vc.mode == "nrmse" and math.isfinite(vc.nrmse)
+        vc.nrmse for vc in comparisons if vc.mode == "nrmse" and math.isfinite(vc.nrmse)
     ]
     n_unscored = sum(1 for vc in comparisons if not math.isfinite(vc.nrmse))
     return (max(scored) if scored else None, n_unscored)
