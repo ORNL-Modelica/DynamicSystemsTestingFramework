@@ -1621,7 +1621,10 @@ selected plot as context series or takes them off (the plot's own variable is
 checked and grey), "+ new plot" makes a watch plot of one variable after the
 others (grey on a plot's variable, and on a family: open it and pick one).
 A run that failed has no plots: the drawer says "The run failed: no plots",
-and its checks and every "+ new plot" are grey. A test with no result — never run, or
+and its checks and every "+ new plot" are grey. A run that succeeded and whose
+variables the test tracks none of reads "no plots: this test tracks none of
+the result's variables" on the count line ("+ new plot" makes a watch plot of
+one); "no plots: the result has no variables" is for a result that holds none. A test with no result — never run, or
 a run that never finished it (stopped before it) — is NOT RUN, not a failed
 run: the drawer says "No plot yet: + new plot adds one", as for any test with
 no plot, while the strip, the count line and the tree line say the test has no

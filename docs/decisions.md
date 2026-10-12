@@ -5557,7 +5557,12 @@ variable order (D133).
    result" on the count and tree lines, as the strip says "No result yet",
    and its drawer "No result yet: no plots" over the partial result the
    reader hands in; only a run that finished and failed reads "the run
-   failed".
+   failed". A run that succeeded and draws no plot says which of two things
+   it is (2026-10-12): "no plots: the result has no variables" for a
+   result with nothing in it, and "no plots: this test tracks none of the
+   result's variables" where it holds some and the test's patterns match
+   none (or it is simulate-only) — the first was said for both, beside a
+   Variables drawer listing them.
 2. *The new `plots` schema.* A list of extras `{"var", "context"?}`: an
    entry on a scored variable (or a member of its family) adds its
    `context` to that plot; any other entry is a watch plot. No glob, no

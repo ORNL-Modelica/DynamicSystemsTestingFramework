@@ -319,16 +319,21 @@ class TestPage:
         with no tree still draws one plot per tracked variable, so a page
         with none has a failed run or no result (`run_state`, first: a
         failed run has no plots whatever its tree says, O2), a result with
-        nothing in it — or a tree whose every criterion scores a statistic
-        (a stored-scalar leaf names no series, so it derives no plot).
-        ``from_tree`` is `Session.plots_from_tree`, never whether there is
-        a tree VIEW: a test with no baseline has none, and its authored
-        tree still names its plots."""
+        nothing in it, a result the test tracks nothing of (its patterns
+        match none of it, or it is simulate-only: the Variables drawer
+        lists what it holds, and "the result has no variables" beside
+        that list was false) — or a tree whose every criterion scores a
+        statistic (a stored-scalar leaf names no series, so it derives no
+        plot). ``from_tree`` is `Session.plots_from_tree`, never whether
+        there is a tree VIEW: a test with no baseline has none, and its
+        authored tree still names its plots."""
         reason = self._state_reason()
         if reason is not None:
             return reason
         if from_tree:
             return "this test's criteria score statistics, not signals"
+        if self.shell.session.variable_names(self.model_id):
+            return "this test tracks none of the result's variables"
         return "the result has no variables"
 
     # -- the one open editor ---------------------------------------------------

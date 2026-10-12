@@ -2553,6 +2553,32 @@ async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path
         )
 
 
+async def test_a_result_the_test_tracks_nothing_of_says_that_not_no_variables(
+    tmp_path,
+):
+    """The result holds `x` and `y`, and the test's pattern matches
+    neither: the page said `no plots: the result has no variables` with
+    both of them listed in the Variables drawer beside it."""
+    import json
+
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == B]
+    entry["variables"] = ["nope*"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    assert shell.session.variable_names(B) == ["x", "y"]
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert page.cards == []
+        assert _one(user, "plots:count").text == (
+            "no plots: this test tracks none of the result's variables"
+        )
+
+
 async def test_a_no_baseline_test_draws_its_result(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, B)
