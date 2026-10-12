@@ -6959,7 +6959,7 @@ side, by the pixels dragged; one pass over 120 arrows took 2.3 ms.
   Chromium was run.
 - The Playwright browser tests are not run in CI.
 
-**What E2 still owes.** The second half of step E, none of it built: the
+**What E2 still owes.** (Built since, as D149.) The second half of step E, none of it built: the
 fields following a drag live (a handle still commits on release); arm a
 field, then click the plot; Ctrl+click adding a row that settles on the
 data; dragged values snapped to a readable precision (a drag writes 12
@@ -7113,10 +7113,12 @@ every page load; after, it is the dark page from the first frame sampled.
 **What stays unthemed, and why.**
 
 - Status fills and badges, role chips, and every series colour but the
-  five: they carry meaning (the brief's ruling).
-- The figure's pass, fail, window and muted regions, the error red, the
-  grip's orange (4.4:1 on the dark plot) and a marker's white outline:
-  the owner's item 5 names what follows, and these are not in it.
+  five (eight since 2026-10-11, below): they carry meaning (the brief's
+  ruling).
+- The figure's pass, fail, window and muted regions, the error red and the
+  grip's orange (4.4:1 on the dark plot):
+  the owner's item 5 names what follows, and these are not in it. (A
+  marker's white outline was in this list until 2026-10-11, below.)
 - The tree card's level bars: one table for both themes. The hovered
   shade of level 2 reads just under 3:1 on the dark surface (2.96, the
   prototype's measurement); a bar says where a row sits and is not text.
@@ -7465,8 +7467,9 @@ the tool.
    `failed: <message, one line; the whole on hover>`, `cancelled` — and
    Remove (waiting), Cancel (running, where the backend can), Open test and
    the Suite's actions for that test (ended). Its header: counts, a Workers
-   field (1 to the machine's cores, from `parallel`; applies to workers
-   started after the change), Clear finished, and ⋮ → Stop workers. Above
+   field (1 to the machine's cores, from `Config.parallel` — 1 in the tool:
+   `testing.json` has no key for it and `dstf author` no flag; applies to
+   workers started after the change), Clear finished, and ⋮ → Stop workers. Above
    the table under 1200 px, and one line while empty. The rows are data
    (`authoring/queue_rows.py`); the shell draws them.
 6. *The header's indicator, on every page.* `3 running · 5 queued` or
@@ -7553,7 +7556,7 @@ rescored PASS; with omc killed during its start both waiting tests failed
 running.
 
 **Not built.** The growing trace of a running test (the next step, on this
-queue); a log viewer for a failed row; cross-backend chains through the
+queue — built since, as D151); a log viewer for a failed row; cross-backend chains through the
 queue; an idle timeout for workers; a simulation-settings editor — `/simulation`
 is not stageable for any test (`patch_apply`'s whitelist, the `spec-update`
 seam), so item 3's lock has no field to grey yet, and a queued test's
@@ -7561,7 +7564,7 @@ settings cannot be edited in the tool either.
 
 **Known limits.** The page of a running test draws no criterion (it has no
 result), so criteria are edited mid-run only where the tool offers an edit
-without one. A cancel is a request, and Dymola's is a `stop` file dymosim
+without one (reversed by D151). A cancel is a request, and Dymola's is a `stop` file dymosim
 reads between steps: a model blocked in an external call
 (`Modelica.Utilities.System.command`) never reads it, so the cancel takes
 the worker's whole grace (`Worker.cancel_grace`, 10 s) and then the
@@ -7807,7 +7810,10 @@ tested against a pool that says it is restarting.
 by pattern has no plot until its first result (a watch plot can be added
 from the Variables drawer while it runs). The live trace is a preview: a
 backlog longer than the cap is thinned by the reader and not read again.
-A plot's zoom does not carry across a run's start or end. Under a partial
+A plot's zoom does not carry across a run's start or end — on a backend
+with a live view; without one (Python, Julia, FMPy) a run's figures keep
+the figure layer's own `uirevision` (`LiveRuns.dress` leaves them as they
+are), so nothing there resets a zoom. Under a partial
 result of a test with no baseline the tree card says "nothing scored: this
 test has no result". A flat entry's criteria still cannot be edited one by
 one while its test runs (D150): their rows say so. The file is read on the

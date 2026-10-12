@@ -546,7 +546,9 @@ READ; the plot's background and grid follow, its series do not.
 above says "unchanged" were ruled otherwise by the owner from pictures of the
 prototype, on `dark` only: a status's tint and pill are dimmed (its fill and
 its badge are not), and five plot colours that do not read on a dark plot are
-lightened. The gate was run over a fixture project, not over TRANSFORM.
+lightened (eight since 2026-10-11, with three overlay and event colours a
+review of the release tree found: D148, "Five literals that followed no
+theme"). The gate was run over a fixture project, not over TRANSFORM.
 
 ---
 
