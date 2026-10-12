@@ -832,6 +832,13 @@ held to, in the metric's own words, then that metric's details:
       final:              ref=1.000000e+00  act=9.999999e-01
 ```
 
+The metric a block names is the one its criterion was scored by — the same
+name as the leaf's `mode_effective` in `verdicts.json` — also where the
+criterion could not be scored: an override written `{"mode": "range"}` is
+headed `x: range` over `Not scored: needs at least one of min_value /
+max_value`. An override naming a mode nothing is registered under has no
+metric: its block is headed by the variable alone.
+
 `--report` and `--report-format` each add what they name, and
 together they add both: `run --report --report-format junit --output
 results.xml` prints the table, writes the pages and writes the file. The three

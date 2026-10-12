@@ -3364,7 +3364,8 @@ class TestAModesCompareTimeErrorIsAConfigError:
 
     def test_flat_it_has_the_shape_of_a_mode_that_did_not_resolve(self, leaf, said):
         """One sentinel for both: what `resolve_mode`'s ``ValueError``
-        always became (an unknown mode name, a malformed tolerance)."""
+        always became (a config that cannot be built, a malformed
+        tolerance) — named by its metric, as the tree path's is."""
 
         def shape(vc):
             fields = dataclasses.asdict(vc)
@@ -3372,10 +3373,23 @@ class TestAModesCompareTimeErrorIsAConfigError:
             return repr(fields)  # NaN fields: compared as text
 
         (late,) = _sides_compare(leaf, flat=True).variables
-        (early,) = _sides_compare({"metric": "no-such-mode"}, flat=True).variables
+        (early,) = _sides_compare(
+            {"metric": "tube", "tube_abs": "wide"}, flat=True
+        ).variables
         assert early.diagnostics["config_error"] is True
         assert shape(late) == shape(early)
-        assert late.mode == ""
+        assert late.mode == "tube"
+
+    def test_flat_a_mode_nothing_is_registered_under_names_no_metric(self, leaf, said):
+        """The one sentinel with no metric: never the "nrmse" default it was
+        not scored by, never the string that was written."""
+        (unknown,) = _sides_compare({"metric": "no-such-mode"}, flat=True).variables
+        (late,) = _sides_compare(leaf, flat=True).variables
+        assert unknown.mode == "" and unknown.diagnostics["config_error"] is True
+        # NaN fields: compared as text
+        assert repr(dataclasses.replace(late, mode="", diagnostics={})) == repr(
+            dataclasses.replace(unknown, diagnostics={})
+        )
 
     def test_tree_it_is_the_leafs_as_it_was(self, leaf, said):
         comp = _sides_compare(
@@ -3415,7 +3429,7 @@ def test_flat_a_baseline_free_modes_compare_time_error_is_a_config_error():
         "error": "could not convert string to float: 'a'",
         "config_error": True,
     }
-    assert not x.passed and x.mode == "" and y.passed
+    assert not x.passed and x.mode == "event-timing" and y.passed
 
 
 class TestAMalformedToleranceIsAConfigError:

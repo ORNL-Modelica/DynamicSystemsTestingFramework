@@ -186,14 +186,17 @@ def failure_blocks(comp: TestComparison) -> list[list[str]]:
         # expression says WHICH quantity, the name what to write a
         # criterion or an override against.
         name = label_with_name(vc.name, vc.expression)
-        what = [vc.mode or str(leaf.get("mode") or "nrmse")]
+        # The metric is the comparison's own `mode`, as on every surface;
+        # the one criterion with none (a flat override naming a mode
+        # nothing is registered under) is headed by its variable alone.
+        what = [vc.mode] if vc.mode else []
         window = _window_text(leaf.get("window"))
         if window:
             what.append(window)
         if leaf.get("against"):
             what.append(f"against {leaf['against']}")
         lead = "advisory — " if id(vc) in advisory else ""
-        lines = [f"    {lead}{name}: {' · '.join(what)}"]
+        lines = [f"    {lead}{': '.join([name, ' · '.join(what)] if what else [name])}"]
         reason = not_scored_reason(vc)
         if reason:
             # A sentinel (config that could not build, no data to compare)

@@ -747,6 +747,16 @@ _TUBE_KEYS = frozenset(
 )
 
 
+def override_metric(var_override: dict, default_points: bool = False) -> str:
+    """The name of the metric a flat override is scored by: its ``mode``,
+    else the default — ``points`` under ``default_points``, ``nrmse``
+    otherwise. Whatever was written, registered or not: :func:`resolve_mode`
+    refuses a name nothing is registered under."""
+    return var_override.get("mode", "") or (
+        DEFAULT_POINTS_METRIC if default_points else DEFAULT_METRIC
+    )
+
+
 def resolve_mode(
     var_override: dict,
     tolerance: Sides | float,
@@ -764,10 +774,7 @@ def resolve_mode(
     :mod:`dstf.comparison.registry`, so a third-party metric registered via
     ``register_metric`` resolves here without touching this function.
     """
-    mode_name = var_override.get("mode", "") or (
-        DEFAULT_POINTS_METRIC if default_points else DEFAULT_METRIC
-    )
-
+    mode_name = override_metric(var_override, default_points)
     desc = registry_metric(mode_name)
     if desc is None:
         # An unrecognized mode must be loud. Silently defaulting to NRMSE

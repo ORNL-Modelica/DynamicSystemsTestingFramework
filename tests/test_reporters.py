@@ -13,6 +13,8 @@ import types
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import pytest
+
 from dstf.comparison.types import (
     StructuralWarning,
     TestComparison,
@@ -188,6 +190,48 @@ def _scored(tree: dict) -> TestComparison:
         "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
     }
     return compare_test(test, result, reference, 1e-4)
+
+
+def _flat(overrides: dict, *, default_points: bool = False, reference: dict = None):
+    """``(comparison, test, result)`` of one variable, `x`, off its baseline
+    by 0.005, scored on the FLAT path: no tree, ``overrides`` as the entry's
+    ``comparison.variable_overrides`` and ``reference`` as the comparison
+    settings its baseline stores."""
+    import numpy as np
+
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.comparator import compare_test
+    from dstf.discovery.test_registry import TestModel
+
+    t = np.array([0.0, 0.5, 1.0])
+    values = np.array([1.0, 2.0, 3.0])
+    test = TestModel(
+        model_id="Lib.Examples.T",
+        source_file=Path(""),
+        source_package="Lib.Examples",
+        short_name="T",
+        n_vars=0,
+        source="spec",
+        variable_patterns=["x"],
+        variable_overrides=overrides,
+    )
+    result = TestResult(
+        model_id=test.model_id,
+        success=True,
+        variables=[VariableResult(index=1, name="x", time=t, values=values + 0.005)],
+    )
+    stored = {
+        "test_id": "0001",
+        "time": t.tolist(),
+        "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
+    }
+    if reference is not None:
+        stored["comparison"] = reference
+    return (
+        compare_test(test, result, stored, 1e-9, default_points=default_points),
+        test,
+        result,
+    )
 
 
 #: A tree no criterion of which fails, that fails: its two passing nrmse
@@ -682,6 +726,57 @@ class TestConsoleReport:
             "    x: nrmse · against primary",
             "    advisory — x: nrmse · against OpenModelica",
         ]
+
+    @pytest.mark.parametrize(
+        ("override", "metric"),
+        [
+            # cannot be built: the console said `x: nrmse` of it
+            ({"mode": "range"}, "range"),
+            # built, and refused when it scores
+            ({"mode": "tube", "tube_width_mode": "absolute"}, "tube"),
+            # scored, and failing
+            ({"mode": "range", "max_value": 2.0}, "range"),
+            ({}, "nrmse"),
+        ],
+    )
+    def test_a_flat_criterion_is_named_by_its_metric_on_every_surface(
+        self, override, metric
+    ):
+        """ONE source — the comparison's own ``mode`` — for the console's
+        block, the tree `verdicts.json` and the pages show, and (through the
+        console's blocks) JUnit."""
+        from dstf.reporting.console_report import failure_blocks
+        from dstf.reporting.verdicts import test_verdict
+
+        comp, test, result = _flat({"x": override})
+        (block,) = failure_blocks(comp)
+        assert block[0].split(" · ")[0] == f"    x: {metric}"
+        (leaf,) = test_verdict(comp, test, result)["tree"]["children"]
+        assert leaf["metric"] == leaf["mode_effective"] == metric
+
+    @pytest.mark.parametrize("override", [{}, {"tolerance": "wide"}])
+    def test_a_criterion_scored_by_points_by_default_says_points(self, override):
+        """Scored, or a sentinel whose tolerance is no number: `points`
+        under ``default_points`` either way."""
+        from dstf.reporting.console_report import failure_blocks
+
+        comp, _test, _result = _flat({"x": override}, default_points=True)
+        (block,) = failure_blocks(comp)
+        assert block[0].split(" · ")[0] == "    x: points"
+
+    def test_an_override_naming_no_registered_mode_is_given_no_metric(self):
+        """`"mode": "Tube"` is no metric: its block is headed by the variable
+        alone — never `x: nrmse`, which it was not scored by — and the
+        reason names what was written."""
+        from dstf.reporting.console_report import failure_blocks
+        from dstf.reporting.verdicts import test_verdict
+
+        comp, test, result = _flat({"x": {"mode": "Tube"}})
+        (block,) = failure_blocks(comp)
+        assert block[0] == "    x"
+        assert block[1].split(None, 2)[2].startswith("unknown comparison mode 'Tube'")
+        (leaf,) = test_verdict(comp, test, result)["tree"]["children"]
+        assert leaf["mode_effective"] == ""
 
     def test_config_error_prints_the_reason(self, capsys):
         assert print_report([_config_error()]) == 1

@@ -522,7 +522,7 @@ def compare_test(
             ``TIME_SERIES`` — the only kind any backend produces today.
     """
     from .metric_tree import implicit_and_tree
-    from .modes import resolve_mode
+    from .modes import override_metric, resolve_mode
     from .tree_eval import collect_leaf_variables, evaluate_spec
 
     ref_test_id = reference.get("test_id")
@@ -692,13 +692,16 @@ def compare_test(
         name = var_result.name
 
         var_override = merged_overrides.get(name, {})
+        # The metric this criterion is scored by — or, where its config is
+        # an error, could not be: what a sentinel below is named by.
+        metric_name = override_metric(var_override, default_points)
         try:
             tolerance = parse_sides(
                 var_override.get("tolerance", base_tolerance), "tolerance"
             )
             mode = resolve_mode(var_override, tolerance, default_points=default_points)
         except ValueError as exc:
-            comparisons.append(_config_error_comparison(var_result, exc))
+            comparisons.append(_config_error_comparison(var_result, exc, metric_name))
             continue
 
         # A stats-path quantity is resolved by the tree evaluator from the
@@ -749,7 +752,9 @@ def compare_test(
                 try:
                     vc = mode.compare(empty, empty, var_result.time, var_result.values)
                 except ValueError as exc:
-                    comparisons.append(_config_error_comparison(var_result, exc))
+                    comparisons.append(
+                        _config_error_comparison(var_result, exc, metric_name)
+                    )
                     continue
                 vc.index = var_result.index
                 vc.name = name
@@ -786,7 +791,7 @@ def compare_test(
         try:
             vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
         except ValueError as exc:
-            comparisons.append(_config_error_comparison(var_result, exc))
+            comparisons.append(_config_error_comparison(var_result, exc, metric_name))
             continue
         vc.index = var_result.index
         vc.name = name
@@ -818,7 +823,7 @@ def compare_test(
 
 
 def _config_error_comparison(
-    var_result: VariableResult, exc: ValueError
+    var_result: VariableResult, exc: ValueError, metric_name: str
 ) -> VariableComparison:
     """The flat path's sentinel for a variable whose override is a config
     error: the variable fails, the others are scored — as a leaf's does on
@@ -831,10 +836,15 @@ def _config_error_comparison(
     2026-07-06) or scoring with it, for what a mode can only detect then (a
     tube's unknown width mode, `abs` without control points).
 
-    ``mode=""`` rather than the "nrmse" field default: the report must not
-    caption this "nrmse leaf not scored". An offending mode string isn't
-    stamped either — it would feed a bogus name to the reporter's mode
-    lookups; it rides in the error text."""
+    ``mode`` is ``metric_name`` — the metric the override is scored by
+    (``modes.override_metric``) — as the tree path's sentinel carries its
+    leaf's: a ``{"mode": "range"}`` that could not be built is a `range`
+    criterion on every surface, and was `x: nrmse` on the console beside
+    ``"metric": "range"`` in verdicts.json. A name nothing is registered
+    under is no metric: that one sentinel has ``mode=""`` (never the
+    "nrmse" field default, which it was not scored by — and never the
+    offending string, which would go to every lookup by mode); what was
+    written rides in the error text."""
     return VariableComparison(
         index=var_result.index,
         name=var_result.name,
@@ -846,7 +856,7 @@ def _config_error_comparison(
         max_abs_error_time=0.0,
         reference_final=float("nan"),
         actual_final=float("nan"),
-        mode="",
+        mode=metric_name if registry_metric(metric_name) is not None else "",
         diagnostics={"error": str(exc), "config_error": True},
     )
 

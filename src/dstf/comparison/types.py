@@ -54,7 +54,12 @@ class VariableComparison:
     is_constant: bool = False  # True if reference signal has zero range
     # The tolerance applied for this variable, per side (a number is both).
     tolerance_used: Sides = Sides(0.0, 0.0)
-    mode: str = "nrmse"  # Comparison mode: "nrmse" or "tube"
+    #: The metric this criterion was scored by — or, a config-error
+    #: sentinel's, could not be. THE one source of a criterion's metric name:
+    #: the console and JUnit blocks, the tree view and `verdicts.json` read
+    #: it and none substitutes a default. ``""`` only for a flat override
+    #: naming a mode nothing is registered under.
+    mode: str = "nrmse"
     # Tube-specific metrics (populated when mode="tube")
     tube_points_inside: float | None = None  # Fraction of points inside tube (0-1)
     tube_worst_violation: float | None = None  # Largest violation (absolute)

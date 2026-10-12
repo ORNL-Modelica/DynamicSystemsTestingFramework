@@ -160,12 +160,17 @@ def _augment_tree_view(
         vc = comparisons_by_path.get(path)
         if vc is None:
             return
-        mode = vc.mode or "nrmse"
         var_label = vc.name or view.get("variable", "")
         summary = summarize(vc)
         view.update(
             {
-                "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
+                # The metric the criterion was scored by — the comparison's
+                # own `mode`, the ONE source every surface names it from
+                # ("" for the one with none: a flat override naming a mode
+                # nothing is registered under). `metric` beside it is the
+                # spec's: a flat test's default is written `nrmse` there
+                # while `default_points` scores it by `points`.
+                "mode_effective": vc.mode,
                 "name": var_label,
                 # What the leaf's row READS (`metric · pipe.T[1]`), on both
                 # tiers: the report's node macro and the tool's `leaf_name`
