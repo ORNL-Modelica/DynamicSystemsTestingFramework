@@ -552,6 +552,20 @@ sentence. A test with a tree is not asked (each criterion fails by itself:
 `variable 'x' not found in the result`), and a simulate-only test passes by
 having run.
 
+A tracked variable the BASELINE holds and the run no longer has is a
+criterion that was not scored, and the test FAILS: `y: nrmse · against
+primary` / `Not scored: variable 'y' not found in the result` — the words a
+`metrics` tree's criterion has for it. (With no tree the run used to be
+scored on the variables it still held, and passed.) Only what the baseline
+holds is asked for: a `variables` pattern that matches nothing on either
+side is the backend's log line, and a variable the test no longer tracks is
+not missed. `--accept` over such a run is not refused — accepting is how a
+variable is dropped on purpose — and says what the new baseline lost:
+
+```
+Warning: ref_0042.json (MyLib.Examples.Pipe) no longer holds y — the accepted result does not hold it.
+```
+
 A **simulate-only** test passes iff its simulation completes: nothing is
 compared, no baseline is stored for it, and its report page reads
 `Simulate-only: simulation succeeded`. A test is one when a recognizer marks
@@ -657,7 +671,7 @@ larger than 5 MB, the accept says so, once per file:
 Warning: ref_0123.json (MyLib.Examples.LongTransient) is 5.3 MB (74,167 points × 3 variables) — set "baseline_points" for this test to store fewer.
 ```
 
-It is a warning: the baseline IS stored, and the exit code is what it would
+It is a warning, as `no longer holds …` is: the baseline IS stored, and the exit code is what it would
 have been. `run --accept` and `compare --accept` print it under their
 `Accepted N test baselines` line, the interactive review under its
 `Accepted (…)`, and `dstf author`'s Accept carries the same sentence in its

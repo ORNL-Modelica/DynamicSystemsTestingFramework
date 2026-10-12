@@ -1078,3 +1078,50 @@ def test_the_tools_accept_notice_carries_the_warning(tmp_path, monkeypatch):
     assert notice.startswith("Accept: stored 2 baseline(s) to ")
     assert f"skipped {C}: " in notice  # the refusal is still said
     assert notice.endswith("".join(f"; {line}" for line in said))
+
+
+# -- a baseline that no longer holds a variable ------------------------------
+
+
+def _of(*names: str) -> TestResult:
+    time = np.arange(5.0)
+    return TestResult(
+        model_id=M,
+        success=True,
+        variables=[
+            VariableResult(index=i, time=time, values=time, name=n)
+            for i, n in enumerate(names, 1)
+        ],
+    )
+
+
+def test_an_accept_says_which_variables_its_baseline_no_longer_holds(
+    tmp_path, monkeypatch
+):
+    """One line per test whose new baseline dropped a variable the stored
+    one held — before the size warning of the same file — and none for a
+    first baseline, an unchanged one, or one that only gained."""
+    config = _config(tmp_path)
+    store, test = ReferenceStore(config), _tracking_all(M)
+
+    def accept(*names: str) -> list[str]:
+        stored, skipped, warnings = accept_run_results(
+            store, [test], {M: _of(*names)}, config.work_dir
+        )
+        assert (stored, skipped) == (1, [])
+        return warnings
+
+    assert accept("a", "b") == []  # the first baseline replaced nothing
+    assert accept("a", "b") == []
+    assert accept("a", "b", "c") == []
+    assert accept("a", "c") == [
+        f"ref_0001.json ({M}) no longer holds b — the accepted result does not hold it."
+    ]
+    assert accept("a", "c", *"defghijk") == []
+    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
+    lost, large = accept("z")
+    assert lost == (
+        f"ref_0001.json ({M}) no longer holds a, c, d, e, f, g and 4 more — "
+        "the accepted result does not hold them."
+    )
+    assert " MB (" in large

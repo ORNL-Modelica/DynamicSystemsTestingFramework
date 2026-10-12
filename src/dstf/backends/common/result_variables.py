@@ -13,7 +13,7 @@ TRACKS — the rule the comparator and the authoring Session both ask.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import numpy as np
@@ -76,6 +76,17 @@ def tracked_results(test: TestModel, result: TestResult) -> list[VariableResult]
                 test.model_id,
                 v.index,
             )
+    tracked = tracks(test)
+    return [v for v in result.variables if tracked(v.name)]
+
+
+def tracks(test: TestModel) -> Callable[[str], bool]:
+    """Whether ``test`` TRACKS a variable of that name: one of its
+    UnitTests variables, a ``variables`` pattern that names it or a glob
+    that matches it (``"*"`` every name). THE one rule, asked of a result's
+    variables (:func:`tracked_results`) and of a baseline's (the
+    comparator: a tracked variable the baseline holds and the run does
+    not)."""
     wanted = {v.name for v in unit_test_variables(test)}
     globs = []
     for pattern in test.variable_patterns:
@@ -83,11 +94,7 @@ def tracked_results(test: TestModel, result: TestResult) -> list[VariableResult]
             globs.append(_pattern_to_regex(pattern))
         else:
             wanted.add(pattern)
-    return [
-        v
-        for v in result.variables
-        if v.name in wanted or any(g.fullmatch(v.name) for g in globs)
-    ]
+    return lambda name: name in wanted or any(g.fullmatch(name) for g in globs)
 
 
 def compute_needed_variables(
@@ -318,4 +325,5 @@ __all__ = [
     "merge_timing_stats",
     "run_timing",
     "tracked_results",
+    "tracks",
 ]

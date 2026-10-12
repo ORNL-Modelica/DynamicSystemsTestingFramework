@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..backends import TestResult
-from ..backends.common.result_variables import tracked_results
+from ..backends.common.result_variables import tracked_results, tracks
 from ..backends.types import DatasetType, VariableResult
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
@@ -820,6 +820,14 @@ def compare_test(
     for vc, var_result, read in zip(comparisons, tracked, baselines_read, strict=True):
         vc.expression = var_result.expression
         vc.against = read
+    comparisons += _lost_variable_comparisons(
+        test,
+        result,
+        ref_vars_by_name,
+        merged_overrides,
+        base_tolerance,
+        default_points,
+    )
     tree = implicit_and_tree(comparisons)
 
     return TestComparison(
@@ -832,6 +840,60 @@ def compare_test(
         tolerance_source=tolerance_source,
         base_tolerance=base_tolerance,
     )
+
+
+def _lost_variable_comparisons(
+    test: TestModel,
+    result: TestResult,
+    ref_vars_by_name: Mapping[str, dict],
+    overrides: Mapping[str, dict],
+    base_tolerance: float,
+    default_points: bool,
+) -> list[VariableComparison]:
+    """The flat path's criteria that could not be scored because the RUN
+    lost their variable: one per variable the test tracks
+    (``result_variables.tracks``) that the baseline holds and the result
+    does not, in the baseline's order — the sentinel a tree's leaf gives it
+    (``variable 'y' not found in the result``), and the test fails.
+
+    The flat path scores one criterion per tracked variable the result
+    holds, so a run that lost ``y`` of {x, y} was scored on ``x`` alone:
+    PASS, Criteria 1/1 and no word, where the same loss under a ``metrics``
+    tree fails — and an accept then wrote a baseline without ``y``.
+
+    Only what the BASELINE holds: it is what says the variable was there.
+    A pattern that matches nothing on either side stays the backend's log
+    line, and a baseline variable the test no longer tracks is not asked
+    about. The sentinel carries what its criterion would have: the
+    override's metric and tolerance, the baseline's expression (the run
+    has none to give) and the baseline it would have read."""
+    from .modes import override_metric, resolve_mode
+    from .tree_eval import _missing_variable_comparison
+
+    held = {v.name for v in result.variables}
+    tracked = tracks(test)
+    lost: list[VariableComparison] = []
+    for name, entry in ref_vars_by_name.items():
+        if name in held or not tracked(name):
+            continue
+        vc = _missing_variable_comparison(name, None)
+        vc.expression = entry.get("expression") or ""
+        override = overrides.get(name, {})
+        metric_name = override_metric(override, default_points)
+        try:
+            tolerance = parse_sides(
+                override.get("tolerance", base_tolerance), "tolerance"
+            )
+            mode = resolve_mode(override, tolerance, default_points=default_points)
+        except ValueError:
+            # Its config is an error too; the loss is what is said.
+            vc.mode = metric_name if registry_metric(metric_name) is not None else ""
+        else:
+            vc.mode = mode.name
+            vc.tolerance_used = tolerance
+            vc.against = None if mode.is_baseline_free() else PRIMARY_BASELINE
+        lost.append(vc)
+    return lost
 
 
 def _config_error_comparison(

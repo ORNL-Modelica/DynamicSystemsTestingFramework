@@ -43,6 +43,38 @@ def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
     )
 
 
+#: How many lost names :func:`lost_variables_warning` spells out.
+_NAMED_LOST = 6
+
+
+def _variable_names(reference: dict | None) -> list[str]:
+    return [v.get("name") or "" for v in (reference or {}).get("variables", [])]
+
+
+def lost_variables_warning(
+    store: ReferenceStore, model_id: str, held_before: list[str]
+) -> str | None:
+    """The sentence for a baseline just written that no longer holds a
+    variable the one it replaced held (``held_before``, its names), else
+    ``None``. A warning: the baseline IS stored — accepting is how a
+    variable is dropped on purpose — but a run that LOST one rewrote the
+    baseline without it, and nothing said so."""
+    test_id = store.index.get_id(model_id)
+    if test_id is None:
+        return None
+    holds = set(_variable_names(store.get_reference(model_id)))
+    lost = [name for name in held_before if name and name not in holds]
+    if not lost:
+        return None
+    named = ", ".join(lost[:_NAMED_LOST])
+    if len(lost) > _NAMED_LOST:
+        named += f" and {len(lost) - _NAMED_LOST} more"
+    return (
+        f"{RefIndex.ref_filename(test_id)} ({model_id}) no longer holds {named} — "
+        f"the accepted result does not hold {'it' if len(lost) == 1 else 'them'}."
+    )
+
+
 def accept_refusal(
     store: ReferenceStore, test: TestModel, result: TestResult | None
 ) -> str | None:
@@ -68,7 +100,7 @@ def accept_run_results(
     results: dict[str, TestResult],
     work_dir: Path,
 ) -> tuple[int, list[tuple[str, str]], list[str]]:
-    """:meth:`ReferenceStore.accept_results` plus two refusals and a warning.
+    """:meth:`ReferenceStore.accept_results` plus two refusals and two warnings.
 
     A test the batch manifest in ``work_dir`` still records as pending was
     in flight when a run was aborted: it has no recorded verdict, and its
@@ -86,12 +118,14 @@ def accept_run_results(
     A baseline file just written that is larger than `LARGE_BASELINE_BYTES`
     is said once (`large_baseline_warning`): it IS stored, and counts as
     stored. Every accept path prints what this returns, so the CLI and the
-    tool say the same sentence.
+    tool say the same sentence. So is a baseline that no longer holds a
+    variable the one it replaced held (`lost_variables_warning`).
 
     Returns ``(stored, skipped, warnings)``: how many baselines were written;
     ``accept_results``'s skips with the refusals appended — the refused
     tests in the order given, then the unfinished ones in model order; and
-    one sentence per large file, in the order written.
+    the warnings in the order written: per test, what it lost, then its
+    size.
     """
     unfinished = unfinished_run_models(work_dir) & {t.model_id for t in tests}
     refused = {
@@ -100,14 +134,14 @@ def accept_run_results(
         if t.model_id not in unfinished
         and (reason := accept_refusal(store, t, results.get(t.model_id))) is not None
     }
-    stored, skipped = store.accept_results(
-        [
-            t
-            for t in tests
-            if t.model_id not in unfinished and t.model_id not in refused
-        ],
-        results,
-    )
+    accepted = [
+        t for t in tests if t.model_id not in unfinished and t.model_id not in refused
+    ]
+    # What each baseline holds now: read before the accept replaces it.
+    held_before = {
+        t.model_id: _variable_names(store.get_reference(t.model_id)) for t in accepted
+    }
+    stored, skipped = store.accept_results(accepted, results)
     return (
         len(stored),
         [
@@ -126,6 +160,10 @@ def accept_run_results(
         [
             warning
             for model_id in stored
-            if (warning := large_baseline_warning(store, model_id)) is not None
+            for warning in (
+                lost_variables_warning(store, model_id, held_before[model_id]),
+                large_baseline_warning(store, model_id),
+            )
+            if warning is not None
         ],
     )

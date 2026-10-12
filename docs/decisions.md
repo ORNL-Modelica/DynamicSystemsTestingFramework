@@ -7809,8 +7809,25 @@ and with or without a baseline, and no accept stores a baseline for it
 (`comparator.nothing_scored`, the one decision). A test with a `metrics`
 tree is not asked — each leaf fails by itself for a variable the result
 does not hold — and a simulate-only test passes by having run. A result
-that holds SOME of a flat test's tracked variables is scored on those, as
-before: the backend's log line is all that says one was missing.
+that holds SOME of a flat test's tracked variables was at first scored on
+those alone, the backend's log line all that said one was missing: `x` of
+{x, y} read PASS, Criteria 1/1, and a following `--accept` rewrote the
+baseline with `x` only, in silence — where a `metrics` tree fails the same
+loss. The flat path now does what the tree does
+(`comparator._lost_variable_comparisons`): a variable the test tracks
+(`result_variables.tracks`, the one rule `tracked_results` asks too) that
+the BASELINE holds and the result does not is a criterion not scored, with
+the tree's sentence — `Not scored: variable 'y' not found in the result`
+— under its override's metric, and the test fails. What only the spec
+names stays the log line: a pattern that matches nothing on either side
+has no baseline to say it was ever there. An accept over such a run is not
+refused, since accepting is how a variable is dropped on purpose; every
+accept path says `ref_0042.json (MyLib.M) no longer holds y — the accepted
+result does not hold it.` beside the large-file warning
+(`storage.accept.lost_variables_warning`). Over a copy of the 331-test
+library's stored results the change flipped no verdict and changed no
+entry of `verdicts.json`; with a tracked variable added to three baselines
+there, those three tests and no other went PASS → FAIL.
 
 That decision first failed one test too many: an entry that tracks
 nothing and has no criteria — what `dstf add <model>` writes, `"variables":

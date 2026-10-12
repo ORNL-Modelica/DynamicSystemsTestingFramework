@@ -135,6 +135,150 @@ def test_one_tracked_variable_in_the_result_is_scored_as_before():
     assert classify(compare_one(test, _result("x"), _Store(None))) == NO_REF
 
 
+# ---------------------------------------------------------------------------
+# A variable the baseline holds and the run lost
+# ---------------------------------------------------------------------------
+
+#: A baseline of two variables; `y` carries an expression.
+BOTH = {
+    "test_id": 3,
+    "time": list(T),
+    "variables": [
+        {"name": "x", "expression": "", "values": list(T)},
+        {"name": "y", "expression": "a.Q", "values": list(T)},
+    ],
+}
+
+
+def _lost(name: str) -> str:
+    return f"variable {name!r} not found in the result"
+
+
+#: What a flat test tracks -> (its fields, what the baseline holds, what the
+#: run holds, the variables it lost).
+LOSSES = {
+    "a literal pattern": (dict(variable_patterns=["x", "y"]), "x y", "x", ["y"]),
+    "every variable": (dict(variable_patterns=["*"]), "x y", "x", ["y"]),
+    "a glob that matched it": (
+        dict(variable_patterns=["T[*]"]),
+        "T[1] T[2] T[3]",
+        "T[2]",
+        ["T[1]", "T[3]"],
+    ),
+    "a UnitTests variable": (
+        dict(source="unit_tests", n_vars=2),
+        "unitTests.x[1] unitTests.x[2]",
+        "unitTests.x[1]",
+        ["unitTests.x[2]"],
+    ),
+}
+
+
+@pytest.mark.parametrize("what", list(LOSSES))
+def test_a_tracked_variable_the_baseline_holds_and_the_run_lost_fails(what):
+    """With no tree the run was scored on the variables it still held: `x`
+    of {x, y} read PASS, Criteria 1/1, no word — and an accept then wrote
+    a baseline of `x` alone. A tree fails that loss; so does the flat
+    path, with the tree's sentence, as a criterion that was not scored."""
+    fields, held, ran, lost = LOSSES[what]
+    reference = {
+        "test_id": 3,
+        "time": list(T),
+        "variables": [{"name": n, "values": list(T)} for n in held.split()],
+    }
+    test = make_test_model(**fields)
+    comp = compare_one(test, _result(*ran.split()), _Store(reference))
+    assert classify(comp) == FAIL and refusal(comp) is None
+    scored = [v for v in comp.variables if v.passed]
+    assert [v.name for v in scored] == ran.split()
+    failed = [v for v in comp.variables if not v.passed]
+    assert [v.name for v in failed] == lost
+    assert [v.diagnostics["error"] for v in failed] == [_lost(n) for n in lost]
+    assert comp.metric_tree is not None and comp.metric_tree.passed is False
+
+
+def test_the_lost_criterion_is_the_one_a_tree_would_report():
+    flat = make_test_model(variable_patterns=["x", "y"])
+    tree = make_test_model(
+        variable_patterns=["x", "y"],
+        metric_tree_spec=parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "nrmse", "variable": "y"},
+                ],
+            }
+        ),
+    )
+    by_flat = compare_one(flat, _result("x"), _Store(BOTH))
+    by_tree = compare_one(tree, _result("x"), _Store(BOTH))
+
+    def said(comp):
+        return [
+            (v.name, v.passed, v.mode, v.against, (v.diagnostics or {}).get("error"))
+            for v in comp.variables
+        ]
+
+    assert said(by_flat) == said(by_tree)
+    assert said(by_flat)[1] == ("y", False, "nrmse", "primary", _lost("y"))
+    # The label a person reads is the baseline's: the run has none to give.
+    assert by_flat.variables[1].expression == "a.Q"
+    assert by_flat.variables[1].tolerance_used == by_flat.variables[0].tolerance_used
+
+
+def test_a_lost_variable_keeps_its_overrides_metric_and_tolerance():
+    test = make_test_model(
+        variable_patterns=["x", "y"],
+        variable_overrides={
+            "y": {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.1}
+        },
+        comparison_tolerance=0.05,
+    )
+    comp = compare_one(test, _result("x"), _Store(BOTH))
+    (y,) = [v for v in comp.variables if v.name == "y"]
+    assert (y.mode, y.against, y.passed) == ("tube", "primary", False)
+    assert y.tolerance_used.lower == y.tolerance_used.upper == 0.05
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        # A glob that matches nothing anywhere stays a log line.
+        dict(variable_patterns=["x", "q*"]),
+        # ...and so does a name neither side holds.
+        dict(variable_patterns=["x", "gone"]),
+        # `y` is in the baseline and no longer tracked: the test does not ask.
+        dict(variable_patterns=["x"]),
+        dict(source="unit_tests", n_vars=0, variable_patterns=["x"]),
+    ],
+    ids=["an empty glob", "a name nowhere", "no longer tracked", "no UnitTests"],
+)
+def test_what_the_test_does_not_track_or_no_side_holds_is_not_a_loss(fields):
+    comp = compare_one(make_test_model(**fields), _result("x"), _Store(BOTH))
+    assert classify(comp) == PASS and [v.name for v in comp.variables] == ["x"]
+
+
+def test_a_loss_with_no_baseline_is_no_ref_as_before():
+    test = make_test_model(variable_patterns=["x", "y"])
+    assert classify(compare_one(test, _result("x"), _Store(None))) == NO_REF
+
+
+def test_a_warn_over_a_lost_variable_is_an_advisory_failure():
+    """A tree that is only a `warn`: the test passes, and the criterion
+    that was not scored is counted where advisory failures are."""
+    from dstf.reporting.status import advisory_failures
+
+    tree = parse_metric_tree(
+        {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "y"}]}
+    )
+    test = make_test_model(variable_patterns=["y"], metric_tree_spec=tree)
+    comp = compare_one(test, _result("x"), _Store(BOTH))
+    assert classify(comp) == PASS
+    (leaf,) = advisory_failures(comp)
+    assert leaf.advisory and leaf.reason == _lost("y")
+
+
 def test_a_simulate_only_test_still_passes_by_having_run():
     test = make_test_model(simulate_only=True)
     for reference in (REFERENCE, None):
@@ -242,3 +386,56 @@ def test_accept_neither_stores_nor_skips_a_test_that_declares_nothing(
     out = capsys.readouterr().out
     assert "Skipped" not in out, out
     assert project.reference(RAMP).read_bytes() == before
+
+
+def _hold_y_too(project: Project) -> None:
+    """RAMP tracks `x` and `y`, and its stored baseline holds both: the
+    run, which writes `x` alone, has lost `y`."""
+    _track(project, RAMP, "x", "y")
+    path = project.reference(RAMP)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    (x,) = data["variables"]
+    data["variables"].append({**x, "index": 2, "name": "y"})
+    data["n_vars"] = 2
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_compare_fails_a_test_whose_run_lost_a_baseline_variable(
+    project, tmp_path, capsys
+):
+    _hold_y_too(project)
+    rc, cases = project.junit(tmp_path)
+    assert rc == 1
+    assert _case(cases, RAMP) == ("failure", "1 criterion failed")
+    assert "variable 'y' not found in the result" in (tmp_path / "junit.xml").read_text(
+        encoding="utf-8"
+    )
+    capsys.readouterr()
+    assert project.dstf("compare") == 1
+    out = capsys.readouterr().out
+    assert "Not scored:" in out and "variable 'y' not found in the result" in out, out
+    assert "Results: 2/3 passed" in out, out
+
+
+@pytest.mark.parametrize("command", ["compare", "run"])
+def test_accept_says_which_variables_the_new_baseline_no_longer_holds(
+    project, capsys, command
+):
+    """Not refused: accepting is how a variable is dropped on purpose. But
+    the baseline was rewritten without it, and nothing said so."""
+    _hold_y_too(project)
+    name = project.reference(RAMP).name
+    capsys.readouterr()
+    assert project.dstf(command, "--accept") == 0
+    out = capsys.readouterr().out
+    assert (
+        f"Warning: {name} ({RAMP}) no longer holds y — the accepted result "
+        "does not hold it."
+    ) in out, out
+    assert out.count("no longer holds") == 1  # the two other tests lost nothing
+    stored = json.loads(project.reference(RAMP).read_text(encoding="utf-8"))
+    assert [v["name"] for v in stored["variables"]] == ["x"]
+    # Accepted again: there is nothing more to lose, and nothing is said.
+    capsys.readouterr()
+    assert project.dstf("compare", "--accept") == 0
+    assert "no longer holds" not in capsys.readouterr().out
