@@ -2,7 +2,6 @@
 
 import sys
 
-from ..backends.types import label_with_name
 from ..comparison.comparator import TestComparison
 from .status import (
     FAIL,
@@ -12,8 +11,8 @@ from .status import (
     STATUS_LABELS,
     classify,
     exit_code,
+    failed_criteria,
     group_failures,
-    not_scored_reason,
 )
 
 # ANSI color codes
@@ -132,81 +131,28 @@ def print_report(comparisons: list[TestComparison]) -> int:
     return exit_code(comparisons)
 
 
-def _window_text(window: object) -> str:
-    """``window 0–0.5 s`` for a leaf scoped to part of the run; ``""`` for
-    one that is not."""
-    if not isinstance(window, dict):
-        return ""
-    start, end = window.get("start"), window.get("end")
-    if start is None and end is None:
-        return ""
-    if start is None:
-        return f"window to {end:g} s"
-    if end is None:
-        return f"window from {start:g} s"
-    return f"window {start:g}–{end:g} s"
-
-
 def failure_blocks(comp: TestComparison) -> list[list[str]]:
-    """One block of lines per criterion of ``comp`` that did not pass, in
-    TREE order — two criteria on one variable are two blocks, and each says
-    which it is: its metric, its window if it has one, the baseline it is
-    scored against, then the criterion in the metric's own words (the
-    measured value against its tolerance or bound — ``registry.summarize``,
-    what the report's tree row reads) and that metric's detail pairs. A
-    criterion under a ``warn`` cannot fail the test: its block starts
-    ``advisory — ``.
+    """One block of lines per criterion of ``comp`` that did not pass
+    (:func:`~.status.failed_criteria`, which JUnit's lines are read from
+    too), in TREE order: the line that says which criterion it is, the
+    criterion in its metric's own words — or why it was not scored — and
+    that metric's detail pairs.
 
     The blocks used to be the same five generic numbers under the
     variable's name alone: a start-up window's nrmse and an advisory
     comparison against a soft check read as one variable failing twice,
     with nothing to tell them apart."""
-    from ..comparison.registry import summarize
-    from ..comparison.tree_eval import (
-        advisory_comparisons,
-        flatten_evaluation,
-        leaf_comparisons_by_path,
-    )
-
-    tree = comp.metric_tree
-    if tree is not None:
-        said = flatten_evaluation(tree)
-        leaves = [
-            (vc, said.get(path, {}))
-            for path, vc in leaf_comparisons_by_path(tree).items()
-        ]
-    else:
-        leaves = [(vc, {}) for vc in comp.variables]
-    advisory = {id(vc) for vc in advisory_comparisons(tree)}
     blocks: list[list[str]] = []
-    for vc, leaf in leaves:
-        if vc.passed:
-            continue
-        # `pipe.T[1] (unitTests.x[1])`, the name alone when they agree: the
-        # expression says WHICH quantity, the name what to write a
-        # criterion or an override against.
-        name = label_with_name(vc.name, vc.expression)
-        # The metric is the comparison's own `mode`, as on every surface;
-        # the one criterion with none (a flat override naming a mode
-        # nothing is registered under) is headed by its variable alone.
-        what = [vc.mode] if vc.mode else []
-        window = _window_text(leaf.get("window"))
-        if window:
-            what.append(window)
-        if leaf.get("against"):
-            what.append(f"against {leaf['against']}")
-        lead = "advisory — " if id(vc) in advisory else ""
-        lines = [f"    {lead}{': '.join([name, ' · '.join(what)] if what else [name])}"]
-        reason = not_scored_reason(vc)
-        if reason:
+    for criterion in failed_criteria(comp):
+        lines = [f"    {criterion.head}"]
+        if criterion.reason:
             # A sentinel (config that could not build, no data to compare)
             # has no meaningful numbers — the reason is the whole finding.
-            lines.append(f"      {'Not scored:':<20}{reason}")
+            lines.append(f"      {'Not scored:':<20}{criterion.reason}")
         else:
-            summary = summarize(vc)
-            lines.append(f"      {summary.criterion}")
+            lines.append(f"      {criterion.sentence}")
             lines += [
-                f"      {label + ':':<20}{value}" for label, value in summary.details
+                f"      {label + ':':<20}{value}" for label, value in criterion.details
             ]
         blocks.append(lines)
     return blocks

@@ -195,7 +195,7 @@ _JUNIT_GOLDEN = """\
   <testsuite name="Lib.Ex" tests="6" failures="2" errors="1" skipped="1">
     <testcase name="Lib.Ex.Pass" classname="Lib.Ex" />
     <testcase name="Lib.Ex.Fail" classname="Lib.Ex">
-      <failure message="1 criterion failed" type="RegressionFailure">h: NRMSE=5.000000e-01, max_abs=3.000000e-01 at t=1.25, ref_final=1.000000e+00, act_final=1.100000e+00</failure>
+      <failure message="1 criterion failed" type="RegressionFailure">h: nrmse — NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL</failure>
     </testcase>
     <testcase name="Lib.Ex.SimFail" classname="Lib.Ex">
       <error message="translation failed" type="SimulationError" />
@@ -205,7 +205,7 @@ _JUNIT_GOLDEN = """\
     </testcase>
     <testcase name="Lib.Ex.WarnOnly" classname="Lib.Ex" />
     <testcase name="Lib.Ex.BaselineFreeFail" classname="Lib.Ex">
-      <failure message="1 criterion failed" type="RegressionFailure">h: NRMSE=5.000000e-01, max_abs=3.000000e-01 at t=1.25, ref_final=1.000000e+00, act_final=1.100000e+00</failure>
+      <failure message="1 criterion failed" type="RegressionFailure">h: nrmse — NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL</failure>
     </testcase>
   </testsuite>
 </testsuites>"""

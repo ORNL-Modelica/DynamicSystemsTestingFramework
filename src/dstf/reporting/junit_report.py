@@ -4,9 +4,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
-from ..backends.types import label_with_name
-from ..comparison.comparator import TestComparison, VariableComparison
-from ..comparison.tree_eval import advisory_comparisons
+from ..comparison.comparator import TestComparison
 from .status import (
     FAIL,
     NO_REF,
@@ -14,29 +12,10 @@ from .status import (
     SIM_FAIL,
     classify,
     count_by_status,
+    failed_criteria,
     group_failures,
-    not_scored_reason,
     refusal,
 )
-
-
-def _failure_line(var: VariableComparison) -> str:
-    """One failing criterion, for a reader with no plot beside it: the
-    expression names the quantity, the name is what a criterion or a
-    --filter is written against."""
-    name = label_with_name(var.name, var.expression)
-    reason = not_scored_reason(var)
-    if reason:
-        # Sentinel leaf: the numbers are all inf/nan, so CI sees the
-        # variable's name and the reason instead of a wall of them.
-        return f"{name}: not scored — {reason}"
-    return (
-        f"{name}: "
-        f"NRMSE={var.nrmse:.6e}, "
-        f"max_abs={var.max_abs_error:.6e} at t={var.max_abs_error_time:g}, "
-        f"ref_final={var.reference_final:.6e}, "
-        f"act_final={var.actual_final:.6e}"
-    )
 
 
 def _failure_message(failed: list[str], groups: list[str], advisory: list[str]) -> str:
@@ -131,20 +110,16 @@ def generate_junit_report(
                     },
                 )
             elif state == FAIL:
-                # A failure under `warn` cannot fail the test: it is not
-                # counted with the ones that do, and its line says so.
-                # Each entry of `comp.variables` is one CRITERION — two
-                # leaves on one variable are two of them.
-                advisory_ids = {id(v) for v in advisory_comparisons(comp.metric_tree)}
-                failed: list[str] = []
-                advisory: list[str] = []
-                for var in comp.variables:
-                    if var.passed:
-                        continue
-                    if id(var) in advisory_ids:
-                        advisory.append(f"advisory — {_failure_line(var)}")
-                    else:
-                        failed.append(_failure_line(var))
+                # One line per criterion that did not pass, in the words
+                # of the console's block (`failed_criteria`): which
+                # criterion it is — two on one variable are two of them —
+                # and the measured value against what it is held to, or
+                # why it was not scored. A failure under `warn` cannot
+                # fail the test: it is not counted with the ones that do,
+                # and its line says so.
+                criteria = failed_criteria(comp)
+                failed = [c.line for c in criteria if not c.advisory]
+                advisory = [c.line for c in criteria if c.advisory]
                 # A test the comparison refused has no failing criterion to
                 # count: its reason is the message and the body.
                 refused = refusal(comp)

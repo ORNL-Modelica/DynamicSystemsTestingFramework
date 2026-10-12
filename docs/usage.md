@@ -2184,7 +2184,17 @@ uv run dstf --config testing.json run --report-format html --output report.html
 ```
 
 A failed testcase's `<failure message>` counts the criteria that failed
-(`2 criteria failed`), one line each in the body. A failure under a `warn`
+(`2 criteria failed`), one line each in the body: the first line of that
+criterion's block in the console's failure details — the variable, the
+metric, its window, its baseline — then the criterion in the metric's own
+words, or why it was not scored:
+
+```
+x (unitTests.x[1]): nrmse · window to 2.5 s · against primary — NRMSE 4.264e-02 vs tolerance 1.000e-03 → FAIL
+x (unitTests.x[1]): range — Not scored: needs at least one of min_value / max_value
+```
+
+A failure under a `warn`
 cannot fail the test and is not one of them: the message names it beside them
 (`1 criterion failed, with 1 advisory failure`) and its line starts
 `advisory —`. A test can fail with every criterion passing — at a `weighted`

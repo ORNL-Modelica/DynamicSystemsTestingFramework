@@ -373,8 +373,9 @@ class TestJUnitReport:
         assert failure is not None
         assert failure.get("type") == "RegressionFailure"
         # Only the failed variable ('h') is reported, not the passing one.
-        assert "h:" in failure.text
-        assert "NRMSE=" in failure.text
+        assert failure.text == (
+            "h: nrmse — NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL"
+        )
 
     def test_an_advisory_failure_is_not_counted_as_a_failure(self, tmp_path):
         """One criterion failed and one comparison under `warn` differed:
@@ -406,8 +407,72 @@ class TestJUnitReport:
         failure = ET.parse(out).getroot().find(".//failure")
         assert failure.get("message") == "1 criterion failed, with 1 advisory failure"
         failing, advisory = failure.text.splitlines()
-        assert failing.startswith("x: NRMSE=")
-        assert advisory.startswith("advisory — x: NRMSE=")
+        assert failing == (
+            "x: nrmse · against primary — NRMSE 2.500e-03 vs tolerance 1.000e-09 → FAIL"
+        )
+        assert advisory == (
+            "advisory — x: nrmse · against primary — "
+            "NRMSE 2.500e-03 vs tolerance 1.000e-08 → FAIL"
+        )
+
+    def test_each_failed_criterion_is_a_line_that_says_which_it_is(self, tmp_path):
+        """Every metric's number was written `x: NRMSE=…` — a range's worst
+        violation and a tube's too — and two failing criteria on one
+        variable were two lines nothing told apart. A line is the console
+        block's head and its criterion sentence, from the same function."""
+        from dstf.reporting.console_report import failure_blocks
+
+        comp = _scored(
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "nrmse",
+                        "variable": "x",
+                        "tolerance": 1e-9,
+                        "window": {"start": 0.0, "end": 0.6},
+                    },
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-8},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "tube",
+                                "variable": "x",
+                                "tube_width_mode": "band",
+                                "tube_abs": 0.001,
+                            }
+                        ],
+                    },
+                    {"metric": "range", "variable": "x", "max_value": 2.0},
+                    {"metric": "range", "variable": "x"},
+                ],
+            }
+        )
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "4 criteria failed, with 1 advisory failure"
+        lines = failure.text.splitlines()
+        assert [ln.split(" — ")[-1] for ln in lines] == [
+            "NRMSE 5.000e-03 vs tolerance 1.000e-09 → FAIL",
+            "NRMSE 2.500e-03 vs tolerance 1.000e-08 → FAIL",
+            "max violation 1.005e+00 → FAIL (requires 0)",
+            "Not scored: metric 'range' misconfigured: needs at least one of "
+            "min_value / max_value",
+            "0.0% inside tube → FAIL (requires 100%)",
+        ]
+        assert lines[0].startswith("x: nrmse · window 0–0.6 s")
+        assert lines[1].startswith("x: nrmse") and "window" not in lines[1]
+        assert lines[2].startswith("x: range") and lines[3].startswith("x: range")
+        assert lines[4].startswith("advisory — x: tube")
+        assert len(set(lines)) == 5 and "NRMSE=" not in failure.text
+        # the console's words, not a second wording of them
+        said = sorted(
+            f"{head.strip()} — {' '.join(second.split())}"
+            for head, second, *_ in failure_blocks(comp)
+        )
+        assert sorted(lines) == said
 
     def test_criteria_in_a_group_under_warn_are_advisory_too(self, tmp_path):
         """`and[fail, warn[and[fail, fail]]]`: the `warn` holds a GROUP, and
@@ -494,7 +559,7 @@ class TestJUnitReport:
         failure = ET.parse(out).getroot().find(".//failure")
         assert failure.get("message") == "1 criterion failed"
         criterion, group = failure.text.splitlines()
-        assert criterion.startswith("x: NRMSE=")
+        assert criterion.startswith("x: nrmse · against primary — NRMSE ")
         assert group.startswith("weighted group at metrics.children[1]: weighted sum")
 
     def test_a_group_under_warn_fails_nothing_and_is_not_named(self, tmp_path):
@@ -517,10 +582,10 @@ class TestJUnitReport:
         generate_junit_report([_config_error()], out)
         failure = ET.parse(out).getroot().find(".//failure")
         assert failure is not None
-        assert "h: not scored — " in failure.text
-        assert "min_value / max_value" in failure.text
-        # The meaningless numeric block is suppressed for this leaf.
-        assert "NRMSE=" not in failure.text
+        assert failure.text == (
+            "h: range — Not scored: metric 'range' misconfigured: "
+            "needs at least one of min_value / max_value"
+        )
 
     def test_a_refused_test_says_why_in_the_message_and_the_body(self, tmp_path):
         """A FAIL with no variable is one the comparison refused: its reason
@@ -667,7 +732,7 @@ class TestConsoleReport:
         assert "Reference final" not in details and "Max abs error" not in details
 
     def test_a_block_names_the_baseline_and_a_one_sided_window(self):
-        from dstf.reporting.console_report import _window_text
+        from dstf.reporting.status import _window_text
 
         assert _window_text({"start": 0.5}) == "window from 0.5 s"
         assert _window_text({"end": 2.0}) == "window to 2 s"
@@ -1130,7 +1195,7 @@ class TestTheTextSurfacesNameBoth:
         generate_junit_report([_labelled_failure()], out)
         failure = ET.parse(out).getroot().find(".//failure")
         assert failure is not None
-        assert "pipe.T[1] (unitTests.x[1]): NRMSE=" in failure.text
+        assert failure.text.startswith("pipe.T[1] (unitTests.x[1]): nrmse — NRMSE ")
 
     def test_the_review_detail_prints_the_label_and_the_name(self, capsys):
         from dstf.cli.review import _print_detail

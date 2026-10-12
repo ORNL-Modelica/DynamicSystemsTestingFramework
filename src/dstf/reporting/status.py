@@ -35,6 +35,7 @@ copy — are gone. Every surface classifies here.
 
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from ..comparison.types import TestComparison, VariableComparison
 
@@ -241,6 +242,109 @@ def group_failures(comp: TestComparison) -> list[str]:
             why = str(diag.get("reason") or "failed with no failing criterion under it")
         lines.append(f"{kind} group at {place}: {why}")
     return lines
+
+
+def _window_text(window: object) -> str:
+    """``window 0–0.5 s`` for a leaf scoped to part of the run; ``""`` for
+    one that is not."""
+    if not isinstance(window, dict):
+        return ""
+    start, end = window.get("start"), window.get("end")
+    if start is None and end is None:
+        return ""
+    if start is None:
+        return f"window to {end:g} s"
+    if end is None:
+        return f"window from {start:g} s"
+    return f"window {start:g}–{end:g} s"
+
+
+@dataclass(frozen=True)
+class FailedCriterion:
+    """One criterion that did not pass, in the words a text surface prints
+    for it — the console as a block, JUnit as a line."""
+
+    #: Which criterion it is: the variable (``pipe.T[1] (unitTests.x[1])``,
+    #: the name alone when they agree — the expression says WHICH quantity,
+    #: the name what to write a criterion or an override against), then its
+    #: metric, its window if it has one and the baseline it is scored
+    #: against; led by ``advisory — `` under a ``warn``, where it cannot
+    #: fail the test.
+    head: str
+    advisory: bool
+    #: The criterion in the metric's own words (the measured value against
+    #: its tolerance or bound — ``registry.summarize``, what the report's
+    #: tree row reads); ``""`` for one that was not scored.
+    sentence: str
+    #: The metric's own detail pairs; none for one that was not scored.
+    details: tuple[tuple[str, str], ...]
+    #: Why it was not scored (:func:`not_scored_reason`), else ``None``.
+    reason: str | None
+
+    @property
+    def line(self) -> str:
+        """The criterion on ONE line: its head, then its sentence or the
+        reason it was not scored."""
+        said = f"Not scored: {self.reason}" if self.reason else self.sentence
+        return f"{self.head} — {said}"
+
+
+def failed_criteria(comp: TestComparison) -> list[FailedCriterion]:
+    """The criteria of ``comp`` that did not pass, in TREE order — two
+    criteria on one variable are two entries, and each says which it is.
+    THE one reading of a failing criterion for a surface with no page: the
+    console's failure blocks and JUnit's failure lines are both written from
+    it, so they cannot name a criterion differently. (JUnit wrote every
+    metric's number as ``x: NRMSE=…``, and two failing criteria on one
+    variable as two identical lines.) Imported late, as below."""
+    from ..backends.types import label_with_name
+    from ..comparison.registry import summarize
+    from ..comparison.tree_eval import (
+        advisory_comparisons,
+        flatten_evaluation,
+        leaf_comparisons_by_path,
+    )
+
+    tree = comp.metric_tree
+    leaves: list[tuple[VariableComparison, dict]]
+    if tree is not None:
+        said = flatten_evaluation(tree)
+        leaves = [
+            (vc, said.get(path, {}))
+            for path, vc in leaf_comparisons_by_path(tree).items()
+        ]
+    else:
+        leaves = [(vc, {}) for vc in comp.variables]
+    advisory = {id(vc) for vc in advisory_comparisons(tree)}
+    out: list[FailedCriterion] = []
+    for vc, leaf in leaves:
+        if vc.passed:
+            continue
+        name = label_with_name(vc.name, vc.expression)
+        # The metric is the comparison's own `mode`, as on every surface;
+        # the one criterion with none (a flat override naming a mode
+        # nothing is registered under) is headed by its variable alone.
+        what = [vc.mode] if vc.mode else []
+        window = _window_text(leaf.get("window"))
+        if window:
+            what.append(window)
+        if leaf.get("against"):
+            what.append(f"against {leaf['against']}")
+        under_warn = id(vc) in advisory
+        lead = "advisory — " if under_warn else ""
+        head = f"{lead}{': '.join([name, ' · '.join(what)] if what else [name])}"
+        reason = not_scored_reason(vc)
+        summary = None if reason else summarize(vc)
+        out.append(
+            FailedCriterion(
+                head=head,
+                advisory=under_warn,
+                sentence=summary.criterion if summary is not None else "",
+                details=tuple(summary.details) if summary is not None else (),
+                reason=reason,
+            )
+        )
+    return out
 
 
 def not_scored_reason(var: VariableComparison) -> str | None:
