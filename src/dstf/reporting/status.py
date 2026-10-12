@@ -348,6 +348,23 @@ def failed_criteria(comp: TestComparison) -> list[FailedCriterion]:
     return out
 
 
+def advisory_failures(comp: TestComparison) -> list[FailedCriterion]:
+    """The criteria that failed under a ``warn`` in a test that PASSES —
+    what such a test has to say and no verdict says: it is PASS, it exits 0
+    and it is counted with the passes, and a text surface printed nothing
+    else of it. Empty for a test of any other status: a failing test's
+    advisory criteria are in its failure details."""
+    if classify(comp) != PASS:
+        return []
+    return [c for c in failed_criteria(comp) if c.advisory]
+
+
+def advisory_text(n: int) -> str:
+    """``1 advisory failure`` / ``2 advisory failures``: the words every
+    surface counts them in (the tool's strip, JUnit's message, the console)."""
+    return f"{n} advisory failure{'' if n == 1 else 's'}"
+
+
 def not_scored_reason(var: VariableComparison) -> str | None:
     """Why a leaf produced no score, or ``None`` when it scored one.
 

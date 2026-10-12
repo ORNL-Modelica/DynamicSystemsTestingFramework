@@ -10,6 +10,8 @@ from .status import (
     NO_REF,
     NOT_RUN,
     SIM_FAIL,
+    advisory_failures,
+    advisory_text,
     classify,
     count_by_status,
     failed_criteria,
@@ -29,8 +31,7 @@ def _failure_message(failed: list[str], groups: list[str], advisory: list[str]) 
     else:
         text = f"{n} {'criterion' if n == 1 else 'criteria'} failed"
     if advisory:
-        m = len(advisory)
-        text += f", with {m} advisory failure{'' if m == 1 else 's'}"
+        text += f", with {advisory_text(len(advisory))}"
     return text
 
 
@@ -136,6 +137,22 @@ def generate_junit_report(
                     },
                 )
                 fail.text = refused or "\n".join(failed + groups + advisory)
+            else:
+                # PASS — and it may have passed with a failure under `warn`:
+                # no <failure>, counted in nothing, and said, where it used
+                # to say nothing at all.
+                passed_with = advisory_failures(comp)
+                if passed_with:
+                    n = len(passed_with)
+                    they = "it" if n == 1 else "they"
+                    said = ET.SubElement(tc, "system-out")
+                    said.text = "\n".join(
+                        [
+                            f"{advisory_text(n)} (under `warn`: {they} cannot "
+                            "fail the test)"
+                        ]
+                        + [c.line for c in passed_with]
+                    )
 
         total_tests += n_tests
         total_failures += n_failures

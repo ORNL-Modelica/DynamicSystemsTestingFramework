@@ -9,6 +9,9 @@ from .status import (
     NOT_RUN,
     SIM_FAIL,
     STATUS_LABELS,
+    FailedCriterion,
+    advisory_failures,
+    advisory_text,
     classify,
     exit_code,
     failed_criteria,
@@ -46,6 +49,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
     n_not_run = 0
     failures: list[TestComparison] = []
     warned: list[TestComparison] = []
+    advised: list[tuple[TestComparison, list[FailedCriterion]]] = []
 
     for comp in comparisons:
         # Ordering (SIM_FAIL > FAIL > NO_REF > PASS) and its rationale live
@@ -80,7 +84,14 @@ def print_report(comparisons: list[TestComparison]) -> int:
             id_tag = "[new] "
         else:
             id_tag = ""
-        print(f"  {status}  {id_tag}{comp.model_id}{warn_tag}")
+        # A test that passes with a failure under `warn` says so: it read a
+        # plain PASS, with no word of the criterion that failed.
+        advisory = advisory_failures(comp)
+        advisory_tag = ""
+        if advisory:
+            advised.append((comp, advisory))
+            advisory_tag = _color(f" ({advisory_text(len(advisory))})", _YELLOW)
+        print(f"  {status}  {id_tag}{comp.model_id}{advisory_tag}{warn_tag}")
 
         if not comp.passed and comp.sim_success:
             failures.append(comp)
@@ -97,6 +108,8 @@ def print_report(comparisons: list[TestComparison]) -> int:
         print(_color(f"  No baseline: {n_no_ref}", _YELLOW))
     if n_not_run:
         print(_color(f"  {STATUS_LABELS[NOT_RUN]}: {n_not_run}", _GREY))
+    if advised:
+        print(_color(f"  With advisory failures: {len(advised)}", _YELLOW))
     if warned:
         print(_color(f"  Structural warnings: {len(warned)}", _YELLOW))
 
@@ -117,6 +130,18 @@ def print_report(comparisons: list[TestComparison]) -> int:
             # criterion failed.
             for line in group_failures(comp):
                 print(f"    {line}")
+
+    # The criteria that failed under a `warn` in the tests that passed
+    if advised:
+        print()
+        print(_color("Advisory Failures (under `warn`: they fail no test):", _BOLD))
+        print("-" * 80)
+        for comp, advisory in advised:
+            id_tag = f"[{comp.test_id}] " if comp.test_id else ""
+            print(f"\n  {id_tag}{comp.model_id}")
+            for block in _blocks(advisory):
+                for line in block:
+                    print(line)
 
     # Print structural warnings
     if warned:
@@ -142,8 +167,12 @@ def failure_blocks(comp: TestComparison) -> list[list[str]]:
     variable's name alone: a start-up window's nrmse and an advisory
     comparison against a soft check read as one variable failing twice,
     with nothing to tell them apart."""
+    return _blocks(failed_criteria(comp))
+
+
+def _blocks(criteria: list[FailedCriterion]) -> list[list[str]]:
     blocks: list[list[str]] = []
-    for criterion in failed_criteria(comp):
+    for criterion in criteria:
         lines = [f"    {criterion.head}"]
         if criterion.reason:
             # A sentinel (config that could not build, no data to compare)

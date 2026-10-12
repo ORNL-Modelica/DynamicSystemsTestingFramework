@@ -867,6 +867,12 @@ headed `x: range` over `Not scored: needs at least one of min_value /
 max_value`. An override naming a mode nothing is registered under has no
 metric: its block is headed by the variable alone.
 
+A test whose only failures are under a `warn` PASSES, and says so: its line
+reads `PASS  [0007] MyLib.Examples.Rod (1 advisory failure)`, the summary
+counts such tests (`With advisory failures: 1`), and a section after the
+failure details — `Advisory Failures (under `warn`: they fail no test):` —
+prints their blocks. The exit code is not changed by them.
+
 `--report` and `--report-format` each add what they name, and
 together they add both: `run --report --report-format junit --output
 results.xml` prints the table, writes the pages and writes the file. The three
@@ -2229,7 +2235,10 @@ cannot fail the test and is not one of them: the message names it beside them
 group whose sum is over its threshold: the message is then that group's line
 (`weighted group at metrics.children[1]: weighted sum 2.500000e-03 is not
 below its threshold 0.001`), and the console's Failure Details prints the same
-line under the test.
+line under the test. A testcase that PASSES with failures under a `warn` has
+no `<failure>` and is counted in nothing; its `<system-out>` says `1 advisory
+failure (under `warn`: it cannot fail the test)` over the same `advisory —`
+lines.
 
 ---
 

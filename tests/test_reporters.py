@@ -234,6 +234,27 @@ def _flat(overrides: dict, *, default_points: bool = False, reference: dict = No
     )
 
 
+#: A tree that PASSES with a failure under `warn`: the criterion that can
+#: fail the test passes, the advisory one beside it does not.
+ADVISORY_ONLY = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+        {
+            "combinator": "warn",
+            "children": [
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                        {"metric": "range", "variable": "x", "max_value": 2.0},
+                    ],
+                }
+            ],
+        },
+    ],
+}
+
 #: A tree no criterion of which fails, that fails: its two passing nrmse
 #: leaves (5e-3 off a range of 2: 2.5e-3 each) sum, weighted, over 1e-6.
 WEIGHTED_ONLY = {
@@ -474,6 +495,28 @@ class TestJUnitReport:
         )
         assert sorted(lines) == said
 
+    def test_a_test_that_passes_with_an_advisory_failure_says_so(self, tmp_path):
+        """Its only failures are under a `warn`: it PASSES — no <failure>,
+        counted in nothing — and it used to say nothing at all. Its
+        <system-out> holds the count and the criteria, in the words of a
+        failing test's advisory lines."""
+        comp = _scored(ADVISORY_ONLY)
+        assert comp.passed
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp, _passing()], out)
+        root = ET.parse(out).getroot()
+        assert (root.get("failures"), root.get("errors")) == ("0", "0")
+        case = root.find(".//testcase[@name='Lib.Examples.T']")
+        assert [c.tag for c in case] == ["system-out"]
+        assert case.find("system-out").text.splitlines() == [
+            "2 advisory failures (under `warn`: they cannot fail the test)",
+            "advisory — x: nrmse · against primary — "
+            "NRMSE 2.500e-03 vs tolerance 1.000e-09 → FAIL",
+            "advisory — x: range — max violation 1.005e+00 → FAIL (requires 0)",
+        ]
+        # a test that simply passes says nothing
+        assert list(root.find(".//testcase[@name='Lib.Examples.A']")) == []
+
     def test_criteria_in_a_group_under_warn_are_advisory_too(self, tmp_path):
         """`and[fail, warn[and[fail, fail]]]`: the `warn` holds a GROUP, and
         both of its criteria are under the warn — one level down."""
@@ -667,6 +710,63 @@ class TestConsoleReport:
         assert "Failure Details" in out
         assert "Lib.Examples.B" in out
         assert "NRMSE" in out
+
+    def test_a_test_that_passes_with_an_advisory_failure_says_so(self, capsys):
+        """It printed a plain `PASS`. The line names the count, the summary
+        the tests, and a section their criteria — and the exit code is 0,
+        as it was."""
+        comp = _scored(ADVISORY_ONLY)
+        assert comp.passed
+        assert print_report([comp, _passing()]) == 0
+        out = capsys.readouterr().out
+        assert "  PASS  [0001] Lib.Examples.T (2 advisory failures)\n" in out
+        assert "  PASS  Lib.Examples.A\n" in out
+        assert "Results: 2/2 passed\n  With advisory failures: 1\n" in out
+        assert "Failure Details" not in out
+        section = out.split("Advisory Failures (under `warn`: they fail no test):")[1]
+        assert [ln for ln in section.splitlines() if ln.strip()][1:] == [
+            "  [0001] Lib.Examples.T",
+            "    advisory — x: nrmse · against primary",
+            "      NRMSE 2.500e-03 vs tolerance 1.000e-09 → FAIL",
+            "      RMSE:               5.000000e-03 (range 2.0000e+00)",
+            "      max |err|:          5.000000e-03 at t=0",
+            "      final:              ref=3.000000e+00  act=3.005000e+00",
+            "    advisory — x: range",
+            "      max violation 1.005e+00 → FAIL (requires 0)",
+            "      bounds:             [-inf, 2]",
+            "      worst violation:    1.005000e+00 at t=1",
+            "      inside:             33.3% of samples",
+        ]
+
+    def test_a_failed_branch_of_a_passing_or_is_no_advisory_failure(self, capsys):
+        """An `or` passes on one branch: the other is no failure under a
+        `warn`, and the test simply passes."""
+        tree = {
+            "combinator": "or",
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+            ],
+        }
+        comp = _scored(tree)
+        assert comp.passed and not comp.variables[0].passed
+        assert print_report([comp]) == 0
+        assert "advisory" not in capsys.readouterr().out.lower()
+
+    def test_a_failing_test_is_not_listed_among_the_advisory_ones(self, capsys):
+        """Its advisory criteria are in its failure details already."""
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                ADVISORY_ONLY["children"][1],
+            ],
+        }
+        assert print_report([_scored(tree)]) == 1
+        out = capsys.readouterr().out
+        assert "  FAIL  [0001] Lib.Examples.T\n" in out
+        assert "advisory failure" not in out and "Advisory Failures" not in out
+        assert out.count("advisory — x: range") == 1
 
     def test_a_test_that_fails_only_at_a_weighted_group_says_why(self, capsys):
         """The test was listed under Failure Details with no reason."""
