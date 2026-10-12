@@ -416,3 +416,38 @@ def test_a_dependency_whose_path_is_not_its_resolved_one_is_read_again(
         assert tool.fresh() == 2111.0
     finally:
         _closed(tool)
+
+
+@pytest.mark.ompython
+@pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
+def test_openmodelica_reads_everything_after_a_reload_that_failed_part_way(
+    tmp_path, monkeypatch
+):
+    """File by file, one click: `Enc.mo` edited validly and `K.mo` broken.
+    omc takes the new `Enc` and then fails on `K`. Both files are put back
+    exactly — bytes and modification time — so nothing differs from what
+    the worker read before the failure; it must not go on running the
+    `Enc` it took."""
+    from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+    monkeypatch.setattr(OpenModelicaWorker, "_FILE_LOAD_SECONDS", 0.0)
+    tool = Parts(tmp_path, "OpenModelica")
+    try:
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        enc, k = tool.lib / "Parts" / "Enc.mo", tool.lib / "Parts" / "K.mo"
+        kept = {p: (p.read_bytes(), os.stat(p)) for p in (enc, k)}
+        _sub(enc, "e=1", "e=2")
+        _sub(k, "k=1;", "k=;")
+        item = tool.click()
+        assert item.state is ItemState.FAILED
+        assert "PartsLib does not load: Parts/K.mo" in item.message
+        for path, (data, st) in kept.items():
+            path.write_bytes(data)
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+        assert tool.x() == 1111.0, "ran the Enc.mo of the reload that failed"
+        assert tool.x() == 1111.0
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 1111.0
+    finally:
+        _closed(tool)

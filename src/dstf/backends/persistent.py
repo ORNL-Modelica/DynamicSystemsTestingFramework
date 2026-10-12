@@ -276,11 +276,12 @@ class Worker(ABC):
         :meth:`run_test_with_timeout`) — a reload that hangs is the test's
         timeout, a cancel during it is the test's. It raises
         :class:`LibraryReloadError` with the tool's message when the
-        library does not load, and must then not leave the tool running a
-        class the files no longer hold as if it were read: the test fails
-        with the message, and the next one asks again with the same
-        changes (and any since). It sets ``self._step`` as it goes — what
-        :meth:`reloading` shows."""
+        library does not load: the test fails with the message, and since
+        nobody then knows which of the changed files the tool took, the
+        next reload is asked with ``None`` — everything, whatever has
+        changed by then (:meth:`WorkerRunner._reload`). An override
+        therefore keeps no account of its own of a reload that failed. It
+        sets ``self._step`` as it goes — what :meth:`reloading` shows."""
         self.close()
         self.start_within()
 
@@ -1068,7 +1069,7 @@ class WorkerRunner(ItemRunner):
         held = self.library
         # Every file that differs from what this worker read, across
         # however many clicks it sat out; all of it when nobody knows what
-        # it read.
+        # it holds — it was never told, or its last reload failed.
         changes = library.changes_since(held) if held is not None else None
         if not w.reloads_in_place:
             try:
@@ -1085,6 +1086,14 @@ class WorkerRunner(ItemRunner):
 
         def reload() -> None:
             w._reload_began = time.monotonic()
+            # From here until the tool has read all of it, what it holds
+            # is UNKNOWN: a reload that fails part-way has taken some of
+            # the changed files and not the rest, and no later list of
+            # changes — computed against a state it no longer holds — says
+            # which. So a reload that does not come back whole leaves
+            # ``library`` at None, and the worker's next one is asked for
+            # everything (``changes`` None), whatever changed.
+            self.library = None
             try:
                 w.reload(changes)
             finally:

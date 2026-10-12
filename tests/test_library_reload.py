@@ -35,6 +35,7 @@ A_MO, B_MO, NEW_MO = ROOT / "A.mo", ROOT / "B.mo", ROOT / "New.mo"
 S1 = LibraryState(1, {A_MO: (1, 10), B_MO: (1, 10)})
 S2 = LibraryState(2, {A_MO: (2, 11), B_MO: (1, 10), NEW_MO: (1, 5)})
 S3 = LibraryState(3, {A_MO: (3, 12), NEW_MO: (1, 5)})
+S4 = LibraryState(4, {A_MO: (4, 13), NEW_MO: (1, 5)})
 
 
 class _ReloadingWorker(_FakeWorker):
@@ -225,14 +226,45 @@ def test_a_library_that_does_not_load_fails_the_item_and_is_asked_again(reloadin
     assert [i.state for i in (b, c)] == [ItemState.FAILED, ItemState.FAILED]
     assert b.message == backend.broken and c.message == backend.broken
     assert backend.starts == [0] and backend.workers[0].is_alive()
-    # Fixed on disk: the next click's item reads everything that differs
-    # from what the worker holds — S1 still — and runs.
+    # Fixed on disk. What the worker holds after a reload that failed is
+    # unknown — some of S2's files, maybe — so no list of changes is right
+    # for it: every reload from the failure on is asked for everything.
     backend.broken = None
     d = pool.submit(_t("D"), S3)
     _wait_until(lambda: _ended(d))
     assert d.state is ItemState.FINISHED
     assert _kinds(backend.log) == ["run", "reload", "reload", "reload", "run"]
-    assert backend.log[3][1] == S3.changes_since(S1)
+    assert [entry[1] for entry in backend.log if entry[0] == "reload"] == [
+        S2.changes_since(S1),
+        None,
+        None,
+    ]
+    # Read whole, it holds S3: the next state is a list of changes again.
+    e = pool.submit(_t("E"), S4)
+    _wait_until(lambda: _ended(e))
+    assert backend.log[-2][:2] == ("reload", S4.changes_since(S3))
+
+
+def test_files_put_back_as_they_were_are_still_read_after_a_reload_that_failed(
+    reloading,
+):
+    """The state after the failure equals the one the worker read before
+    it, file for file — and the worker took SOME of the failed one's
+    files. "Nothing differs from what it read" must not be the answer."""
+    backend, pool = reloading
+    a = pool.submit(_t("A"), S1)
+    _wait_until(lambda: _ended(a))
+    backend.broken = "Lib does not load: B.mo: [syntax:error:2]"
+    b = pool.submit(_t("B"), S2)
+    _wait_until(lambda: _ended(b))
+    assert b.state is ItemState.FAILED
+    backend.broken = None
+    restored = LibraryState(3, dict(S1.stamps))
+    assert not restored.changes_since(S1)
+    c = pool.submit(_t("C"), restored)
+    _wait_until(lambda: _ended(c))
+    assert c.state is ItemState.FINISHED
+    assert backend.log[-2][:2] == ("reload", None)
 
 
 def test_an_item_with_no_state_asks_nothing_of_the_worker(reloading):

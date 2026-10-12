@@ -145,9 +145,8 @@ class TestOpenModelica:
         with pytest.raises(LibraryReloadError) as raised:
             worker.reload(LibraryChanges(changed=(lib / "Examples" / "A.mo",)))
         assert str(raised.value) == f"Lib does not load: Examples/A.mo: {message}"
-        # omc still holds the class of the file as it was: nothing of the
-        # new one was taken, and nothing is owed.
-        assert worker.session.calls == [expr] and worker._unread == set()
+        # omc still holds the class of the file as it was.
+        assert worker.session.calls == [expr]
 
     @pytest.mark.parametrize(
         ("holds", "said"),
@@ -169,9 +168,10 @@ class TestOpenModelica:
         assert len(worker.session.calls) == 1
 
     @pytest.mark.parametrize("how", ["the load fails", "the class is not there"])
-    def test_a_load_that_fails_after_the_delete_is_owed_to_the_next_reload(
-        self, lib, how
-    ):
+    def test_a_load_that_fails_after_the_delete_says_so(self, lib, how):
+        """omc then holds neither the file's old class nor a new one. The
+        worker keeps no account of it: its caller asks the next reload
+        for everything (`test_library_reload.py`)."""
         path = lib / "Examples" / "A.mo"
         replies: dict[str, object] = {"parseFile": _holds(A)}
         if how == "the load fails":
@@ -184,22 +184,6 @@ class TestOpenModelica:
         with pytest.raises(LibraryReloadError) as raised:
             worker.reload(LibraryChanges(changed=(path,)))
         assert str(raised.value) == f"Lib does not load: Examples/A.mo: {said}"
-        assert worker._unread == {path}
-        # The next reload names another file only — a later state put A's
-        # stamp back to the one the worker is held to have read: A is
-        # loaded all the same, since omc holds no A at all.
-        worker.session = _Omc(
-            {
-                f'parseFile("{path}")': _holds(A),
-                "parseFile": _holds("Lib.Examples.B"),
-            }
-        )
-        worker.reload(LibraryChanges(changed=(lib / "Examples" / "B.mo",)))
-        assert worker.session.calls == [
-            *_one_by_one(lib, "Examples/A.mo"),
-            *_one_by_one(lib, "Examples/B.mo"),
-        ]
-        assert worker._unread == set()
 
     def test_a_whole_load_that_fails_says_so_with_omcs_message(self, lib):
         expr = f'loadFile("{lib}/package.mo")'

@@ -267,10 +267,6 @@ class OpenModelicaWorker(Worker):
         #: took in this omc: what :meth:`reload` weighs a file-by-file
         #: load against.
         self._library_load_seconds = 0.0
-        #: Files whose class was deleted for a load that then failed: omc
-        #: holds neither their old class nor a new one, so they are loaded
-        #: again with the next reload whatever it is asked for.
-        self._unread: set[Path] = set()
 
     def start(self) -> None:
         """Launch omc via OMCSessionZMQ and apply the load/setup sequence.
@@ -343,7 +339,6 @@ class OpenModelicaWorker(Worker):
         began = time.monotonic()
         ok = self._exec(f'loadFile("{main_pkg_fwd}")')
         self._library_load_seconds = time.monotonic() - began
-        self._unread = set()
         if not ok:
             err = _raw_get_error_string(self.session)
             raise RuntimeError(
@@ -397,7 +392,10 @@ class OpenModelicaWorker(Worker):
         omc KEEPS the classes it holds when a load fails — a run would
         then pass on the old model — so every failure here raises
         :class:`LibraryReloadError` with omc's message, and the caller
-        fails the test.
+        fails the test. A failure after some files were loaded leaves omc
+        holding a mix (a new class of one file, the old of another, none
+        of a third): the caller asks the next reload for everything
+        (``changes`` None), which is the whole library and replaces it all.
 
         The whole library is what replaces everything: a deleted file's
         class is gone after it, and a file whose class does not carry the
@@ -427,7 +425,6 @@ class OpenModelicaWorker(Worker):
             main_pkg = str((config.library_dir / "package.mo").resolve())
             self._load_whole(main_pkg.replace("\\", "/"), str(config.library_name))
             self._library_load_seconds = time.monotonic() - began
-            self._unread = set()
             return
         for path in files:
             self._load_file_again(path)
@@ -444,7 +441,6 @@ class OpenModelicaWorker(Worker):
             if under(path, library_dir)
         ]
         changed = {path for path in changes.changed if under(path, library_dir)}
-        changed |= {path for path in self._unread if path.is_file()}
         if added_or_removed or any(
             path.name in ("package.mo", "package.order") for path in changed
         ):
@@ -486,8 +482,8 @@ class OpenModelicaWorker(Worker):
         self._step = f'parseFile("{file}")'
         holds, error = _raw_reply(session, self._step)
         if error is not None:
-            # The class omc holds is the old file's and stays: nothing of
-            # the new one was taken, and the caller fails the test.
+            # The class omc holds is the old file's and stays, and the
+            # caller fails the test.
             raise refuse(error)
         names = [n.strip() for n in holds.strip("{}").split(",") if n.strip()]
         if names != [name]:
@@ -495,14 +491,12 @@ class OpenModelicaWorker(Worker):
         self._step = f"deleteClass({name})"
         # false for a class omc does not hold: nothing to delete.
         _raw_exec_bool(session, self._step)
-        self._unread.add(path)
         self._step = f'loadFile("{file}")'
         _, error = _raw_reply(session, self._step)
         if error is None and not _raw_exec_bool(session, f"existClass({name})"):
             error = f"loadFile left no class {name}"
         if error is not None:
             raise refuse(error)
-        self._unread.discard(path)
 
     def process_detail(self) -> str:
         omc = getattr(self.session, "omc_process", None)

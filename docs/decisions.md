@@ -7652,8 +7652,22 @@ the RESOLVED path until 2026-10-12, so a dependency reached through a
 symbolic link, or given as an absolute path holding `..`, was never
 reopened. omc KEEPS the classes it holds when a load
 fails, so **a failed reload fails the item** with omc's message
-(`MyLib does not load: Examples/Pipe.mo: [syntax:error:2] …`) and leaves
-the worker as it was, and the next item asks again. omc loads the whole
+(`MyLib does not load: Examples/Pipe.mo: [syntax:error:2] …`), and the
+next item asks again. **After a failed reload what the worker holds is
+unknown, and its next reload reads everything** — the whole library and
+each path dependency, whatever has changed by then
+(`WorkerRunner._reload` leaves the runner's state at None until a reload
+comes back whole; said once, for every backend that reads in place). The
+first build held the worker to the state it had read before the failure
+and handed the next reload the files that differed from THAT: one click
+that edited `Enc.mo` validly and broke `K.mo` loaded the new `Enc`,
+failed on `K`, and after both files were put back exactly (bytes and
+modification time) nothing differed — the worker ran the `Enc` of the
+failed reload for good, where a fresh worker ran the file on disk
+(executed on omc; the OpenModelica worker's own list of files a failed
+load had left without a class never came to be consulted, and is gone).
+The price: the click after a failure costs a whole load, which on a slow
+mount is the library's first load over again. omc loads the whole
 library again when a file was added or removed, a `package.mo` or
 `package.order` changed, or one file at a time would cost more; else each
 changed file by itself, as strictly as the whole load: `parseFile` must
