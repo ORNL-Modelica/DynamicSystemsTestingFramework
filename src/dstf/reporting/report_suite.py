@@ -807,6 +807,12 @@ def _build_per_test_args(
     else:
         report_id = _sanitize_filename(model_id)
 
+    # The test's baseline, for its row's Reference: the one it was compared
+    # against, else the one the store holds for it. A comparison that
+    # compared nothing (a failed simulation's, a test's with no result)
+    # names none, and its sidecar said null beside that baseline's file.
+    ref_number = comp.test_id or test_id
+
     return {
         "model_id": model_id,
         "ref_data": ref_data,
@@ -819,7 +825,7 @@ def _build_per_test_args(
         "test_key": test_key,
         "status_text": status_text,
         "status_class": status_class,
-        "ref_id": f"ref_{comp.test_id}" if comp.test_id else None,
+        "ref_id": f"ref_{ref_number}" if ref_number else None,
         "last_run_at": last_run_at,
         "comparison": comp,
         "comp_variables": comp.variables,

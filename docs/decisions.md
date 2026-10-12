@@ -7496,7 +7496,11 @@ the tool.
    for where the suite writes it (the baseline compared against, else
    the test key), not only under the name the run guessed. Such a row's
    Reference is its id as text: the link's target comes from the sidecar,
-   and the page's writer is handed no reference directory.
+   and the page's writer is handed no reference directory. A sidecar
+   names its test's baseline wherever the store holds one, and a null in
+   a sidecar replaces nothing its row knows: a failed simulation's, whose
+   comparison names no baseline, said null beside the baseline's file,
+   and once found took the Reference id off its row.
 10. *Stop server asks while the queue holds a test* ("3 tests are queued
     or running — stop anyway?"), then removes the waiting ones, stops the
     running ones and closes the pool; NiceGUI's shutdown hook closes it too

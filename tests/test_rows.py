@@ -221,6 +221,34 @@ def test_a_summary_enriches_the_row_with_its_numbers():
     assert (rich.status, rich.worst_score, rich.n_vars) == ("PASS", 2e-5, 3)
 
 
+def test_a_null_in_a_summary_replaces_nothing_the_row_knows():
+    """A sidecar's null says its writer did not know: the baseline the run
+    named stays, beside whatever else the sidecar does say."""
+    row = row_from_status(
+        {
+            "test_key": "t",
+            "model_id": "Lib.A",
+            "status": "failed",
+            "report_dir": "ref_0007",
+        }
+    )
+    assert row.ref_id == "ref_0007"
+    rich = enrich_row(
+        row,
+        {
+            "model_id": "Lib.A",
+            "status": "SIM_FAIL",
+            "ref_id": None,
+            "ref_file": "file:///refs/ref_0007.json",
+            "n_warnings": 0,
+        },
+        start_wall=None,
+    )
+    assert (rich.ref_id, rich.ref_file) == ("ref_0007", "file:///refs/ref_0007.json")
+    # a zero is a value
+    assert rich.n_warnings == 0
+
+
 def test_a_sidecar_written_before_status_reads_its_status_text():
     # Old data: a sidecar from before `status` existed carries only the
     # word, and TIMED OUT is the one word that is not its status.

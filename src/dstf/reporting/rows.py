@@ -427,8 +427,13 @@ def enrich_row(
             file=sys.stderr,
         )
         return row
+    # A null says its writer did not know, and replaces nothing: copied,
+    # the null `ref_id` of a failed simulation's sidecar took the baseline
+    # its run had named off the row.
     changes: dict[str, Any] = {
-        dst: summary[src] for src, dst in _SUMMARY_TO_ROW if src in summary
+        dst: summary[src]
+        for src, dst in _SUMMARY_TO_ROW
+        if summary.get(src) is not None
     }
     # An empty provenance says nothing: the live row's stands.
     if not changes.get("field_sources", True):

@@ -1941,6 +1941,87 @@ def test_a_merge_run_keeps_the_other_tests_reference_links(
     ]
 
 
+def _reference_cell(tr: str) -> str:
+    """What a row's Reference cell holds (the cells follow the selection
+    box's, in the columns' order)."""
+    from dstf.reporting.rows import COLUMNS
+
+    cells = re.findall(r"<td\b[^>]*>(.*?)</td>", tr, flags=re.S)
+    return cells[1 + [c.key for c in COLUMNS].index("ref")].strip()
+
+
+def test_a_failed_simulation_s_row_keeps_its_reference(tmp_path, monkeypatch):
+    """`run --report`, then `compare --report`, where a baselined test's
+    simulation fails. Its page is written under its test key and its
+    comparison names no baseline — nothing was compared — so the sidecar
+    said `"ref_id": null` beside the reference file's link. Once the page's
+    writer found that sidecar, the null replaced the id the run had named:
+    the Reference cell was a link reading `—`, and no sort or filter by
+    Reference found the row."""
+    from conftest import python_example_copy
+    from dstf.cli import main
+    from dstf.storage.reference_store import ReferenceStore
+
+    config, tests = python_example_copy(tmp_path)
+    work = config.work_dir
+    ramp = next(t.model_id for t in tests if t.model_id.endswith("SimpleRamp"))
+    ref_id = f"ref_{ReferenceStore(config).index.get_id(ramp)}"
+    (tmp_path / "lib" / "Examples" / "SimpleRamp.py").write_text(
+        "def simulate(stop_time, tolerance):\n    raise RuntimeError('boom')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
+    for command in ("run", "compare"):
+        main(
+            ["--config", str(config.config_file), command, "--work-dir", str(work)]
+            + ["--report"]
+        )
+        html = (work / "dashboard.html").read_text(encoding="utf-8")
+        (tr,) = [tr for tr in _body_rows(html) if _attrs(tr)["data-model"] == ramp]
+        attrs = _attrs(tr)
+        assert attrs["data-status"] == "sim-fail", command
+        assert (attrs["data-ref"], attrs["data-sort-ref"]) == (ref_id, ref_id), command
+        cell = _reference_cell(tr)
+        assert re.fullmatch(
+            rf'<a href="file://[^"]*/{ref_id}\.json" title="Open reference JSON">'
+            rf"{ref_id}</a>",
+            cell,
+        ), (command, cell)
+        # What finding that sidecar won stays: the page it was written
+        # beside is linked, and the Resolution is the sidecar's.
+        key = attrs["data-test"]
+        assert f'<a href="reports/{key}/interactive.html">{ramp}</a>' in tr, command
+        assert attrs["data-resolution"], command
+        # The writer knows the baseline: it says so, beside its file.
+        summary = json.loads(
+            (work / "reports" / key / "comparison_data.json").read_text("utf-8")
+        )["summary"]
+        assert summary["ref_id"] == ref_id and summary["ref_file"], command
+
+
+def test_a_sidecar_that_names_no_baseline_leaves_the_row_s(tmp_path):
+    """Old data: a failed simulation's sidecar written with `"ref_id":
+    null` beside its reference file. A null says nothing — the row keeps
+    the baseline its run named, and takes the link."""
+    _one_row(tmp_path, report_dir="ref_0007")
+    _write_sidecar(
+        tmp_path,
+        {
+            "model_id": "Lib.A",
+            "written_at": 2.0,
+            "status": "SIM_FAIL",
+            "ref_id": None,
+            "ref_file": "file:///refs/ref_0007.json",
+        },
+    )
+    render_final(tmp_path)
+    (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert _attrs(tr)["data-ref"] == "ref_0007"
+    assert _reference_cell(tr) == (
+        '<a href="file:///refs/ref_0007.json" title="Open reference JSON">ref_0007</a>'
+    )
+
+
 # ---------------------------------------------------------------------------
 # The status bar of a final page that lists more tests than the last run ran.
 # ---------------------------------------------------------------------------
