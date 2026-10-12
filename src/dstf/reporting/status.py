@@ -216,6 +216,31 @@ def exit_code(comparisons: Iterable[TestComparison]) -> int:
     return 1 if any(classify(c) in FAILURES for c in comps) else 0
 
 
+def group_failures(comp: TestComparison) -> list[str]:
+    """One line per group of the test's tree that fails on its own
+    (``tree_eval.failed_groups``), in tree order: which group, and its score
+    against its threshold — ``weighted group at metrics.children[1]:
+    weighted sum 2.500000e-03 is not below its threshold 0.001``. A test
+    that fails only there has no failing criterion, and JUnit said ``0
+    criteria failed`` over an empty body. Imported late, as below."""
+    from ..comparison.tree_eval import failed_groups
+
+    lines = []
+    for place, node in failed_groups(comp.metric_tree):
+        kind = node.label.split("[", 1)[0]
+        diag = node.diagnostics or {}
+        if "weighted_sum" in diag:
+            side = "below" if diag.get("direction", "less") == "less" else "above"
+            why = (
+                f"weighted sum {diag['weighted_sum']:.6e} is not {side} its "
+                f"threshold {diag['threshold']:g}"
+            )
+        else:
+            why = str(diag.get("reason") or "failed with no failing criterion under it")
+        lines.append(f"{kind} group at {place}: {why}")
+    return lines
+
+
 def not_scored_reason(var: VariableComparison) -> str | None:
     """Why a leaf produced no score, or ``None`` when it scored one.
 

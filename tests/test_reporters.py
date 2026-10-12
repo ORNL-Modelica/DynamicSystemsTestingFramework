@@ -8,6 +8,7 @@ across the pass / fail / sim-error / no-baseline / warning branches, plus
 the `--report-format` routing that selects between them.
 """
 
+import re
 import types
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -189,6 +190,25 @@ def _scored(tree: dict) -> TestComparison:
     return compare_test(test, result, reference, 1e-4)
 
 
+#: A tree no criterion of which fails, that fails: its two passing nrmse
+#: leaves (5e-3 off a range of 2: 2.5e-3 each) sum, weighted, over 1e-6.
+WEIGHTED_ONLY = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+        {
+            "combinator": "weighted",
+            "weights": [1.0, 1.0],
+            "threshold": 1e-6,
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+                {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+            ],
+        },
+    ],
+}
+
+
 def _stated(model_id="Lib.Examples.S"):
     """A warning that states something about this run, beside one that
     reports a change from the baseline."""
@@ -345,6 +365,37 @@ class TestJUnitReport:
         assert failing.startswith("x: NRMSE=")
         assert advisory.startswith("advisory — x: NRMSE=")
 
+    def test_criteria_in_a_group_under_warn_are_advisory_too(self, tmp_path):
+        """`and[fail, warn[and[fail, fail]]]`: the `warn` holds a GROUP, and
+        both of its criteria are under the warn — one level down."""
+        strict = {"metric": "nrmse", "variable": "x", "tolerance": 1e-9}
+        comp = _scored(
+            {
+                "combinator": "and",
+                "children": [
+                    strict,
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {"combinator": "and", "children": [strict, strict]}
+                        ],
+                    },
+                ],
+            }
+        )
+        assert [v.passed for v in comp.variables] == [False, False, False]
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "1 criterion failed, with 2 advisory failures"
+        assert [
+            line.startswith("advisory — ") for line in failure.text.splitlines()
+        ] == [
+            False,
+            True,
+            True,
+        ]
+
     def test_the_message_counts_criteria(self, tmp_path):
         """Two failing criteria on one variable are two criteria — and no
         advisory clause where nothing advisory failed."""
@@ -369,6 +420,52 @@ class TestJUnitReport:
         assert failure.get("message") == "2 criteria failed"
         assert len(failure.text.splitlines()) == 2
         assert "advisory" not in failure.text
+
+    def test_a_test_that_fails_only_at_a_weighted_group_names_it(self, tmp_path):
+        """Every criterion passes and the weighted sum is over its
+        threshold: the message read `0 criteria failed` over an empty body."""
+        comp = _scored(WEIGHTED_ONLY)
+        assert not comp.passed and all(v.passed for v in comp.variables)
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        message = failure.get("message")
+        assert re.fullmatch(
+            r"weighted group at metrics\.children\[1\]: weighted sum "
+            r"\d\.\d{6}e-\d\d is not below its threshold 1e-06",
+            message,
+        ), message
+        assert failure.text == message
+
+    def test_a_failed_group_is_listed_beside_a_failed_criterion(self, tmp_path):
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                WEIGHTED_ONLY["children"][1],
+            ],
+        }
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_scored(tree)], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "1 criterion failed"
+        criterion, group = failure.text.splitlines()
+        assert criterion.startswith("x: NRMSE=")
+        assert group.startswith("weighted group at metrics.children[1]: weighted sum")
+
+    def test_a_group_under_warn_fails_nothing_and_is_not_named(self, tmp_path):
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                {"combinator": "warn", "children": [WEIGHTED_ONLY["children"][1]]},
+            ],
+        }
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_scored(tree)], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "1 criterion failed"
+        assert "group" not in failure.text
 
     def test_config_error_failure_names_the_reason(self, tmp_path):
         """A sentinel leaf's reason reaches CI, not a wall of inf/nan."""
@@ -461,6 +558,16 @@ class TestConsoleReport:
         assert "Failure Details" in out
         assert "Lib.Examples.B" in out
         assert "NRMSE" in out
+
+    def test_a_test_that_fails_only_at_a_weighted_group_says_why(self, capsys):
+        """The test was listed under Failure Details with no reason."""
+        assert print_report([_scored(WEIGHTED_ONLY)]) == 1
+        details = capsys.readouterr().out.split("Failure Details:")[1]
+        assert re.search(
+            r"\n    weighted group at metrics\.children\[1\]: weighted sum "
+            r"\S+ is not below its threshold 1e-06\n",
+            details,
+        ), details
 
     def test_config_error_prints_the_reason(self, capsys):
         assert print_report([_config_error()]) == 1

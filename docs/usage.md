@@ -2066,7 +2066,11 @@ A failed testcase's `<failure message>` counts the criteria that failed
 (`2 criteria failed`), one line each in the body. A failure under a `warn`
 cannot fail the test and is not one of them: the message names it beside them
 (`1 criterion failed, with 1 advisory failure`) and its line starts
-`advisory —`.
+`advisory —`. A test can fail with every criterion passing — at a `weighted`
+group whose sum is over its threshold: the message is then that group's line
+(`weighted group at metrics.children[1]: weighted sum 2.500000e-03 is not
+below its threshold 0.001`), and the console's Failure Details prints the same
+line under the test.
 
 ---
 

@@ -1146,6 +1146,14 @@ class TestALeafsToleranceIsSides:
             base_tolerance=base,
         )
 
+    def test_a_pair_with_a_third_key_is_the_parsers_to_refuse(self):
+        """A key nothing reads, inside the pair: said where the spec is
+        read (`strict_keys`), never left for the leaf to fail on."""
+        from dstf.comparison.tree_spec import MetricSpecError
+
+        with pytest.raises(MetricSpecError, match='tolerance: unknown field "x"'):
+            self._evaluate({"lower": 1, "upper": 2, "x": 3})
+
     def test_the_view_writes_an_equal_pair_as_the_number(self):
         from dstf.comparison.tree_eval import to_view
 
@@ -1161,7 +1169,7 @@ class TestALeafsToleranceIsSides:
 
     @pytest.mark.parametrize(
         "bad",
-        ["abc", "0.01", None, True, {"lower": 1}, {"lower": 1, "upper": 2, "x": 3}],
+        ["abc", "0.01", None, True, {"lower": 1}],
         ids=repr,
     )
     def test_a_malformed_one_fails_its_leaf_and_the_rest_is_scored(self, bad):

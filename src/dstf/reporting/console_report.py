@@ -12,6 +12,7 @@ from .status import (
     STATUS_LABELS,
     classify,
     exit_code,
+    group_failures,
     not_scored_reason,
 )
 
@@ -113,6 +114,10 @@ def print_report(comparisons: list[TestComparison]) -> int:
             for var in comp.variables:
                 if not var.passed:
                     _print_var_failure(var)
+            # A group that fails on its own: the test's reason where no
+            # criterion failed.
+            for line in group_failures(comp):
+                print(f"    {line}")
 
     # Print structural warnings
     if warned:

@@ -14,6 +14,7 @@ from .status import (
     SIM_FAIL,
     classify,
     count_by_status,
+    group_failures,
     not_scored_reason,
     refusal,
 )
@@ -38,11 +39,16 @@ def _failure_line(var: VariableComparison) -> str:
     )
 
 
-def _failure_message(failed: list[str], advisory: list[str]) -> str:
+def _failure_message(failed: list[str], groups: list[str], advisory: list[str]) -> str:
     """`1 criterion failed`, and `, with 1 advisory failure` when some
-    comparison under a `warn` failed beside it."""
+    comparison under a `warn` failed beside it. With no failing criterion
+    the test failed at a group, and the message is that group's line (`2
+    groups failed` for more than one; the body has each)."""
     n = len(failed)
-    text = f"{n} {'criterion' if n == 1 else 'criteria'} failed"
+    if n == 0 and groups:
+        text = groups[0] if len(groups) == 1 else f"{len(groups)} groups failed"
+    else:
+        text = f"{n} {'criterion' if n == 1 else 'criteria'} failed"
     if advisory:
         m = len(advisory)
         text += f", with {m} advisory failure{'' if m == 1 else 's'}"
@@ -142,15 +148,19 @@ def generate_junit_report(
                 # A test the comparison refused has no failing criterion to
                 # count: its reason is the message and the body.
                 refused = refusal(comp)
+                # A group that fails on its own — a weighted sum over its
+                # threshold — fails the test with no criterion to list.
+                groups = group_failures(comp)
                 fail = ET.SubElement(
                     tc,
                     "failure",
                     {
-                        "message": refused or _failure_message(failed, advisory),
+                        "message": refused
+                        or _failure_message(failed, groups, advisory),
                         "type": "RegressionFailure",
                     },
                 )
-                fail.text = refused or "\n".join(failed + advisory)
+                fail.text = refused or "\n".join(failed + groups + advisory)
 
         total_tests += n_tests
         total_failures += n_failures

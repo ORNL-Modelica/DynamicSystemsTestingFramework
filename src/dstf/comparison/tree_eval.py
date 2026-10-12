@@ -212,6 +212,31 @@ def advisory_comparisons(tree: MetricResult | None) -> list[VariableComparison]:
     return out
 
 
+def failed_groups(tree: MetricResult | None) -> list[tuple[str, MetricResult]]:
+    """The groups that fail ON THEIR OWN: a combinator that did not pass
+    though every child of it did — a ``weighted`` whose sum is on the wrong
+    side of its threshold, or undefined — as ``(place, node)`` in tree
+    order, the place as a parse error writes it (``metrics.children[1]``).
+    None from under a ``warn``: nothing there can fail the test. ``[]`` for
+    no tree.
+
+    A test can FAIL with no failing criterion; it then fails at one of
+    these, and a surface that lists what failed has only them to name."""
+    out: list[tuple[str, MetricResult]] = []
+
+    def _walk(node: MetricResult, place: str) -> None:
+        if not node.children or "warned" in (node.diagnostics or {}):
+            return
+        if not node.passed and all(child.passed for child in node.children):
+            out.append((place, node))
+        for i, child in enumerate(node.children):
+            _walk(child, f"{place}.children[{i}]")
+
+    if tree is not None:
+        _walk(tree, "metrics")
+    return out
+
+
 def flatten_evaluation(
     tree: MetricResult,
     *,
