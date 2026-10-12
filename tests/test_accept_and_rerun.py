@@ -269,6 +269,24 @@ def test_a_drained_queue_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path
     assert _dashboard_status(work_dir, POINTS_CHECK) == "pass"
 
 
+def test_a_drained_queue_stamps_each_verdict_into_status_json(tmp_path, tool):
+    """status.json's `status` says only that a simulation ran: the verdict
+    beside it is the Session's, as a `run` leaves it — FAIL for the test
+    the staged edit fails, whose simulation "passed"."""
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = tmp_path / "work"
+    session = tool.open(config, work_dir)
+    session.stage([TIGHTEN])  # the run of ConstantCsv fails
+    tool.queue(CONSTANT_CSV, POINTS_CHECK)
+    tool.finished(CONSTANT_CSV, POINTS_CHECK)
+    assert session.wait_background(30)
+    rows = {t["model_id"]: t for t in read_status(work_dir)["tests"]}
+    assert {m: (t["status"], t["verdict"]) for m, t in rows.items()} == {
+        CONSTANT_CSV: ("passed", "FAIL"),
+        POINTS_CHECK: ("passed", "PASS"),
+    }
+
+
 def test_save_and_discard_after_a_drained_queue_leave_its_dashboard_alone(
     tmp_path, tool
 ):

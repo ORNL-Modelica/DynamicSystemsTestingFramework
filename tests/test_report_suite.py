@@ -463,10 +463,13 @@ class TestWorstNrmse:
 
     @pytest.mark.parametrize(
         "mode",
-        ["tube", "range", "points", "event-timing", "scalar", "dominant-frequency"],
+        ["tube", "range", "points", "event-timing", "scalar", "dominant-frequency", ""],
     )
     def test_a_test_with_no_nrmse_criterion_has_no_worst_nrmse(self, mode):
-        """Each of these modes keeps a number of its own in the field."""
+        """Each of these modes keeps a number of its own in the field — and
+        a criterion with NO metric (`""`: a flat override naming a mode
+        nothing is registered under) is not one scored by nrmse: no surface
+        reads a default into an empty mode."""
         from dstf.reporting.context_builder import worst_nrmse
 
         assert worst_nrmse([self._scored(0.5, mode=mode)]) == (None, 0)

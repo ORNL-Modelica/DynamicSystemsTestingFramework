@@ -208,7 +208,9 @@ def summarize(vc: VariableComparison) -> ScoreSummary:
         return ScoreSummary(
             display="not scored", criterion=f"{label} not scored — {error}"
         )
-    desc = metric(vc.mode or "nrmse")
+    # A mode nothing is registered under — none at all, or a plug-in's that
+    # is not loaded — reads as the default summary does.
+    desc = metric(vc.mode)
     fn = desc.summarize if desc is not None else summarize_default
     return fn(vc)
 
