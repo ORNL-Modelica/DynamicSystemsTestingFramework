@@ -2530,8 +2530,9 @@ async def test_watch_plots_with_no_derived_plot_say_so(shell):
 
 async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path):
     """The third reason: a successful result the test tracks nothing of.
-    The tree's line is still the baseline's — the two sentences answer two
-    questions."""
+    That is no longer "no baseline" on the tree's line either: a result
+    that holds nothing the test tracks scored nothing, and no accept gives
+    it a criterion — the comparison refuses the test and says so."""
     import json
 
     cfg, work = _two_var_project(tmp_path)
@@ -2546,9 +2547,9 @@ async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path
         page = await _test_page(shell, user, B)
         assert page.cards == []
         assert _one(user, "plots:count").text == "no plots: the result has no variables"
-        assert (
-            _one(user, "tree:summary").text
-            == "nothing scored: this test has no baseline"
+        assert _one(user, "tree:summary").text == (
+            "nothing scored: the result holds none of the variables this test "
+            "tracks (x, y) — nothing was scored"
         )
 
 

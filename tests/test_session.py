@@ -891,7 +891,7 @@ class TestOpen:
         the re-read's own list comes back as "not found in discovery". Only
         the changed models may be stored: without that filter an unchanged
         Bar's result flips to a failed read on every rescan, and its next
-        rescore says SIM_FAIL where the open said NO_REF."""
+        rescore says SIM_FAIL where the open scored the result it read."""
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
         cfg = _modelica_project(tmp_path)
         _add_bar(tmp_path)
@@ -925,7 +925,12 @@ class TestOpen:
         assert s.rescan_done.wait(10.0)
         assert s.project.test(before.model_id).stop_time == before.stop_time + 1
         assert s.project.results["MyLib.Bar"].success is True
-        assert classify(s.rescore("MyLib.Bar")) == NO_REF
+        # Still the result read at open, which holds none of what Bar
+        # tracks (this project's Python backend reads no UnitTests
+        # variable): scored, it says so. A failed read would be SIM_FAIL.
+        comp = s.rescore("MyLib.Bar")
+        assert comp.sim_success and classify(comp) == FAIL
+        assert comp.error_message.endswith(" — nothing was scored")
 
     def test_a_rescans_read_that_raises_leaves_the_session_as_it_was(
         self, tmp_path, monkeypatch

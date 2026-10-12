@@ -1915,8 +1915,12 @@ class TestNameBasedPairing:
                 )
             ],
         )
-        comp = compare_test(_mk_test(), result, reference)
-        assert comp.passed
+        # The test tracks `b`: before a test that scores nothing stopped
+        # being a PASS this one tracked no variable of its result, scored
+        # nothing and passed whatever `b` was paired with.
+        comp = compare_test(_mk_test(variable_patterns=["b"]), result, reference)
+        assert comp.passed and [v.name for v in comp.variables] == ["b"]
+        assert comp.variables[0].nrmse == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -2048,7 +2052,9 @@ class TestCompareOne:
     def test_no_baseline_is_no_ref(self):
         from dstf.comparison.comparator import compare_one
 
-        comp = compare_one(_mk_test(), _mk_result(), _NoRefStore())
+        comp = compare_one(
+            _mk_test(variable_patterns=["x"]), _mk_result(), _NoRefStore()
+        )
         assert comp.has_reference is False and comp.passed is True
         assert not comp.evaluated
 
@@ -2066,7 +2072,7 @@ class TestCompareOne:
 
         tests = [
             _make_test(),
-            _mk_test(model_id="MyLib.Test"),
+            _mk_test(model_id="MyLib.Test", variable_patterns=["x"]),
             _mk_test(model_id="MyLib.Gone"),
         ]
         results = {"Test.Model": scored_result, "MyLib.Test": _mk_result()}

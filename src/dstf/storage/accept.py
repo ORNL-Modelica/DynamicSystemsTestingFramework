@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..backends.types import TestResult
-from ..comparison.comparator import refused_base_tolerance
+from ..comparison.comparator import nothing_scored, refused_base_tolerance
 from ..discovery.test_registry import TestModel
 from .batch_manifest import unfinished_run_models
 from .ref_index import RefIndex
@@ -46,16 +46,20 @@ def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
 def accept_refusal(
     store: ReferenceStore, test: TestModel, result: TestResult | None
 ) -> str | None:
-    """Why the comparison REFUSES ``test`` — its base tolerance is no number
-    — or ``None``: the comparison's own decision (`refused_base_tolerance`),
-    asked of the test and its stored reference as ``compare_one`` asks it. A
-    test with no successful result is not refused: it has its own reason."""
+    """Why the comparison REFUSES ``test`` — its base tolerance is no
+    number, or its result holds nothing it tracks — or ``None``: the
+    comparison's own decisions (`refused_base_tolerance`, `nothing_scored`),
+    asked of the test and its stored reference as ``compare_one`` asks
+    them. A test with no successful result is not refused: it has its own
+    reason."""
     if result is None or not result.success:
         return None
     refused = refused_base_tolerance(
         test, store.get_reference(test.model_id), store.config.tolerance
     )
-    return None if refused is None else refused.error_message
+    if refused is not None:
+        return refused.error_message
+    return nothing_scored(test, result)
 
 
 def accept_run_results(

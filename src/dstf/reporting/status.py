@@ -16,7 +16,8 @@ Ordering, and why:
    about the trajectories is meaningful.
 2. ``FAIL`` — a failing verdict outranks a missing baseline: baseline-free
    modes (``range``, ``points`` with explicit values) carry a real verdict
-   with nothing stored.
+   with nothing stored. A test the comparison refused is here too, baseline
+   or none (:func:`refusal`): one that scored NOTHING is not a pass.
 3. simulate-only — the pass criterion IS "it simulated", so a missing
    baseline is irrelevant and the verdict is PASS, never NO_REF.
 4. ``NO_REF`` — reserved for tests where nothing was evaluated at all.
@@ -156,7 +157,8 @@ def classify(comp: TestComparison) -> str:
 
 def refusal(comp: TestComparison) -> str | None:
     """Why the comparison REFUSED this test — FAILED it without scoring a
-    variable (a base tolerance that is no number) — or ``None``. The reason
+    variable (a base tolerance that is no number; a result that holds
+    nothing the test tracks) — or ``None``. The reason
     is the whole finding: there is no failing variable to name and no tree
     to draw, so every surface says it where it would name those. Not a
     SIM_FAIL's or a NO_REF's message, which their own status says."""

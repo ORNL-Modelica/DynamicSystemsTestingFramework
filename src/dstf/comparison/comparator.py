@@ -121,6 +121,43 @@ def refused_base_tolerance(
     )
 
 
+#: How many of a test's tracked names :func:`nothing_scored` spells out.
+_NAMED_TRACKED = 4
+
+
+def nothing_scored(test: TestModel, result: TestResult) -> str | None:
+    """Why a test with no tree scores NOTHING of *result*, or ``None``: the
+    result holds none of the variables the test tracks — its ``variables``
+    patterns match no name in it, its UnitTests variables are not there (a
+    model replaced by an empty class of the same name still simulates) — or
+    the test tracks none. The flat path scores one criterion per tracked
+    variable the result holds, and the AND of none of them is true: such a
+    test read PASS, with no criterion and no word.
+
+    THE one decision: the comparison fails the test with this sentence
+    (``reporting.status.refusal`` puts it where a failing criterion would
+    be named), and an accept skips it with the same one — the baseline it
+    would write holds nothing the test asks about. A test with a tree is
+    not asked: each of its leaves fails by itself when its variable is not
+    in the result. A simulate-only test is not asked either: that it ran
+    is its criterion."""
+    if test.simulate_only or test.metric_tree_spec is not None:
+        return None
+    if not result.success or tracked_results(test, result):
+        return None
+    tracked = [v.name for v in unit_test_variables(test)] + list(test.variable_patterns)
+    # A reason, as every refusal is: a page leads it with "Not scored: ".
+    if not tracked:
+        return "this test tracks no variable and has no criteria — nothing was scored"
+    named = ", ".join(tracked[:_NAMED_TRACKED])
+    if len(tracked) > _NAMED_TRACKED:
+        named += f" and {len(tracked) - _NAMED_TRACKED} more"
+    return (
+        "the result holds none of the variables this test tracks "
+        f"({named}) — nothing was scored"
+    )
+
+
 def refuse_stored_override_keys(
     reference: dict, store: ReferenceStore, model_id: str
 ) -> None:
@@ -501,6 +538,19 @@ def compare_test(
             variables=[],
             metric_tree=leaf,
             simulate_only=True,
+        )
+
+    nothing = nothing_scored(test, result)
+    if nothing is not None:
+        # Not a PASS: no criterion was scored, so there is no verdict about
+        # the model at all. FAIL, the status a tree's leaf gives a variable
+        # the result does not hold, with the reason where the failing
+        # criterion would be named.
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            test_id=ref_test_id,
+            error_message=nothing,
         )
 
     structural_warnings = _check_structural_changes(
@@ -915,6 +965,17 @@ def compare_one(
     refused = refused_base_tolerance(test, reference, default_tolerance)
     if refused is not None:
         return refused
+    # Nor is it NO_REF — "accept it" — when its result holds nothing it
+    # tracks: no accept can give such a test a criterion.
+    nothing = nothing_scored(test, result)
+    if nothing is not None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            test_id=(reference or {}).get("test_id"),
+            has_reference=reference is not None,
+            error_message=nothing,
+        )
     # simulate_only tests don't need a baseline — their pass criterion
     # is "did it simulate successfully?". Dispatch to compare_test with
     # an empty dict reference so its simulate_only short-circuit runs

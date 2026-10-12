@@ -7713,11 +7713,18 @@ translation log; an emptied or garbage BASE-CLASS file reads the same on
 Dymola (the model misses what it declared) and `MyLib does not load:
 [grammar:error:234] …` on OpenModelica. A test's OWN file emptied or
 turned to garbage never reaches the simulator: the click refuses it (`no
-longer holds it`). What still gets through: a test only the spec declares
-whose model was replaced by an EMPTY class of the same name runs on both
-simulators and, tracking a variable the result no longer holds, is scored
-PASS with nothing scored — the comparator's reading of a run that records
-none of its variables, not the queue's.
+longer holds it`). A test only the spec declares whose model was replaced
+by an EMPTY class of the same name still runs on both simulators, and its
+result holds none of the variables it tracks. The comparator read that as
+PASS — the AND of no criteria — until 2026-10-12; it is now FAIL with the
+reason where a failing criterion would be named, `the result
+holds none of the variables this test tracks (x) — nothing was scored`, on every surface
+and with or without a baseline, and no accept stores a baseline for it
+(`comparator.nothing_scored`, the one decision). A test with a `metrics`
+tree is not asked — each leaf fails by itself for a variable the result
+does not hold — and a simulate-only test passes by having run. A result
+that holds SOME of a flat test's tracked variables is scored on those, as
+before: the backend's log line is all that says one was missing.
 
 **What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
 refusal of Save, Discard and Reload while one runs. D129's capability

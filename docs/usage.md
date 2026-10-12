@@ -529,6 +529,17 @@ one down:
   base tolerance that is no number, and `spec-update` — the tool's Save too —
   refuses a patch that sets `comparison.tolerance` to one.
 
+A test with no `metrics` tree is scored one criterion per tracked variable
+its result holds. When the result holds NONE of them — its `variables`
+patterns match no name in it, or the model was replaced by one that no
+longer has them and still simulates — nothing was scored, and that is not a
+pass: the test FAILS the same way, with `the result holds none of the
+variables this test tracks (pipe.T[*], pipe.m_flow) — nothing was scored` as
+its message, with or without a baseline, and `--accept` skips it with that
+sentence. A test with a tree is not asked (each criterion fails by itself:
+`variable 'x' not found in the result`), and a simulate-only test passes by
+having run.
+
 ### The points a baseline stores (`baseline_points`)
 
 Accepting a result stores its trajectory as the test's baseline. A baseline
