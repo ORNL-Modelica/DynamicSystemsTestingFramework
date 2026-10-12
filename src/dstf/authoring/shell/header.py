@@ -389,7 +389,14 @@ class Header:
         """The stale-file refusal's dialog: the spec changed on disk since
         it was loaded, so nothing that writes from the loaded one went on.
         Save's, and — handed here by the page's action bars — Accept's:
-        one dialog, one way out (Reload, or keep the edits and look)."""
+        one dialog, one way out (Reload, or keep the edits and look).
+
+        It says what was NOT done (the Accept's own dialog has closed for
+        this one, and nothing else on the page says it), and its Reload
+        button says what it costs before it is clicked: the pending edits
+        it drops, counted as the header counts them. With none pending
+        there is nothing to keep, and the other button is Close."""
+        pending = edit_count(self.shell.session.spec.pending)
         self.dialog.clear()
         with self.dialog, ui.card():
 
@@ -405,11 +412,22 @@ class Header:
             ui.label(f"{e.path} changed on disk since it was loaded.").mark(
                 "stale-spec"
             )
+            ui.label(e.not_done).mark("stale-not-done")
             with ui.row():
-                ui.button("Reload", on_click=reload).props("outline dense no-caps")
-                ui.button("Keep my edits", on_click=self.dialog.close).props(
-                    "flat dense no-caps"
-                )
+                ui.button(
+                    f"Reload and discard {plural(pending, 'pending edit')}"
+                    if pending
+                    else "Reload",
+                    on_click=reload,
+                ).props("outline dense no-caps").mark("stale-reload")
+                if pending:
+                    ui.button("Keep my edits", on_click=self.dialog.close).props(
+                        "flat dense no-caps"
+                    ).mark("stale-keep")
+                else:
+                    ui.button("Close", on_click=self.dialog.close).props(
+                        "flat dense no-caps"
+                    ).mark("stale-close")
         self.dialog.open()
 
     def _save(self) -> None:

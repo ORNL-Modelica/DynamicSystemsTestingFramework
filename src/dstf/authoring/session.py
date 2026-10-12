@@ -421,8 +421,12 @@ class StaleSpecError(RuntimeError):
     entry's `baseline_points` and comparison settings — goes on. ``doing``
     is what was refused, for the sentence."""
 
+    #: What each refused act did NOT do, as the dialog says it.
+    NOT_DONE = {"saving": "Nothing was saved.", "accepting": "Nothing was accepted."}
+
     def __init__(self, path: Path, doing: str = "saving"):
         self.path = path
+        self.not_done = self.NOT_DONE[doing]
         super().__init__(
             f"{path} changed on disk since it was loaded; reload before {doing}"
         )
@@ -808,10 +812,27 @@ class Session:
 
     def reload(self) -> None:
         """Re-read the spec from disk, dropping pending ops (what a refused
-        save offers)."""
+        save offers). A reload that cannot be done leaves the Session as it
+        was — its spec, its pending ops, its tests: a file that is no spec
+        (`ConfigError`, the decoder's and the merge's), and a file that was
+        there when it was loaded and is gone now. `SpecDocument.load` reads
+        a missing file as the empty document, which is right for a project
+        that never had one; over a deleted file it emptied the Suite."""
         project = self._require_project()
-        self.spec = SpecDocument.load(project.config.spec_path)
-        self._rebuild_tests(set(self.comparisons))
+        held = self.spec
+        spec = SpecDocument.load(project.config.spec_path)
+        if spec.content_hash is None and held.content_hash is not None:
+            raise ConfigError(
+                f"{spec.path} is gone: nothing was reloaded — put the file "
+                "back, then Reload"
+            )
+        self.spec = spec
+        try:
+            self._rebuild_tests(set(self.comparisons))
+        except BaseException:
+            # The merge reads before it replaces anything (`_rebuild_tests`).
+            self.spec = held
+            raise
 
     def wait_background(self, timeout: float | None = None) -> bool:
         """Wait until what the Session runs off the UI loop — a drained

@@ -26,7 +26,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.shell.shell import TICK, Shell  # noqa: E402
-from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.authoring.spec_document import PatchOp, edit_count  # noqa: E402
 from dstf.backends.pool import ItemState  # noqa: E402
 from dstf.reporting.status import FAIL, classify  # noqa: E402
 from test_queue_panel import _has, _hold  # noqa: E402
@@ -322,6 +322,79 @@ async def test_accept_refused_on_a_changed_file_says_so_in_saves_dialog(shell):
         await user.should_see("Accept 1 result as baselines", retries=20)
         user.find(kind=ui.button, content="Accept 1 result as baselines").click()
         await _settled(lambda: session.project.store.index.get_id(B) is not None)
+
+
+def _touch_spec(shell) -> None:
+    path = shell.session.spec.path
+    path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+
+async def _accept_b(shell, user) -> None:
+    """Accept B from the Suite, to the refusal's dialog."""
+    page = _suite(shell, user)
+    page._on_selection([B])
+    await _settled(lambda: _one(user, "action:accept").enabled)
+    user.find(marker="action:accept").click()
+    await user.should_see("Accept 1 result as baselines", retries=20)
+    user.find(kind=ui.button, content="Accept 1 result as baselines").click()
+    await user.should_see(marker="stale-spec", retries=20)
+
+
+async def test_the_stale_dialog_says_what_was_not_done_and_what_a_reload_costs(shell):
+    """The dialog said the file changed and offered Reload / Keep my
+    edits: not that the Accept was not done, `Keep my edits` with no edit
+    to keep, and nothing of the edits a Reload drops."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        # An Accept, nothing pending: nothing to keep, nothing to lose.
+        _touch_spec(shell)
+        await _accept_b(shell, user)
+        assert _one(user, "stale-not-done").text == "Nothing was accepted."
+        assert _one(user, "stale-reload").text == "Reload"
+        assert not _has(user, "stale-keep")
+        user.find(marker="stale-close").click()
+        # Two acts pending, then the same Accept.
+        shell.session.stage([LOOSEN])
+        shell.session.stage([PatchOp(B, "add", "/comparison", {"tolerance": 0.2})])
+        await _accept_b(shell, user)
+        assert _one(user, "stale-not-done").text == "Nothing was accepted."
+        assert _one(user, "stale-reload").text == ("Reload and discard 2 pending edits")
+        assert _one(user, "stale-keep").text == "Keep my edits"
+        assert not _has(user, "stale-close")
+        user.find(marker="stale-keep").click()
+        assert edit_count(shell.session.spec.pending) == 2  # kept
+        # A Save says its own word.
+        header = _suite(shell, user).header
+        header._save()
+        await user.should_see("Nothing was saved.", retries=20)
+        assert _one(user, "stale-not-done").text == "Nothing was saved."
+        user.find(marker="stale-reload").click()
+        await _settled(lambda: not shell.session.spec.pending)
+
+
+async def test_reload_with_the_spec_file_gone_says_one_sentence_and_keeps_the_suite(
+    shell,
+):
+    """Reload over a deleted spec file left an empty Suite. It says the
+    one sentence, the rows stay, the dialog stays — and with the file back
+    the same Reload goes through."""
+    session = shell.session
+    path = session.spec.path
+    text = path.read_bytes()
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        tests = [t.model_id for t in session.project.tests]
+        path.unlink()
+        await _accept_b(shell, user)
+        user.find(marker="stale-reload").click()
+        gone = f"{path} is gone: nothing was reloaded — put the file back, then Reload"
+        await _settled(lambda: gone in user.notify.messages)
+        assert [t.model_id for t in session.project.tests] == tests
+        assert _has(user, "stale-spec")  # the dialog is still the way out
+        path.write_bytes(text)
+        user.find(marker="stale-reload").click()
+        await _settled(lambda: not session.spec.on_disk_changed())
+        assert [t.model_id for t in session.project.tests] == tests
 
 
 async def test_stop_server_confirms_with_its_reasons_and_stops_on_the_second_word(

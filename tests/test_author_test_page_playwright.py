@@ -586,6 +586,12 @@ def test_escape_on_a_menu_or_a_dialog_over_the_pending_drawer_closes_only_it(
             page.get_by_role("button", name="Save these").click()
             dialog = page.get_by_text("changed on disk since it was loaded")
             expect(dialog).to_be_visible(timeout=EXPECT_TIMEOUT)
+            # What was not done, and what its Reload costs, before a click.
+            expect(page.get_by_text("Nothing was saved.")).to_be_visible()
+            expect(
+                page.get_by_role("button", name="Reload and discard 1 pending edit")
+            ).to_be_visible()
+            expect(page.get_by_role("button", name="Keep my edits")).to_be_visible()
             _shot(page, tmp_path, "stale-dialog-over-drawer")
             page.keyboard.press("Escape")
             expect(dialog).to_be_hidden(timeout=EXPECT_TIMEOUT)

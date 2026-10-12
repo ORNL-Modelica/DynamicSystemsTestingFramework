@@ -1817,6 +1817,59 @@ class TestSaveDiscardExport:
         assert session.spec.pending == [] and not session.spec.on_disk_changed()
         assert classify(session.comparisons[A]) == FAIL
 
+    def test_reload_with_the_file_gone_says_so_and_keeps_the_session(self, session):
+        """A spec file deleted under the tool: Reload read it as the empty
+        document and the Suite went empty. It is one sentence, the Session
+        is as it was — its tests, its pending edits — and a Reload after
+        the file is back finds it."""
+        from dstf.config import ConfigError
+
+        session.stage([LOOSEN])
+        p, held = session.spec.path, session.spec
+        text = p.read_bytes()
+        tests = [t.model_id for t in session.project.tests]
+        p.unlink()
+        with pytest.raises(ConfigError) as refused:
+            session.reload()
+        assert str(refused.value) == (
+            f"{p} is gone: nothing was reloaded — put the file back, then Reload"
+        )
+        assert session.spec is held and edit_count(session.spec.pending) == 1
+        assert [t.model_id for t in session.project.tests] == tests
+        p.write_bytes(text)
+        session.reload()
+        assert session.spec is not held and session.spec.pending == []
+        assert [t.model_id for t in session.project.tests] == tests
+
+    def test_reload_of_a_project_that_never_had_a_spec_file_is_no_refusal(
+        self, tmp_path
+    ):
+        cfg, work = _project(tmp_path)
+        cfg.with_name("test_spec.json").unlink()
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.spec.content_hash is None and not s.spec.path.exists()
+        s.reload()  # the empty document it loaded, again
+        assert s.spec.content_hash is None
+
+    def test_reload_over_a_file_that_is_no_spec_keeps_the_session(self, session):
+        """The file is read, and what it holds is refused: the Session
+        still holds the spec it had, with its pending edits."""
+        from dstf.config import ConfigError
+
+        session.stage([LOOSEN])
+        p, held = session.spec.path, session.spec
+        text = p.read_text(encoding="utf-8")
+        doc = json.loads(text)
+        doc["tests"][0]["comparison"] = "tolerance=5"
+        p.write_text(json.dumps(doc), encoding="utf-8")
+        with pytest.raises(ConfigError):
+            session.reload()
+        assert session.spec is held and edit_count(session.spec.pending) == 1
+        p.write_text(text, encoding="utf-8")
+        session.reload()
+        assert session.spec.pending == []
+
     def test_discard_restores_the_loaded_verdicts(self, session):
         session.stage([LOOSEN])
         assert classify(session.comparisons[A]) == PASS

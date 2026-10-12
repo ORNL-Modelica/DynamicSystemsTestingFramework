@@ -1250,6 +1250,16 @@ the header and the strip. An Esc while a menu or a dialog is open closes that
 one, and the drawer stays; a second Esc, even while it is still fading out,
 closes the drawer.
 
+A Save or an Accept over a `test_spec.json` that was changed on disk since
+the tool loaded it — edited by hand, or by `spec-update` — is refused in a
+dialog: `<path> changed on disk since it was loaded.`, then `Nothing was
+saved.` / `Nothing was accepted.`, and Reload, which reads the file again.
+With edits pending the button says what it costs, `Reload and discard 2
+pending edits`, beside `Keep my edits`; with none it is `Reload` beside
+`Close`. A Reload that cannot be done changes nothing: over a deleted file
+it says `<path> is gone: nothing was reloaded — put the file back, then
+Reload`, and over a file that is no spec that file's own error.
+
 The **Suite page** is a table of the tests, with the dashboard's columns and
 words (one row model, D136): Status, Test, Worst NRMSE, Criteria, Sim (s),
 Warnings, Edits (a test's staged edits, "2 unsaved") and Message, which takes

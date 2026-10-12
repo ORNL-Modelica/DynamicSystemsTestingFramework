@@ -8526,6 +8526,20 @@ Suite's bar, the Test page's strip and a queue row alike
 (`Header.stale`). The CLI's accepts read the file as they start and are
 not concerned.
 
+That dialog said the file had changed and offered `Reload` / `Keep my
+edits`: not that the Accept had NOT been done (its own dialog closes for
+this one), `Keep my edits` with no edit to keep, and nothing of the edits
+a Reload drops. It now reads the path's line, then `Nothing was
+accepted.` (`Nothing was saved.` for a Save); its Reload button is
+`Reload and discard 2 pending edits` while edits are pending — the
+header's count — and `Reload` beside `Close` when none are. And a Reload
+that cannot be done leaves the Session as it was (`Session.reload`): over
+a spec file DELETED under the tool it read the empty document and the
+Suite went empty; it now says `<path> is gone: nothing was reloaded — put
+the file back, then Reload`, the rows and the pending edits stay, and the
+same Reload goes through once the file is back. A file that is read and
+is no spec is refused with its own sentence, the same way.
+
 ## D154 — What nothing reads is an error; an unscorable criterion is refused by the write that makes it (2026-10-12)
 
 **Context.** `test_spec.json` is written by hand as well as by the tool,
