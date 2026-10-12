@@ -1934,22 +1934,51 @@ planning.
   needs CSS `:has` (D147's limits), which a pinned range with a margin
   would not.
 
-- **How many points a baseline keeps is nobody's decision yet (owner,
-  2026-10-11)**: a stored baseline is thinned to at most 2000 points
-  (`storage/reference_store.py::_downsample`, `max_points=2000`), a default
-  that has stood since the first upload and has no `testing.json` key. It is
-  more than a file-size setting: scoring reads the run AT the baseline's time
-  points, so the cap is also the resolution at which a regression can be
-  seen. The owner's point: plenty of simulations want what the simulator
-  wrote, not a thinned copy. The small form is a `testing.json` key (default
-  2000, with a value that means "keep every sample") read where a baseline
-  is stored; the questions to settle first are what the default should be,
-  whether it can be set per test, and what a baseline stored at one setting
-  means when the run is later compared at another. Found beside it: two
-  baselines stored before the 2026-07-06 tail fix still end short of their
-  stop time, so the end of those runs is compared against nothing until they
-  are accepted again — a baseline whose last time is earlier than its
-  recorded stop time could be reported by `manifest dump` or on compare.
+- **Sampling a baseline by region (owner, 2026-10-11; deferred to its own
+  session — grill before planning)**: the simple half is being built now —
+  a baseline keeps every point the simulator wrote unless `baseline_points`
+  gives a number. What is deferred is the flexible half the owner described:
+  uniform sampling, chosen times, or a different density in different parts
+  of a run (sparse at the start, fine in the middle or around events). A
+  candidate form, NOT a decision: a list of segments in place of the number,
+  `[{"until": 50, "points": 20}, {"until": 200, "points": "all"},
+  {"points": 200}]`. What the first look found, to be argued in that session:
+  - Three things are easy to conflate: what the simulator writes
+    (`number_of_intervals` / `output_interval`), what the baseline keeps
+    (this), and where scoring looks (a leaf's `window`). "Do not sample the
+    beginning" is a scoring choice a window already makes VISIBLY; made by
+    sampling it leaves a region silently unchecked, which is what the old
+    tail-trim did. Candidate rule: no region may hold zero points — every
+    region keeps its end points and its events.
+  - `nrmse` is a mean over the baseline's POINTS, not over time, so a denser
+    region weighs more in the score. "Fine in the middle" is therefore a
+    weighting; three windowed leaves with their own tolerances say "stricter
+    in the middle" directly and exist today. A time-weighted nrmse would
+    remove the effect and change every stored score.
+  - Other leaves read the grid too: a `scalar` max or integral is taken from
+    the stored baseline (a thinned peak is a different target), a
+    `dominant-frequency` check cannot see above what the stored spacing
+    resolves, `event-timing` needs the event points (always kept).
+  - Candidate rule: select, never interpolate — a baseline holds only
+    samples the simulator wrote; "uniform" means the written samples nearest
+    a uniform grid, and true uniform output is `output_interval`'s job.
+  - Thinning is even by index and can drop a spike. A shape-preserving
+    thinning (LTTB, as the figures use) picks different indices per
+    variable, and a baseline has ONE time vector for all its variables —
+    that is a change to the reference JSON layout.
+  - "Around events" cannot be written as times beforehand: events are known
+    only after the run, so it would be its own option.
+  - Measured on TRANSFORM (330 baselines): 11 were thinned by the old 2000
+    cap, the median run has 502 rows, and keeping everything takes the
+    baselines from 10.7 MB to about 24.6 MB, two 74,000-row tests being
+    about 5 MB each — so segments would mostly buy file size, and the size
+    is small. The open question to start from: is the per-region wish about
+    what is SCORED or about what is STORED?
+  Beside it, not built: a baseline whose last time is earlier than its
+  recorded stop time could be reported on compare (two stored before the
+  2026-07-06 tail fix ended short until they were accepted again); and a
+  compare could say when a baseline was stored under another
+  `baseline_points` than the one now in force.
 
 - **Small things the release gates saw and left (2026-10-11)**: a cancelled
   run's "stopped at t = …" note is anchored in the legend's band and can
