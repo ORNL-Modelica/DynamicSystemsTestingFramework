@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -543,8 +544,6 @@ def test_a_companion_that_is_a_reference_file_is_read_through_it_too(tmp_path):
 def test_import_baseline_stores_the_runs_own_numbers(tmp_path, capsys):
     """`import-baseline` of a `single` reference file: the soft check it
     stores holds what the run held."""
-    from dstf.cli import main
-
     config, path = _single_reference(tmp_path)
     source = tmp_path / "from-elsewhere.json"
     source.write_bytes(path.read_bytes())
