@@ -230,7 +230,8 @@ def _build_ref_info(
 ) -> list:
     """Build the test-metadata rows shown in the report's "Reference Info"
     section: test_id / status / dates / reference-file link / test-dir link
-    / tracked-variable count.
+    / how many criteria scored the run / how many variables the baseline
+    stores.
     """
     ref_info = []
     meta_fields = [
@@ -262,15 +263,16 @@ def _build_ref_info(
             }
         )
 
-    ref_info.append(
-        {
-            "label": "Tracked Variables",
-            "value": f"{len(comparisons)} current"
-            + (f" / {ref_data.get('n_vars', '?')} reference" if ref_data else "")
-            if comparisons
-            else "",
-        }
-    )
+    # Two counts of two things, each named for what it is: the criteria
+    # this run was scored by (one per leaf — two on one variable are two),
+    # and the variables the baseline stores. They read `Tracked Variables |
+    # 23 current / 21 reference`, as one quantity then and now.
+    if comparisons:
+        ref_info.append({"label": "Criteria", "value": str(len(comparisons))})
+    if ref_data and ref_data.get("n_vars") is not None:
+        ref_info.append(
+            {"label": "Reference Variables", "value": str(ref_data["n_vars"])}
+        )
     return ref_info
 
 

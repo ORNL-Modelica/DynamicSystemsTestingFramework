@@ -4983,7 +4983,14 @@ twice in the template (header, filter row) and a third time in each row's
    key `criteria`, on 2026-10-12: what it counts is the leaves of the
    test's tree — `3/3` for a test that scores ONE variable three ways,
    `21/21` for twenty elements of an array and one more criterion on one
-   of them — and it said "Variables". The number is unchanged.)
+   of them — and it said "Variables". The number is unchanged. Two more
+   places said "Variables" of that count and say Criteria since: the
+   interactive review's `Variables: 2/3 passed, 1 failed` is `Criteria:
+   2/3 passed, 1 failed`; and the report page's Reference Info row
+   `Tracked Variables | 23 current / 21 reference`, which set the run's
+   criteria beside the variables its baseline stores as if they were one
+   quantity, is two rows, `Criteria | 23` and `Reference Variables | 21`,
+   each left out when there is no such count.)
 3. *One typed-filter module* (`templates/filters.js`, `DstfFilters.compile(
    kind, query, {regex, case})`), inlined before `dashboard.js`. Text: a
    substring, an anchored glob when the query holds `*` or `?` (every other

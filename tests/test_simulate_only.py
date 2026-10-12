@@ -155,3 +155,21 @@ def test_the_report_page_of_a_test_that_declares_nothing_says_simulate_only():
     assert _compute_summary_flags([], ran, declares_nothing) == (0, 0, True, False)
     tracks = make_test_model(variable_patterns=["x"])
     assert _compute_summary_flags([], ran, tracks) == (0, 0, False, True)
+
+
+def test_the_report_page_names_what_its_two_counts_count(tmp_path):
+    """`Tracked Variables | 3 current / 2 reference` set the test's
+    CRITERIA beside the variables its baseline stores, as one quantity now
+    and then. Each is named for what it is, and a count that is not there
+    is no row."""
+    from dstf.reporting.context_builder import _build_ref_info
+
+    def rows(comparisons, ref_data) -> dict:
+        info = _build_ref_info(comparisons, ref_data, None, None)
+        return {row["label"]: row["value"] for row in info}
+
+    three, reference = [object()] * 3, {"n_vars": 2}
+    assert rows(three, reference) == {"Criteria": "3", "Reference Variables": "2"}
+    assert rows(three, None) == {"Criteria": "3"}
+    assert rows([], reference) == {"Reference Variables": "2"}
+    assert rows([], {}) == {} and rows([], None) == {}

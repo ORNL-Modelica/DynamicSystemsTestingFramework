@@ -111,15 +111,17 @@ def _interactive_review(
         if comp.error_message and (not comp.sim_success or refused):
             print(f"  Error: {comp.error_message}")
 
-        # Brief variable summary
+        # Its criteria in brief — `comp.variables` holds one comparison per
+        # CRITERION (two on one variable are two): the Criteria column's
+        # count, under its name.
         if comp.variables:
-            n_vars_pass = sum(1 for v in comp.variables if v.passed)
-            n_vars_total = len(comp.variables)
+            n_pass = sum(1 for v in comp.variables if v.passed)
+            n_total = len(comp.variables)
             if comp.passed:
-                print(f"  Variables: {n_vars_pass}/{n_vars_total} passed")
+                print(f"  Criteria: {n_pass}/{n_total} passed")
             else:
                 print(
-                    f"  Variables: {n_vars_pass}/{n_vars_total} passed, {n_vars_total - n_vars_pass} failed"
+                    f"  Criteria: {n_pass}/{n_total} passed, {n_total - n_pass} failed"
                 )
 
         # Can't accept if simulation failed, or never ran

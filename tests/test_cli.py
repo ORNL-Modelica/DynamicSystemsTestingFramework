@@ -247,6 +247,45 @@ def test_the_review_says_the_classifiers_status(shape, monkeypatch, tmp_path, ca
     assert f"  Status: {_REVIEWED_AS[shape][2]}\n" in out
 
 
+@pytest.mark.parametrize(
+    ("passed", "line"),
+    [
+        ((True, True, True), "  Criteria: 3/3 passed\n"),
+        ((True, False, True), "  Criteria: 2/3 passed, 1 failed\n"),
+    ],
+)
+def test_the_review_counts_criteria_and_calls_them_that(
+    passed, line, monkeypatch, tmp_path, capsys
+):
+    """`Variables: 2/3 passed` counted the test's CRITERIA: two of them on
+    one variable are two, and the Suite's and the dashboard's column for
+    the same number is Criteria."""
+    from dstf.comparison.types import VariableComparison
+
+    def criterion(ok: bool) -> VariableComparison:
+        return VariableComparison(
+            index=1,
+            name="x",  # three criteria, ONE variable
+            passed=ok,
+            nrmse=0.0,
+            rmse=0.0,
+            signal_range=1.0,
+            max_abs_error=0.0,
+            max_abs_error_time=0.0,
+            reference_final=1.0,
+            actual_final=1.0,
+        )
+
+    comp = TestComparison(
+        "L.T", passed=all(passed), variables=[criterion(ok) for ok in passed]
+    )
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    _interactive_review([], {}, [comp], store, config)
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert line in out and "Variables:" not in out, out
+
+
 # ---------------------------------------------------------------------------
 # Parser <-> dispatch-table parity
 # ---------------------------------------------------------------------------

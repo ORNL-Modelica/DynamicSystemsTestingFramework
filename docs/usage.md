@@ -901,7 +901,9 @@ together they add both: `run --report --report-format junit --output
 results.xml` prints the table, writes the pages and writes the file. The three
 flags do the same on `compare`.
 
-**Interactive mode (`-i`) actions:**
+**Interactive mode (`-i`)** prints each test's status and, where it was
+scored, `Criteria: 2/3 passed, 1 failed` — its criteria, the Criteria
+column's count (two criteria on one variable are two). Its actions:
 
 | Key | Action |
 |-----|--------|
