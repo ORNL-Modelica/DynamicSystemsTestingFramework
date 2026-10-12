@@ -54,6 +54,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+from ..storage.reference_store import read_reference_file
+
 logger = logging.getLogger(__name__)
 
 
@@ -268,7 +270,7 @@ def _sibling_backend_index(
                 continue
             for ref_file in sorted(os_dir.glob("ref_*.json")):
                 try:
-                    data = json.loads(ref_file.read_text(encoding="utf-8"))
+                    data = read_reference_file(ref_file)
                 except (json.JSONDecodeError, OSError):
                     continue
                 if data.get("status") == "obsolete":

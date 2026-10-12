@@ -33,6 +33,18 @@ from .roles import _companion_dir, _RolesMixin, _soft_check_dir
 logger = logging.getLogger(__name__)
 
 
+def read_reference_file(path: Path) -> dict:
+    """A reference-shape JSON file as the dict it holds — THE reader of a
+    baseline's arrays (``time``, each variable's ``values``): a primary
+    reference of this partition (:meth:`ReferenceStore.get_reference`), of
+    a sibling one (the report's overlays) and the source of an
+    ``import-baseline`` all come through here. ``OSError`` and
+    ``json.JSONDecodeError`` are the caller's: each says its own thing
+    about a file it could not read."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data
+
+
 def _baseline_from_flat(data: dict) -> Baseline:
     """Synthesize the ``"primary"`` baseline from a flat reference dict.
 
@@ -114,7 +126,7 @@ class ReferenceStore(_RolesMixin):
         if ref_file is None or not ref_file.exists():
             return None
         try:
-            data = json.loads(ref_file.read_text(encoding="utf-8"))
+            data = read_reference_file(ref_file)
         except (json.JSONDecodeError, OSError) as e:
             logger.error("Failed to read reference %s: %s", ref_file, e)
             return None

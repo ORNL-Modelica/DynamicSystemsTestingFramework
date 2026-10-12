@@ -299,7 +299,7 @@ def cmd_import_baseline(args: argparse.Namespace) -> int:
     import json as json_mod
 
     config = _build_config(args)
-    from ..storage.reference_store import ReferenceStore
+    from ..storage.reference_store import ReferenceStore, read_reference_file
 
     store = ReferenceStore(config)
     source = Path(args.import_source)
@@ -307,7 +307,7 @@ def cmd_import_baseline(args: argparse.Namespace) -> int:
         print(f"File not found: {source}")
         return 1
     try:
-        data = json_mod.loads(source.read_text(encoding="utf-8"))
+        data = read_reference_file(source)
     except (json_mod.JSONDecodeError, OSError) as e:
         print(f"Failed to read {source}: {e}")
         return 1
