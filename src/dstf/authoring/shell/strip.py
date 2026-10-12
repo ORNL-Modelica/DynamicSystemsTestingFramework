@@ -86,6 +86,9 @@ class StatusStrip:
                     lambda: Selection(tests=frozenset({page.model_id})),
                     marker="test-actions",
                     apply=page.apply,
+                    # The strip is drawn INSIDE the header, before the page
+                    # holds it: asked for when a refusal arrives.
+                    stale=lambda e: page.header.stale(e),
                     emphasis=lambda cap: getattr(cap, "emphasis", {}).get(
                         self.situation
                     ),

@@ -547,6 +547,38 @@ async def test_a_finished_row_s_badge_follows_a_rescore(shell):
         assert _one(user, f"queue-words:{A}").text.startswith("finished")
 
 
+async def test_an_accept_from_the_strip_or_a_queue_row_over_a_changed_spec_is_saves_refusal(
+    shell,
+):
+    """The Test page's strip and a queue row's Accept are refused over a
+    spec changed on disk as the Suite's is: in the header's dialog, with
+    Reload, and nothing stored."""
+    session = shell.session
+    spec_path = session.spec.path
+    async with user_simulation(root=shell.index) as user:
+        shell.mount()
+        await _open(user, f"/test/{B}")  # B: a result, no baseline
+        await _settled(lambda: _has(user, "action:accept"))
+        spec_path.write_text(
+            spec_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+        )
+        user.find(marker="action:accept").click()
+        await user.should_see(marker="panel:accept", retries=20)
+        user.find(marker="accept-submit").click()
+        await user.should_see(marker="stale-spec", retries=20)
+        assert session.project.store.index.get_id(B) is None
+
+        await _open(user, "/")
+        _end(shell, _hold(shell, B, ItemState.RUNNING), ItemState.FINISHED)
+        user.find(marker=f"queue-accept:{B}").click()
+        await user.should_see(marker="panel:accept", retries=20)
+        user.find(marker="accept-submit").click()
+        await user.should_see(marker="stale-spec", retries=20)
+        assert session.project.store.index.get_id(B) is None
+        user.find("Reload").click()
+        await _settled(lambda: not session.spec.on_disk_changed())
+
+
 async def test_an_earlier_run_s_row_has_no_verdict_and_no_accept(shell):
     """A test that ran twice has two rows. The verdict and what acts on
     the test — Accept, Queue again — are on its latest row alone: the

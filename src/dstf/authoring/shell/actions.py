@@ -32,7 +32,7 @@ from nicegui import ui
 from ..capabilities import Capability, Emphasis, Outcome, Placement
 from ..capabilities import FigureHook as FigureHookProtocol
 from ..errors import USER_ERRORS, user_text
-from ..session import Selection
+from ..session import Selection, StaleSpecError
 from .figure_hook import FigureHook
 from .placing import PLACE, PREVIEW, Placing
 from .widgets import Action, IconAction, MenuAction
@@ -272,9 +272,14 @@ class ActionBar:
         icons: bool = False,
         emphasis: Callable[[Capability], Emphasis | None] | None = None,
         apply: Callable[[Outcome | Sequence[Outcome]], None] | None = None,
+        stale: Callable[[StaleSpecError], None] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.marker = marker
+        #: Where an act refused for a spec changed on disk is said: the
+        #: page's header (`Header.stale`), the dialog Save's own refusal
+        #: uses — with Reload in it — in place of a line in this bar's.
+        self.stale = stale
         #: How an act's outcome is applied: the Session's own, unless the
         #: page the bar is on applies it (`TestPage.apply`, which notes the
         #: `spec` revisions its own acts produced).
@@ -408,6 +413,12 @@ class ActionBar:
                     outcome = cap.act(view, **inputs)
                     (self.apply or self.shell.session.apply)(outcome)
                 except Exception as e:  # shown here; a raising act changes nothing
+                    if isinstance(e, StaleSpecError) and self.stale is not None:
+                        # Said where Save's own stale-file refusal is, with
+                        # the way out beside it: this dialog closes for it.
+                        close()
+                        self.stale(e)
+                        return False
                     log_unless_users(e, cap.name)
                     self.errors[cap.name] = user_text(e)
                     error.set_text(self.errors[cap.name])

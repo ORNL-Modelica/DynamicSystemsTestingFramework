@@ -2098,7 +2098,11 @@ table and drag edits like any other pending op.
 
 **Save, Discard, Export.** Save applies exactly the pending ops through the same
 read-modify-write `dstf spec-update` uses, and refuses when the file changed on
-disk since it was loaded — offering to reload it or to keep your edits. Discard
+disk since it was loaded — offering to reload it or to keep your edits. Accept
+makes the same check and is refused in the same dialog: a baseline is written
+with the test's entry as the tool holds it (its `baseline_points`, the
+comparison settings stored beside the data), and after an edit of the file by
+hand that is no longer the entry on disk. Discard
 drops the pending ops and restores the loaded verdicts. Export writes the
 multi-model envelope to `<work_dir>/spec_patch.json`, which `dstf spec-update`
 applies unchanged.

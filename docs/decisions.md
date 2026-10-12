@@ -8397,6 +8397,19 @@ spell — within 1e-9 of the run, not equal to it. And a result with NO
 rows is refused at accept (`no rows to store`): it was stored as a
 baseline of no points.
 
+**Addendum, 2026-10-12 — the tool's Accept refuses over a spec changed on
+disk.** `baseline_points` is the entry's, and the tool's Accept wrote the
+baseline with the entry as the Session had LOADED it: an entry edited by
+hand from 50 to 77 while the tool was open was accepted at 50, with no
+word, where Save in the same state refused (`StaleSpecError`). Every
+store write a capability returns is now refused by the Session when the
+spec's hash is not the loaded one (`Session.apply`, the check Save makes):
+`<path> changed on disk since it was loaded; reload before accepting`,
+said in the dialog Save's refusal uses, with its Reload — from the
+Suite's bar, the Test page's strip and a queue row alike
+(`Header.stale`). The CLI's accepts read the file as they start and are
+not concerned.
+
 ## D154 — What nothing reads is an error; an unscorable criterion is refused by the write that makes it (2026-10-12)
 
 **Context.** `test_spec.json` is written by hand as well as by the tool,

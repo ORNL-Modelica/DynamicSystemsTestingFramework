@@ -34,7 +34,7 @@ from ..queue_rows import (
     queue_rows,
     starting_texts,
 )
-from ..session import Selection
+from ..session import Selection, StaleSpecError
 from ..typed_number import TypedNumber
 from .actions import ActionBar, log_unless_users
 from .widgets import Action, IconAction
@@ -120,7 +120,9 @@ class QueueIndicator:
 
 
 class QueuePanel:
-    def __init__(self, shell: Shell) -> None:
+    def __init__(
+        self, shell: Shell, stale: Callable[[StaleSpecError], None] | None = None
+    ) -> None:
         self.shell = shell
         #: The test a row's capability button was clicked on: the selection
         #: the panel's one dialog acts over.
@@ -195,6 +197,7 @@ class QueuePanel:
                 tests=frozenset({self.row_model} if self.row_model else ())
             ),
             marker="queue-row-actions",
+            stale=stale,
         )
         self.bar.clear()
         self.bar.container.set_visibility(False)

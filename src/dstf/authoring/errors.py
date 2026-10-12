@@ -16,7 +16,7 @@ from ..backends.pool import Refused as PoolRefused
 from ..comparison.handles import HandleEditError
 from ..config import ConfigError
 from ..discovery.patch_apply import PatchError
-from .session import QueueError
+from .session import QueueError, StaleSpecError
 from .tree_move import MoveRefused
 from .unscorable import Refused as EditorRefused
 
@@ -33,6 +33,9 @@ USER_ERRORS: tuple[type[BaseException], ...] = (
     MoveRefused,
     # A value an editor will not stage: typed on the way to a good one.
     EditorRefused,
+    # The spec file changed on disk under the tool: a write from the
+    # loaded one is refused, with the way out in the sentence.
+    StaleSpecError,
 )
 
 

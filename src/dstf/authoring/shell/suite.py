@@ -96,6 +96,7 @@ class SuitePage:
                     lambda: Selection(tests=frozenset(self.state.checked)),
                     marker="suite-actions",
                     icons=True,
+                    stale=self.header.stale,
                 )
             self.ids = self.shell.visible_tests()
             self._sent = list(self.ids)
@@ -106,7 +107,7 @@ class SuitePage:
                         selected=self.state.checked,
                         on_selection=self._on_selection,
                     ).mark("grid")
-                self.queue = QueuePanel(self.shell)
+                self.queue = QueuePanel(self.shell, stale=self.header.stale)
         # The header's indicator links here from every page; the panel is
         # drawn after the browser looked for the anchor.
         ui.run_javascript(

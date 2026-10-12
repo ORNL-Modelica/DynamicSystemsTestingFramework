@@ -385,30 +385,39 @@ class Header:
 
     # -- the edits -----------------------------------------------------------------
 
+    def stale(self, e: StaleSpecError) -> None:
+        """The stale-file refusal's dialog: the spec changed on disk since
+        it was loaded, so nothing that writes from the loaded one went on.
+        Save's, and — handed here by the page's action bars — Accept's:
+        one dialog, one way out (Reload, or keep the edits and look)."""
+        self.dialog.clear()
+        with self.dialog, ui.card():
+
+            def reload() -> None:
+                try:
+                    self.shell.session.reload()
+                except Exception as e:  # said in the dialog's place, never raised
+                    log_unless_users(e, "reload")
+                    ui.notify(user_text(e), type="warning")
+                    return
+                self.dialog.close()
+
+            ui.label(f"{e.path} changed on disk since it was loaded.").mark(
+                "stale-spec"
+            )
+            with ui.row():
+                ui.button("Reload", on_click=reload).props("outline dense no-caps")
+                ui.button("Keep my edits", on_click=self.dialog.close).props(
+                    "flat dense no-caps"
+                )
+        self.dialog.open()
+
     def _save(self) -> None:
         try:
             self.shell.session.save()
             ui.notify("saved")
         except StaleSpecError as e:
-            self.dialog.clear()
-            with self.dialog, ui.card():
-
-                def reload() -> None:
-                    try:
-                        self.shell.session.reload()
-                    except Exception as e:  # said in the dialog's place, never raised
-                        log_unless_users(e, "reload")
-                        ui.notify(user_text(e), type="warning")
-                        return
-                    self.dialog.close()
-
-                ui.label(f"{e.path} changed on disk since it was loaded.")
-                with ui.row():
-                    ui.button("Reload", on_click=reload).props("outline dense no-caps")
-                    ui.button("Keep my edits", on_click=self.dialog.close).props(
-                        "flat dense no-caps"
-                    )
-            self.dialog.open()
+            self.stale(e)
         except UnscorableSaveError as e:
             # The other refusal of a Save: said where the stale one is, in
             # the dialog — a sentence to act on, not a toast that goes.

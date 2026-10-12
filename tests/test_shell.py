@@ -20,7 +20,7 @@ import pytest
 
 pytest.importorskip("nicegui")
 
-from nicegui import app  # noqa: E402
+from nicegui import app, ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities as caps  # noqa: E402
@@ -291,6 +291,37 @@ async def test_save_refused_on_a_changed_file_offers_reload(shell):
         assert shell.session.spec.pending  # kept
         user.find("Reload").click()
         await _settled(lambda: not shell.session.spec.pending)
+
+
+async def test_accept_refused_on_a_changed_file_says_so_in_saves_dialog(shell):
+    """The refusal Save makes, in the dialog Save's uses, with its Reload:
+    the Accept dialog closes for it, nothing is stored, and after the
+    reload the Accept goes through."""
+    session = shell.session
+    spec_path = session.spec.path
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _suite(shell, user)
+        page._on_selection([B])
+        await _settled(lambda: _one(user, "action:accept").enabled)
+        spec_path.write_text(
+            spec_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+        )
+        user.find(marker="action:accept").click()
+        await user.should_see("Accept 1 result as baselines", retries=20)
+        user.find(kind=ui.button, content="Accept 1 result as baselines").click()
+        await user.should_see(marker="stale-spec", retries=20)
+        assert _one(user, "stale-spec").text == (
+            f"{spec_path} changed on disk since it was loaded."
+        )
+        assert session.project.store.index.get_id(B) is None
+        assert page.actions.errors == {} and not page.actions.dialog.value
+        user.find("Reload").click()
+        await _settled(lambda: not session.spec.on_disk_changed())
+        user.find(marker="action:accept").click()
+        await user.should_see("Accept 1 result as baselines", retries=20)
+        user.find(kind=ui.button, content="Accept 1 result as baselines").click()
+        await _settled(lambda: session.project.store.index.get_id(B) is not None)
 
 
 async def test_stop_server_confirms_with_its_reasons_and_stops_on_the_second_word(

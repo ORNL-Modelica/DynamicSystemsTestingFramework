@@ -17,6 +17,7 @@ from dstf.authoring.capabilities import Artifact, OpenProject, Patch, StoreWrite
 from dstf.authoring.session import (
     NO_TREE,
     NOTHING_SCORED,
+    Selection,
     Session,
     SessionView,
     StaleSpecError,
@@ -1786,6 +1787,40 @@ class TestSaveDiscardExport:
             session.save()
         assert p.read_bytes() == before and len(session.spec.pending) == 2
 
+    def test_accept_refuses_on_a_changed_hash_as_save_does(self, session):
+        """An entry edited by hand while the tool is open — its
+        `baseline_points` — is not the entry the Session holds: an Accept
+        stored the baseline at the OLD value and said nothing, where Save in
+        the same state refused."""
+        from dstf.authoring.builtin.accept import Accept
+
+        p = session.spec.path
+        spec = json.loads(p.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["baseline_points"] = 3
+        p.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        store = session.project.store
+        assert store.index.get_id(B) is None  # B has no baseline
+        view = SessionView(session, Selection(tests=frozenset({B})))
+        with pytest.raises(StaleSpecError) as refused:
+            session.apply(Accept().act(view))
+        assert str(refused.value) == (
+            f"{p} changed on disk since it was loaded; reload before accepting"
+        )
+        # Nothing was written, and nothing said to have been.
+        assert not list(session.project.config.reference_dir.glob("ref_0004*"))
+        assert not [n for n in session.notices if n.startswith("Accept")]
+
+        session.reload()
+        session.apply(
+            Accept().act(SessionView(session, Selection(tests=frozenset({B}))))
+        )
+        (ref,) = session.project.config.reference_dir.glob("ref_0004.json")
+        stored = json.loads(ref.read_text(encoding="utf-8"))
+        assert stored["model_id"] == B and stored["sampling"]["setting"] == 3
+        assert len(stored["time"]) == 3
+
     def test_reload_after_a_refused_save(self, session):
         session.stage([LOOSEN])
         p = session.spec.path
@@ -3013,8 +3048,6 @@ class TestPlots:
         assert s._reads_for(A).names_read
 
     def test_the_session_view_mirrors_the_three_reads(self, tmp_path):
-        from dstf.authoring.session import Selection, SessionView
-
         s = self._open(tmp_path)
         v = SessionView(s, Selection())
         assert v.variable_names(A) == s.variable_names(A)

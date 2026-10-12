@@ -178,7 +178,7 @@ class Accept:
             ui.label(f"{model_id} · {status} · {action}").classes("text-xs")
         ui.button(self.caption(s), on_click=lambda: ui_panel.submit()).props(
             "dense no-caps"
-        )
+        ).mark("accept-submit")
 
     def act(self, s: SessionView, **inputs: Any) -> StoreWrite:
         project = s.project

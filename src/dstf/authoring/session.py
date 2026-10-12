@@ -403,10 +403,15 @@ def check_project(
 
 
 class StaleSpecError(RuntimeError):
-    def __init__(self, path: Path):
+    """The spec file is not the one the Session loaded: nothing that reads
+    the loaded spec to WRITE — Save, its edits; Accept, a baseline with the
+    entry's `baseline_points` and comparison settings — goes on. ``doing``
+    is what was refused, for the sentence."""
+
+    def __init__(self, path: Path, doing: str = "saving"):
         self.path = path
         super().__init__(
-            f"{path} changed on disk since it was loaded; reload before saving"
+            f"{path} changed on disk since it was loaded; reload before {doing}"
         )
 
 
@@ -1791,6 +1796,14 @@ class Session:
                         f"{model_id} is {_doing(item)}: accept it when its run "
                         "has ended"
                     )
+            # The check Save makes. A baseline is written with the test as
+            # the Session holds it — its `baseline_points`, the comparison
+            # settings stored beside the data — which is the spec as
+            # LOADED: after an edit of the file by hand an Accept stored
+            # the old entry's baseline (50 points where the file said 77)
+            # and said nothing.
+            if self.spec.on_disk_changed():
+                raise StaleSpecError(self.spec.path, "accepting")
             message = outcome.run(self._require_project().store)
             self._reload_results()
             # The reload first, so a listener that reads verdicts on
