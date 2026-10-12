@@ -1219,17 +1219,19 @@ class TestSiblingBackendOverlays:
 
 
 class TestTheRepoSExampleCompanions:
-    """The bundled demo libraries cross-overlay each other: every Julia
-    test carries the OpenModelica baseline of the same model as a
-    companion, and the other way round. They are the worked example of a
-    companion that names the quantity its own way, so each one carries a
-    mapping — and the real loader must draw on every trajectory it names.
+    """The bundled demo libraries cross-overlay each other where the two
+    hold ONE model: `Frequency`, `MultiFrequency` and `RangeCheck` carry
+    the other library's baseline of it as a companion, in both directions.
+    They are the worked example of a companion that names the quantity its
+    own way, so each one carries a mapping — and the real loader must draw
+    on every trajectory it names, on the curve it is drawn over.
 
-    One Modelica test is not overlaid by its Julia namesake:
-    `MetricTreeTest` is another model than the Julia library's
-    `MetricTree` (`der(x) = (1 - x)/0.5` against `D(x) ~ 1`), and the
-    overlay drew an unrelated curve. It carries the model's ANALYTIC
-    solution instead, frozen beside its baseline in both Linux partitions.
+    The like-named tests that are NOT one model carry none: `Constant`,
+    `SimpleRamp` / `SimpleTest`, `TubeTolerance` and `MetricTree` are
+    different equations in the two libraries, and a companion there drew
+    an unrelated curve. The Modelica `MetricTreeTest` carries its model's
+    ANALYTIC solution instead, frozen beside its baseline in both Linux
+    partitions.
     """
 
     EXAMPLES = Path(__file__).parent.parent / "examples"
@@ -1252,20 +1254,13 @@ class TestTheRepoSExampleCompanions:
     #: pins, so dropping a mapping from the data is a failure and not
     #: merely one fewer thing checked.
     EXPECTED = {
-        "modelica-om-constant": {"x": "unitTests.x[1]"},
         "modelica-om-frequency": {"x": "unitTests.x[1]"},
-        "modelica-om-metrictree": {"x": "unitTests.x[1]", "y": "unitTests.x[2]"},
         "modelica-om-multifrequency": {"y": "unitTests.x[1]"},
         "modelica-om-rangecheck": {"x": "unitTests.x[1]"},
-        "modelica-om-simpleramp": {"x": "unitTests.x[1]"},
-        "modelica-om-tubetolerance": {"x": "unitTests.x[1]"},
-        "julia-mtk-constant": {"unitTests.x[1]": "x"},
         "julia-mtk-frequency": {"unitTests.x[1]": "x"},
         "analytic": {"unitTests.x[1]": "x", "unitTests.x[2]": "y"},
         "julia-mtk-multifrequency": {"unitTests.x[1]": "y"},
         "julia-mtk-rangecheck": {"unitTests.x[1]": "x"},
-        "julia-mtk-simpleramp": {"unitTests.x[1]": "x"},
-        "julia-mtk-tubetolerance": {"unitTests.x[1]": "x"},
     }
 
     def _load(self, source, backend):
@@ -1320,6 +1315,64 @@ class TestTheRepoSExampleCompanions:
         assert missed == {}, f"mapped but drew nothing: {sorted(missed)}"
         for (companion, _var), names in drawn.items():
             assert names == [companion]
+
+    def _off(self, source, backend) -> dict[tuple[str, str], float]:
+        """``(companion, test variable) -> how far the companion's curve is
+        from the baseline it is drawn on``: the largest difference over the
+        time both cover, as a fraction of the baseline's range (of its
+        value, for a constant). Read through the real loader."""
+        from dstf.config import Config
+        from dstf.reporting.overlay_loader import _overlay_variable_for
+        from dstf.storage.reference_store import ReferenceStore
+
+        root = source / "Resources" / "ReferenceResults"
+        store = ReferenceStore(
+            Config(
+                source_path=source,
+                reference_root=root,
+                backend_name=backend,
+                os_name="linux",
+            )
+        )
+        off: dict[tuple[str, str], float] = {}
+        for model_id in store.index.active_tests().values():
+            baseline = store.get_baseline(model_id)
+            for ov in load_overlays(store, model_id):
+                if ov.role != "companion":
+                    continue
+                for entry in baseline.variables:
+                    curve, _ = _overlay_variable_for(
+                        ov, entry["name"], entry.get("expression", "")
+                    )
+                    if curve is None:
+                        continue
+                    t = np.asarray(baseline.time, dtype=float)
+                    values = np.asarray(entry["values"], dtype=float)
+                    ct = np.asarray(curve.time, dtype=float)
+                    shared = (t >= ct[0]) & (t <= ct[-1])
+                    assert shared.any()
+                    apart = np.abs(
+                        np.interp(t[shared], ct, curve.values) - values[shared]
+                    )
+                    scale = float(np.ptp(values)) or float(np.max(np.abs(values)))
+                    off[(ov.name, entry["name"])] = float(apart.max()) / scale
+        return off
+
+    def test_every_example_companion_lies_on_the_baseline_it_overlays(self):
+        """A companion that draws another model's curve is a wrong example:
+        `julia-mtk-constant` sat 2.5 from a constant, `julia-mtk-simpleramp`
+        half the ramp's range from it, `julia-mtk-tubetolerance` more than
+        the signal's whole range — like-named tests of the two libraries
+        that are not one model — and so did their mirrors under the Julia
+        example, `modelica-om-metrictree` with them. What ships agrees with
+        its baseline to 1 % of its range (the worst, a sine against another
+        solver's: 3e-3)."""
+        off: dict[tuple[str, str], float] = {}
+        for source, backend in self.ROOTS:
+            off.update(self._off(source, backend))
+        assert {name for name, _var in off} == set(self.EXPECTED)
+        apart = {k: round(v, 4) for k, v in off.items() if v > 1e-2}
+        assert apart == {}, f"companions that are not their baseline's model: {apart}"
 
     @pytest.mark.parametrize("backend", ["OpenModelica", "Dymola"])
     def test_the_analytic_companion_is_the_models_own_solution(self, backend):
