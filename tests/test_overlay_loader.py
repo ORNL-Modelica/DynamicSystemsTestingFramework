@@ -14,6 +14,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from dstf.reporting.overlay_loader import (
     Overlay,
     OverlayVariable,
@@ -1221,6 +1224,12 @@ class TestTheRepoSExampleCompanions:
     companion, and the other way round. They are the worked example of a
     companion that names the quantity its own way, so each one carries a
     mapping — and the real loader must draw on every trajectory it names.
+
+    One Modelica test is not overlaid by its Julia namesake:
+    `MetricTreeTest` is another model than the Julia library's
+    `MetricTree` (`der(x) = (1 - x)/0.5` against `D(x) ~ 1`), and the
+    overlay drew an unrelated curve. It carries the model's ANALYTIC
+    solution instead, frozen beside its baseline in both Linux partitions.
     """
 
     EXAMPLES = Path(__file__).parent.parent / "examples"
@@ -1232,6 +1241,10 @@ class TestTheRepoSExampleCompanions:
         (
             EXAMPLES / "modelica" / "ModelicaTestingLib",
             "OpenModelica",
+        ),
+        (
+            EXAMPLES / "modelica" / "ModelicaTestingLib",
+            "Dymola",
         ),
     ]
 
@@ -1248,7 +1261,7 @@ class TestTheRepoSExampleCompanions:
         "modelica-om-tubetolerance": {"x": "unitTests.x[1]"},
         "julia-mtk-constant": {"unitTests.x[1]": "x"},
         "julia-mtk-frequency": {"unitTests.x[1]": "x"},
-        "julia-mtk-metrictree": {"unitTests.x[1]": "x", "unitTests.x[2]": "y"},
+        "analytic": {"unitTests.x[1]": "x", "unitTests.x[2]": "y"},
         "julia-mtk-multifrequency": {"unitTests.x[1]": "y"},
         "julia-mtk-rangecheck": {"unitTests.x[1]": "x"},
         "julia-mtk-simpleramp": {"unitTests.x[1]": "x"},
@@ -1307,3 +1320,53 @@ class TestTheRepoSExampleCompanions:
         assert missed == {}, f"mapped but drew nothing: {sorted(missed)}"
         for (companion, _var), names in drawn.items():
             assert names == [companion]
+
+    @pytest.mark.parametrize("backend", ["OpenModelica", "Dymola"])
+    def test_the_analytic_companion_is_the_models_own_solution(self, backend):
+        """`MetricTreeTest`: x' = (1 - x)/0.5 and y' = x - y from zero, so
+        x = 1 - e^(-2t) and y = 1 - 2e^(-t) + e^(-2t). The companion's
+        curves are those — written out, not a simulator's — and the stored
+        baseline of each partition lies on them."""
+        from dstf.config import Config
+        from dstf.storage.reference_store import ReferenceStore
+
+        source = self.EXAMPLES / "modelica" / "ModelicaTestingLib"
+        root = source / "Resources" / "ReferenceResults"
+        model = "ModelicaTestingLib.Examples.MetricTreeTest"
+        store = ReferenceStore(
+            Config(
+                source_path=source,
+                reference_root=root,
+                backend_name=backend,
+                os_name="linux",
+            )
+        )
+        (analytic,) = [o for o in load_overlays(store, model) if o.role == "companion"]
+        assert (analytic.name, analytic.kind, analytic.status) == (
+            "analytic",
+            "frozen",
+            "loaded",
+        )
+        exact = {
+            "x": lambda t: 1.0 - np.exp(-2.0 * t),
+            "y": lambda t: 1.0 - 2.0 * np.exp(-t) + np.exp(-2.0 * t),
+        }
+        assert set(analytic.variables) == {"x", "y"}
+        for name, curve in analytic.variables.items():
+            t = np.asarray(curve.time, dtype=float)
+            assert (t[0], t[-1], len(t)) == (0.0, 10.0, 501)
+            assert np.max(np.abs(np.asarray(curve.values) - exact[name](t))) < 1e-11
+        reference = store.get_reference(model)
+        t = np.asarray(reference["time"], dtype=float)
+        worst = {
+            v["name"]: float(
+                np.max(
+                    np.abs(
+                        np.asarray(v["values"]) - exact[analytic.mapping[v["name"]]](t)
+                    )
+                )
+            )
+            for v in reference["variables"]
+        }
+        assert set(worst) == {"unitTests.x[1]", "unitTests.x[2]"}
+        assert max(worst.values()) < 1e-5, worst

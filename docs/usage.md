@@ -692,6 +692,16 @@ uv run dstf --config testing.json companion add MyLib.HeatExchanger rig ./rig.cs
 uv run dstf --config testing.json companion list MyLib.HeatExchanger
 ```
 
+The Modelica example ships both kinds. Most of its tests carry the Julia
+example's baseline of the same model as a companion — another library's run,
+a pointer to that library's reference file. `MetricTreeTest` carries
+`analytic`: the model's closed-form solution (`x = 1 − e^(−2t)`,
+`y = 1 − 2e^(−t) + e^(−2t)`) written to a CSV on a fine grid, registered with
+`--map "unitTests.x[1]=x" --map "unitTests.x[2]=y"` and then frozen, so the
+data sits beside the baseline it is drawn on (`companions/ref_NNNN/
+analytic.{json,csv}`). On the report page, tick `analytic` in the plot's
+Overlays row: it lies on the simulated curve to 3e-6.
+
 **Say which variable is which.** `--map TEST_VAR=COMPANION_VAR` is repeatable
 and is the record the report reads: the left name is a variable of the test
 (the name its result file gives it — `unitTests.x[1]`, not the expression the

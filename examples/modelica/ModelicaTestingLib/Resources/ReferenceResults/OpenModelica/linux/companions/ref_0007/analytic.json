@@ -1,0 +1,9 @@
+{
+  "kind": "frozen",
+  "format": "csv",
+  "data_file": "analytic.csv",
+  "variables": {
+    "unitTests.x[1]": "x",
+    "unitTests.x[2]": "y"
+  }
+}
