@@ -1602,7 +1602,7 @@ class TestTreeConfigErrorIsALeafFailure:
         refused where the tree is parsed: a key nothing reads.)"""
         from dstf.comparison.tree_spec import MetricSpecError
 
-        with pytest.raises(MetricSpecError, match='unknown field "min" — did you'):
+        with pytest.raises(MetricSpecError, match='unknown field "min"; the fields'):
             self._tree_test({"metric": "range", "variable": "x", "min": 0, "max": 2})
         bad, good = self._two_test_run({"metric": "range", "variable": "x"})
         assert not bad.passed
