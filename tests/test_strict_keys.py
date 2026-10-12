@@ -1346,6 +1346,91 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         assert "children[5]: range · unitTests.x[2]" in capsys.readouterr().out
         assert spec.read_bytes() == before
 
+    def _one(self, entry):
+        entry["metrics"]["children"].append(dict(BARE_RANGE))
+
+    FILL = {"op": "add", "path": "/metrics/children/3/min_value", "value": 0.0}
+
+    @pytest.mark.parametrize("fill_first", [True, False], ids=["fill-add", "add-fill"])
+    def test_filling_one_and_adding_an_equal_one_adds_a_new_one(
+        self, example, tmp_path, capsys, fill_first
+    ):
+        """One bare range before and one after — and it is another one: the
+        one that was there is still in its place, filled. Counted alone,
+        this patch was written."""
+        spec = self._held(example, MODEL, self._one)
+        before = spec.read_bytes()
+        ops = [self.FILL, _add_leaf(BARE_RANGE)]
+        assert self._update(example, tmp_path, MODEL, *ops[:: 1 if fill_first else -1])
+        assert "children[4]: range · unitTests.x[2]: needs at least one" in (
+            capsys.readouterr().out
+        )
+        assert spec.read_bytes() == before
+
+    def test_one_taken_out_and_put_back_elsewhere_is_the_one_that_was_there(
+        self, example, tmp_path
+    ):
+        """A move is a remove and an add: the criterion is gone from where
+        it was, and the equal one that appears is it."""
+        spec = self._held(example, MODEL, self._one)
+        ops = [
+            {"op": "remove", "path": "/metrics/children/3"},
+            {"op": "add", "path": "/metrics/children/0", "value": dict(BARE_RANGE)},
+        ]
+        assert self._update(example, tmp_path, MODEL, *ops) == 0
+        assert self._entry(spec, MODEL)["metrics"]["children"][0] == BARE_RANGE
+
+    def test_one_taken_out_stands_for_one_put_back_and_no_more(
+        self, example, tmp_path, capsys
+    ):
+        spec = self._held(example, MODEL, self._one)
+        before = spec.read_bytes()
+        ops = [
+            {"op": "remove", "path": "/metrics/children/3"},
+            _add_leaf(BARE_RANGE),
+            _add_leaf(BARE_RANGE),
+        ]
+        assert self._update(example, tmp_path, MODEL, *ops) == 1
+        assert "children[4]: range · unitTests.x[2]" in capsys.readouterr().out
+        assert spec.read_bytes() == before
+
+    def test_one_written_over_with_itself_is_the_one_that_was_there(
+        self, example, tmp_path
+    ):
+        self._held(example, MODEL, self._one)
+        op = {"op": "replace", "path": "/metrics/children/3", "value": dict(BARE_RANGE)}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+
+    def test_one_wrapped_in_a_group_is_the_one_that_was_there(self, example, tmp_path):
+        spec = self._held(example, MODEL, self._one)
+        group = {"combinator": "warn", "children": [dict(BARE_RANGE)]}
+        op = {"op": "replace", "path": "/metrics/children/3", "value": group}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+        assert self._entry(spec, MODEL)["metrics"]["children"][3] == group
+
+    def test_one_filled_and_another_made_like_it_was_is_refused(
+        self, example, tmp_path, capsys
+    ):
+        """Two before — a bare range and a bare scalar. The range is filled
+        and the scalar rewritten INTO a bare range: the scalar's leaf was
+        edited and left unscorable."""
+        spec = self._held(example, MODEL, self._two)
+        before = spec.read_bytes()
+        ops = [
+            self.FILL,
+            {"op": "replace", "path": "/metrics/children/4", "value": dict(BARE_RANGE)},
+        ]
+        assert self._update(example, tmp_path, MODEL, *ops) == 1
+        assert "children[4]: range · unitTests.x[2]" in capsys.readouterr().out
+        assert spec.read_bytes() == before
+
+    def test_no_marker_of_the_check_reaches_the_file(self, example, tmp_path):
+        spec = self._held(example, MODEL, self._one)
+        op = {"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5}
+        assert self._update(example, tmp_path, MODEL, op) == 0
+        assert "\\u0000" not in spec.read_text(encoding="utf-8")
+        assert self._entry(spec, MODEL)["metrics"]["children"][3] == BARE_RANGE
+
     def _override(self, entry):
         entry["comparison"]["variable_overrides"]["unitTests.x[1]"] = {"mode": "range"}
 

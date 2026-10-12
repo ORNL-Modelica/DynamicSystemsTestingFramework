@@ -8573,14 +8573,22 @@ it.
    DELTA rule, in one place (`spec_update.refuse_newly_unscorable`),
    applied where a file is written: **a write is refused only for a
    criterion that is unscorable after the patch and was not already
-   there, with the same content, before it.** Counted by content — the
-   metric, variable, baseline, window and params — not looked up by
-   place: a sibling's removal shifts an index, and a flat entry's implicit
-   tree being written out turns its override into a leaf, without making
-   either a new criterion. So an entry that already holds one takes every
+   there, with the same content, before it.** "Already there" is said of
+   the criterion, followed through the patch (the ops are replayed over a
+   marked copy of the entry): one that is still the object it was, with
+   the content it had — the metric, variable, baseline, window and params
+   — is the one that was there, wherever a sibling's removal has shifted
+   it. Any other unscorable criterion — one the patch added or wrote over
+   — is the one that was there only if an equal one of the entry is GONE
+   from the criteria that score: a move (a remove and an add), a leaf
+   wrapped in a group, a flat entry's implicit tree written out over its
+   override. So an entry that already holds one takes every
    other edit, the edit that fills it and the edit that removes it; two of
    them do not block each other; a patch that adds one, or edits one and
-   leaves it unscorable, is refused. The first build refused EVERY
+   leaves it unscorable, is refused. The second build COUNTED by content
+   and nothing else: a patch that filled the bare `range` an entry held
+   and added an equal bare one beside it was written — one before, one
+   after. The first build refused EVERY
    unscorable criterion of the patched entry, at every patch and every
    stage: an entry holding one took no edit at all — not the fix — and the
    tool could no longer add a bare `range` for its editor to fill.
@@ -8620,7 +8628,10 @@ scalar's `quantity`; a pair written inside a table ROW's cell is refused
 by the parser and not by the schema (a row's cells are untyped there).
 The delta rule compares content: a patch that rewrites an unscorable
 criterion into a different unscorable one is refused, and one that
-reorders the keys of an untouched one is not. A reference JSON's stored
+reorders the keys of an untouched one is not. A criterion taken out
+stands for an equal one put in, anywhere in the entry: a patch that
+removes one bare `range` and adds an equal one on the same variable
+elsewhere is a move, whatever its author meant. A reference JSON's stored
 override with an unknown key stops a whole `run` or `compare`, not that
 test alone — it is a file to repair, and no accept repairs it (an accept
 keeps the stored overrides it does not replace); the tool, which has no

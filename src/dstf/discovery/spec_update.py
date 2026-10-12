@@ -285,32 +285,128 @@ def unscorable_criteria(entry: dict | None) -> list[Unscorable]:
     return out
 
 
+#: The key a criterion of the entry AS IT WAS is marked with, on a copy the
+#: patch is replayed over (:func:`_places_after`): its value is the place it
+#: had. No spec key (a NUL), and never in a document that is kept.
+_WAS = "\0was"
+
+_OVERRIDES = "comparison.variable_overrides"
+
+
+def _criteria_dicts(entry: dict | None, *, flat: bool) -> dict[str, dict]:
+    """``{place: the raw dict}`` of the entry's criteria of one kind, places
+    spelled as :func:`unscorable_criteria` spells them: the leaves of its
+    ``metrics`` tree (``metrics.children[1]``), or with ``flat`` its
+    ``comparison.variable_overrides`` (``comparison.variable_overrides[x]``).
+    Whatever is no object is passed over: it is no criterion."""
+    out: dict[str, dict] = {}
+    if not isinstance(entry, dict):
+        return out
+    if flat:
+        comparison = entry.get("comparison")
+        overrides = (
+            comparison.get("variable_overrides")
+            if isinstance(comparison, dict)
+            else None
+        )
+        if isinstance(overrides, dict):
+            for variable, override in overrides.items():
+                if isinstance(override, dict):
+                    out[f"{_OVERRIDES}[{variable}]"] = override
+        return out
+
+    def walk(node: object, pointer: str) -> None:
+        if not isinstance(node, dict):
+            return
+        children = node.get("children")
+        if "combinator" in node and isinstance(children, list):
+            for i, child in enumerate(children):
+                walk(child, f"{pointer}/children/{i}")
+        elif "metric" in node:
+            out[_dotted(pointer)] = node
+
+    walk(entry.get("metrics"), "/metrics")
+    return out
+
+
+def _places_after(
+    before: dict | None, ops: Sequence[dict], model_id: str
+) -> dict[str, str]:
+    """``{place after the patch: the place it had before}`` for every
+    criterion of ``before`` — tree leaf or flat override — that is still in
+    the entry once ``ops`` are applied: the same object, wherever it is
+    now and whatever was added to it or taken from it. A criterion an op
+    removed, or wrote over whole, is in no place after; one the patch added
+    had no place before.
+
+    Found by replaying the patch over a marked copy: an op names a path,
+    so a mark inside a criterion rides with it through every op that does
+    not replace that criterion."""
+    if before is None:
+        return {}
+    marked = copy.deepcopy(before)
+    for flat in (False, True):
+        for place, criterion in _criteria_dicts(marked, flat=flat).items():
+            criterion[_WAS] = place
+    document = {"tests": [marked]}
+    apply_patch_to_document(document, model_id, list(ops))
+    after = spec_entry(document, model_id)
+    return {
+        place: criterion[_WAS]
+        for flat in (False, True)
+        for place, criterion in _criteria_dicts(after, flat=flat).items()
+        if _WAS in criterion
+    }
+
+
 def refuse_newly_unscorable(
-    before: dict | None, after: dict | None, model_id: str
+    before: dict | None, ops: Sequence[dict], after: dict | None, model_id: str
 ) -> None:
     """THE rule for a criterion that can never be scored, applied where a
     FILE is written (``spec-update`` and the tool's Save, both through
     :func:`apply_validated_patches`): the write is refused only for a
-    criterion that is unscorable in ``after`` and was not already there,
-    with the same content, in ``before``.
+    criterion that is unscorable in ``after`` — ``before`` with ``ops``
+    applied — and was not already there, with the same content, in
+    ``before``.
 
     So an entry that already holds one — written by hand, or by an earlier
     version of the tool — takes every other edit, the edit that fills it
-    and the edit that removes it; two of them do not block each other; and
-    one that only MOVED (a removed sibling shifts its index, the entry's
-    implicit tree is written out) is the one that was there. A patch that
-    adds one, or edits one and leaves it unscorable, is refused: that is
-    the write that could know better. Counted, not looked up by place: two
-    equal bare leaves before and three after is one new one.
+    and the edit that removes it; two of them do not block each other. A
+    patch that adds one, or edits one and leaves it unscorable, is refused:
+    that is the write that could know better.
+
+    "Already there" is said of the criterion, not of a count. One that is
+    still the object it was (:func:`_places_after`) with the content it had
+    is the one that was there, wherever a removed sibling has shifted it.
+    Any other unscorable criterion of ``after`` — one the patch added, or
+    wrote over — is the one that was there only if an equal one of
+    ``before`` is GONE from the criteria that score: a move (a remove and
+    an add), a leaf wrapped in a group, the entry's implicit tree written
+    out over its flat override. Counted alone — which this replaces — a
+    patch that filled the bare ``range`` an entry held and added an equal
+    bare one beside it was written: one before, one after.
 
     Refusing every unscorable criterion of the patched entry — the rule
-    this replaces — refused the patch that fixed one of two, and every
-    edit of an entry that held one it did not touch."""
-    was = Counter(item.content for item in unscorable_criteria(before))
-    for item in unscorable_criteria(after):
-        if was[item.content] > 0:
-            was[item.content] -= 1
-            continue
+    before that — refused the patch that fixed one of two, and every edit
+    of an entry that held one it did not touch."""
+    found = unscorable_criteria(after)
+    if not found:
+        return
+    was = {item.place: item.content for item in unscorable_criteria(before)}
+    came_from = _places_after(before, ops, model_id)
+    # The criteria of `before` still among the ones that SCORE in `after`:
+    # its tree's leaves, or without a tree its overrides.
+    scoring = _criteria_dicts(after, flat=not has_metrics(after))
+    still_there = {came_from[place] for place in scoring if place in came_from}
+    gone = Counter(
+        content for place, content in was.items() if place not in still_there
+    )
+    for item in found:
+        if was.get(came_from.get(item.place, "")) == item.content:
+            continue  # untouched, or only shifted
+        if gone[item.content] > 0:
+            gone[item.content] -= 1
+            continue  # taken out and put back: moved, wrapped, written out
         raise UnscorableCriterion(
             f"patched entry is invalid: tests[{model_id}].{item.place}: {item.reason}",
             reason=item.reason,
@@ -400,7 +496,7 @@ def apply_validated_patches(
         validate_entry_base_tolerance(data, model_id, _base_tolerance(was))
         validate_entry_keys(data, model_id)
         validate_entry_metric_tree(data, model_id, config, store)
-        refuse_newly_unscorable(was, spec_entry(data, model_id), model_id)
+        refuse_newly_unscorable(was, full, spec_entry(data, model_id), model_id)
         validate_entry_plots(data, model_id)
         applied.append((model_id, full))
     spec_path.parent.mkdir(parents=True, exist_ok=True)
