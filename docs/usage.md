@@ -629,10 +629,16 @@ arrays were. A `"single"` baseline — Dymola writes single-precision result
 files — is written with 9 significant digits, the fewest that identify a
 single-precision number, and read back through single precision: each stored
 value is the run's, bit for bit, so a baseline scores exactly `0` against the
-run it was accepted from. A `"double"` one is written with 15 digits, as
-always. A reference without the field was written with 7 digits for a
-single-precision run; it is read as the numbers its file spells, as before,
-and scores as it did until its test is accepted again.
+run it was accepted from. A `"double"` one is written with 17, the fewest
+that identify a double — each at its shortest spelling, so `0.1` is still
+`0.1` — and is the run's bit for bit too. A reference without the field was
+written with 7 digits for a single-precision run, and a `"double"` one
+stored by an earlier version holds 15 (not the run's own doubles: it scores
+up to about 1e-9 against its own run where the signal's range is small
+beside its level); each is read as the numbers its
+file spells, as before, and scores as it did until its test is accepted
+again. A run of mixed precision is `"double"`, and its single-precision
+arrays are then the doubles their 9 digits spell.
 
 **A large baseline is said when it is accepted.** Keeping every point of a
 very long run makes a large file. When a baseline file just written is

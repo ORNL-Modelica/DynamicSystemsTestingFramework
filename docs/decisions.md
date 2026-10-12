@@ -8374,10 +8374,11 @@ kept points. A baseline has ONE time vector for all its variables: the
 points are chosen per test, not per variable. An existing baseline keeps
 the points it has until its test is accepted again, whatever the key says
 now; its `sampling` record, or the lack of one, says how it was stored.
-"Every point" is every row. The values of a double-precision run are
-written at 15 significant digits, as they always were; a single-precision
+"Every point" is every row. The values of a double-precision run were
+written at 15 significant digits, as they always were, and are at 17
+since the second 2026-10-12 addendum below; a single-precision
 run's (every Dymola result file measured here) are written at 9 and read
-back through single precision — see the 2026-10-12 addendum below. This
+back through single precision — see the first 2026-10-12 addendum below. This
 entry first said 7, "as they always were": at 7 digits a stored value is a
 different float32 than the run's more often than not (56–67 % of random
 values, measured; 0.7–1.2 % at 8; none at 9), and a baseline accepted from
@@ -8437,6 +8438,22 @@ and its single-precision arrays are then the doubles their 9 digits
 spell — within 1e-9 of the run, not equal to it. And a result with NO
 rows is refused at accept (`no rows to store`): it was stored as a
 baseline of no points.
+
+**Addendum, 2026-10-12 — a double-precision run's numbers too.** The
+addendum above left float64 "at 15", under a heading that said a
+baseline holds its run's own numbers: 15 digits do not identify a
+double, and a baseline of a float64 run (OpenModelica, FMPy, Julia,
+Python) scored 6.7e-10 against that run on the same kind of signal
+(range 0.4 at 130450). `DOUBLE_DIGITS` is 17, the fewest that
+round-trip every binary64; JSON writes each value at its shortest
+spelling, so a round number costs nothing. Measured on a scratch copy
+of each example, one simulation and two accepts: the OpenModelica
+partition of the Modelica example goes from 271,202 to 284,877 bytes
+(+5.0 %; eleven of its twelve stored tests by 0–4.6 %, `NoUnitTest`
++47 %), the Python example from 24,698 to 27,504 (+11.4 %; `SimpleRamp`
++43 %, its time grid being sums like `0.30000000000000004`). A
+`"double"` file stored before this holds 15 digits and reads as it did.
+The shipped example baselines were not accepted again.
 
 **Addendum, 2026-10-12 — the tool's Accept refuses over a spec changed on
 disk.** `baseline_points` is the entry's, and the tool's Accept wrote the

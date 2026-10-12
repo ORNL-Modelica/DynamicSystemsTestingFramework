@@ -418,16 +418,65 @@ def test_a_single_precision_value_is_written_with_nine_digits(tmp_path):
     assert raw["variables"][0]["values"] == [0.100000001, 16777216.0]
 
 
-def test_a_double_precision_run_is_stored_and_read_as_it_always_was(tmp_path):
+def test_a_double_precision_run_is_stored_as_its_own_numbers(tmp_path):
     third = 1.0 / 3.0
     result = _run(8)
     result.variables[1].values = result.variables[1].values + third
     config = _config(tmp_path)
     reference = _stored(config, result)
     assert reference["sampling"]["precision"] == "double"
-    # 15 significant digits, and no trip through float32 on the way back
-    assert reference["variables"][1]["values"][0] == float("%.15g" % third)
+    # the double itself — 15 digits wrote another one — and no trip through
+    # float32 on the way back
+    assert reference["variables"][1]["values"][0] == third != float("%.15g" % third)
     assert reference["variables"][1]["values"][0] != float(np.float32(third))
+
+
+def _awkward_doubles() -> TestResult:
+    """Random doubles of every size, with the one a review measured: a
+    signal of range 0.4 at a level of 130450 — where 15 digits put a
+    stored value 2e-10 from the run's — and a time grid that is no round
+    number (`0.1 + 0.2`)."""
+    rng = np.random.default_rng(11)
+    rows = 400
+    time = np.cumsum(np.full(rows, 0.1)) + 0.2
+    spread = rng.standard_normal(rows) * 10.0 ** rng.integers(-12, 13, rows)
+    level = 130450.0 + 0.4 * rng.random(rows)
+    return TestResult(
+        model_id=M,
+        success=True,
+        variables=[
+            VariableResult(index=i, time=time, values=v, name=name)
+            for i, (name, v) in enumerate(
+                {"spread": spread, "level": level}.items(), start=1
+            )
+        ],
+    )
+
+
+def test_a_double_precision_run_round_trips_bit_for_bit(tmp_path):
+    result = _awkward_doubles()
+    reference = _stored(
+        _config(tmp_path), result, make_test_model(M, variable_patterns=["*"])
+    )
+    assert reference["sampling"]["precision"] == "double"
+    assert reference["time"] == result.variables[0].time.tolist()
+    for stored, var in zip(reference["variables"], result.variables, strict=True):
+        assert np.asarray(stored["values"]).tobytes() == var.values.tobytes(), var.name
+
+
+def test_a_double_precision_baseline_scores_exactly_zero_against_its_run(tmp_path):
+    """It scored 6.7e-10 on the level signal: written at 15 digits, a
+    stored double is another one than the run's."""
+    config = _config(tmp_path)
+    result = _awkward_doubles()
+    test = make_test_model(M, variable_patterns=["spread", "level"])
+    _stored(config, result, test)
+    (comp,) = compare_all([test], {M: result}, ReferenceStore(config))
+    assert comp.passed
+    assert [(v.name, v.nrmse) for v in comp.variables] == [
+        ("spread", 0.0),
+        ("level", 0.0),
+    ]
 
 
 def test_one_double_array_among_single_ones_is_a_double_baseline(tmp_path):

@@ -33,12 +33,16 @@ from .roles import _companion_dir, _RolesMixin, _soft_check_dir
 logger = logging.getLogger(__name__)
 
 
-#: Significant digits a value is written with, by the precision it has. 9
-#: identify a single-precision number (IEEE 754 binary32 needs at most 9
-#: decimal digits to round-trip); 15 is what a double was always written
-#: with.
+#: Significant digits a value is written with, by the precision it has:
+#: the fewest that identify EVERY number of that precision, so a stored
+#: value is the run's own. IEEE 754 binary32 needs at most 9 decimal digits
+#: to round-trip, binary64 at most 17. (A double was written with 15 — one
+#: more often than not another double than the run's, and a baseline scored
+#: 6.7e-10 against its own run on a signal of range 0.4 at 130450.) JSON
+#: then writes each at its SHORTEST spelling that reads back the same:
+#: `0.1` stays `0.1`.
 SINGLE_DIGITS = 9
-DOUBLE_DIGITS = 15
+DOUBLE_DIGITS = 17
 
 #: ``sampling.precision`` of a reference JSON whose time and value arrays
 #: were ALL single precision in the run it was accepted from.
@@ -646,7 +650,8 @@ def _to_json_list(arr: np.ndarray) -> list[float]:
       number back (`read_reference_file`). At 7, which this wrote before,
       a stored value was a different float32 than the run's more often
       than not.
-    - float64: 15, as always.
+    - float64: 17, the fewest that round-trip every double — the stored
+      value IS the run's.
     """
     sig = SINGLE_DIGITS if arr.dtype == np.float32 else DOUBLE_DIGITS
     return [float(f"%.{sig}g" % v) for v in arr]
