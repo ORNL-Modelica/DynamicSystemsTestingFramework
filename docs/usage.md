@@ -692,9 +692,9 @@ uv run dstf --config testing.json companion add MyLib.HeatExchanger rig ./rig.cs
 uv run dstf --config testing.json companion list MyLib.HeatExchanger
 ```
 
-The Modelica example ships both kinds. Most of its tests carry the Julia
-example's baseline of the same model as a companion — another library's run,
-a pointer to that library's reference file. `MetricTreeTest` carries
+The Modelica example ships both kinds. Six of its tests carry, as a companion,
+the Julia example's baseline of the like-named test — a pointer to another
+library's reference file, mapped by name. `MetricTreeTest` carries
 `analytic`: the model's closed-form solution (`x = 1 − e^(−2t)`,
 `y = 1 − 2e^(−t) + e^(−2t)`) written to a CSV on a fine grid, registered with
 `--map "unitTests.x[1]=x" --map "unitTests.x[2]=y"` and then frozen, so the
