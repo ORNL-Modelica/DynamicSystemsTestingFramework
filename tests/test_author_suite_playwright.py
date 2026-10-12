@@ -626,7 +626,7 @@ def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
         edited = page.locator("button[data-pill='edited']")
         expect(edited).to_have_text("EDITED 1", timeout=EXPECT_TIMEOUT)
         cell = page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='edits']")
-        expect(cell).to_have_text("2 unsaved")
+        expect(cell).to_have_text("1 unsaved")
         edited.click()
         _shown(page, "G:FakeLib A")
         # EDITED is OR'd with the status pills.
@@ -671,7 +671,7 @@ def test_save_is_unfilled_at_zero_pending_and_filled_at_one(
 
 def test_a_rescore_repaints_its_row_and_keeps_the_view(tmp_path, playwright_browser):
     """A staged edit rescores A while the page is open: its row repaints —
-    PASS, "2 unsaved", the EDITED pill counts it — in one transaction, and
+    PASS, "1 unsaved" (one edit, of two ops), the EDITED pill counts it — in one transaction, and
     the sort, the filter and the selection stay (the grid is not rebuilt)."""
     proc, url, page, context, errors, _ = _served(
         tmp_path, playwright_browser, hooks=True
@@ -692,7 +692,7 @@ def test_a_rescore_repaints_its_row_and_keeps_the_view(tmp_path, playwright_brow
         expect(page.locator(f"{row}[col-id='status']")).to_have_text(
             "PASS", timeout=EXPECT_TIMEOUT
         )
-        expect(page.locator(f"{row}[col-id='edits']")).to_have_text("2 unsaved")
+        expect(page.locator(f"{row}[col-id='edits']")).to_have_text("1 unsaved")
         expect(page.locator("button[data-pill='edited']")).to_have_text("EDITED 1")
         expect(page.locator("button[data-pill='pass']")).to_have_text("PASS 3")
         _shown(page, "G:FakeLib D G A")
@@ -733,7 +733,7 @@ def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_brow
             assert json.loads(r.read())["pending"] == 2
         expect(
             page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='edits']")
-        ).to_have_text("2 unsaved", timeout=EXPECT_TIMEOUT)
+        ).to_have_text("1 unsaved", timeout=EXPECT_TIMEOUT)
         # A row patched after the build, as a transaction from Python does.
         page.evaluate(
             "() => { const r = {...DstfSuite.api.getRowNode('FakeLib.B').data,"
@@ -1005,7 +1005,7 @@ def test_a_transaction_before_the_grid_is_ready_is_applied_once_it_is(
         page.evaluate("() => window.__release()")
         expect(
             page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='edits']")
-        ).to_have_text("2 unsaved", timeout=EXPECT_TIMEOUT)
+        ).to_have_text("1 unsaved", timeout=EXPECT_TIMEOUT)
         expect(page.locator("button[data-pill='edited']")).to_have_text("EDITED 1")
         assert page.evaluate("() => DstfSuite.pending") == []
         assert errors == [], errors
