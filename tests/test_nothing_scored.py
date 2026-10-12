@@ -20,7 +20,7 @@ from conftest import make_test_model
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_one, compare_test, nothing_scored
 from dstf.comparison.tree_spec import parse_metric_tree
-from dstf.reporting.status import FAIL, NO_REF, PASS, classify, refusal
+from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify, refusal
 from test_base_tolerance import CSV, RAMP, Project, _case, _ran  # noqa: F401
 
 T = np.linspace(0.0, 1.0, 5)
@@ -89,12 +89,41 @@ def test_a_result_holding_nothing_the_test_tracks_fails_and_says_so(route, basel
     assert (direct.passed, direct.error_message) == (False, comp.error_message)
 
 
-def test_a_test_that_tracks_nothing_and_has_no_criteria_says_that():
-    comp = compare_one(make_test_model(), _result("x"), _Store(REFERENCE))
-    assert classify(comp) == FAIL
-    assert refusal(comp) == (
-        "this test tracks no variable and has no criteria — nothing was scored"
-    )
+#: What a test can declare to score, one at a time.
+DECLARES = {
+    "a pattern": dict(variable_patterns=["x"]),
+    "a UnitTests variable": dict(source="unit_tests", n_vars=1),
+    "a criterion": dict(
+        metric_tree_spec=parse_metric_tree({"metric": "nrmse", "variable": "x"})
+    ),
+}
+
+
+@pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
+def test_a_test_that_declares_nothing_to_score_is_simulate_only(baseline):
+    """No tracked variable, no UnitTests variable, no criteria — the entry
+    `dstf add <model>` writes: it passes by having run, as a test a
+    recognizer marked `simulate_only` does. Not the FAIL of a test that
+    tracks variables its result does not hold."""
+    test = make_test_model()
+    assert test.simulate_only is False and test.is_simulate_only is True
+    assert nothing_scored(test, _result("x")) is None
+    comp = compare_one(test, _result("x"), _Store(REFERENCE if baseline else None))
+    assert classify(comp) == PASS and comp.simulate_only and refusal(comp) is None
+    assert comp.metric_tree.label == "simulate-only" and comp.variables == []
+    # ...iff its simulation completes.
+    failed = TestResult("Lib.T", False, error_message="boom")
+    assert classify(compare_one(test, failed, _Store(None))) == SIM_FAIL
+
+
+@pytest.mark.parametrize("what", list(DECLARES))
+def test_a_test_that_declares_one_thing_to_score_is_not_simulate_only(what):
+    test = make_test_model(**DECLARES[what])
+    assert test.is_simulate_only is False
+    # A UnitTests component of a test the spec alone declares names nothing.
+    assert make_test_model(source="spec", n_vars=1).is_simulate_only is True
+    # The recognizer's mark wins over anything declared.
+    assert make_test_model(simulate_only=True, **DECLARES[what]).is_simulate_only
 
 
 def test_one_tracked_variable_in_the_result_is_scored_as_before():
@@ -181,4 +210,35 @@ def test_accept_stores_no_baseline_of_a_result_that_holds_nothing_tracked(
     assert project.dstf(command, "--accept") == 1
     out = capsys.readouterr().out
     assert f"Skipped 1 test(s):\n  {RAMP}: {NONE_OF} (nope*){NOTHING}" in out
+    assert project.reference(RAMP).read_bytes() == before
+
+
+def test_an_entry_with_no_variables_passes_by_having_run(project, tmp_path, capsys):
+    """`dstf add <model>` writes `"variables": []`: a simulate-only test.
+    It read FAIL `this test tracks no variable and has no criteria` on
+    every run."""
+    _track(project, RAMP)
+    rc, cases = project.junit(tmp_path)
+    assert rc == 0 and _case(cases, RAMP) == ("pass", None)
+    capsys.readouterr()
+    assert project.dstf("compare") == 0
+    out = capsys.readouterr().out
+    assert "nothing was scored" not in out and "Results: 3/3 passed" in out, out
+    verdicts = json.loads(
+        (project.config.work_dir / "verdicts.json").read_text(encoding="utf-8")
+    )
+    (ramp,) = [t for t in verdicts["tests"] if t["model_id"] == RAMP]
+    assert ramp["status"] == PASS
+
+
+@pytest.mark.parametrize("command", ["compare", "run"])
+def test_accept_neither_stores_nor_skips_a_test_that_declares_nothing(
+    project, capsys, command
+):
+    _track(project, RAMP)
+    before = project.reference(RAMP).read_bytes()
+    capsys.readouterr()
+    assert project.dstf(command, "--accept") == 0
+    out = capsys.readouterr().out
+    assert "Skipped" not in out, out
     assert project.reference(RAMP).read_bytes() == before

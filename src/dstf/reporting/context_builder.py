@@ -523,7 +523,7 @@ def _compute_summary_flags(
         if (not comparisons and result and result.variables)
         else 0
     )
-    is_simulate_only = bool(test_model and getattr(test_model, "simulate_only", False))
+    is_simulate_only = bool(test_model and test_model.is_simulate_only)
     sim_failed = len(comparisons) == 0 and n_nobaseline == 0 and not is_simulate_only
     return n_passed, n_nobaseline, is_simulate_only, sim_failed
 

@@ -89,8 +89,10 @@ class TestModel:
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.
     #
-    # simulate_only: when True, the test passes iff the simulation completes
-    # without error — no per-variable comparison. Wired end-to-end in PTA.5.
+    # simulate_only: a recognizer's MARK — the test passes iff the simulation
+    # completes without error, whatever it declares, and no criterion staged
+    # on it is ever scored. What a reader asks is `is_simulate_only`, which
+    # is also true of a test that declares nothing to score.
     simulate_only: bool = False
     # requested_baselines: names of additional baselines to produce for this
     # test (e.g., ["dymola-via-fmpy"]). Placeholder for 4.B.
@@ -105,6 +107,27 @@ class TestModel:
 
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
+
+    @property
+    def is_simulate_only(self) -> bool:
+        """Whether the test passes iff its simulation completes — THE one
+        rule: a recognizer marked it (``simulate_only``), or it DECLARES
+        nothing to score: no UnitTests variable, no ``variables`` pattern and
+        no ``metrics`` tree. That is the entry ``dstf add <model>`` writes
+        (``"variables": []``), which has no key of its own for it.
+
+        Not the test that declares variables and whose result holds none of
+        them: that one scored nothing it asked about, and fails
+        (``comparison.comparator.nothing_scored``)."""
+        from .unit_tests import unit_test_variables
+
+        if self.simulate_only:
+            return True
+        return (
+            not unit_test_variables(self)
+            and not self.variable_patterns
+            and self.metric_tree_spec is None
+        )
 
     def finalize_defaults(self) -> "TestModel":
         """Resolve unset (None) simulation fields to framework defaults.

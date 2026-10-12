@@ -439,7 +439,7 @@ class ReferenceStore(_RolesMixin):
             if not result.success:
                 skipped.append((test.model_id, "simulation failed"))
                 continue
-            if test.simulate_only:
+            if test.is_simulate_only:
                 continue
             try:
                 ok = self.store_reference(test, result)

@@ -141,3 +141,17 @@ class TestSimulateOnly:
         comps = compare_all([test], results, _FakeStore())
         assert comps[0].passed is False
         assert comps[0].sim_success is False
+
+
+def test_the_report_page_of_a_test_that_declares_nothing_says_simulate_only():
+    """`dstf add <model>`'s entry: no comparison and no variable is what a
+    simulate-only run looks like, not a failed simulation's banner."""
+    from conftest import make_test_model
+    from dstf.reporting.context_builder import _compute_summary_flags
+
+    ran = TestResult(model_id="Lib.T", success=True, variables=[])
+    declares_nothing = make_test_model()
+    assert not declares_nothing.simulate_only
+    assert _compute_summary_flags([], ran, declares_nothing) == (0, 0, True, False)
+    tracks = make_test_model(variable_patterns=["x"])
+    assert _compute_summary_flags([], ran, tracks) == (0, 0, False, True)

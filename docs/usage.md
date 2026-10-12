@@ -552,6 +552,15 @@ sentence. A test with a tree is not asked (each criterion fails by itself:
 `variable 'x' not found in the result`), and a simulate-only test passes by
 having run.
 
+A **simulate-only** test passes iff its simulation completes: nothing is
+compared, no baseline is stored for it, and its report page reads
+`Simulate-only: simulation succeeded`. A test is one when a recognizer marks
+it (`simulate_only`), or when it DECLARES nothing to score — no `UnitTests`
+variable, no `variables` pattern and no `metrics` tree. `"variables": []`
+on a model without the component is that entry, and it is what `dstf add
+<model>` writes; give it a pattern or a criterion and it is scored like any
+other test.
+
 ### The points a baseline stores (`baseline_points`)
 
 Accepting a result stores its trajectory as the test's baseline. A baseline
@@ -1138,6 +1147,10 @@ uv run dstf --config testing.json add MyLib.Examples.NewTest --variables "pipe.T
 # Add simulate-only (no variable tracking)
 uv run dstf --config testing.json add MyLib.Examples.NewTest
 ```
+
+The second form writes `{"model": …, "variables": []}`: an entry that
+declares nothing to score, so the test passes when its simulation completes
+(see "simulate-only" under the comparison settings above).
 
 ---
 

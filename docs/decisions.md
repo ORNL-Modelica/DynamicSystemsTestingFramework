@@ -7802,6 +7802,19 @@ does not hold — and a simulate-only test passes by having run. A result
 that holds SOME of a flat test's tracked variables is scored on those, as
 before: the backend's log line is all that says one was missing.
 
+That decision first failed one test too many: an entry that tracks
+nothing and has no criteria — what `dstf add <model>` writes, `"variables":
+[]` — read FAIL `this test tracks no variable and has no criteria` on every
+run. A test that DECLARES nothing to score is a simulate-only test
+(`TestModel.is_simulate_only`, the one rule: a recognizer's mark, or no
+UnitTests variable, no `variables` pattern and no `metrics` tree): it
+passes iff its simulation completes, no accept stores or skips it, and the
+sentence is gone. The FAIL is for the test that declares variables and
+whose result holds none of them. `TestModel.simulate_only` stays the
+recognizer's mark alone — the tool's add form is grey on a marked test,
+where a staged criterion would never be scored, and open on one that only
+declares nothing, where the criterion is what makes it a scored test.
+
 **An earlier run's row is a run's record** (2026-10-12). A test queued
 twice has two rows, and both read the test's verdict as it stands — the
 later run's — beside the words of a run that had ended otherwise, and

@@ -84,7 +84,7 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
             # A test the comparison refused: the row says the comparison's
             # own sentence, which `accept_run_results` skips it with.
             action = refused
-        elif test.simulate_only:
+        elif test.is_simulate_only:
             # `accept_results` neither stores nor skips these, by design.
             action = SIMULATE_ONLY
         elif not result.variables:

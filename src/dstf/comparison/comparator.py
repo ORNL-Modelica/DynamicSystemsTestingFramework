@@ -130,26 +130,25 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
     """Why a test with no tree scores NOTHING of *result*, or ``None``: the
     result holds none of the variables the test tracks — its ``variables``
     patterns match no name in it, its UnitTests variables are not there (a
-    model replaced by an empty class of the same name still simulates) — or
-    the test tracks none. The flat path scores one criterion per tracked
-    variable the result holds, and the AND of none of them is true: such a
-    test read PASS, with no criterion and no word.
+    model replaced by an empty class of the same name still simulates). The
+    flat path scores one criterion per tracked variable the result holds,
+    and the AND of none of them is true: such a test read PASS, with no
+    criterion and no word.
 
     THE one decision: the comparison fails the test with this sentence
     (``reporting.status.refusal`` puts it where a failing criterion would
     be named), and an accept skips it with the same one — the baseline it
     would write holds nothing the test asks about. A test with a tree is
     not asked: each of its leaves fails by itself when its variable is not
-    in the result. A simulate-only test is not asked either: that it ran
-    is its criterion."""
-    if test.simulate_only or test.metric_tree_spec is not None:
+    in the result. A simulate-only test is not asked either — one a
+    recognizer marked, or one that declares nothing to score
+    (``TestModel.is_simulate_only``): that it ran is its criterion."""
+    if test.is_simulate_only or test.metric_tree_spec is not None:
         return None
     if not result.success or tracked_results(test, result):
         return None
     tracked = [v.name for v in unit_test_variables(test)] + list(test.variable_patterns)
     # A reason, as every refusal is: a page leads it with "Not scored: ".
-    if not tracked:
-        return "this test tracks no variable and has no criteria — nothing was scored"
     named = ", ".join(tracked[:_NAMED_TRACKED])
     if len(tracked) > _NAMED_TRACKED:
         named += f" and {len(tracked) - _NAMED_TRACKED} more"
@@ -541,9 +540,10 @@ def compare_test(
         return refused
 
     # PTA.5 — simulate_only short-circuit: when the recognizer marked this
-    # test as "just check that it simulates", skip per-variable comparison
-    # and the whole baseline machinery. The sim already succeeded above.
-    if test.simulate_only:
+    # test as "just check that it simulates", or it declares nothing to
+    # score, skip per-variable comparison and the whole baseline machinery.
+    # The sim already succeeded above.
+    if test.is_simulate_only:
         from .metric_tree import MetricResult
 
         leaf = MetricResult(
@@ -1043,7 +1043,7 @@ def compare_one(
     # by this fix (idea #59 / D83).
     if (
         reference is None
-        and not test.simulate_only
+        and not test.is_simulate_only
         and not _test_is_baseline_free(test, default_tolerance)
     ):
         return TestComparison(

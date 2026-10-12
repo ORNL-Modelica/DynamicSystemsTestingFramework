@@ -2451,6 +2451,27 @@ async def test_accept_excludes_a_simulate_only_test_from_the_count(session):
     assert Accept().available(view) == SIMULATE_ONLY
 
 
+async def test_accept_excludes_a_test_that_declares_nothing_to_score(session):
+    """No pattern, no UnitTests variable, no tree — what `dstf add <model>`
+    writes: simulate-only without a recognizer's mark, and the forecast
+    says what the shared accept function does with it."""
+    from dstf.authoring.builtin.accept import SIMULATE_ONLY
+
+    test = session.project.test(B)
+    test.variable_patterns, test.metric_tree_spec = [], None
+    assert test.is_simulate_only and not test.simulate_only
+
+    view = SessionView(session, Selection(tests=frozenset({B})))
+    assert Accept().available(view) == SIMULATE_ONLY
+    # The add form is grey only on a MARKED test, where a staged criterion
+    # is never scored: here the criterion is what makes it a scored test.
+    from dstf.authoring.builtin.edit_tree import _simulate_only
+
+    assert _simulate_only(view, B) is False
+    test.simulate_only = True
+    assert _simulate_only(view, B) is True
+
+
 async def test_accept_excludes_a_result_with_no_tracked_variables(session):
     """`store_reference` returns False for a variable-less result and
     `accept_results` skips it with this reason; the panel has the result in

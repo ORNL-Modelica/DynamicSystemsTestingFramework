@@ -496,6 +496,21 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         ]
         assert row.split()[1:] == ["1", "pattern", "200", "Dassl", "spec"]
 
+    def test_dstf_add_with_no_variables_adds_a_simulate_only_test(self, rodlib, capsys):
+        """`dstf add <model>` says `(simulate only)` and writes an entry
+        that declares nothing to score: the test it makes IS simulate-only
+        (it failed every run as one that scored nothing)."""
+        argv = ["--config", str(rodlib)]
+        assert main([*argv, "add", "RodLib.Rod"]) == 0
+        assert "Variables: (simulate only)" in capsys.readouterr().out
+        spec = json.loads(rodlib.with_name("test_spec.json").read_text("utf-8"))
+        assert spec["tests"] == [{"model": "RodLib.Rod", "variables": []}]
+        test = _discovered(rodlib)["RodLib.Rod"]
+        assert test.simulate_only is False and test.is_simulate_only is True
+        # A pattern makes it a scored test again.
+        assert main([*argv, "add", "RodLib.Parts.Rod", "--variables", "T[1]"]) == 0
+        assert _discovered(rodlib)["RodLib.Parts.Rod"].is_simulate_only is False
+
     def test_a_non_modelica_source_is_unchanged(self, tmp_path, monkeypatch):
         """No annotation is looked for — the library is not even probed —
         and an entry with no stop time keeps the default."""
