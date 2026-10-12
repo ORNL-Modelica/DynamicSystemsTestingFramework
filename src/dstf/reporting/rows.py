@@ -232,15 +232,23 @@ COLUMNS: tuple[Column, ...] = (
         sort=lambda r: r.worst_score,
     ),
     Column(
-        key="vars",
-        label="Variables",
+        # What is counted is CRITERIA — the leaves of the test's tree, one
+        # per tracked variable where it has no tree: two criteria on one
+        # variable are two, a family of twenty elements twenty, an advisory
+        # one (under a `warn`) one. The column read "Variables", and `3/3`
+        # under it for a test that scores one variable three ways. (The
+        # row's fields keep their names, `n_vars` / `n_vars_passed`: they
+        # are the sidecar summary's keys.)
+        key="criteria",
+        label="Criteria",
         kind="number",
         text=lambda r: _DASH if r.n_vars is None else f"{r.n_vars_passed}/{r.n_vars}",
         # The number passed, as the column sorted before it had a filter:
-        # ">2" there means "more than 2 variables passed".
+        # ">2" there means "more than 2 criteria passed".
         sort=lambda r: None if r.n_vars is None else r.n_vars_passed,
         title=(
-            "Variables passed / scored. Sorts and filters on the number "
+            "Criteria passed / criteria in all, advisory ones included: two "
+            "on one variable count as two. Sorts and filters on the number "
             "passed: >2 means more than 2 passed"
         ),
     ),

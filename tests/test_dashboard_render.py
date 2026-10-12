@@ -949,7 +949,7 @@ def test_the_header_is_the_column_list(tmp_path):
     # The model id is the test a person reads; the work-dir key is a key.
     assert labels[keys.index("model")] == "Test"
     assert labels[keys.index("test")] == "Key"
-    assert 'data-key="vars" title="Variables passed / scored.' in head
+    assert 'data-key="criteria" title="Criteria passed / criteria in all' in head
 
 
 def test_every_row_carries_every_columns_attributes(tmp_path):
@@ -1439,7 +1439,7 @@ def test_a_sidecar_with_an_unknown_status_does_not_break_the_page(tmp_path):
     (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
     # The row keeps its own state; the sidecar's numbers still land.
     assert _attrs(tr)["data-status"] == "pending"
-    assert _attrs(tr)["data-vars"] == "1/2"
+    assert _attrs(tr)["data-criteria"] == "1/2"
 
 
 def _passing_sidecar(ref_id: str) -> dict:

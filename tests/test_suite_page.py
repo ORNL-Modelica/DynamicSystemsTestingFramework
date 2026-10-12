@@ -121,7 +121,7 @@ async def test_the_grid_offers_the_tools_columns(shell):
             "status",
             "model",
             "nrmse",
-            "vars",
+            "criteria",
             "sim",
             "warnings",
             "edits",

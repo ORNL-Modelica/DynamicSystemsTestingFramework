@@ -289,6 +289,17 @@ def test_typed_filters_on_the_dashboard(tmp_path, playwright_browser):
     assert _visible(page) == ["Lib.B"]
     _type(page, "nrmse", "")
 
+    # The column that counts criteria says so, in its header and its
+    # tooltip; its filter is keyed by it, and nothing says Variables.
+    header = page.locator('th[data-key="criteria"]')
+    assert header.inner_text().strip().startswith("Criteria")
+    assert (header.get_attribute("title") or "").startswith(
+        "Criteria passed / criteria in all"
+    )
+    assert page.locator('input.col-filter[data-col-filter="criteria"]').count() == 1
+    assert page.locator('th[data-key="vars"]').count() == 0
+    assert "Variables" not in page.locator("thead").inner_text()
+
     # .* on: the Test (model) filter is a regex.
     page.click("#toggle-regex")
     assert page.get_attribute("#toggle-regex", "aria-pressed") == "true"

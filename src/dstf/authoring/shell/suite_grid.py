@@ -55,7 +55,16 @@ TOOL_COLUMNS: tuple[Column, ...] = (
 #: message — Edits before Message, which takes the width left over, so a
 #: narrow window cuts the message, not the edits. The rest are in the
 #: column chooser.
-VISIBLE = ("status", "model", "nrmse", "vars", "sim", "warnings", "edits", "detail")
+VISIBLE = (
+    "status",
+    "model",
+    "nrmse",
+    "criteria",
+    "sim",
+    "warnings",
+    "edits",
+    "detail",
+)
 ORDER = (*VISIBLE, "ref", "resolution", "translate", "total")
 #: What a filter says beyond its kind's hint (``rows.FILTER_HINTS``, the
 #: dashboard's words): the Test column shows short names and filters the

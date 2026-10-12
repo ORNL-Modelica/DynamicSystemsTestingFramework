@@ -435,6 +435,13 @@ def test_the_suite_table_groups_filters_sorts_and_names(tmp_path, playwright_bro
         ).not_to_be_checked()
         for live in ("Key", "Worker", "Elapsed"):
             expect(menu.locator("label", has_text=live)).to_have_count(0)
+        # The column that counts criteria says so — in its header, in the
+        # chooser and in its filter's hint — and nothing says Variables.
+        expect(menu.locator("label", has_text="Criteria")).to_have_count(1)
+        expect(menu.locator("label", has_text="Variables")).to_have_count(0)
+        criteria = page.locator(".ag-header-cell[col-id='criteria']")
+        expect(criteria.locator(".ag-header-cell-text")).to_have_text("Criteria")
+        expect(page.locator(".ag-header-cell[col-id='vars']")).to_have_count(0)
         menu.locator("label", has_text="Message").locator("input").uncheck()
         expect(page.locator(".ag-header-cell[col-id='detail']")).to_have_count(0)
         page.keyboard.press("Escape")

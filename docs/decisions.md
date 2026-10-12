@@ -4979,7 +4979,11 @@ twice in the template (header, filter row) and a third time in each row's
    and the live tick's key. The Message column keeps the key `detail` (the
    column-resize follow reads `--col-w-detail`). The Variables column sorts
    and filters on the number passed, as it sorted before: `>2` means more
-   than 2 passed, and its header tooltip says so.
+   than 2 passed, and its header tooltip says so. (Renamed **Criteria**,
+   key `criteria`, on 2026-10-12: what it counts is the leaves of the
+   test's tree — `3/3` for a test that scores ONE variable three ways,
+   `21/21` for twenty elements of an array and one more criterion on one
+   of them — and it said "Variables". The number is unchanged.)
 3. *One typed-filter module* (`templates/filters.js`, `DstfFilters.compile(
    kind, query, {regex, case})`), inlined before `dashboard.js`. Text: a
    substring, an anchored glob when the query holds `*` or `?` (every other

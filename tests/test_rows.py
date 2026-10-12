@@ -7,6 +7,7 @@ of the numbers the per-test sidecar carries.
 """
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -57,7 +58,7 @@ def test_the_columns_both_surfaces_show():
         "worker",
         "elapsed",
         "nrmse",
-        "vars",
+        "criteria",
         "warnings",
         "translate",
         "sim",
@@ -69,7 +70,7 @@ def test_the_columns_both_surfaces_show():
     assert {k for k, v in kinds.items() if v == "number"} == {
         "elapsed",
         "nrmse",
-        "vars",
+        "criteria",
         "warnings",
         "translate",
         "sim",
@@ -79,7 +80,13 @@ def test_the_columns_both_surfaces_show():
     # The resize-follow reads --col-w-detail: the key stays, the label reads
     # what the column holds.
     assert col["detail"].label == "Message"
-    assert "passed" in (col["vars"].title or "")
+    # The column says what it counts: criteria, not variables — a test
+    # that scores one variable three ways reads 3/3.
+    assert col["criteria"].label == "Criteria"
+    assert (col["criteria"].title or "").startswith(
+        "Criteria passed / criteria in all, advisory ones included"
+    )
+    assert "variable" not in col["criteria"].label.lower()
     assert (col["resolution"].title or "").startswith("Provenance of stop_time")
 
 
@@ -147,6 +154,54 @@ def test_summary_fields_are_the_sidecars_numbers(sample_comparison):
     assert (s["status_text"], s["status_class"]) == ("FAIL", "fail")
     assert s["sim_wall"] == 1.5 and s["n_vars"] == len(sample_comparison.variables)
     assert (s["n_vars_passed"], s["worst_nrmse"], s["n_unscored"]) == (1, 0.5, 0)
+
+
+def test_the_criteria_column_counts_criteria_not_variables():
+    """Two criteria on ONE variable, three elements of an array with one
+    each, and an advisory one that fails: 6 criteria over 4 variables, and
+    the column reads `5/6` — under a header that says Criteria."""
+    import numpy as np
+
+    from conftest import make_test_model
+    from dstf.backends.types import TestResult, VariableResult
+    from dstf.comparison.comparator import compare_test
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    t = np.linspace(0.0, 1.0, 11)
+    names = ["x", "T[1]", "T[2]", "T[3]"]
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "x", "min_value": -1, "max_value": 2},
+            *({"metric": "nrmse", "variable": f"T[{i}]"} for i in (1, 2, 3)),
+            {
+                "combinator": "warn",
+                "children": [
+                    {"metric": "range", "variable": "x", "max_value": 0.5},
+                ],
+            },
+        ],
+    }
+    test = make_test_model(
+        "Lib.A", variable_patterns=names, metric_tree_spec=parse_metric_tree(tree)
+    )
+    result = TestResult(
+        "Lib.A",
+        True,
+        variables=[VariableResult(i + 1, t, t, name=n) for i, n in enumerate(names)],
+    )
+    reference = {
+        "time": list(t),
+        "variables": [{"name": n, "values": list(t)} for n in names],
+    }
+    comp = compare_test(test, result, reference)
+    assert comp.passed and len({v.name for v in comp.variables}) == 4
+    s = summary_fields(comp)
+    assert (s["n_vars"], s["n_vars_passed"]) == (6, 5)
+    row = replace(TestRow(model_id="Lib.A"), n_vars=6, n_vars_passed=5)
+    col = {c.key: c for c in COLUMNS}["criteria"]
+    assert (col.label, col.text(row), col.sort(row)) == ("Criteria", "5/6", 5)
 
 
 def test_the_sidecar_carries_the_classifiers_word(tmp_path, sample_comparison):
@@ -272,7 +327,7 @@ def test_display_text_and_sort_value():
     col = {c.key: c for c in COLUMNS}
     assert col["nrmse"].text(row) == "1.2346e-05"
     assert col["nrmse"].sort(row) == 1.23456e-5
-    assert col["vars"].text(row) == "3/4" and col["vars"].sort(row) == 3
+    assert col["criteria"].text(row) == "3/4" and col["criteria"].sort(row) == 3
     # the sort value is the STATUS_ORDER index
     assert col["status"].text(row) == "PASS" and col["status"].sort(row) == 2
     assert col["model"].sort(row) == "lib.a"
