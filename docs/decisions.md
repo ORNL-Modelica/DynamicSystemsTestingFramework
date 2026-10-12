@@ -7609,7 +7609,13 @@ OpenModelica). And the Session's tests were the scan at open: an
    modification time and size of every `*.mo` and `package.order` under
    `source_path` and under each dependency given as a PATH; a Julia
    project's `*.jl` and `*.toml`; nothing for an FMU or Python project,
-   whose tests each start a process. A sweep that finds nothing changed is
+   whose tests each start a process. A sub-directory that is a symbolic
+   link is walked as the directory it points at (a sub-package kept
+   elsewhere is part of what the simulator loads; until 2026-10-12 it was
+   skipped, and an edit behind the link ran the old text on both
+   simulators): each real directory is entered through a link once and
+   the root never, so a link that leads back ends the walk; a dangling
+   link is nothing. A sweep that finds nothing changed is
    the last click's own `LibraryState` object, else the next serial. Every
    item of the click carries it (`QueueItem.library`).
 2. **Reads the queued tests' changed files again**: only the files of the

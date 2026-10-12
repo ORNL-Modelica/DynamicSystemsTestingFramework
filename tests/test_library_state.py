@@ -69,6 +69,69 @@ def test_the_sweep_on_threads_finds_what_the_walk_on_one_finds(tmp_path, monkeyp
     assert used == [1]
 
 
+@pytest.fixture(params=["one thread", "threads"])
+def walk(request, monkeypatch) -> str:
+    """Both walks of :func:`sweep`: the listing of every root is "slow"
+    for the second."""
+    if request.param == "threads":
+        monkeypatch.setattr(library_state, "_SLOW_LISTING_SECONDS", -1.0)
+    return request.param
+
+
+def test_a_sub_package_that_is_a_symbolic_link_is_swept_through_the_link(
+    tmp_path, walk
+):
+    lib = _library(tmp_path)
+    kept = tmp_path / "elsewhere" / "Shared"
+    (kept / "Inner").mkdir(parents=True)
+    (kept / "package.mo").write_text("package Shared end Shared;", encoding="utf-8")
+    (kept / "Inner" / "D.mo").write_text("model D end D;", encoding="utf-8")
+    os.symlink(kept, lib / "Sub" / "Shared")
+    os.symlink(kept / "Inner" / "D.mo", lib / "Linked.mo")  # a file, linked
+    stamps = sweep([lib], _is_mo)
+    assert set(stamps) == set(lib.rglob("*.mo")) | {
+        lib / "Sub" / "Shared" / "package.mo",
+        lib / "Sub" / "Shared" / "Inner" / "D.mo",
+    }
+    st = os.stat(kept / "Inner" / "D.mo")
+    assert stamps[lib / "Sub" / "Shared" / "Inner" / "D.mo"] == (
+        st.st_mtime_ns,
+        st.st_size,
+    )
+    assert stamps[lib / "Linked.mo"] == (st.st_mtime_ns, st.st_size)
+    # An edit behind the link is a change of the library.
+    (kept / "Inner" / "D.mo").write_text("model D Real x; end D;", encoding="utf-8")
+    assert sweep([lib], _is_mo) != stamps
+
+
+def test_a_link_that_leads_back_ends_the_walk_and_a_dangling_one_is_skipped(
+    tmp_path, walk
+):
+    lib = _library(tmp_path)
+    plain = sweep([lib], _is_mo)
+    os.symlink(lib, lib / "Sub" / "Deep" / "up")  # to the root
+    os.symlink(lib / "Sub", lib / "Sub" / "again")  # to a directory above it
+    os.symlink(tmp_path / "nowhere", lib / "Sub" / "gone")  # dangling
+    os.symlink(tmp_path / "nowhere.mo", lib / "Gone.mo")
+    stamps = sweep([lib], _is_mo)
+    # Every file once by its own spelling; `Sub` once more through the
+    # link to it, where the link to itself inside it ends the walk.
+    assert set(stamps) == set(plain) | {
+        lib / "Sub" / "again" / "package.mo",
+        lib / "Sub" / "again" / "B.mo",
+        lib / "Sub" / "again" / "Deep" / "C.mo",
+    }
+    assert sweep([lib], _is_mo) == stamps  # the same spelling every time
+
+
+def test_of_two_links_to_one_directory_the_first_by_name_is_the_one_walked(tmp_path):
+    (tmp_path / "real").mkdir()
+    for name in ("b", "a", "c"):
+        os.symlink(tmp_path / "real", tmp_path / name)
+    listed = [str(tmp_path / name) for name in ("b", "c", "a")]
+    assert library_state._followed(listed, set()) == [str(tmp_path / "a")]
+
+
 def test_a_root_that_is_one_file_is_stamped_itself_and_a_missing_one_is_nothing(
     tmp_path,
 ):

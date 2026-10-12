@@ -55,32 +55,52 @@ def stamp(path: Path | str) -> Stamp | None:
 
 def _list(
     directory: str, wanted: Callable[[str], bool]
-) -> tuple[list[str], dict[Path, Stamp]]:
-    """One directory: its subdirectories, and the stamp of each wanted
-    file in it."""
+) -> tuple[list[str], list[str], dict[Path, Stamp]]:
+    """One directory: its subdirectories, those of them that are symbolic
+    links (apart: :func:`_followed` decides which are walked), and the
+    stamp of each wanted file in it. A link is read as what it points at;
+    a dangling one is nothing."""
     subs: list[str] = []
+    links: list[str] = []
     found: dict[Path, Stamp] = {}
     try:
         entries = os.scandir(directory)
     except OSError:  # removed while the walk ran, or not a directory
-        return subs, found
+        return subs, links, found
     with entries:
         for entry in entries:
             try:
-                if entry.is_dir(follow_symlinks=False):
-                    subs.append(entry.path)
+                if entry.is_dir():
+                    (links if entry.is_symlink() else subs).append(entry.path)
                 elif wanted(entry.name):
                     st = entry.stat()
                     found[Path(entry.path)] = (st.st_mtime_ns, st.st_size)
             except OSError:
                 continue
-    return subs, found
+    return subs, links, found
+
+
+def _followed(links: list[str], seen: set[str]) -> list[str]:
+    """The linked directories of *links* to walk: each real directory is
+    entered through a link once, and the root never — so a link that leads
+    back to a directory above it ends the walk instead of repeating it. In
+    name order, so two links to one directory are told apart the same way
+    by every sweep."""
+    walked: list[str] = []
+    for link in sorted(links):
+        real = os.path.realpath(link)
+        if real not in seen:
+            seen.add(real)
+            walked.append(link)
+    return walked
 
 
 def sweep(roots: Iterable[Path], wanted: Callable[[str], bool]) -> dict[Path, Stamp]:
     """The stamp of every file under *roots* whose name is *wanted*, keyed
-    by its path as ``root.rglob`` spells it. A root that is a file is
-    stamped itself; one that does not exist holds nothing."""
+    by its path as it is spelled from its root — through a sub-directory
+    that is a symbolic link too (a sub-package kept elsewhere is part of
+    the library the simulator loads). A root that is a file is stamped
+    itself; one that does not exist holds nothing."""
     stamps: dict[Path, Stamp] = {}
     for root in roots:
         if not root.is_dir():
@@ -88,20 +108,25 @@ def sweep(roots: Iterable[Path], wanted: Callable[[str], bool]) -> dict[Path, St
             if own is not None:
                 stamps[root] = own
             continue
+        seen = {os.path.realpath(root)}
         began = time.perf_counter()
-        pending, found = _list(str(root), wanted)
+        pending, links, found = _list(str(root), wanted)
+        pending += _followed(links, seen)
         stamps.update(found)
         if time.perf_counter() - began <= _SLOW_LISTING_SECONDS:
             while pending:
-                subs, found = _list(pending.pop(), wanted)
-                pending += subs
+                subs, links, found = _list(pending.pop(), wanted)
+                pending += subs + _followed(links, seen)
                 stamps.update(found)
             continue
         with ThreadPoolExecutor(_THREADS, thread_name_prefix="dstf-sweep") as pool:
             while pending:
                 listed = list(pool.map(lambda sub: _list(sub, wanted), pending))
-                pending = [sub for subs, _ in listed for sub in subs]
-                for _, found in listed:
+                pending = [sub for subs, _, _ in listed for sub in subs]
+                pending += _followed(
+                    [link for _, links, _ in listed for link in links], seen
+                )
+                for _, _, found in listed:
                     stamps.update(found)
     return stamps
 

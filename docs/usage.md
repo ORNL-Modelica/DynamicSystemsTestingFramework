@@ -1246,7 +1246,8 @@ writes' lines and the artifacts are listed under the rows.
 
 **A Queue click runs the library as it is on disk.** The workers stay alive,
 so each click first looks at the library's files: one stat of every `*.mo` and
-`package.order` under `source_path` and under each dependency given as a path
+`package.order` under `source_path` and under each dependency given as a path,
+through a sub-directory that is a symbolic link too
 (a Julia project's `*.jl` and `*.toml`; nothing for an FMU or Python project,
 whose tests each start a process) — 0.06 s for a 4,000-file library on a local
 disk, 1.3 s on a slow mount, and not on the page's own thread: the tests

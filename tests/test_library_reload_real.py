@@ -14,6 +14,7 @@ markers. About half a minute per simulator.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -62,41 +63,16 @@ def _alive(pid: int) -> bool:
         return False
 
 
-class Tool:
-    """A Session open on a scratch copy of the example library, on a real
-    backend, its queue driven from the test's thread."""
+class _Live:
+    """A Session open on a scratch project, on a real backend, its queue
+    driven from the test's thread."""
 
-    def __init__(self, tmp_path: Path, backend: str):
-        self.lib = tmp_path / "ModelicaTestingLib"
-        shutil.copytree(EXAMPLE, self.lib)
-        # Before the tool opens: the test's model extends a class that has
-        # a file of its own, so a later edit of that file changes no list
-        # of files.
-        (self.lib / "Components" / "Gain.mo").write_text(
-            GAIN.format(k=1), encoding="utf-8"
-        )
-        order = self.lib / "Components" / "package.order"
-        order.write_text(order.read_text(encoding="utf-8") + "Gain\n", encoding="utf-8")
-        self.model = self.lib / "Examples" / "SimpleTest.mo"
-        text = self.model.read_text(encoding="utf-8")
-        assert "der(x) = 1;" in text
-        self.model.write_text(
-            text.replace(
-                'Real x(start=0, fixed=true) "Linear ramp";',
-                'extends Components.Gain;\n  Real x(start=0, fixed=true) "Linear ramp";',
-            ).replace("der(x) = 1;", "der(x) = k*unitTests.scale;"),
-            encoding="utf-8",
-        )
-        # ...and reads a parameter of its component (a result file holds
-        # the tracked variables only, so each edit must show in one).
-        _sub(self.lib / "Components" / "UnitTests.mo", N, N + SCALE.format(scale=1))
+    model: str
+
+    def _open(self, config: Path, backend: str, work: Path) -> None:
         self.loop = Loop()
         self.session = Session(post=self.loop.post)
-        self.session.open(
-            self.lib / "Resources" / "ReferenceResults" / "testing.json",
-            backend=backend,
-            work_dir=tmp_path / "work",
-        )
+        self.session.open(config, backend=backend, work_dir=work)
         self.session.rescan_done.wait(60)
         self.loop.pump()
         self.pids: set[int] = set()
@@ -107,7 +83,7 @@ class Tool:
 
     def click(self):
         """One Queue click on the model, waited to its end: the item."""
-        (item,) = self.session.enqueue([M])
+        (item,) = self.session.enqueue([self.model])
         self.loop.until(
             lambda: (
                 self.session.item_state(item)
@@ -134,6 +110,42 @@ class Tool:
         self.session.wait_background(30)
 
 
+class Tool(_Live):
+    """The example library, a scratch copy."""
+
+    model = M
+
+    def __init__(self, tmp_path: Path, backend: str):
+        self.lib = tmp_path / "ModelicaTestingLib"
+        shutil.copytree(EXAMPLE, self.lib)
+        # Before the tool opens: the test's model extends a class that has
+        # a file of its own, so a later edit of that file changes no list
+        # of files.
+        (self.lib / "Components" / "Gain.mo").write_text(
+            GAIN.format(k=1), encoding="utf-8"
+        )
+        order = self.lib / "Components" / "package.order"
+        order.write_text(order.read_text(encoding="utf-8") + "Gain\n", encoding="utf-8")
+        self.file = self.lib / "Examples" / "SimpleTest.mo"
+        text = self.file.read_text(encoding="utf-8")
+        assert "der(x) = 1;" in text
+        self.file.write_text(
+            text.replace(
+                'Real x(start=0, fixed=true) "Linear ramp";',
+                'extends Components.Gain;\n  Real x(start=0, fixed=true) "Linear ramp";',
+            ).replace("der(x) = 1;", "der(x) = k*unitTests.scale;"),
+            encoding="utf-8",
+        )
+        # ...and reads a parameter of its component (a result file holds
+        # the tracked variables only, so each edit must show in one).
+        _sub(self.lib / "Components" / "UnitTests.mo", N, N + SCALE.format(scale=1))
+        self._open(
+            self.lib / "Resources" / "ReferenceResults" / "testing.json",
+            backend,
+            tmp_path / "work",
+        )
+
+
 def _finished(tool: Tool, *names: str):
     item = tool.click()
     assert item.state is ItemState.FINISHED, item.message
@@ -141,7 +153,7 @@ def _finished(tool: Tool, *names: str):
 
 
 def _edit_and_queue_again(tool: Tool, broken_says: tuple[str, ...]) -> None:
-    lib, model = tool.lib, tool.model
+    lib, model = tool.lib, tool.file
     assert _finished(tool, X) == (10.0, {X: 10.0})
     (pid,) = tool.worker().pids
     born = psutil.Process(pid).create_time()
@@ -246,3 +258,138 @@ def test_dymola_runs_the_model_as_it_is_on_disk(tmp_path):
         pids = set(tool.pids)
         tool.close()
     assert not [p for p in pids if _alive(p)]
+
+
+# ---------------------------------------------------------------------------
+# What a simulator loads from more than one place
+# ---------------------------------------------------------------------------
+
+T1 = "PartsLib.Tests.T1"
+
+#: ``x(1)`` of the test's model spells which text of each part ran: the
+#: ones are `Parts.K`, the tens `Parts.Sub.Deep` (a sub-package with a
+#: directory of its own), the hundreds `Parts.Enc`, the thousands the
+#: dependency's `DepLib.C`.
+_PARTS = {
+    "package.mo": "package PartsLib\nend PartsLib;\n",
+    "package.order": "Parts\nTests\n",
+    "Parts/package.mo": "within PartsLib;\npackage Parts\nend Parts;\n",
+    "Parts/package.order": "K\nEnc\nSub\n",
+    "Parts/K.mo": ("within PartsLib.Parts;\npackage K\n  constant Real k=1;\nend K;\n"),
+    "Parts/Enc.mo": (
+        "within PartsLib.Parts;\nmodel Enc\n  parameter Real e=1;\n"
+        "  Real v=e;\nend Enc;\n"
+    ),
+    "Parts/Sub/package.mo": "within PartsLib.Parts;\npackage Sub\nend Sub;\n",
+    "Parts/Sub/package.order": "Deep\n",
+    "Parts/Sub/Deep.mo": (
+        "within PartsLib.Parts.Sub;\npackage Deep\n  constant Real d=1;\nend Deep;\n"
+    ),
+    "Tests/package.mo": "within PartsLib;\npackage Tests\nend Tests;\n",
+    "Tests/package.order": "T1\n",
+    "Tests/T1.mo": (
+        "within PartsLib.Tests;\nmodel T1\n  Real x(start=0, fixed=true);\n"
+        "  Parts.Enc enc;\nequation\n"
+        "  der(x) = Parts.K.k + 10*Parts.Sub.Deep.d + 100*enc.v + 1000*DepLib.C.c;\n"
+        "  annotation(experiment(StopTime=1, Tolerance=1e-6));\nend T1;\n"
+    ),
+}
+_DEP = {
+    "package.mo": "package DepLib\nend DepLib;\n",
+    "package.order": "C\n",
+    "C.mo": "within DepLib;\npackage C\n  constant Real c=1;\nend C;\n",
+}
+
+
+class Parts(_Live):
+    """A generated library with a second one as a path dependency.
+    ``arrange(parts)`` runs on the files before the tool opens and returns
+    the dependency's entry for ``testing.json`` (None: its directory)."""
+
+    model = T1
+
+    def __init__(self, tmp_path: Path, backend: str, dep_dir="DepLib", arrange=None):
+        self.root = tmp_path
+        self.lib = tmp_path / "PartsLib"
+        self.dep = tmp_path / "deps" / dep_dir
+        for base, files in ((self.lib, _PARTS), (self.dep, _DEP)):
+            for rel, text in files.items():
+                (base / rel).parent.mkdir(parents=True, exist_ok=True)
+                (base / rel).write_text(text, encoding="utf-8")
+        entry = arrange(self) if arrange is not None else None
+        (tmp_path / "testing.json").write_text(
+            json.dumps(
+                {
+                    "source_path": str(self.lib),
+                    "backends": {
+                        "OpenModelica": ["/usr/bin/omc", "omc"],
+                        "Dymola": ["/usr/local/bin/dymola"],
+                    },
+                    "dependencies": [entry or str(self.dep)],
+                    "test_spec": "test_spec.json",
+                    "reference_root": str(tmp_path / "refs"),
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "test_spec.json").write_text(
+            json.dumps({"tests": [{"model": T1, "variables": ["x"]}]}),
+            encoding="utf-8",
+        )
+        self._open(tmp_path / "testing.json", backend, tmp_path / "work")
+
+    def x(self) -> float:
+        """``x(1)`` of a click's run, which must finish."""
+        item = self.click()
+        assert item.state is ItemState.FINISHED, item.message
+        return self.read(item, "x")[1]["x"]
+
+    def fresh(self) -> float:
+        """What a NEW simulator makes of the files as they are: the truth
+        a live one's answer is held against."""
+        self.session.stop_queue()
+        return self.x()
+
+
+_SIMULATORS = [
+    pytest.param(
+        "OpenModelica",
+        marks=[
+            pytest.mark.ompython,
+            pytest.mark.skipif(
+                not _ompython_available(), reason="needs omc + OMPython"
+            ),
+        ],
+    ),
+    pytest.param(
+        "Dymola",
+        marks=[
+            pytest.mark.dymola,
+            pytest.mark.skipif(not _dymola_available(), reason="needs Dymola"),
+        ],
+    ),
+]
+
+
+def _closed(tool: _Live) -> None:
+    pids = set(tool.pids)
+    tool.close()
+    assert not [p for p in pids if _alive(p)]
+
+
+@pytest.mark.parametrize("backend", _SIMULATORS)
+def test_a_sub_package_behind_a_symbolic_link_is_read_again(tmp_path, backend):
+    def arrange(parts: Parts) -> None:
+        shutil.move(str(parts.lib / "Parts" / "Sub"), str(parts.root / "shared_Sub"))
+        os.symlink(parts.root / "shared_Sub", parts.lib / "Parts" / "Sub")
+
+    tool = Parts(tmp_path, backend, arrange=arrange)
+    try:
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        _sub(tmp_path / "shared_Sub" / "Deep.mo", "d=1", "d=2")
+        assert tool.x() == 1121.0, "the live simulator ran the old sub-package"
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 1121.0
+    finally:
+        _closed(tool)
