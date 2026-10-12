@@ -6975,6 +6975,26 @@ class TestRail:
             assert all(drawer.list.rows[m] is r for m, r in rows.items())
             assert rebuilds == []
 
+    async def test_a_row_not_scored_yet_wears_scoring_not_queued(self, shell):
+        """A test with no verdict yet reads `…` under the SCORING class —
+        its fill and its tint. `queued` is the simulation queue's (D150):
+        a row wearing it says the test waits for a worker."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            user.find(marker="rail:tests").click()
+            drawer = page.rail.tests
+            assert drawer is not None
+            assert drawer.list.rows[D].verdict == "PASS"
+            del shell.session.comparisons[D]
+            shell.session._emit("results", models={D})
+            await _settled(lambda: drawer.list.rows[D].verdict == "")
+            row = drawer.list.rows[D]
+            assert row.badge.text == "…"
+            assert row.badge._style["background-color"] == "var(--dstf-scoring-fill)"
+            assert "dstf-tint-scoring" in row.container.classes
+            assert "dstf-tint-queued" not in row.container.classes
+            assert "dstf-tint-pass" not in row.container.classes
+
 
 def _shown(shell, user) -> list[str]:
     """The Tests drawer's visible rows, in drawing order."""
@@ -9071,6 +9091,21 @@ async def test_a_read_but_unscored_test_waits_while_the_project_is_read(shell):
         with page.client:
             page.sync()
         assert _one(user, "strip-text").text == "Scoring…"
+
+
+async def test_the_badge_of_a_test_not_scored_yet_wears_scoring_not_queued(shell):
+    """The header's badge of a test with no verdict yet reads `…` under the
+    SCORING class. `queued` is the simulation queue's (D150): a badge
+    wearing it says the test waits for a worker."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        assert page.badge.text == "PASS"
+        shell.load.phase = "results"
+        del shell.session.comparisons[D]
+        with page.client:
+            page.sync()
+        assert page.badge.text == "…"
+        assert page.badge._style["background-color"] == "var(--dstf-scoring-fill)"
 
 
 def _strip_raises(monkeypatch) -> None:
