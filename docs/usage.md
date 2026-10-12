@@ -168,7 +168,7 @@ It used to be kept and ignored, and that leaf scored as a range with no upper bo
 
 A block that is not an object where one is read — `"simulation": "stop_time=5"`, `"comparison": null`, `"variable_overrides": [1]`, an override written `"x": "tube"` — is the same error, naming the block and what it holds; leave a block out to not set it.
 
-The `comparison` section a baseline stores in its reference JSON goes through the same check when the test is compared: its `variable_overrides` are merged under the spec's, so a stored override with a key nothing reads stops the command, naming the reference file.
+The `comparison` section a baseline stores in its reference JSON goes through the same check: its `variable_overrides` are merged under the spec's, so a stored override with a key nothing reads stops a command that would compare against it — `Config error: <reference file>: comparison.variable_overrides[x]: …`, exit 2, from `run` before it simulates anything and from `compare` — while `dstf author` opens and shows that one test FAIL, `Not scored:` with the same sentence.
 
 ```
 Config error: …/Dymola/linux/ref_0007.json: comparison.variable_overrides[pipe.T[1]]: range · pipe.T[1]: unknown field "max_val" — did you mean "max_value"?

@@ -835,6 +835,98 @@ class TestAStoredBaselinesOverride:
         code, _err = self._compare(cfg, work, capsys)
         assert code == 1  # the suite's own failures; x reaches 1.001 > 0.5
 
+    BAD = {"mode": "range", "min_value": -1, "max_val": 0.5}
+
+    def _sentence(self, ref) -> str:
+        return (
+            f"{ref}: comparison.variable_overrides[x]: range · x: "
+            'unknown field "max_val" — did you mean "max_value"?'
+        )
+
+    @pytest.mark.parametrize(
+        "flags", [[], ["--merge"], ["--rerun", "failed"], ["-i", "failed"]]
+    )
+    def test_a_run_that_scores_refuses_before_it_simulates(
+        self, tmp_path, capsys, flags
+    ):
+        """The baselines a run compares against are there before it starts:
+        it simulated every test, and then exited 2 with no verdict."""
+        from test_session import _snapshot
+
+        cfg, work, ref = self._project(tmp_path, self.BAD)
+        before = _snapshot(work)
+        capsys.readouterr()
+        code = main(
+            ["--config", str(cfg), "run", "--no-browser", "--work-dir", str(work)]
+            + flags
+        )
+        assert code == 2
+        assert capsys.readouterr().err.strip().splitlines()[-1] == (
+            "Config error: " + self._sentence(ref)
+        )
+        assert _snapshot(work) == before
+
+    @pytest.mark.parametrize("command", ["compare", "run"])
+    def test_a_filter_that_leaves_the_test_out_leaves_its_file_unread(
+        self, tmp_path, capsys, command
+    ):
+        """A command stops for the baselines IT compares against."""
+        from test_session import A
+
+        cfg, work, _ref = self._project(tmp_path, self.BAD)
+        code = main(
+            ["--config", str(cfg), command, "--no-browser", "--work-dir", str(work)]
+            + ["--filter", A]
+        )
+        assert code == 1  # A fails on its own
+        assert "Config error" not in capsys.readouterr().err
+
+    def test_a_merged_run_scores_the_tests_its_filter_left_out(self, tmp_path, capsys):
+        from test_session import A, _snapshot
+
+        cfg, work, ref = self._project(tmp_path, self.BAD)
+        before = _snapshot(work)
+        code = main(
+            ["--config", str(cfg), "run", "--no-browser", "--work-dir", str(work)]
+            + ["--filter", A, "--merge"]
+        )
+        assert code == 2
+        assert self._sentence(ref) in capsys.readouterr().err
+        assert _snapshot(work) == before
+
+    @pytest.mark.parametrize("command", ["compare", "run"])
+    def test_an_accept_compares_nothing_and_is_not_stopped(
+        self, tmp_path, capsys, command
+    ):
+        cfg, work, _ref = self._project(tmp_path, self.BAD)
+        main(
+            ["--config", str(cfg), command, "--no-browser", "--work-dir", str(work)]
+            + ["--accept"]
+        )
+        assert "Config error" not in capsys.readouterr().err
+
+    def test_one_comparison_refuses_that_test_alone(self, tmp_path):
+        """A caller with one test in hand — the tool, a library caller —
+        has that test refused with the sentence; nothing is raised."""
+        from dstf.authoring.session import Session
+        from dstf.reporting.status import FAIL, PASS, classify, refusal
+        from test_session import A, D, G
+
+        pytest.importorskip("nicegui")
+        cfg, work, ref = self._project(tmp_path, self.BAD)
+        session = Session()
+        session.open(cfg, work_dir=work)
+        refused = session.comparisons[D]
+        assert classify(refused) == FAIL
+        assert refusal(refused) == self._sentence(ref)
+        assert refused.has_reference is True and refused.variables == []
+        # its other tests score
+        assert classify(session.comparisons[G]) == PASS
+        assert session.comparisons[A].variables[0].nrmse == pytest.approx(
+            0.153, abs=1e-3
+        )
+        assert refusal(session.comparisons[A]) is None
+
 
 # ---------------------------------------------------------------------------
 # the commands: spec-update refuses and writes nothing; run / compare /

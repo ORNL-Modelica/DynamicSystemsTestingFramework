@@ -8500,10 +8500,23 @@ it.
    - **At parse** — `run`, `compare`, `discover` and `dstf author` (before
      it serves): one `Config error: <file>: <place>: …` line, exit 2, the
      path a malformed `metrics` tree already took.
-   - **At compare, for a stored baseline** — the `variable_overrides` a
-     reference JSON keeps are merged under the spec's, so each goes
-     through the override check when its test is compared: the same
-     `Config error`, naming the reference file.
+   - **For a stored baseline** — the `variable_overrides` a reference
+     JSON keeps are merged under the spec's, so each goes through the
+     override check: one decision (`comparator.stored_override_problem`),
+     a sentence naming the reference file, with two readers. A command
+     that scores stops on it before it does anything else — the same
+     `Config error`, exit 2, from `run` BEFORE it simulates (the
+     reference files are there at discovery; the first build found it at
+     the compare, after every simulation, and left no verdict) and from
+     `compare` before it wipes or stamps; each for the baselines it will
+     compare against (a `--filter`'s tests, every discovered test under
+     `--merge` / `--rerun`), and an `--accept`, which compares nothing,
+     is not stopped. A comparison of ONE test (`compare_one`) refuses
+     that test with the sentence: `dstf author` opens, shows that test
+     FAIL with `Not scored: <reference file>: comparison.
+     variable_overrides[x]: range · x: unknown field "max_val" — did you
+     mean "max_value"?` where it would name a failing criterion, and
+     scores every other test.
    - **At a file write** — `spec-update` (`Patch failed: …`, exit 1, the
      file untouched) and the tool's Save, both through
      `spec_update.apply_validated_patches`.
@@ -8563,9 +8576,10 @@ by the parser and not by the schema (a row's cells are untyped there).
 The delta rule compares content: a patch that rewrites an unscorable
 criterion into a different unscorable one is refused, and one that
 reorders the keys of an untouched one is not. A reference JSON's stored
-override with an unknown key stops the whole compare, not that test
-alone — it is a file to repair, and no accept repairs it (an accept keeps
-the stored overrides it does not replace). A non-object entry of `tests`,
+override with an unknown key stops a whole `run` or `compare`, not that
+test alone — it is a file to repair, and no accept repairs it (an accept
+keeps the stored overrides it does not replace); the tool, which has no
+exit code to give, refuses that test alone. A non-object entry of `tests`,
 an entry with no `model`, a `variables` that is no list and a
 non-numeric `simulation` value are still warnings, as before.
 

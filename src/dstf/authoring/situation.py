@@ -251,7 +251,10 @@ def strip_for(
         # Before NEW_VARIABLES: a rerun records the variable, and the test
         # is refused all the same. The reason, never "accept it": accepting
         # keeps the reference's comparison settings, the refusal with them.
-        return Strip(S.REFUSED, "red", f"Not scored: {refused}.")
+        # A reason that ends its own sentence (`… did you mean "max_value"?`)
+        # is not given a second stop.
+        stop = "" if refused.endswith(("?", "!", ".")) else "."
+        return Strip(S.REFUSED, "red", f"Not scored: {refused}{stop}")
     if new_variables:
         return Strip(
             S.NEW_VARIABLES,

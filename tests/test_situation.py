@@ -232,6 +232,17 @@ ROWS = [
         "Not scored: the base is a pair.",
     ),
     (
+        # A reason that ends its own sentence gets no second stop.
+        dict(
+            status="FAIL",
+            has_result=True,
+            refused='ref_0002.json: unknown field "max_val" — did you mean "max_value"?',
+        ),
+        S.REFUSED,
+        "red",
+        'Not scored: ref_0002.json: unknown field "max_val" — did you mean "max_value"?',
+    ),
+    (
         dict(status="PASS", has_result=True, simulate_only=True),
         S.SIMULATE_ONLY,
         "grey",

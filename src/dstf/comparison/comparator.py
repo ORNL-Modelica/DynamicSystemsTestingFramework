@@ -158,11 +158,11 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
     )
 
 
-def refuse_stored_override_keys(
+def stored_override_problem(
     reference: dict, store: ReferenceStore, model_id: str
-) -> None:
-    """``ConfigError`` naming the reference file when a baseline's stored
-    ``comparison.variable_overrides`` holds what nothing reads: an override
+) -> str | None:
+    """Why a baseline's stored ``comparison.variable_overrides`` cannot be
+    read, as a sentence naming the reference file, or ``None``: an override
     that is no object, or a key its mode does not read — the check a spec's
     override goes through (``strict_keys.unread_override_key``).
 
@@ -172,8 +172,14 @@ def refuse_stored_override_keys(
     bound, and passed with the value at 10 — the spec file's own hole, one
     file over. Every stored override is checked, read by this comparison or
     not (a ``metrics`` tree reads none, the spec's own replaces one): the
-    file holds it either way, and an accept keeps it."""
-    from ..config import ConfigError
+    file holds it either way, and an accept keeps it.
+
+    THE one decision, with two readers. A command that compares many tests
+    stops on it before it does anything else (:func:`refuse_stored_overrides`:
+    ``run`` before it simulates, ``compare`` before it scores). A comparison
+    of ONE test refuses that test with it (:func:`compare_one`): the tool
+    opens a project test by test, and a file to repair under one of them is
+    no reason to score none."""
     from .sides import _as_json
     from .strict_keys import unread_override_key
 
@@ -182,26 +188,41 @@ def refuse_stored_override_keys(
         comparison.get("variable_overrides") if isinstance(comparison, dict) else None
     )
     if overrides is None:
-        return
+        return None
 
-    def refuse(place: str, problem: str) -> ConfigError:
+    def said(place: str, problem: str) -> str:
         # The file is asked for only here: a refusal names it.
         ref_file = store.reference_file(model_id)
-        return ConfigError(
-            f"{ref_file}: comparison.variable_overrides{place}: {problem}"
-        )
+        return f"{ref_file}: comparison.variable_overrides{place}: {problem}"
 
     if not isinstance(overrides, dict):
-        raise refuse("", f"must be an object, got {_as_json(overrides)}")
+        return said("", f"must be an object, got {_as_json(overrides)}")
     for variable, override in overrides.items():
         if not isinstance(override, dict):
-            raise refuse(
-                f"[{variable}]", f"must be an object, got {_as_json(override)}"
-            )
+            return said(f"[{variable}]", f"must be an object, got {_as_json(override)}")
         found = unread_override_key(override)
         if found is not None:
             mode, problem = found
-            raise refuse(f"[{variable}]", f"{mode} · {variable}: {problem}")
+            return said(f"[{variable}]", f"{mode} · {variable}: {problem}")
+    return None
+
+
+def refuse_stored_overrides(tests: Iterable[TestModel], store: ReferenceStore) -> None:
+    """``ConfigError`` for the first of *tests* whose stored baseline holds
+    an override nothing reads (:func:`stored_override_problem`). What a
+    command calls with the tests it is about to compare, before it simulates
+    or scores any of them: the reference files are there at discovery, and a
+    run that found one at its compare had simulated everything for no
+    verdict."""
+    from ..config import ConfigError
+
+    for test in tests:
+        reference = store.get_reference(test.model_id)
+        if reference is None:
+            continue
+        problem = stored_override_problem(reference, store, test.model_id)
+        if problem is not None:
+            raise ConfigError(problem)
 
 
 def _check_structural_changes(
@@ -959,7 +980,18 @@ def compare_one(
 
     reference = store.get_reference(test.model_id)
     if reference is not None:
-        refuse_stored_override_keys(reference, store, test.model_id)
+        # A stored override nothing reads: this test is refused, with the
+        # sentence naming its reference file. A command has stopped on it
+        # before it got here (`refuse_stored_overrides`).
+        unread = stored_override_problem(reference, store, test.model_id)
+        if unread is not None:
+            return TestComparison(
+                model_id=test.model_id,
+                passed=False,
+                test_id=reference.get("test_id"),
+                has_reference=True,
+                error_message=unread,
+            )
     # The base tolerance is judged HERE, before the test is anything else: a
     # test with no baseline is not NO_REF over a base no accept may store.
     refused = refused_base_tolerance(test, reference, default_tolerance)

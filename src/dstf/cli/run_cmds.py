@@ -137,6 +137,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
+    if not args.accept:
+        # A route that scores stops at a baseline it cannot read (`Config
+        # error: <reference file>: …`, exit 2) BEFORE it simulates: the
+        # reference files are there now. `--merge` and `--rerun` score every
+        # discovered test's last result, any other run the tests it runs.
+        from ..comparison.comparator import refuse_stored_overrides
+
+        merged = getattr(args, "merge", False) or (
+            getattr(args, "rerun", None) is not None
+        )
+        refuse_stored_overrides(all_tests if merged else tests, store)
     write_id_mapping(store, config)
 
     backend = _get_backend(config, persistent=not getattr(args, "batch", False))
@@ -392,6 +403,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     backend = _get_backend(config)
     store = ReferenceStore(config)
+    if not getattr(args, "accept", False):
+        # As `run` does, before anything is wiped or stamped.
+        from ..comparison.comparator import refuse_stored_overrides
+
+        refuse_stored_overrides(tests, store)
     write_id_mapping(store, config)
 
     # Pre-compute ref_id_map so the wipe + downstream report rendering can
