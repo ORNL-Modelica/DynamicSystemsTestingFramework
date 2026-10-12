@@ -2,7 +2,8 @@
 
 import json
 import logging
-from collections.abc import Iterable
+import math
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from ..config import ConfigError, baseline_points_refused
@@ -40,6 +41,14 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
     ``"variable_overrides": [1]`` and ``{"x": "tube"}`` a traceback — the
     second one at compare.
 
+    And refuse a value the parser reads that is not what it reads there:
+    ``variables`` that is no list of strings (``"x"`` was a warning and a
+    test tracking nothing, ``[1]`` a traceback at compare), a ``source``
+    that is no string, a ``simulation`` value of another type than
+    ``spec_shape.SIMULATION`` gives its key (``"stop_time": "abc"`` was a
+    warning and a run to the default second; ``"100"`` and ``true`` were
+    converted, ``2.5`` intervals cut to 2). ``null`` there stays "not set".
+
     Raises :class:`EntryKeyError`.
     """
     from ..comparison.sides import _as_json
@@ -64,9 +73,36 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
         return value
 
     refuse(here, entry, spec_shape.ENTRY)
+    if "variables" in entry:
+        variables = entry["variables"]
+        if not isinstance(variables, list):
+            raise EntryKeyError(
+                f"{here}.variables",
+                f"must be a list of names or patterns, got {_as_json(variables)}",
+            )
+        for i, pattern in enumerate(variables):
+            if not isinstance(pattern, str):
+                raise EntryKeyError(
+                    f"{here}.variables[{i}]",
+                    f"must be a name or a pattern, got {_as_json(pattern)}",
+                )
+    if "source" in entry and not isinstance(entry["source"], str):
+        raise EntryKeyError(
+            f"{here}.source", f"must be a path, got {_as_json(entry['source'])}"
+        )
     simulation = block(here, entry, "simulation")
     if simulation is not None:
         refuse(f"{here}.simulation", simulation, spec_shape.SIMULATION)
+        for key, value in simulation.items():
+            # `null` is "not set", as this module's own example writes it.
+            if value is None:
+                continue
+            kind = spec_shape.SIMULATION[key]["type"]
+            if not _HOLDS[kind](value):
+                raise EntryKeyError(
+                    f"{here}.simulation.{key}",
+                    f"must be {_SAID[kind]}, got {_as_json(value)}",
+                )
     comparison = block(here, entry, "comparison")
     if comparison is None:
         return
@@ -82,6 +118,26 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
         if found is not None:
             mode, problem = found
             raise EntryKeyError(where, f"{mode} · {variable}: {problem}")
+
+
+def _is_number(value: object) -> bool:
+    """A JSON number that is one: no bool, no NaN, no infinity."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+#: A JSON-Schema ``type`` of ``spec_shape.SIMULATION`` → whether a value is
+#: one, and how a refusal says it. An integral float is a whole number, as
+#: it is to JSON Schema.
+_HOLDS: dict[str, Callable[[object], bool]] = {
+    "number": _is_number,
+    "integer": lambda v: _is_number(v) and float(v).is_integer(),  # type: ignore[arg-type]
+    "string": lambda v: isinstance(v, str),
+}
+_SAID = {"number": "a number", "integer": "a whole number", "string": "a string"}
 
 
 def check_root_keys(data: object, label: str) -> list:
@@ -105,33 +161,64 @@ def check_root_keys(data: object, label: str) -> list:
     return tests
 
 
+def spec_document_from_bytes(raw: bytes, label: str) -> dict:
+    """The spec document a file's bytes hold — its root object, ``tests``
+    there (empty when the file names none) — or :class:`ConfigError` naming
+    ``label``: bytes that are no UTF-8 text, text that is no JSON, a root
+    that cannot hold a ``tests`` list (:func:`check_root_keys`).
+
+    THE one decoder of a ``test_spec.json``. Every reader comes through it —
+    discovery, ``spec-update`` and the edit helpers (:func:`read_spec_document`)
+    and the authoring Session, which hashes the same bytes — so a file is
+    read by all of them or by none, with one sentence. ``discover`` /
+    ``run`` / ``compare`` logged ``Failed to read test spec`` and went on
+    with a spec of no tests (exit 1, ``No tests found.``), and a UTF-16 or
+    binary file was a traceback out of every command but ``dstf author``.
+
+    ``utf-8-sig``: a spec a Windows editor saved keeps a BOM, and a BOM is
+    not a reason to refuse a file that otherwise parses."""
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{label}: not UTF-8 text ({e})") from e
+    if not text.strip():
+        raise ConfigError(f"{label}: the file is empty")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"{label}: not JSON ({e})") from e
+    tests = check_root_keys(data, label)
+    assert isinstance(data, dict)  # check_root_keys
+    data.setdefault("tests", tests)
+    return data
+
+
+def read_spec_document(spec_path: Path) -> dict | None:
+    """The spec document in ``spec_path`` (:func:`spec_document_from_bytes`),
+    or ``None`` when there is no such file — a project without a spec file
+    has no spec tests. A file that is there and cannot be opened is a
+    :class:`ConfigError` with the system's reason."""
+    try:
+        raw = spec_path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise ConfigError(f"{spec_path}: {e}") from e
+    return spec_document_from_bytes(raw, str(spec_path))
+
+
 def _load_spec_for_edit(spec_path: Path) -> dict:
     """Load a spec about to be modified in place.
 
     A missing file is a new spec (``{"tests": []}``). An EXISTING file that
-    cannot be read or parsed raises :class:`ConfigError`: the edit helpers
-    below load-modify-write, so swallowing the parse error and carrying on
-    with an empty dict replaced the user's hand-authored spec with a
-    near-empty one on a single JSON typo.
+    cannot be read or parsed raises :class:`ConfigError`
+    (:func:`read_spec_document`): the edit helpers below load-modify-write,
+    so swallowing the parse error and carrying on with an empty dict
+    replaced the user's hand-authored spec with a near-empty one on a
+    single JSON typo.
     """
-    if not spec_path.exists():
-        return {"tests": []}
-    try:
-        # `utf-8-sig`, like every other reader of this file: a BOM is not
-        # a reason to refuse a spec that otherwise parses.
-        text = spec_path.read_text(encoding="utf-8-sig")
-    except OSError as e:
-        raise ConfigError(f"Cannot read test spec {spec_path}: {e}") from e
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ConfigError(f"Malformed JSON in test spec {spec_path}: {e}") from e
-    if not isinstance(data, dict):
-        raise ConfigError(f"Test spec {spec_path} root must be a JSON object")
-    data.setdefault("tests", [])
-    if not isinstance(data["tests"], list):
-        raise ConfigError(f"Test spec {spec_path}: 'tests' must be a list")
-    return data
+    data = read_spec_document(spec_path)
+    return {"tests": []} if data is None else data
 
 
 def _write_spec(spec_path: Path, data: dict) -> None:
@@ -141,30 +228,12 @@ def _write_spec(spec_path: Path, data: dict) -> None:
     _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
 
 
-def _spec_number(section: dict, key: str, conv, model_id: str):
-    """Return ``conv(section[key])``, or None when absent / null / invalid.
-
-    review 2026-07-06 finding 16: JSON ``null`` means "not set" (this
-    module's own docstring shows ``"output_interval": null``) — it must not
-    crash discovery with ``float(None)``. A non-numeric value logs a warning
-    naming the model + field and is skipped so one bad entry doesn't abort
-    the whole run.
-    """
-    if key not in section:
-        return None
-    raw = section[key]
-    if raw is None:
-        return None
-    try:
-        return conv(raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Test '%s': ignoring non-numeric simulation/comparison value %s=%r",
-            model_id,
-            key,
-            raw,
-        )
-        return None
+def _spec_number(section: dict, key: str, conv):
+    """``conv(section[key])``, or None when absent or ``null`` — "not set"
+    (this module's own docstring shows ``"output_interval": null``). The
+    value is a number: :func:`check_entry_keys` refused anything else."""
+    raw = section.get(key)
+    return None if raw is None else conv(raw)
 
 
 def _entries(data: dict) -> list:
@@ -232,15 +301,13 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     - Empty list [] — simulate only, no variable comparison
     - Wildcard ["*"] — track all variables
 
-    Reads the file, then hands the document to
-    :func:`spec_models_from_document`; the authoring Session calls that
-    directly with its in-memory document.
+    Reads the file (:func:`read_spec_document`: a file that is no spec is
+    a :class:`ConfigError`, a missing one a spec of no tests), then hands
+    the document to :func:`spec_models_from_document`; the authoring
+    Session calls that directly with its in-memory document.
     """
-    try:
-        # `utf-8-sig`, like every other reader of this file.
-        data = json.loads(spec_path.read_text(encoding="utf-8-sig"))
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error("Failed to read test spec %s: %s", spec_path, e)
+    data = read_spec_document(spec_path)
+    if data is None:
         return []
     return spec_models_from_document(
         data, base_dir=spec_path.parent, label=str(spec_path)
@@ -258,21 +325,27 @@ def spec_models_from_document(
     key nothing reads, a bad ``metrics`` tree. Not named ``test_...``:
     pytest collects such a name when a test module imports it.
     """
+    from ..comparison.sides import _as_json
+
     tests_data = check_root_keys(data, label)
 
     tests = []
     for i, entry in enumerate(tests_data):
-        # review 2026-07-06 finding 53: a non-dict entry must be skipped with
-        # a warning, not crash discovery with AttributeError.
+        # An entry that cannot be a test is an error that names its place,
+        # like a key nothing reads: it was a warning and a test skipped,
+        # which a run of 300 others does not show.
         if not isinstance(entry, dict):
-            logger.warning(
-                "Skipping non-dict entry tests[%d] in %s: %r", i, label, entry
+            raise ConfigError(
+                f"{label}: tests[{i}]: must be an object, got {_as_json(entry)}"
             )
-            continue
         model_id = entry.get("model")
-        if not model_id:
-            logger.warning("Skipping spec entry with no 'model' field")
-            continue
+        if model_id is None or model_id == "":
+            raise ConfigError(f'{label}: tests[{i}]: has no "model"')
+        if not isinstance(model_id, str):
+            raise ConfigError(
+                f"{label}: tests[{i}].model: must be a model's name, "
+                f"got {_as_json(model_id)}"
+            )
 
         # A key nothing reads is an error that names it, like a malformed
         # tree: one "Config error: ..." line and exit 2.
@@ -281,10 +354,7 @@ def spec_models_from_document(
         except EntryKeyError as e:
             raise ConfigError(f"{label}: {e}") from e
 
-        variables = entry.get("variables", [])
-        if not isinstance(variables, list):
-            logger.warning("'variables' must be a list for %s", model_id)
-            variables = []
+        variables = entry.get("variables", [])  # a list of strings: ditto
 
         parts = model_id.rsplit(".", 1)
         source_package = parts[0] if len(parts) > 1 else ""
@@ -321,26 +391,26 @@ def spec_models_from_document(
         # fields stay None and get provenance "default" when
         # TestModel.finalize_defaults runs at the end of discover_tests.
         sim = entry.get("simulation", {})  # an object: `check_entry_keys`
-        stop_time = _spec_number(sim, "stop_time", float, model_id)
+        stop_time = _spec_number(sim, "stop_time", float)
         if stop_time is not None:
             test.stop_time = stop_time
             test.field_sources["stop_time"] = "test_spec"
-        tolerance = _spec_number(sim, "tolerance", float, model_id)
+        tolerance = _spec_number(sim, "tolerance", float)
         if tolerance is not None:
             test.tolerance = tolerance
             test.field_sources["tolerance"] = "test_spec"
         if sim.get("method") is not None:
             test.method = str(sim["method"])
             test.field_sources["method"] = "test_spec"
-        n_intervals = _spec_number(sim, "number_of_intervals", int, model_id)
+        n_intervals = _spec_number(sim, "number_of_intervals", int)
         if n_intervals is not None:
             test.number_of_intervals = n_intervals
             test.field_sources["number_of_intervals"] = "test_spec"
-        output_interval = _spec_number(sim, "output_interval", float, model_id)
+        output_interval = _spec_number(sim, "output_interval", float)
         if output_interval is not None:
             test.output_interval = output_interval
             test.field_sources["output_interval"] = "test_spec"
-        timeout = _spec_number(sim, "timeout", int, model_id)
+        timeout = _spec_number(sim, "timeout", int)
         if timeout is not None:
             test.timeout = timeout
 

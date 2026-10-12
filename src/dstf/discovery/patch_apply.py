@@ -106,31 +106,14 @@ def apply_patch(
 
 
 def load_spec_document(spec_path: Path) -> dict:
-    if not spec_path.exists():
-        return {"tests": []}
-    try:
-        # `utf-8-sig`: a spec a Windows editor saved keeps a BOM, and a BOM
-        # is not a reason to refuse a file that otherwise parses — the
-        # baselines have always been read this way, and a BOM'd spec made
-        # `migrate-variable-names` call the whole file unreadable. The other
-        # two spec readers (`spec_parser._load_spec`, `SpecDocument.load`)
-        # decode the same way, or this one alone could read it.
-        data = json.loads(spec_path.read_text(encoding="utf-8-sig"))
-    except (json.JSONDecodeError, OSError) as e:
-        raise PatchError(f"cannot read {spec_path}: {e}") from e
-    return spec_document_shape(data)
+    """The spec document a patch is applied to: the file's
+    (``spec_parser.read_spec_document`` — the one reader, a
+    :class:`~dstf.config.ConfigError` for a file that is no spec), or the
+    empty document when there is no file yet."""
+    from .spec_parser import read_spec_document
 
-
-def spec_document_shape(data: object) -> dict:
-    """The one check of a parsed spec's shape — an object whose ``tests`` is
-    a list (added empty when absent) — shared by this loader and the
-    authoring Session's, so the two cannot drift. Raises :class:`PatchError`."""
-    if not isinstance(data, dict):
-        raise PatchError("spec root must be an object")
-    data.setdefault("tests", [])
-    if not isinstance(data["tests"], list):
-        raise PatchError("spec 'tests' must be a list")
-    return data
+    data = read_spec_document(spec_path)
+    return {"tests": []} if data is None else data
 
 
 # ---------------------------------------------------------------------------

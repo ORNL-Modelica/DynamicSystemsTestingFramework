@@ -168,6 +168,18 @@ It used to be kept and ignored, and that leaf scored as a range with no upper bo
 
 A block that is not an object where one is read — `"simulation": "stop_time=5"`, `"comparison": null`, `"variable_overrides": [1]`, an override written `"x": "tube"` — is the same error, naming the block and what it holds; leave a block out to not set it.
 
+So is an entry that cannot be a test, and a value that is not what is read there: an entry of `tests` that is no object (`tests[3]: must be an object, got "MyLib.A"`) or has no `model`; `variables` that is not a list of strings (`"variables": "x"`, `[1]`); a `source` that is no string; and a `simulation` value of another type than its field's — `"stop_time": "abc"`, a number written as text (`"100"`), `true`, a `number_of_intervals` of `2.5`: `tests[MyLib.A].simulation.stop_time: must be a number, got "abc"`. (`null` there still means "not set".) Each used to be a warning in the log and a test skipped, or run on defaults.
+
+And so is a spec file that is no spec at all — one line, exit 2, from every command that reads it (`discover`, `run`, `compare`, `spec-update`, `add`, `migrate-variable-names`, `dstf author`), and nothing is run or written:
+
+```
+Config error: …/test_spec.json: not JSON (Expecting value: line 1 column 12 (char 11))
+Config error: …/test_spec.json: the file is empty
+Config error: …/test_spec.json: not UTF-8 text ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)
+```
+
+A file saved with a UTF-8 byte-order mark is read. A project whose spec file does not exist, or holds `{}` or `{"tests": []}`, has no spec tests, which is no error.
+
 The `comparison` section a baseline stores in its reference JSON goes through the same check: its `variable_overrides` are merged under the spec's, so a stored override with a key nothing reads stops a command that would compare against it — `Config error: <reference file>: comparison.variable_overrides[x]: …`, exit 2, from `run` before it simulates anything and from `compare` — while `dstf author` opens and shows that one test FAIL, `Not scored:` with the same sentence.
 
 ```

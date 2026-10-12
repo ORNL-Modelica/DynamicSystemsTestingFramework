@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from dstf.config import ConfigError
 from dstf.discovery.patch_apply import PatchError, apply_patch
 
 
@@ -563,19 +564,20 @@ class TestRejectionEdges:
     def test_corrupt_json_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text("{not json", encoding="utf-8")
-        with pytest.raises(PatchError, match="cannot read"):
+        with pytest.raises(ConfigError, match=r"spec\.json: not JSON \("):
             apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+        assert spec.read_text(encoding="utf-8") == "{not json"
 
     def test_root_not_object_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text("[1, 2, 3]", encoding="utf-8")
-        with pytest.raises(PatchError, match="root must be an object"):
+        with pytest.raises(ConfigError, match=r"spec\.json: must be an object, got"):
             apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
 
     def test_tests_not_list_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text('{"tests": {}}', encoding="utf-8")
-        with pytest.raises(PatchError, match="'tests' must be a list"):
+        with pytest.raises(ConfigError, match=r"spec\.json: tests: must be a list"):
             apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
 
     def test_pointer_must_start_with_slash(self, tmp_path):

@@ -3815,16 +3815,17 @@ class TestABaseToleranceIsANumber:
         assert comp.passed and comp.error_message is None
         assert comp.variables[0].tolerance_used == Sides(0.5, 0.5)
 
-    def test_a_simulation_number_that_is_none_is_still_dropped(self, tmp_path, caplog):
+    def test_a_simulation_number_that_is_none_is_refused_at_parse(self, tmp_path):
+        """A simulation value has no compare to be refused at: the parser
+        names it, where it used to drop it with a warning."""
+        from dstf.config import ConfigError
         from dstf.discovery.spec_parser import parse_test_spec
 
         spec = tmp_path / "test_spec.json"
         entry = {"model": "Test.Model", "simulation": {"stop_time": {"lower": 1}}}
         spec.write_text(json.dumps({"tests": [entry]}), encoding="utf-8")
-        with caplog.at_level("WARNING"):
-            (test,) = parse_test_spec(spec)
-        assert "stop_time" not in test.field_sources
-        assert "ignoring non-numeric" in caplog.text
+        with pytest.raises(ConfigError, match="simulation.stop_time: must be a number"):
+            parse_test_spec(spec)
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     @NOT_NUMBERS

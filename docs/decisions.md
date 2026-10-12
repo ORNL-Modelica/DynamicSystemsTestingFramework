@@ -8499,7 +8499,23 @@ it.
 3. *Where it is refused.*
    - **At parse** — `run`, `compare`, `discover` and `dstf author` (before
      it serves): one `Config error: <file>: <place>: …` line, exit 2, the
-     path a malformed `metrics` tree already took.
+     path a malformed `metrics` tree already took. The same line for what
+     cannot be a test or a value: an entry of `tests` that is no object or
+     has no `model`, `variables` that is no list of strings, a `source`
+     that is no string, a `simulation` value of another type than
+     `spec_shape.SIMULATION` gives its key (`null` stays "not set") — each
+     was a warning and a test skipped or run on defaults, and
+     `"variables": [1]` a traceback at the compare.
+   - **At the file** — a `test_spec.json` that is no UTF-8 text, no JSON,
+     empty, or whose root cannot hold a `tests` list has ONE decoder
+     (`spec_parser.spec_document_from_bytes`) that every reader comes
+     through: discovery, `spec-update`, the `add` helpers,
+     `migrate-variable-names` and the tool's Session. `Config error:
+     <file>: not JSON (…)`, exit 2, from each of them; `discover` / `run`
+     / `compare` used to log `Failed to read test spec` and go on with a
+     spec of no tests, and a UTF-16 or binary file was a traceback out of
+     every command but `dstf author`. A missing file, `{}` and `{"tests":
+     []}` are a spec of no tests.
    - **For a stored baseline** — the `variable_overrides` a reference
      JSON keeps are merged under the spec's, so each goes through the
      override check: one decision (`comparator.stored_override_problem`),
@@ -8579,9 +8595,9 @@ reorders the keys of an untouched one is not. A reference JSON's stored
 override with an unknown key stops a whole `run` or `compare`, not that
 test alone — it is a file to repair, and no accept repairs it (an accept
 keeps the stored overrides it does not replace); the tool, which has no
-exit code to give, refuses that test alone. A non-object entry of `tests`,
-an entry with no `model`, a `variables` that is no list and a
-non-numeric `simulation` value are still warnings, as before.
+exit code to give, refuses that test alone. `spec-update` checks
+the file and the entry it patches, not the other entries: a patch of one
+test is written into a file whose other entry is no object.
 
 **Consequences.** A `test_spec.json` or a reference JSON holding a key
 nothing reads no longer loads: it is named, and the command exits 2.

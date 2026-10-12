@@ -594,11 +594,12 @@ def test_field_sources_records_spec_override():
 #   (``finalize_defaults``), so downstream consumers keep seeing concrete values.
 # * Finding 57: field_sources provenance is "test_spec" only for fields the
 #   spec actually set; fields no source set get provenance "default".
-# * Finding 16: JSON null in simulation.* means "not set"; non-numeric values
-#   log a warning naming model + field and are skipped — discovery never aborts.
+# * Finding 16: JSON null in simulation.* means "not set"; a non-numeric value
+#   is a config error naming model + field.
 # * Finding 52: add_to_test_spec(overwrite=True) preserves hand-authored
 #   comparison/simulation/metrics sections, replacing only model + variables.
-# * Finding 53: non-dict entries in "tests" are warned about and skipped.
+# * Finding 53: a non-dict entry in "tests" is a config error naming its place
+#   (the edit helpers, which do not parse the tests, step over one).
 # * Finding 51: duplicate `model` entries in test_spec.json — FIRST entry wins
 #   everywhere (discovery, patch, update helpers), each with a warning.
 # * Findings 48/55/56: .mo scanners run on comment/string-stripped text with
@@ -788,17 +789,18 @@ class TestFinding16NullAndGarbageSpecValues:
         assert t.timeout is None
         assert t.method is None
 
-    def test_non_numeric_value_warns_and_skips_field(self, tmp_path, caplog):
+    def test_a_non_numeric_value_is_a_config_error_that_names_it(self, tmp_path):
+        """It was a warning and a run to the default stop time."""
+        from dstf.config import ConfigError
+
         spec_path = self._spec_with_sim(
             tmp_path, {"stop_time": "not-a-number", "tolerance": 1e-5}
         )
-        with caplog.at_level(logging.WARNING, logger="dstf.discovery.spec_parser"):
-            tests = parse_test_spec(spec_path)
-        assert len(tests) == 1
-        assert tests[0].stop_time is None  # skipped, not aborted
-        assert tests[0].tolerance == 1e-5  # sibling field still parsed
-        assert any(
-            "MyLib.A" in r.message and "stop_time" in r.message for r in caplog.records
+        with pytest.raises(ConfigError) as refused:
+            parse_test_spec(spec_path)
+        assert str(refused.value) == (
+            f"{spec_path}: tests[MyLib.A].simulation.stop_time: must be a number, "
+            'got "not-a-number"'
         )
 
 
@@ -808,24 +810,28 @@ class TestFinding16NullAndGarbageSpecValues:
 
 
 class TestFinding53NonDictEntries:
-    def test_parse_skips_non_dict_entries_with_warning(self, tmp_path, caplog):
+    def test_a_non_dict_entry_is_a_config_error_that_names_its_place(self, tmp_path):
+        """It was skipped with a warning — and crashed discovery before that."""
+        from dstf.config import ConfigError
+
         spec_path = tmp_path / "test_spec.json"
         spec_path.write_text(
             json.dumps(
                 {
                     "tests": [
-                        "oops-a-string",
                         {"model": "MyLib.A", "variables": ["x"]},
+                        "oops-a-string",
                         42,
                     ]
                 }
             ),
             encoding="utf-8",
         )
-        with caplog.at_level(logging.WARNING, logger="dstf.discovery.spec_parser"):
-            tests = parse_test_spec(spec_path)
-        assert [t.model_id for t in tests] == ["MyLib.A"]
-        assert sum("non-dict" in r.message for r in caplog.records) == 2
+        with pytest.raises(ConfigError) as refused:
+            parse_test_spec(spec_path)
+        assert str(refused.value) == (
+            f'{spec_path}: tests[1]: must be an object, got "oops-a-string"'
+        )
 
     def test_edit_helpers_tolerate_non_dict_entries(self, tmp_path):
         spec_path = tmp_path / "test_spec.json"

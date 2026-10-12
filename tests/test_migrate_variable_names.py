@@ -562,19 +562,21 @@ def test_a_baseline_that_cannot_be_read_stops_that_file_only(lib, capsys):
 
 def test_an_unreadable_spec_writes_no_baseline_either(lib, capsys):
     """The one file whose reading gates every write: the spec's keys and the
-    baselines that key off them are one coordinated change."""
+    baselines that key off them are one coordinated change. A spec that is
+    none stops this command as it stops every other — one `Config error`
+    line, exit 2 — before a baseline is decided."""
+    from dstf.config import ConfigError
+
     (lib / "test_spec.json").write_text("{not json")
     before = _snapshot(lib)
-    report = migrate(_cfg(lib), apply=True)
+    with pytest.raises(ConfigError, match="test_spec.json: not JSON"):
+        migrate(_cfg(lib), apply=True)
     assert _snapshot(lib) == before
-    assert report.spec_unreadable == lib / "test_spec.json"
-    assert report.clean is False
     capsys.readouterr()
-    assert _exit_code(lib, "--apply") == 1
-    out = capsys.readouterr().out
-    assert "test_spec.json could not be read" in out and "NOTHING is written" in out
-    # and the counts do not claim otherwise
-    assert "would rewrite" in out
+    assert _exit_code(lib, "--apply") == 2
+    captured = capsys.readouterr()
+    assert captured.err.startswith(f"Config error: {lib / 'test_spec.json'}: not JSON")
+    assert captured.out == ""
     assert _snapshot(lib) == before
 
 
@@ -679,7 +681,6 @@ def test_a_bom_prefixed_spec_is_read_like_a_bom_prefixed_baseline(lib):
     spec_path = lib / "test_spec.json"
     spec_path.write_bytes(b"\xef\xbb\xbf" + spec_path.read_bytes())
     report = migrate(_cfg(lib), apply=True)
-    assert report.spec_unreadable is None
     assert report.spec_rewritten
     assert _names(lib / "refs/Dymola/linux/ref_0001.json") == NEW_PLAIN
     assert not spec_path.read_bytes().startswith(b"\xef\xbb\xbf")

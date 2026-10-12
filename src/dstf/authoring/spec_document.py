@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -13,11 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import ConfigError
-from ..discovery.patch_apply import (
-    PatchError,
-    apply_patch_to_document,
-    spec_document_shape,
-)
+from ..discovery.patch_apply import apply_patch_to_document
+from ..discovery.spec_parser import spec_document_from_bytes
 
 
 @dataclass(frozen=True)
@@ -127,23 +123,19 @@ class SpecDocument:
     @classmethod
     def load(cls, path: Path) -> SpecDocument:
         """Read ``path`` once: the hash and the document come from the same
-        bytes. A missing file is the empty document; a malformed one — bad
-        JSON, a non-object root, a non-list ``tests`` — is a
-        :class:`ConfigError`, the same shape rule ``spec-update``'s loader
-        applies, because the Session must not save over a file it could
-        not read."""
+        bytes. A missing file is the empty document; one that is no spec —
+        no UTF-8 text, no JSON, a non-object root, a non-list ``tests`` — is
+        a :class:`ConfigError` (``spec_parser.spec_document_from_bytes``,
+        the one decoder every command reads the file through), because the
+        Session must not save over a file it could not read. A Save writes
+        a file read with a BOM back without it."""
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
             return cls(path=path, loaded={"tests": []}, content_hash=None)
         except OSError as e:
             raise ConfigError(f"{path}: {e}") from e
-        try:
-            # `utf-8-sig`, like every other reader of this file; a Save
-            # writes the same bytes back without the BOM.
-            data = spec_document_shape(json.loads(raw.decode("utf-8-sig")))
-        except (json.JSONDecodeError, UnicodeDecodeError, PatchError) as e:
-            raise ConfigError(f"{path}: {e}") from e
+        data = spec_document_from_bytes(raw, str(path))
         return cls(path=path, loaded=data, content_hash=hashlib.sha256(raw).hexdigest())
 
     def on_disk_changed(self) -> bool:

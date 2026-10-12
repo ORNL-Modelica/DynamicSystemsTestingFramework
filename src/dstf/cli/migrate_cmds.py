@@ -24,11 +24,7 @@ def cmd_migrate_variable_names(args: argparse.Namespace) -> int:
     report = migrate(config, apply=args.apply)
     root = config.reference_root
     assert root is not None
-    # An unreadable baseline is a skip of its own file; an unreadable SPEC
-    # stops every write, whatever --apply said — its keys and the names the
-    # baselines are stored under are one coordinated change.
-    wrote = args.apply and report.spec_unreadable is None
-    verb = "rewritten" if wrote else "would rewrite"
+    verb = "rewritten" if args.apply else "would rewrite"
 
     def partition_of(path):
         return "/".join(path.relative_to(root).parts[:2])
@@ -86,12 +82,6 @@ def cmd_migrate_variable_names(args: argparse.Namespace) -> int:
         print(
             f"{len(report.unreadable)} file(s) could not be read and are left "
             "alone — the rest of the run is decided without them"
-        )
-    if report.spec_unreadable is not None:
-        print(
-            f"{report.spec_unreadable.name} could not be read; NOTHING is "
-            "written while it stands — its keys and the names the baselines "
-            "are stored under are one change"
         )
     if not args.apply:
         print("dry run — nothing written; pass --apply to write")

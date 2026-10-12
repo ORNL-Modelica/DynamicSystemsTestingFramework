@@ -38,7 +38,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..discovery.mo_parser import normalize_expression
-from ..discovery.patch_apply import PatchError, load_spec_document
+from ..discovery.patch_apply import load_spec_document
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
 from .ref_index import _REF_FILE_PATTERN, _atomic_write_text
@@ -106,10 +106,6 @@ class MigrationReport:
     #: its OWN file. Reported apart from the content skips because they are a
     #: different job for the reader: a file to fix, not a decision to make.
     unreadable: list[Path] = field(default_factory=list)
-    #: The spec, when IT could not be read. The one file whose reading gates
-    #: every write: its keys and the names the baselines are stored under are
-    #: one coordinated change.
-    spec_unreadable: Path | None = None
 
     @property
     def clean(self) -> bool:
@@ -440,8 +436,8 @@ def migrate(config: Config, *, apply: bool) -> MigrationReport:
 
     Every file is read and every outcome decided first; the writes happen
     together at the end. A baseline that could not be read is a skip of its
-    own file and the rest is still written; the SPEC that could not be read
-    stops every write.
+    own file and the rest is still written; a SPEC that could not be read
+    is a ``ConfigError`` from discovery, before anything is decided.
     """
     report = MigrationReport()
     tests = {t.model_id: t for t in discover_tests(config)}
@@ -512,7 +508,7 @@ def migrate(config: Config, *, apply: bool) -> MigrationReport:
         report.reaccept += [(model_id, v) for v in _needs_reaccept(tests[model_id])]
 
     spec_write = _migrate_spec(config, tests, report)
-    if apply and report.spec_unreadable is None:
+    if apply:
         for path, text in planned:
             _atomic_write_text(path, text)
         if spec_write is not None:
@@ -537,12 +533,11 @@ def _migrate_spec(
     spec_path = config.spec_path
     if not spec_path.exists():
         return None
-    try:
-        doc = load_spec_document(spec_path)
-    except PatchError as exc:
-        report.spec_unreadable = spec_path
-        report.spec_skipped.append(f"{spec_path.name} cannot be read: {exc}")
-        return None
+    # Readable: `discover_tests` read it through the same reader, and a spec
+    # that is none stopped the command there (`Config error`, exit 2) before
+    # a baseline was decided — its keys and the names the baselines are
+    # stored under are one coordinated change.
+    doc = load_spec_document(spec_path)
     before = json.dumps(doc)
     #: (model, old key) -> [new key, occurrences]. A key reached through an
     #: override AND a leaf AND a plot series is one decision, counted.

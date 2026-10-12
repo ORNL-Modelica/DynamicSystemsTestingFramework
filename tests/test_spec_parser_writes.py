@@ -41,7 +41,7 @@ def test_corrupt_spec_raises_and_is_left_untouched(tmp_path, entry_point):
     spec = tmp_path / "test_spec.json"
     spec.write_text(CORRUPT, encoding="utf-8")
 
-    with pytest.raises(ConfigError, match="Malformed JSON"):
+    with pytest.raises(ConfigError, match=r"test_spec\.json: not JSON \("):
         _edits(spec)[entry_point]()
 
     assert spec.read_text(encoding="utf-8") == CORRUPT
@@ -55,7 +55,7 @@ def test_non_object_spec_root_raises(tmp_path, entry_point):
     spec = tmp_path / "test_spec.json"
     spec.write_text("[1, 2, 3]\n", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match="must be a JSON object"):
+    with pytest.raises(ConfigError, match="must be an object, got"):
         _edits(spec)[entry_point]()
 
     assert spec.read_text(encoding="utf-8") == "[1, 2, 3]\n"
