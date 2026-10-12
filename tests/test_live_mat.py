@@ -443,6 +443,69 @@ def test_a_parameter_rewritten_before_the_first_row_is_the_same_run(tmp_path):
     assert _same(trace.series("x")[1], mat.expected["x"][:4])
 
 
+@pytest.mark.parametrize(
+    ("trajectories", "parameter", "aliases", "listed"),
+    [
+        pytest.param(
+            ("u", "v"),
+            "c",
+            {"u.neg": ("u", True), "c.neg": ("c", True)},
+            ("u", "v", "c", "u.neg", "c.neg"),
+            id="other-names",
+        ),
+        pytest.param(
+            ("x", "y"),
+            "k",
+            {"x.neg": ("y", True), "k.neg": ("k", True)},
+            ("x", "y", "k", "x.neg", "k.neg"),
+            id="the-same-names-stored-elsewhere",
+        ),
+    ],
+)
+def test_another_structure_of_the_same_shape_is_another_run(
+    tmp_path, trajectories, parameter, aliases, listed
+):
+    """The STRUCTURE is more than the shape. A header put in place of one
+    that has served no row — as long, its rows starting at the same byte,
+    as wide and of the same type — that names other variables, or stores
+    the same names elsewhere, is another run, read by its own names."""
+    path = tmp_path / "res.mat"
+    old = _result(path, "openmodelica", "<f8", n=40, points=0, declared=0)
+    reader = LiveMatReader(path)
+    trace = Trace()
+    first = trace.take(reader.poll(NAMES))
+    assert (first.state, first.run, first.rows) == (RUNNING, 0, 0)
+    assert reader.names == ("x", "y", "k", "x.neg", "k.neg")
+    size, inode = path.stat().st_size, path.stat().st_ino
+
+    t = np.linspace(0.0, 4.0, 40)
+    a, b = trajectories
+    new = write_result_mat(
+        path,
+        tool="openmodelica",
+        dtype="<f8",
+        time=t,
+        trajectories={a: 100 + t, b: 200 - t},
+        parameters={parameter: 9.0},
+        aliases=aliases,
+        points=0,
+        declared=0,
+    )
+    # nothing but the names, or where they are stored, tells the two apart
+    assert (new.data_offset, new.row_bytes) == (old.data_offset, old.row_bytes)
+    assert new.table.dtype == old.table.dtype
+    assert (path.stat().st_size, path.stat().st_ino) == (size, inode)
+    with open(path, "ab") as f:
+        f.write(new.rows(0, 4))
+
+    snap = trace.take(reader.poll([*listed, "gone"]))
+    assert (snap.state, snap.run, snap.rows) == (RUNNING, 1, 4)
+    assert reader.names == listed
+    assert set(snap.series) == set(listed)
+    for name in listed:
+        assert _same(trace.series(name)[1], new.expected[name][:4]), name
+
+
 def test_a_header_is_read_again_only_until_its_first_row(tmp_path, monkeypatch):
     path = tmp_path / "res.mat"
     mat = _result(path, n=40, points=0, declared=1)
