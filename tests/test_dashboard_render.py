@@ -1511,6 +1511,41 @@ def test_a_sidecar_that_agrees_with_the_comparison_keeps_its_link(tmp_path):
     assert (row.ref_id, row.ref_file) == ("ref_0005", "file:///refs/ref_0005.json")
 
 
+def test_the_first_place_holding_a_sidecar_is_the_one_read(tmp_path):
+    """A sidecar is looked for in three places, in this order: under the
+    baseline the comparison in hand was scored against, under the name the
+    run guessed, under the test key. With one in two of them, the row's
+    numbers and its page link are the earlier place's — a test accepted
+    since its run has a page under each of the first two, and the guess's
+    is the older verdict."""
+    from dstf.comparison.types import TestComparison
+
+    def sidecar(place: str, total_wall: float) -> None:
+        _sidecar_in(
+            tmp_path,
+            place,
+            {**_passing_sidecar("ref_0007"), "total_wall": total_wall},
+        )
+
+    def read(comparisons=()) -> tuple[str | None, float | None]:
+        (row,) = build_dashboard_context(
+            tmp_path, mode="final", comparisons=comparisons
+        )["tests"]
+        return row.report_page, row.total_wall
+
+    _one_row(tmp_path, report_dir="ref_0005")
+    comp = TestComparison(model_id="Lib.A", passed=True, test_id="0007")
+    sidecar("ref_0005", 5.0)
+    sidecar("test_0001", 1.0)
+    # the run's guess, before the test key
+    assert read() == ("ref_0005", 5.0)
+    assert read([comp]) == ("ref_0005", 5.0)  # none under the baseline compared
+    # the baseline compared against, before both
+    sidecar("ref_0007", 7.0)
+    assert read([comp]) == ("ref_0007", 7.0)
+    assert read() == ("ref_0005", 5.0)  # no comparison in hand names it
+
+
 def test_the_comparisons_numbers_replace_the_sidecars(tmp_path):
     """Every number the comparison has replaces the sidecar's: a sidecar
     with 2 unscored leaves over 3 variables, a comparison with 1 scored."""
