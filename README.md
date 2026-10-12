@@ -19,7 +19,7 @@ Criteria are written in **`dstf author`**, a local browser tool over the same fi
   | Backend | Source kind | Persistent | Notes |
   |---|---|---|---|
   | Dymola | Modelica `.mo` | ✓ default | Python interface; `--batch` selects the `.mos` path. Records translation statistics, so a change in a model's state count is a structural warning |
-  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; `--batch` selects the `omc -s` path. Records timing statistics only: no structural warning when a model's state count changes |
+  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; `--batch` selects the `omc -s` path. Records timing statistics and the model's state count (from the init file omc generates), so a change in it is the structural warning it is on Dymola; system sizes and Jacobian counts are Dymola's alone |
   | FMPy | Pre-built FMU | per-test thread | `fmpy.simulate_fmu` in-process |
   | Julia / MTK | `.jl` ModelingToolkit | ✓ default | stdin-JSON pipe; Dyad untested |
   | Python | Any `simulate(stop_time, tol) -> dict` | subprocess-per-test | scipy, pandas, CSV loader, HTTP — anything |

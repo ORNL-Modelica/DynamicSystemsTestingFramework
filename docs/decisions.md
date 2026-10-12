@@ -5284,6 +5284,29 @@ the result beside it.
 first named here — a no-`--report` dashboard of a `--filter` run showing
 only that run's rows, even with `--merge` — is D136's amendment.
 
+**Addendum, 2026-10-12 — OpenModelica records the state count.** omc
+prints no translation statistics, so an OpenModelica run's statistics were
+timing only, and a model that gained a state gave `Continuous states: 2 ->
+3` on Dymola and nothing on OpenModelica. omc does write the system's size
+as attributes of the root element of `<prefix>_init.xml`, the file it
+generates beside the executable. `backends/openmodelica/init_xml.py` reads
+`numberOfContinuousStates` into `statistics.translation.
+continuous_time_states` — the key Dymola's translation log fills — in
+`OpenModelicaBackend.read_result`, the one read the persistent workers,
+`--batch` and a later `compare` share; only the root's start tag is
+parsed (the file lists every variable). Executed on real omc, both
+backends: the example's `SimpleTest` reads 2, and with a third state
+added the run says `Continuous states: 2 -> 3`. Read from the file each
+time, so nothing new is kept beside the result. *Old data:* an
+OpenModelica baseline accepted before this has no such statistic, and a
+statistic one side lacks is no change on either tier (no structural
+line, no "changed" row); the first accept after it records the number.
+*Not read:* omc's other counts there (event indicators, algebraic
+variables and parameters by type) have no twin among Dymola's keys —
+its `free_parameters` and `scalar_unknowns` count other things — and
+the sizes of nonlinear and linear systems are not in that file
+(`<prefix>_info.json` lists the equations).
+
 ## D139 — The Test page: a status strip, one add model, a Save preview and the drawers' one control set (2026-09-27)
 
 **Context.** The owner ruled on the feedback board (2026-09-26, v2) on the

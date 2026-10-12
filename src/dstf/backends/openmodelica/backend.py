@@ -45,6 +45,7 @@ from ..types import (
     TestRunResult,
     timeout_message,
 )
+from .init_xml import with_system_size
 from .log_parser import parse_omc_stdout
 from .mos_generator import build_simulate_mos
 
@@ -101,6 +102,7 @@ class OpenModelicaBackend(Backend):
     )
 
     RESULT_MAT_FILENAME = "result_res.mat"
+    INIT_XML_FILENAME = "result_init.xml"
     STDOUT_FILENAME = "omc_stdout.txt"
     MOS_FILENAME = "simulate.mos"
 
@@ -336,6 +338,10 @@ class OpenModelicaBackend(Backend):
 
         variables, diagnostics = extract_variables(mat_data, test, diag_names)
         stats = fold_diagnostics_into_statistics(stats, diagnostics)
+        # The system's size, from the file omc generated with the result
+        # (`init_xml`): here, so the persistent workers, `--batch` and a
+        # `compare` of an earlier run all record it.
+        stats = with_system_size(stats, test_dir / self.INIT_XML_FILENAME)
 
         unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)
         if unfinished is not None:
