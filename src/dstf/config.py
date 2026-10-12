@@ -117,10 +117,10 @@ class ConfigError(ValueError):
 
 
 def baseline_points_refused(named: str, value: object) -> str | None:
-    """Why ``value`` is no ``baseline_points`` — ``named`` saying where it
-    was written — or ``None``. It is ``"all"`` or a whole number of 2 or
-    more: a thinned baseline keeps both ends of its run. ``true`` is no
-    number, and neither is ``2000.0``."""
+    """Why ``value`` is no ``baseline_points`` — in ``testing.json`` or on a
+    ``test_spec.json`` entry, ``named`` saying which — or ``None``. It is
+    ``"all"`` or a whole number of 2 or more: a thinned baseline keeps both
+    ends of its run. ``true`` is no number, and neither is ``2000.0``."""
     if isinstance(value, str) and value == ALL_POINTS:
         return None
     if isinstance(value, int) and not isinstance(value, bool) and value >= 2:
@@ -394,7 +394,9 @@ class Config:
 
     # The points a stored baseline keeps of its run (D153, testing.json
     # `baseline_points`): "all" — every row the simulator wrote — or a whole
-    # number of 2 or more, which thins the run to at most that many.
+    # number of 2 or more, which thins the run to at most that many. The
+    # project's value: a test_spec.json entry's own `baseline_points` wins
+    # (`TestModel.baseline_points`).
     # Scoring reads the run AT the baseline's time points, so this is also
     # the resolution at which a regression can be seen.
     baseline_points: int | str = ALL_POINTS

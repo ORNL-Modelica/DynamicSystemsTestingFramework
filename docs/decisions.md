@@ -8104,7 +8104,21 @@ baseline keeps every point the simulator wrote, unless a number is given.
    and the two forms: `testing.json baseline_points is 1: the points a
    baseline keeps are "all" or a whole number of 2 or more`
    (`config.baseline_points_refused`). There is no CLI flag.
-2. *Where a baseline is written.* `store_reference` is the one place a
+2. *`baseline_points` on a `test_spec.json` entry* — at the entry's top
+   level, beside `simulation` and `comparison` — is that test's own value,
+   in the same two forms. The order is the test's, then `testing.json`'s,
+   then `"all"`: one long run can be thinned in a project that keeps
+   everything, and one test can say `"all"` in a project that gives a
+   number. A value that is neither form is refused as `plots` is — a
+   config error at discovery that names the file and the entry
+   (`<test_spec.json>: tests[<model>].baseline_points is 1: …`), `null`
+   included: dropped with a warning, the test would be stored at the
+   project's setting and nobody told. `TestModel.baseline_points` carries
+   it (`None` for an entry without the key); `export-schema` lists it. It
+   is written by hand: it is outside the subtrees a patch may touch, so
+   `spec-update` and the tool do not edit it, and the tool's Save keeps it
+   on an entry it rewrites.
+3. *Where a baseline is written.* `store_reference` is the one place a
    primary baseline is written, and the only caller of `_downsample`.
    `"all"` stores every sample the run has, in order, the two samples of
    each event included. A number N calls the thinning that was already
@@ -8117,7 +8131,7 @@ baseline keeps every point the simulator wrote, unless a number is given.
    before this stored — a test pins the kept rows against that function's
    output, over runs with and without events, with more events than
    points, and shorter and longer than the number.
-3. *The reference JSON records what was done*, under a top-level key that
+4. *The reference JSON records what was done*, under a top-level key that
    is always written: `"sampling": {"setting": "all" | N, "source_points":
    <rows the run had>, "stored_points": <points stored>}`. A reference
    without it — every one stored before this — loads and scores exactly as
@@ -8145,8 +8159,8 @@ baseline stored under another setting than the one now in effect. A check
 for a baseline that ends before its stop time. Any change to a scoring
 function.
 
-**Consequences.** `Config` gains `baseline_points`; a primary reference
-JSON gains `sampling`. A long run's baseline is larger the next time it is
+**Consequences.** `Config` and `TestModel` gain `baseline_points`; a
+primary reference JSON gains `sampling`. A long run's baseline is larger the next time it is
 accepted, and its `nrmse` is then an average over more points — the score
 of such a test can differ from the one its thinned baseline gave. A project
 that wants its baselines stored as before sets `"baseline_points": 2000`.

@@ -1,6 +1,7 @@
 """``baseline_points`` (D153): a stored baseline keeps every point its run
-wrote unless a number is given, and its reference JSON says what was done
-under ``sampling``."""
+wrote unless a number is given — in ``testing.json`` for the project, on a
+``test_spec.json`` entry for one test — and its reference JSON says what was
+done under ``sampling``."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from dstf.backends.types import TestResult, VariableResult
 from dstf.cli.main import main
 from dstf.comparison.comparator import compare_all
 from dstf.config import Config, ConfigError
+from dstf.discovery.test_registry import discover_tests, merge_tests
 from dstf.storage.reference_store import ReferenceStore, _downsample
 
 M = "Lib.Run"
@@ -293,3 +295,170 @@ def test_the_key_changes_an_existing_baseline_only_when_it_is_accepted_again(
         "stored_points": 50,
     }
     assert len(again["time"]) == 50
+
+
+# -- test_spec.json: a test's own value ---------------------------------------
+
+#: A key that is not written at all.
+ABSENT = object()
+
+
+def _spec_config(tmp_path, *, project=ABSENT, entry=ABSENT) -> Config:
+    """`_config` with a ``test_spec.json`` holding M; ``project`` is
+    testing.json's ``baseline_points``, ``entry`` the test's own."""
+    keys = {} if project is ABSENT else {"baseline_points": project}
+    config = _config(tmp_path, test_spec="test_spec.json", **keys)
+    test = {"model": M, "variables": ["i", "x"]}
+    if entry is not ABSENT:
+        test["baseline_points"] = entry
+    config.spec_path.write_text(json.dumps({"tests": [test]}), encoding="utf-8")
+    return config
+
+
+@pytest.mark.parametrize(
+    ("project", "entry", "setting", "stored"),
+    [
+        (ABSENT, ABSENT, "all", 5000),
+        (50, ABSENT, 50, 50),
+        (ABSENT, 50, 50, 50),
+        (50, "all", "all", 5000),
+        ("all", 50, 50, 50),
+        (100, 50, 50, 50),
+        (50, 100, 100, 100),
+    ],
+    ids=[
+        "neither: all",
+        "the project's",
+        "the test's",
+        "the test's all over the project's number",
+        "the test's number over the project's all",
+        "the test's smaller number",
+        "the test's larger number",
+    ],
+)
+def test_the_tests_key_beats_the_projects(tmp_path, project, entry, setting, stored):
+    config = _spec_config(tmp_path, project=project, entry=entry)
+    (test,) = discover_tests(config)
+    assert test.baseline_points == (None if entry is ABSENT else entry)
+
+    reference = _stored(config, _run(5000, EVENTS), test)
+
+    assert len(reference["time"]) == stored
+    assert reference["sampling"] == {
+        "setting": setting,
+        "source_points": 5000,
+        "stored_points": stored,
+    }
+
+
+def test_a_test_found_in_the_source_takes_the_key_from_its_spec_entry():
+    """A model both scanned and in the spec: the entry's value is the test's,
+    and an entry without the key leaves the project's to apply."""
+    scanned = {M: make_test_model(M, source="unit_tests")}
+    with_key = {M: make_test_model(M, baseline_points=50)}
+    without = {M: make_test_model(M)}
+    assert merge_tests(scanned, with_key)[0].baseline_points == 50
+    assert merge_tests(scanned, without)[0].baseline_points is None
+
+
+@pytest.mark.parametrize("value", REFUSED, ids=repr)
+def test_a_spec_entry_refuses_anything_else_with_one_sentence(tmp_path, value):
+    config = _spec_config(tmp_path, entry=value)
+    with pytest.raises(ConfigError) as refused:
+        discover_tests(config)
+    assert str(refused.value) == (
+        f"{config.spec_path}: tests[{M}].baseline_points is "
+        f"{json.dumps(value)}: {FORMS}"
+    )
+
+
+def test_a_refused_spec_entry_is_one_line_and_exit_two(tmp_path, capsys):
+    config = _spec_config(tmp_path, entry=2000.0)
+    assert main(["--config", str(config.config_file), "discover"]) == 2
+    assert capsys.readouterr().err == (
+        f"Config error: {config.spec_path}: tests[{M}].baseline_points is "
+        f"2000.0: {FORMS}\n"
+    )
+
+
+def test_export_schema_lists_the_key_with_its_two_forms(tmp_path):
+    jsonschema = pytest.importorskip("jsonschema")
+    out = tmp_path / "schema.json"
+    assert main(["export-schema", "--output", str(out)]) == 0
+    schema = json.loads(out.read_text(encoding="utf-8"))
+    assert "baseline_points" in schema["$defs"]["test_entry"]["properties"]
+
+    def valid(value) -> bool:
+        spec = {"tests": [{"model": M, "baseline_points": value}]}
+        return jsonschema.Draft202012Validator(schema).is_valid(spec)
+
+    assert all(valid(v) for v in ("all", 2, 2000))
+    # 2000.0 is an integer to JSON Schema; the parser is the one that refuses it.
+    assert not any(valid(v) for v in REFUSED if v != 2000.0)
+
+
+# -- the authoring tool ---------------------------------------------------------
+
+
+def test_the_tool_keeps_the_key_when_it_saves_an_edited_entry(tmp_path):
+    from test_session import LOOSEN, A, _session_with_entry
+
+    session = _session_with_entry(tmp_path, {"baseline_points": 3})
+    assert _session_test(session, A).baseline_points == 3
+    session.stage([LOOSEN])
+    session.save()
+
+    spec = json.loads(session.spec.path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == A]
+    assert entry["baseline_points"] == 3
+    assert entry["metrics"]["children"][0]["tolerance"] == 0.5  # the edit, saved
+    assert _session_test(session, A).baseline_points == 3
+
+
+def test_the_tools_accept_stores_the_points_the_tests_key_says(tmp_path):
+    """The tool's Accept is the CLI's: a five-row result under the test's
+    ``baseline_points: 3`` is stored as three points, beside one stored
+    whole."""
+    from dstf.authoring.builtin.accept import Accept
+    from dstf.authoring.session import Selection, SessionView
+    from test_session import A, B, _session_with_entry
+
+    session = _session_with_entry(tmp_path, {"baseline_points": 3})
+    view = SessionView(session, Selection(tests=frozenset({A, B})))
+    session.apply(Accept().act(view))
+
+    store = session.project.store
+    assert store.get_reference(A)["sampling"] == {
+        "setting": 3,
+        "source_points": 5,
+        "stored_points": 3,
+    }
+    assert store.get_reference(A)["time"] == [0.0, 0.5, 1.0]
+    assert store.get_reference(B)["sampling"] == {
+        "setting": "all",
+        "source_points": 5,
+        "stored_points": 5,
+    }
+
+
+def test_the_key_is_written_by_hand_a_patch_may_not_touch_it(tmp_path):
+    """`spec-update` and the tool edit `comparison`, `metrics` and `plots`:
+    the key is outside what a patch may write, so neither stores a value
+    the parser would refuse."""
+    from dstf.discovery.patch_apply import PatchError, apply_patch
+
+    config = _spec_config(tmp_path, entry=50)
+    before = config.spec_path.read_bytes()
+    for op in ("replace", "remove"):
+        with pytest.raises(PatchError, match="baseline_points"):
+            apply_patch(
+                config.spec_path,
+                M,
+                [{"op": op, "path": "/baseline_points", "value": 1}],
+            )
+    assert config.spec_path.read_bytes() == before
+
+
+def _session_test(session, model_id):
+    (test,) = [t for t in session.project.tests if t.model_id == model_id]
+    return test

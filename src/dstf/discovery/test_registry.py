@@ -79,6 +79,12 @@ class TestModel:
     # when the key is absent, ``()`` for ``[]`` — both mean no extras.
     plots: tuple["PlotExtra", ...] | None = None
 
+    # The entry's own ``baseline_points`` (D153): ``"all"`` or a whole number
+    # of 2 or more — the points this test's stored baseline keeps of its
+    # run. None when the entry has no such key: the project's applies
+    # (``Config.baseline_points``).
+    baseline_points: int | str | None = None
+
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.
     #
@@ -300,6 +306,8 @@ def merge_tests(
                 existing.metric_tree_spec = spec_test.metric_tree_spec
             if spec_test.plots is not None:
                 existing.plots = spec_test.plots
+            if spec_test.baseline_points is not None:
+                existing.baseline_points = spec_test.baseline_points
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults — review

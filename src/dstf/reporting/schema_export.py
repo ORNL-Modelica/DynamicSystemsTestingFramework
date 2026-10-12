@@ -308,6 +308,18 @@ def build_schema() -> dict:
                     "additionalProperties": False,
                 },
             },
+            "baseline_points": {
+                "description": (
+                    "The points this test's stored baseline keeps of its run: "
+                    '"all" — every point the simulator wrote — or a whole '
+                    "number of 2 or more, which thins a longer run to at most "
+                    "that many. Overrides testing.json's baseline_points; "
+                    "absent, that one applies."
+                ),
+                # What `config.baseline_points_refused` accepts — but for
+                # `2000.0`, an integer to JSON Schema and refused there.
+                "oneOf": [{"const": "all"}, {"type": "integer", "minimum": 2}],
+            },
             "description": {"type": "string"},
             "info": {"type": "string"},
             "metadata": {"type": "object"},

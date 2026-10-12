@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 
-from ..config import ConfigError
+from ..config import ConfigError, baseline_points_refused
 from ..storage.ref_index import _atomic_write_text
 from .test_registry import TestModel
 
@@ -123,7 +123,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             "variable_overrides": {
               "pipe.T[1]": {"tolerance": 0.1}
             }
-          }
+          },
+          "baseline_points": 2000
         }
       ]
     }
@@ -314,6 +315,17 @@ def spec_models_from_document(
                 )
             except PlotsSpecError as e:
                 raise ConfigError(f"{label}: {e}") from e
+
+        # The test's own baseline points (D153), over the project's. Refused
+        # like `plots`, null included: a value that is neither form would
+        # otherwise store this test's baseline at the project's setting.
+        if "baseline_points" in entry:
+            refused = baseline_points_refused(
+                f"tests[{model_id}].baseline_points", entry["baseline_points"]
+            )
+            if refused is not None:
+                raise ConfigError(f"{label}: {refused}")
+            test.baseline_points = entry["baseline_points"]
 
         tests.append(test)
 

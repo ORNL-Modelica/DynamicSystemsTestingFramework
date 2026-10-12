@@ -209,9 +209,14 @@ class ReferenceStore(_RolesMixin):
         # All variables share the same time vector (Modelica spec).
         shared_time = result.variables[0].time
         # The points kept (D153): every row the run wrote, unless
-        # `baseline_points` gives a number. "all" is the run's own row
-        # count — a budget `_downsample` returns every row within.
-        setting = self.config.baseline_points
+        # `baseline_points` gives a number — the test's own, else the
+        # project's. "all" is the run's own row count — a budget
+        # `_downsample` returns every row within.
+        setting = (
+            test.baseline_points
+            if test.baseline_points is not None
+            else self.config.baseline_points
+        )
         max_points = setting if isinstance(setting, int) else len(shared_time)
         shared_time_list, _ = _downsample(shared_time, shared_time, max_points)
 

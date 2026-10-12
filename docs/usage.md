@@ -44,7 +44,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
 | `max_embedded_samples` | No | The most samples a per-test report page embeds per trace (default: `1000`); longer ones are decimated, and the page's banner says which. |
 | `tolerance` | No | The project's comparison tolerance (default: `1e-4`): what a test with no `comparison.tolerance` of its own, in its spec entry or its baseline, is scored with. One finite number — anything else is a config error (see "Tolerances with two sides"). `--tolerance` overrides it. |
-| `baseline_points` | No | The points a stored baseline keeps of its run: `"all"` (the default) — every point the simulator wrote — or a whole number of 2 or more, which thins a longer run to at most that many. Anything else is a config error. A baseline is what a run is compared against, point by point, so this is also the resolution at which a regression can be seen (see "The points a baseline stores"). There is no flag for it. |
+| `baseline_points` | No | The points a stored baseline keeps of its run: `"all"` (the default) — every point the simulator wrote — or a whole number of 2 or more, which thins a longer run to at most that many. Anything else is a config error. A `test_spec.json` entry's own `baseline_points` overrides it for that test. A baseline is what a run is compared against, point by point, so this is also the resolution at which a regression can be seen (see "The points a baseline stores"). There is no flag for it. |
 | `worker_startup_timeout` | No | Seconds a persistent worker (Dymola, OpenModelica, Julia) may take to start before the run fails with the backend's message. One positive number; default 600 on every backend. The bound is for a tool that hangs — a tool that died fails the start at once — so raise it only for a library whose load takes longer (a large library is minutes of `loadFile` in OpenModelica); the message of a start that ran out names this key and the step the tool was in. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 | `work_dir` | No | Where runs write their output, relative to `testing.json` location (default: `testing_output/<library>/<backend>/<os>/` under the current directory). `--work-dir` overrides it. |
@@ -141,6 +141,8 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 **Non-Modelica backends**: add a `"source": "path/to/Model.fmu"` field (path relative to the spec file) to point at the simulation source — a prebuilt `.fmu` for FMPy, a `.jl` for Julia, a `.py` for Python.
 
 **MetricTree**: add a top-level `"metrics"` block to author an explicit pass/fail tree — see `docs/extensibility.md` §6 for the schema.
+
+**Baseline points**: add a top-level `"baseline_points"` to an entry — `"all"` or a whole number of 2 or more — to say how many points THIS test's stored baseline keeps, over `testing.json`'s `baseline_points` (see "The points a baseline stores").
 
 #### Two-layer contract: annotation vs `test_spec.json`
 
@@ -498,8 +500,8 @@ one down:
 
 Accepting a result stores its trajectory as the test's baseline. A baseline
 keeps **every point the simulator wrote** — in order, the two samples of each
-event included — unless `baseline_points` in `testing.json` gives a number
-(D153):
+event included — unless `baseline_points` gives a number (D153). In
+`testing.json` it is the project's value:
 
 ```json
 {
@@ -515,10 +517,30 @@ event included — unless `baseline_points` in `testing.json` gives a number
   not by what the signal does. A run with no more rows than the number is
   stored whole: a point is never invented.
 
+**One test's own value.** A `test_spec.json` entry may carry the key too, at
+its top level beside `simulation` and `comparison`; it takes the same two
+forms and is that test's value:
+
+```json
+{
+  "model": "MyLib.Examples.LongTransient",
+  "variables": ["pipe.T[1]"],
+  "baseline_points": 5000
+}
+```
+
+The order is **the test's, then `testing.json`'s, then `"all"`** — so one
+long run can be thinned in a project that keeps everything, and one test can
+say `"all"` in a project that gives a number. It is written by hand:
+`spec-update` and `dstf author` do not edit it, and the tool's Save keeps it
+on an entry it rewrites.
+
 Anything else — `true`, `2000.0`, `0`, `1`, a negative, `"ALL"`, `null` — is a
-config error: one line, `Config error: testing.json baseline_points is 1: the
-points a baseline keeps are "all" or a whole number of 2 or more`, and exit
-code 2 before anything runs.
+config error in either file: one line, `Config error: testing.json
+baseline_points is 1: the points a baseline keeps are "all" or a whole number
+of 2 or more` (for an entry, `<test_spec.json>:
+tests[MyLib.Examples.LongTransient].baseline_points is 1: …`), and exit code 2
+before anything runs. `export-schema` lists the entry's key.
 
 **What the stored points mean for scoring.** A baseline is its stored points
 and nothing else. `nrmse`, the default mode, compares the run **at the
@@ -540,7 +562,7 @@ under `sampling`:
 "sampling": {"setting": "all", "source_points": 5021, "stored_points": 5021}
 ```
 
-`setting` is the `baseline_points` in effect when it was accepted,
+`setting` is the `baseline_points` in effect for the test when it was accepted,
 `source_points` the rows the run had and `stored_points` the points stored. A
 reference with no `sampling` was stored before the key existed, when every
 baseline was thinned to at most 2000 points; it loads and scores as it always
