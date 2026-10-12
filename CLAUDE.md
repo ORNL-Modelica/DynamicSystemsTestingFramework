@@ -29,6 +29,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation),
 │   │                             #      library_state.py (the source files' stamps at one Queue click: what a live worker compares before it reads the library again)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
+│   │                             #      (openmodelica/init_xml.py: the system size omc writes to <model>_init.xml, read into the
+│   │                             #      statistics key Dymola's translation log fills — translation.continuous_time_states)
 │   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
 │   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place)
 │   │   ├── pool.py               # SimulationPool: a FIFO queue of tests over a backend's runners that stays open (the tool's queue)
@@ -41,7 +43,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      strict_keys.py (a key nothing reads is an error that names it — the ONE check, from each metric's config)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
 │   │                             #      migrate_names.py (the `migrate-variable-names` rewrite; deleted at the v1.0 tag)
-│   ├── authoring/                # Session, capability contract, spec document — the tool's core;
+│   ├── authoring/                # Session, capability contract, spec document (its pending ops, counted by act: edit_counts, D155) — the tool's core;
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
 │   │                             #      picker_rows.py (the add form's variable picker as data: sections, filter, cap),
@@ -70,14 +72,15 @@ DynamicSystemsTestingFramework/
 │   │                             #      actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit family + edit tree + accept + enqueue + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + palette.py (what a figure takes from a theme, by name) + LTTB decimate; both tiers draw from it
-│   └── reporting/                # status.py (the classifier + every status word and class) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
+│   └── reporting/                # status.py (the classifier + every status word and class, a refusal's reason, and failed_criteria — the one reading of a failing criterion the console's blocks and JUnit's lines are written from) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
 │       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`export-schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
-│   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 10+ showcase tests)
+│   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 13 tests: one per mode and combinator,
+│   │                                  #      an array model — HeatRodTest, `T[20]` — and MetricTreeTest with its `analytic` companion)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
 │   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
 │   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
@@ -144,13 +147,19 @@ uv run dstf --config testing.json spec-update spec_patch.json
 
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
 # The Suite page is a table of the tests (count pills, typed column filters with .* / Aa, package
-# group rows, a column chooser); Accept the selection's results as baselines, Queue the selection:
+# group rows, a column chooser; its Criteria column counts criteria passed of criteria, `3/4`);
+# Accept the selection's results as baselines (refused, as Save is, when test_spec.json changed on
+# disk since it was loaded), Queue the selection:
 # one simulation queue per tool process (D150), first in, first out, over workers that stay alive.
 # Its panel beside the table lists each item in run order (Remove a waiting one, Cancel a running
-# one, Open test / Accept an ended one; a Workers field, Clear finished, Stop workers); the header
-# says `3 running · 5 queued` on every page. A queued or running test stays editable; each result
+# one, Open test on an ended one; a Workers field, Clear finished, Stop workers). Only a test's
+# LATEST row carries its verdict and Accept: an earlier run's row says how that run ended
+# (`finished · 3 s`). The header says `3 running · 5 queued` on every page. A queued or running
+# test stays editable; each result
 # is read back and that test rescored as it ends. A Queue click runs the library as it is on disk
-# NOW: it sweeps the source files' stamps once, reads the queued tests' changed files again
+# NOW: the tests it names show as taken at once (Suite row QUEUED, panel row `waiting · checking
+# the library`, counted in the header) while it sweeps the source files' stamps once and reads the
+# queued tests' changed files again
 # (StopTime, expressions), and a live worker reads the library again before it runs one of them —
 # `running · reading the library`; a library that no longer loads FAILS the test with the
 # simulator's message. A running test's page keeps its plots and draws
@@ -187,7 +196,8 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # a select switches plots. Variable labels are cut in the middle (head…[3]).
 # A plot's legend holds its signals, above the plot; a swatch on each criteria row shows or hides
 # that criterion's drawing; one Error select per plot of one variable picks the error series.
-# The pending count opens the preview: each edited test's entry before and after, as a diff.
+# The pending count counts what was done — one act is one pending edit, however many patch ops
+# it staged (D155) — and opens the preview: each edited test's entry before and after, as a diff.
 # A rail down the left opens the Tests drawer (switch test) or the Variables drawer (a context
 # series on the selected plot, or a watch plot); `×`, Remove plot and Reset layout take them
 # away. Both drawers carry one control set: filter with .* / Aa; Tests has sort and names menus,
@@ -342,7 +352,7 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.
 - **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `comparison/mode_schema.py`.
 - **`MetricTree`** (`comparison/tree_spec.py` + `tree_eval.py` + `metric_tree.py`) — `LeafSpec` / `CombinatorSpec` + evaluator; `implicit_and_tree()` (`metric_tree.py`) for specs without an explicit tree; `validator.py` enforces baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped; companions not targetable).
-- **`comparator`** (`comparison/comparator.py`) — orchestrates per-test comparison; threads primary + named baselines into the evaluator; derives `TestComparison.passed` from the tree root.
+- **`comparator`** (`comparison/comparator.py`) — orchestrates per-test comparison; threads primary + named baselines into the evaluator; derives `TestComparison.passed` from the tree root. `compare_one` is one test's comparison with its short-circuits (NOT RUN, SIM_FAIL, NO_REF) and its refusals — FAIL with a reason and no criterion (`reporting.status.refusal`): a base tolerance that is no number, a stored override nothing reads, and a test with no tree whose result holds none of the variables it tracks (`nothing_scored`: a test that scored nothing is not a PASS, and an accept skips it).
 
 ## Design Principles
 
