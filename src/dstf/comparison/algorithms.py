@@ -1038,11 +1038,12 @@ def _compare_tube(
 
     passed = n_inside == n_total
 
-    # NRMSE for reporting stays on the REFERENCE grid. The verdict moved to
-    # the union grid above, but this figure feeds the dashboard's "Worst NRMSE"
-    # column, and a mean taken over a denser grid is a different number --
-    # changing it would drift the reported error on tests whose verdict did not
-    # change. _compare_trajectories remains the authority on trajectory error.
+    # The NRMSE a tube leaf carries stays on the REFERENCE grid. The verdict
+    # moved to the union grid above; this figure decides nothing — no surface
+    # shows it as the tube's number, and "Worst NRMSE" reads nrmse-scored
+    # criteria only — but it is what `_compare_trajectories`, the authority on
+    # trajectory error, would say of the same pair, and a mean taken over a
+    # denser grid is a different number.
     act_interp = np.interp(ref_time, act_time, act_values)
     diff = act_interp - ref_values
     abs_error = np.abs(diff)

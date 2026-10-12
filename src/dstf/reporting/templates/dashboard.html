@@ -227,7 +227,7 @@ body.has-selection { padding-bottom: 5em; }
 {% elif c.key == 'status' %}  <td><span class="status-badge {{ t.status_class }}">{{ text }}</span></td>
 {% elif c.key == 'resolution' %}  <td>{% if t.resolution == 'mixed' %}<span title="{% for k, v in t.field_sources.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}">{{ text }}</span>{% elif t.resolution %}<span title="all fields from {{ text }}">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'elapsed' %}  <td class="elapsed-cell">{{ text }}</td>
-{% elif c.key == 'nrmse' %}  <td>{% if t.worst_score is none and t.n_unscored %}<span class="unscored" title="No leaf on this test produced a score — every one is a sentinel (metric config that would not build, or no data to compare)">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
+{% elif c.key == 'nrmse' %}  <td>{% if t.worst_score is none and t.n_unscored %}<span class="unscored" title="No nrmse criterion on this test produced a score; {{ t.n_unscored }} of its criteria {{ 'is' if t.n_unscored == 1 else 'are' }} not scored (a metric config that would not build, or no data to compare)">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'warnings' %}  <td>{% if t.n_warnings %}<span class="warn">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'detail' %}  <td class="detail-cell" title="{{ t.message or '' }}">{{ t.message or '' }}</td>
 {% else %}{% set tag = c.tag(t) if c.tag else none %}{% set tip = c.tip(t) if c.tip else none %}  <td{% if tag %} class="tagged"{% endif %}{% if tip %} title="{{ tip }}"{% endif %}>{{ text }}{% if tag %} <span class="cell-tag">{{ tag }}</span>{% endif %}</td>

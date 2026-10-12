@@ -798,15 +798,17 @@ cannot fail the test; the next line is the measured value against what it is
 held to, in the metric's own words, then that metric's details:
 
 ```
-  [0007] MyLib.Examples.MetricTreeTest
-    x (unitTests.x[1]): nrmse · window 0–0.5 s · against primary
-      NRMSE 4.264e-02 vs tolerance 1.000e-02 → FAIL
-      RMSE:               4.235186e-02 (range 9.9326e-01)
-      max |err|:          1.213060e-01 at t=0.07
-      final:              ref=6.065307e-01  act=6.703200e-01
-    advisory — x (unitTests.x[1]): nrmse · against OpenModelica
+  [0007] ModelicaTestingLib.Examples.MetricTreeTest
+    x (unitTests.x[1]): nrmse · window to 2.5 s · against primary
+      NRMSE 4.264e-02 vs tolerance 1.000e-03 → FAIL
+      RMSE:               4.235140e-02 (range 9.9326e-01)
+      max |err|:          6.697616e-02 at t=0.54
+      final:              ref=9.932612e-01  act=9.844956e-01
+    advisory — x (unitTests.x[1]): nrmse · against openmodelica
       NRMSE 2.128e-02 vs tolerance 1.000e-02 → FAIL
-      …
+      RMSE:               2.127812e-02 (range 1.0000e+00)
+      max |err|:          6.697616e-02 at t=0.54
+      final:              ref=1.000000e+00  act=9.999999e-01
 ```
 
 `--report` and `--report-format` each add what they name, and
@@ -841,7 +843,7 @@ number — prints its reason as `Error: …` and is not offered `a`.
 DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the live progress page during a run and the final report after comparison.
 
 - **During a run**: the page is re-written on every state change and reloads itself every 5s (a meta refresh — a script fetch is blocked on `file://`). It stays live until the command that started the run has finished with it.
-- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/ref_NNNN/interactive.html` (`reports/test_NNNN/` for a test with no baseline), linked from the Test column. A name is a link only where this page read that test's report: a run clears the report pages of the tests it runs, so after a plain `run` or `compare`, and for a test the queue of `dstf author` ran, the name is plain text until a `--report` writes its page again. A `run` or `compare` that removed pages and is not writing them again says so in one line: `Removed 12 per-test report pages written by an earlier --report (now stale); --report writes them again.`
+- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE — the worst among the test's criteria that are scored by `nrmse`, `—` for a test with none: a tube's, a range's or a checkpoint's own number is not an NRMSE and is not shown as one — Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/ref_NNNN/interactive.html` (`reports/test_NNNN/` for a test with no baseline), linked from the Test column. A name is a link only where this page read that test's report: a run clears the report pages of the tests it runs, so after a plain `run` or `compare`, and for a test the queue of `dstf author` ran, the name is plain text until a `--report` writes its page again. A `run` or `compare` that removed pages and is not writing them again says so in one line: ``Removed 12 per-test report pages written by an earlier --report (now stale); `compare --report` writes them again.``
 - **Which rows**: a live page lists the tests the running run holds. A final page lists the last run's tests and then every other test the command scored, in the work dir's manifest order. So `compare` after a `--filter` run, a `--merge` run, and a drained queue in `dstf author` list every test with its verdict; a plain `--filter` run without `--merge` lists only its own tests, because those are all it scored. A test the last run did not run keeps its per-test report (and its Reference link) while that report is newer than the test's own last run. The status bar of such a page names both counts: `Final report · 331 tests · last run: 1 test in 0.4s` — for a drained queue, the time from its first test's start to its last one's end.
 
 `status.json` and `batch_manifest.json`, beside the dashboard in the work dir, record the RUN: a test's `status` in `status.json` and its `last_run_status` in `batch_manifest.json` say whether its simulation ran. `"passed"` there means the simulation finished — not that the comparison passed. The verdict is on the console, in the JUnit file, on the dashboard and, after `--report`, in `reports/<dir>/comparison_data.json`.

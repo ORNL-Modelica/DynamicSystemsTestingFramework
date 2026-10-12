@@ -122,7 +122,10 @@ class TestDetails:
         )
         d = dict(s.details)
         assert d["worst violation"].startswith("4.000000e-01 at t=")
-        assert "NRMSE" in d and "final" in d
+        assert "max |err|" in d and "final" in d
+        # the tube's own measures: its NRMSE against the reference is
+        # computed and scores nothing, and is not printed as its number
+        assert "NRMSE" not in d
 
     def test_points_lists_each_failed_checkpoint(self):
         from dstf.comparison.algorithms import _compare_points

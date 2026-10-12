@@ -412,43 +412,71 @@ class TestVendoredPlotly:
             assert asset.resolve().is_relative_to(pkg_root / "dstf")
 
 
-class TestWorstFiniteScore:
-    """A sentinel leaf carries inf/nan; a plain max() let it swallow every
-    real score on the test, and the dashboard then read "—" for a test
-    whose other leaves scored fine."""
+class TestWorstNrmse:
+    """The worst NRMSE among the criteria SCORED by nrmse. A sentinel leaf
+    carries inf/nan; a plain max() let it swallow every real score on the
+    test. And a max over every leaf read a tube's NRMSE — a number its
+    criterion does not score by — as the test's worst."""
 
     @staticmethod
-    def _scored(nrmse: float, name: str = "h"):
+    def _scored(nrmse: float, name: str = "h", mode: str = "nrmse"):
         vc = _nonfinite_comparison(name)
         vc.nrmse = nrmse
+        vc.mode = mode
         return vc
 
     def test_sentinel_does_not_swallow_the_finite_leaves(self):
-        from dstf.reporting.context_builder import worst_finite_score
+        from dstf.reporting.context_builder import worst_nrmse
 
-        worst, n_unscored = worst_finite_score(
+        worst, n_unscored = worst_nrmse(
             [self._scored(1e-5), _nonfinite_comparison("bad"), self._scored(3e-4)]
         )
         assert worst == 3e-4
         assert n_unscored == 1
 
     def test_all_unscored_reports_the_count(self):
-        from dstf.reporting.context_builder import worst_finite_score
+        from dstf.reporting.context_builder import worst_nrmse
 
-        worst, n_unscored = worst_finite_score(
+        worst, n_unscored = worst_nrmse(
             [_nonfinite_comparison("a"), _nonfinite_comparison("b")]
         )
         assert worst is None
         assert n_unscored == 2
 
     def test_nan_counts_as_unscored(self):
-        from dstf.reporting.context_builder import worst_finite_score
+        from dstf.reporting.context_builder import worst_nrmse
 
-        worst, n_unscored = worst_finite_score(
-            [self._scored(float("nan")), self._scored(2.0)]
-        )
+        worst, n_unscored = worst_nrmse([self._scored(float("nan")), self._scored(2.0)])
         assert worst == 2.0
         assert n_unscored == 1
+
+    def test_a_passing_tubes_nrmse_is_not_the_tests_worst(self):
+        """The evidence: a tube at 100 % inside whose `nrmse` field is
+        2.8213e-01, beside the nrmse criterion that fails at 4.264e-02."""
+        from dstf.reporting.context_builder import worst_nrmse
+
+        tube = self._scored(2.8213e-01, "x", mode="tube")
+        tube.passed = True
+        failing = self._scored(4.264e-02, "x")
+        advisory = self._scored(2.128e-02, "x")
+        assert worst_nrmse([tube, failing, advisory]) == (4.264e-02, 0)
+
+    @pytest.mark.parametrize(
+        "mode",
+        ["tube", "range", "points", "event-timing", "scalar", "dominant-frequency"],
+    )
+    def test_a_test_with_no_nrmse_criterion_has_no_worst_nrmse(self, mode):
+        """Each of these modes keeps a number of its own in the field."""
+        from dstf.reporting.context_builder import worst_nrmse
+
+        assert worst_nrmse([self._scored(0.5, mode=mode)]) == (None, 0)
+
+    def test_an_unscored_criterion_of_another_mode_is_still_counted(self):
+        from dstf.reporting.context_builder import worst_nrmse
+
+        bad = _nonfinite_comparison("bad")
+        bad.mode = "range"
+        assert worst_nrmse([self._scored(1e-5), bad]) == (1e-5, 1)
 
     def test_summary_sidecar_carries_both(self, tmp_path):
         plot_dir = tmp_path / "report"
@@ -457,7 +485,11 @@ class TestWorstFiniteScore:
             model_id="Fixture.Worst",
             ref_data=None,
             result=None,
-            comparisons=[self._scored(1e-5), _nonfinite_comparison("bad")],
+            comparisons=[
+                self._scored(1e-5),
+                _nonfinite_comparison("bad"),
+                self._scored(0.9, mode="tube"),
+            ],
             plot_dir=plot_dir,
         )
         summary = json.loads(
@@ -470,8 +502,24 @@ class TestWorstFiniteScore:
         from dstf.reporting.context_builder import _build_key_stats
 
         stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {})
-        worst = next(s for s in stats if s["label"] == "Worst Score")
+        worst = next(s for s in stats if s["label"] == "Worst NRMSE")
         assert worst["current"] == "n/a (1 unscored leaf)"
+
+    def test_the_report_header_reads_the_columns_number(self):
+        """One name, one number: the header stat is the dashboard column's."""
+        from dstf.reporting.context_builder import _build_key_stats
+
+        comps = [self._scored(0.28, mode="tube"), self._scored(4.264e-02)]
+        (worst,) = [s for s in _build_key_stats(comps, {}, {}) if "Worst" in s["label"]]
+        assert (worst["label"], worst["current"]) == ("Worst NRMSE", "4.2640e-02")
+
+    def test_the_report_header_reads_a_dash_with_no_nrmse_criterion(self):
+        from dstf.reporting.context_builder import _build_key_stats
+
+        comps = [self._scored(0.28, mode="tube")]
+        (worst,) = [s for s in _build_key_stats(comps, {}, {}) if "Worst" in s["label"]]
+        assert (worst["label"], worst["current"]) == ("Worst NRMSE", "—")
+        assert [s for s in _build_key_stats([], {}, {}) if "Worst" in s["label"]] == []
 
 
 class TestEmbeddedFigures:

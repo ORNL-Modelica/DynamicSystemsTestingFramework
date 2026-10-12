@@ -54,21 +54,32 @@ def _format_value(val) -> str:
     return str(val)
 
 
-def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
-    """Return ``(worst finite score, count of unscored leaves)``.
+def worst_nrmse(comparisons: list) -> tuple[float | None, int]:
+    """``(the worst NRMSE among the criteria scored BY nrmse, the count of
+    criteria with no score)`` — what the "Worst NRMSE" column, the report
+    header and the tool's Suite page show.
 
-    ``VariableComparison.nrmse`` carries the mode's score, and a sentinel
-    leaf (metric config that would not build, no data to compare) sets it
-    to ``inf``/``nan``. A plain ``max()`` over the leaves therefore returns
-    a non-finite value for the whole test, which the strict-JSON pass then
-    writes as ``null`` — the dashboard's "Worst NRMSE" read "—" for a test
-    whose other leaves scored perfectly well. Report the worst among the
-    leaves that HAVE a score, and count the rest so the surface can say so
-    instead of implying there was nothing to measure.
+    ``VariableComparison.nrmse`` is overloaded: it carries the mode's own
+    number (a range's worst violation, an event's Δt), and for a tube the
+    NRMSE against the reference — which the tube does not score by. A max
+    over every leaf showed ``2.8213e-01`` for a test whose tube passed at
+    100 % inside while the criterion that failed, an nrmse, was at
+    ``4.264e-02``. Only a criterion whose mode is ``nrmse`` has an NRMSE
+    that decided anything; a test with none has no worst one (``None``:
+    the column reads "—").
+
+    A sentinel leaf of any mode (a metric config that would not build, no
+    data to compare) carries ``inf``/``nan``: it is left out and counted,
+    so one of them cannot swallow the real numbers, and the surface can
+    say that criteria went unscored.
     """
-    finite = [vc.nrmse for vc in comparisons if math.isfinite(vc.nrmse)]
+    scored = [
+        vc.nrmse
+        for vc in comparisons
+        if (vc.mode or "nrmse") == "nrmse" and math.isfinite(vc.nrmse)
+    ]
     n_unscored = sum(1 for vc in comparisons if not math.isfinite(vc.nrmse))
-    return (max(finite) if finite else None, n_unscored)
+    return (max(scored) if scored else None, n_unscored)
 
 
 def _text_of(texts: dict[str, VariableText] | None, name: str, expression: str) -> str:
@@ -489,7 +500,7 @@ def _build_key_stats(
     *,
     run_diagnostics: Sequence = (),
 ) -> list:
-    """Top-level summary row: worst score across leaves, plus a small
+    """Top-level summary row: the worst NRMSE (`worst_nrmse`), plus a small
     fixed pick of structural stats (continuous states, nonlinear
     counts) and CPUtime / EventCounter. Format mirrors statistics_sections
     rows so the template renderer is uniform.
@@ -519,13 +530,11 @@ def _build_key_stats(
         )
 
     key_stats = []
-    # "Worst Score" — for NRMSE leaves this is the max NRMSE (lower is
-    # better); for range/tube leaves the nrmse field carries mode-specific
-    # content (max_violation / fraction-inside). Mixed-mode tests get the
-    # worst across whatever leaves they contain.
-    # Sentinel leaves (inf/nan score) are excluded and counted instead —
-    # one unscored leaf used to swallow every real number on the test.
-    worst_score, n_unscored = worst_finite_score(comparisons)
+    # "Worst NRMSE": the worst among the criteria scored by nrmse
+    # (`worst_nrmse`), the dashboard column's number. A test whose
+    # criteria are all of other metrics reads "—": it has none. Sentinel
+    # leaves are left out and counted.
+    worst_score, n_unscored = worst_nrmse(comparisons)
     # The unscored count rides in ``current`` (the template prefixes
     # ``reference`` with "ref:", which this is not).
     unscored_note = (
@@ -540,7 +549,7 @@ def _build_key_stats(
     if worst_score is not None:
         key_stats.append(
             {
-                "label": "Worst Score",
+                "label": "Worst NRMSE",
                 "current": f"{worst_score:.4e}{unscored_note}",
                 "reference": "",
             }
@@ -548,7 +557,7 @@ def _build_key_stats(
     elif n_unscored:
         key_stats.append(
             {
-                "label": "Worst Score",
+                "label": "Worst NRMSE",
                 "current": (
                     "n/a (1 unscored leaf)"
                     if n_unscored == 1
@@ -557,6 +566,9 @@ def _build_key_stats(
                 "reference": "",
             }
         )
+    elif comparisons:
+        # Criteria, and none of them scored by nrmse.
+        key_stats.append({"label": "Worst NRMSE", "current": "—", "reference": ""})
 
     for path, label in (
         ("translation.continuous_time_states", "Continuous States"),

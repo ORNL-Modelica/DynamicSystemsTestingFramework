@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..comparison.types import TestComparison
-from .context_builder import worst_finite_score
+from .context_builder import worst_nrmse
 from .status import (
     CANCELLED,
     LIVE_STATES,
@@ -308,11 +308,10 @@ def summary_fields(
     status, status_class = classify_with_class(comp)
     variables = comp.variables
     warns = comp.warnings if warnings is None else warnings
-    # Worst score across the leaves that HAVE one: a sentinel leaf carries
-    # inf/nan, and a plain max() let it swallow every real number on the
-    # test. ``n_unscored`` is what the column says when nothing finite is
-    # left.
-    worst, n_unscored = worst_finite_score(variables)
+    # The worst NRMSE among the criteria scored by nrmse (`worst_nrmse`):
+    # None for a test with none. ``n_unscored`` counts the sentinel leaves,
+    # and is what the column says when there is no number to show.
+    worst, n_unscored = worst_nrmse(variables)
     timing = stats.get("timing") if isinstance(stats, Mapping) else None
     if not isinstance(timing, Mapping):
         timing = {}
