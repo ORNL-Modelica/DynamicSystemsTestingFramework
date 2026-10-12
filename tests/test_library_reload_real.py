@@ -184,8 +184,12 @@ def _edit_and_queue_again(tool: Tool, broken_says: tuple[str, ...]) -> None:
     item = tool.click()
     assert item.state is ItemState.FAILED, "a broken model PASSED on the old one"
     assert item.message and all(part in item.message for part in broken_says)
-    again = tool.click()  # and asked again, it fails again
-    assert again.state is ItemState.FAILED and again.message == item.message
+    # Asked again, it fails again — by a load of the WHOLE library this
+    # time, whichever way the first was read: after a reload that failed
+    # nobody knows what the simulator holds.
+    again = tool.click()
+    assert again.state is ItemState.FAILED
+    assert again.message and all(part in again.message for part in broken_says)
 
     # Fixed.
     _sub(model, "der(x) = 3*k +*", "der(x) = 5*k*")
@@ -226,7 +230,9 @@ def test_openmodelica_runs_the_model_as_it_is_on_disk(tmp_path, monkeypatch, how
             ("ModelicaTestingLib does not load", "[syntax:error:"),
         )
         # Six clicks found a changed file (the broken one twice over).
-        assert len(asked) == (0 if how == "file by file" else 7)
+        # File by file, the two after the one that failed are whole loads:
+        # the broken file asked again, and the fixed one.
+        assert len(asked) == (2 if how == "file by file" else 7)
 
         # A class renamed inside its file — the base class's: the whole
         # load refuses the file, and so does the load of that one file.
