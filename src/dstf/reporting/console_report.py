@@ -3,7 +3,7 @@
 import sys
 
 from ..backends.types import label_with_name
-from ..comparison.comparator import TestComparison, VariableComparison
+from ..comparison.comparator import TestComparison
 from .status import (
     FAIL,
     NO_REF,
@@ -111,9 +111,9 @@ def print_report(comparisons: list[TestComparison]) -> int:
             print(f"\n  {id_tag}{comp.model_id}")
             if comp.error_message:
                 print(f"    Error: {comp.error_message}")
-            for var in comp.variables:
-                if not var.passed:
-                    _print_var_failure(var)
+            for block in failure_blocks(comp):
+                for line in block:
+                    print(line)
             # A group that fails on its own: the test's reason where no
             # criterion failed.
             for line in group_failures(comp):
@@ -132,28 +132,78 @@ def print_report(comparisons: list[TestComparison]) -> int:
     return exit_code(comparisons)
 
 
-def _print_var_failure(var: VariableComparison):
-    """Print details for a failed variable comparison."""
-    # `pipe.T[1] (unitTests.x[1])`, the name alone when they agree: the
-    # expression says WHICH quantity, the name what to write a criterion
-    # or an override against.
-    name = label_with_name(var.name, var.expression)
-    print(f"    {name}:")
-    reason = not_scored_reason(var)
-    if reason:
-        # A sentinel (config that could not build, no data to compare) has
-        # no meaningful numbers — the reason is the whole finding. The name
-        # above it is the variable's, so the line says which leaf to fix.
-        print(f"      Not scored:         {reason}")
-    if var.is_constant:
-        print(f"      RMSE:               {var.rmse:.6e} (constant signal)")
-    else:
-        print(
-            f"      NRMSE:              {var.nrmse:.6e} (signal range: {var.signal_range:.4e})"
-        )
-        print(f"      RMSE:               {var.rmse:.6e}")
-    print(
-        f"      Max abs error:      {var.max_abs_error:.6e} (at t={var.max_abs_error_time:g})"
+def _window_text(window: object) -> str:
+    """``window 0–0.5 s`` for a leaf scoped to part of the run; ``""`` for
+    one that is not."""
+    if not isinstance(window, dict):
+        return ""
+    start, end = window.get("start"), window.get("end")
+    if start is None and end is None:
+        return ""
+    if start is None:
+        return f"window to {end:g} s"
+    if end is None:
+        return f"window from {start:g} s"
+    return f"window {start:g}–{end:g} s"
+
+
+def failure_blocks(comp: TestComparison) -> list[list[str]]:
+    """One block of lines per criterion of ``comp`` that did not pass, in
+    TREE order — two criteria on one variable are two blocks, and each says
+    which it is: its metric, its window if it has one, the baseline it is
+    scored against, then the criterion in the metric's own words (the
+    measured value against its tolerance or bound — ``registry.summarize``,
+    what the report's tree row reads) and that metric's detail pairs. A
+    criterion under a ``warn`` cannot fail the test: its block starts
+    ``advisory — ``.
+
+    The blocks used to be the same five generic numbers under the
+    variable's name alone: a start-up window's nrmse and an advisory
+    comparison against a soft check read as one variable failing twice,
+    with nothing to tell them apart."""
+    from ..comparison.registry import summarize
+    from ..comparison.tree_eval import (
+        advisory_comparisons,
+        flatten_evaluation,
+        leaf_comparisons_by_path,
     )
-    print(f"      Reference final:    {var.reference_final:.6e}")
-    print(f"      Actual final:       {var.actual_final:.6e}")
+
+    tree = comp.metric_tree
+    if tree is not None:
+        said = flatten_evaluation(tree)
+        leaves = [
+            (vc, said.get(path, {}))
+            for path, vc in leaf_comparisons_by_path(tree).items()
+        ]
+    else:
+        leaves = [(vc, {}) for vc in comp.variables]
+    advisory = {id(vc) for vc in advisory_comparisons(tree)}
+    blocks: list[list[str]] = []
+    for vc, leaf in leaves:
+        if vc.passed:
+            continue
+        # `pipe.T[1] (unitTests.x[1])`, the name alone when they agree: the
+        # expression says WHICH quantity, the name what to write a
+        # criterion or an override against.
+        name = label_with_name(vc.name, vc.expression)
+        what = [vc.mode or str(leaf.get("mode") or "nrmse")]
+        window = _window_text(leaf.get("window"))
+        if window:
+            what.append(window)
+        if leaf.get("against"):
+            what.append(f"against {leaf['against']}")
+        lead = "advisory — " if id(vc) in advisory else ""
+        lines = [f"    {lead}{name}: {' · '.join(what)}"]
+        reason = not_scored_reason(vc)
+        if reason:
+            # A sentinel (config that could not build, no data to compare)
+            # has no meaningful numbers — the reason is the whole finding.
+            lines.append(f"      {'Not scored:':<20}{reason}")
+        else:
+            summary = summarize(vc)
+            lines.append(f"      {summary.criterion}")
+            lines += [
+                f"      {label + ':':<20}{value}" for label, value in summary.details
+            ]
+        blocks.append(lines)
+    return blocks

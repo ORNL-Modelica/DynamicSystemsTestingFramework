@@ -569,6 +569,120 @@ class TestConsoleReport:
             details,
         ), details
 
+    def test_each_failed_criterion_is_a_block_that_says_which_it_is(self, capsys):
+        """Two criteria failed on ONE variable — a windowed nrmse, and an
+        advisory tube under `warn` — beside a range on it: three blocks, in
+        the tree's order, each with its metric, its window if it has one,
+        its baseline, and the criterion in that metric's own words. They
+        were the same five numbers under `x:` three times."""
+        comp = _scored(
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "nrmse",
+                        "variable": "x",
+                        "tolerance": 1e-9,
+                        "window": {"start": 0.0, "end": 0.6},
+                    },
+                    {"metric": "nrmse", "variable": "x", "tolerance": 10.0},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "tube",
+                                "variable": "x",
+                                "tube_width_mode": "band",
+                                "tube_abs": 0.001,
+                            }
+                        ],
+                    },
+                    {"metric": "range", "variable": "x", "max_value": 2.0},
+                ],
+            }
+        )
+        assert print_report([comp]) == 1
+        details = capsys.readouterr().out.split("Failure Details:")[1]
+        heads = [
+            ln for ln in details.splitlines() if ln.startswith("    ") and ln[4] != " "
+        ]
+        assert heads == [
+            "    x: nrmse · window 0–0.6 s · against primary",
+            "    advisory — x: tube · against primary",
+            "    x: range · against primary",
+        ]
+        # under each head, the measured value against what it is held to
+        said = [ln.strip() for ln in details.splitlines() if "→ FAIL" in ln]
+        assert said == [
+            "NRMSE 5.000e-03 vs tolerance 1.000e-09 → FAIL",
+            "0.0% inside tube → FAIL (requires 100%)",
+            "max violation 1.005e+00 → FAIL (requires 0)",
+        ]
+        # a metric's own pairs, never another's under a generic label
+        assert "bounds:             [-inf, 2]" in details
+        assert "Reference final" not in details and "Max abs error" not in details
+
+    def test_a_block_names_the_baseline_and_a_one_sided_window(self):
+        from dstf.reporting.console_report import _window_text
+
+        assert _window_text({"start": 0.5}) == "window from 0.5 s"
+        assert _window_text({"end": 2.0}) == "window to 2 s"
+        assert _window_text({"start": 0.5, "end": 2.0}) == "window 0.5–2 s"
+        assert _window_text({}) == "" and _window_text(None) == ""
+
+    def test_a_block_against_a_soft_check_says_its_name(self, tmp_path):
+        """The evidence run's second block: an advisory comparison against
+        the `OpenModelica` soft check, of the same variable."""
+        import numpy as np
+
+        from conftest import make_test_model
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_one
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.config import Config
+        from dstf.reporting.console_report import failure_blocks
+        from dstf.storage.reference_store import ReferenceStore
+        from test_session import D, _project
+
+        cfg, work = _project(tmp_path)
+        store = ReferenceStore(Config(config_file=cfg, work_dir=work))
+        t = np.array([i / 4 for i in range(5)])
+        assert store.add_soft_check(
+            D,
+            "OpenModelica",
+            time=t.tolist(),
+            variables=[{"index": 1, "name": "x", "values": (t * 2).tolist()}],
+        )
+        test = make_test_model(D, variable_patterns=["x"])
+        test.metric_tree_spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "nrmse",
+                                "variable": "x",
+                                "against": "OpenModelica",
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        result = TestResult(
+            model_id=D,
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=t, values=t * 1.001)],
+        )
+        heads = [block[0] for block in failure_blocks(compare_one(test, result, store))]
+        assert heads == [
+            "    x: nrmse · against primary",
+            "    advisory — x: nrmse · against OpenModelica",
+        ]
+
     def test_config_error_prints_the_reason(self, capsys):
         assert print_report([_config_error()]) == 1
         out = capsys.readouterr().out

@@ -790,7 +790,26 @@ uv run dstf --config testing.json run -i
 
 A run that scores (not `--accept`, not `-i`) always prints the verdict table —
 a `PASS` / `FAIL` line per test, `Results: 11/12 passed` and the failure
-details. `--report` and `--report-format` each add what they name, and
+details: under each failed test one block per criterion that did not pass, in
+the tree's order. A block's first line says which criterion it is — the
+variable, the metric, its window if it has one and the baseline it is scored
+against — and starts `advisory — ` when the criterion is under a `warn` and
+cannot fail the test; the next line is the measured value against what it is
+held to, in the metric's own words, then that metric's details:
+
+```
+  [0007] MyLib.Examples.MetricTreeTest
+    x (unitTests.x[1]): nrmse · window 0–0.5 s · against primary
+      NRMSE 4.264e-02 vs tolerance 1.000e-02 → FAIL
+      RMSE:               4.235186e-02 (range 9.9326e-01)
+      max |err|:          1.213060e-01 at t=0.07
+      final:              ref=6.065307e-01  act=6.703200e-01
+    advisory — x (unitTests.x[1]): nrmse · against OpenModelica
+      NRMSE 2.128e-02 vs tolerance 1.000e-02 → FAIL
+      …
+```
+
+`--report` and `--report-format` each add what they name, and
 together they add both: `run --report --report-format junit --output
 results.xml` prints the table, writes the pages and writes the file. The three
 flags do the same on `compare`.

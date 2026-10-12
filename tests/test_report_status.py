@@ -147,7 +147,8 @@ class TestClassify:
 
 
 # ---------------------------------------------------------------------------
-# Byte-identity pins (pre-unification output, verbatim)
+# Byte-identity pins (the summary and the JUnit file as before the status
+# unification; a failure block as the console labels it since)
 # ---------------------------------------------------------------------------
 
 _CONSOLE_GOLDEN = """\
@@ -168,20 +169,18 @@ Failure Details:
 --------------------------------------------------------------------------------
 
   [0002] Lib.Ex.Fail
-    h:
-      NRMSE:              5.000000e-01 (signal range: 2.0000e+00)
-      RMSE:               4.000000e-01
-      Max abs error:      3.000000e-01 (at t=1.25)
-      Reference final:    1.000000e+00
-      Actual final:       1.100000e+00
+    h: nrmse
+      NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL
+      RMSE:               4.000000e-01 (range 2.0000e+00)
+      max |err|:          3.000000e-01 at t=1.25
+      final:              ref=1.000000e+00  act=1.100000e+00
 
   Lib.Ex.BaselineFreeFail
-    h:
-      NRMSE:              5.000000e-01 (signal range: 2.0000e+00)
-      RMSE:               4.000000e-01
-      Max abs error:      3.000000e-01 (at t=1.25)
-      Reference final:    1.000000e+00
-      Actual final:       1.100000e+00
+    h: nrmse
+      NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL
+      RMSE:               4.000000e-01 (range 2.0000e+00)
+      max |err|:          3.000000e-01 at t=1.25
+      final:              ref=1.000000e+00  act=1.100000e+00
 
 Structural Warnings:
 --------------------------------------------------------------------------------
