@@ -76,8 +76,10 @@ def test_a_modelica_test_shows_its_unit_tests_variables_and_its_method(capsys):
     assert rows["NoUnitTest"][2:] == ["Dassl", "spec"]
     # recognized by `extends`, with no UnitTests component and no pattern
     assert rows["SimulateOnlyTest"][0] == "0"
+    # declared in test_spec.json only too: an array, tracked by one pattern
+    assert rows["HeatRodTest"] == ["1 pattern", "50", "Dassl", "spec"]
     assert totals[1] == "  UnitTests variables: 14"
-    assert totals[2].startswith("  Variable patterns: 1 ")
+    assert totals[2].startswith("  Variable patterns: 2 ")
 
 
 def test_unit_tests_variables_and_patterns_on_one_test_are_both_shown(tmp_path, capsys):

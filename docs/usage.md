@@ -1449,6 +1449,14 @@ in its MIDDLE — its head, an ellipsis, its index (`cat(1, pipe2.mediums.T, …
 or its last 12 characters when it has no index that near its end — with the
 whole label as its tooltip; a model id is cut at its start.
 
+An array to try what follows on ships with the tool: the Modelica example's
+`ModelicaTestingLib.Examples.HeatRodTest` is a rod of twenty nodes whose
+temperatures are one array, `T[1]` … `T[20]`. Its `test_spec.json` entry tracks
+`T[*]` and scores it with twenty identical `tube` criteria — what Indices
+`1:20` writes — and one `scalar` on `T[10]` alone, so its Test page shows the
+array's plot with one folded row, `tube · T[1:20]` (`20 pass`), and the
+`scalar · T[10]` row after it.
+
 Under an array family's plot, the elements whose criterion is one and the
 same — children of one node, with the same metric, parameters, window and
 baseline — are ONE folded row: a chevron, the worst of their verdicts as its
@@ -1459,8 +1467,8 @@ criterion's own row indented under it, with its own swatch, editor, handles
 and node controls; which rows are unfolded is the browser tab's. Clicking the
 folded row opens its editor: one member's fields, showing the value they
 share, and every change is applied to ALL of them as one edit (on a test with
-no saved tree the count reads 2, as for any criterion's edit there: its tree
-written out, and the edit). It draws no handles — "These fields change all 20
+no saved tree its tree is written out under the edit, which the preview says;
+the count reads 1 all the same). It draws no handles — "These fields change all 20
 criteria. Unfold to drag one on the plot." Its **Indices** field holds the
 elements the criterion is on, in the add form's syntax (see Edit tree), and
 beside it what Enter would do, as it is typed: `→ 5 elements (removes 15)`,
@@ -2267,7 +2275,7 @@ uv run pytest -m "not dymola"
 
 ### Testing ModelicaTestingLib itself
 
-The project includes `examples/modelica/ModelicaTestingLib/`, a small Modelica library used both as a test fixture and as a reference implementation. To regression test it (requires Dymola):
+The project includes `examples/modelica/ModelicaTestingLib/`, a small Modelica library used both as a test fixture and as a reference implementation: thirteen tests, one per comparison mode and combinator, among them `HeatRodTest` — the one whose variable is an array (see the folded criteria row, above). To regression test it (requires Dymola or OpenModelica; `HeatRodTest` has baselines for `Dymola/linux` and `OpenModelica/linux` and reads `NO_REF` on Windows Dymola until one is accepted there):
 
 ```bash
 # Run and compare against stored references

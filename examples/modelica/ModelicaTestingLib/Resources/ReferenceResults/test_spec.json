@@ -248,6 +248,166 @@
           }
         }
       }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.HeatRodTest",
+      "variables": [
+        "T[*]"
+      ],
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {
+            "metric": "tube",
+            "variable": "T[1]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[2]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[3]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[4]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[5]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[6]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[7]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[8]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[9]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[10]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[11]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[12]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[13]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[14]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[15]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[16]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[17]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[18]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[19]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[20]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "scalar",
+            "variable": "T[10]",
+            "quantity": {
+              "reduce": "final"
+            },
+            "tolerance": 0.05,
+            "tolerance_mode": "abs"
+          }
+        ]
+      }
     }
   ]
 }

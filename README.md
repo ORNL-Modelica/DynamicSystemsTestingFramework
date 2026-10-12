@@ -117,7 +117,7 @@ uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceRes
 
 The dashboard URL is printed as a run starts (`Live progress: file://…`) and the page is opened in a browser tab; it reloads itself every 5s during the run. `--report` writes the per-test pages under `<work_dir>/reports/` and opens the dashboard again when they are written. `--no-browser` (on `run` and `compare`) opens no tab and still prints the link.
 
-The examples ship baselines for these `<Backend>/<os>` partitions: Modelica — `Dymola/linux`, `Dymola/windows` and `OpenModelica/linux`; FMU — `FMPy/linux` and `FMPy/windows`; Julia — `Julia/linux`; Python — `Python/linux`. A first run on an OS a backend has no partition for (OpenModelica, Julia or Python on Windows, say) reports every test `NO_REF` until `run --accept` stores its baselines there.
+The examples ship baselines for these `<Backend>/<os>` partitions: Modelica — `Dymola/linux`, `Dymola/windows` and `OpenModelica/linux` (its array model, `HeatRodTest`, on the two Linux ones); FMU — `FMPy/linux` and `FMPy/windows`; Julia — `Julia/linux`; Python — `Python/linux`. A first run on an OS a backend has no partition for (OpenModelica, Julia or Python on Windows, say) reports every test `NO_REF` until `run --accept` stores its baselines there.
 
 To repeat with another backend's demo library, swap the config path:
 

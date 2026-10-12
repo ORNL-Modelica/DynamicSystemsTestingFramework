@@ -10,3 +10,4 @@ MultiFrequencyTest
 MetricTreeTest
 RangeCheckTest
 PointsCheckTest
+HeatRodTest
