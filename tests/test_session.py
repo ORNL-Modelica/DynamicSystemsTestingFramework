@@ -1553,34 +1553,22 @@ class TestRescoreAndStage:
             )
         assert session.spec.pending == []
 
-    def test_a_null_metrics_is_no_tree(self, tmp_path):
-        """`"metrics": null` is no tree: spec_parser scores the flat path, so
-        the Session materializes that tree — it did not, and `tree` was None
-        beside a tree view while `stage` descended into the null (and the
-        validator refused any op on the entry: a null is no tree to parse)."""
-        from dstf.discovery.spec_update import needs_materialization
-
+    def test_a_null_metrics_is_refused_at_the_open(self, tmp_path):
+        """`"metrics": null` used to be "no tree": the flat path scored the
+        entry and the Session wrote a tree out over the null. Absent is the
+        only "no tree" now, and a file that holds a null is one the open
+        stops at, naming it — like any other block that is no object."""
         cfg, work = _project(tmp_path)
         doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
         next(e for e in doc["tests"] if e["model"] == A)["metrics"] = None
         (cfg.parent / "test_spec.json").write_text(
             json.dumps(doc, indent=2) + "\n", encoding="utf-8"
         )
-        s = Session()
-        s.open(cfg, work_dir=work)
-        assert s.tree_view(A) is not None
-        assert needs_materialization(s.spec.entry(A), [LOOSEN.raw()])
-        assert [c["variable"] for c in s.tree(A)["children"]] == ["x"]
-        assert s.tree_or_reason(A)[1] is None
-        s.stage([PatchOp(A, "add", "/comparison", {"tolerance": 0.01})])
-        s.stage([LOOSEN])
-        assert [op.path for op in s.spec.pending] == [
-            "/comparison",
-            "/metrics",
-            LOOSEN.path,
-        ]
-        assert s.spec.pending[1].materializes
-        assert s.spec.entry(A)["metrics"]["children"][0]["tolerance"] == 0.5
+        with pytest.raises(ConfigError) as refused:
+            Session().open(cfg, work_dir=work)
+        assert str(refused.value).endswith(
+            f"test_spec.json: tests[{A}].metrics: must be an object, got null"
+        )
 
 
 class TestAFlatTestScoresWhatItTracks:
@@ -3956,16 +3944,6 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
             as_float = {**implicit, "children": [{**leaf, "count_must_match": 1.0}]}
             s.stage([PatchOp(A, "add", "/metrics", as_float)])
             assert s.spec.pending == []
-
-    def test_a_null_metrics_in_the_file_is_no_tree_of_its_own(self, tmp_path):
-        """``"metrics": null`` is a flat entry (`has_metrics`): the tree
-        written out over it is as saved, as over an entry with no member."""
-        s = _session_with_entry(tmp_path, {"metrics": None})
-        leaf = s.tree(A)["children"][0]
-        s.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": 0.5})])
-        assert len(s.spec.pending) == 2
-        s.stage([PatchOp(A, "replace", self.LEAF, leaf)])
-        assert s.spec.pending == []
 
     @pytest.mark.parametrize(
         ("a", "b", "same"),

@@ -303,12 +303,13 @@ class TestSpecUpdateMaterialization:
             in capsys.readouterr().out
         )
 
-    def test_a_null_metrics_entry_takes_a_comparison_op_and_gains_no_null(
-        self, tmp_path
+    def test_an_entry_holding_a_null_metrics_takes_only_the_patch_that_fixes_it(
+        self, tmp_path, capsys
     ):
-        """`"metrics": null` is no tree (`has_metrics`): an op on /comparison
-        applies — the D66 validator has no tree to refuse — and the write
-        leaves every other entry as it was, with no null of its own."""
+        """`"metrics": null` is no tree and no entry a file may hold: an op
+        elsewhere in the entry is refused, naming it — as for an entry
+        holding a key nothing reads — and the op that takes the null out is
+        the fix."""
         spec = tmp_path / "test_spec.json"
         other = {"model": "MyLib.Other", "variables": ["q"]}
         spec.write_text(
@@ -322,17 +323,22 @@ class TestSpecUpdateMaterialization:
             ),
             encoding="utf-8",
         )
+        before = spec.read_bytes()
         patch = _write_patch(
             tmp_path,
             "MyLib.A",
             [{"op": "add", "path": "/comparison", "value": {"tolerance": 0.1}}],
         )
-        assert _run_spec_update(spec, patch) == 0
+        assert _run_spec_update(spec, patch) == 1
+        assert capsys.readouterr().out.strip() == (
+            "Patch failed: patched metric tree is invalid: metrics: must be an "
+            "object, got null"
+        )
+        assert spec.read_bytes() == before
+        fix = _write_patch(tmp_path, "MyLib.A", [{"op": "remove", "path": "/metrics"}])
+        assert _run_spec_update(spec, fix) == 0
         after = json.loads(spec.read_text(encoding="utf-8"))["tests"]
-        assert after[0]["comparison"] == {"tolerance": 0.1}
-        assert after[1] == other
-        nulls = [e["model"] for e in after if "metrics" in e and e["metrics"] is None]
-        assert nulls in ([], ["MyLib.A"])
+        assert after == [{"model": "MyLib.A", "variables": ["x"]}, other]
 
     def test_flat_entry_without_variables_fails_cleanly(self, tmp_path):
         """No tracked variables → nothing to materialize leaves from; the
