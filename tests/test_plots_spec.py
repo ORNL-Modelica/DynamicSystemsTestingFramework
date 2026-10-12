@@ -49,9 +49,22 @@ def test_an_empty_list_is_no_extras():
     [
         ({"var": "x"}, "plots: must be a list"),
         ([["x"]], "plots[0]: must be an object"),
-        ([{"var": "x", "title": "T"}], "plots[0]: unknown key 'title'"),
-        ([{"var": "x", "series": []}], "plots[0]: unknown key 'series'"),
-        ([{"var": "x", "kind": "time"}], "plots[0]: unknown key 'kind'"),
+        (
+            [{"var": "x", "title": "T"}],
+            'plots[0]: unknown field "title"; the fields here are: context, var',
+        ),
+        (
+            [{"var": "x", "series": []}],
+            'plots[0]: unknown field "series"; the fields here are: context, var',
+        ),
+        (
+            [{"var": "x", "kind": "time"}],
+            'plots[0]: unknown field "kind"; the fields here are: context, var',
+        ),
+        (
+            [{"var": "x", "contxt": ["y"]}],
+            'plots[0]: unknown field "contxt" — did you mean "context"?',
+        ),
         ([{}], "plots[0].var: must be a non-empty string"),
         ([{"var": " "}], "plots[0].var: must be a non-empty string"),
         ([{"var": 3}], "plots[0].var: must be a non-empty string"),

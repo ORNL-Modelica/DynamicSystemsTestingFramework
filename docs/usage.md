@@ -146,7 +146,7 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 
 #### A key nothing reads is an error
 
-`test_spec.json` is strict about its keys: one that nothing reads stops the command and is named, with the nearest key there is when one is close.
+`test_spec.json` is strict about its keys: one that nothing reads stops the command and is named — with the key that was meant when the name is a near miss of exactly one (a letter or two off, another case, the start of one), otherwise with the fields there are to choose from. A hint is never a guess: `start_time` is not offered `stop_time`.
 
 ```
 Config error: …/test_spec.json: tests[MyLib.Examples.SimpleTest].metrics.children[1]: range · pipe.T[1]: unknown field "max_val" — did you mean "max_value"?

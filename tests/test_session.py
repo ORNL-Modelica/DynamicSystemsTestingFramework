@@ -2857,7 +2857,9 @@ class TestPlots:
         from dstf.discovery.patch_apply import PatchError
 
         s = self._open(tmp_path)
-        with pytest.raises((PatchError, ConfigError), match=r"plots\[0\]: unknown key"):
+        with pytest.raises(
+            (PatchError, ConfigError), match=r"plots\[0\]: unknown field"
+        ):
             s.stage([PatchOp(A, "add", "/plots", [{"series": []}])])
         assert s.spec.pending == [] or tuple(s.spec.pending) == ()
         assert len(s.plots(A)) == 2

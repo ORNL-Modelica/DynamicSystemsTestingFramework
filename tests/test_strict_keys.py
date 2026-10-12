@@ -60,6 +60,50 @@ class TestTheCheck:
             == 'unknown field "min" — did you mean "min_value"?'
         )
 
+    @pytest.mark.parametrize(
+        "typed,names,meant",
+        [
+            # the slips a hint is for: a letter dropped, added, replaced,
+            # two swapped, another case
+            ("max_val", ["min_value", "max_value"], "max_value"),
+            ("tolerence", ["tolerance", "time_tolerance"], "tolerance"),
+            ("frq", ["freq", "tolerance", "tolerance_mode"], "freq"),
+            ("agianst", ["against", "metric", "variable", "window"], "against"),
+            ("tiem", ["time", "value", "tolerance"], "time"),  # ONE slip: a swap
+            ("simulaton", ["simulation", "comparison", "metrics"], "simulation"),
+            ("uper", ["lower", "upper"], "upper"),
+            ("contxt", ["var", "context"], "context"),
+            ("K", ["k", "children", "combinator"], "k"),
+            ("Tests", ["tests", "$schema"], "tests"),
+            # the start of one name: as typed, or but for its last letter
+            ("min", ["min_value", "max_value"], "min_value"),
+            ("childs", ["children", "combinator"], "children"),
+            # and what read as close and was not: a hint to the wrong field
+            ("start_time", ["stop_time", "tolerance", "method"], None),
+            ("notes", ["plots", "model", "metrics", "variables"], None),
+            ("simulate_only", ["simulation", "comparison"], None),
+            ("tolerance_mode", ["tolerance", "points", "time_tolerance"], None),
+            # four fields start with `tube`: none of them is THE one
+            ("tube", ["tube_abs", "tube_rel", "tube_points", "tube_min_width"], None),
+            # as far from one bound as from the other
+            ("m_value", ["min_value", "max_value"], None),
+            # one letter is no near miss of another
+            ("n", ["k", "children"], None),
+        ],
+    )
+    def test_only_a_near_miss_is_suggested(self, typed, names, meant):
+        from dstf.comparison.strict_keys import near_miss
+
+        assert near_miss(typed, names) == meant
+        said = unknown_field([typed], names)
+        if meant is None:
+            assert said == (
+                f'unknown field "{typed}"; the fields here are: '
+                + ", ".join(sorted(names))
+            )
+        else:
+            assert said == f'unknown field "{typed}" — did you mean "{meant}"?'
+
     def test_nothing_unknown_says_nothing(self):
         assert unknown_field(["a"], ["a", "b"]) is None
         assert unknown_field([], ["a"]) is None

@@ -64,9 +64,14 @@ class ResolvedPlot:
 
 
 def _unknown(obj: dict, known: set[str], at: str) -> None:
-    for key in obj:
-        if key not in known:
-            raise PlotsSpecError(f"{at}: unknown key {key!r}")
+    """Refuse a key nothing reads, in the words every other part of the
+    spec is refused with (``strict_keys.unknown_field``). Imported late:
+    the comparison package reaches back into discovery."""
+    from ..comparison.strict_keys import unknown_field
+
+    problem = unknown_field(obj, known)
+    if problem is not None:
+        raise PlotsSpecError(f"{at}: {problem}")
 
 
 def _one_name(value: object, at: str, what: str) -> str:

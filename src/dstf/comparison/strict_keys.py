@@ -19,7 +19,6 @@ registers is therefore checked against ITS config with no change here.
 from __future__ import annotations
 
 import dataclasses
-import difflib
 from collections.abc import Iterable, Mapping
 
 from .registry import metric, unnamed_metrics
@@ -39,22 +38,75 @@ from .registry import metric, unnamed_metrics
 EVERY_METRIC = ("tolerance", "quantity")
 
 
+def _edits(a: str, b: str) -> int:
+    """How many single edits turn ``a`` into ``b``: a letter added, dropped
+    or replaced, or two neighbours swapped (the optimal-string-alignment
+    distance — ``agianst`` is ONE slip from ``against``)."""
+    previous2: list[int] = []
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        row = [i]
+        for j, cb in enumerate(b, start=1):
+            cost = 0 if ca == cb else 1
+            best = min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + cost)
+            if i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                best = min(best, previous2[j - 2] + 1)
+            row.append(best)
+        previous2, previous = previous, row
+    return previous[-1]
+
+
+def near_miss(key: str, names: Iterable[str]) -> str | None:
+    """The ONE of ``names`` that ``key`` is a slip of the hand from, or None.
+
+    A suggestion that is wrong sends the reader to the wrong field, so one
+    is made only for a near miss, and only when it is the only one:
+
+    - the same name in another case, always (``K`` for ``k``);
+    - else at most two edits (:func:`_edits`, case ignored) and at most one
+      per three letters typed — ``max_val`` → ``max_value``, ``tolerence``
+      → ``tolerance``, ``frq`` → ``freq``, ``agianst`` → ``against`` — with
+      no other name as near: ``m_value`` is as far from ``min_value`` as
+      from ``max_value``, and gets neither;
+    - else the start of exactly one name, three letters or more — itself
+      (``min`` for ``min_value``) or less its last letter (``childs`` for
+      ``children``).
+
+    ``difflib``'s ratio, which this replaces, called these close:
+    ``start_time`` → ``stop_time`` (a different field), ``notes`` →
+    ``plots``, ``simulate_only`` → ``simulation``, ``tolerance_mode`` on a
+    leaf without one → ``tolerance``; the prefix rule offered ``tube_abs``
+    for ``tube`` with four names starting so. Each now lists the fields."""
+    names = sorted(set(names))
+    typed = key.casefold()
+    same = [name for name in names if name.casefold() == typed]
+    if same:
+        return same[0]
+    allowed = min(2, len(typed) // 3)
+    scored = sorted((_edits(typed, name.casefold()), name) for name in names)
+    if scored and 0 < scored[0][0] <= allowed:
+        if len(scored) == 1 or scored[1][0] > scored[0][0]:
+            return scored[0][1]
+        return None
+    for stem in (key, key[:-1]):
+        starts = [name for name in names if len(stem) >= 3 and name.startswith(stem)]
+        if starts:
+            return starts[0] if len(starts) == 1 else None
+    return None
+
+
 def unknown_field(keys: Iterable[str], known: Iterable[str]) -> str | None:
     """What to say about the first of ``keys`` that is not in ``known``, or
     None when all are: ``unknown field "max_val" — did you mean
-    "max_value"?`` with the nearest known key when one is close — in
-    spelling, or as the start of one (``min`` for ``min_value``) — else the
-    keys there are to choose from."""
+    "max_value"?`` when ONE known key is a near miss (:func:`near_miss`),
+    else the keys there are to choose from."""
     names = sorted(set(known))
     for key in keys:
         if key in names:
             continue
-        text = str(key)
-        close = difflib.get_close_matches(text, names, n=1, cutoff=0.6) or [
-            name for name in names if text and name.startswith(text)
-        ]
-        if close:
-            return f'unknown field "{key}" — did you mean "{close[0]}"?'
+        close = near_miss(str(key), names)
+        if close is not None:
+            return f'unknown field "{key}" — did you mean "{close}"?'
         return f'unknown field "{key}"; the fields here are: {", ".join(names)}'
     return None
 
