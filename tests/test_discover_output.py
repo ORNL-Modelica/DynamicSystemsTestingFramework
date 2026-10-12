@@ -80,9 +80,7 @@ def test_a_modelica_test_shows_its_unit_tests_variables_and_its_method(capsys):
     assert totals[2].startswith("  Variable patterns: 1 ")
 
 
-def test_unit_tests_variables_and_patterns_on_one_test_are_both_shown(
-    tmp_path, capsys
-):
+def test_unit_tests_variables_and_patterns_on_one_test_are_both_shown(tmp_path, capsys):
     import shutil
 
     lib = tmp_path / "ModelicaTestingLib"
