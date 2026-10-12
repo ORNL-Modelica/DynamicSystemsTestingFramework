@@ -742,8 +742,16 @@ uv run dstf --config testing.json run -i
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
 | `--timeout SECS` | Per-test timeout in seconds (default: 60) |
 | `--work-dir PATH` | Override output directory |
-| `--report-format` | `console` (default), `junit`, or `html` (the dashboard page, written to `--output`) |
+| `--report` | Also write the per-test pages under `<work_dir>/reports/` (see "Live progress + final report") |
+| `--report-format` | `junit` or `html` (the dashboard page) also writes that file, to `--output` (default `test-results.xml` / `test-report.html` in the current directory); `console`, the default, writes none |
 | `--no-browser` | Open no browser tab. `run` opens the dashboard as the run starts, `--report` (on `run` and `compare`) opens it again once the pages are written, and `p` in the interactive review opens that test's page; with this flag each only prints its `file://` link. Also on `compare`. |
+
+A run that scores (not `--accept`, not `-i`) always prints the verdict table —
+a `PASS` / `FAIL` line per test, `Results: 11/12 passed` and the failure
+details. `--report` and `--report-format` each add what they name, and
+together they add both: `run --report --report-format junit --output
+results.xml` prints the table, writes the pages and writes the file. The three
+flags do the same on `compare`.
 
 **Interactive mode (`-i`) actions:**
 

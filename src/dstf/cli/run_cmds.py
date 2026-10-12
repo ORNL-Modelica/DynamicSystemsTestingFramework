@@ -138,18 +138,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 comparisons=prior_comps,
                 results=prior_results,
             )
-            if args.report:
-                scope_tests = [t for t in all_tests if t.model_id in prior_results]
-                # Exit code stays 0 regardless of prior-result verdicts:
-                # "nothing to rerun" is this invocation's whole outcome.
-                _generate_report_suite(
-                    prior_comps,
-                    prior_results,
-                    scope_tests,
-                    store,
-                    config,
-                    browser=_browser(args),
-                )
+            # The verdicts as they stand, on whatever was asked for. The
+            # exit code stays 0 regardless of them: "nothing to rerun" is
+            # this invocation's whole outcome.
+            scope_tests = [t for t in all_tests if t.model_id in prior_results]
+            _show_reports(prior_comps, prior_results, scope_tests, store, config, args)
             return 0
 
     if not tests:
@@ -275,17 +268,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             final_rendered = True
 
-            if args.report:
-                return _generate_report_suite(
-                    comparisons,
-                    results,
-                    scope_tests,
-                    store,
-                    config,
-                    browser=_browser(args),
-                )
-
-            return _output_report(comparisons, args, config, results)
+            _show_reports(comparisons, results, scope_tests, store, config, args)
+            return _exit_code(comparisons)
     finally:
         if not final_rendered:
             # A page is not worth the run's own exception: a failing render
@@ -411,17 +395,37 @@ def cmd_compare(args: argparse.Namespace) -> int:
         results=results,
     )
 
+    _show_reports(comparisons, results, tests, store, config, args)
+    return _exit_code(comparisons)
+
+
+def _show_reports(comparisons, results, tests, store, config, args) -> None:
+    """What a scored ``run`` or ``compare`` shows — three independent
+    things, and any combination does all of what it asks:
+
+    * the console verdict table, ALWAYS;
+    * ``--report``: the per-test pages;
+    * ``--report-format junit|html``: that file, at ``--output``.
+
+    In that order: the verdict first, and the HTML file after the pages its
+    rows link. (``--report`` used to return before the other two, and a
+    ``--report-format`` printed no table — `compare --report
+    --report-format junit` wrote no file and said nothing.) The exit code
+    is the caller's: ``_exit_code``.
+    """
+    from ..reporting.console_report import print_report
+
+    print_report(comparisons)
     if getattr(args, "report", False):
-        return _generate_report_suite(
+        _generate_report_suite(
             comparisons, results, tests, store, config, browser=_browser(args)
         )
-
-    return _output_report(comparisons, args, config, results)
+    _write_report_file(comparisons, args, config, results)
 
 
 def _generate_report_suite(
     comparisons, results, tests, store, config, *, browser: bool
-) -> int:
+) -> None:
     """Generate per-test reports + refresh the unified dashboard, and open
     it in a browser tab when ``browser``.
 
@@ -445,16 +449,13 @@ def _generate_report_suite(
     print(f"Report: {dashboard_path}")
     open_in_browser(dashboard_path, launch=browser)
 
-    # A test NOT RUN, or with no baseline, does not fail the run; a run in
-    # which nothing ran does (D145).
-    return _exit_code(comparisons)
 
-
-def _output_report(
+def _write_report_file(
     comparisons: list, args: argparse.Namespace, config, results: dict
-) -> int:
-    """Route comparisons to the selected report format; ``results`` give
-    the HTML page its CPU times, as they gave ``render_final``."""
+) -> None:
+    """Write the file ``--report-format junit|html`` asks for (``console``,
+    the default, asks for none); ``results`` give the HTML page its CPU
+    times, as they gave ``render_final``."""
     fmt = getattr(args, "report_format", "console")
     if fmt == "junit":
         from ..reporting.junit_report import generate_junit_report
@@ -462,7 +463,6 @@ def _output_report(
         out = Path(getattr(args, "output", None) or "test-results.xml")
         generate_junit_report(comparisons, out)
         print(f"JUnit report written to {out}")
-        return _exit_code(comparisons)
     elif fmt == "html":
         # One HTML surface, not three: --report-format html writes the same
         # dashboard page render_final produces (both callers have already
@@ -491,9 +491,3 @@ def _output_report(
                 f"reports/) resolve only inside {config.work_dir}",
                 file=sys.stderr,
             )
-        return _exit_code(comparisons)
-    else:
-        from ..reporting.console_report import print_report
-
-        print_report(comparisons)
-        return _exit_code(comparisons)

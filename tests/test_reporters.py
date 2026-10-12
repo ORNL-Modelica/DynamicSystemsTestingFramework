@@ -545,7 +545,7 @@ class TestConsoleReport:
 
 
 def _fake_config(work_dir: Path):
-    """What `_output_report`'s html branch reads off Config."""
+    """What the html report file's branch reads off Config."""
     return types.SimpleNamespace(
         work_dir=work_dir,
         config_file=None,
@@ -553,6 +553,16 @@ def _fake_config(work_dir: Path):
         reference_root=None,
         theme="default",
     )
+
+
+def _output_report(comparisons, args, config, results) -> int:
+    """What `run` and `compare` do with a scored suite: show it on every
+    surface asked for, then exit by it."""
+    from dstf.cli.common import _exit_code
+    from dstf.cli.run_cmds import _show_reports
+
+    _show_reports(comparisons, results, [], None, config, args)
+    return _exit_code(comparisons)
 
 
 class TestReportFormatRouting:
@@ -565,7 +575,6 @@ class TestReportFormatRouting:
     """
 
     def test_html_writes_dashboard_render_to_output_path(self, tmp_path):
-        from dstf.cli.run_cmds import _output_report
         from dstf.reporting.dashboard_render import render_final
 
         work_dir = tmp_path / "work"
@@ -586,7 +595,6 @@ class TestReportFormatRouting:
         ).read_text(encoding="utf-8")
 
     def test_html_exit_code_tracks_failures(self, tmp_path):
-        from dstf.cli.run_cmds import _output_report
 
         work_dir = tmp_path / "work"
         work_dir.mkdir()
@@ -600,8 +608,6 @@ class TestReportFormatRouting:
     def test_every_route_exits_zero_over_not_run_and_pass(self, tmp_path, capsys):
         """D145: `compare` and `run` exit by what ran — a test NOT RUN is
         not a failure on any route; a FAIL beside it still is."""
-        from dstf.cli.run_cmds import _output_report
-
         work_dir = tmp_path / "work"
         work_dir.mkdir()
         for fmt in ("console", "junit", "html"):
@@ -616,7 +622,6 @@ class TestReportFormatRouting:
         """D145 §5: a compare over an empty or wrong work dir, or after a
         pool whose workers all failed to start, has no comparison or none
         that ran — that is not a green run, on any route."""
-        from dstf.cli.run_cmds import _output_report
         from dstf.reporting.status import exit_code
 
         work_dir = tmp_path / "work"
@@ -646,17 +651,14 @@ class TestReportFormatRouting:
         assert exit_code(iter([_failing()])) == 1
         assert exit_code([_not_run(), _passing()]) == 0
 
-    def test_junit_route_unchanged(self, tmp_path):
-        from dstf.cli.run_cmds import _output_report
-
+    def test_junit_route_writes_the_file_and_the_verdict_table(self, tmp_path, capsys):
         out = tmp_path / "r.xml"
         args = types.SimpleNamespace(report_format="junit", output=str(out))
         assert _output_report([_passing()], args, _fake_config(tmp_path), {}) == 0
         assert ET.parse(out).getroot().tag == "testsuites"
+        assert "Results: 1/1 passed" in capsys.readouterr().out
 
     def test_console_route_is_default(self, tmp_path, capsys):
-        from dstf.cli.run_cmds import _output_report
-
         args = types.SimpleNamespace(report_format="console", output=None)
         assert _output_report([_passing()], args, _fake_config(tmp_path), {}) == 0
         assert "Results: 1/1 passed" in capsys.readouterr().out

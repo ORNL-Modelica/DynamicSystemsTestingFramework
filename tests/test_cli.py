@@ -624,7 +624,6 @@ class TestRerunEmptySetIsSuccess:
 
         def fake_suite(comparisons, results, tests, store, config, *, browser):
             called["comparisons"] = list(comparisons)
-            return 1  # per-test failures must NOT flip the empty-rerun success
 
         monkeypatch.setattr("dstf.cli.run_cmds._generate_report_suite", fake_suite)
         t1 = _mk_test("Lib.T1")
@@ -2138,3 +2137,104 @@ class TestNoBrowser:
         assert launched_openers == []
         out = capsys.readouterr().out
         assert "Plots saved to" in out and out.count("View: file://") == 2
+
+
+# =========================================================================
+# The console verdict table, --report's pages and --report-format's file
+# are three independent things: any combination does all of what it asks
+# =========================================================================
+
+
+class TestTheThreeReportsAreIndependent:
+    @pytest.fixture
+    def scored(self, run_env, tmp_path):
+        """Two tests with a baseline; T1 will pass and T2 fail. Returns a
+        runner of one command with the given flags."""
+        tests = [_mk_test(_T1), _mk_test(_T2)]
+        run_env.make(tests, results={m: _mk_result(m) for m in (_T1, _T2)})
+        assert cmd_run(_run_args(run_env, "--accept")) == 0
+        results = {
+            _T1: _mk_result(_T1),
+            _T2: _mk_result(_T2, values=np.cos(np.linspace(0.0, 1.0, 11))),
+        }
+
+        def dstf(command: str, *extra: str) -> int:
+            run_env.make(tests, results=results, prior_results=results)
+            args = build_arg_parser().parse_args(
+                ["--config", str(run_env.config_dir), command]
+                + ["--work-dir", str(run_env.work_dir), "--no-browser", *extra]
+            )
+            return (cmd_run if command == "run" else cmd_compare)(args)
+
+        return dstf
+
+    @staticmethod
+    def _pages(run_env) -> int:
+        return len(list(run_env.work_dir.glob("reports/*/interactive.html")))
+
+    @pytest.mark.parametrize("command", ["run", "compare"])
+    @pytest.mark.parametrize("report", [False, True])
+    @pytest.mark.parametrize("fmt", ["console", "junit", "html"])
+    def test_every_combination_does_all_it_asks(
+        self, scored, run_env, tmp_path, capsys, command, report, fmt
+    ):
+        out_file = tmp_path / f"out.{fmt}"
+        extra = ["--report"] if report else []
+        if fmt != "console":
+            extra += ["--report-format", fmt, "--output", str(out_file)]
+        capsys.readouterr()
+        assert scored(command, *extra) == 1  # T2 fails, on every route
+        out = capsys.readouterr().out
+
+        # the verdict table, always
+        lines = out.splitlines()
+        assert [ln for ln in lines if ln.endswith(_T1)] == [f"  PASS  [0001] {_T1}"]
+        assert [ln for ln in lines if ln.endswith(_T2)][0] == f"  FAIL  [0002] {_T2}"
+        assert "Results: 1/2 passed" in lines
+        assert "Failure Details:" in lines
+
+        # --report's pages, when asked and only then
+        assert self._pages(run_env) == (2 if report else 0)
+        assert ("Report: " in out) is report
+
+        # --report-format's file, when asked and only then
+        assert out_file.exists() is (fmt != "console")
+        if fmt == "junit":
+            assert ET.parse(out_file).getroot().get("failures") == "1"
+            assert f"JUnit report written to {out_file}" in lines
+        if fmt == "html":
+            assert _T2 in out_file.read_text(encoding="utf-8")
+            assert f"HTML report written to {out_file}" in lines
+
+    def test_an_html_file_written_with_the_pages_links_them(
+        self, scored, run_env, capsys
+    ):
+        """`--report --report-format html --output <work_dir>/r.html`: the
+        file is written AFTER the pages, so its rows link them."""
+        out_file = run_env.work_dir / "r.html"
+        scored(
+            "compare", "--report", "--report-format", "html", "--output", str(out_file)
+        )
+        assert out_file.read_text(encoding="utf-8").count("/interactive.html") >= 2
+
+    def test_nothing_to_rerun_still_writes_what_it_was_asked_for(
+        self, scored, run_env, tmp_path, capsys
+    ):
+        """`run --rerun sim-failed` where nothing failed to simulate runs
+        nothing and exits 0 — and still prints the verdicts as they stand
+        and writes the junit file it was asked for."""
+        out_file = tmp_path / "j.xml"
+        capsys.readouterr()
+        rc = scored(
+            "run",
+            "--rerun",
+            "sim-failed",
+            "--report-format",
+            "junit",
+            "--output",
+            str(out_file),
+        )
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Nothing to rerun" in out and "Results: 1/2 passed" in out
+        assert ET.parse(out_file).getroot().get("failures") == "1"
