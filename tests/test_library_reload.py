@@ -334,6 +334,30 @@ def test_the_default_reload_restarts_the_worker_once_per_state(restarting):
     assert backend.workers[0]._n_restarts == 0
 
 
+def test_the_default_reload_is_a_close_and_a_bounded_start(restarting):
+    backend, _pool = restarting
+    worker = backend.make_worker(0)
+    assert not worker.reloads_in_place
+    worker.start_within()
+    worker.reload(None)
+    assert backend.starts == [0, 0] and backend.closes == [0]
+    assert worker.is_alive()
+    worker.close()
+
+
+def test_a_restart_to_read_again_is_not_charged_to_the_restart_budget(restarting):
+    """A worker at the end of its budget — every death so far was real — is
+    still restarted for a changed library: nothing died."""
+    backend, pool = restarting
+    a = pool.submit(_t("A"), S1)
+    _wait_until(lambda: _ended(a))
+    backend.workers[0]._n_restarts = backend.max_restarts_per_worker
+    b = pool.submit(_t("B"), S2)
+    _wait_until(lambda: _ended(b))
+    assert b.state is ItemState.FINISHED, b.message
+    assert backend.starts == [0, 0]
+
+
 def test_a_restart_to_read_again_shows_as_a_restart_under_its_item(restarting):
     backend, pool = restarting
     a = pool.submit(_t("A"), S1)

@@ -870,7 +870,8 @@ class Worker(ABC):
                     if done.wait(0.05):
                         break
             if not done.is_set():
-                left.set()
+                # A body still in *before* sees the cancel when it comes
+                # back, and starts no test.
                 with self._quiet():
                     self.close(grace=1.0)
                     t.join(0.5)

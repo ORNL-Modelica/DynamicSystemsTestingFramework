@@ -1580,6 +1580,36 @@ def test_a_julia_worker_whose_process_died_idle_is_restarted(tmp_path, monkeypat
             _kill_quietly(proc)
 
 
+def test_a_tool_that_dies_during_what_runs_before_the_test_runs_no_test(tmp_path):
+    """The watchdog gives the body up when the tool is gone; a body that
+    comes back from `before` after that — the closed tool let go of it —
+    must not go on to run the test."""
+    tool = subprocess.Popen([sys.executable, "-c", _SLEEP])
+    worker = _Worker(0, _config(tmp_path))
+    ran: list[str] = []
+    worker.run_test = lambda test, key, progress=None: ran.append(key)
+    back = threading.Event()
+
+    def before():
+        tool.kill()
+        tool.wait()
+        worker.gate.wait(30)  # parked in the dead tool until it is closed
+        back.set()
+
+    try:
+        worker.start()
+        worker.pids = {tool.pid}
+        result = worker.run_test_with_timeout(
+            make_test_model(), "test_0001", 60, before=before
+        )
+        assert "exited during the test" in result.error_message
+        assert back.wait(15)
+        time.sleep(0.05)
+        assert ran == []
+    finally:
+        _kill_quietly(tool)
+
+
 def test_a_julia_worker_is_restarted_to_read_a_changed_project(tmp_path, monkeypatch):
     """Julia's worker keeps `Worker.reload`'s default: a test queued against
     source files newer than the ones its process loaded gets a new process,
