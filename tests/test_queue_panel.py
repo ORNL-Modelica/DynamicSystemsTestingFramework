@@ -167,6 +167,57 @@ async def test_the_strip_of_a_queued_and_of_a_running_test(shell):
         assert _one(user, "queue-indicator").text == "1 running"
 
 
+async def test_a_test_whose_click_is_still_being_read_is_listed_as_taken(shell):
+    """From the click until its read of the library is back the queue holds
+    no item of the test: the panel lists it all the same, with no button —
+    there is nothing to remove yet — and the header counts it."""
+    session = shell.session
+    async with user_simulation(root=shell.index) as user:
+        shell.mount()
+        await _open(user, f"/test/{B}")
+        await _settled(lambda: _has(user, "strip-text"))
+        (page,) = [
+            p
+            for p in shell.pages
+            if isinstance(p, TestPage) and p.client is user.client
+        ]
+        strip = page.strip
+        await _settled(lambda: strip.text.text != "")
+        _hold(shell, A, ItemState.RUNNING)
+        # B ran in the queue before and its row is still listed: the item
+        # the strip finds for it is that ended one, and not one to remove.
+        ended = _hold(shell, B, ItemState.RUNNING)
+        ended.state, ended.ended_at = ItemState.CANCELLED, ended.started_at
+        del session._live[B]
+        session._emit("queue", state="ended", models={B})
+        shell.tick()
+
+        session._reading.add(B)  # as `_enqueue_later` leaves it
+        session._emit("queue", state="checking", models={B})
+        shell.tick()
+        assert _one(user, "queue-indicator").text == "1 running · 1 queued"
+        assert strip.situation is Situation.QUEUED
+        assert strip.text.text == "Queued — waiting · checking the library"
+        assert (strip.remove.visible, strip.cancel.visible) == (False, False)
+
+        await _open(user, "/")
+        assert _one(user, "queue-counts").text == "1 running · 1 queued · 1 cancelled"
+        statuses = [e.text for e in user.find(marker=f"queue-status:{B}").elements]
+        assert sorted(statuses) == ["CANCELLED", "QUEUED"]
+        words = [e.text for e in user.find(marker=f"queue-words:{B}").elements]
+        assert sorted(words) == ["cancelled", "waiting · checking the library"]
+        for marker in ("queue-remove", "queue-cancel"):
+            assert not _has(user, f"{marker}:{B}"), marker
+        assert shell.stop_reasons() == ["2 tests are queued or running — stop anyway?"]
+
+        # The read refused it: that row goes, the ended one stays.
+        session._reading.discard(B)
+        session._emit("queue", state="refused", models={B})
+        shell.tick()
+        assert _one(user, f"queue-words:{B}").text == "cancelled"
+        assert _one(user, "queue-counts").text == "1 running · 1 cancelled"
+
+
 def _suite(shell, user) -> SuitePage:
     (page,) = [
         p for p in shell.pages if isinstance(p, SuitePage) and p.client is user.client

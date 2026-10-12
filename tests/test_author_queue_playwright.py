@@ -118,6 +118,71 @@ NUMBERS = (
 )
 
 
+#: Run in the server before the CLI: a click's read waits on a file.
+CLICK_HOOKS = Path(__file__).with_name("slow_click_hooks.py")
+
+
+def test_a_click_shows_its_tests_as_taken_while_the_library_is_checked(
+    tmp_path, playwright_browser
+):
+    """Between a Queue click and the rows nothing on the page moved while
+    the files were being checked. The tests the click names read QUEUED at
+    once — in the table, in the panel, in the header's count — and a second
+    click on them says they are already being queued."""
+    proc, _url, page, _context, errors, cfg = _served(
+        tmp_path, playwright_browser, setup=_gated(), hooks=CLICK_HOOKS
+    )
+    hold = cfg.parent / "hold-click"
+    try:
+        hold.write_text("", encoding="utf-8")
+        _hold(cfg, A)
+        for model_id in (A, B):
+            _box(page, model_id).click()
+        _queue(page, "Queue 2")
+
+        # The read is out: no item exists, and both tests show as taken.
+        for model_id in (A, B):
+            expect(_words(page, model_id)).to_have_text(
+                "waiting · checking the library", timeout=EXPECT_TIMEOUT
+            )
+            expect(_badge(page, model_id)).to_have_text("QUEUED")
+            expect(_suite_status(page, model_id)).to_have_text("QUEUED")
+            expect(_row(page, model_id).get_by_role("button")).to_have_count(0)
+        expect(page.locator(INDICATOR)).to_have_text("2 queued")
+        expect(page.locator(COUNTS)).to_have_text("2 queued")
+        assert page.evaluate(NUMBERS) == ["1", "2"]
+        _keep(page, tmp_path, "queue-checking")
+
+        # The same click again, while the first is being read: said in the
+        # dialog, and nothing is queued twice.
+        _queue(page, "Queue 2")
+        dialog = page.locator(".q-dialog")
+        expect(dialog).to_contain_text(
+            "all 2 tests are already being queued", timeout=EXPECT_TIMEOUT
+        )
+        dialog.get_by_role("button", name="Close").click()
+        expect(dialog).to_have_count(0)
+        expect(page.locator(".dstf-queue-row")).to_have_count(2)
+
+        # The read is back: the rows are the queue's own.
+        hold.unlink()
+        expect(_words(page, A)).to_have_text(
+            re.compile(r"^running · "), timeout=RUN_TIMEOUT
+        )
+        expect(_words(page, B)).to_have_text("waiting · 1 ahead")
+        expect(_row(page, B).get_by_role("button", name="Remove")).to_have_count(1)
+        expect(page.locator(INDICATOR)).to_have_text("1 running · 1 queued")
+        _release(cfg, A)
+        for model_id in (A, B):
+            expect(_words(page, model_id)).to_have_text(
+                re.compile(r"^finished"), timeout=RUN_TIMEOUT
+            )
+        assert _console(errors) == []
+    finally:
+        hold.unlink(missing_ok=True)
+        _stop(proc)
+
+
 def test_three_queued_one_removed_one_cancelled_one_finished_and_accepted(
     tmp_path, playwright_browser
 ):

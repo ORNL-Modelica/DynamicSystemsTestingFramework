@@ -1261,8 +1261,11 @@ so each click first looks at the library's files: one stat of every `*.mo` and
 through a sub-directory that is a symbolic link too
 (a Julia project's `*.jl` and `*.toml`; nothing for an FMU or Python project,
 whose tests each start a process) — 0.06 s for a 4,000-file library on a local
-disk, 1.3 s on a slow mount, and not on the page's own thread: the tests
-appear in the queue when it is done. A queued test whose own file changed is
+disk, 1.3 s on a slow mount, and not on the page's own thread. Meanwhile the
+tests the click named show as taken: each reads QUEUED in the table and has a
+panel row `waiting · checking the library`, with no button yet, and the header
+counts it; a second click on one says `<model> is already being queued`. When
+the look is done they take their place in the queue. A queued test whose own file changed is
 read again first, so an edited `experiment(StopTime=…)` or `x={…}` is what the
 run uses and what its row shows; a test whose file is gone, or no longer holds
 it, is not queued and the panel says so (`<model>: its file <path> is gone`).

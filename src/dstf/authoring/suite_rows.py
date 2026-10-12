@@ -39,7 +39,9 @@ def suite_row(
     edits: Mapping[str, int] | None = None,
 ) -> TestRow:
     """One Suite row. A test the queue holds reads QUEUED or RUNNING,
-    whatever else is true of it; then the comparison — CANCELLED where it
+    whatever else is true of it — QUEUED from the click on, while the
+    click's read of the library is still out (`Session.checking`); then the
+    comparison — CANCELLED where it
     has no result because its run in the queue was stopped (until that
     row is cleared); then a scoring failure the open announced (``failed`` —
     the shell's set, kept until the next open, so a model a later rescore
@@ -56,7 +58,7 @@ def suite_row(
     )
     state = session.queue_state(model_id)
     comp = session.comparisons.get(model_id)
-    if state is ItemState.WAITING:
+    if state is ItemState.WAITING or model_id in session.checking:
         return replace(row, status=QUEUED)
     if state is ItemState.RUNNING:
         return replace(row, status=RUNNING)

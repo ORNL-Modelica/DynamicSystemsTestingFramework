@@ -42,7 +42,9 @@ class QueueRow:
     model_id: str
     state: ItemState
     #: The state in words: ``waiting · 3 ahead`` (``waiting · next`` with
-    #: none, ``waiting · worker starting`` while no worker is up),
+    #: none, ``waiting · worker starting`` while no worker is up, ``waiting
+    #: · checking the library`` while its click's read is out and the queue
+    #: does not hold it yet),
     #: ``running · 42 s`` (``running · t = 42 / 100 s`` where the backend
     #: has a live view, D151; ``running · worker restarting`` while its
     #: worker is brought back after a death, ``running · reading the
@@ -76,7 +78,8 @@ class QueueRow:
     #: the pool failed because no worker could start.
     started: bool = False
     #: ``remove`` while it waits, ``cancel`` while it runs on a backend that
-    #: can stop a test, ``open`` (its Test page) once it has ended.
+    #: can stop a test, ``open`` (its Test page) once it has ended; none
+    #: while its click is being read — there is no item to act on yet.
     actions: tuple[str, ...] = ()
     #: Why a running item has no ``cancel``: the backend's sentence.
     cancel_why: str | None = None
@@ -114,6 +117,13 @@ RESTARTING = "worker restarting"
 #: is as long to read again as it was to load. The ONE phrase for it — the
 #: row's words, the strip's sentence and the worker's line all say this.
 READING = "reading the library"
+
+#: A row of a test a Queue click named, while that click's read of the
+#: library is still out (`Session.checking`): the tool has taken the test
+#: and is looking at the files — a stat of each, and the test's own file
+#: read again where it changed. It has no place in the queue yet, and the
+#: read may still refuse it (its file is gone). The ONE phrase for it.
+CHECKING = "checking the library"
 
 
 def starting_text(worker: StartingWorker) -> str:
@@ -220,8 +230,11 @@ def _row(
 
 
 def queue_rows(session: Session, *, now: float | None = None) -> list[QueueRow]:
-    """The queue's rows, in run order. ``now`` is the clock a running row's
-    elapsed seconds are read against (``time.time()``)."""
+    """The queue's rows, in run order — and after them a row per test a
+    click named whose read of the library is still out
+    (`Session.checking`): taken, waiting, with no item yet. ``now`` is the
+    clock a running row's elapsed seconds are read against
+    (``time.time()``)."""
     clock = time.time() if now is None else now
     starting = {w.worker_id: w for w in session.starting_workers}
     rows: list[QueueRow] = []
@@ -231,6 +244,18 @@ def queue_rows(session: Session, *, now: float | None = None) -> list[QueueRow]:
         if row.state in (ItemState.WAITING, ItemState.RUNNING):
             ahead += 1
         rows.append(row)
+    for model_id in session.checking:
+        rows.append(
+            QueueRow(
+                number=len(rows) + 1,
+                model_id=model_id,
+                state=ItemState.WAITING,
+                words=f"waiting · {CHECKING}",
+                status=QUEUED,
+                ahead=ahead,
+            )
+        )
+        ahead += 1
     return rows
 
 

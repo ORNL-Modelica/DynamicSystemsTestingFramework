@@ -7634,7 +7634,17 @@ OpenModelica). And the Session's tests were the scan at open: an
    background thread (the one that writes `status.json` and the
    dashboard), and the tests are queued by a call posted to the loop; a
    refusal found by the read is a notice. `Session.enqueue` itself stays
-   synchronous for a Session without a loop.
+   synchronous for a Session without a loop. **The tests a click names
+   show as taken at once** (`Session.checking`, since 2026-10-12): from
+   the click until the read is back — 0.1 to 3.6 s measured, during which
+   nothing on the page moved — each reads QUEUED in the Suite table, has a
+   row in the panel that says `waiting · checking the library`
+   (`queue_rows.CHECKING`, the one phrase) with no button, and is counted
+   by the header (`2 queued`); a test the read then refuses loses that row
+   by a `queue` event of state `refused`, and its sentence is the notice
+   it always was. The queue holds no item of such a test yet, so the Queue
+   button still offers it, and a second click says `<model> is already
+   being queued` in the dialog.
 
 Before a worker runs an item whose state is newer than the one it read,
 it reads the library again — once per state, not per item; a worker

@@ -1819,6 +1819,25 @@ class Session:
         pool = self._pool
         return pool.starting if pool is not None else ()
 
+    @property
+    def checking(self) -> tuple[str, ...]:
+        """The tests a Queue click named whose click is still being read
+        (`_enqueue_later`) and that the queue does not hold yet, in project
+        order — the order they will be queued in. Each is TAKEN, and every
+        surface says so until the read is back: the Suite row reads QUEUED,
+        the panel lists it (`queue_rows.CHECKING`) and the header counts
+        it. For the tenth of a second to several the files are being looked
+        at — a large library on a slow mount — nothing on the page moved,
+        and a click that went nowhere is clicked again."""
+        project = self.project
+        if project is None or not self._reading:
+            return ()
+        return tuple(
+            t.model_id
+            for t in project.tests
+            if t.model_id in self._reading and t.model_id not in self._live
+        )
+
     def queue_item(self, model_id: str) -> QueueItem | None:
         """The model's item in the queue — the last one listed — or None."""
         return next((i for i in reversed(self.queue) if i.model_id == model_id), None)
@@ -1902,6 +1921,8 @@ class Session:
         asks = self._asks(project, models)
         epoch = self._queue_epoch
         self._reading.update(models)
+        # Said at once: these tests were taken (`checking`).
+        self._emit("queue", state="checking", models=set(models))
 
         def read() -> None:
             got: _ClickRead | Exception
@@ -1924,15 +1945,22 @@ class Session:
         if self.project is not project or epoch != self._queue_epoch:
             return  # the project was swapped, or the queue stopped, meanwhile
         self._reading.difference_update(models)
+        added: list[QueueItem] = []
         try:
             if isinstance(got, Exception):
                 raise got
-            self._queue_read(project, models, got)
+            added = self._queue_read(project, models, got)
         except QueueError as e:
             self._say(str(e))
         except Exception as e:
             logger.exception("queueing %s failed", ", ".join(models))
             self._say(f"Queue failed: {type(e).__name__}: {e}")
+        finally:
+            # A test the read refused was shown as taken (`checking`): its
+            # row goes, and the sentence above says why.
+            dropped = set(models) - {item.model_id for item in added}
+            if dropped:
+                self._emit("queue", state="refused", models=dropped)
 
     def _say(self, message: str) -> None:
         self.notices.append(message)
@@ -2089,12 +2117,13 @@ class Session:
         ended stay until `clear_finished`."""
         # A click whose read is still running is not queued after this.
         self._queue_epoch += 1
+        gone = set(self.checking)
         self._reading.clear()
         pool, self._pool = self._pool, None
         if pool is None:
             return
         pool.close()
-        gone = set(self._live)
+        gone |= set(self._live)
         for item in list(self._live.values()):
             if item.state is ItemState.REMOVED:
                 self._forget(item)

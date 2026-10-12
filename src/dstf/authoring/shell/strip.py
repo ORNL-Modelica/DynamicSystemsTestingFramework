@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
+from ...backends.pool import ItemState
 from ..capabilities import Placement
 from ..errors import user_text
 from ..session import Selection
@@ -145,7 +146,13 @@ class StatusStrip:
         # A stop already asked of it: no second Cancel while it ends.
         item = session.queue_item(self.page.model_id)
         stopping = item is not None and item.stopping
-        self.remove.set_visibility(situation is Situation.QUEUED)
+        # Queued, and the queue holds its item: a test whose click is
+        # still being read (`Session.checking`) has nothing to remove yet.
+        self.remove.set_visibility(
+            situation is Situation.QUEUED
+            and item is not None
+            and session.item_state(item) is ItemState.WAITING
+        )
         self.cancel.set_visibility(running and why is None and not stopping)
         self.cancel_why.set_text(why or "")
         self.cancel_why.set_visibility(running and why is not None)

@@ -309,6 +309,8 @@ class QueuePanel:
 
     def _actions(self, row: QueueRow) -> None:
         model_id = row.model_id
+        if not row.actions and row.cancel_why is None:
+            return  # a test whose click is still being read: no item yet
         item = self.shell.session.queue[row.number - 1]
         if REMOVE in row.actions:
             with (

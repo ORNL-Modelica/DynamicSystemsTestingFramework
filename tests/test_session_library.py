@@ -23,17 +23,24 @@ pytest.importorskip("nicegui")
 from dstf.authoring import session as session_module
 from dstf.authoring.capabilities import Enqueue
 from dstf.authoring.queue_rows import (
+    CHECKING,
     READING,
+    counts_text,
+    indicator,
     queue_row,
+    queue_rows,
     starting_text,
     starting_texts,
+    stop_reason,
 )
 from dstf.authoring.session import QueueError, Session
 from dstf.authoring.situation import strip_for
 from dstf.authoring.spec_document import PatchOp
+from dstf.authoring.suite_rows import suite_row
 from dstf.backends.pool import ItemState, StartingWorker
 from dstf.discovery.library_state import LibraryChanges
 from dstf.discovery.scan_cache import load_scan
+from dstf.reporting.status import QUEUED
 from test_library_reload import _ReloadingBackend
 from test_session_queue import Loop, fake_item
 
@@ -453,6 +460,124 @@ def test_with_a_loop_the_click_returns_before_the_library_is_read(looped, monkey
     assert on == ["dstf-background", "dstf-background"]
 
 
+def _held_sweep(monkeypatch):
+    """The sweep of a click's read, held until ``go`` is set."""
+    sweeping, go = threading.Event(), threading.Event()
+    real = session_module.source_stamps
+
+    def slow(config):
+        sweeping.set()
+        assert go.wait(30)
+        return real(config)
+
+    monkeypatch.setattr(session_module, "source_stamps", slow)
+    return sweeping, go
+
+
+def _said(rows) -> list[tuple]:
+    return [(r.number, r.model_id, r.words, r.status, r.actions) for r in rows]
+
+
+def test_with_a_loop_a_clicks_tests_show_as_taken_before_the_read_is_back(
+    looped, monkeypatch
+):
+    """Between the click and the read nothing on the page moved — a tenth
+    of a second on a small library, seconds on a large one on a slow mount
+    — and a click that seems to go nowhere is clicked again."""
+    lib = looped
+    sweeping, go = _held_sweep(monkeypatch)
+    lib.session.apply(Enqueue(models=(B, A)))
+    assert sweeping.wait(30)
+
+    # No item yet, and every surface says the tests were taken: in project
+    # order, the order they will be queued in.
+    assert lib.session.queue == [] and lib.session.checking == (A, B)
+    words = f"waiting · {CHECKING}"
+    assert words == "waiting · checking the library"
+    rows = queue_rows(lib.session)
+    assert _said(rows) == [(1, A, words, QUEUED, ()), (2, B, words, QUEUED, ())]
+    assert [(r.state, r.ahead) for r in rows] == [
+        (ItemState.WAITING, 0),
+        (ItemState.WAITING, 1),
+    ]
+    assert indicator(lib.session).text == "2 queued"
+    assert counts_text(rows) == "2 queued"
+    assert stop_reason(lib.session) == "2 tests are queued or running"
+    assert suite_row(lib.session, A).status == QUEUED
+    assert suite_row(lib.session, B).status == QUEUED
+    assert suite_row(lib.session, C).status != QUEUED
+    assert strip_for(queue=queue_row(lib.session, A)).sentence == f"Queued — {words}"
+    # Said by an event that names them: their rows are repainted.
+    assert [(e["state"], e["models"]) for e in lib.events if e["event"] == "queue"] == [
+        ("checking", {A, B})
+    ]
+    # A second click on one of them is still refused, in its own words.
+    with pytest.raises(QueueError, match=f"{A} is already being queued"):
+        lib.session.apply(Enqueue(models=(A,)))
+
+    go.set()
+    lib.loop.until(lambda: len(lib.session.queue) == 2, what="queued")
+    assert lib.session.checking == ()
+    rows = queue_rows(lib.session)
+    assert [r.model_id for r in rows] == [B, A] and CHECKING not in rows[1].words
+    lib.ended(*lib.session.queue)
+
+
+def test_a_test_that_already_waits_has_its_one_row_while_a_click_on_it_is_read(
+    looped, monkeypatch
+):
+    lib = looped
+    lib.session.apply(Enqueue(models=(C,)))  # the pool, and its backend
+    lib.loop.until(lambda: len(lib.session.queue) == 1, what="queued")
+    lib.ended(*lib.session.queue)
+    lib.backend.gate(A)
+    lib.session.apply(Enqueue(models=(A, B)))
+    lib.loop.until(lambda: len(lib.session.queue) == 3, what="queued")
+    sweeping, go = _held_sweep(monkeypatch)
+    lib.session.apply(Enqueue(models=(B, C)))  # B waits already
+    assert sweeping.wait(30)
+    assert lib.session.checking == (C,)
+    assert [r.model_id for r in queue_rows(lib.session)] == [C, A, B, C]
+    go.set()
+    lib.loop.until(lambda: len(lib.session.queue) == 4, what="queued")
+    lib.backend.gates[A].set()
+    lib.ended(*lib.session.queue)
+
+
+def test_a_test_the_read_refuses_loses_its_row_and_says_why(looped, monkeypatch):
+    lib = looped
+    (lib.dir / "B.mo").unlink()
+    sweeping, go = _held_sweep(monkeypatch)
+    lib.session.apply(Enqueue(models=(A, B)))
+    assert sweeping.wait(30)
+    assert [r.model_id for r in queue_rows(lib.session)] == [A, B]
+    go.set()
+    said = f"{B}: its file {lib.dir / 'B.mo'} is gone"
+    lib.loop.until(lambda: lib.notices() == [said], what="the notice")
+    assert lib.session.checking == ()
+    assert [r.model_id for r in queue_rows(lib.session)] == [A]
+    assert suite_row(lib.session, B).status != QUEUED
+    # The event that takes B's row back names it.
+    states = [(e["state"], e["models"]) for e in lib.events if e["event"] == "queue"]
+    assert ("refused", {B}) in states and ("queued", {A}) in states
+    lib.ended(*lib.session.queue)
+
+
+def test_a_refused_click_of_one_test_takes_its_row_back(looped, monkeypatch):
+    lib = looped
+    (lib.dir / "B.mo").unlink()
+    sweeping, go = _held_sweep(monkeypatch)
+    lib.session.apply(Enqueue(models=(B,)))
+    assert sweeping.wait(30) and lib.session.checking == (B,)
+    go.set()
+    lib.loop.until(lambda: lib.notices() != [], what="the notice")
+    assert lib.session.checking == () and queue_rows(lib.session) == []
+    assert [(e["state"], e["models"]) for e in lib.events if e["event"] == "queue"] == [
+        ("checking", {B}),
+        ("refused", {B}),
+    ]
+
+
 def test_with_a_loop_a_refusal_after_the_read_is_a_notice(looped):
     lib = looped
     (lib.dir / "B.mo").unlink()
@@ -490,11 +615,16 @@ def test_a_click_still_being_read_when_the_queue_stops_queues_nothing(
     monkeypatch.setattr(session_module, "source_stamps", slow)
     lib.session.apply(Enqueue(models=(A,)))
     assert sweeping.wait(30)
+    lib.events.clear()
     lib.session.stop_queue()  # the tool stopping
+    # The row that said A was taken goes with the stop, by name.
+    assert lib.session.checking == ()
+    assert [(e["state"], e["models"]) for e in lib.events] == [("stopped", {A})]
     go.set()
     assert lib.session.wait_background(30)
     lib.loop.pump()
     assert lib.session.queue == [] and lib.session._pool is None
+    assert [e["state"] for e in lib.events] == ["stopped"]  # and nothing after
     assert not [t for t in threading.enumerate() if "-pool-" in t.name]
 
 
