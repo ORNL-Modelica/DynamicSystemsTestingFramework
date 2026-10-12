@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -211,6 +211,19 @@ def scan_source_tests(
     """Step 1 of discovery: recognizer results over the source tree, keyed
     by model_id. Empty unless ``source_type == "modelica"``. ``progress(done,
     total)`` is called after each ``.mo`` file is scanned."""
+    if config.source_type != "modelica":
+        return {}
+    return scan_files(config, sorted(config.library_dir.rglob("*.mo")), progress)
+
+
+def scan_files(
+    config: Config,
+    files: Iterable[Path],
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[str, TestModel]:
+    """The tests the recognizers find in ``files`` of a Modelica library,
+    keyed by model_id: :func:`scan_source_tests` over every ``.mo`` file of
+    it. ``progress(done, total)`` is called after each file."""
     # Trigger bundled-recognizer registration on first call.
     from . import mo_parser  # noqa: F401
 
@@ -218,35 +231,29 @@ def scan_source_tests(
     # config.disabled_bundled); user-provided recognizers from config.recognizers
     # append, so user values win on per-field merge in
     # _build_test_model_from_recognizer_results.
-    ut_tests: dict[str, TestModel] = {}
-    if config.source_type == "modelica":
-        library_dir = config.library_dir
-        bundled = [
-            r
-            for r in get_recognizers("modelica")
-            if r.name not in config.disabled_bundled
-        ]
-        user = [r for r in config.recognizers if "modelica" in r.applies_to]
-        recognizers = bundled + user
+    library_dir = config.library_dir
+    bundled = [
+        r for r in get_recognizers("modelica") if r.name not in config.disabled_bundled
+    ]
+    user = [r for r in config.recognizers if "modelica" in r.applies_to]
+    recognizers = bundled + user
 
-        per_model: dict[str, list[RecognizerResult]] = {}
-        files = sorted(library_dir.rglob("*.mo"))
-        for done, mo_file in enumerate(files, start=1):
-            for recognizer in recognizers:
-                if not recognizer.applies_to_path(mo_file, library_dir):
-                    continue
-                result = recognizer.recognize(mo_file)
-                if result is not None:
-                    per_model.setdefault(result.model_id, []).append(result)
-            if progress is not None:
-                progress(done, len(files))
+    files = list(files)
+    per_model: dict[str, list[RecognizerResult]] = {}
+    for done, mo_file in enumerate(files, start=1):
+        for recognizer in recognizers:
+            if not recognizer.applies_to_path(mo_file, library_dir):
+                continue
+            result = recognizer.recognize(mo_file)
+            if result is not None:
+                per_model.setdefault(result.model_id, []).append(result)
+        if progress is not None:
+            progress(done, len(files))
 
-        for model_id, results in per_model.items():
-            ut_tests[model_id] = _build_test_model_from_recognizer_results(
-                model_id,
-                results,
-            )
-    return ut_tests
+    return {
+        model_id: _build_test_model_from_recognizer_results(model_id, results)
+        for model_id, results in per_model.items()
+    }
 
 
 def spec_tests_by_model(models: list[TestModel]) -> dict[str, TestModel]:
