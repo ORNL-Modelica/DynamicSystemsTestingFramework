@@ -466,6 +466,77 @@ def test_openmodelica_reads_everything_after_a_reload_that_failed_part_way(
 
 @pytest.mark.ompython
 @pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
+def test_openmodelica_loads_whole_for_a_file_in_a_directory_with_no_package_mo(
+    tmp_path, monkeypatch
+):
+    """A `.mo` file in a directory with no `package.mo` is no part of the
+    library omc loads. File by file, `loadFile` of it failed the test —
+    `Failed to insert class F within PartsLib.Parts.Loose` — where a fresh
+    worker runs."""
+    from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+    monkeypatch.setattr(OpenModelicaWorker, "_FILE_LOAD_SECONDS", 0.0)
+    loose = tmp_path / "PartsLib" / "Parts" / "Loose" / "F.mo"
+
+    def arrange(parts: Parts) -> None:
+        loose.parent.mkdir()
+        loose.write_text(
+            "within PartsLib.Parts.Loose;\npackage F\n  constant Real f=1;\nend F;\n",
+            encoding="utf-8",
+        )
+
+    tool = Parts(tmp_path, "OpenModelica", arrange=arrange)
+    try:
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        _sub(loose, "f=1", "f=2")
+        _sub(tool.lib / "Parts" / "K.mo", "k=1", "k=2")
+        assert tool.x() == 1112.0
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 1112.0
+    finally:
+        _closed(tool)
+
+
+@pytest.mark.ompython
+@pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
+def test_openmodelica_loads_whole_for_a_file_two_links_reach(tmp_path, monkeypatch):
+    """Two links to one directory: the sweep enters it through one, and
+    that one need not be the package's. File by file, the file was then
+    refused for its spelling — `it holds PartsLib.Parts.Sub.Deep, not
+    PartsLib.AAA.Alias.Deep` — where a fresh worker runs."""
+    from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+    from dstf.discovery.library_state import _modelica_source, sweep
+
+    monkeypatch.setattr(OpenModelicaWorker, "_FILE_LOAD_SECONDS", 0.0)
+    shared = tmp_path / "shared_Sub"
+
+    def arrange(parts: Parts) -> None:
+        shutil.move(str(parts.lib / "Parts" / "Sub"), str(shared))
+        os.symlink(shared, parts.lib / "Parts" / "Sub")
+        for other in ("AAA", "Resources"):
+            (parts.lib / other).mkdir()
+            os.symlink(shared, parts.lib / other / "Alias")
+
+    tool = Parts(tmp_path, "OpenModelica", arrange=arrange)
+    try:
+        # However the sweep spells it, it is spelled once.
+        (spelled,) = [
+            p for p in sweep([tool.lib], _modelica_source) if p.name == "Deep.mo"
+        ]
+        assert shared not in spelled.parents
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        _sub(shared / "Deep.mo", "d=1", "d=2")
+        assert tool.x() == 1121.0
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 1121.0
+    finally:
+        _closed(tool)
+
+
+@pytest.mark.ompython
+@pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
 def test_openmodelica_reads_a_dependency_whose_directory_is_not_its_name(tmp_path):
     """`DepLib 1.0.0/package.mo` holds `package DepLib`: the directory of a
     library carries its version, and omc loads it. The reload must look

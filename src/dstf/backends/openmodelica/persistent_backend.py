@@ -475,9 +475,11 @@ class OpenModelicaWorker(Worker):
         file's name is refused. It is used when a file was added or
         removed, when a ``package.mo`` or a ``package.order`` changed (a
         ``package.mo`` is not a file omc loads by itself), when nothing is
-        known of what changed, and when the changed files are too many
-        for one-by-one to be cheaper. One file is read as strictly as
-        that (:meth:`_load_file_again`)."""
+        known of what changed, when the changed files are too many for
+        one-by-one to be cheaper, and when one of them is a file whose
+        path does not say its class (:meth:`_path_is_its_class`: a
+        directory with no ``package.mo``, or one reached through a link).
+        One file is read as strictly as that (:meth:`_load_file_again`)."""
         assert self.session is not None
         config = self.config
         touched = (
@@ -530,7 +532,33 @@ class OpenModelicaWorker(Worker):
             return None
         if len(changed) * self._FILE_LOAD_SECONDS > self._library_load_seconds:
             return None
+        if not all(self._path_is_its_class(path) for path in changed):
+            return None
         return sorted(changed)
+
+    def _path_is_its_class(self, path: Path) -> bool:
+        """Whether a swept file of the library can be loaded by itself:
+        every directory from the library down to it holds a ``package.mo``
+        and none of them below the library's own is a symbolic link.
+
+        Only then is the class the path spells the one omc holds for the
+        file. omc loads no file of a directory without a ``package.mo``
+        (a fresh worker never reads it), and ``loadFile`` of such a file
+        fails with ``Failed to insert class``. And a directory two links
+        reach is swept through ONE of them (``library_state._followed``),
+        which need not be the one the file's ``within`` names — the file
+        was refused as holding another class than its path's. A file that
+        is itself a link has its directory's spelling, and is read."""
+        library_dir = self.config.library_dir
+        directory = path.parent
+        while True:
+            if not (directory / "package.mo").is_file():
+                return False
+            if directory == library_dir:
+                return True
+            if directory.is_symlink():
+                return False
+            directory = directory.parent
 
     def _classes_in(
         self, file: str

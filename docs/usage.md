@@ -1343,6 +1343,8 @@ Dymola reopens it (hundredths of a second on a local disk, 8 to 9.5 s for a
 third of a second) or the whole library — when a file was added or removed,
 when a `package.mo` or `package.order` changed, when one file at a time would
 cost more than the whole load did (a small library is always loaded whole),
+when a changed file sits in a directory with no `package.mo` or one reached
+through a symbolic link (its path does not say its class),
 and for the click after a reload that failed, since nobody then knows what
 the simulator holds — which takes as long as its first load (a second on a
 local disk, over a minute and a half for that library on a slow mount), and

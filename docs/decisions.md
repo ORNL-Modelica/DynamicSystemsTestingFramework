@@ -7732,14 +7732,24 @@ load had left without a class never came to be consulted, and is gone).
 The price: the click after a failure costs a whole load, which on a slow
 mount is the library's first load over again. omc loads the whole
 library again when a file was added or removed, a `package.mo` or
-`package.order` changed, or one file at a time would cost more; else each
-changed file by itself, as strictly as the whole load: `parseFile` must
-name exactly the class the file's path implies, that class is deleted,
-the file loaded, and the class must then exist. (Executed on a model
-file, a component's and a base class's — the model ran the new text each
-time — and on a syntax error, a renamed class, a wrong `within`, a second
-class in the file and an empty file: refused wherever the whole load
-refuses. A dependency given as a path is always loaded whole, and the
+`package.order` changed, one file at a time would cost more, or a changed
+file's path does not say its class; else each changed file by itself:
+`parseFile` must name exactly the class the file's path implies, that
+class is deleted, the file loaded, and the class must then exist.
+(Executed on a model file, a component's and a base class's — the model
+ran the new text each time — and on a syntax error, a renamed class, a
+wrong `within`, a second class in the file and an empty file: refused
+wherever the whole load refuses. That was first written "as strictly as
+the whole load", and it was STRICTER in two places where a fresh worker
+runs: a `.mo` file in a directory with no `package.mo` — no part of the
+library omc loads; the 3,270-file library has twelve — failed its load
+with `Failed to insert class easeIn within …`, and a file in a directory
+two symbolic links reach, which the sweep spells through one of them, was
+refused with `it holds X, not Y`. So a file is loaded by itself only when
+every directory from the library down to it holds a `package.mo` and none
+of them below the library's own is a link
+(`OpenModelicaWorker._path_is_its_class`); any other changed file makes
+the reload the whole load. A dependency given as a path is always loaded whole, and the
 classes that must exist after it are the ones `parseFile` of its file
 names: its directory need not carry its package's name — `DepLib 1.0.0`,
 a symbolic link called anything. Until 2026-10-12 the directory's name

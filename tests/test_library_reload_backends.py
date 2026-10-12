@@ -138,6 +138,60 @@ class TestOpenModelica:
         worker._library_load_seconds = 2 * worker._FILE_LOAD_SECONDS
         assert worker._files_to_load_again(changes) == list(changes.changed)
 
+    @pytest.mark.parametrize(
+        "where", ["no package.mo", "a linked directory", "below a linked directory"]
+    )
+    def test_a_file_omc_cannot_place_by_its_path_is_the_whole_library(
+        self, lib, tmp_path, where
+    ):
+        """One file is loaded by itself only where its path IS its class:
+        every directory from the library down to it holds a `package.mo`
+        — omc loads no file of a directory without one, and `loadFile` of
+        such a file fails with `Failed to insert class` — and none is a
+        symbolic link: the sweep spells a file through the first link that
+        reaches its directory, which need not be the one its `within`
+        names."""
+        if where == "no package.mo":
+            (lib / "Examples" / "Loose").mkdir()
+            path = lib / "Examples" / "Loose" / "F.mo"
+        else:
+            shared = tmp_path / "shared"
+            (shared / "Sub").mkdir(parents=True)
+            for rel in ("package.mo", "F.mo", "Sub/package.mo", "Sub/F.mo"):
+                (shared / rel).write_text("", encoding="utf-8")
+            os.symlink(shared, lib / "Examples" / "Linked")
+            sub = "" if where == "a linked directory" else "Sub/"
+            path = lib / "Examples" / "Linked" / (sub + "F.mo")
+        path.write_text("", encoding="utf-8")
+        worker = _om_worker(lib)
+        assert worker._files_to_load_again(LibraryChanges(changed=(path,))) is None
+        # ...and with it every other changed file, in the one whole load.
+        worker.reload(LibraryChanges(changed=(lib / "Examples" / "A.mo", path)))
+        assert worker.session.calls == [
+            f'loadFile("{lib}/package.mo")',
+            "existClass(Lib)",
+        ]
+
+    def test_a_file_two_packages_down_is_loaded_by_itself(self, lib):
+        (lib / "Examples" / "Deep").mkdir()
+        (lib / "Examples" / "Deep" / "package.mo").write_text("", encoding="utf-8")
+        path = lib / "Examples" / "Deep" / "F.mo"
+        path.write_text("", encoding="utf-8")
+        worker = _om_worker(lib, {"parseFile": _holds("Lib.Examples.Deep.F")})
+        worker.reload(LibraryChanges(changed=(path,)))
+        assert worker.session.calls == _one_by_one(lib, "Examples/Deep/F.mo")
+
+    def test_a_file_that_is_itself_a_link_is_loaded_by_itself(self, lib, tmp_path):
+        """A linked FILE has one spelling — its directory's — and omc loads
+        what it points at."""
+        kept = tmp_path / "A.mo"
+        kept.write_text("", encoding="utf-8")
+        path = lib / "Examples" / "A.mo"
+        path.unlink()
+        os.symlink(kept, path)
+        worker = _om_worker(lib, {"parseFile": _holds(A)})
+        assert worker._files_to_load_again(LibraryChanges(changed=(path,))) == [path]
+
     def test_a_whole_load_is_timed_for_the_next_choice(self, lib):
         worker = _om_worker(lib)
         worker.reload(None)
