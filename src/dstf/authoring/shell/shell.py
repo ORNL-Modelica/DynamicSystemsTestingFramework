@@ -27,8 +27,10 @@ from ...backends.pool import ItemState
 from ...cli.common import _filter_tests
 from ...reporting.theme import level_variables
 from ..capabilities import Capability, Placement, plural, registered_capabilities
+from ..errors import user_text
 from ..queue_rows import stop_reason
 from ..session import Selection, Session, SessionView
+from .actions import log_unless_users
 from .style import QUASAR, STYLE
 from .tab_theme import TabTheme
 from .tabstate import TabState
@@ -160,8 +162,12 @@ class Shell:
         try:
             self.session.open(self.config_path, backend=backend, work_dir=self.work_dir)
         except Exception as e:  # shown on the page (decision 8), never lost on a thread
-            logger.exception("opening %s failed", self.config_path)
-            error = f"{type(e).__name__}: {e}"
+            # A person's own — a testing.json or a spec edited by hand
+            # while the tool is open, then reopened — is its sentence on
+            # the page and no traceback in the console; a bug's is logged
+            # and keeps its class name (`user_text`).
+            log_unless_users(e, f"opening {self.config_path}")
+            error = user_text(e)
         self._events.put({"event": "opened", "error": error})
 
     # -- the loop --------------------------------------------------------------

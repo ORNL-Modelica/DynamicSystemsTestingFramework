@@ -816,9 +816,11 @@ async def test_the_page_appears_while_the_project_opens_and_says_where_it_stands
         assert shell.load.error is None
 
 
-async def test_an_open_that_fails_says_so_on_the_page(tmp_path):
+async def test_an_open_that_fails_says_so_on_the_page(tmp_path, caplog):
     """Decision 8: a backend this machine cannot build (here a name nobody
-    registered) leaves no project; the page says why and keeps the hint."""
+    registered) leaves no project; the page says why and keeps the hint.
+    It is a person's own error — a `ConfigError`: its sentence, with no
+    class name before it and no traceback in the console."""
     cfg, work = _project(tmp_path)
     shell = Shell(cfg, work_dir=work)
     async with user_simulation(root=shell.index) as user:
@@ -829,6 +831,54 @@ async def test_an_open_that_fails_says_so_on_the_page(tmp_path):
         await user.should_see("NoSuchBackend")
         await user.should_see("dstf author --config")
         assert shell.session.project is None
+        assert not shell.load.error.startswith("ConfigError")
+        assert _failure_records(caplog) == []
+
+
+async def test_a_spec_broken_by_hand_while_the_tool_is_open_is_said_plainly(
+    tmp_path, caplog
+):
+    """The project opened; its spec was then edited by hand into one with a
+    key nothing reads, and reopened: the page says the file's sentence —
+    the file's, so no "(in memory)" — and the console gets no traceback."""
+    cfg, work = _project(tmp_path)
+    shell = Shell(cfg, work_dir=work)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.open_async()
+        await _settled(lambda: shell.load.phase == "done")
+        spec = cfg.parent / "test_spec.json"
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        data["tests"][0]["simulaton"] = {"stop_time": 3}
+        spec.write_text(json.dumps(data), encoding="utf-8")
+        shell.open_async()
+        # the project that was open stays open: "done", with the error
+        await _settled(lambda: shell.load.error is not None)
+        assert shell.load.error == (
+            f'{spec}: tests[{A}]: unknown field "simulaton" — did you mean '
+            '"simulation"?'
+        )
+        await user.should_see("unknown field", retries=20)
+        assert _failure_records(caplog) == []
+
+
+async def test_an_open_that_fails_on_a_bug_is_logged_with_its_class(
+    tmp_path, monkeypatch, caplog
+):
+    cfg, work = _project(tmp_path)
+    shell = Shell(cfg, work_dir=work)
+
+    def broken(*args, **kwargs):
+        raise KeyError("a bug's")
+
+    monkeypatch.setattr(shell.session, "open", broken)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.open_async()
+        await _settled(lambda: shell.load.phase == "failed")
+        assert shell.load.error.startswith("KeyError")
+        (record,) = _failure_records(caplog)
+        assert isinstance(record.exc_info[1], KeyError)
 
 
 async def test_a_partial_scoring_failure_opens_the_project_with_a_warning(

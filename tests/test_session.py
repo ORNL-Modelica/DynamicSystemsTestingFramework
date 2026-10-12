@@ -2852,6 +2852,23 @@ class TestPlots:
         plot = s.plots(A)[0]
         assert plot.series == ("x", "gone") and plot.missing == ("gone",)
 
+    def test_an_error_in_the_edited_spec_says_it_is_not_the_files(self, tmp_path):
+        """A document with pending edits is not the file: its error says so.
+        One read from disk names the file alone — it said "(in memory)" of
+        both."""
+        from dstf.config import ConfigError
+
+        s = self._open(tmp_path)
+        with pytest.raises(ConfigError) as edited:
+            s.stage([PatchOp(A, "add", "/plots", [{"series": []}])])
+        assert str(edited.value).startswith(f"{s.spec.path} (with unsaved edits): ")
+        data = json.loads(s.spec.path.read_text(encoding="utf-8"))
+        data["tests"][0]["plots"] = [{"series": []}]
+        s.spec.path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(ConfigError) as on_disk:
+            s.reload()
+        assert str(on_disk.value).startswith(f"{s.spec.path}: tests[")
+
     def test_staging_an_invalid_layout_changes_nothing(self, tmp_path):
         from dstf.config import ConfigError
         from dstf.discovery.patch_apply import PatchError

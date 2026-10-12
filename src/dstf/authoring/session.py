@@ -346,6 +346,62 @@ def _unreadable(ask: _Ask, why: str) -> str:
     return f"{ask.model_id}: its file {ask.path} {why}"
 
 
+def resolve_project(
+    config_path: Path, *, backend: str | None = None, work_dir: Path | None = None
+) -> tuple[Config, str | None, Backend]:
+    """What an open of ``config_path`` works with: its Config, the warning
+    about the backend the last run recorded (or None), and the backend that
+    reads its results. Without an explicit ``backend`` the one the last run
+    recorded wins, as ``compare`` does. ``ConfigError`` for a testing.json
+    that cannot be read as one and for a backend this machine cannot
+    build."""
+    config_path = Path(config_path)
+    config = Config(config_file=config_path, backend_name=backend, work_dir=work_dir)
+    warning: str | None = None
+    if backend is None:
+        assert config.work_dir is not None  # resolved in __post_init__
+        recorded, warning = recorded_backend(config.work_dir)
+        if recorded and recorded != config.backend_name:
+            config = Config(
+                config_file=config_path, backend_name=recorded, work_dir=work_dir
+            )
+    try:
+        # The Session's backend reads results; it is not the queue's
+        # backend, so the batch class is what it wants. `select_backend`
+        # is the seam that turns every "this machine can't build it"
+        # failure — an unregistered name, a missing executable, an
+        # absent optional dependency — into one class, so `dstf author`
+        # prints a line where a RuntimeError tracebacked.
+        backend_obj = select_backend(config, persistent=False)
+    except BackendUnavailableError as e:
+        raise ConfigError(str(e)) from e
+    # A UI process has no console to narrate a run or a read to.
+    backend_obj.quiet = True
+    return config, warning, backend_obj
+
+
+def check_project(
+    config_path: Path, *, backend: str | None = None, work_dir: Path | None = None
+) -> None:
+    """Everything of an open that a config or spec error stops, and nothing
+    slow: the Config, the backend, and the spec file parsed as the open
+    parses it — no scan of the library, no result read. ``ConfigError``
+    with the sentence every other command prints.
+
+    ``dstf author`` runs it BEFORE it serves: the project used to be opened
+    only once the server was up, on a thread, so `"theme": "neon"`, a
+    `baseline_points` of 1 or an unknown spec key started the server,
+    logged a traceback and showed the error in the page — where `run` and
+    `compare` print one `Config error: …` line and exit 2."""
+    config, _warning, _backend = resolve_project(
+        config_path, backend=backend, work_dir=work_dir
+    )
+    spec = SpecDocument.load(config.spec_path)
+    spec_models_from_document(
+        spec.loaded, base_dir=config.spec_path.parent, label=str(config.spec_path)
+    )
+
+
 class StaleSpecError(RuntimeError):
     def __init__(self, path: Path):
         self.path = path
@@ -496,30 +552,9 @@ class Session:
         Refused while the queue holds a test or while edits are pending —
         save or discard first; a swap must never drop them silently."""
         self._refuse_if_busy()
-        config_path = Path(config_path)
-        config = Config(
-            config_file=config_path, backend_name=backend, work_dir=work_dir
+        config, warning, backend_obj = resolve_project(
+            config_path, backend=backend, work_dir=work_dir
         )
-        warning: str | None = None
-        if backend is None:
-            assert config.work_dir is not None  # resolved in __post_init__
-            recorded, warning = recorded_backend(config.work_dir)
-            if recorded and recorded != config.backend_name:
-                config = Config(
-                    config_file=config_path, backend_name=recorded, work_dir=work_dir
-                )
-        try:
-            # The Session's backend reads results; it is not the queue's
-            # backend, so the batch class is what it wants. `select_backend`
-            # is the seam that turns every "this machine can't build it"
-            # failure — an unregistered name, a missing executable, an
-            # absent optional dependency — into one class, so `dstf author`
-            # prints a line where a RuntimeError tracebacked.
-            backend_obj = select_backend(config, persistent=False)
-        except BackendUnavailableError as e:
-            raise ConfigError(str(e)) from e
-        # A UI process has no console to narrate a run or a read to.
-        backend_obj.quiet = True
         store = ReferenceStore(config)
         spec = SpecDocument.load(config.spec_path)
         # The models this open can name before the scan — the spec's and the
@@ -551,7 +586,7 @@ class Session:
                 )
                 store_scan(config, scanned)
             locate = SpecModelLocator(config)
-            tests = self._merge(config, scanned, spec.effective(), locate)
+            tests = self._merge(config, scanned, spec.effective(), locate, edited=False)
             # The queue is the open project's, and its workers the open
             # backend's: both end here, at the commit point (nothing is
             # queued or running — refused above).
@@ -1603,7 +1638,11 @@ class Session:
         if gone or put_back:
             effective = candidate.effective()
         tests = self._merge(
-            project.config, project.scanned, effective, project.locate
+            project.config,
+            project.scanned,
+            effective,
+            project.locate,
+            edited=bool(candidate.pending),
         )  # ConfigError on a bad tree
         # A criterion on a variable the result file holds but the last read
         # did not extract: read again with the merged TestModel, which now
@@ -1668,7 +1707,11 @@ class Session:
             tests = {
                 t.model_id: t
                 for t in self._merge(
-                    project.config, project.scanned, self.spec.loaded, project.locate
+                    project.config,
+                    project.scanned,
+                    self.spec.loaded,
+                    project.locate,
+                    edited=False,
                 )
             }
             for m in rest:
@@ -2254,11 +2297,18 @@ class Session:
         scanned: dict[str, TestModel],
         document: dict,
         locate: SpecModelLocator,
+        *,
+        edited: bool,
     ) -> list[TestModel]:
+        """The project's tests from the scan and the spec ``document``.
+        ``edited`` says whether that document holds pending edits: an error
+        in one that does not is the FILE's, and names the file alone — it
+        said "(in memory)" of a spec just read from disk."""
+        label = str(config.spec_path)
         models = spec_models_from_document(
             document,
             base_dir=config.spec_path.parent,
-            label=f"{config.spec_path} (in memory)",
+            label=f"{label} (with unsaved edits)" if edited else label,
         )
         return merge_tests(scanned, spec_tests_by_model(models), locate=locate)
 
@@ -2284,7 +2334,13 @@ class Session:
         again = scanned is not None or locate is not None
         scan = project.scanned if scanned is None else scanned
         locate = project.locate if locate is None else locate
-        tests = self._merge(project.config, scan, self.spec.effective(), locate)
+        tests = self._merge(
+            project.config,
+            scan,
+            self.spec.effective(),
+            locate,
+            edited=bool(self.spec.pending),
+        )
         current = {t.model_id for t in tests}
         reread = models & current if again else set()
         fresh = self._read_again(reread, tests) if reread else {}

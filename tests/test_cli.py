@@ -340,6 +340,65 @@ def test_author_without_regex_says_how_to_install_it(monkeypatch, capsys, tmp_pa
     assert "--extra author" in err and "regex" in err
 
 
+def _edit_json(path, change) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    change(data)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "file,change,says",
+    [
+        ("testing.json", lambda d: d.update(theme="neon"), "theme"),
+        ("testing.json", lambda d: d.update(baseline_points=1), "baseline_points"),
+        (
+            "test_spec.json",
+            lambda d: d["tests"][0].update(simulaton={"stop_time": 3}),
+            'test_spec.json: tests[FakeLib.A]: unknown field "simulaton" — did you '
+            'mean "simulation"?',
+        ),
+        ("test_spec.json", lambda d: d.update(Tests=[]), 'unknown field "Tests"'),
+    ],
+    ids=["theme", "baseline_points", "spec-entry-key", "spec-root-key"],
+)
+def test_author_with_a_config_or_spec_error_serves_nothing(
+    tmp_path, monkeypatch, capsys, file, change, says
+):
+    """`dstf author` opened the project on a thread AFTER the server was
+    up: an error `run` prints as one `Config error: …` line and exits 2 on
+    started the server, logged a traceback and showed in the page."""
+    pytest.importorskip("nicegui")
+    import dstf.authoring.shell.app as app_mod
+    from test_session import _project
+
+    served = []
+    monkeypatch.setattr(app_mod.ui, "run", lambda *a, **k: served.append(a))
+    cfg, work = _project(tmp_path)
+    _edit_json(cfg.parent / file, change)
+    capsys.readouterr()
+    rc = main(["--config", str(cfg), "author", "--no-browser", "--port", "8831"])
+    assert rc == 2 and served == []
+    (line,) = capsys.readouterr().err.strip().splitlines()
+    assert line.startswith("Config error: ") and says in line
+    assert "(in memory)" not in line and "Traceback" not in line
+
+
+def test_author_with_a_project_that_opens_serves(tmp_path, monkeypatch, capsys):
+    """The control: the check that stops a bad project lets a good one by."""
+    pytest.importorskip("nicegui")
+    import dstf.authoring.shell.app as app_mod
+    from test_session import _project
+
+    served = []
+    monkeypatch.setattr(app_mod.ui, "run", lambda *a, **k: served.append(a))
+    monkeypatch.setattr(app_mod.app, "on_startup", lambda fn: None)
+    monkeypatch.setattr(app_mod.app, "on_shutdown", lambda fn: None)
+    monkeypatch.setattr(app_mod.Shell, "mount", lambda self: None)
+    cfg, work = _project(tmp_path)
+    rc = main(["--config", str(cfg), "author", "--no-browser", "--port", "8831"])
+    assert rc == 0 and len(served) == 1
+
+
 def test_author_checks_every_package_of_the_extra():
     """The install check imports `_AUTHOR_MODULES`, and nothing else ties
     it to pyproject.toml's ``author`` extra: a package added there and not
