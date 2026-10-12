@@ -32,15 +32,23 @@ Create a `testing.json` in your reference results directory. This is the single 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `source_path` | No | Path to library source location (Modelica package.mo directory, FMU directory, etc.). Relative to `testing.json` location. Can be provided via `--source-path` instead. |
-| `backend` | No | Backend name (default: `"Dymola"`). Use named entries like `"Dymola 2025"` to target specific versions. |
+| `source_type` | No | `"modelica"` (the default: `source_path` holds a `package.mo` and its `.mo` files are scanned for tests), or `"fmu"` / `"julia"` / `"python"`, whose tests come from `test_spec.json` alone. |
+| `library_name` | No | The library's name for a non-Modelica source (default: the name of the directory holding `testing.json`); a Modelica library's is read from its `package.mo`. |
+| `backend` | No | Backend name. Use named entries like `"Dymola 2025"` to target specific versions. Omitted: the first `backends` entry whose executable exists on this machine, else `"Dymola"`. |
 | `backends` | No | Map of backend names to candidate executable paths (first existing path wins). Falls back to system PATH. |
-| `dependencies` | No | Paths to dependency library roots loaded before simulation. Relative to `testing.json` location. |
+| `dependencies` | No | Paths to dependency library roots loaded before simulation, relative to `testing.json` location — or a bare library name (`"Modelica"`), which OpenModelica loads by name. |
 | `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
+| `recognizers` | No | Declarative recognizers for your library's own test convention, added to the bundled one (see "Test definitions"). |
+| `disable_bundled` | No | Names of bundled recognizers to turn off, e.g. `["modelica:bundled-unit-tests"]`. |
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
+| `max_embedded_samples` | No | The most samples a per-test report page embeds per trace (default: `1000`); longer ones are decimated, and the page's banner says which. |
 | `tolerance` | No | The project's comparison tolerance (default: `1e-4`): what a test with no `comparison.tolerance` of its own, in its spec entry or its baseline, is scored with. One finite number — anything else is a config error (see "Tolerances with two sides"). `--tolerance` overrides it. |
 | `worker_startup_timeout` | No | Seconds a persistent worker (Dymola, OpenModelica, Julia) may take to start before the run fails with the backend's message. One positive number; default 600 on every backend. The bound is for a tool that hangs — a tool that died fails the start at once — so raise it only for a library whose load takes longer (a large library is minutes of `loadFile` in OpenModelica); the message of a start that ran out names this key and the step the tool was in. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
+| `work_dir` | No | Where runs write their output, relative to `testing.json` location (default: `testing_output/<library>/<backend>/<os>/` under the current directory). `--work-dir` overrides it. |
+| `os` | No | The OS partition of the references (default: detected — `windows`, `linux` or `macos`). |
+| `show_ide` | No | `true` shows the Dymola GUI instead of running headless, as `--show-ide` does. |
 | `theme` | No | The bundled theme the pages are drawn in: `"default"` (the default) or `"dark"`. The dashboard and the per-test report pages are generated in it — set it and re-run or `compare` to regenerate them — and `dstf author` opens in it. A name only: any other value, a path included, is a config error that lists the two. There is no flag for it. |
 
 All relative paths resolve from where `testing.json` is located.
@@ -81,7 +89,7 @@ Tests are discovered from three sources (can be combined; merged by model_id, la
 }
 ```
 
-Modelica match types: `component-instantiation` (`component_name`), `extends` (`class_pattern` glob). Field sources: `parameter` (from matched component), `constant` (literal value), `experiment-annotation` (from standard `experiment(...)` block). Per-field merge with last-writer-wins lets a user recognizer override individual fields without disabling bundled. To turn the bundled recognizer off entirely (e.g. when a dependency lib's example tests would otherwise be discovered), add its name to `disable_bundled`: `["modelica:bundled-unit-tests"]`. See `examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json` for a working demo.
+Modelica match types: `component-instantiation` (`component_name`), `extends` (`class_pattern` glob), `class-name-glob`, and `all-of` / `any-of` over those. Field sources: `parameter` (from matched component), `constant` (literal value), `experiment-annotation` (from standard `experiment(...)` block), `annotation` (from another annotation). The schema is at the top of `src/dstf/discovery/json_recognizer.py`. Per-field merge with last-writer-wins lets a user recognizer override individual fields without disabling bundled. To turn the bundled recognizer off entirely (e.g. when a dependency lib's example tests would otherwise be discovered), add its name to `disable_bundled`: `["modelica:bundled-unit-tests"]`. See `examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json` for a working demo.
 
 **3. External `test_spec.json`** — for per-test overrides, MetricTrees, or variable specifications independent of any in-model annotation:
 
@@ -251,9 +259,10 @@ It is a key of nothing. The one exception is overlay matching, and even there
 the expression is only the fallback: a companion records which of ITS
 variables draw on which of the test's, in its own metadata (see
 [Companions](#companions) below and `docs/decisions.md` D132). A companion
-with no mapping — and a soft-check or sibling-backend overlay, which never
-has one — is matched by name, then by expression, because another tool's
-result file cannot be expected to spell a positional name.
+with no mapping is matched by name, then by expression, because another tool's
+result file cannot be expected to spell a positional name. A soft-check or
+sibling-backend overlay is DSTF's own data under the test's own names, and
+is matched by name alone.
 
 A `test_spec.json` written before this change names expressions where it now
 needs names, and a baseline accepted before it is stored under the expression
@@ -504,7 +513,7 @@ A test can be scored against more than one baseline: the `primary` baseline (wha
 }
 ```
 
-Soft_checks are added from the CLI with `dstf import-baseline <model> soft_check <name> <source>`, or programmatically:
+Soft_checks are added from the CLI with `dstf import-baseline <model> <name> <source>`, or programmatically:
 
 ```python
 from dstf.config import Config
@@ -641,7 +650,7 @@ uv run dstf --config testing.json run -i
 | `--show-ide` | Show Dymola GUI instead of headless |
 | `--tolerance FLOAT` | Override the project's comparison tolerance (`testing.json`'s `tolerance`); one finite number |
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
-| `--timeout SECS` | Per-test timeout in seconds (default: 600) |
+| `--timeout SECS` | Per-test timeout in seconds (default: 60) |
 | `--work-dir PATH` | Override output directory |
 | `--report-format` | `console` (default), `junit`, or `html` (the dashboard page, written to `--output`) |
 
@@ -672,7 +681,7 @@ number — prints its reason as `Error: …` and is not offered `a`.
 DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the live progress page during a run and the final report after comparison.
 
 - **During a run**: the page is re-written on every state change and reloads itself every 5s (a meta refresh — a script fetch is blocked on `file://`). It stays live until the command that started the run has finished with it.
-- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/test_NNNN/interactive.html`, linked from the Model column. A name is a link only where this page read that test's report: a run clears the report pages of the tests it runs, so after a plain `run` or `compare`, and for a test the queue of `dstf author` ran, the name is plain text until a `--report` writes its page again.
+- **After comparison**: the same page is re-rendered in final mode — the refresh is dropped and each row carries its verdict and its numbers (Worst NRMSE, Variables, Warnings) and its Translate / Sim / Total wall times. The Reference link comes from the per-test report, so it is filled only with `--report`, which also writes the per-test interactive deep dives at `reports/ref_NNNN/interactive.html` (`reports/test_NNNN/` for a test with no baseline), linked from the Test column. A name is a link only where this page read that test's report: a run clears the report pages of the tests it runs, so after a plain `run` or `compare`, and for a test the queue of `dstf author` ran, the name is plain text until a `--report` writes its page again.
 - **Which rows**: a live page lists the tests the running run holds. A final page lists the last run's tests and then every other test the command scored, in the work dir's manifest order. So `compare` after a `--filter` run, a `--merge` run, and a drained queue in `dstf author` list every test with its verdict; a plain `--filter` run without `--merge` lists only its own tests, because those are all it scored. A test the last run did not run keeps its per-test report (and its Reference link) while that report is newer than the test's own last run. The status bar of such a page names both counts: `Final report · 331 tests · last run: 1 test in 0.4s` — for a drained queue, the time from its first test's start to its last one's end.
 
 The **Translate (s) / Sim (s) / Total (s)** columns — on the dashboard and on the Suite page of `dstf author` — are wall-clock seconds. Total is always the whole test; what Translate and Sim time depends on the backend:
@@ -693,7 +702,7 @@ The count pills along the top are the status filter: click one to show only its 
 
 Every column but Status has a typed filter under its header:
 
-- **Text columns** (Test, Reference, Model, Resolution, Worker, Message) match a **substring** by default, case-insensitively. A query containing `*` or `?` is a **glob** matched against the whole value (`*Pipe` matches `GenericPipe`, not `GenericPipe_Test`; `[` and `]` are literal). With the **`.*`** toggle pressed every text filter is a **regex**, searched (a bad one marks its box and filters nothing); with **`Aa`** pressed every text filter matches case. A row with no value in the column reads as empty to its filter, not as the `—` its cell shows — so a regex `.` on Message shows the rows that have a message.
+- **Text columns** (Key, Reference, Test, Resolution, Worker, Message) match a **substring** by default, case-insensitively. A query containing `*` or `?` is a **glob** matched against the whole value (`*Pipe` matches `GenericPipe`, not `GenericPipe_Test`; `[` and `]` are literal). With the **`.*`** toggle pressed every text filter is a **regex**, searched (a bad one marks its box and filters nothing); with **`Aa`** pressed every text filter matches case. A row with no value in the column reads as empty to its filter, not as the `—` its cell shows — so a regex `.` on Message shows the rows that have a message.
 - **Number columns** (Elapsed, Worst NRMSE, Variables, Warnings, Translate, Sim, Total) take a comparison — `>x`, `>=x`, `<x`, `<=x`, `=x` (a bare number is `=`) — or an inclusive range `a..b` (`1e-6..1e-4`). They compare the value, not its display text; a row with no value never matches. Variables filters on the number passed.
 
 Every column sorts on a 3-state cycle (none → sorted → reverse → none). Numeric columns sort descending first (largest first when triaging failures); text columns sort ascending first. A row with no value sorts last both ways.
@@ -926,9 +935,10 @@ and the report pages stay in the theme they were generated in. On `dark`, a
 status row and a status pill are dimmed — the status's colour laid thin over
 the dark surface, with its light shade as the text — while a filled badge is
 the same in both themes; a plot's background, grid, axes, legend and hover
-label follow the theme, and its series keep their colours except five that
-would not read on a dark plot (the soft-check overlay's purple and the darkest
-shades of an array's colour ramp), which are lighter there.
+label follow the theme, and its series keep their colours except eight that
+would not read on a dark plot (the soft-check, sibling-backend and companion
+overlays, the actual's event line and the darkest shades of an array's colour
+ramp), which are lighter there.
 
 **The preview** is the pending-op count's drawer: per edited test, in staging
 order, its entry before and after its edits as `test_spec.json` will hold it
@@ -1032,10 +1042,10 @@ leaves no result (where the backend cannot stop a test — FMPy — the row says
 so instead). Until the simulation has ended the row reads `cancelling…` and
 the test's strip "Cancelling on worker 2…", with no second Cancel: usually a
 moment, but on Dymola a model blocked in an external call does not see the
-request and is stopped with its worker after about 11 s; an ended row has **Open test** and the Suite's own actions for
+request and is stopped with its worker after about 12 s; an ended row has **Open test** and the Suite's own actions for
 that one test, Accept and Queue. The panel's header counts the rows, holds
-the **workers** field — how many tests run at once, from `parallel` in
-`testing.json`, between 1 and the machine's cores; a change applies to workers
+the **workers** field — how many tests run at once: 1 when the tool starts,
+between 1 and the machine's cores; a change applies to workers
 started after it — **Clear finished**, which drops the ended rows and leaves
 their results, and a ⋮ with **Stop workers**: the simulator processes end and
 their licence seats are free, and the next queued test starts new ones (it is
@@ -1833,7 +1843,10 @@ times, so it stays clear of them (with no reference, the largest gap between
 the rows' times, or `1.0` past the last time when fewer than two rows have
 one). On an empty table that is the middle of the reference, and the row has
 required numbers `0.0`, optional ones blank and each choice at its default — a
-tube row gets `upper` and `lower` `0.0`, a zero-width band to widen. Save writes
+tube row gets, as `upper` and `lower`, the constant width the tube is scored
+by (`tube_abs` on `band`, `tube_rel` on `rel`, a number or a pair), so the
+click alone changes no verdict; an `abs` tube has no constant width and its
+first row is `0.0` / `0.0`, literal bounds to set. Save writes
 table and drag edits like any other pending op.
 
 **Save, Discard, Export.** Save applies exactly the pending ops through the same
