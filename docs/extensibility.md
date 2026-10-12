@@ -18,7 +18,7 @@ class DymolaBackend(Backend):
     ...
 ```
 
-Resolution: config specifies a name (`"backend": "Dymola"` or `"metric": "nrmse"`), a factory looks it up. Unknown names produce a clear error listing available plug-ins. Backends, metrics, combinators, dataset types, discovery strategies all use independent registries under `dstf.{backends,metrics,combinators,datasets,discovery}`.
+Resolution: config specifies a name (`"backend": "Dymola"` or `"metric": "nrmse"`), a factory looks it up. Unknown names produce a clear error listing available plug-ins. Backends, metrics, combinators and recognizers use independent registries: `dstf.backends` (`register`), `dstf.comparison.registry` (`register_metric`, `register_combinator`) and `dstf.discovery.recognizer`; the dataset types are a closed enum (`backends.types.DatasetType`), not a registry.
 
 ### Shipping a plug-in in your own package
 
@@ -254,7 +254,11 @@ What the reader guarantees, and why:
 - **A new run is recognised** when the file was gone at a poll, its
   (device, inode) changed, it got smaller, or the last row served no longer
   reads back as it did (a recreated file takes the removed one's inode on
-  ext4, so identity and size alone can say "the same file, longer").
+  ext4, so identity and size alone can say "the same file, longer") — or,
+  while no row was served yet, its header names another structure than the
+  one read before (other names, other columns, another row shape). Not
+  recognised: a file put in place of one whose rows were served, no smaller
+  than it, with the same bytes at the last row served.
 - **A poll returns at most `max_rows` samples per name.** A longer backlog —
   the first poll of a run long under way, a name first asked for late — is
   thinned to that many, evenly spaced and always ending on the newest row.
@@ -433,7 +437,7 @@ Worked example: `backends/openmodelica/persistent_backend.py` has the most compa
 | `waiting`, `running`, `stopped`, `can_cancel`, `path` | The queue in order, the items running, the message the pool stopped with, the capability, the per-item path. |
 | `close()` | Waiting items `REMOVED`, running ones stopped (`CANCELLED`), every worker closed, every thread joined. The owner must call it. |
 
-First in, first out. No worker exists before the first `submit`; then as many as there are items, up to `workers`. An item (`QueueItem`) carries `state`, `test_key`, `worker_id`, `run_result`, `result`, `message` and wall-clock stamps:
+First in, first out. No worker exists before the first `submit`; then as many as there are items, up to `workers`. An item (`QueueItem`) carries `state`, `test_key`, `worker_id`, `run_result`, `result`, `message`, wall-clock stamps and `stopping` — a stop was asked of it and it has not ended, for as long as the backend takes:
 
 | `ItemState` | Meaning |
 |---|---|
@@ -460,8 +464,8 @@ A backend that only runs whole batches (the `.mos` `DymolaBackend`) is refused w
 
 `Backend` ABC with five concrete implementations: `DymolaBackend`, `OpenModelicaBackend` (native Modelica), `FmpyBackend` (FMU), `JuliaBackend` (ModelingToolkit), and `PythonBackend` (arbitrary `simulate()`). The `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract gate feature availability per backend.
 
-- `DymolaBackend` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK}`. `FMU_EXPORT` and `CANCEL` sit on `PersistentDymolaBackend`, not here — batch mode has no `.mos` export path and no stop (see the note above about declaring a capability on the class that actually has it).
-- `OpenModelicaBackend` and `JuliaBackend` declare `{PERSISTENT_WORKERS, BATCH_FALLBACK}`; `PersistentOpenModelicaBackend` and `PersistentJuliaBackend` declare the same pair plus `CANCEL`.
+- `DymolaBackend` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, LIVE_RESULTS}`. `FMU_EXPORT` and `CANCEL` sit on `PersistentDymolaBackend` (`{PERSISTENT_WORKERS, FMU_EXPORT, LIVE_RESULTS, CANCEL}`), not here — batch mode has no `.mos` export path and no stop (see the note above about declaring a capability on the class that actually has it).
+- `OpenModelicaBackend` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, LIVE_RESULTS}` and `JuliaBackend` `{PERSISTENT_WORKERS, BATCH_FALLBACK}`; `PersistentOpenModelicaBackend` and `PersistentJuliaBackend` declare what their batch class does plus `CANCEL`.
 - `PythonBackend` declares `{BATCH_FALLBACK, CANCEL}` — subprocess per test, which a cancel kills; a long-lived Python worker is deferred, and FMU export isn't meaningful for arbitrary `simulate()` scripts.
 - `FmpyBackend` declares `frozenset()` — no persistent worker exists, no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs).
 
@@ -573,7 +577,7 @@ class MetricResult:
     diagnostics: dict[str, Any]      # per-variable NRMSE, tube violations, event mismatches, ...
 ```
 
-The MetricTree node referencing a metric specifies `"against": "<baseline-name>"` so a single test can carry multiple named baselines (see [vision.md](vision.md) "Multiple named baselines"). Cross-baseline comparison metrics (e.g. "how similar are Dymola and FMU outputs?") take two baseline names: `"against": ["dymola", "fmu"]`.
+The MetricTree node referencing a metric specifies `"against": "<baseline-name>"` so a single test can carry multiple named baselines (see [vision.md](vision.md) "Multiple named baselines"). Cross-baseline comparison metrics (e.g. "how similar are Dymola and FMU outputs?") would take two baseline names, `"against": ["dymola", "fmu"]` — not built: `against` is one name today, and a list is a spec error.
 
 **Contract**:
 1. `accepted_datasets` declares which Dataset types the metric consumes. A
@@ -800,12 +804,12 @@ And references it in `test_spec.json` like any built-in:
 ```
 
 The framework requires no change; `tests/test_metric_registry.py` proves the
-full round-trip with a toy metric. One boundary to know: the interactive
-report's **live** re-scoring and its add-leaf dropdown are implemented in
-the template JS, which carries its own scorer table — a Python-registered
-metric evaluates, renders, and exports normally but shows the
-"CLI-authoritative" badge (its pill updates on the next `dstf run`, exactly
-like the built-in `event-timing`).
+full round-trip with a toy metric. There is no second scorer to keep in
+step: the report page computes nothing (D125) and `dstf author` scores
+through the same registry, so a Python-registered metric evaluates, renders,
+exports and is offered in the tool's add form like a built-in. What it draws
+on a plot is the geometry its `compare` emits; what can be dragged is its
+`edit_handle` (item 7).
 
 ---
 
@@ -845,14 +849,14 @@ Composed case (landed in Phase 3 — schema lives under the `metrics` key):
   "metrics": {
     "combinator": "or",
     "children": [
-      {"metric": "tube", "variable": "pipe.T[1]", "tube_rel": 0.02},
+      {"metric": "tube", "variable": "pipe.T[1]", "tube_width_mode": "rel", "tube_rel": 0.02},
       {"metric": "nrmse", "variable": "pipe.T[1]", "tolerance": 0.05}
     ]
   }
 }
 ```
 
-Leaf metrics available today: `nrmse`, `tube`, `points`, `range`. Leaf params (tolerance, tube_*, min/max) live flat on the leaf node — same field names as the legacy `variable_overrides`. Combinators: `and`, `or`, `k-of-n` (requires `k`), `warn` (exactly one child).
+Leaf metrics available today: `nrmse`, `tube`, `points`, `range`, `event-timing`, `dominant-frequency`, `scalar`. Leaf params (tolerance, tube_*, min/max) live flat on the leaf node — same field names as the legacy `variable_overrides`. Combinators: `and`, `or`, `k-of-n` (requires `k`), `warn` (exactly one child), `weighted` (requires `weights` and `threshold`).
 
 When `metrics` is set, the tree fully controls scoring on that test — legacy `comparison.variable_overrides` is ignored (the same fields move into each leaf's params).
 
@@ -863,11 +867,11 @@ Phase 3 wired MetricTree end-to-end:
 - `comparison/tree_spec.py` — parses user specs (`"metrics"` block) into `LeafSpec` / `CombinatorSpec` with path-bearing validation errors.
 - `comparison/tree_eval.py` — walks a parsed spec against simulation + reference data to produce an evaluated `MetricResult` tree, and serializes the result for report rendering.
 - `compare_test()` derives `TestComparison.passed` from the tree root. Users authoring a `metrics` block get their tree; others get the implicit flat-AND (behavior-preserving for all pre-Phase-3 specs).
-- Per-test HTML report renders the tree when user-authored (`comparison.html`).
+- Per-test HTML report renders the tree (`interactive.html`), with the CLI's verdict per node.
 
-Leaf contract is validated across four metrics spanning two shapes: three reference-consuming (`nrmse`, `tube`, `points`) and one signal-only (`range` — bounds come from the spec, not a baseline).
+Leaf contract is validated across seven metrics: reference-consuming (`nrmse`, `tube`, `points`, `event-timing`, `dominant-frequency`), signal-only (`range` — bounds come from the spec, not a baseline) and single-number (`scalar`). Multi-baseline leaves (`"against": "experiment"`), the `weighted` combinator and the Dymola→FMPy cross-backend chain landed after Phase 3.
 
-Deferred (Phase 4+): multi-baseline leaves (`"against": "experiment"`), cross-backend verification, additional leaf types (event-timing, spectral, Fréchet, KS), `weighted` combinator.
+Deferred: additional leaf types (Fréchet, KS).
 
 ---
 
@@ -875,7 +879,7 @@ Deferred (Phase 4+): multi-baseline leaves (`"against": "experiment"`), cross-ba
 
 The authoring tool is a plug-in surface too. A **capability** is one thing an
 author can do to a project — edit a criterion, edit the tree, accept results,
-rerun a selection, drag a tube's control points — and it registers through the
+queue a selection, drag a tube's control points — and it registers through the
 same `dstf.plugins` entry-point group a metric does. A capability decides
 whether it is available, builds its own controls, and returns an *outcome*; it
 applies nothing itself, so the session stays the single place where a spec is
@@ -1183,8 +1187,9 @@ whose state is the shape of the field's value: a number while linked, a
 nothing until the other is. The same
 `derive_schema` feeds `dstf export-schema`'s JSON-Schema emitter.
 
-The five shipped capabilities live in `authoring/builtin/` and register through
-this same call — Edit criteria and Edit tree return a `Patch`, Accept a
+The six shipped capabilities live in `authoring/builtin/` and register through
+this same call — Edit criteria, Edit tree and Edit family (the folded row's
+Indices, at `FAMILY_CRITERION`) return a `Patch`, Accept a
 `StoreWrite` over the shared accept function, Queue (`EnqueueTests`, named for
 what it does: "queue" is the shell's word for the queue itself, and the shell
 names no capability) an `Enqueue`, and Edit on
@@ -1206,7 +1211,7 @@ Every plug-in, regardless of layer, must honor:
 1. **Determinism** — same inputs produce the same outputs. No wall-clock, no PID, no randomness without an explicit seed.
 2. **JSON-serializable configuration** — all plug-in config must round-trip through `test_spec.json` and the reference JSON.
 3. **Clear error messages on misuse** — "Backend `Foo` does not produce `Events`; metric `event-timing` requires it" is a framework-level check, not a runtime crash.
-4. **No framework-core edits** — if adding a plug-in requires editing the `cli/` package, `config.py`, or anything outside `backends/`, `metrics/`, `combinators/`, `discovery/`, the abstraction is wrong. File an issue before working around it.
+4. **No framework-core edits** — if adding a plug-in requires editing the `cli/` package, `config.py`, or anything outside its own package and the registry it registers with (`backends/`, `comparison/registry.py`, `discovery/recognizer.py`, `authoring/capabilities.py`), the abstraction is wrong. File an issue before working around it.
 5. **Test fixture included** — every plug-in ships with at least one test against a known-good input.
 
 ---
@@ -1217,22 +1222,24 @@ Every plug-in, regardless of layer, must honor:
 src/dstf/
   backends/
     <name>/           # all tool-specific code for backend <name>
-  metrics/
-    <name>.py         # single-file metrics; <name>/ for larger
-  combinators/
-    <name>.py
+  comparison/
+    modes.py          # the built-in metrics' modes and typed configs
+    builtins.py       # their MetricDescriptors, registered at import
+    metric_tree.py    # the built-in combinators
   discovery/
     <name>.py         # one file per strategy
-  datasets/
-    __init__.py       # closed set; framework-internal
+  authoring/builtin/
+    <name>.py         # one file per shipped capability
 
 examples/
   modelica/
     ModelicaTestingLib/    # Modelica demo library (also used as pytest fixture)
   fmu/
-    reference-fmus/        # FMI org's Reference-FMUs (pinned)
-  julia/                   # planned
-  data-file/               # planned (CSV experiment fixtures)
+    reference-fmus-binaries/   # FMI org's Reference-FMUs (fetched by scripts/fetch_reference_fmus.py)
+  julia/
+    JuliaMtkTestingLib/    # ModelingToolkit demo library
+  python/
+    PythonTestingLib/      # Python demo library (scipy ODEs, a CSV data loader)
 ```
 
 Each directory under `examples/` demonstrates one Source type end-to-end — a working reference a user can copy. Pytest fixtures (captured artefacts for unit-testing internals like the MAT reader) remain under `tests/fixtures/` and are separate from `examples/`.

@@ -8,7 +8,7 @@ A **regression and unit-testing framework for any time-dependent system behavior
 - **How it is produced** (Dymola Python interface, OMPython, FMPy, JuliaCall, MATLAB engine, a subprocess, nothing at all for data-file ingest).
 - **What counts as "correct"** (NRMSE, tube envelope, event timing, spectral coherence, statistical distribution, domain-specific metrics the user writes).
 
-The current codebase is a strong, careful Modelica/Dymola implementation of this idea. The framework already has extension points (`@register` backends, `ComparisonMode` strategies); they have not been exercised. This document captures where we are going, so Phase 1+ refactors and new backends hit a consistent target.
+The current codebase implements this idea for five backends — Dymola, OpenModelica, FMPy, Julia/ModelingToolkit and arbitrary Python — through the extension points it set out with (`@register` backends, the metric registry, recognizers). This document captures where we are going, so new backends and metrics hit a consistent target.
 
 ---
 
@@ -47,7 +47,7 @@ The framework is structured around six layers. Each is a plug-in point; each has
   MetricTree      — composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
 ```
 
-Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, points, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types, weighted combinator.
+Most layers are explicit: Source selects via `source_type` (Modelica, FMU, Julia or Python today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola, OpenModelica, FMPy, Julia and Python, Dataset is still time-series only, Metric offers seven built-ins (NRMSE, tube, points, range, event-timing, dominant-frequency, scalar), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn / weighted combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types.
 
 ---
 
@@ -75,12 +75,15 @@ This is the natural completion of the "Modelica is the first consumer, not the r
 
 ## Backend capabilities (first-class)
 
-Backends are not all equivalent. Rather than assume every backend supports every workflow, backends declare **capabilities** on their contract — a `capabilities: frozenset[Capability]` class attribute. `Capability` has exactly three members:
+Backends are not all equivalent. Rather than assume every backend supports every workflow, backends declare **capabilities** on their contract — a `capabilities: frozenset[Capability]` class attribute. `Capability` has five members:
 
 - `PERSISTENT_WORKERS` — can hold a loaded model in memory and simulate many tests per worker (Dymola, OpenModelica and Julia: yes; FMPy: no — it runs in-process and declares nothing). Declare it on the **registered** class: `backends.select_backend` (the CLI's `_get_backend` is its wrapper) reads the batch class's `capabilities` to decide whether to select the persistent variant, so declaring it only on the persistent class means it is never seen.
 - `BATCH_FALLBACK` — exposes a script-driven non-interactive fallback (Dymola, OpenModelica, Julia and Python: yes; FMPy: no).
 - `FMU_EXPORT` — can export a test artefact as an FMU. Declared by `PersistentDymolaBackend`, since the export needs a live interface; the batch class does not have one. Enables cross-backend verification (see below).
-A separate class attribute, `produced_datasets: frozenset[DatasetType]`, declares the set of dataset kinds a backend can yield (most produce `TimeSeries` and `Events`; a data-file backend may produce only `TimeSeries`).
+- `LIVE_RESULTS` — the result file grows while the run is in progress and can be read then (Dymola and OpenModelica). What lets the authoring tool draw a running test's trace.
+- `CANCEL` — can stop a test that is running, from another thread (the persistent Dymola, OpenModelica and Julia backends, and Python; FMPy: no). What the authoring tool's queue cancels through.
+
+A separate class attribute, `produced_datasets: frozenset[DatasetType]`, declares the set of dataset kinds a backend can yield (every backend declares `TimeSeries` alone today).
 
 Capabilities let the framework enable/disable features per backend without special-casing, and let users query at config time ("does this backend support what my test needs?").
 
@@ -127,14 +130,14 @@ A lightweight heuristic layer that looks at a signal (and optional baseline) and
 
 ## Metric composition
 
-Today, a test passes iff every variable's single metric passes. This is too narrow for the target audience:
+Without a tree, a test passes iff every variable's single metric passes. That is too narrow for the target audience:
 
 - Users want to stack metrics: *"pass if NRMSE < 0.01 **AND** dominant-frequency shift < 1%"*.
 - Users want disjunctive fallbacks: *"pass if tube OK **OR** NRMSE loose-bound OK"* — captures "one of these two views is fine."
 - Users want roll-up logic: per-variable metrics aggregate into per-test; per-test can have global metrics (overall simulation time, event count, final energy balance).
 - Users want custom metrics: a domain-specific score (e.g. power-system stability margin) should slot in via the same interface as NRMSE.
 
-**MetricTree** is the abstraction: a tree whose leaves are `Metric` evaluations and whose internal nodes are combinators (AND, OR, weighted-sum-with-threshold, K-of-N, `warn`). Evaluates to a boolean + numeric score + diagnostics, not just a boolean. The diagnostic shape carries through to reports — the interactive HTML report will visualize *which* branch of the tree failed.
+**MetricTree** is the abstraction: a tree whose leaves are `Metric` evaluations and whose internal nodes are combinators (AND, OR, weighted-sum-with-threshold, K-of-N, `warn`). Evaluates to a boolean + numeric score + diagnostics, not just a boolean. The diagnostic shape carries through to reports — the per-test report page shows *which* branch of the tree failed.
 
 The `test_spec.json` schema extends to express MetricTrees. Simple cases remain terse (a bare variable list with a scalar tolerance stays valid and is interpreted as a flat AND of NRMSE-per-variable).
 
@@ -150,7 +153,7 @@ The tool is a **regression testing** framework. "Does this signal match the stor
 
 **Companion references** — visual overlays, never scored.
 - External time-series data (experimental CSV, analytical solution output, vendor reference, digitized plot data).
-- Stored as file paths in the test spec; two storage options — `external` (path points outside the repo; tool loads best-effort on each run) or `frozen` (file copied into `ReferenceResults/.../companions/`; immutable).
+- Registered as metadata under `ReferenceResults/.../companions/ref_NNNN/<name>.json`, never in the test spec; two storage options — `external` (the metadata points at a path; tool loads best-effort on each run) or `frozen` (file copied in beside it; immutable).
 - Load failures emit a warning on the test but do not affect pass/fail — graceful degradation.
 - MetricTree leaves cannot target companions (schema error). Companions are plot-only.
 - Commands: `companion add <test> <name> <path>` / `companion freeze <test> <name>`.

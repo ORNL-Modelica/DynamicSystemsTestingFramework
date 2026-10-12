@@ -27,7 +27,7 @@ The framework is a pipeline of six typed, plug-in layers:
 
 **Backend capabilities** are declared on the backend contract, not inferred from type:
 - `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`,
-  `FMU_EXPORT`, `LIVE_RESULTS`) and `produced_datasets: frozenset[DatasetType]`.
+  `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`) and `produced_datasets: frozenset[DatasetType]`.
 Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
 
 ### Layer ↔ Code mapping (Current)
@@ -39,12 +39,12 @@ Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` �
 | Backend | `backends/` registry with five concrete backends: `DymolaBackend` / `OpenModelicaBackend` (native Modelica), `FmpyBackend` (FMU via FMPy), `JuliaBackend` (ModelingToolkit), and `PythonBackend` (arbitrary `simulate()`). Each declares `capabilities` + `produced_datasets`; Dymola/OpenModelica/Julia ship persistent-worker variants. `PersistentDymolaBackend` implements `export_fmu` via `translateModelFMU` (it needs a live `DymolaInterface`; the batch `DymolaBackend` has no export path). | Cross-backend chain (`backends/cross_backend.py`) wires Dymola export → FMPy simulate → named baseline. Validation caveat: export step requires Windows + Dymola FMI license (D63). |
 | Dataset | Implicit `TimeSeries` returned by `read_result()`; `DatasetType` enum declared on backends | one concrete type materialized; additional types reserved for Phase 3 metrics |
 | Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode`; `VariableComparison.diagnostics` carries structured extras | 7 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, spectral shapes, and single-number (reduction / stored-statistic) checks |
-| MetricTree | `comparison/metric_tree.py` (`And`/`Or`/`KOfN`/`Warn`/`Weighted` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
+| MetricTree | `comparison/metric_tree.py` (`AndCombinator`/`OrCombinator`/`KOfNCombinator`/`WarnCombinator`/`WeightedCombinator` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
 | Reference | Role-partitioned storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; soft_checks and companions in role subdirs beside it |
 | (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. No printing, no exits, no browser, no prompts; failures are exceptions. Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | The CLI drives it (`cmd_run`); the authoring tool's queue drives the same steps one test at a time (`ItemRun` behind `open_pool`, in the same module) |
 | (the run's CLI) | `cli/run_cmds.py`: `cmd_run` is the wrapper — selection and filtering, `_get_backend` (the CLI's wrapper over `backends.select_backend`), `run_pipeline`, then the outcome's notices, `--accept` / `-i` / the report. `cmd_compare` shares the same helpers without simulating. | — |
 
-Forward work: cross-backend verification beyond the Dymola→FMPy chain (each new primary backend needs its own `export_fmu`), and richer metrics (event-timing, spectral, Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
+Forward work: cross-backend verification beyond the Dymola→FMPy chain (each new primary backend needs its own `export_fmu`), and richer metrics (Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
 
 ---
 
@@ -66,8 +66,9 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 
 ```
 src/dstf/
-├── cli/                      # argparse CLI package: discover, run, compare, export, manifest, add, spec-update,
-│   │                         #   companion, soft-check, import-baseline, export-schema, check-dymola
+├── cli/                      # argparse CLI package: discover, run, compare, author, export, manifest, add, spec-update,
+│   │                         #   companion, soft-check, import-baseline, export-schema, migrate-variable-names,
+│   │                         #   check-dymola, check-openmodelica, check-julia
 │   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
 ├── config.py                 # Config dataclass, path resolution, testing.json loading, backend auto-detect
 ├── pipeline.py               # run_pipeline + RunOutcome — the run as a library callable (no printing, no exits)
@@ -93,8 +94,11 @@ src/dstf/
 │   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
 │   ├── base.py               # Backend ABC + RunSetup/_prepare_run (types/persistent/batch_manifest split out, D116)
 │   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
+│   ├── persistent.py         # Worker ABC, WorkerRunner and PersistentBackendBase — the persistent-worker template
+│   ├── pool.py               # SimulationPool: run_tests' dispatch kept open, a FIFO queue of tests (the tool's
+│   │                         #   queue, D150)
 │   ├── common/               # Shared: mat_reader (rows counted from the file's size), process tree-kill,
-│   │                         #   result variables, JSON-driver base,
+│   │                         #   result variables, JSON-driver base, statistics (the zero-count rule),
 │   │                         #   result_files (any variable of a result file, by name: .mat / result.json / .npz),
 │   │                         #   live_mat (LiveMatReader: a .mat polled while its run writes it)
 │   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
@@ -110,8 +114,12 @@ src/dstf/
 │   ├── mode_schema.py        # derive_schema — per-mode schema from typed comparison configs
 │   ├── handles.py            # edit_handle editors: a dragged handle back to a raw leaf (HandleEdit,
 │   │                         #   HandleEditError); wired on MetricDescriptor beside summarize
-│   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + implicit_and_tree() builder
+│   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + synthesize_implicit_tree() builder
 │   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
+│   ├── metric_tree.py        # The combinators + MetricResult; implicit_and_tree() for a test with no tree
+│   ├── registry.py           # MetricDescriptor / CombinatorDescriptor + register_metric / register_combinator
+│   ├── sides.py              # Sides — the ONE place a tolerance's number-or-pair is read or written (D147)
+│   ├── snap.py               # snapped — the one snap rule for a value the pointer placed (D149)
 │   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
 ├── storage/
 │   ├── baseline.py           # Baseline value type + PRIMARY_BASELINE
@@ -131,6 +139,15 @@ src/dstf/
 │   ├── family_rows.py        # A criterion over an array family as data (D152): which criteria rows fold,
 │   │                         #   the elements an Indices text names, an edit of a fold as one whole-tree op;
 │   │                         #   shell/family_fold.py draws the folded rows (UI-free)
+│   ├── layout.py             # The plot extras' edits as pure functions: context series and watch plots,
+│   │                         #   one op on /plots (D140)
+│   ├── variable_rows.py      # The Variables drawer's rows as data; picker_rows.py, the add form's variable
+│   │                         #   picker; suite_rows.py, a Suite row from the Session
+│   ├── queue_rows.py         # The simulation queue as data: a row per item, the header's indicator (D150)
+│   ├── live_rows.py          # A running test's page as data: reader snapshots to the series a plot draws, the
+│   │                         #   words of each state; live_runs.py, the Session's readers of the running tests'
+│   │                         #   result files and of unfinished runs' partial results (D151)
+│   ├── situation.py          # A test's situation and the status strip's sentence
 │   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
 │   │                         #   suite.py + test_page.py (one object per browser tab; the one open editor
 │   │                         #   or form row), tree_card.py (the criteria tree), plot_card.py (one plot,
@@ -140,7 +157,12 @@ src/dstf/
 │   │                         #   a RowTarget to open a form row under their row),
 │   │                         #   queue_panel.py (the simulation queue's panel and the header's indicator,
 │   │                         #   D150), tabstate.py, figure_hook.py (one hook per plot),
-│   │                         #   tab_theme.py (the tab's theme and its live switch, D148)
+│   │                         #   tab_theme.py (the tab's theme and its live switch, D148),
+│   │                         #   suite_grid.py + suite_grid.js (the Suite table), strip.py (the Test page's
+│   │                         #   status strip), stats_card.py, rail.py + test_list.py + variables_drawer.py
+│   │                         #   (the two drawers), picker.py, family_fold.py, live_view.py (what a running
+│   │                         #   test's drawn plots ask for, D151), placing.py (a field's ⌖ and the one armed
+│   │                         #   field, D149), grips.js (a plot's tolerance arrows, D147)
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_family.py, edit_tree.py,
 │                             #   accept.py (the shared accept function), enqueue.py (Queue: the selected
@@ -149,7 +171,10 @@ src/dstf/
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
-    ├── status.py             # Shared per-test status classifier (SIM_FAIL > FAIL > NO_REF > PASS)
+    ├── status.py             # Shared per-test status classifier (NOT RUN > SIM_FAIL > FAIL > NO_REF > PASS)
+    │                         #   and every status word and class
+    ├── rows.py               # The row model both HTML surfaces render: TestRow, COLUMNS
+    ├── stats_rows.py         # The Statistics rows both tiers render: the report's table and the tool's card
     ├── dashboard_render.py   # The one suite-wide HTML page (live + final + --report-format html)
     ├── context_builder.py    # Per-test results → template context (the pure half)
     ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
@@ -163,7 +188,8 @@ src/dstf/
     └── templates/            # interactive.html (server-rendered tree, summary, banner) + axes.js
                               #   (the report's: a secondary axis visible while a trace on it is) + report.js
                               #   (both copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
-                              #   + dashboard.html / dashboard.js + vendor/plotly.min.js
+                              #   + dashboard.html / dashboard.js + filters.js (the typed column filters)
+                              #   + vendor/plotly.min.js
 ```
 
 The figure layer sits beside them, and both tiers draw from it:
@@ -179,7 +205,7 @@ src/dstf/figures/
 │                             #   plot_figure: several views on one plot (families in a hue ramp);
 │                             #   one view is variable_figure, unchanged
 ├── palette.py                # What a figure takes from a theme, by name (D148): its chrome, the
-│                             #   five series colours a dark plot lightens, the layout template
+│                             #   eight series colours a dark plot lightens, the layout template
 │                             #   (none for `default`: that figure is the one it always was)
 ├── families.py               # Array families: the last integer index, slice text, the hue ramp
 ├── assemble.py               # Trajectories + evaluated leaves → a VariableView
@@ -258,7 +284,7 @@ compare_all(tests, results, store, default_tolerance, default_points)
     → per-variable: resolve_mode(override, tolerance, default_points) → ComparisonMode
     → mode.compare(ref_time, ref_values, act_time, act_values) → VariableComparison
     → NrmseMode: piecewise NRMSE with event boundary handling
-    → TubeMode: envelope check with three width modes (rel, band, absolute)
+    → TubeMode: envelope check with three width modes (rel, band, abs)
     → PointsMode: declared-checkpoint comparison (empty list ⇒ final value only;
                   non-empty ⇒ multi-point with abs/rel y-tolerance + x-tolerance box)
     → returns list[TestComparison]
@@ -286,7 +312,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
 | `TestModel` | `discovery/test_registry.py` | One test: model ID, sim params, tracked variables, source |
 | `TestResult` | `backends/types.py` | Simulation output: success flag, variables, diagnostics, statistics |
 | `VariableResult` | `backends/types.py` | One variable's time series (time + values arrays), its result-file `name` and its optional `expression` label (D132) |
-| `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
+| `TestComparison` | `comparison/types.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
 | `RefIndex` | `storage/ref_index.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
 | `BatchManifest` | `storage/batch_manifest.py` | Maps test keys to `{"model_id", "ref_id", "last_run_status"}` within a batch run |
@@ -307,7 +333,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
       "nonlinear": [3, 1], "nonlinear_count": 2, "nonlinear_total": 4, "nonlinear_max": 3,
       "init_nonlinear": [5], "init_nonlinear_count": 1, ...
     },
-    "simulation": {"cpu_time": 0.5, ...},
+    "simulation": {"cpu_time_integration": 0.5, ...},
     "CPUtime": 12.3, "EventCounter": 42
   },
   "diagnostics": [
@@ -392,7 +418,7 @@ The three baseline roles serve three workflows:
   by its own leaf.
 
 See ``src/dstf/storage/baseline.py`` for the ``Baseline`` dataclass and
-the role CRUD. The comparator threads soft_checks into the tree evaluator and
+``src/dstf/storage/roles.py`` for the role CRUD. The comparator threads soft_checks into the tree evaluator and
 the reporter renders per-leaf `against=` provenance — both shipped in Phase 4 /
 D66.
 
@@ -406,7 +432,7 @@ Two manifest files are written to the work directory before simulation starts:
 
 ```
 Backend (ABC)
-  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS, CANCEL
   ├── artifact_files: tuple[tuple[str, str], ...]  # (filename, label) pairs for the report
   ├── run_tests(tests) → list[BatchManifest]       # override for batch execution
   ├── run_single_test(test, ...) → TestRunResult   # override for per-process execution
@@ -455,6 +481,7 @@ Each backend declares its capabilities via `frozenset[Capability]`:
 - `PERSISTENT_WORKERS` — long-lived worker process; library loads once, amortized across N tests.
 - `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
 - `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaBackend` only today — the batch `DymolaBackend` has no `.mos` export path and does not declare it; OM deferred per D69).
+- `CANCEL` — can stop a test that is running, from another thread: the simulation queue's Cancel (the three persistent variants and `PythonBackend`; see [extensibility.md](extensibility.md) §3 "The simulation pool").
 - `LIVE_RESULTS` — the result file grows while the run is in progress; `live_result_path(test_dir)` names it and `backends/common/live_mat.py`'s `LiveMatReader` follows it (Dymola and OpenModelica; see [extensibility.md](extensibility.md) §3 "Live results").
 
 `backends.select_backend(config, persistent=True)` — which `cli/run_cmds.py`'s `_get_backend` wraps for the CLI — swaps to the persistent variant only when the backend **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
