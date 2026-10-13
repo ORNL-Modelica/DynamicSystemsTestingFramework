@@ -107,13 +107,26 @@ def _build_points(override: dict, tolerance: Sides) -> PointsMode:
     )
 
 
+def _bound(override: dict, key: str) -> float | None:
+    """A ``min_value`` / ``max_value`` as it is written: one number, or
+    none (absent, or ``null``). Checked here, as a tube's floor is, so that
+    anything else is a ``ValueError`` where ``resolve_mode``'s callers catch
+    it: a string, or an integer too large for a float, went on to the
+    scorer, which subtracted it from the samples and raised what nothing
+    caught."""
+    value = override.get(key)
+    if value is not None:
+        parse_number(value, key)
+    return value
+
+
 def _build_range(override: dict, tolerance: Sides) -> RangeMode:
     # ``min_value`` / ``max_value`` only — the names the ``RangeConfig``
     # dataclass, the auto-derived UI and MetricTree leaf params all use.
     return RangeMode(
         RangeConfig(
-            min_value=override.get("min_value"),
-            max_value=override.get("max_value"),
+            min_value=_bound(override, "min_value"),
+            max_value=_bound(override, "max_value"),
         )
     )
 
@@ -146,8 +159,8 @@ def _build_scalar(override: dict, tolerance: Sides) -> ScalarMode:
             quantity=override.get("quantity"),
             tolerance=tolerance,
             tolerance_mode=override.get("tolerance_mode", "abs"),
-            min_value=override.get("min_value"),
-            max_value=override.get("max_value"),
+            min_value=_bound(override, "min_value"),
+            max_value=_bound(override, "max_value"),
         )
     )
 

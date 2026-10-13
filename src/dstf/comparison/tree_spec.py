@@ -23,13 +23,12 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
-from .sides import _as_json
+from .sides import _as_json, _is_number
 from .strict_keys import unknown_field, unread_param
 
 #: The keys the parser itself reads off a leaf; every other key of a leaf
@@ -555,7 +554,7 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
             )
         try:
             weights = [float(w) for w in weights_raw]
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise MetricSpecError(
                 f"{path}.weights", f"all weights must be numeric ({exc})"
             ) from exc
@@ -565,7 +564,7 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
             )
         try:
             threshold = float(raw["threshold"])
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise MetricSpecError(
                 f"{path}.threshold", f"must be numeric, got {raw['threshold']!r}"
             ) from exc
@@ -647,11 +646,7 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             raise refused(problem)
         ends: dict[str, float] = {}
         for end, value in window_raw.items():
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-            ):
+            if not _is_number(value):
                 raise refused(f"{end} must be a number, got {_as_json(value)}")
             ends[end] = float(value)
         window_start, window_end = ends.get("start"), ends.get("end")

@@ -121,12 +121,15 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
 
 
 def _is_number(value: object) -> bool:
-    """A JSON number that is one: no bool, no NaN, no infinity."""
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    """A JSON number that is one: no bool, no NaN, no infinity — and no
+    integer too large for a float (a 1 and 400 zeros), which no simulator
+    can be handed: ``math.isfinite`` raises on it."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 #: A JSON-Schema ``type`` of ``spec_shape.SIMULATION`` → whether a value is

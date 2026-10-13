@@ -152,6 +152,30 @@ def _entry(**changes) -> dict:
     return {k: v for k, v in entry.items() if v is not ...}
 
 
+#: An integer JSON can write and no float can hold: `math.isfinite` and
+#: `float()` raise `OverflowError` on it, which was a traceback out of every
+#: command. As a refusal says it: its first 60 characters.
+HUGE = 10**400
+HUGE_SAID = "1" + "0" * 59 + "…"
+
+
+SCALAR = {"metric": "scalar", "variable": "x", "quantity": {"reduce": "max"}}
+
+
+def _range(**bounds) -> dict:
+    return {"mode": "range", **bounds}
+
+
+def _weighted(**changes) -> dict:
+    node = {
+        "combinator": "weighted",
+        "weights": [1],
+        "threshold": 1,
+        "children": [{"metric": "nrmse", "variable": "x"}],
+    }
+    return {**node, **changes}
+
+
 #: the `tests` list → what is said after the path.
 NO_TEST = {
     "an entry that is no object": ([1], "tests[0]: must be an object, got 1"),
@@ -213,6 +237,29 @@ NO_TEST = {
         [_entry(simulation={"method": 5})],
         f"tests[{A}].simulation.method: must be a string, got 5",
     ),
+    "an integer no float can hold": (
+        [_entry(simulation={"stop_time": HUGE})],
+        f"tests[{A}].simulation.stop_time: must be a number, got {HUGE_SAID}",
+    ),
+    "nor a whole number a simulator can take": (
+        [_entry(simulation={"number_of_intervals": HUGE})],
+        f"tests[{A}].simulation.number_of_intervals: must be a whole number, "
+        f"got {HUGE_SAID}",
+    ),
+    "a window's end no float can hold": (
+        [_entry(metrics={"metric": "nrmse", "variable": "x", "window": {"end": HUGE}})],
+        f"tests[{A}].metrics.window: nrmse · x: window: end must be a number, "
+        f"got {HUGE_SAID}",
+    ),
+    "a weight no float can hold": (
+        [_entry(metrics=_weighted(weights=[HUGE]))],
+        f"tests[{A}].metrics.weights: all weights must be numeric "
+        "(int too large to convert to float)",
+    ),
+    "a threshold no float can hold": (
+        [_entry(metrics=_weighted(threshold=HUGE))],
+        f"tests[{A}].metrics.threshold: must be numeric, got {HUGE}",
+    ),
 }
 
 
@@ -236,6 +283,110 @@ def test_an_entry_that_is_no_test_is_refused_with_its_place(tmp_path, case):
     with pytest.raises(ConfigError) as refused:
         spec_models_from_document({"tests": tests}, base_dir=tmp_path, label="spec")
     assert str(refused.value) == f"spec: {said}"
+
+
+@pytest.mark.parametrize("command", ["discover", "run", "compare"])
+def test_a_400_digit_stop_time_in_the_file_stops_the_command(tmp_path, capsys, command):
+    """Written as JSON writes it — digits, no exponent — and read as an int."""
+    cfg, work = _project(tmp_path)
+    spec = cfg.parent / "test_spec.json"
+    text = json.dumps({"tests": [_entry(simulation={"stop_time": 7})]})
+    spec.write_text(text.replace("7", "1" + "0" * 400), encoding="utf-8")
+    assert _stopped(command, cfg, work, tmp_path, capsys) == (
+        f"Config error: {spec}: tests[{A}].simulation.stop_time: must be a number, "
+        f"got {HUGE_SAID}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "said"),
+    [
+        (
+            {"comparison": {"tolerance": HUGE}},
+            "Error: the base tolerance must be a number (test_spec.json "
+            f"comparison.tolerance is {HUGE_SAID})",
+        ),
+        (
+            {"comparison": {"variable_overrides": {"x": {"tolerance": HUGE}}}},
+            'Not scored:         tolerance must be a number or {"lower": …, '
+            f'"upper": …}}, got {HUGE_SAID}',
+        ),
+        (
+            {"metrics": {"metric": "nrmse", "variable": "x", "tolerance": HUGE}},
+            "Not scored:         metric 'nrmse' misconfigured: tolerance must be a "
+            f'number or {{"lower": …, "upper": …}}, got {HUGE_SAID}',
+        ),
+        (
+            {"comparison": {"variable_overrides": {"x": _range(max_value=HUGE)}}},
+            f"Not scored:         max_value must be one number, got {HUGE_SAID}",
+        ),
+        (
+            {"metrics": {"metric": "range", "variable": "x", "min_value": HUGE}},
+            "Not scored:         metric 'range' misconfigured: min_value must be "
+            f"one number, got {HUGE_SAID}",
+        ),
+        (
+            {"metrics": {**SCALAR, "max_value": HUGE}},
+            "Not scored:         metric 'scalar' misconfigured: max_value must be "
+            f"one number, got {HUGE_SAID}",
+        ),
+        (
+            {"metrics": {**SCALAR, "min_value": "abc"}},
+            "Not scored:         metric 'scalar' misconfigured: min_value must be "
+            'one number, got "abc"',
+        ),
+        (
+            {"metrics": {"metric": "range", "variable": "x", "max_value": "abc"}},
+            "Not scored:         metric 'range' misconfigured: max_value must be "
+            'one number, got "abc"',
+        ),
+    ],
+    ids=[
+        "base",
+        "override",
+        "leaf",
+        "range-override",
+        "range-leaf",
+        "scalar-leaf",
+        "scalar-text",
+        "range-text",
+    ],
+)
+def test_a_tolerance_or_a_bound_that_is_no_number_fails_its_test_in_a_sentence(
+    tmp_path, capsys, change, said
+):
+    """A tolerance no float can hold was already the criterion's own
+    refusal. A `range` or a `scalar` bound was not read until the samples
+    were subtracted from it: the integer, like a string there, was a
+    traceback out of `compare`."""
+    cfg, work = _project(tmp_path)
+    spec = cfg.parent / "test_spec.json"
+    spec.write_text(json.dumps({"tests": [_entry(**change)]}), encoding="utf-8")
+    argv = ["--config", str(cfg), "compare", "--no-browser", "--work-dir", str(work)]
+    assert main(argv) == 1
+    lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
+    assert said in lines
+
+
+def test_a_bound_as_it_is_written_is_still_scored(tmp_path, capsys):
+    """An int, a float and a `null` are bounds as they were: A's `x` runs
+    0 … 1.25, inside the first leaf's bounds and over the second's."""
+    cfg, work = _project(tmp_path)
+    spec = cfg.parent / "test_spec.json"
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "range", "variable": "x", "min_value": 0, "max_value": 2.5},
+            {"metric": "range", "variable": "x", "min_value": None, "max_value": 1},
+        ],
+    }
+    spec.write_text(json.dumps({"tests": [_entry(metrics=tree)]}), encoding="utf-8")
+    argv = ["--config", str(cfg), "compare", "--no-browser", "--work-dir", str(work)]
+    assert main(argv) == 1
+    out = capsys.readouterr().out
+    assert "Not scored" not in out
+    assert "bounds:             [-inf, 1]" in out
+    assert "worst violation:    2.500000e-01 at t=1" in out
 
 
 def test_a_variable_that_is_no_name_was_a_traceback_at_the_compare(tmp_path, capsys):
