@@ -83,7 +83,7 @@ DynamicSystemsTestingFramework/
 │   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
 │   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
 ├── tests/                        # pytest suite (~7400 tests, ~360 of them the Playwright subset, gated by importorskip)
-├── docs/                         # decisions.md, vision.md, architecture.md, qa/reporter_checklist.md, ideas.md
+├── docs/                         # decisions.md, vision.md, architecture.md, qa/reporter_checklist.md, ideas.md, releasing.md
 ├── scripts/                      # fetch_reference_fmus.py, smoke_test_dymola_export.py
 ├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [author], [fmpy], [om]
 └── CLAUDE.md

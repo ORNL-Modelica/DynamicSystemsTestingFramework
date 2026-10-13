@@ -1,0 +1,95 @@
+# Build the distribution and publish it to a package index (D156).
+#
+# A pushed tag `vX.Y.Z` publishes to PyPI. A manual run publishes to TestPyPI
+# (the rehearsal) or only builds. Nothing here holds a password or a token:
+# each publish job proves to the index who it is with a short-lived identity
+# GitHub issues to this workflow ("trusted publishing"), which the index
+# accepts only for the repository, workflow file and environment its project
+# settings name — docs/releasing.md lists those values.
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish this build"
+        type: choice
+        options: [build-only, testpypi]
+        default: build-only
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build the wheel and the source archive
+        run: uv build
+
+      # A version can be uploaded once, ever. A tag that does not name the
+      # version in pyproject.toml would publish one number under another's
+      # tag — refuse it here, before anything leaves.
+      - name: The tag names the version that was built
+        if: github.ref_type == 'tag'
+        run: |
+          built="$(ls dist/*.whl | sed -E 's/.*-([0-9][^-]*)-py3-none-any\.whl/\1/')"
+          if [ "v${built}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not name the built version ${built}"
+            exit 1
+          fi
+
+      - name: Check the metadata renders on the index
+        run: uvx twine check --strict dist/*
+
+      # The wheel alone, in a clean environment: it must start without the
+      # repository beside it.
+      - name: Install the wheel and start it
+        run: |
+          uv venv /tmp/wheel-venv
+          uv pip install --python /tmp/wheel-venv/bin/python dist/*.whl
+          /tmp/wheel-venv/bin/dstf --version
+          /tmp/wheel-venv/bin/dstf --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  testpypi:
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
