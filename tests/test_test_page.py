@@ -7179,6 +7179,23 @@ class TestTestsDrawerControls:
             )
             assert _one(user, "tests-drawer:edits:" + D).text == "1 unsaved"
             assert _none(user, "tests-drawer:edits:" + A)
+            # One act that takes two ops — a flat test's first criterion
+            # edit writes its tree out too — is one unsaved edit here as
+            # in the header (D155), not the ops it took.
+            shell.session.stage(
+                [PatchOp(A, "add", "/metrics/children/0/tolerance", 0.5)]
+            )
+            assert (
+                len([op for op in shell.session.spec.pending if op.model_id == A]) == 2
+            )
+            await _settled(
+                lambda: _one(user, "tests-drawer:pill:EDITED").text == "EDITED 2"
+            )
+            assert _one(user, "tests-drawer:edits:" + A).text == "1 unsaved"
+            shell.session.discard({A})
+            await _settled(
+                lambda: _one(user, "tests-drawer:pill:EDITED").text == "EDITED 1"
+            )
             user.find(marker="tests-drawer:pill:EDITED").click()
             await _settled(lambda: _shown(shell, user) == [D])
             assert page.state.tests_pills == {"EDITED"}

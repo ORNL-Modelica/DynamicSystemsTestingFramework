@@ -330,6 +330,28 @@ class TestOpenModelica:
             "existClass(Single)",
         ]
 
+    def test_every_class_a_dependencys_file_names_must_exist_after_its_load(
+        self, lib, tmp_path
+    ):
+        """A dependency's file may hold more than one top-level class:
+        each of them is looked for after the load, not the first alone."""
+        single = tmp_path / "deps" / "Single.mo"
+        replies = {"parseFile": _holds("Single", "Second")}
+        worker = _om_worker(lib, replies, dependencies=[str(single)])
+        worker.reload(LibraryChanges(changed=(single,)))
+        assert worker.session.calls[2:] == ["existClass(Single)", "existClass(Second)"]
+        # The second one missing is a load that failed.
+        worker = _om_worker(
+            lib,
+            {**replies, "existClass(Second)": "false\n"},
+            dependencies=[str(single)],
+        )
+        with pytest.raises(LibraryReloadError) as raised:
+            worker.reload(LibraryChanges(changed=(single,)))
+        assert str(raised.value) == (
+            "Single, Second does not load: loadFile left no class Second"
+        )
+
 
 # -- where a load error is ------------------------------------------------------
 

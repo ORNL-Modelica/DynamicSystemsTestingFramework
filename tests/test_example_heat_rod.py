@@ -126,6 +126,49 @@ def test_each_shipped_baseline_holds_the_array_and_passes_its_own_criteria(parti
     assert comp.warnings == []
 
 
+@pytest.mark.parametrize("partition", PARTITIONS)
+def test_each_shipped_baseline_is_the_solution_of_the_model_as_written(partition):
+    """No test a machine without a simulator runs read the MODEL: with
+    `T_hot=90` in the `.mo` every one of them passed, against baselines of
+    a rod held at 100. The model is linear, so its solution is written
+    out here from the parameters and equations its file holds, and each
+    shipped baseline lies on it to the solver's tolerance."""
+    import re
+
+    source = (EXAMPLE / "Examples" / "HeatRodTest.mo").read_text(encoding="utf-8")
+    for line in (
+        "der(T[1]) = a*(2*T_hot - 3*T[1] + T[2])/dx^2;",
+        "der(T[i]) = a*(T[i - 1] - 2*T[i] + T[i + 1])/dx^2;",
+        "der(T[n]) = a*(T[n - 1] - 3*T[n] + 2*T_cold)/dx^2;",
+        "Real T[n](each start=T_cold, each fixed=true)",
+        "final parameter Real dx=L/n",
+    ):
+        assert line in source, line
+    given = {
+        m[1]: float(m[2])
+        for m in re.finditer(r"parameter (?:Integer|Real) (\w+)=([-+.\deE]+)", source)
+    }
+    assert set(given) == {"n", "a", "L", "T_hot", "T_cold"}
+    n, hot, cold = int(given["n"]), given["T_hot"], given["T_cold"]
+    k = given["a"] / (given["L"] / n) ** 2
+    # T' = A T + b, the three equations above.
+    A = k * (np.diag(np.full(n - 1, 1.0), -1) + np.diag(np.full(n - 1, 1.0), 1))
+    A += np.diag(np.full(n, -2.0 * k))
+    A[0, 0] = A[-1, -1] = -3.0 * k
+    b = np.zeros(n)
+    b[0], b[-1] = 2.0 * k * hot, 2.0 * k * cold
+    steady = np.linalg.solve(A, -b)
+    rates, modes = np.linalg.eigh(A)
+    start = modes.T @ (np.full(n, cold) - steady)
+
+    reference = _reference(partition)
+    time = np.asarray(reference["time"])
+    exact = steady[:, None] + modes @ (start[:, None] * np.exp(rates[:, None] * time))
+    stored = np.array([v["values"] for v in reference["variables"]])
+    assert stored.shape == exact.shape == (n, len(time))
+    assert np.max(np.abs(stored - exact)) < 1e-3  # 6e-5 on both simulators
+
+
 def test_the_windows_dymola_partition_has_no_baseline_of_it_yet():
     """Said, not hidden: the model was added with baselines from the two
     simulators run for it. On Windows Dymola it reads NO_REF until someone
