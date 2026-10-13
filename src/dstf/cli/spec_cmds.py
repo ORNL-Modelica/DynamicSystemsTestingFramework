@@ -91,10 +91,14 @@ def _print_applied(applied, requested, spec_path) -> None:
     outgrew the requested ones, then the requested ops."""
     for (model_id, full), (_, ops) in zip(applied, requested):
         if len(full) > len(ops):
-            n_leaves = len(full[0]["value"]["children"])
+            # The implicit tree is an `and` of one leaf per criterion the
+            # flat path scored: counted as what every other surface calls
+            # them, and in the number's own noun (it read `(1 leaves)`).
+            n = len(full[0]["value"]["children"])
             print(
                 f"Note: materialized implicit metrics tree for {model_id} "
-                f"({n_leaves} leaves) — entry had no 'metrics' block"
+                f"({n} {'criterion' if n == 1 else 'criteria'}) — entry had no "
+                "'metrics' block"
             )
         print(f"Applied {len(ops)} op(s) to {model_id} → {spec_path}")
         for op in ops:

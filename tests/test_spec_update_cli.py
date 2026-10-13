@@ -232,6 +232,26 @@ class TestSpecUpdateMaterialization:
         # The flat comparison block survives untouched (whitelist scope).
         assert entry["comparison"]["variable_overrides"]["v"]["tube_rel"] == 0.05
 
+    @pytest.mark.parametrize(
+        ("variables", "counted"),
+        [(["h"], "1 criterion"), (["h", "v"], "2 criteria")],
+    )
+    def test_the_note_counts_criteria_in_the_numbers_own_noun(
+        self, tmp_path, capsys, variables, counted
+    ):
+        """`(1 leaves)`: the note counted the materialized tree's children
+        — one per criterion the flat path scored — under a noun no other
+        surface uses for them, and one that did not agree with 1."""
+        spec = _write_spec(tmp_path, {"model": "MyLib.A", "variables": variables})
+        op = {"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5}
+        patch = _write_patch(tmp_path, "MyLib.A", [op])
+        capsys.readouterr()
+        assert _run_spec_update(spec, patch) == 0
+        assert (
+            f"Note: materialized implicit metrics tree for MyLib.A ({counted}) — "
+            "entry had no 'metrics' block\n"
+        ) in capsys.readouterr().out
+
     def test_existing_metrics_tree_is_not_rematerialized(self, tmp_path):
         spec = _write_spec(
             tmp_path,
