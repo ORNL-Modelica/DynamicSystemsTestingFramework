@@ -112,12 +112,20 @@ class TestModel:
     def is_simulate_only(self) -> bool:
         """Whether the test passes iff its simulation completes — THE one
         rule: a recognizer marked it (``simulate_only``), or it DECLARES
-        nothing to score: no UnitTests variable, no ``variables`` pattern and
-        no ``metrics`` tree. That is the entry ``dstf add <model>`` writes
-        (``"variables": []``), which has no key of its own for it.
+        nothing to score: no UnitTests variable, no ``variables`` pattern,
+        no ``metrics`` tree and no ``comparison.variable_overrides`` entry.
+        That is the entry ``dstf add <model>`` writes (``"variables": []``),
+        which has no key of its own for it.
+
+        An override is a declaration: whoever wrote ``{"x": {"mode":
+        "range", ...}}`` asked for ``x`` to be checked. On an entry that
+        tracks nothing it scores nothing — an override changes how a TRACKED
+        variable is scored — and such a test passed, simulate-only, with no
+        word of the bound it never read.
 
         Not the test that declares variables and whose result holds none of
-        them: that one scored nothing it asked about, and fails
+        them, nor the one whose overrides are all it declares: each scored
+        nothing it asked about, and fails
         (``comparison.comparator.nothing_scored``)."""
         from .unit_tests import unit_test_variables
 
@@ -127,6 +135,7 @@ class TestModel:
             not unit_test_variables(self)
             and not self.variable_patterns
             and self.metric_tree_spec is None
+            and not self.variable_overrides
         )
 
     def finalize_defaults(self) -> "TestModel":

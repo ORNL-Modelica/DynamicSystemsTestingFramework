@@ -7877,6 +7877,23 @@ and nothing is compared.` and the tree's `nothing scored: this test is
 simulate-only`, which read `this test has no baseline` under that strip
 for a test that had one.
 
+That rule in turn passed one test too many (2026-10-13): `"variables":
+[]` with a `comparison.variable_overrides` entry — `{"x": {"mode":
+"range", "min_value": 100, "max_value": 200}}`, `x` in [0, 10] — read
+PASS, simulate-only, with no message and no warning, where it had read
+FAIL before. An override is a declaration: whoever wrote it asked for `x`
+to be checked. The one rule gains the clause — no UnitTests variable, no
+`variables` pattern, no `metrics` tree **and no `variable_overrides`
+entry** — so such a test takes the nothing-scored refusal, with a sentence
+of its own, since no tracked variable is missing from its result:
+`variable_overrides key(s) name no variable this test tracks (x) — an
+override changes how a tracked variable is scored, and "variables" (or a
+"metrics" leaf) is what tracks one; nothing was scored`. It is the scored
+path's log line for an override key that names nothing (`… name no
+variable of this result and are ignored`), said as the test's reason where
+nothing else is scored beside it. An accept skips the test with it; a test
+a recognizer marked stays simulate-only whatever it overrides.
+
 **A worker that cannot start says why** (2026-10-12). On OpenModelica a
 library that did not parse when a worker STARTED — the first click, or
 the click after a kill — failed the waiting items with `No OpenModelica

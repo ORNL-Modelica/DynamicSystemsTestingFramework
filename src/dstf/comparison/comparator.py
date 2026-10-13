@@ -122,8 +122,17 @@ def refused_base_tolerance(
     )
 
 
-#: How many of a test's tracked names :func:`nothing_scored` spells out.
+#: How many of a test's tracked names — or of its override keys —
+#: :func:`nothing_scored` spells out.
 _NAMED_TRACKED = 4
+
+
+def _named_few(names: list[str]) -> str:
+    """Up to `_NAMED_TRACKED` of ``names``, then ``and N more``."""
+    named = ", ".join(names[:_NAMED_TRACKED])
+    if len(names) > _NAMED_TRACKED:
+        named += f" and {len(names) - _NAMED_TRACKED} more"
+    return named
 
 
 def nothing_scored(test: TestModel, result: TestResult) -> str | None:
@@ -142,19 +151,30 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
     not asked: each of its leaves fails by itself when its variable is not
     in the result. A simulate-only test is not asked either — one a
     recognizer marked, or one that declares nothing to score
-    (``TestModel.is_simulate_only``): that it ran is its criterion."""
+    (``TestModel.is_simulate_only``): that it ran is its criterion.
+
+    A test that tracks NOTHING and holds a ``variable_overrides`` entry is
+    asked, and has a sentence of its own: there is no tracked variable for
+    the result to hold, and what is wrong is the override, which names a
+    variable the test does not track. It is the scored path's log line for
+    such a key (``_warn_about_overrides_that_name_nothing``) where no other
+    variable is scored beside it."""
     if test.is_simulate_only or test.metric_tree_spec is not None:
         return None
     if not result.success or tracked_results(test, result):
         return None
     tracked = [v.name for v in unit_test_variables(test)] + list(test.variable_patterns)
     # A reason, as every refusal is: a page leads it with "Not scored: ".
-    named = ", ".join(tracked[:_NAMED_TRACKED])
-    if len(tracked) > _NAMED_TRACKED:
-        named += f" and {len(tracked) - _NAMED_TRACKED} more"
+    if not tracked:
+        return (
+            "variable_overrides key(s) name no variable this test tracks "
+            f"({_named_few(list(test.variable_overrides))}) — an override changes "
+            'how a tracked variable is scored, and "variables" (or a "metrics" '
+            "leaf) is what tracks one; nothing was scored"
+        )
     return (
         "the result holds none of the variables this test tracks "
-        f"({named}) — nothing was scored"
+        f"({_named_few(tracked)}) — nothing was scored"
     )
 
 

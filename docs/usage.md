@@ -582,10 +582,26 @@ been; the interactive review prints the same sentence for `a` on such a test,
 and `dstf author`'s Accept carries it in its notice. A test is
 simulate-only when a recognizer marks
 it (`simulate_only`), or when it DECLARES nothing to score — no `UnitTests`
-variable, no `variables` pattern and no `metrics` tree. `"variables": []`
+variable, no `variables` pattern, no `metrics` tree and no
+`comparison.variable_overrides` entry. `"variables": []`
 on a model without the component is that entry, and it is what `dstf add
 <model>` writes; give it a pattern or a criterion and it is scored like any
 other test.
+
+An override alone does not make it one. `comparison.variable_overrides`
+changes how a TRACKED variable is scored, so on an entry that tracks nothing
+— `"variables": []` and `{"x": {"mode": "range", "min_value": 100,
+"max_value": 200}}` — it scores nothing, and whoever wrote it asked for `x`
+to be checked. That test FAILS without a criterion, as a result that holds
+none of a test's tracked variables does, and `--accept` skips it with the
+same sentence:
+
+```
+variable_overrides key(s) name no variable this test tracks (x) — an override changes how a tracked variable is scored, and "variables" (or a "metrics" leaf) is what tracks one; nothing was scored
+```
+
+Name the variable in `variables` (the override then scores it), or write the
+criterion as a `metrics` leaf.
 
 ### The points a baseline stores (`baseline_points`)
 

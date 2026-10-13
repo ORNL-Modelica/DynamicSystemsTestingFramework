@@ -32,6 +32,17 @@ REFERENCE = {
 
 NONE_OF = "the result holds none of the variables this test tracks"
 NOTHING = " — nothing was scored"
+#: A bound `x` — 0 to 1 in every result here — is far outside of.
+BOUND = {"mode": "range", "min_value": 100, "max_value": 200}
+
+
+def _untracked(keys: str) -> str:
+    """The refusal of a test that tracks nothing and overrides ``keys``."""
+    return (
+        f"variable_overrides key(s) name no variable this test tracks ({keys}) — "
+        'an override changes how a tracked variable is scored, and "variables" '
+        '(or a "metrics" leaf) is what tracks one; nothing was scored'
+    )
 
 
 def _result(*names: str) -> TestResult:
@@ -99,6 +110,7 @@ DECLARES = {
     "a criterion": dict(
         metric_tree_spec=parse_metric_tree({"metric": "nrmse", "variable": "x"})
     ),
+    "an override": dict(variable_overrides={"x": dict(BOUND)}),
 }
 
 
@@ -127,6 +139,64 @@ def test_a_test_that_declares_one_thing_to_score_is_not_simulate_only(what):
     assert make_test_model(source="spec", n_vars=1).is_simulate_only is True
     # The recognizer's mark wins over anything declared.
     assert make_test_model(simulate_only=True, **DECLARES[what]).is_simulate_only
+
+
+@pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
+def test_an_override_on_a_test_that_tracks_nothing_fails_and_says_so(baseline):
+    """`"variables": []` and an override that holds `x` to [100, 200], `x`
+    in [0, 1]: PASS, simulate-only, with no word — whoever wrote the
+    override asked for `x` to be checked. An override is a declaration; it
+    scores nothing where nothing is tracked, and the test says which keys
+    and what tracks a variable."""
+    test = make_test_model(variable_overrides={"x": dict(BOUND)})
+    assert test.is_simulate_only is False
+    comp = compare_one(test, _result("x"), _Store(REFERENCE if baseline else None))
+    assert classify(comp) == FAIL and comp.passed is False
+    assert comp.simulate_only is False and comp.has_reference is baseline
+    assert refusal(comp) == _untracked("x")
+    assert comp.variables == [] and comp.metric_tree is None
+    direct = compare_test(test, _result("x"), REFERENCE if baseline else {})
+    assert (direct.passed, direct.error_message) == (False, comp.error_message)
+
+
+def test_the_override_keys_are_named_four_and_counted():
+    keys = ["a", "b", "c", "d", "e", "f"]
+    test = make_test_model(variable_overrides={k: {"tolerance": 0.1} for k in keys})
+    assert nothing_scored(test, _result("x")) == _untracked("a, b, c, d and 2 more")
+
+
+def test_an_override_on_a_tracked_variable_is_read_as_it_was():
+    """The override's key IS tracked: the variable is scored by it — here
+    it fails its bound — and the sentence above is said of no such test."""
+    test = make_test_model(
+        variable_patterns=["x"], variable_overrides={"x": dict(BOUND)}
+    )
+    assert nothing_scored(test, _result("x")) is None
+    comp = compare_one(test, _result("x"), _Store(REFERENCE))
+    assert classify(comp) == FAIL and refusal(comp) is None
+    assert [(v.name, v.mode, v.passed) for v in comp.variables] == [
+        ("x", "range", False)
+    ]
+    inside = make_test_model(
+        variable_patterns=["x"],
+        variable_overrides={"x": {"mode": "range", "min_value": 0, "max_value": 1}},
+    )
+    assert classify(compare_one(inside, _result("x"), _Store(REFERENCE))) == PASS
+
+
+def test_a_tracked_variable_the_result_lost_keeps_its_own_sentence():
+    """It tracks `y`, overrides `x`, and the result holds neither tracked
+    variable: what is wrong is the result, in the words that were there."""
+    test = make_test_model(
+        variable_patterns=["y"], variable_overrides={"x": dict(BOUND)}
+    )
+    assert nothing_scored(test, _result("x")) == f"{NONE_OF} (y){NOTHING}"
+
+
+def test_a_marked_test_stays_simulate_only_over_an_override():
+    test = make_test_model(simulate_only=True, variable_overrides={"x": dict(BOUND)})
+    assert test.is_simulate_only and nothing_scored(test, _result("x")) is None
+    assert classify(compare_one(test, _result("x"), _Store(None))) == PASS
 
 
 def test_one_tracked_variable_in_the_result_is_scored_as_before():
@@ -376,6 +446,73 @@ def test_an_entry_with_no_variables_passes_by_having_run(project, tmp_path, caps
     )
     (ramp,) = [t for t in verdicts["tests"] if t["model_id"] == RAMP]
     assert ramp["status"] == PASS
+
+
+def _override_only(project: Project, model_id: str) -> None:
+    """What `dstf add <model>` writes, and an override added by hand."""
+    _track(project, model_id)
+    data = json.loads(project.spec.read_text(encoding="utf-8"))
+    (entry,) = [e for e in data["tests"] if e["model"] == model_id]
+    entry["comparison"] = {"variable_overrides": {"x": dict(BOUND)}}
+    project.spec.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
+def test_compare_fails_an_entry_whose_override_names_a_variable_it_does_not_track(
+    project, tmp_path, capsys, baseline
+):
+    """On the console, in JUnit and in verdicts.json: it read PASS in all
+    three, with no message and no warning."""
+    _override_only(project, RAMP)
+    if not baseline:
+        project.reference(RAMP).unlink()
+    rc, cases = project.junit(tmp_path)
+    assert rc == 1
+    assert _case(cases, RAMP) == ("failure", _untracked("x"))
+    assert _case(cases, CSV) == ("pass", None)
+    capsys.readouterr()
+    assert project.dstf("compare") == 1
+    out = capsys.readouterr().out
+    assert f"{RAMP}\n    Error: {_untracked('x')}\n" in out, out
+    assert "Results: 2/3 passed" in out
+    verdicts = json.loads(
+        (project.config.work_dir / "verdicts.json").read_text(encoding="utf-8")
+    )
+    (ramp,) = [t for t in verdicts["tests"] if t["model_id"] == RAMP]
+    assert (ramp["status"], ramp["message"]) == (FAIL, _untracked("x"))
+
+
+@pytest.mark.parametrize("command", ["compare", "run"])
+def test_accept_skips_an_entry_whose_override_names_an_untracked_variable(
+    project, capsys, command
+):
+    _override_only(project, RAMP)
+    before = project.reference(RAMP).read_bytes()
+    capsys.readouterr()
+    assert project.dstf(command, "--accept") == 1
+    out = capsys.readouterr().out
+    assert f"Skipped 1 test(s):\n  {RAMP}: {_untracked('x')}" in out, out
+    assert "Simulate-only" not in out
+    assert project.reference(RAMP).read_bytes() == before
+
+
+def test_the_tool_shows_such_an_entry_not_scored_with_the_sentence(project):
+    """The Session's comparison, the reason its tree line and strip are
+    written from, and Accept: greyed with the sentence, where a
+    simulate-only test's row read `simulate-only: no baseline`."""
+    pytest.importorskip("nicegui")
+    from dstf.authoring.builtin.accept import Accept, _rows
+    from dstf.authoring.session import Selection, Session, SessionView
+
+    _override_only(project, RAMP)
+    session = Session()
+    session.open(project.config.config_file, work_dir=project.config.work_dir)
+    comp = session.comparisons[RAMP]
+    assert classify(comp) == FAIL and not comp.simulate_only
+    assert refusal(comp) == _untracked("x")
+    view = SessionView(session, Selection(tests=frozenset({RAMP})))
+    assert _rows(view) == [(RAMP, "FAIL", _untracked("x"))]
+    assert Accept().available(view) == _untracked("x")
 
 
 @pytest.mark.parametrize("command", ["compare", "run"])
