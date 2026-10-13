@@ -2870,7 +2870,10 @@ existed: `manifest cleanup` deleting the highest obsolete ref let
 silently re-pointing external artifacts keyed on ref_NNNN. Each partition
 now persists `.id_high_water.json` (additive dot-file, invisible to every
 `ref_*.json` glob — the layout seam is unbroken; absent file → scan-only,
-old partitions keep working; write failure warns, never fails an accept).
+old partitions keep working; write failure warns, never fails an accept;
+a shipped example partition carries none — it has lost no baseline, and
+the two an accept on a scratch copy left in the Modelica example were
+removed on 2026-10-12, the next id being the scan's either way).
 Adversarial review caught that a read-check-then-write bump is
 last-writer-wins and could REGRESS the mark under two racing `--accept`
 processes — and a write-verify-retry does not close it (the higher writer

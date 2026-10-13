@@ -744,12 +744,15 @@ OpenModelica baseline the other way round (`modelica-om-…`). The tests of
 the two libraries that share a name and not a model (`Constant`,
 `SimpleRamp` / `SimpleTest`, `TubeTolerance`, `MetricTree`) carry no such
 companion: it would draw another model's curve. `MetricTreeTest` carries
-`analytic`: the model's closed-form solution (`x = 1 − e^(−2t)`,
-`y = 1 − 2e^(−t) + e^(−2t)`) written to a CSV on a fine grid, registered with
-`--map "unitTests.x[1]=x" --map "unitTests.x[2]=y"` and then frozen, so the
+`analytic`: the closed-form solution of the variable its criteria score
+(`x = 1 − e^(−2t)`) written to a CSV on a fine grid, registered with
+`--map "unitTests.x[1]=x"` and then frozen, so the
 data sits beside the baseline it is drawn on (`companions/ref_NNNN/
 analytic.{json,csv}`). On the report page, tick `analytic` in the plot's
-Overlays row: it lies on the simulated curve to 3e-6.
+Overlays row: it lies on the simulated curve to 3e-6. Map a companion's
+variable to a variable the test's criteria SCORE: an overlay is drawn on
+that variable's plot, and a watch plot (a `plots` entry on an unscored
+variable) draws the run's series alone.
 
 **Say which variable is which.** `--map TEST_VAR=COMPANION_VAR` is repeatable
 and is the record the report reads: the left name is a variable of the test

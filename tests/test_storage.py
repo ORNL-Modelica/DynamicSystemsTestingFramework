@@ -1337,3 +1337,19 @@ class TestStoreReferenceRejectsNonFinite:
         stored, skipped = store.accept_results([sim_only], {"Lib.SimOnly": result})
         assert stored == []
         assert skipped == []
+
+
+def test_no_shipped_example_partition_carries_a_high_water_mark():
+    """The mark keeps an id spent after the baseline that held it is
+    removed. A shipped partition has lost none: the scan gives the same
+    next id without it, and the two an accept on a scratch copy left in
+    the Modelica example were the only ones among the shipped partitions."""
+    examples = Path(__file__).parent.parent / "examples"
+    partitions = sorted({ref.parent for ref in examples.rglob("ref_*.json")})
+    assert len(partitions) >= 7, partitions
+    assert sorted(examples.rglob(".id_high_water.json")) == []
+    for partition in partitions:
+        highest = max(
+            int(ref.stem[len("ref_") :]) for ref in partition.glob("ref_*.json")
+        )
+        assert RefIndex(partition).next_id() == f"{highest + 1:04d}"

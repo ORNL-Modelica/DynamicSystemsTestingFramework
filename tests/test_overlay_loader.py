@@ -1258,7 +1258,7 @@ class TestTheRepoSExampleCompanions:
         "modelica-om-multifrequency": {"y": "unitTests.x[1]"},
         "modelica-om-rangecheck": {"x": "unitTests.x[1]"},
         "julia-mtk-frequency": {"unitTests.x[1]": "x"},
-        "analytic": {"unitTests.x[1]": "x", "unitTests.x[2]": "y"},
+        "analytic": {"unitTests.x[1]": "x"},
         "julia-mtk-multifrequency": {"unitTests.x[1]": "y"},
         "julia-mtk-rangecheck": {"unitTests.x[1]": "x"},
     }
@@ -1358,6 +1358,44 @@ class TestTheRepoSExampleCompanions:
                     off[(ov.name, entry["name"])] = float(apart.max()) / scale
         return off
 
+    def test_every_example_companion_is_drawn_on_a_plot_its_test_has(self):
+        """A companion's variable is drawn on the plot of the test variable
+        it is mapped to, and a test has a plot per variable its criteria
+        score — a watch plot draws the run's series alone, no overlay.
+        `analytic`'s `y` was mapped to `unitTests.x[2]` of a test whose
+        tree scores `x[1]` alone: it attached to a trajectory no page
+        drew, and that half of the mapping is gone."""
+        from dstf.config import Config
+        from dstf.discovery.plots import plots_of_test
+        from dstf.discovery.test_registry import discover_tests
+        from dstf.storage.reference_store import ReferenceStore
+
+        checked = 0
+        for source, backend in self.ROOTS:
+            root = source / "Resources" / "ReferenceResults"
+            config = Config(
+                config_file=root / "testing.json", backend_name=backend, os_name="linux"
+            )
+            tests = {t.model_id: t for t in discover_tests(config)}
+            store = ReferenceStore(config)
+            for ref_file in sorted((root / backend / "linux").glob("ref_*.json")):
+                data = json.loads(ref_file.read_text(encoding="utf-8"))
+                model = data["model_id"]
+                held = [v["name"] for v in data["variables"]]
+                plots = plots_of_test(tests[model], held, None, listed=None)
+                drawn = {
+                    name for plot in plots if not plot.watch for name in plot.subject
+                }
+                for ov in load_overlays(store, model):
+                    if ov.role != "companion":
+                        continue
+                    for variable in ov.mapping:
+                        assert variable in drawn, (backend, model, ov.name, variable)
+                        checked += 1
+        # Every mapping of EXPECTED; `analytic` ships in both Modelica partitions.
+        mappings = sum(len(m) for m in self.EXPECTED.values())
+        assert checked == mappings + len(self.EXPECTED["analytic"])
+
     def test_every_example_companion_lies_on_the_baseline_it_overlays(self):
         """A companion that draws another model's curve is a wrong example:
         `julia-mtk-constant` sat 2.5 from a constant, `julia-mtk-simpleramp`
@@ -1376,10 +1414,11 @@ class TestTheRepoSExampleCompanions:
 
     @pytest.mark.parametrize("backend", ["OpenModelica", "Dymola"])
     def test_the_analytic_companion_is_the_models_own_solution(self, backend):
-        """`MetricTreeTest`: x' = (1 - x)/0.5 and y' = x - y from zero, so
-        x = 1 - e^(-2t) and y = 1 - 2e^(-t) + e^(-2t). The companion's
-        curves are those — written out, not a simulator's — and the stored
-        baseline of each partition lies on them."""
+        """`MetricTreeTest`: x' = (1 - x)/0.5 from zero, so x = 1 - e^(-2t).
+        The companion's curve is that — written out, not a simulator's —
+        and the stored baseline of each partition lies on it. It holds the
+        variable the test's criteria score and no other: `y`, mapped to
+        the unscored `unitTests.x[2]`, was drawn on no page."""
         from dstf.config import Config
         from dstf.storage.reference_store import ReferenceStore
 
@@ -1400,11 +1439,8 @@ class TestTheRepoSExampleCompanions:
             "frozen",
             "loaded",
         )
-        exact = {
-            "x": lambda t: 1.0 - np.exp(-2.0 * t),
-            "y": lambda t: 1.0 - 2.0 * np.exp(-t) + np.exp(-2.0 * t),
-        }
-        assert set(analytic.variables) == {"x", "y"}
+        exact = {"x": lambda t: 1.0 - np.exp(-2.0 * t)}
+        assert set(analytic.variables) == {"x"}
         for name, curve in analytic.variables.items():
             t = np.asarray(curve.time, dtype=float)
             assert (t[0], t[-1], len(t)) == (0.0, 10.0, 501)
@@ -1420,6 +1456,7 @@ class TestTheRepoSExampleCompanions:
                 )
             )
             for v in reference["variables"]
+            if v["name"] in analytic.mapping
         }
-        assert set(worst) == {"unitTests.x[1]", "unitTests.x[2]"}
+        assert set(worst) == {"unitTests.x[1]"}
         assert max(worst.values()) < 1e-5, worst
