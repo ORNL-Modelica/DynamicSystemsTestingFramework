@@ -194,6 +194,26 @@ def test_every_example_parses(path, example, capsys):
         assert command_path(args).startswith(path + " ")
 
 
+def test_every_command_the_dashboard_builds_parses(capsys):
+    """The dashboard's selection footer builds `dstf --config <cfg> <kind>
+    --filter …` from its Command menu (and ` --merge --report` after a
+    plain `run`): each is a command line of this tree."""
+    from pathlib import Path
+
+    import dstf.reporting
+
+    page = Path(dstf.reporting.__file__).parent / "templates" / "dashboard.html"
+    menu = page.read_text(encoding="utf-8").split('<select id="cmd-kind"', 1)[1]
+    kinds = re.findall(r'<option value="([^"]+)">', menu.split("</select>", 1)[0])
+    assert "run" in kinds and "author" in kinds and len(kinds) >= 5
+    for kind in kinds:
+        tail = " --merge --report" if kind == "run" else ""
+        line = f'--config "/a b/testing.json" {kind} --filter "Lib.A,Lib.B"{tail}'
+        args = _parse(shlex.split(line), capsys)
+        assert isinstance(args, argparse.Namespace), f"dstf {line}\n{args}"
+        assert args.filter == "Lib.A,Lib.B" and args.config == "/a b/testing.json"
+
+
 # ---------------------------------------------------------------------------
 # Fence 4 — a command offers exactly the flags it reads
 # ---------------------------------------------------------------------------

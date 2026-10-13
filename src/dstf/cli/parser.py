@@ -425,7 +425,11 @@ def _text(text: str) -> str:
     (the formatter leaves a description and an epilog as written, for the
     examples' sake)."""
     paragraphs = textwrap.dedent(text).strip().split("\n\n")
-    return "\n\n".join(textwrap.fill(" ".join(p.split()), 78) for p in paragraphs)
+    return "\n\n".join(
+        # A name with a hyphen in it (a package, a flag) stays whole.
+        textwrap.fill(" ".join(p.split()), 78, break_on_hyphens=False)
+        for p in paragraphs
+    )
 
 
 class _Tree:
