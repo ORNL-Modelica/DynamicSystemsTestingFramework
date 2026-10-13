@@ -134,6 +134,18 @@ class TestTheList:
         assert out.endswith("Simulink: no backend is registered under this name.\n")
 
 
+def _no_project(tmp_path: Path) -> Path:
+    """A directory with no project anywhere above it. Deeper than
+    ``find_package_dir``'s 10-level walk up: that walk looks at the CHILDREN
+    of every directory it passes, so from a directory just under
+    ``tmp_path`` it reaches pytest's base directory and finds the
+    ``package.mo`` another test left in its own (``test_backends`` writes
+    one) — and `check` then reads that library on defaults."""
+    deep = tmp_path.joinpath(*[f"d{i}" for i in range(12)])
+    deep.mkdir(parents=True)
+    return deep
+
+
 class TestWithNoTestingJson:
     def test_the_search_alone_and_nothing_written(
         self, no_installs, tmp_path, capsys, monkeypatch
@@ -141,8 +153,7 @@ class TestWithNoTestingJson:
         """A directory with no project: the backends are still where they
         are. What a Modelica project with an empty testing.json would run
         with is marked — with only omc on PATH, OpenModelica."""
-        empty = tmp_path / "empty"
-        empty.mkdir()
+        empty = _no_project(tmp_path)
         monkeypatch.chdir(empty)
         omc = _program(no_installs / "omc")
         from dstf.backends.openmodelica import session_loader
@@ -171,8 +182,7 @@ class TestWithNoTestingJson:
     def test_nothing_installed_is_exit_1_with_the_fix(
         self, no_installs, tmp_path, capsys, monkeypatch
     ):
-        empty = tmp_path / "empty"
-        empty.mkdir()
+        empty = _no_project(tmp_path)
         monkeypatch.chdir(empty)
         assert main(["check"]) == 1
         out = capsys.readouterr().out
