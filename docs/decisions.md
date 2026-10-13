@@ -5306,7 +5306,11 @@ generates beside the executable. `backends/openmodelica/init_xml.py` reads
 continuous_time_states` — the key Dymola's translation log fills — in
 `OpenModelicaBackend.read_result`, the one read the persistent workers,
 `--batch` and a later `compare` share; only the root's start tag is
-parsed (the file lists every variable). Executed on real omc, both
+parsed (the file lists every variable). A count is a non-negative decimal
+integer, all of the attribute, or it is not recorded: `int()` also read
+`-1`, `+3`, `1_000`, ` 3 ` and another script's digits. `0` is one — a
+model with no state, whose first state then reads `Continuous states: 0
+-> 1`. Executed on real omc, both
 backends: the example's `SimpleTest` reads 2, and with a third state
 added the run says `Continuous states: 2 -> 3`. Read from the file each
 time, so nothing new is kept beside the result. *Old data:* an

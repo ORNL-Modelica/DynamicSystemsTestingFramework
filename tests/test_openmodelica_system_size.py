@@ -63,6 +63,23 @@ def test_the_states_are_read_into_the_key_dymola_fills(tmp_path):
     }
 
 
+def test_no_state_is_a_count_of_zero_and_a_first_state_is_a_change(tmp_path):
+    """A model with no state has a count — 0 — and it is recorded: read
+    as nothing, the state a model then gains would be a count with no
+    count to compare with, and no line."""
+    path = _init(tmp_path / "result_init.xml", states=0)
+    assert system_size(path) == {"continuous_time_states": 0}
+    assert with_system_size(None, path) == {
+        "translation": {"continuous_time_states": 0}
+    }
+    assert system_size(_init(path, states="007")) == {"continuous_time_states": 7}
+    gained = _scored(1, {"translation": {"continuous_time_states": 0}})
+    assert [w.text for w in gained.warnings] == ["Continuous states: 0 -> 1"]
+    lost = _scored(0, {"translation": {"continuous_time_states": 1}})
+    assert [w.text for w in lost.warnings] == ["Continuous states: 1 -> 0"]
+    assert changed("translation.continuous_time_states", "count", 1, 0) is True
+
+
 def test_only_the_root_elements_start_tag_is_read(tmp_path):
     """The file lists every variable of the model — megabytes for a large
     one — and nothing after the root's own attributes is asked for: a body
@@ -82,8 +99,28 @@ def test_only_the_root_elements_start_tag_is_read(tmp_path):
         ),
         lambda p: _init(p, states="many"),
         lambda p: _init(p, states="2.5"),
+        # What `int()` reads and no count is: a count is digits, all of it.
+        lambda p: _init(p, states="-1"),
+        lambda p: _init(p, states="+3"),
+        lambda p: _init(p, states="1_000"),
+        lambda p: _init(p, states=" 3 "),
+        lambda p: _init(p, states="٣"),
+        lambda p: _init(p, states=""),
     ],
-    ids=["no file", "empty", "not xml", "no attribute", "no number", "no whole number"],
+    ids=[
+        "no file",
+        "empty",
+        "not xml",
+        "no attribute",
+        "no number",
+        "no whole number",
+        "negative",
+        "signed",
+        "underscored",
+        "padded",
+        "a digit of another script",
+        "an empty attribute",
+    ],
 )
 def test_a_file_that_says_nothing_gives_nothing(tmp_path, write):
     path = tmp_path / "result_init.xml"
