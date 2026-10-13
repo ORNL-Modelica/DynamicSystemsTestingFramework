@@ -5356,9 +5356,10 @@ accepted the planner's choices ("No objections").
    SIM_FAIL, NO_REF, FAIL, simulate-only, PASS — the first that applies
    wins — each with a tone (grey, red, amber) and one sentence
    (`shell/strip.py` draws it). Accept and Rerun leave the test's row for
-   the strip. The controller's calls: "N unsaved edits" counts ops, so the
-   first criterion edit on a flat test reads 2 (the materialization and the
-   edit), as the header's count does; a saved spec that cannot be scored
+   the strip. The controller's calls: "N unsaved edits" counted OPS when
+   this was written, so the first criterion edit on a flat test read 2
+   (the materialization and the edit), as the header's count did — it
+   counts what the user did since D155, and reads 1; a saved spec that cannot be scored
    reads "verdict would change scoring failed → PASS"; an unscored test
    while the project is read waits ("Scoring…"); a result counts only when
    the manifest does not list its model as unfinished (what Accept's
@@ -7807,18 +7808,24 @@ by the simulator and not swept. `testing.json` itself — `backend_setup`,
 is seen by the next click; the test queued before it runs what the worker
 holds when its turn comes. A file rewritten with the same modification
 time and size is not seen (a rewrite of the same length within one tick of
-the file system's clock, or one whose time is put back). An editor's lock
-or temporary file whose name ends in `.mo` (Emacs's `.#A.mo`) is a source
-file to the sweep: an added file, so a reload — the whole library on
-OpenModelica — and no error. A rescan that lands after a click does not
+the file system's clock, or one whose time is put back). A REAL file an
+editor leaves beside a source file under a name that ends in `.mo` is a
+source file to the sweep: an added file, so a reload — the whole library on
+OpenModelica — and no error. Emacs's lock `.#A.mo` is not one: it is a
+dangling symbolic link, and a dangling link is nothing to the sweep
+(written here, until 2026-10-12, as a file it saw). A rescan that lands after a click does not
 take back what the click read of a test: a file edited again between the
 two shows the click's values until that test's next click. A test that did
 not exist when the tool opened
 is listed by the next open. Dymola's message for a model that no longer
 parses is its generic "Translation failed", the parser's words in the
 translation log; an emptied or garbage BASE-CLASS file reads the same on
-Dymola (the model misses what it declared) and `MyLib does not load:
-[grammar:error:234] …` on OpenModelica. A test's OWN file emptied or
+Dymola (the model misses what it declared), and on OpenModelica, with the
+file named: `MyLib does not load: Parts/K.mo: [grammar:error:234] Modelica
+library files should contain exactly one package, …` for an emptied one
+(`Parts/K.mo: it holds no class, not MyLib.Parts.K` when that file is
+loaded by itself) and `Parts/K.mo:1: [syntax:error:2] Parser error: …`
+for garbage, either way. A test's OWN file emptied or
 turned to garbage never reaches the simulator: the click refuses it — a
 file that cannot be opened with `cannot be read: Permission denied`, the
 system's words — and a refusal's note leaves the panel when that test is
@@ -8270,8 +8277,10 @@ decisions are folded in below; what follows is the contract as built.
    replaces the first, so a value typed into a folded field is one edit
    and not a keystroke log; and a tree put back as the saved entry scores
    is no edit and leaves nothing pending. On a test with a saved tree the
-   header counts 1. On a FLAT test it counts 2, as it does for one
-   criterion's edit there: the op is marked as an edit of the tree
+   header counts 1. On a FLAT test it counted 2 when this was written, as
+   it did for one criterion's edit there, and counts 1 since D155 (one act
+   is one pending edit, however many ops); the two ops are still staged:
+   the op is marked as an edit of the tree
    (`PatchOp.edits_tree`), so `Session.stage` writes the implicit tree out
    first, marked, and the preview diffs the gesture against that tree and
    says "Save also writes this test's criteria out as a tree". Unmarked —

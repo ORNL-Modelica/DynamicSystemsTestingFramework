@@ -113,6 +113,8 @@ def test_a_link_that_leads_back_ends_the_walk_and_a_dangling_one_is_skipped(
     os.symlink(lib / "Sub", lib / "Sub" / "again")  # to a directory above it
     os.symlink(tmp_path / "nowhere", lib / "Sub" / "gone")  # dangling
     os.symlink(tmp_path / "nowhere.mo", lib / "Gone.mo")
+    # Emacs's lock on `A.mo`: a link to no file, named like a source file.
+    os.symlink("user@host.4242:1760000000", lib / ".#A.mo")
     stamps = sweep([lib], _is_mo)
     # Every file once by its own spelling; `Sub` once more through the
     # link to it, where the link to itself inside it ends the walk.
