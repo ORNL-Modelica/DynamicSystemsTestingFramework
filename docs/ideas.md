@@ -2072,3 +2072,12 @@ planning.
   Rust (owner, 2026-10-13)**: an evaluation, not a decision. Nothing has
   been measured for it yet; which parts, on what evidence and at what cost
   to the plug-in contracts are the questions. Grill before planning.
+
+- **Review the authoring interfaces against the original prototype (owner,
+  2026-10-13, from testing `dstf author` by hand)**: the owner sees issues
+  in manual use — the tool no longer works the way the old, original
+  prototype HTML did. Which behaviours are meant has not been written down
+  yet: the first step is the owner's list, taken with the prototype and the
+  tool side by side, before anything is planned. (A reading, not the
+  owner's words: the prototype is the editable report page from before
+  editing moved into `dstf author`, D125.) Grill before planning.
