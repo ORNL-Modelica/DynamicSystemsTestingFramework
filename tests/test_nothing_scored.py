@@ -579,3 +579,71 @@ def test_accept_says_which_variables_the_new_baseline_no_longer_holds(
     capsys.readouterr()
     assert project.dstf("compare", "--accept") == 0
     assert "no longer holds" not in capsys.readouterr().out
+
+
+def test_an_accept_says_why_each_variable_left_the_baseline(tmp_path, capsys):
+    """`… no longer holds z — the accepted result does not hold it.` of a
+    variable taken out of `variables` on purpose, which the run still
+    wrote: the second half was false. A variable the test no longer tracks
+    is said to be that; one it tracks and the run lost keeps the sentence;
+    and an accept that has both says each of its own names.
+
+    Through `run --accept` over a copy of the Python example whose ramp
+    writes what each step says."""
+    from conftest import python_example_copy
+    from dstf.cli import main
+
+    config, _ = python_example_copy(tmp_path)
+    spec = config.config_file.parent / "test_spec.json"
+    model = tmp_path / "lib" / "Examples" / "SimpleRamp.py"
+    wrote_x = '"variables": {"x": sol.y[0].tolist()},'
+    source = model.read_text(encoding="utf-8")
+    assert source.count(wrote_x) == 1
+
+    def accept(tracked: list[str], written: list[str]) -> list[str]:
+        """`run --accept` of the ramp tracking ``tracked`` and writing
+        ``written``; the warnings it printed about what a baseline lost."""
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        (entry,) = [e for e in data["tests"] if e["model"] == RAMP]
+        entry["variables"] = tracked
+        spec.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        series = ", ".join(f'"{name}": sol.y[0].tolist()' for name in written)
+        model.write_text(
+            source.replace(wrote_x, f'"variables": {{{series}}},'), encoding="utf-8"
+        )
+        capsys.readouterr()
+        rc = main(
+            ["--config", str(config.config_file), "run", "--no-browser"]
+            + ["--work-dir", str(config.work_dir), "--accept"]
+        )
+        assert rc == 0
+        # The result FILE holds what the model wrote, tracked or not.
+        results = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in config.work_dir.glob("test_*/result.json")
+        ]
+        (result,) = [r for r in results if set(r["variables"]) == set(written)]
+        assert result["success"] is True
+        return [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if "no longer holds" in line
+        ]
+
+    (ref,) = [
+        path.name
+        for path in config.reference_dir.glob("ref_*.json")
+        if json.loads(path.read_text(encoding="utf-8"))["model_id"] == RAMP
+    ]
+    said = f"Warning: {ref} ({RAMP}) no longer holds"
+    assert accept(["x", "y", "z"], ["x", "y", "z"]) == []
+    # `z` is taken out of `variables`; the run still writes it.
+    assert accept(["x", "y"], ["x", "y", "z"]) == [
+        f"{said} z — the test no longer tracks it."
+    ]
+    assert accept(["x", "y", "z", "w"], ["x", "y", "z", "w"]) == []
+    # Tracked and lost, and two no longer tracked: a line for each reason.
+    assert accept(["x", "y"], ["x", "z", "w"]) == [
+        f"{said} y — the accepted result does not hold it.",
+        f"{said} z, w — the test no longer tracks them.",
+    ]

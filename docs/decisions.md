@@ -7855,7 +7855,10 @@ has no baseline to say it was ever there. An accept over such a run is not
 refused, since accepting is how a variable is dropped on purpose; every
 accept path says `ref_0042.json (MyLib.M) no longer holds y — the accepted
 result does not hold it.` beside the large-file warning
-(`storage.accept.lost_variables_warning`). Over a copy of the 331-test
+(`storage.accept.lost_variables_warnings`; a variable the test no longer
+tracks is said as that — `… the test no longer tracks it.` — since
+2026-10-13: the first sentence was printed of it too, while the run still
+wrote it). Over a copy of the 331-test
 library's stored results the change flipped no verdict and changed no
 entry of `verdicts.json`; with a tracked variable added to three baselines
 there, those three tests and no other went PASS → FAIL.

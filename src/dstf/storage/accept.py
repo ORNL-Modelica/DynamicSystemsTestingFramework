@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..backends.common.result_variables import criterion_variables, tracks
 from ..backends.types import TestResult
 from ..comparison.comparator import nothing_scored, refused_base_tolerance
 from ..discovery.test_registry import TestModel
@@ -44,7 +45,7 @@ def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
 
 
 #: How many names a sentence that lists them spells out
-#: (:func:`lost_variables_warning`, :func:`simulate_only_note`).
+#: (:func:`lost_variables_warnings`, :func:`simulate_only_note`).
 _NAMED = 6
 
 
@@ -72,26 +73,43 @@ def _variable_names(reference: dict | None) -> list[str]:
     return [v.get("name") or "" for v in (reference or {}).get("variables", [])]
 
 
-def lost_variables_warning(
-    store: ReferenceStore, model_id: str, held_before: list[str]
-) -> str | None:
-    """The sentence for a baseline just written that no longer holds a
-    variable the one it replaced held (``held_before``, its names), else
-    ``None``. A warning: the baseline IS stored — accepting is how a
-    variable is dropped on purpose — but a run that LOST one rewrote the
-    baseline without it, and nothing said so."""
+def lost_variables_warnings(
+    store: ReferenceStore, test: TestModel, held_before: list[str]
+) -> list[str]:
+    """The sentences for a baseline just written that no longer holds a
+    variable the one it replaced held (``held_before``, its names); none
+    when it lost nothing. A warning: the baseline IS stored — accepting is
+    how a variable is dropped on purpose — but a run that LOST one rewrote
+    the baseline without it, and nothing said so.
+
+    Two sentences, since a variable leaves a baseline for two reasons, and
+    each is said of its own names. One the test still tracks — a UnitTests
+    variable, a ``variables`` pattern, a criterion's variable — the run did
+    not deliver: ``the accepted result does not hold it``. One it no longer
+    tracks was taken out on purpose, and the run may well still write it:
+    ``the test no longer tracks it`` — that half read ``the accepted result
+    does not hold it`` too, of a result file that held it."""
+    model_id = test.model_id
     test_id = store.index.get_id(model_id)
     if test_id is None:
-        return None
+        return []
     holds = set(_variable_names(store.get_reference(model_id)))
     lost = [name for name in held_before if name and name not in holds]
-    if not lost:
-        return None
-    return (
-        f"{RefIndex.ref_filename(test_id)} ({model_id}) no longer holds "
-        f"{_named(lost)} — "
-        f"the accepted result does not hold {'it' if len(lost) == 1 else 'them'}."
-    )
+    tracked = tracks(test)
+    by_criterion = set(criterion_variables(test, store.config.diagnostic_variables))
+    asked = [name for name in lost if tracked(name) or name in by_criterion]
+    dropped = [name for name in lost if name not in asked]
+
+    def said(names: list[str], why: str) -> str:
+        return (
+            f"{RefIndex.ref_filename(test_id)} ({model_id}) no longer holds "
+            f"{_named(names)} — {why} {'it' if len(names) == 1 else 'them'}."
+        )
+
+    return [
+        *([said(asked, "the accepted result does not hold")] if asked else []),
+        *([said(dropped, "the test no longer tracks")] if dropped else []),
+    ]
 
 
 def accept_refusal(
@@ -139,7 +157,7 @@ def accept_run_results(
     is said once (`large_baseline_warning`): it IS stored, and counts as
     stored. Every accept path prints what this returns, so the CLI and the
     tool say the same sentence. So is a baseline that no longer holds a
-    variable the one it replaced held (`lost_variables_warning`).
+    variable the one it replaced held (`lost_variables_warnings`).
 
     A simulate-only test whose run completed is neither stored nor skipped:
     it has no baseline to store. The tests passed over for that are named
@@ -166,6 +184,7 @@ def accept_run_results(
         t.model_id: _variable_names(store.get_reference(t.model_id)) for t in accepted
     }
     stored, skipped, simulate_only = store.accept_results(accepted, results)
+    by_model = {t.model_id: t for t in accepted}
     note = simulate_only_note(simulate_only)
     return (
         len(stored),
@@ -186,7 +205,9 @@ def accept_run_results(
             warning
             for model_id in stored
             for warning in (
-                lost_variables_warning(store, model_id, held_before[model_id]),
+                *lost_variables_warnings(
+                    store, by_model[model_id], held_before[model_id]
+                ),
                 large_baseline_warning(store, model_id),
             )
             if warning is not None

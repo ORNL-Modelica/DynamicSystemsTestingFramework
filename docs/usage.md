@@ -566,6 +566,16 @@ variable is dropped on purpose — and says what the new baseline lost:
 Warning: ref_0042.json (MyLib.Examples.Pipe) no longer holds y — the accepted result does not hold it.
 ```
 
+A variable taken out of `variables` (or whose criterion was removed) leaves
+the baseline at the next accept too, and that is said as what it is — the
+run may still write it:
+
+```
+Warning: ref_0042.json (MyLib.Examples.Pipe) no longer holds z — the test no longer tracks it.
+```
+
+An accept that has both prints both lines, each with its own names.
+
 A **simulate-only** test passes iff its simulation completes: nothing is
 compared, no baseline is stored for it, and its report page reads
 `Simulate-only: simulation succeeded`. An accept names the ones it passed
