@@ -144,7 +144,7 @@ class TestSimulateOnly:
 
 
 def test_the_report_page_of_a_test_that_declares_nothing_says_simulate_only():
-    """`dstf add <model>`'s entry: no comparison and no variable is what a
+    """`dstf spec add <model>`'s entry: no comparison and no variable is what a
     simulate-only run looks like, not a failed simulation's banner."""
     from conftest import make_test_model
     from dstf.reporting.context_builder import _compute_summary_flags

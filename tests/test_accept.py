@@ -104,7 +104,7 @@ def test_no_manifest_means_no_refusal(tmp_path):
 
 def test_a_simulate_only_test_is_named_and_is_neither_stored_nor_skipped(tmp_path):
     """`Accepted 0 test baselines` with no word of the test: a test that
-    declares nothing to score — what `dstf add <model>` writes — has no
+    declares nothing to score — what `dstf spec add <model>` writes — has no
     baseline to store, and the accept says that in one line."""
     config, store = _env(tmp_path, {})
     tests = [

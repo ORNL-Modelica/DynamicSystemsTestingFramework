@@ -1,7 +1,7 @@
 """A key nobody reads is an error that names it.
 
 A ``range`` leaf written ``"max_val": 0.5`` (for ``max_value``) used to be
-accepted by ``spec-update``, written to ``test_spec.json`` and scored as if
+accepted by ``spec update``, written to ``test_spec.json`` and scored as if
 it had no upper bound: PASS. The same hole took a point row's
 ``tolerence``, a peak row's ``frq``, an override's ``tube_rell``, a
 window's ``strt``, a leaf's ``agianst`` (then scored against the PRIMARY
@@ -828,7 +828,7 @@ def test_spec_update_refuses_to_write_a_null_tree(example, tmp_path, capsys):
         ),
         encoding="utf-8",
     )
-    assert main(["--config", str(example), "spec-update", str(patch)]) == 1
+    assert main(["--config", str(example), "spec", "update", str(patch)]) == 1
     assert capsys.readouterr().out.strip() == (
         "Patch failed: patched metric tree is invalid: metrics: must be an "
         "object, got null"
@@ -1076,7 +1076,7 @@ class TestAStoredBaselinesOverride:
 
 
 # ---------------------------------------------------------------------------
-# the commands: spec-update refuses and writes nothing; run / compare /
+# the commands: spec update refuses and writes nothing; run / compare /
 # discover stop at the spec
 # ---------------------------------------------------------------------------
 
@@ -1107,7 +1107,7 @@ class TestSpecUpdateRefuses:
         spec = example.parent / "test_spec.json"
         before = spec.read_bytes()
         capsys.readouterr()
-        assert main(["--config", str(example), "spec-update", str(patch)]) == 1
+        assert main(["--config", str(example), "spec", "update", str(patch)]) == 1
         assert spec.read_bytes() == before
         out = capsys.readouterr().out
         assert out.startswith("Patch failed: ") and "Applied" not in out
@@ -1221,7 +1221,7 @@ class TestSpecUpdateRefuses:
                 "value": {"variable_overrides": {"unitTests.x[1]": {"mode": "range"}}},
             },
         )
-        assert main(["--config", str(example), "spec-update", str(patch)]) == 0
+        assert main(["--config", str(example), "spec", "update", str(patch)]) == 0
 
     def test_the_place_is_written_as_a_parse_error_writes_it(
         self, example, tmp_path, capsys
@@ -1271,7 +1271,7 @@ class TestSpecUpdateRefuses:
                 }
             ),
         )
-        assert main(["--config", str(example), "spec-update", str(patch)]) == 0
+        assert main(["--config", str(example), "spec", "update", str(patch)]) == 0
         assert "Applied 1 op(s)" in capsys.readouterr().out
         spec = json.loads(
             (example.parent / "test_spec.json").read_text(encoding="utf-8")
@@ -1307,7 +1307,7 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
             json.dumps({"patches": [{"model": model, "patch": list(ops)}]}),
             encoding="utf-8",
         )
-        return main(["--config", str(example), "spec-update", str(patch)])
+        return main(["--config", str(example), "spec", "update", str(patch)])
 
     def _entry(self, spec, model) -> dict:
         data = json.loads(spec.read_text(encoding="utf-8"))

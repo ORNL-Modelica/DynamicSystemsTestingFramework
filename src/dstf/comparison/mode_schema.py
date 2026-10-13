@@ -1,4 +1,4 @@
-"""UI schema derived from a mode's Config dataclass — what ``export-schema``
+"""UI schema derived from a mode's Config dataclass — what ``spec schema``
 writes as JSON-Schema and the authoring tool's form emitter renders.
 
 Each :class:`ComparisonMode`'s Config is a frozen dataclass with strictly

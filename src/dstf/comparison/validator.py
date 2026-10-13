@@ -153,7 +153,7 @@ def _check_leaf(
                 path,
                 f"This criterion scores against the companion {leaf.against!r}, "
                 f"and companions are only drawn; import it as a soft check "
-                f"(dstf import-baseline) to score against it.",
+                f"(dstf soft-check add) to score against it.",
             )
         )
         return

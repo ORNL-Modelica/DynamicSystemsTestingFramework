@@ -106,7 +106,7 @@ def _with_expression(variable: dict) -> dict:
     present, and ``accept``'s key order — index, name, expression, values.
 
     ``add_soft_check`` is handed entries someone else produced —
-    ``import-baseline`` reads a file that may predate the key, and a
+    ``soft-check add`` reads a file that may predate the key, and a
     cross-backend chain builds its own. A writer never leaves the field out
     (an entry without it is one no writer of this version made), so the
     missing key becomes the empty text.

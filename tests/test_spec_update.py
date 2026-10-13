@@ -1,4 +1,4 @@
-"""The spec-update read-modify-write as a library: materialization, validation,
+"""The spec update read-modify-write as a library: materialization, validation,
 one read and one write for every model in a patch set."""
 
 import copy

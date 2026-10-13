@@ -848,7 +848,7 @@ class Session:
     def rescore(self, model_id: str) -> TestComparison:
         """Score ``model_id`` against the spec with pending ops applied. A
         flat-override test first gets the same ``add /metrics`` op
-        ``spec-update`` prepends, so the document the tool edits and the one
+        ``spec update`` prepends, so the document the tool edits and the one
         it saves never differ in shape — but only when that tree scores
         exactly what the flat path scored (Conventions #7); otherwise the
         test is scored as loaded and nothing is staged. That op does not
@@ -1790,7 +1790,7 @@ class Session:
         return out
 
     def save(self) -> None:
-        """Apply exactly the pending ops through ``spec-update``'s
+        """Apply exactly the pending ops through ``spec update``'s
         read-modify-write, then reload. Refuses when the file changed on
         disk since it was loaded, and when the edits leave a criterion that
         can never be scored (`UnscorableSaveError`: `stage` took it, for its

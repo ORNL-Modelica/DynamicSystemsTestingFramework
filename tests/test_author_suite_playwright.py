@@ -559,7 +559,7 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
 
 
 def _d_is_simulate_only(cfg: Path) -> None:
-    """D's entry as `dstf add` writes one: it declares nothing to score."""
+    """D's entry as `dstf spec add` writes one: it declares nothing to score."""
     spec_path = cfg.parent / "test_spec.json"
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     (entry,) = [e for e in spec["tests"] if e["model"] == D]

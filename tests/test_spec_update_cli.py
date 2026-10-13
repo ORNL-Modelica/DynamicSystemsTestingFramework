@@ -468,7 +468,7 @@ class TestMultiModelEnvelope:
 class TestABaseToleranceThatIsNoNumberIsNotWritten:
     """``comparison.tolerance`` is ONE finite number: a patch that would
     leave the entry holding anything else there is refused with the
-    comparison's sentence and applies nothing — ``spec-update`` and the
+    comparison's sentence and applies nothing — ``spec update`` and the
     tool's Save alike (`apply_validated_patches`)."""
 
     WHERE = "test_spec.json comparison.tolerance"

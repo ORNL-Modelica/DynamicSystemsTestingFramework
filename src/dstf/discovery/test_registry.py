@@ -114,7 +114,7 @@ class TestModel:
         rule: a recognizer marked it (``simulate_only``), or it DECLARES
         nothing to score: no UnitTests variable, no ``variables`` pattern,
         no ``metrics`` tree and no ``comparison.variable_overrides`` entry.
-        That is the entry ``dstf add <model>`` writes (``"variables": []``),
+        That is the entry ``dstf spec add <model>`` writes (``"variables": []``),
         which has no key of its own for it.
 
         An override is a declaration: whoever wrote ``{"x": {"mode":

@@ -1,5 +1,6 @@
-"""Commands that write or describe `test_spec.json`: add, spec-update,
-export-schema."""
+"""The `spec` group — commands that write or describe `test_spec.json`:
+`spec add`, `spec update`, and `spec schema` (which also describes
+`testing.json`)."""
 
 import argparse
 import sys
@@ -8,12 +9,13 @@ from pathlib import Path
 from ..config import CONFIG_FILENAME
 from .common import _build_config
 
-#: `export-schema --file`: the two files a schema is written for.
+#: `spec schema <file>`: the two files a schema is written for, by the name
+#: each is asked for. The first is the default.
 SPEC_FILE = "test_spec.json"
-SCHEMA_FILES = (SPEC_FILE, CONFIG_FILENAME)
+SCHEMAS = {"test_spec": SPEC_FILE, "testing": CONFIG_FILENAME}
 
 
-def cmd_add(args: argparse.Namespace) -> int:
+def cmd_spec_add(args: argparse.Namespace) -> int:
     """Add a test to test_spec.json."""
     config = _build_config(args)
     model_id = args.model_id
@@ -110,20 +112,20 @@ def _print_applied(applied, requested, spec_path) -> None:
             print(f"  {op.get('op'):<8} {op.get('path'):<60} {op.get('value', '')}")
 
 
-def cmd_export_schema(args: argparse.Namespace) -> int:
+def cmd_spec_schema(args: argparse.Namespace) -> int:
     """Emit a JSON-Schema document describing ``test_spec.json`` (6.4.5),
-    or — ``--file testing.json`` — the project's ``testing.json``."""
+    or — ``spec schema testing`` — the project's ``testing.json``."""
     import json as json_mod
 
     from ..reporting.schema_export import build_config_schema, build_schema
 
-    if getattr(args, "file", SPEC_FILE) == CONFIG_FILENAME:
+    if SCHEMAS[args.schema] == CONFIG_FILENAME:
         schema = build_config_schema()
     else:
         schema = build_schema()
     text = json_mod.dumps(schema, indent=2) + "\n"
-    out = getattr(args, "output", None)
-    if out:
+    out = args.output
+    if out is not None:
         # LF on every platform — the schema gets committed.
         Path(out).write_text(text, encoding="utf-8", newline="\n")
         print(f"Wrote schema to {out}")

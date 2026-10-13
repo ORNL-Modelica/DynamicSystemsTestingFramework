@@ -3,7 +3,7 @@ default and what it is for.
 
 ONE table, read three times. ``Config`` refuses a key that is not in it —
 ``"tolerence": 0.01`` used to be skipped in silence, and the project ran on
-the default — and takes its defaults from it; ``export-schema`` publishes
+the default — and takes its defaults from it; ``spec schema`` publishes
 it, descriptions included. So the keys a person reads about, the ones an
 editor checks and the ones the tool reads cannot differ.
 
@@ -67,7 +67,7 @@ TESTING_JSON: dict[str, Setting] = {
         {"type": "string"},
         None,
         "The JSON Schema an editor checks this file against as it is typed "
-        "(`dstf export-schema` writes one). Nothing else reads it.",
+        "(`dstf spec schema` writes one). Nothing else reads it.",
     ),
     "source_path": Setting(
         {"type": "string"},

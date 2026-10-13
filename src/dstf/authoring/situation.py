@@ -9,7 +9,7 @@ anything the last scoring said).
 There is no state for edits to the simulation settings (the owner's ruling
 Q2 A drew one): ``/simulation`` is not stageable — `patch_apply`'s default
 whitelist is ``/comparison``, ``/metrics`` and ``/plots``, and widening it
-changes ``spec-update``, a seam another repository relies on. It waits for
+changes ``spec update``, a seam another repository relies on. It waits for
 a simulation-settings editor."""
 
 from __future__ import annotations

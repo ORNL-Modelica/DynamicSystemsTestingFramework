@@ -481,7 +481,7 @@ def test_a_running_test_s_simulation_settings_are_locked(h):
     )
     assert h.session.spec.pending == []
     # A queued test is not locked. `/simulation` is not stageable for ANY
-    # test today — `patch_apply`'s whitelist, the `spec-update` seam — so
+    # test today — `patch_apply`'s whitelist, the `spec update` seam — so
     # this is the whitelist's refusal, not the queue's.
     with pytest.raises(PatchError, match="whitelist"):
         h.session.stage([PatchOp(B, "replace", "/simulation/stop_time", 2.0)])

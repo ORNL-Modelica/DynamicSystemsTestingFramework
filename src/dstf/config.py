@@ -772,7 +772,7 @@ class Config:
     def spec_path(self) -> Path:
         """Where ``test_spec.json`` lives: the configured file, else
         ``<reference_root>/test_spec.json``. The one spelling of a fallback
-        that ``add``, ``spec-update`` and the review loop each used to
+        that ``spec add``, ``spec update`` and the review loop each used to
         carry; the authoring Session reads the same property."""
         if self.test_spec_file is not None:
             return self.test_spec_file

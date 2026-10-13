@@ -1,4 +1,4 @@
-"""The JSON-Patch envelope ``dstf spec-update`` reads and the authoring
+"""The JSON-Patch envelope ``dstf spec update`` reads and the authoring
 Session's ``export`` writes.
 
 Two shapes are read — ``{"model": ..., "patch": [...]}`` because files in

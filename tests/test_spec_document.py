@@ -50,7 +50,7 @@ def test_malformed_json_is_a_config_error(tmp_path):
 
 @pytest.mark.parametrize("body", ['{"tests": {"M": 1}}', '{"tests": "abc"}', "[]"])
 def test_a_malformed_shape_is_a_config_error_at_load(tmp_path, body):
-    """The same shape rule spec-update's loader applies: a non-list `tests`
+    """The same shape rule spec update's loader applies: a non-list `tests`
     used to load fine and explode as AttributeError on the first replay."""
     p = tmp_path / "test_spec.json"
     p.write_text(body, encoding="utf-8")

@@ -1,9 +1,9 @@
 """`testing.json` is read through ONE key table, and is strict.
 
 `config_shape.TESTING_JSON` is what `Config` refuses an unknown key by, what
-it takes its defaults from, what `export-schema --file testing.json`
-publishes and what the docs' key lists are held to. A backend's settings
-block is checked the same way against the table the backend declares.
+it takes its defaults from, what `spec schema testing` publishes and what the
+docs' key lists are held to. A backend's settings block is checked the same
+way against the table the backend declares.
 """
 
 from __future__ import annotations
@@ -66,16 +66,22 @@ class TestUnknownKeys:
             ["discover"],
             ["run"],
             ["compare"],
-            ["export"],
+            ["baseline", "export"],
             ["manifest", "show"],
-            ["add", "Lib.M"],
-            ["spec-update", "patch.json"],
+            ["manifest", "dump"],
+            ["manifest", "cleanup"],
+            ["spec", "add", "Lib.M"],
+            ["spec", "update", "patch.json"],
+            ["companion", "add", "Lib.M", "name", "rig.csv"],
             ["companion", "list"],
+            ["companion", "freeze", "Lib.M", "name"],
+            ["companion", "remove", "Lib.M", "name"],
+            ["soft-check", "add", "Lib.M", "name", "ref.json"],
             ["soft-check", "list"],
-            ["import-baseline", "Lib.M", "name", "ref.json"],
+            ["soft-check", "remove", "Lib.M", "name"],
             ["check"],
         ],
-        ids=lambda command: command[0],
+        ids=lambda command: " ".join(command[:2]),
     )
     def test_every_command_that_reads_the_file_says_it_and_exits_2(
         self, tmp_path, capsys, command
@@ -483,15 +489,15 @@ class TestSchema:
         )
         assert patterns["^FMPy"]["properties"] == {}
 
-    def test_export_schema_s_default_output_is_unchanged(self, capsys):
-        assert main(["export-schema"]) == 0
+    def test_spec_schema_s_default_is_the_spec_s(self, capsys):
+        assert main(["spec", "schema"]) == 0
         assert json.loads(capsys.readouterr().out) == build_schema()
-        assert main(["export-schema", "--file", "test_spec.json"]) == 0
+        assert main(["spec", "schema", "test_spec"]) == 0
         assert json.loads(capsys.readouterr().out) == build_schema()
 
-    def test_export_schema_writes_testing_json_s(self, tmp_path, capsys):
+    def test_spec_schema_writes_testing_json_s(self, tmp_path, capsys):
         out = tmp_path / "testing.schema.json"
-        assert main(["export-schema", "--file", "testing.json", "-o", str(out)]) == 0
+        assert main(["spec", "schema", "testing", "-o", str(out)]) == 0
         capsys.readouterr()
         assert json.loads(out.read_text(encoding="utf-8")) == build_config_schema()
 

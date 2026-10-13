@@ -1,4 +1,5 @@
-"""Query and diagnostic commands: discover, export, manifest, check."""
+"""Query and diagnostic commands: `discover`, `baseline export`, the
+`manifest` group, `check`."""
 
 import argparse
 from pathlib import Path
@@ -80,84 +81,93 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_export(args: argparse.Namespace) -> int:
-    """Export reference data."""
+#: `baseline export --format`: each format and the file it is written to
+#: in the work dir when no --output names one. The first is the default.
+EXPORT_FILES = {"json": "references.json", "csv": "references.csv"}
+
+
+def cmd_baseline_export(args: argparse.Namespace) -> int:
+    """Write every stored baseline of the partition to one file."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-
+    assert config.work_dir is not None  # resolved in Config.__post_init__
     # review 2026-07-06 finding 60: --output arrives as a string — coerce to
     # Path (the ReferenceStore export APIs call .parent on it).
+    out = (
+        Path(args.output)
+        if args.output is not None
+        else config.work_dir / EXPORT_FILES[args.format]
+    )
     if args.format == "csv":
-        out = Path(args.output) if args.output else (config.work_dir / "references.csv")
         store.export_csv(out)
-        print(f"Exported to {out}")
     else:
-        out = (
-            Path(args.output) if args.output else (config.work_dir / "references.json")
-        )
         store.export_json(out)
-        print(f"Exported to {out}")
+    print(f"Exported to {out}")
+    return 0
+
+
+def cmd_manifest_show(args: argparse.Namespace) -> int:
+    """List the partition's references and the status of each."""
+    config = _build_config(args)
+    from ..storage.reference_store import ReferenceStore
+
+    store = ReferenceStore(config)
+    all_tests = store.index.all_tests()
+    active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
+    obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
+    skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
+
+    print(f"References: {config.reference_dir}")
+    print(f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n")
+
+    if active:
+        print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
+        print("-" * 90)
+        for tid in sorted(active):
+            entry = active[tid]
+            print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
+
+    if skipped:
+        print("\nSkipped:")
+        for tid in sorted(skipped):
+            print(f"{tid:>6}  {skipped[tid]['model_id']}")
+
+    if obsolete and args.show_obsolete:
+        print("\nObsolete:")
+        for tid in sorted(obsolete):
+            print(f"{tid:>6}  {obsolete[tid]['model_id']}")
 
     return 0
 
 
-def cmd_manifest(args: argparse.Namespace) -> int:
-    """Show and manage test references."""
+def cmd_manifest_dump(args: argparse.Namespace) -> int:
+    """Write the ref ID → model ID mapping to the work directory."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    action = args.action
+    write_id_mapping(store, config)
+    assert config.work_dir is not None  # resolved in Config.__post_init__
+    print(f"Written to {config.work_dir / 'reference_manifest.json'}")
+    return 0
 
-    if action == "show":
-        all_tests = store.index.all_tests()
-        active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
-        obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
-        skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
 
-        print(f"References: {config.reference_dir}")
-        print(
-            f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n"
-        )
+def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
+    """List what a cleanup would remove, or — ``--apply`` — remove it.
 
-        if active:
-            print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
-            print("-" * 90)
-            for tid in sorted(active):
-                entry = active[tid]
-                print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
+    Dry-run is the universal default for destructive paths: ``cleanup``
+    lists what it would remove and exits 0 unless ``--apply`` is given. The
+    ``--orphans`` path always worked this way; the obsolete-reference path
+    used to delete on sight.
+    """
+    config = _build_config(args)
+    if args.orphans:
+        return _cleanup_orphans(config, apply=args.apply)
+    from ..storage.reference_store import ReferenceStore
 
-        if skipped:
-            print("\nSkipped:")
-            for tid in sorted(skipped):
-                print(f"{tid:>6}  {skipped[tid]['model_id']}")
-
-        if obsolete and args.show_obsolete:
-            print("\nObsolete:")
-            for tid in sorted(obsolete):
-                print(f"{tid:>6}  {obsolete[tid]['model_id']}")
-
-        return 0
-
-    elif action == "dump":
-        write_id_mapping(store, config)
-        mapping_path = config.work_dir / "reference_manifest.json"
-        print(f"Written to {mapping_path}")
-        return 0
-
-    elif action == "cleanup":
-        # Dry-run is the universal default for destructive paths: `cleanup`
-        # lists what it would remove and exits 0 unless --apply is given.
-        # The --orphans path always worked this way; the obsolete-reference
-        # path used to delete on sight.
-        apply = getattr(args, "apply", False)
-        if getattr(args, "orphans", False):
-            return _cleanup_orphans(config, apply=apply)
-        return _cleanup_obsolete(store, apply=apply)
-
-    return 1
+    return _cleanup_obsolete(ReferenceStore(config), apply=args.apply)
 
 
 def _cleanup_obsolete(store, apply: bool) -> int:
@@ -301,7 +311,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         for cls in [backend_class(backend_family(name))]
     }
 
-    named = getattr(args, "check_backend", None)
+    named = args.check_backend
     if named is None:
         print(f"Backends ({project})")
         width = max(len(name) for name, _ in entries)

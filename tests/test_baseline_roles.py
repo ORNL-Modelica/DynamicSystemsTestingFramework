@@ -85,7 +85,7 @@ class TestSoftCheckStorage:
         assert data["provenance"] == {"source": "rig-A"}
 
     def test_the_written_entries_carry_an_expression(self, store_with_primary):
-        """`import-baseline` hands this writer the entries of a file someone
+        """`soft-check add` hands this writer the entries of a file someone
         else produced — an older one has no ``expression`` key at all. A
         writer never leaves the field out: the imported entry is written
         with the empty text, in the same key order ``accept`` produces, so
@@ -143,7 +143,7 @@ class TestSoftCheckStorage:
 
     def test_a_null_expression_is_written_as_the_empty_text(self, store_with_primary):
         """JSON someone else wrote may hold `"expression": null` — an
-        `import-baseline` source, a hand-edited file. Every reader of the
+        `soft-check add` source, a hand-edited file. Every reader of the
         field takes `""` for "no expression" (`display_label`, the soft
         check, the migrate hint); `None` is a third value none of them
         tests for, and it would be written back out as `null`."""
@@ -771,9 +771,14 @@ class TestCompanionMapCLI:
             == 0
         )
         capsys.readouterr()
-        rc = self._run(store, test, *argv, "--map", "x=sensor_b")
-        assert rc == 2
-        assert "--map is only accepted by" in capsys.readouterr().err
+        # `--map` is `companion add`'s flag: no other action's parser has it.
+        with pytest.raises(SystemExit) as exc:
+            self._run(store, test, *argv, "--map", "x=sensor_b")
+        assert exc.value.code == 2
+        assert (
+            f"dstf companion {argv[0]}: error: unrecognized arguments: "
+            "--map x=sensor_b" in capsys.readouterr().err
+        )
         # and nothing was done: the registration still says what it said
         companions = store.get_companions(test.model_id)
         assert companions["rig"].kind == "external"

@@ -421,45 +421,65 @@ def test_the_review_does_not_count_an_advisory_failure_as_a_failure(
 
 
 def test_argparse_subcommands_match_dispatch_table():
-    """Every subcommand registered with argparse must have a handler in
-    ``_COMMANDS``, and vice versa. Catches drift when adding a new
-    subcommand to one site but forgetting the other."""
-    from dstf.cli.main import _COMMANDS, build_arg_parser
+    """Every command of the tree has a handler in ``_COMMANDS`` and every
+    handler a command, by the name the command is typed with (``spec add``).
+    Catches drift when a command is added to one site and not the other —
+    and a group that names an action no parser has."""
+    from dstf.cli.main import _COMMANDS
 
     parser = build_arg_parser()
-    # subparsers action holds the subcommand registry
-    subparsers_action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    assert set(parser.commands) == set(_COMMANDS), (
+        f"the command tree and _COMMANDS drifted:\n"
+        f"  in the tree but not _COMMANDS: {set(parser.commands) - set(_COMMANDS)}\n"
+        f"  in _COMMANDS but not the tree: {set(_COMMANDS) - set(parser.commands)}"
     )
-    parser_commands = set(subparsers_action.choices.keys())
-    dispatch_commands = set(_COMMANDS.keys())
-    assert parser_commands == dispatch_commands, (
-        f"argparse subcommands and _COMMANDS dispatch table drifted:\n"
-        f"  in argparse but not _COMMANDS: {parser_commands - dispatch_commands}\n"
-        f"  in _COMMANDS but not argparse: {dispatch_commands - parser_commands}"
-    )
+    # The tree as argparse holds it, walked: what `parser.commands` records
+    # is what a command line can actually reach.
+    reachable: set[str] = set()
+
+    def walk(node: argparse.ArgumentParser, path: str) -> None:
+        subs = [a for a in node._actions if isinstance(a, argparse._SubParsersAction)]
+        if not subs:
+            reachable.add(path)
+        for sub in subs:
+            for name, child in sub.choices.items():
+                walk(child, f"{path} {name}".strip())
+
+    walk(parser, "")
+    assert reachable == set(_COMMANDS)
 
 
-def test_author_refuses_the_global_flags_it_would_drop(tmp_path, capsys):
+def test_author_offers_only_the_project_flag_it_reads(tmp_path, capsys):
     """The tool edits and saves the spec testing.json names; an override
-    here would show one file and save another. And no Config is built before
-    the refusal — a full resolution can write a default testing.json."""
+    here would show one file and save another. The three flags are refused
+    by the parser, on either side of the command — so before any Config is
+    built: a full resolution can write a default testing.json."""
     lib = tmp_path / "lib"
     lib.mkdir()
     (lib / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
-    rc = main(["author", "--source-path", str(lib), "--test-spec", "/x/spec.json"])
-    err = capsys.readouterr().err
-    assert rc == 2 and "needs --config" in err
+    cfg = str(tmp_path / "t.json")
+    for flag, value in (
+        ("--source-path", str(lib)),
+        ("--reference-root", str(tmp_path)),
+        ("--test-spec", "/x/spec.json"),
+    ):
+        for argv in (
+            ["--config", cfg, "author", flag, value],
+            [flag, value, "author", "--config", cfg],
+        ):
+            with pytest.raises(SystemExit) as exc:
+                main(argv)
+            assert exc.value.code == 2
+            assert flag in capsys.readouterr().err
     # A Config build with --source-path writes its default testing.json in
-    # the library's PARENT; the refusal must come before any build.
+    # the library's PARENT; nothing was built.
     assert not list(tmp_path.rglob("testing.json"))
-    for flag in ("--source-path", "--reference-root"):
-        rc = main(["--config", str(tmp_path / "t.json"), "author", flag, str(tmp_path)])
-        assert rc == 2 and flag in capsys.readouterr().err
-    rc = main(
-        ["--config", str(tmp_path / "t.json"), "author", "--test-spec", "/x/spec.json"]
-    )
-    assert rc == 2 and "--test-spec" in capsys.readouterr().err
+
+
+def test_author_without_a_config_says_it_needs_one(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main(["author"]) == 2
+    assert "needs --config" in capsys.readouterr().err
 
 
 def test_author_without_the_extra_says_how_to_install_it(monkeypatch, capsys, tmp_path):
@@ -632,19 +652,17 @@ def test_omitted_tolerance_falls_back_to_default(tmp_path):
     assert config.tolerance == DEFAULT_COMPARISON_TOLERANCE
 
 
-def test_import_baseline_source_does_not_shadow_the_global_source_path():
-    """`import-baseline`'s positional is dest='import_source', NOT
-    'source_path' — that name is the global --source-path option, and the
-    collision made _build_config treat the ref JSON as the library root
-    (find_package_dir iterdir()s a file → NotADirectoryError; found live
-    while importing the demo soft_check, D103)."""
-    from dstf.cli.main import build_arg_parser
-
+def test_soft_check_add_s_source_does_not_shadow_the_source_path_flag():
+    """`soft-check add`'s positional is dest='source', NOT 'source_path' —
+    that name is the --source-path option, and the collision made
+    _build_config treat the ref JSON as the library root (find_package_dir
+    iterdir()s a file → NotADirectoryError; found live while importing the
+    demo soft_check, D103)."""
     args = build_arg_parser().parse_args(
-        ["import-baseline", "Lib.M", "openmodelica", "ref_0001.json"]
+        ["soft-check", "add", "Lib.M", "openmodelica", "ref_0001.json"]
     )
-    assert args.import_source == "ref_0001.json"
-    # The global option must remain unset so _build_config ignores it.
+    assert args.source == "ref_0001.json"
+    # The option must remain unset so _build_config ignores it.
     assert args.source_path is None
 
 
@@ -1186,11 +1204,11 @@ class TestAcceptExitCodeAndScope:
         self, run_env, capsys, command
     ):
         """`Accepted 0 test baselines to …`, exit 0, and no word of the
-        test: what `dstf add <model>` then `run --accept` printed, and
+        test: what `dstf spec add <model>` then `run --accept` printed, and
         `compare --accept` after it. Not a warning and not a skip — the
         exit code is what it was."""
         tank = _mk_test("Lib.Tank")
-        tank.variable_patterns = []  # the entry `dstf add` writes
+        tank.variable_patterns = []  # the entry `dstf spec add` writes
         assert tank.is_simulate_only and not tank.simulate_only
         results = {"Lib.Tank": _mk_result("Lib.Tank")}
         run_env.make([tank], results=results, prior_results=results)
@@ -1875,6 +1893,7 @@ class TestExportOutputPath:
             [
                 "--config",
                 str(tmp_config_dir),
+                "baseline",
                 "export",
                 "--format",
                 "json",
@@ -1892,6 +1911,7 @@ class TestExportOutputPath:
             [
                 "--config",
                 str(tmp_config_dir),
+                "baseline",
                 "export",
                 "--format",
                 "csv",
@@ -1918,31 +1938,14 @@ class TestExportOutputPath:
 # =========================================================================
 
 
-# --- 1. global flags after the subcommand --------------------------------
-
-_GLOBAL_FLAGS = [
-    ("--source-path", "source_path"),
-    ("--config", "config"),
-    ("--reference-root", "reference_root"),
-    ("--test-spec", "test_spec"),
-]
-
-
-@pytest.mark.parametrize(("flag", "dest"), _GLOBAL_FLAGS)
-def test_global_flags_accepted_before_and_after_the_subcommand(flag, dest):
-    """`dstf run --config X` used to be a usage error while
-    `dstf --config X run` worked — the single biggest first-contact stumble.
-    Both positions must now parse to the same value."""
-    parser = build_arg_parser()
-    before = parser.parse_args([flag, "VALUE", "run"])
-    after = parser.parse_args(["run", flag, "VALUE"])
-    assert getattr(before, dest) == "VALUE"
-    assert getattr(after, dest) == "VALUE"
+# --- 1. the project flags, on either side of the command ------------------
+# (which command reads which flag, and that both sides agree for every
+# command, is tests/test_cli_tree.py)
 
 
 def test_subcommand_global_flag_does_not_erase_the_pre_subcommand_value():
     """argparse copies the subparser's whole namespace onto the top-level
-    one, so the inherited copies default to SUPPRESS. Without that, a
+    one, so the copies a command offers default to SUPPRESS. Without that, a
     subparser default of None would wipe a value given before the
     subcommand (silently, with no usage error to notice)."""
     parser = build_arg_parser()
@@ -1953,42 +1956,14 @@ def test_subcommand_global_flag_does_not_erase_the_pre_subcommand_value():
 
 
 def test_global_flags_default_to_none_when_given_nowhere():
-    """SUPPRESS is only on the inherited copies; the top-level parser still
-    guarantees the attribute exists so _build_config's reads are safe."""
-    args = build_arg_parser().parse_args(["discover"])
-    for _flag, dest in _GLOBAL_FLAGS:
-        assert getattr(args, dest) is None
+    """SUPPRESS is only on the commands' copies; the top-level parser still
+    guarantees the attribute exists, whatever the command offers."""
+    from dstf.cli.parser import PROJECT_FLAGS
 
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "discover",
-        "run",
-        "compare",
-        "export",
-        "manifest",
-        "add",
-        "spec-update",
-        "companion",
-        "soft-check",
-        "import-baseline",
-        "export-schema",
-        "check",
-    ],
-)
-def test_every_subcommand_help_lists_the_global_flags(command, capsys):
-    """`dstf <cmd> --help` must show the flags it now accepts — a flag that
-    parses but isn't documented is not discoverable."""
-    parser = build_arg_parser()
-    subparsers_action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
-    )
-    with pytest.raises(SystemExit):
-        subparsers_action.choices[command].parse_args(["--help"])
-    out = capsys.readouterr().out
-    for flag, _dest in _GLOBAL_FLAGS:
-        assert flag in out, f"{command} --help omits {flag}"
+    for argv in (["discover"], ["author"], ["spec", "schema"]):
+        args = build_arg_parser().parse_args(argv)
+        for dest in PROJECT_FLAGS:
+            assert getattr(args, dest) is None
 
 
 def test_config_after_subcommand_reaches_the_built_config(tmp_path):
@@ -2050,30 +2025,35 @@ def test_missing_modelica_package_is_a_config_error(tmp_path, capsys):
 @pytest.mark.parametrize(
     ("argv", "missing"),
     [
-        (["companion", "add"], "model_id, name, path"),
+        (["companion", "add"], "model, name, path"),
         (["companion", "add", "Lib.M"], "name, path"),
         (["companion", "freeze", "Lib.M"], "name"),
-        (["soft-check", "remove"], "model_id, name"),
+        (["companion", "remove"], "model, name"),
+        (["soft-check", "add", "Lib.M", "om"], "source"),
+        (["soft-check", "remove"], "model, name"),
+        (["spec", "add"], "model"),
+        (["spec", "update"], "patch.json"),
     ],
 )
-def test_missing_baseline_positionals_are_a_clean_usage_error(
+def test_missing_positionals_are_the_parser_s_usage_error(
     argv, missing, tmp_path, capsys
 ):
-    """These positionals are nargs='?' (they're required per-action, which
-    argparse can't express), so omitting one used to reach the store call
-    and raise TypeError/ValueError with a traceback."""
-    rc = main(["--source-path", str(_fake_library(tmp_path)), *argv])
-    assert rc == 2
+    """Each action is its own parser, so what it needs is required BY the
+    parser: the usage line of that action, the names missing, exit 2 — and
+    no Config built (a build can write a default testing.json)."""
+    with pytest.raises(SystemExit) as exc:
+        main(["--source-path", str(_fake_library(tmp_path)), *argv])
+    assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert err.startswith("Config error: ")
-    assert missing in err
-    assert "Usage: dstf" in err
-    assert "Traceback" not in err
+    assert f"usage: dstf {' '.join(argv[:2])} " in err
+    assert f"the following arguments are required: {missing}" in err
+    assert not list(tmp_path.rglob("testing.json"))
 
 
-def test_companion_list_still_works_without_positionals(tmp_path, capsys):
-    """The requirement is per-action: `list` legitimately takes none."""
-    rc = main(["--source-path", str(_fake_library(tmp_path)), "companion", "list"])
+@pytest.mark.parametrize("group", ["companion", "soft-check"])
+def test_a_list_still_works_without_positionals(group, tmp_path, capsys):
+    """`list` legitimately takes none: every test's."""
+    rc = main(["--source-path", str(_fake_library(tmp_path)), group, "list"])
     assert rc == 0
     assert "Config error" not in capsys.readouterr().err
 

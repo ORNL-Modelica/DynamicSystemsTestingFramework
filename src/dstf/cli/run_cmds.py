@@ -20,6 +20,15 @@ from .common import (
 )
 from .review import _interactive_review
 
+#: `--report-format`: each format and the file it is written to, in the
+#: current directory, when no --output names one (``console`` writes none).
+#: The first is the default.
+REPORT_FILES: dict[str, str | None] = {
+    "console": None,
+    "junit": "test-results.xml",
+    "html": "test-report.html",
+}
+
 
 def _notify_orphans(config, all_tests: list) -> None:
     """One-line notice if orphan manifest entries exist."""
@@ -568,17 +577,25 @@ def _generate_report_suite(
     open_in_browser(dashboard_path, launch=browser)
 
 
+def _report_output(args: argparse.Namespace, fmt: str) -> str:
+    """Where ``--report-format fmt`` writes: ``--output``, else the format's
+    own file name in the current directory."""
+    default = REPORT_FILES[fmt]
+    assert default is not None  # a format that writes a file
+    return args.output if args.output is not None else default
+
+
 def _write_report_file(
     comparisons: list, args: argparse.Namespace, config, results: dict
 ) -> None:
     """Write the file ``--report-format junit|html`` asks for (``console``,
     the default, asks for none); ``results`` give the HTML page its CPU
     times, as they gave ``render_final``."""
-    fmt = getattr(args, "report_format", "console")
+    fmt = args.report_format
     if fmt == "junit":
         from ..reporting.junit_report import generate_junit_report
 
-        out = Path(getattr(args, "output", None) or "test-results.xml")
+        out = Path(_report_output(args, fmt))
         generate_junit_report(comparisons, out)
         print(f"JUnit report written to {out}")
     elif fmt == "html":
@@ -587,7 +604,7 @@ def _write_report_file(
         # refreshed it), just to the requested path.
         from ..reporting.dashboard_render import build_rerun_prefix, render_final_to
 
-        out = Path(getattr(args, "output", None) or "test-report.html")
+        out = Path(_report_output(args, fmt))
         render_final_to(
             config.work_dir,
             out,

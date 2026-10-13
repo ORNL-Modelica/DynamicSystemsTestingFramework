@@ -528,7 +528,7 @@ def test_a_reference_without_the_precision_is_read_as_it_always_was(tmp_path):
 def test_every_reader_of_a_reference_file_reads_it_through_the_one_function(
     tmp_path,
 ):
-    """The sibling-partition overlays and `import-baseline` read a
+    """The sibling-partition overlays and `soft-check add` read a
     reference file too: a single-precision one gives them the same
     numbers."""
     from dstf.reporting.overlay_loader import _ref_data_to_overlay_vars
@@ -591,14 +591,14 @@ def test_a_companion_that_is_a_reference_file_is_read_through_it_too(tmp_path):
 
 
 def test_import_baseline_stores_the_runs_own_numbers(tmp_path, capsys):
-    """`import-baseline` of a `single` reference file: the soft check it
+    """`soft-check add` of a `single` reference file: the soft check it
     stores holds what the run held."""
     config, path = _single_reference(tmp_path)
     source = tmp_path / "from-elsewhere.json"
     source.write_bytes(path.read_bytes())
     assert (
         main(
-            ["--config", str(config.config_file), "import-baseline", M, "other"]
+            ["--config", str(config.config_file), "soft-check", "add", M, "other"]
             + [str(source)]
         )
         == 0
@@ -748,10 +748,10 @@ def test_a_refused_spec_entry_is_one_line_and_exit_two(tmp_path, capsys):
     )
 
 
-def test_export_schema_lists_the_key_with_its_two_forms(tmp_path):
+def test_spec_schema_lists_the_key_with_its_two_forms(tmp_path):
     jsonschema = pytest.importorskip("jsonschema")
     out = tmp_path / "schema.json"
-    assert main(["export-schema", "--output", str(out)]) == 0
+    assert main(["spec", "schema", "--output", str(out)]) == 0
     schema = json.loads(out.read_text(encoding="utf-8"))
     assert "baseline_points" in schema["$defs"]["test_entry"]["properties"]
 
@@ -811,7 +811,7 @@ def test_the_tools_accept_stores_the_points_the_tests_key_says(tmp_path):
 
 
 def test_the_key_is_written_by_hand_a_patch_may_not_touch_it(tmp_path):
-    """`spec-update` and the tool edit `comparison`, `metrics` and `plots`:
+    """`spec update` and the tool edit `comparison`, `metrics` and `plots`:
     the key is outside what a patch may write, so neither stores a value
     the parser would refuse."""
     from dstf.discovery.patch_apply import PatchError, apply_patch

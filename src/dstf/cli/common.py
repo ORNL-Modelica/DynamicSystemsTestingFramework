@@ -21,37 +21,41 @@ from ..reporting.status import (
     nothing_ran,
 )
 
+#: The flags that reach :class:`Config`, by the attribute each parses to:
+#: the Config field it sets, and whether its value is a path. A command
+#: offers the ones it reads (`cli.parser`), so one the command line did not
+#: have is simply absent here.
+_CONFIG_FLAGS: dict[str, tuple[str, bool]] = {
+    "source_path": ("source_path", True),
+    "config": ("config_file", True),
+    "reference_root": ("reference_root", True),
+    "test_spec": ("test_spec_file", True),
+    "backend": ("backend_name", False),
+    "backend_path": ("backend_path", False),
+    "work_dir": ("work_dir", True),
+    "parallel": ("parallel", False),
+    "tolerance": ("tolerance", False),
+    "timeout": ("timeout", False),
+}
+
 
 def _build_config(args: argparse.Namespace, *, write_default: bool = True) -> Config:
     """Build Config from parsed CLI arguments. ``write_default=False`` is
     for a command that only reads: a project with no testing.json is then
-    read on defaults, and none is written beside it."""
+    read on defaults, and none is written beside it.
+
+    A flag that was given is passed on whatever its value — ``is not
+    None``, NOT truthiness: ``--tolerance 0`` is the strictest possible
+    setting and Config/comparator honor an explicit 0.0, and a value that
+    cannot be meant (``--timeout 0``) is the parser's to refuse, never this
+    function's to drop."""
     kwargs: dict = {"write_default": write_default}
-    if args.source_path:
-        kwargs["source_path"] = Path(args.source_path)
-    if hasattr(args, "config") and args.config:
-        kwargs["config_file"] = Path(args.config)
-    if hasattr(args, "reference_root") and args.reference_root:
-        kwargs["reference_root"] = Path(args.reference_root)
-    if hasattr(args, "backend") and args.backend:
-        kwargs["backend_name"] = args.backend
-    if hasattr(args, "backend_path") and args.backend_path:
-        kwargs["backend_path"] = args.backend_path
-    if hasattr(args, "work_dir") and args.work_dir:
-        kwargs["work_dir"] = Path(args.work_dir)
-    if hasattr(args, "parallel") and args.parallel:
-        kwargs["parallel"] = args.parallel
-    # `is not None`, NOT truthiness — `--tolerance 0` is the strictest
-    # possible setting and Config/comparator honor an explicit 0.0
-    # (comparator.py resolve chain, config.py file-tolerance precedence).
-    if hasattr(args, "tolerance") and args.tolerance is not None:
-        kwargs["tolerance"] = args.tolerance
-    if hasattr(args, "default_points") and args.default_points:
-        kwargs["default_points"] = args.default_points
-    if hasattr(args, "timeout") and args.timeout:
-        kwargs["timeout"] = args.timeout
-    if hasattr(args, "test_spec") and args.test_spec:
-        kwargs["test_spec_file"] = Path(args.test_spec)
+    for attr, (field, is_path) in _CONFIG_FLAGS.items():
+        value = getattr(args, attr, None)
+        if value is not None:
+            kwargs[field] = Path(value) if is_path else value
+    if getattr(args, "default_points", False):
+        kwargs["default_points"] = True
     return Config(**kwargs)
 
 

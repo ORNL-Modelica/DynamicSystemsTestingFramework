@@ -1227,7 +1227,7 @@ def test_the_app_runs_the_shells_shutdown(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod.ui, "run", lambda *a, **k: None)
     monkeypatch.setattr(app_mod.Shell, "mount", lambda self: None)
     cfg, work = _project(tmp_path)
-    app_mod.run_app(cfg, work_dir=work, show=False)
+    app_mod.run_app(cfg, port=8091, work_dir=work, show=False)
     (handler,) = handlers
     assert handler.__func__ is Shell.shutdown
 

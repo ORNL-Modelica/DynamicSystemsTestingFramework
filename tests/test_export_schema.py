@@ -103,7 +103,7 @@ class TestSchemaBuilder:
 class TestCli:
     def test_cli_emits_to_stdout(self, tmp_path):
         result = subprocess.run(
-            [sys.executable, "-m", "dstf", "export-schema"],
+            [sys.executable, "-m", "dstf", "spec", "schema"],
             capture_output=True,
             text=True,
         )
@@ -114,7 +114,7 @@ class TestCli:
     def test_cli_writes_to_output_file(self, tmp_path):
         out = tmp_path / "schema.json"
         result = subprocess.run(
-            [sys.executable, "-m", "dstf", "export-schema", "--output", str(out)],
+            [sys.executable, "-m", "dstf", "spec", "schema", "--output", str(out)],
             capture_output=True,
             text=True,
         )
@@ -131,7 +131,7 @@ class TestCli:
         compiles the CRLF write translation in rather than reading
         os.linesep — so pin the argument at the call site instead.
         """
-        from dstf.cli.spec_cmds import cmd_export_schema
+        from dstf.cli.spec_cmds import cmd_spec_schema
 
         seen: dict[str, object] = {}
         real = Path.write_text
@@ -142,7 +142,10 @@ class TestCli:
 
         monkeypatch.setattr(Path, "write_text", spy)
         out = tmp_path / "schema.json"
-        assert cmd_export_schema(argparse.Namespace(output=str(out))) == 0
+        assert (
+            cmd_spec_schema(argparse.Namespace(schema="test_spec", output=str(out)))
+            == 0
+        )
 
         assert seen["schema.json"] == "\n"
 

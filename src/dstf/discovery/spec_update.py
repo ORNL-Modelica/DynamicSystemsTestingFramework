@@ -1,6 +1,6 @@
 """Applying a validated patch set to ``test_spec.json``.
 
-The one read-modify-write both ``dstf spec-update`` and the authoring
+The one read-modify-write both ``dstf spec update`` and the authoring
 Session's ``save`` go through: materialize the implicit tree where a
 per-leaf op needs one, apply each model's ops to its entry, refuse a base
 tolerance the patch made no number, refuse a key nothing reads, run the
@@ -65,7 +65,7 @@ def implicit_tree_op(entry: dict, *, variables: Sequence[str] | None = None) -> 
     ``synthesize_implicit_tree``). ``variables`` replaces the entry's own
     list: the authoring Session passes the names the flat path actually
     scored, which for a test tracked by its ``.mo`` annotation are not in
-    the spec at all (``spec-update``, with no result in hand, can only use
+    the spec at all (``spec update``, with no result in hand, can only use
     the entry's). Raises :class:`PatchError` when there are no variables to
     build leaves from."""
     from ..comparison.tree_spec import spec_to_raw, synthesize_implicit_tree
@@ -351,7 +351,7 @@ def refuse_newly_unscorable(
     before: dict | None, ops: Sequence[dict], after: dict | None, model_id: str
 ) -> None:
     """THE rule for a criterion that can never be scored, applied where a
-    FILE is written (``spec-update`` and the tool's Save, both through
+    FILE is written (``spec update`` and the tool's Save, both through
     :func:`apply_validated_patches`): the write is refused only for a
     criterion that is unscorable in ``after`` — ``before`` with ``ops``
     applied — and was not already there, with the same content, in

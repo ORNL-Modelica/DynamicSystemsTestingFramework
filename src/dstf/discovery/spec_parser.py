@@ -32,7 +32,7 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
 
     ``"simulaton": {"stop_time": 100}`` used to be skipped without a word
     and the test ran for the default second. The known keys are
-    ``spec_shape``'s — the table ``export-schema`` publishes.
+    ``spec_shape``'s — the table ``spec schema`` publishes.
 
     And refuse a block that is no object where one is read — ``simulation``,
     ``comparison``, ``variable_overrides`` and each override in it; a
@@ -148,7 +148,7 @@ def spec_document_from_bytes(raw: bytes, label: str) -> dict:
     that cannot hold a ``tests`` list (:func:`check_root_keys`).
 
     THE one decoder of a ``test_spec.json``. Every reader comes through it —
-    discovery, ``spec-update`` and the edit helpers (:func:`read_spec_document`)
+    discovery, ``spec update`` and the edit helpers (:func:`read_spec_document`)
     and the authoring Session, which hashes the same bytes — so a file is
     read by all of them or by none, with one sentence. ``discover`` /
     ``run`` / ``compare`` logged ``Failed to read test spec`` and went on

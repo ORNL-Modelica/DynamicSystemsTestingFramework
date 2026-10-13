@@ -117,7 +117,7 @@ DECLARES = {
 @pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
 def test_a_test_that_declares_nothing_to_score_is_simulate_only(baseline):
     """No tracked variable, no UnitTests variable, no criteria — the entry
-    `dstf add <model>` writes: it passes by having run, as a test a
+    `dstf spec add <model>` writes: it passes by having run, as a test a
     recognizer marked `simulate_only` does. Not the FAIL of a test that
     tracks variables its result does not hold."""
     test = make_test_model()
@@ -431,7 +431,7 @@ def test_accept_stores_no_baseline_of_a_result_that_holds_nothing_tracked(
 
 
 def test_an_entry_with_no_variables_passes_by_having_run(project, tmp_path, capsys):
-    """`dstf add <model>` writes `"variables": []`: a simulate-only test.
+    """`dstf spec add <model>` writes `"variables": []`: a simulate-only test.
     It read FAIL `this test tracks no variable and has no criteria` on
     every run."""
     _track(project, RAMP)
@@ -449,7 +449,7 @@ def test_an_entry_with_no_variables_passes_by_having_run(project, tmp_path, caps
 
 
 def _override_only(project: Project, model_id: str) -> None:
-    """What `dstf add <model>` writes, and an override added by hand."""
+    """What `dstf spec add <model>` writes, and an override added by hand."""
     _track(project, model_id)
     data = json.loads(project.spec.read_text(encoding="utf-8"))
     (entry,) = [e for e in data["tests"] if e["model"] == model_id]

@@ -1433,7 +1433,7 @@ class TestRescoreAndStage:
         assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
 
     def test_save_refuses_a_base_tolerance_that_is_no_number(self, session):
-        """Save goes through `spec-update`'s check: the file is not written."""
+        """Save goes through `spec update`'s check: the file is not written."""
         from dstf.discovery.patch_apply import PatchError
 
         session.stage([PatchOp(A, "add", "/comparison", {"tolerance": [1]})])

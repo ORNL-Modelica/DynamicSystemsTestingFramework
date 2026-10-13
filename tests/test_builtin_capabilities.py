@@ -2467,7 +2467,7 @@ def test_accept_names_the_simulate_only_test_it_stored_nothing_for(session):
 
 
 async def test_accept_excludes_a_test_that_declares_nothing_to_score(session):
-    """No pattern, no UnitTests variable, no tree — what `dstf add <model>`
+    """No pattern, no UnitTests variable, no tree — what `dstf spec add <model>`
     writes: simulate-only without a recognizer's mark, and the forecast
     says what the shared accept function does with it."""
     from dstf.authoring.builtin.accept import SIMULATE_ONLY

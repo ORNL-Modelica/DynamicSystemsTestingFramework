@@ -1310,7 +1310,7 @@ class TestDiscoveryFromDocument:
         assert spec_only.field_sources == {}
 
     def test_the_fallback_spec_file_is_discovered(self, tmp_path):
-        """`dstf add` writes <reference_root>/test_spec.json when no test_spec
+        """`dstf spec add` writes <reference_root>/test_spec.json when no test_spec
         is configured; discovery reads that same file (Conventions #8)."""
         from dstf.discovery.test_registry import discover_tests
 

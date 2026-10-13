@@ -56,7 +56,7 @@ def read_reference_file(path: Path) -> dict:
     reference of this partition (:meth:`ReferenceStore.get_reference`), of
     a sibling one (the report's overlays), a soft check's file, a JSON
     companion's (another library's reference file, or a frozen copy) and
-    the source of an ``import-baseline`` all come through here. ``OSError`` and
+    the source of a ``soft-check add`` all come through here. ``OSError`` and
     ``json.JSONDecodeError`` are the caller's: each says its own thing
     about a file it could not read.
 
@@ -182,7 +182,7 @@ class ReferenceStore(_RolesMixin):
             logger.warning(
                 "%s carries a top-level 'baselines' key — it is ignored. "
                 "Re-add those baselines as soft_checks: "
-                "`dstf import-baseline %s soft_check <name> <source>`.",
+                "`dstf soft-check add %s <name> <source>`.",
                 ref_file,
                 model_id,
             )

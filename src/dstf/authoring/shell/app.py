@@ -18,7 +18,7 @@ def run_app(
     *,
     filter: str | None = None,
     package: str | None = None,
-    port: int | None = None,
+    port: int,
     work_dir: Path | None = None,
     backend: str | None = None,
     show: bool = True,
@@ -46,7 +46,7 @@ def run_app(
     ui.run(
         shell.index,
         host="127.0.0.1",
-        port=port or 8080,
+        port=port,
         show=show,
         reload=False,
         title="DSTF",
