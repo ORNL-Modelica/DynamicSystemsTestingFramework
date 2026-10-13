@@ -1021,6 +1021,26 @@ class TestAStoredBaselinesOverride:
         assert self._sentence(ref) in capsys.readouterr().err
         assert _snapshot(work) == before
 
+    def test_so_does_a_rerun_whose_filter_left_it_out(self, tmp_path, capsys):
+        """`--rerun` picks its tests from every test's last result and its
+        report merges them all: D's baseline is one it compares against,
+        whatever the filter. Nothing is simulated first — no result file is
+        written and `status.json` is as the last run left it."""
+        from test_session import A, _snapshot
+
+        cfg, work, ref = self._project(tmp_path, self.BAD)
+        before = _snapshot(work)
+        assert any(name == "status.json" for name, _ in before)
+        code = main(
+            ["--config", str(cfg), "run", "--no-browser", "--work-dir", str(work)]
+            + ["--filter", A, "--rerun", "failed"]
+        )
+        assert code == 2
+        assert capsys.readouterr().err.strip().splitlines()[-1] == (
+            "Config error: " + self._sentence(ref)
+        )
+        assert _snapshot(work) == before
+
     @pytest.mark.parametrize("command", ["compare", "run"])
     def test_an_accept_compares_nothing_and_is_not_stopped(
         self, tmp_path, capsys, command
