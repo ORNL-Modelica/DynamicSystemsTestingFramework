@@ -151,8 +151,9 @@ def test_a_regex_is_timed_in_its_own_cpu_while_another_thread_holds_the_gil(
     wall time and 0.044-0.050 s of its own CPU here in 22 runs, idle and
     beside two CPU burners on 8 cores; a loaded host saw up to 8.4 s and
     0.17 s. Without the busy thread it takes ~0.04 s, so a wall time over
-    3 budgets proves the thread contended. A 0.3 s budget is 6x above that
-    CPU and 4x below the fastest wall time: timed on `monotonic` it ran
+    the budget proves the thread contended (a run under it is skipped: it
+    proves nothing). A 0.3 s budget is 6x above that
+    CPU and 4x below the fastest wall time here: timed on `monotonic` it ran
     out, timed on `thread_time` it keeps every name. And each search holds
     the GIL (``concurrent=False``): released, a search waits on the busy
     thread every time, up to ~0.2 s a name, and failed here in 3 runs of 3
@@ -185,9 +186,14 @@ def test_a_regex_is_timed_in_its_own_cpu_while_another_thread_holds_the_gil(
     finally:
         stop.set()
         busy.join()
-    assert wall > 3 * needle_module.REGEX_BUDGET, (
-        f"{wall:.2f} s: the spinner never contended"
-    )
+    if wall <= needle_module.REGEX_BUDGET:
+        # The busy thread took no time from this one (a host that hands the
+        # GIL over at once): the filter finished inside the budget on either
+        # clock, so this run cannot tell them apart. A wall time over the
+        # budget is the whole premise — timed on `monotonic` such a run ends
+        # early. It was `> 3 budgets`, asserted: a hosted runner measured
+        # 0.73 s (over the budget, every name kept) and failed the build.
+        pytest.skip(f"{wall:.2f} s: the spinner never contended on this host")
     assert len(kept) == 500 and kept[0] == "pipe3.T[3]"
 
 
