@@ -294,8 +294,9 @@ class Config:
 
     # Backend selection. ``None`` means "not explicitly chosen" — the
     # post-init resolution then consults testing.json's ``backend`` key,
-    # then auto-detect from the ``backends`` map, then falls back to
-    # ``"Dymola"`` as the historical default. A non-None value (typically
+    # then the first entry of the ``backends`` map that is found on this
+    # machine, then the installed backends that run this source type
+    # (``_pick_backend``). A non-None value (typically
     # from a CLI ``--backend`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
     backend_name: str | None = None

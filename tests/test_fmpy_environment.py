@@ -96,7 +96,7 @@ def test_fmpy_can_read_bouncing_ball():
 def test_fmpy_backend_registers_under_name():
     """``get_backend`` with ``backend_name='FMPy'`` returns an FmpyBackend.
 
-    Proves the registry + config._detect_backend + lazy-import wiring is
+    Proves the registry + backends.backend_family + lazy-import wiring is
     correct end-to-end. Does not attempt simulation (Phase 2.3).
     """
     from dstf.backends import get_backend

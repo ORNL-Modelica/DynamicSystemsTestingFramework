@@ -191,7 +191,7 @@ class DymolaBackend(Backend):
         if info["error"] and found.path is not None:
             lines.append(f"  error: {info['error']}")
         if info["discovered_dirs"]:
-            lines.append("  Dymola installs in the standard folders (newest first):")
+            lines.append("  interfaces in the standard folders (newest first):")
             lines.extend(f"    {d}" for d in info["discovered_dirs"])
         fixes: list[str] = []
         if not located.found:
