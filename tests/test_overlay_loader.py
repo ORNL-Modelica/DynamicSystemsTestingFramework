@@ -1417,8 +1417,9 @@ class TestTheRepoSExampleCompanions:
         """`MetricTreeTest`: x' = (1 - x)/0.5 from zero, so x = 1 - e^(-2t).
         The companion's curve is that — written out, not a simulator's —
         and the stored baseline of each partition lies on it. It holds the
-        variable the test's criteria score and no other: `y`, mapped to
-        the unscored `unitTests.x[2]`, was drawn on no page."""
+        variable the test's criteria compare with a baseline and no other:
+        `y`, mapped to the then unscored `unitTests.x[2]`, was drawn on no
+        page, and the bound that variable is held to now reads no curve."""
         from dstf.config import Config
         from dstf.storage.reference_store import ReferenceStore
 

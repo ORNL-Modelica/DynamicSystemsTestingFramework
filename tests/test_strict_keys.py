@@ -1226,13 +1226,13 @@ class TestSpecUpdateRefuses:
     def test_the_place_is_written_as_a_parse_error_writes_it(
         self, example, tmp_path, capsys
     ):
-        """Dotted — `metrics.children[3]` — never the op's JSON pointer."""
+        """Dotted — `metrics.children[4]` — never the op's JSON pointer."""
         patch = _patch(
             tmp_path, _add_leaf({"metric": "range", "variable": "unitTests.x[2]"})
         )
         assert self._refused(example, patch, capsys) == (
             f"Patch failed: patched entry is invalid: tests[{MODEL}].metrics."
-            "children[3]: range · unitTests.x[2]: needs at least one of "
+            "children[4]: range · unitTests.x[2]: needs at least one of "
             "min_value / max_value"
         )
 
@@ -1330,19 +1330,19 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
 
     def test_one_of_two_may_be_filled(self, example, tmp_path):
         spec = self._held(example, MODEL, self._two)
-        op = {"op": "add", "path": "/metrics/children/3/min_value", "value": 0.0}
+        op = {"op": "add", "path": "/metrics/children/4/min_value", "value": 0.0}
         assert self._update(example, tmp_path, MODEL, op) == 0
-        assert self._entry(spec, MODEL)["metrics"]["children"][3]["min_value"] == 0.0
+        assert self._entry(spec, MODEL)["metrics"]["children"][4]["min_value"] == 0.0
 
     def test_one_of_two_may_be_removed_and_the_other_only_moves(
         self, example, tmp_path
     ):
-        """The scalar leaf is at children[3] afterwards, where the range
+        """The scalar leaf is at children[4] afterwards, where the range
         was: a rule that looked a place up would call it new."""
         spec = self._held(example, MODEL, self._two)
-        op = {"op": "remove", "path": "/metrics/children/3"}
+        op = {"op": "remove", "path": "/metrics/children/4"}
         assert self._update(example, tmp_path, MODEL, op) == 0
-        assert self._entry(spec, MODEL)["metrics"]["children"][3] == BARE_SCALAR
+        assert self._entry(spec, MODEL)["metrics"]["children"][4] == BARE_SCALAR
 
     def test_an_edit_that_leaves_one_unscorable_is_refused(
         self, example, tmp_path, capsys
@@ -1351,9 +1351,9 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         not what was there."""
         spec = self._held(example, MODEL, self._two)
         before = spec.read_bytes()
-        op = {"op": "add", "path": "/metrics/children/3/tolerance", "value": 0.5}
+        op = {"op": "add", "path": "/metrics/children/4/tolerance", "value": 0.5}
         assert self._update(example, tmp_path, MODEL, op) == 1
-        assert "children[3]: range · unitTests.x[2]: needs at least one" in (
+        assert "children[4]: range · unitTests.x[2]: needs at least one" in (
             capsys.readouterr().out
         )
         assert spec.read_bytes() == before
@@ -1363,13 +1363,13 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         spec = self._held(example, MODEL, self._two)
         before = spec.read_bytes()
         assert self._update(example, tmp_path, MODEL, _add_leaf(BARE_RANGE)) == 1
-        assert "children[5]: range · unitTests.x[2]" in capsys.readouterr().out
+        assert "children[6]: range · unitTests.x[2]" in capsys.readouterr().out
         assert spec.read_bytes() == before
 
     def _one(self, entry):
         entry["metrics"]["children"].append(dict(BARE_RANGE))
 
-    FILL = {"op": "add", "path": "/metrics/children/3/min_value", "value": 0.0}
+    FILL = {"op": "add", "path": "/metrics/children/4/min_value", "value": 0.0}
 
     @pytest.mark.parametrize("fill_first", [True, False], ids=["fill-add", "add-fill"])
     def test_filling_one_and_adding_an_equal_one_adds_a_new_one(
@@ -1382,7 +1382,7 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         before = spec.read_bytes()
         ops = [self.FILL, _add_leaf(BARE_RANGE)]
         assert self._update(example, tmp_path, MODEL, *ops[:: 1 if fill_first else -1])
-        assert "children[4]: range · unitTests.x[2]: needs at least one" in (
+        assert "children[5]: range · unitTests.x[2]: needs at least one" in (
             capsys.readouterr().out
         )
         assert spec.read_bytes() == before
@@ -1394,7 +1394,7 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         it was, and the equal one that appears is it."""
         spec = self._held(example, MODEL, self._one)
         ops = [
-            {"op": "remove", "path": "/metrics/children/3"},
+            {"op": "remove", "path": "/metrics/children/4"},
             {"op": "add", "path": "/metrics/children/0", "value": dict(BARE_RANGE)},
         ]
         assert self._update(example, tmp_path, MODEL, *ops) == 0
@@ -1406,27 +1406,27 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         spec = self._held(example, MODEL, self._one)
         before = spec.read_bytes()
         ops = [
-            {"op": "remove", "path": "/metrics/children/3"},
+            {"op": "remove", "path": "/metrics/children/4"},
             _add_leaf(BARE_RANGE),
             _add_leaf(BARE_RANGE),
         ]
         assert self._update(example, tmp_path, MODEL, *ops) == 1
-        assert "children[4]: range · unitTests.x[2]" in capsys.readouterr().out
+        assert "children[5]: range · unitTests.x[2]" in capsys.readouterr().out
         assert spec.read_bytes() == before
 
     def test_one_written_over_with_itself_is_the_one_that_was_there(
         self, example, tmp_path
     ):
         self._held(example, MODEL, self._one)
-        op = {"op": "replace", "path": "/metrics/children/3", "value": dict(BARE_RANGE)}
+        op = {"op": "replace", "path": "/metrics/children/4", "value": dict(BARE_RANGE)}
         assert self._update(example, tmp_path, MODEL, op) == 0
 
     def test_one_wrapped_in_a_group_is_the_one_that_was_there(self, example, tmp_path):
         spec = self._held(example, MODEL, self._one)
         group = {"combinator": "warn", "children": [dict(BARE_RANGE)]}
-        op = {"op": "replace", "path": "/metrics/children/3", "value": group}
+        op = {"op": "replace", "path": "/metrics/children/4", "value": group}
         assert self._update(example, tmp_path, MODEL, op) == 0
-        assert self._entry(spec, MODEL)["metrics"]["children"][3] == group
+        assert self._entry(spec, MODEL)["metrics"]["children"][4] == group
 
     def test_one_filled_and_another_made_like_it_was_is_refused(
         self, example, tmp_path, capsys
@@ -1438,10 +1438,10 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         before = spec.read_bytes()
         ops = [
             self.FILL,
-            {"op": "replace", "path": "/metrics/children/4", "value": dict(BARE_RANGE)},
+            {"op": "replace", "path": "/metrics/children/5", "value": dict(BARE_RANGE)},
         ]
         assert self._update(example, tmp_path, MODEL, *ops) == 1
-        assert "children[4]: range · unitTests.x[2]" in capsys.readouterr().out
+        assert "children[5]: range · unitTests.x[2]" in capsys.readouterr().out
         assert spec.read_bytes() == before
 
     def test_no_marker_of_the_check_reaches_the_file(self, example, tmp_path):
@@ -1449,7 +1449,7 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         op = {"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5}
         assert self._update(example, tmp_path, MODEL, op) == 0
         assert "\\u0000" not in spec.read_text(encoding="utf-8")
-        assert self._entry(spec, MODEL)["metrics"]["children"][3] == BARE_RANGE
+        assert self._entry(spec, MODEL)["metrics"]["children"][4] == BARE_RANGE
 
     def _override(self, entry):
         entry["comparison"]["variable_overrides"]["unitTests.x[1]"] = {"mode": "range"}
@@ -1576,7 +1576,7 @@ def test_a_spec_holding_an_unknown_key_stops_the_command(example, capsys, comman
     err = capsys.readouterr().err
     assert err.startswith("Config error: ")
     assert err.strip().endswith(
-        f"tests[{MODEL}].metrics.children[3]: range · unitTests.x[2]: unknown field "
+        f"tests[{MODEL}].metrics.children[4]: range · unitTests.x[2]: unknown field "
         '"max_val" — did you mean "max_value"?'
     )
 

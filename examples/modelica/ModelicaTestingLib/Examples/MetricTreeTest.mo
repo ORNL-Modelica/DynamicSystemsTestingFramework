@@ -31,14 +31,17 @@ AND
   TUBE(x, window [2.5, 10])     &lt;-- steady state, primary, hard-fail
   WARN
     NRMSE(x, against=openmodelica)  &lt;-- cross-simulator soft_check, advisory
+  RANGE(y, max 1)               &lt;-- the lag never overshoots, baseline-free, hard-fail
 </pre>
 <p>
 The two windowed leaves are the regression anchor against the primary
 baseline; the warn-wrapped leaf compares the same trajectory against an
 imported OpenModelica <code>soft_check</code> baseline, so cross-simulator
-disagreement is visible in the report without failing the test. Open the
-interactive report to see the tree, the window brackets, and the tube
-band rendered on the plot.
+disagreement is visible in the report without failing the test. The last
+leaf scores the downstream lag against no baseline at all: <code>y</code>
+rises from 0 towards 1 and never passes it, whatever the two time
+constants. Open the interactive report to see the tree, the window
+brackets, the tube band and the bound rendered on the plots.
 </p>
 </html>"));
 end MetricTreeTest;

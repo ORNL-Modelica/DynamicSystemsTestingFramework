@@ -99,6 +99,11 @@
                 "tolerance": 0.01
               }
             ]
+          },
+          {
+            "metric": "range",
+            "variable": "unitTests.x[2]",
+            "max_value": 1.0
           }
         ]
       }
