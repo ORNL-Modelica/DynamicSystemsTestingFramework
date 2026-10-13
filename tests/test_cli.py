@@ -1826,6 +1826,44 @@ class TestConfigErrorCleanExit:
 
 
 # ---------------------------------------------------------------------------
+# --batch on a backend with one way to run is an error, not a no-op
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source_type", "backend"), [("fmu", "FMPy"), ("python", "Python")]
+)
+def test_batch_on_a_backend_with_no_workers_is_a_config_error(
+    tmp_path, capsys, monkeypatch, source_type, backend
+):
+    """`--batch` turns the workers that stay alive off. FMPy and Python have
+    none, and the flag was silently dropped there. Said before the library
+    is scanned or anything simulates."""
+    cfg = tmp_path / "testing.json"
+    cfg.write_text(
+        json.dumps({"source_type": source_type, "backend": backend}), encoding="utf-8"
+    )
+
+    def scanned(config):
+        raise AssertionError("the refusal comes before discovery")
+
+    monkeypatch.setattr("dstf.cli.run_cmds.discover_tests", scanned)
+    work = tmp_path / "work"
+    rc = main(["run", "--config", str(cfg), "--batch", "--work-dir", str(work)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"Config error: --batch does not apply to the {backend} ")
+    assert not work.exists()
+
+
+def test_batch_stays_on_a_backend_that_has_workers(tmp_path):
+    from dstf.cli.run_cmds import _refuse_batch_without_workers
+
+    for backend in ("Dymola", "OpenModelica", "Julia"):
+        _refuse_batch_without_workers(SimpleNamespace(backend=backend))
+
+
+# ---------------------------------------------------------------------------
 # Finding 60 — export --output takes a string path
 # ---------------------------------------------------------------------------
 

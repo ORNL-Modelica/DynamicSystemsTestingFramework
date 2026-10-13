@@ -54,6 +54,26 @@ def _get_backend(config, persistent: bool = False):
         sys.exit(1)
 
 
+def _refuse_batch_without_workers(config) -> None:
+    """``--batch`` asks for the backend's script mode INSTEAD of its workers
+    that stay alive. A backend with no such workers (FMPy, Python) runs its
+    tests one way, and the flag chose nothing there: a flag that does not
+    apply is an error, said before anything simulates. An unregistered
+    backend name is :func:`_get_backend`'s to say."""
+    from ..backends import Capability, get_backend_class
+
+    try:
+        cls = get_backend_class(config)
+    except ValueError:
+        return
+    if Capability.PERSISTENT_WORKERS not in cls.capabilities:
+        raise ConfigError(
+            f"--batch does not apply to the {config.backend} backend: it has "
+            f"no workers that stay alive for --batch to turn off, and runs "
+            f"its tests one way. Run without --batch."
+        )
+
+
 def _report_accept(
     config,
     stored: int,
@@ -139,6 +159,8 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
+    if args.batch:
+        _refuse_batch_without_workers(config)
     all_tests = discover_tests(config)
     tests = _filter_tests(all_tests, args.filter, args.package)
     _notify_orphans(config, all_tests)
@@ -159,7 +181,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         refuse_stored_overrides(all_tests if merged else tests, store)
     write_id_mapping(store, config)
 
-    backend = _get_backend(config, persistent=not getattr(args, "batch", False))
+    backend = _get_backend(config, persistent=not args.batch)
 
     # --rerun selects tests by status from prior comparisons (no new sim yet).
     # Default category: failed. Implies --merge so the report covers the full suite.

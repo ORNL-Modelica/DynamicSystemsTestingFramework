@@ -236,7 +236,9 @@ def select_backend(config, *, persistent: bool) -> Backend:
     if not persistent or Capability.PERSISTENT_WORKERS not in batch_cls.capabilities:
         # Batch-only backend (FMPy, Python today). Persistent flag is a
         # no-op rather than an error so a single CLI works across mixed
-        # backends in a multi-library config.
+        # backends in a multi-library config. A `--batch` WRITTEN for such
+        # a backend is another matter, and the CLI's to refuse
+        # (`cli.run_cmds._refuse_batch_without_workers`).
         return _instantiate(batch_cls, config)
     pcls = batch_cls.persistent_backend_cls()
     if pcls is None:
