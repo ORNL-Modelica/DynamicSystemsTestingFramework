@@ -1,5 +1,6 @@
 """JUnit XML report generation for CI integration."""
 
+import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
@@ -18,6 +19,20 @@ from .status import (
     group_failures,
     refusal,
 )
+
+#: Every character XML 1.0 cannot carry (its ``Char`` production): a control
+#: character below U+0020 but tab, LF and CR, a surrogate — in a ``str``
+#: every one is a lone one — U+FFFE and U+FFFF.
+_NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def _xml_text(text: str) -> str:
+    """``text`` as an XML 1.0 file can hold it: each character it cannot —
+    the ESC of an ANSI colour code in a simulator's message, a NUL, a lone
+    surrogate — as U+FFFD. There is no escape to write instead: ``&#27;``
+    is as ill-formed as the character, and no parser reads a file that
+    holds either."""
+    return _NOT_XML.sub("\ufffd", text)
 
 
 def _failure_message(failed: list[str], groups: list[str], advisory: list[str]) -> str:
@@ -161,6 +176,15 @@ def generate_junit_report(
     root.set("tests", str(total_tests))
     root.set("failures", str(total_failures))
     root.set("errors", str(total_errors))
+
+    # THE place text enters the file: every attribute value and every
+    # element's text, whichever branch above wrote it — a model's name, a
+    # simulator's message, a criterion's line with its variable's.
+    for element in root.iter():
+        for key, value in list(element.attrib.items()):
+            element.set(key, _xml_text(value))
+        if element.text:
+            element.text = _xml_text(element.text)
 
     tree = ET.ElementTree(root)
     output_path.parent.mkdir(parents=True, exist_ok=True)

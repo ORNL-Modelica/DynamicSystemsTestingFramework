@@ -371,6 +371,53 @@ class TestJUnitReport:
         assert out.read_text().startswith("<?xml")
         ET.parse(out)  # parses without error
 
+    def test_a_character_xml_cannot_carry_is_written_as_u_fffd(self, tmp_path):
+        """An ANSI colour code's ESC in a simulator's message, a NUL, a lone
+        surrogate: XML 1.0 has no way to write them, escaped or not, and the
+        file was one no parser read. Each is U+FFFD — in a message, a
+        model's name and a variable's — and the text around it is whole."""
+        bad = "\x1b[31mred\x00nul\ud83dhalf"
+        said = "\ufffd[31mred\ufffdnul\ufffdhalf"
+        sim = _sim_failed(model_id=f"Lib.Ex{bad}.C")
+        sim.error_message = f"Translation failed: {bad} — é, 𝛼 and a tab\tstay"
+        failing = TestComparison(
+            model_id=f"Lib.Ex{bad}.B",
+            passed=False,
+            variables=[_var(name=f"pipe.{bad}.T", passed=False)],
+        )
+        out = tmp_path / "junit.xml"
+        generate_junit_report([sim, failing], out)
+        (suite,) = ET.parse(out).getroot().findall("testsuite")
+        assert suite.get("name") == f"Lib.Ex{said}"
+        errored, failed = suite.findall("testcase")
+        assert errored.get("name") == f"Lib.Ex{said}.C"
+        assert errored.get("classname") == f"Lib.Ex{said}"
+        assert errored.find("error").get("message") == (
+            f"Translation failed: {said} — é, 𝛼 and a tab\tstay"
+        )
+        assert failed.get("name") == f"Lib.Ex{said}.B"
+        assert failed.find("failure").text == (
+            f"pipe.{said}.T: nrmse — NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL"
+        )
+
+    @pytest.mark.parametrize(
+        "kept",
+        ["\t", "\n", " ", "~", "\x7f", "\ud7ff", "\ue000", "\ufffd", "\U00010000"],
+    )
+    def test_every_character_xml_carries_is_kept(self, kept):
+        from dstf.reporting.junit_report import _xml_text
+
+        assert _xml_text(f"a{kept}b") == f"a{kept}b"
+
+    @pytest.mark.parametrize(
+        "refused",
+        ["\x00", "\x08", "\x0b", "\x1f", "\ud800", "\udfff", "\ufffe", "\uffff"],
+    )
+    def test_every_character_xml_cannot_carry_is_replaced(self, refused):
+        from dstf.reporting.junit_report import _xml_text
+
+        assert _xml_text(f"a{refused}b") == "a\ufffdb"
+
     def test_aggregate_counts_on_root(self, tmp_path):
         out = tmp_path / "junit.xml"
         generate_junit_report([_passing(), _failing(), _sim_failed()], out)
