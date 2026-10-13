@@ -652,8 +652,15 @@ def test_stopping_the_queue_leaves_no_simulation_behind(h):
     h.hold(A)
     a, b = h.session.enqueue([A, B])
     h.running(A)
-    children = [p for p in me.children(recursive=True) if p.is_running()]
-    assert children, "the held simulation is a child process"
+
+    def simulations() -> list:
+        return [p for p in me.children(recursive=True) if p.is_running()]
+
+    # RUNNING is said as the worker takes the item, a moment BEFORE its
+    # process exists: 1 to 5 ms on a native file system, and long enough on
+    # a slow mount that looking at once found no child at all.
+    h.loop.until(lambda: bool(simulations()), what="the held simulation is a child")
+    children = simulations()
 
     h.session.stop_queue()
 
