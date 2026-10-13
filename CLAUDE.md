@@ -20,7 +20,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      check (where each backend is on this machine, and whether the project's is ready)
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
 │   ├── config_shape.py           # testing.json's keys — type, default, description: the ONE table Config refuses an unknown key by,
-│   │                             #      and takes its defaults from; a backend's settings
+│   │                             #      takes its defaults from and `export-schema --file testing.json` publishes; a backend's settings
 │   │                             #      block is declared in the same shape (Setting) and checked by the same check
 │   ├── json_types.py             # whether a JSON value is of the type its key takes, and how a refusal says it (both strict files)
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
@@ -233,6 +233,9 @@ uv run dstf --config testing.json run --batch --parallel 4 --report
 # exit 0 iff that one is usable. Works with no testing.json (the search alone) and writes none.
 uv run dstf --config testing.json check
 uv run dstf check Dymola           # one backend's full diagnosis
+
+# The schema of testing.json itself: every key with its type, default and description
+uv run dstf export-schema --file testing.json --output testing.schema.json
 ```
 
 ## Running Tests

@@ -5,7 +5,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from ..config import CONFIG_FILENAME
 from .common import _build_config
+
+#: `export-schema --file`: the two files a schema is written for.
+SPEC_FILE = "test_spec.json"
+SCHEMA_FILES = (SPEC_FILE, CONFIG_FILENAME)
 
 
 def cmd_add(args: argparse.Namespace) -> int:
@@ -106,12 +111,16 @@ def _print_applied(applied, requested, spec_path) -> None:
 
 
 def cmd_export_schema(args: argparse.Namespace) -> int:
-    """Emit a JSON-Schema document describing ``test_spec.json`` (6.4.5)."""
+    """Emit a JSON-Schema document describing ``test_spec.json`` (6.4.5),
+    or — ``--file testing.json`` — the project's ``testing.json``."""
     import json as json_mod
 
-    from ..reporting.schema_export import build_schema
+    from ..reporting.schema_export import build_config_schema, build_schema
 
-    schema = build_schema()
+    if getattr(args, "file", SPEC_FILE) == CONFIG_FILENAME:
+        schema = build_config_schema()
+    else:
+        schema = build_schema()
     text = json_mod.dumps(schema, indent=2) + "\n"
     out = getattr(args, "output", None)
     if out:

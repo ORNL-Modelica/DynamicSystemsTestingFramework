@@ -1,7 +1,8 @@
 """`testing.json` is read through ONE key table, and is strict.
 
 `config_shape.TESTING_JSON` is what `Config` refuses an unknown key by, what
-it takes its defaults from and what the docs' key lists are held to. A backend's settings
+it takes its defaults from, what `export-schema --file testing.json`
+publishes and what the docs' key lists are held to. A backend's settings
 block is checked the same way against the table the backend declares.
 """
 
@@ -20,6 +21,7 @@ from dstf.cli.main import build_arg_parser
 from dstf.config import Config, ConfigError, load_config_file
 from dstf.config_shape import TESTING_JSON, Setting, default, refused
 from dstf.discovery.spec_shape import NOTES
+from dstf.reporting.schema_export import build_config_schema, build_schema
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -445,8 +447,53 @@ class TestTheRepoSFiles:
 
 
 # ---------------------------------------------------------------------------
-# The pages that list the keys
+# The schema, and the pages that list the keys
 # ---------------------------------------------------------------------------
+
+
+class TestSchema:
+    def test_it_is_the_table(self):
+        schema = build_config_schema()
+        assert schema["title"] == "DSTF testing.json"
+        assert schema["additionalProperties"] is False
+        assert list(schema["properties"]) == list(TESTING_JSON)
+        for key, setting in TESTING_JSON.items():
+            node = schema["properties"][key]
+            assert node["description"] == setting.description
+            assert node.get("default") == setting.default
+            for word, value in setting.schema.items():
+                assert node[word] == value
+
+    def test_each_backend_s_block_is_its_table(self):
+        blocks = build_config_schema()["properties"]["backends"]
+        assert blocks["additionalProperties"] is False
+        patterns = blocks["patternProperties"]
+        assert list(patterns)[:5] == [
+            "^Dymola",
+            "^OpenModelica",
+            "^FMPy",
+            "^Julia",
+            "^Python",
+        ]
+        dymola = patterns["^Dymola"]
+        assert dymola["additionalProperties"] is False
+        assert list(dymola["properties"]) == list(DymolaBackend.settings)
+        assert dymola["properties"]["show_ide"]["description"] == (
+            DymolaBackend.settings["show_ide"].description
+        )
+        assert patterns["^FMPy"]["properties"] == {}
+
+    def test_export_schema_s_default_output_is_unchanged(self, capsys):
+        assert main(["export-schema"]) == 0
+        assert json.loads(capsys.readouterr().out) == build_schema()
+        assert main(["export-schema", "--file", "test_spec.json"]) == 0
+        assert json.loads(capsys.readouterr().out) == build_schema()
+
+    def test_export_schema_writes_testing_json_s(self, tmp_path, capsys):
+        out = tmp_path / "testing.schema.json"
+        assert main(["export-schema", "--file", "testing.json", "-o", str(out)]) == 0
+        capsys.readouterr()
+        assert json.loads(out.read_text(encoding="utf-8")) == build_config_schema()
 
 
 def _keys_listed(text: str, pattern: str) -> list[str]:

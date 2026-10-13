@@ -1,4 +1,6 @@
-"""JSON-Schema export for ``test_spec.json`` (PHASE_6_PLAN 6.4.5).
+"""JSON-Schema export for ``test_spec.json`` (PHASE_6_PLAN 6.4.5) and for
+``testing.json`` (:func:`build_config_schema`, from the one table ``Config``
+reads the file by).
 
 Derives a JSON-Schema document from:
   * every registered metric's Config dataclass (reusing the 6.1.1
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import re
 from typing import Any
 
 from ..comparison.mode_schema import derive_schema
@@ -35,6 +38,7 @@ from ..comparison.registry import (
 )
 from ..comparison.strict_keys import EVERY_METRIC, declares_quantity, row_fields
 from ..comparison.tree_spec import COMBINATOR_KIND_KEYS
+from ..config_shape import TESTING_JSON, schema_properties
 from ..discovery import spec_shape
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
@@ -410,4 +414,40 @@ def build_schema() -> dict:
             **mode_defs,
             **_override_defs(modes),
         },
+    }
+
+
+def build_config_schema() -> dict:
+    """The JSON-Schema document of ``testing.json``: every key of
+    ``config_shape.TESTING_JSON`` with its type, default and description,
+    and under ``backends`` each registered backend's own settings table
+    (``Backend.settings``) for the entries named after it.
+
+    As strict as ``Config``: a key that is in neither table is refused
+    there, and is ``additionalProperties: false`` here.
+    """
+    from ..backends import backend_class, backend_names
+
+    properties = schema_properties(TESTING_JSON)
+    blocks: dict[str, Any] = {}
+    for name in backend_names():
+        cls = backend_class(name)
+        if cls is None:
+            continue
+        # An entry is its backend's by how its name STARTS: "Dymola 2025".
+        blocks[f"^{re.escape(name)}"] = {
+            "type": "object",
+            "title": f"{name} settings",
+            "properties": schema_properties(cls.settings),
+            "additionalProperties": False,
+        }
+    properties["backends"].update(
+        {"patternProperties": blocks, "additionalProperties": False}
+    )
+    return {
+        "$schema": _JSON_SCHEMA_URI,
+        "title": "DSTF testing.json",
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
     }

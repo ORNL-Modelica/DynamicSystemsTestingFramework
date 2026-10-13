@@ -74,7 +74,9 @@ resolves to on this machine, and by which rule.
 mean "tolerance"?` (exit 2) from every command that reads the file, and
 `backends.Dymola: unknown field …` for a key of a block. A value of another
 type than its key takes is the same error (`max_embedded_samples: must be a
-whole number, got "abc"`). `description` / `info` / `metadata` are for notes.
+whole number, got "abc"`). `description` / `info` / `metadata` are for notes,
+and `$schema` may point an editor at `dstf export-schema --file testing.json`'s
+output, which lists every key with its type, default and description.
 
 So the former spellings `simulator`, `simulators` and `simulator_setup` are
 refused, as is a `backends` entry written as a list of paths (`backends.Dymola

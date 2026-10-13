@@ -15,7 +15,13 @@ from .diag_cmds import (
     cmd_manifest,
 )
 from .run_cmds import cmd_compare, cmd_run
-from .spec_cmds import cmd_add, cmd_export_schema, cmd_spec_update
+from .spec_cmds import (
+    SCHEMA_FILES,
+    SPEC_FILE,
+    cmd_add,
+    cmd_export_schema,
+    cmd_spec_update,
+)
 
 
 def _review_filter_arg(value: str) -> str:
@@ -478,11 +484,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to source reference JSON (flat ref file shape)",
     )
 
-    # export-schema — emit JSON-Schema for test_spec.json (6.4.5)
+    # export-schema — emit JSON-Schema for test_spec.json (6.4.5) or testing.json
     p_schema = subparsers.add_parser(
         "export-schema",
         parents=[global_parent],
-        help="Emit a JSON-Schema describing the test_spec.json shape",
+        help="Emit a JSON-Schema describing the test_spec.json shape "
+        "(or, with --file testing.json, the testing.json shape)",
+    )
+    p_schema.add_argument(
+        "--file",
+        choices=SCHEMA_FILES,
+        default=SPEC_FILE,
+        help="Which file's schema to emit (default: test_spec.json). "
+        "testing.json's lists every key with its type, default and "
+        "description, and each backend's own settings.",
     )
     p_schema.add_argument(
         "--output",
