@@ -2,17 +2,19 @@
   "tests": [
     {
       "model": "ModelicaTestingLib.Examples.NoUnitTest",
-      "variables": ["x"],
+      "variables": [
+        "x"
+      ],
       "simulation": {
         "stop_time": 5,
-        "tolerance": 1e-4
+        "tolerance": 0.0001
       }
     },
     {
       "model": "ModelicaTestingLib.Examples.TubeToleranceTest",
       "comparison": {
         "variable_overrides": {
-          "x": {
+          "unitTests.x[1]": {
             "mode": "tube",
             "tube_width_mode": "rel",
             "tube_rel": 0.05
@@ -24,10 +26,14 @@
       "model": "ModelicaTestingLib.Examples.FrequencyTest",
       "comparison": {
         "variable_overrides": {
-          "x": {
+          "unitTests.x[1]": {
             "mode": "dominant-frequency",
             "peaks": [
-              {"freq": 1.0, "tolerance": 0.15, "tolerance_mode": "rel"}
+              {
+                "freq": 1.0,
+                "tolerance": 0.15,
+                "tolerance_mode": "rel"
+              }
             ]
           }
         }
@@ -37,12 +43,24 @@
       "model": "ModelicaTestingLib.Examples.MultiFrequencyTest",
       "comparison": {
         "variable_overrides": {
-          "y": {
+          "unitTests.x[1]": {
             "mode": "dominant-frequency",
             "peaks": [
-              {"freq": 1.0, "tolerance": 0.15, "tolerance_mode": "rel"},
-              {"freq": 3.0, "tolerance": 0.1, "tolerance_mode": "rel"},
-              {"freq": 7.0, "tolerance": 0.05, "tolerance_mode": "rel"}
+              {
+                "freq": 1.0,
+                "tolerance": 0.15,
+                "tolerance_mode": "rel"
+              },
+              {
+                "freq": 3.0,
+                "tolerance": 0.1,
+                "tolerance_mode": "rel"
+              },
+              {
+                "freq": 7.0,
+                "tolerance": 0.05,
+                "tolerance_mode": "rel"
+              }
             ]
           }
         }
@@ -53,12 +71,133 @@
       "metrics": {
         "combinator": "and",
         "children": [
-          {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+          {
+            "metric": "nrmse",
+            "variable": "unitTests.x[1]",
+            "tolerance": 0.001,
+            "window": {
+              "end": 2.5
+            }
+          },
+          {
+            "metric": "tube",
+            "variable": "unitTests.x[1]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.02,
+            "tube_min_width": 0.005,
+            "window": {
+              "start": 2.5
+            }
+          },
           {
             "combinator": "warn",
             "children": [
-              {"metric": "nrmse", "variable": "y", "tolerance": 1e-3}
+              {
+                "metric": "nrmse",
+                "variable": "unitTests.x[1]",
+                "against": "openmodelica",
+                "tolerance": 0.01
+              }
             ]
+          },
+          {
+            "metric": "range",
+            "variable": "unitTests.x[2]",
+            "max_value": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.EventTest",
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {
+            "metric": "nrmse",
+            "variable": "unitTests.x[1]",
+            "tolerance": 0.001
+          },
+          {
+            "metric": "event-timing",
+            "variable": "unitTests.x[2]",
+            "time_tolerance": 0.01
+          }
+        ]
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.SimpleTest",
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {
+            "combinator": "k-of-n",
+            "k": 1,
+            "children": [
+              {
+                "metric": "nrmse",
+                "variable": "unitTests.x[1]",
+                "tolerance": 0.0001
+              },
+              {
+                "metric": "nrmse",
+                "variable": "unitTests.x[2]",
+                "tolerance": 0.0001
+              }
+            ]
+          },
+          {
+            "metric": "scalar",
+            "variable": "unitTests.x[1]",
+            "quantity": {
+              "reduce": "final"
+            },
+            "tolerance": 0.001,
+            "tolerance_mode": "abs"
+          }
+        ]
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.ConstantTest",
+      "metrics": {
+        "combinator": "weighted",
+        "weights": [
+          0.5,
+          0.5
+        ],
+        "threshold": 0.0001,
+        "direction": "less",
+        "children": [
+          {
+            "metric": "nrmse",
+            "variable": "unitTests.x[1]",
+            "tolerance": 0.0001
+          },
+          {
+            "metric": "nrmse",
+            "variable": "unitTests.x[2]",
+            "tolerance": 0.0001
+          }
+        ]
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.IntervalTest",
+      "metrics": {
+        "combinator": "or",
+        "children": [
+          {
+            "metric": "nrmse",
+            "variable": "unitTests.x[1]",
+            "tolerance": 0.0001
+          },
+          {
+            "metric": "tube",
+            "variable": "unitTests.x[1]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05
           }
         ]
       }
@@ -67,7 +206,7 @@
       "model": "ModelicaTestingLib.Examples.RangeCheckTest",
       "comparison": {
         "variable_overrides": {
-          "x": {
+          "unitTests.x[1]": {
             "mode": "range",
             "min_value": -1.05,
             "max_value": 1.05
@@ -79,17 +218,200 @@
       "model": "ModelicaTestingLib.Examples.PointsCheckTest",
       "comparison": {
         "variable_overrides": {
-          "x": {
+          "unitTests.x[1]": {
             "mode": "points",
             "points": [
-              {"time": 0.0, "tolerance": 0.001, "tolerance_mode": "abs"},
-              {"time": 1.5707963267948966, "value": 1.0, "tolerance": 0.05, "tolerance_mode": "rel"},
-              {"time": 3.141592653589793, "tolerance": 0.02, "tolerance_mode": "abs", "time_tolerance": 0.05},
-              {"time": 4.71238898038469, "value": -1.0, "tolerance": 0.05, "tolerance_mode": "rel"},
-              {"time": 10.0, "tolerance": 0.01, "tolerance_mode": "abs"}
+              {
+                "time": 0.0,
+                "tolerance": 0.001,
+                "tolerance_mode": "abs"
+              },
+              {
+                "time": 1.5707963267948966,
+                "value": 1.0,
+                "tolerance": 0.05,
+                "tolerance_mode": "rel"
+              },
+              {
+                "time": 3.141592653589793,
+                "tolerance": 0.02,
+                "tolerance_mode": "abs",
+                "time_tolerance": 0.05
+              },
+              {
+                "time": 4.71238898038469,
+                "value": -1.0,
+                "tolerance": 0.05,
+                "tolerance_mode": "rel"
+              },
+              {
+                "time": 10.0,
+                "tolerance": 0.01,
+                "tolerance_mode": "abs"
+              }
             ]
           }
         }
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.HeatRodTest",
+      "variables": [
+        "T[*]"
+      ],
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {
+            "metric": "tube",
+            "variable": "T[1]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[2]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[3]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[4]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[5]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[6]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[7]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[8]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[9]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[10]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[11]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[12]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[13]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[14]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[15]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[16]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[17]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[18]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[19]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "tube",
+            "variable": "T[20]",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.01,
+            "tube_min_width": 0.05
+          },
+          {
+            "metric": "scalar",
+            "variable": "T[10]",
+            "quantity": {
+              "reduce": "final"
+            },
+            "tolerance": 0.05,
+            "tolerance_mode": "abs"
+          }
+        ]
       }
     }
   ]

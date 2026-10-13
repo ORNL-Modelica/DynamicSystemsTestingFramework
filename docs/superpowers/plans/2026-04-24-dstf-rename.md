@@ -328,7 +328,7 @@ EOF
 - Modify: `docs/decisions.md` (append D81)
 - Modify: `docs/SESSION_HANDOFF.md` (state header + note about historical plan preservation)
 - Modify: `.claude/settings.local.json` if it contains stale `modelica-testing` permission strings (check first; may be a no-op)
-- Modify: `/home/fig/.claude/projects/-mnt-d-Modelica-ModelicaTesting/memory/MEMORY.md` and any memory files under that dir that reference `modelica-testing` / `modelica_testing` (probably 0-2 files)
+- Modify: `~/.claude/projects/<project>/memory/MEMORY.md` and any memory files under that dir that reference `modelica-testing` / `modelica_testing` (probably 0-2 files)
 
 - [ ] **Step 1: Append D81 to `docs/decisions.md`**
 
@@ -425,7 +425,7 @@ If there are hits, open the file(s) and update each matched string (typically a 
 - [ ] **Step 4: Audit user memory for stale references**
 
 ```bash
-grep -rn "modelica-testing\|modelica_testing" /home/fig/.claude/projects/-mnt-d-Modelica-ModelicaTesting/memory/ 2>/dev/null
+grep -rn "modelica-testing\|modelica_testing" ~/.claude/projects/<project>/memory/ 2>/dev/null
 ```
 
 If there are hits in memory files (they reference the old package/CLI name in a way that will confuse a future conversation), update each file in place using the Edit tool. Do not blindly sed — memory files are short and context-dependent. Report which files and lines were updated in the task summary.
@@ -467,7 +467,7 @@ Confirm staged files are limited to:
 - `docs/SESSION_HANDOFF.md` (naming note)
 - `.claude/settings.local.json` if edited in Step 3
 
-For memory files (under `/home/fig/...`), those are OUTSIDE this repo and are not git-tracked — they won't show up in `git status`. The Step 4 updates happen via Edit tool and persist independently of this commit.
+For memory files (under `~/.claude/...`), those are OUTSIDE this repo and are not git-tracked — they won't show up in `git status`. The Step 4 updates happen via Edit tool and persist independently of this commit.
 
 ```bash
 # Stage the files from steps 1, 2, 3 only (memory files in step 4 are not git-tracked)

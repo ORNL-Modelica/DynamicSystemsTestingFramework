@@ -65,8 +65,9 @@ def validate_tree(
         errors.append(
             ValidationError(
                 _path,
-                "tree has no leaf targeting 'primary' outside a 'warn' combinator — "
-                "every tree must carry at least one hard regression anchor",
+                "Every tree needs at least one criterion scored against the "
+                "primary baseline outside a 'warn': a tree of warnings alone "
+                "can never fail.",
             )
         )
     return errors
@@ -83,9 +84,49 @@ def _walk(
         _check_leaf(node, role_of, path, in_warn, errors)
         return
     if isinstance(node, CombinatorSpec):
+        if node.combinator == "weighted":
+            _check_weighted_directions(node, path, errors)
         child_in_warn = in_warn or node.combinator == "warn"
         for i, child in enumerate(node.children):
             _walk(child, role_of, f"{path}.children[{i}]", child_in_warn, errors)
+
+
+def _check_weighted_directions(
+    node: CombinatorSpec,
+    path: str,
+    errors: list[ValidationError],
+) -> None:
+    """Reject weighted nodes whose leaf children score in opposite directions.
+
+    ``weighted`` compares one summed score against one threshold with one
+    comparison direction, so summing a lower-is-better score (NRMSE-like
+    error) with a higher-is-better one (tube's in-band fraction) is
+    meaningless — the sum can move toward the threshold for opposite
+    reasons. The metric registry's ``score_direction`` is the authority
+    (D101).
+    """
+    from .registry import metric as registry_metric
+
+    directions: dict[str, list[str]] = {}
+    for child in node.children:
+        if not isinstance(child, LeafSpec):
+            continue
+        desc = registry_metric(child.metric)
+        if desc is None:
+            continue  # unknown metric fails loudly at parse/eval, not here
+        directions.setdefault(desc.score_direction, []).append(child.metric)
+    if len(directions) > 1:
+        parts = "; ".join(
+            f"{d}: {', '.join(sorted(set(ms)))}" for d, ms in sorted(directions.items())
+        )
+        errors.append(
+            ValidationError(
+                path,
+                f"A 'weighted' node cannot mix lower-is-better and "
+                f"higher-is-better scores ({parts}); split them into separate "
+                f"weighted nodes.",
+            )
+        )
 
 
 def _check_leaf(
@@ -100,9 +141,9 @@ def _check_leaf(
         errors.append(
             ValidationError(
                 path,
-                f"leaf targets unknown baseline {leaf.against!r}; "
-                f"ensure the baseline exists as primary, a registered soft_check, "
-                f"or check for a typo",
+                f"This criterion scores against {leaf.against!r}, which is not "
+                f"a baseline of this test (the primary or a soft check); check "
+                f"the name.",
             )
         )
         return
@@ -110,10 +151,9 @@ def _check_leaf(
         errors.append(
             ValidationError(
                 path,
-                f"leaf targets companion {leaf.against!r}; companions are "
-                f"plot-only overlays and cannot be scored against. Use a "
-                f"soft_check (via import-baseline) if you need cross-check "
-                f"semantics",
+                f"This criterion scores against the companion {leaf.against!r}, "
+                f"and companions are only drawn; import it as a soft check "
+                f"(dstf import-baseline) to score against it.",
             )
         )
         return
@@ -121,9 +161,8 @@ def _check_leaf(
         errors.append(
             ValidationError(
                 path,
-                f"leaf targets soft_check {leaf.against!r} without a 'warn' "
-                f"ancestor; soft_checks are advisory only and must be "
-                f"warn-wrapped so they cannot hard-fail the test",
+                f"This criterion scores against the soft check {leaf.against!r}, "
+                f"which must sit under a 'warn' so it can only warn.",
             )
         )
         return

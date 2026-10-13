@@ -1,22 +1,20 @@
 """RFC 6902 JSON-Patch applier with whitelist + unknown-key preservation.
 
-Used by :func:`cli.cmd_spec_update` (and 6.4 spec-update round-trip) to
-apply small, scoped edits to ``test_spec.json`` without clobbering
-hand-authored fields. The reporter emits patches of the form::
+Used by ``dstf spec-update`` (through :mod:`spec_update`) and the authoring
+Session to apply small, scoped edits to ``test_spec.json`` without
+clobbering hand-authored fields. The ops arrive in the envelope
+:mod:`patch_envelope` reads; one model's ops look like::
 
-    {
-      "model": "BouncingBall",
-      "patch": [
-        {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-        {"op": "add",     "path": "/comparison/variable_overrides/v/tube_rel",
-         "value": 0.02}
-      ]
-    }
+    [
+      {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+      {"op": "add",     "path": "/comparison/variable_overrides/v/tube_rel",
+       "value": 0.02}
+    ]
 
 Paths are RFC 6901 JSON-Pointers **relative to the matched test entry**
-(so `/comparison/...` and `/metrics/...`, not `/tests/3/...`). A path
-whitelist constrains which subtrees the applier will touch — the
-reporter is explicitly not allowed to mutate arbitrary structure.
+(so `/comparison/...`, `/metrics/...` and `/plots/...`, not `/tests/3/...`). A path
+whitelist constrains which subtrees the applier will touch — an editor
+is not allowed to mutate arbitrary structure.
 
 This module is self-contained: no external JSON-Patch / JSON-Pointer
 libraries. The surface is small (replace/add/remove on a single path
@@ -25,10 +23,13 @@ each), so the RFC 6901 unescape rules fit in ~10 lines.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from pathlib import Path
 from typing import Any
+
+from ..storage.ref_index import _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,47 @@ logger = logging.getLogger(__name__)
 class PatchError(Exception):
     """Raised when a patch cannot be applied cleanly."""
 
-    def __init__(self, message: str, path: str | None = None):
+    def __init__(
+        self, message: str, path: str | None = None, *, reason: str | None = None
+    ):
         self.path = path
+        #: The plain sentence a person reads: ``str()`` keeps the op and the
+        #: pointer for the CLI, the tool shows this beside the edit it came
+        #: from (`authoring.errors.user_text`).
+        self.reason = reason if reason is not None else message
         super().__init__(f"{path}: {message}" if path else message)
 
 
 _SUPPORTED_OPS = {"replace", "add", "remove"}
+
+#: The subtrees of a test entry an editor may touch. One constant, shared by
+#: both entry points below, so the two cannot drift.
+DEFAULT_WHITELIST: tuple[str, ...] = ("/comparison", "/metrics", "/plots")
+
+
+def apply_patch_to_document(
+    data: dict,
+    model_id: str,
+    patch_ops: list[dict],
+    *,
+    whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
+) -> dict:
+    """Apply ``patch_ops`` to the entry in the parsed document ``data`` that
+    matches ``model_id`` (created if absent), in place. Returns ``data``.
+    Raises :class:`PatchError` naming the failing op. The authoring
+    Session's in-memory document goes through here; the disk path is
+    :func:`apply_patch`."""
+    entry = _find_or_create_entry(data, model_id)
+    for i, op in enumerate(patch_ops):
+        try:
+            _apply_one_op(entry, op, whitelist)
+        except PatchError as e:
+            raise PatchError(
+                f"patch_ops[{i}] ({op!r}): {e}",
+                path=e.path,
+                reason=e.reason,
+            ) from None
+    return data
 
 
 def apply_patch(
@@ -49,7 +85,7 @@ def apply_patch(
     model_id: str,
     patch_ops: list[dict],
     *,
-    whitelist: tuple[str, ...] = ("/comparison", "/metrics"),
+    whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
     write: bool = True,
 ) -> dict:
     """Apply ``patch_ops`` to the entry in ``spec_path`` matching ``model_id``.
@@ -59,45 +95,31 @@ def apply_patch(
     on any issue; the caller (CLI) surfaces the message and aborts without
     writing if the dry-run path signals invalidity.
     """
-    data = _load_spec(spec_path)
-    entry = _find_or_create_entry(data, model_id)
-
-    for i, op in enumerate(patch_ops):
-        try:
-            _apply_one_op(entry, op, whitelist)
-        except PatchError as e:
-            raise PatchError(
-                f"patch_ops[{i}] ({op!r}): {e}",
-                path=e.path,
-            ) from None
-
+    data = apply_patch_to_document(
+        load_spec_document(spec_path), model_id, patch_ops, whitelist=whitelist
+    )
     if write:
         spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(
-            json.dumps(data, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        # review 2026-07-06 (finding 31): atomic — an interrupted patch must
+        # not leave the user's spec truncated.
+        _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
     return data
+
+
+def load_spec_document(spec_path: Path) -> dict:
+    """The spec document a patch is applied to: the file's
+    (``spec_parser.read_spec_document`` — the one reader, a
+    :class:`~dstf.config.ConfigError` for a file that is no spec), or the
+    empty document when there is no file yet."""
+    from .spec_parser import read_spec_document
+
+    data = read_spec_document(spec_path)
+    return {"tests": []} if data is None else data
 
 
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
-
-
-def _load_spec(spec_path: Path) -> dict:
-    if not spec_path.exists():
-        return {"tests": []}
-    try:
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        raise PatchError(f"cannot read {spec_path}: {e}") from e
-    if not isinstance(data, dict):
-        raise PatchError("spec root must be an object")
-    data.setdefault("tests", [])
-    if not isinstance(data["tests"], list):
-        raise PatchError("spec 'tests' must be a list")
-    return data
 
 
 def _find_or_create_entry(data: dict, model_id: str) -> dict:
@@ -146,7 +168,12 @@ def _apply_one_op(entry: dict, op: dict, whitelist: tuple[str, ...]) -> None:
         return
     if "value" not in op:
         raise PatchError(f"{op_name!r} requires 'value'", path=path)
-    value = op["value"]
+    # A copy: the document never shares an object with the op that put it
+    # there. Written in by reference, a later op of the same patch edits the
+    # earlier op's own value — and the list a caller still holds is then no
+    # longer the patch it gave: applied again (a replay, a second document)
+    # it does those later ops twice.
+    value = copy.deepcopy(op["value"])
     if op_name == "replace":
         _set_at(entry, tokens, value, path, must_exist=True)
     elif op_name == "add":

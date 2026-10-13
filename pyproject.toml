@@ -1,11 +1,10 @@
 [project]
-name = "dstf"
-version = "0.1.0"
+name = "dynamic-systems-testing-framework"
+version = "1.0.0"
 description = "Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior across Modelica (Dymola, OpenModelica), FMU (FMPy), Julia (ModelingToolkit), and Python backends"
 requires-python = ">=3.10"
 dependencies = [
     "jinja2>=3.1",
-    "matplotlib>=3.8",
     "numpy>=1.20",
     "psutil>=5.9",
 ]
@@ -13,23 +12,32 @@ dependencies = [
 [project.optional-dependencies]
 # scipy is needed for examples/python/PythonTestingLib/Examples/SimpleRamp.py
 # (the Python-backend example uses scipy.integrate.solve_ivp). The end-to-end
-# Python-runner tests skip cleanly without it (see tests/test_python_runner.py
+# Python-backend tests skip cleanly without it (see tests/test_python_backend.py
 # `_scipy_available`), but the default dev install pulls it so the full suite
 # runs out of the box.
 dev = [
     "pytest>=7.0",
     "scipy>=1.10",
-    "ruff>=0.6",
+    "ruff>=0.16",
     "mypy>=1.10",
     "pytest-cov>=5.0",
+    "pytest-asyncio>=0.24",
+    "types-regex>=2026.9.10",
 ]
-# FMPy backend (Phase 2). Install with: uv pip install -e ".[fmpy]"
-# Or bundled with dev: uv pip install -e ".[dev,fmpy]"
+# The authoring shell (`dstf author`). NiceGUI serves the browser UI; the
+# figure layer hands it plain figure dicts, so plotly.py stays out of the
+# install (tests/test_author_extra.py pins that). regex runs the Variables
+# drawer's typed filter with a timeout (`authoring/variable_rows.matcher`).
+# Install with: uv sync --extra dev --extra author --locked --inexact
+author = ["nicegui>=3.16", "regex>=2026.9.10"]
+# FMPy backend (Phase 2). Install with: uv sync --extra fmpy --locked --inexact
+# Or with the dev tools:  uv sync --extra dev --extra fmpy --locked
 fmpy = ["fmpy>=0.3"]
 # Persistent-worker OpenModelica (D70). Drives omc via ZMQ through OMPython
-# instead of spawning a subprocess per test. Batch path still works without
-# it — the CLI falls back automatically if the import fails.
-# Install with: uv pip install -e ".[om]"
+# instead of spawning a subprocess per test. Without it the persistent path
+# ABORTS (there is no silent fallback); pass --batch to use the per-test
+# subprocess path instead.
+# Install with: uv sync --extra om --locked --inexact
 om = ["OMPython>=3.5"]
 
 [project.scripts]
@@ -48,18 +56,35 @@ markers = [
     "dymola: requires Dymola installation",
     "fmpy: requires fmpy package",
     "ompython: requires OMPython package (persistent-worker OpenModelica)",
-    "reference_fmus: requires Reference-FMUs submodule at examples/fmu/reference-fmus",
-    "julia: requires Julia 1.10+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/Project.toml",
+    "reference_fmus: requires Reference-FMUs binaries at examples/fmu/reference-fmus-binaries",
+    "julia: requires Julia 1.10+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/JuliaMtkTestingLib",
+    "playwright: browser-driven reporter tests (requires playwright + chromium); until D97 this marker did not exist and -m 'not playwright' was a no-op filter",
 ]
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning",
 ]
+# The authoring-shell tests drive NiceGUI's in-process `user_simulation`,
+# which is async; auto mode runs a bare `async def test_...` without a
+# per-test decorator.
+asyncio_mode = "auto"
 
 # --- Quality floor (D88) ---------------------------------------------------
 
 [tool.ruff]
 target-version = "py310"
 src = ["src", "tests"]
+
+[tool.ruff.format]
+# Ruff 0.16 began formatting code blocks inside Markdown. This repo's docs are
+# prose with illustrative snippets — reformatting them splits aligned trailing
+# comments across lines and would churn ~1,900 changed lines, 97% of them in
+# docs/superpowers/ plan documents nobody edits. Lint is unaffected because
+# `ruff check` does not read Markdown at all; this exclude is format-only by
+# construction. Caveat: an exclude is honored in discovery mode and under
+# `--force-exclude` (which the pre-commit hook passes), but NOT when a `.md`
+# path is passed explicitly — an editor-on-save integration can still
+# reformat one.
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 # Curated starter set (D88): real-bug rules + import sort + modernization,
@@ -85,10 +110,16 @@ ignore = [
 # flow have poor type signal and are left out of scope for now.
 python_version = "3.10"
 files = [
+    "src/dstf/authoring",
+    "src/dstf/backends/pool.py",
     "src/dstf/comparison",
     "src/dstf/discovery",
+    "src/dstf/figures",
+    "src/dstf/plugins.py",
     "src/dstf/storage",
     "src/dstf/config.py",
+    "src/dstf/pipeline.py",
+    "src/dstf/reporting/rows.py",
 ]
 ignore_missing_imports = true   # fmpy / OMPython / Dymola interface / julia have no stubs
 check_untyped_defs = true
@@ -102,12 +133,12 @@ source = ["dstf"]
 # just deflates the metric. Coverage here reflects CI-runnable code.
 omit = [
     "*/dstf/__main__.py",
-    "*/simulators/dymola/*",
-    "*/simulators/julia/*",
-    "*/simulators/fmpy/runner.py",
-    "*/simulators/openmodelica/session_loader.py",
-    "*/simulators/python/run_test.py",
-    "*/simulators/cross_backend.py",
+    "*/backends/dymola/*",
+    "*/backends/julia/*",
+    "*/backends/fmpy/backend.py",
+    "*/backends/openmodelica/session_loader.py",
+    "*/backends/python/run_test.py",
+    "*/backends/cross_backend.py",
 ]
 
 [tool.coverage.report]

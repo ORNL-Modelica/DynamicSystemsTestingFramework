@@ -165,7 +165,7 @@ git add src/modelica_testing/simulators/common/__init__.py \
         src/modelica_testing/simulators/dymola/persistent_runner.py \
         tests/test_simulators.py
 git rm src/modelica_testing/simulators/dymola/mat_reader.py
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 refactor: hoist mat_reader from dymola/ to simulators/common/
 
 OpenModelica shares the DSresult MAT format by design; the reader
@@ -628,7 +628,7 @@ Expected: all ~12 tests pass (the test file has 3 classes with multiple tests ea
 git add src/modelica_testing/simulators/openmodelica/__init__.py \
         src/modelica_testing/simulators/openmodelica/mos_generator.py \
         tests/test_openmodelica_mos.py
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 feat(openmodelica): .mos script generator + unit tests
 
 Pure-text builder for the per-test .mos script. Classifies
@@ -968,7 +968,7 @@ Expected: all ~7 tests pass.
 git add src/modelica_testing/simulators/openmodelica/log_parser.py \
         tests/test_openmodelica_log_parser.py \
         tests/fixtures/results_openmodelica/pid_controller_stdout.txt
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 feat(openmodelica): stdout parser + captured fixture
 
 Parses the sentinel-bounded SimulationResult block emitted by
@@ -1661,7 +1661,7 @@ git add src/modelica_testing/simulators/openmodelica/__init__.py \
         src/modelica_testing/simulators/openmodelica/runner.py \
         src/modelica_testing/simulators/__init__.py \
         tests/test_openmodelica_runner.py
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 feat(openmodelica): OpenModelicaRunner + OpenModelicaConfig
 
 Wires omc subprocess path analogous to Dymola's batch fallback.
@@ -1887,7 +1887,7 @@ Expected: **all** unit + integration tests pass. The integration tests take a fe
 ```bash
 git add tests/test_openmodelica_runner.py \
         tests/fixtures/results_openmodelica/pid_controller_res.mat
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 test(openmodelica): real-omc integration tests + MAT fixture
 
 End-to-end run_single_test + read_result against Modelica.Blocks.
@@ -2003,7 +2003,7 @@ git add examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.
         examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/OpenModelica/
 # If any library .mo files were patched for portability, add them too:
 #   git add examples/modelica/ModelicaTestingLib/Examples/<file>.mo
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 feat(examples): ModelicaTestingLib baselines for OpenModelica/linux
 
 End-to-end sweep against openmodelica backend on Linux. Fresh
@@ -2090,7 +2090,7 @@ Expected: all tests pass. Record the final count and, if the CLAUDE.md entry was
 
 ```bash
 git add CLAUDE.md docs/decisions.md
-git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<'EOF'
 docs: record OpenModelica backend (D69)
 
 CLAUDE.md phase block describes the shipped state.

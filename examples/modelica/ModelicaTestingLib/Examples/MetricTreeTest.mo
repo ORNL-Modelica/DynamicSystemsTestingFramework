@@ -1,16 +1,17 @@
 within ModelicaTestingLib.Examples;
-model MetricTreeTest "Two signals — demonstrates AND + warn combinator tree"
+model MetricTreeTest
+  "Step response — demonstrates windowed leaves + a multi-baseline tree"
 
-  Real x "Sine component";
-  Real y "Cosine component";
+  Real x(start=0, fixed=true) "First-order step response: transient, then steady state";
+  Real y(start=0, fixed=true) "Downstream lag of x";
 
   Components.UnitTests unitTests(
     n=2,
     x={x, y});
 
 equation
-  x = sin(time);
-  y = cos(time);
+  der(x) = (1 - x)/0.5;
+  der(y) = (x - y)/1.0;
 
   annotation (
     experiment(
@@ -19,19 +20,28 @@ equation
       __Dymola_Algorithm="Dassl"),
     Documentation(info="<html>
 <p>
-Two correlated signals used to showcase an explicit <b>MetricTree</b> in
-<code>test_spec.json</code>. The authored tree is
+A first-order step response (time constant 0.5&nbsp;s, settled after
+&asymp;2.5&nbsp;s) feeding a slower downstream lag. Showcases an explicit
+<b>MetricTree</b> in <code>test_spec.json</code> that scores different
+<i>phases</i> of the same trajectory with different criteria:
+</p>
 <pre>
 AND
-  NRMSE(x)           &lt;-- primary, hard-fail
+  NRMSE(x, window [0, 2.5])     &lt;-- start-up transient, primary, hard-fail
+  TUBE(x, window [2.5, 10])     &lt;-- steady state, primary, hard-fail
   WARN
-    NRMSE(y)         &lt;-- soft-fail (warn-wrapped)
+    NRMSE(x, against=openmodelica)  &lt;-- cross-simulator soft_check, advisory
+  RANGE(y, max 1)               &lt;-- the lag never overshoots, baseline-free, hard-fail
 </pre>
-The <code>x</code> leaf is the primary regression anchor; the
-<code>y</code> leaf is warn-wrapped so a regression on cosine reports
-yellow but doesn't turn the test red. Open the interactive report to see
-the tree rendered at the top of the page plus per-variable mounts in each
-row.
+<p>
+The two windowed leaves are the regression anchor against the primary
+baseline; the warn-wrapped leaf compares the same trajectory against an
+imported OpenModelica <code>soft_check</code> baseline, so cross-simulator
+disagreement is visible in the report without failing the test. The last
+leaf scores the downstream lag against no baseline at all: <code>y</code>
+rises from 0 towards 1 and never passes it, whatever the two time
+constants. Open the interactive report to see the tree, the window
+brackets, the tube band and the bound rendered on the plots.
 </p>
 </html>"));
 end MetricTreeTest;

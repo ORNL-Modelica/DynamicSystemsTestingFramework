@@ -19,18 +19,22 @@ DEFAULT_NUMBER_OF_INTERVALS = 500
 # Comparison defaults
 DEFAULT_COMPARISON_TOLERANCE = 1e-4
 
+# `baseline_points` for every point the run wrote — the default (D153).
+ALL_POINTS = "all"
+
 # Config filename looked for near the package or in working directory
 CONFIG_FILENAME = "testing.json"
 
-# Maps simulator entry names to their backend type
-SIMULATOR_BACKENDS = {
+# Maps a user-supplied backend name prefix to its canonical family:
+# "Dymola 2026x" -> "Dymola". NOT the set of registered backends.
+BACKEND_FAMILIES = {
     "Dymola": "Dymola",
     "OpenModelica": "OpenModelica",
     "FMPy": "FMPy",
     "Julia": "Julia",
     # review 2026-07-06 finding 67: "Python" was missing, so the documented
     # versioned-name convention ("Python 3.12") failed backend detection
-    # with "Unsupported simulator backend".
+    # with "Unsupported backend".
     "Python": "Python",
 }
 
@@ -38,7 +42,7 @@ SIMULATOR_BACKENDS = {
 # doesn't list an explicit path. Backend-name lowercase happens to match for
 # Dymola; OpenModelica's binary is ``omc`` (not ``openmodelica``). An empty
 # string marks backends that don't ship a standalone binary (FMPy is a
-# Python library — simulator_path is unused for it).
+# Python library — backend_path is unused for it).
 BACKEND_BINARY_NAMES = {
     "Dymola": "dymola",
     "OpenModelica": "omc",
@@ -48,15 +52,15 @@ BACKEND_BINARY_NAMES = {
 }
 
 
-def _detect_backend(simulator_name: str) -> str:
-    """Determine the simulator backend type from a named entry.
+def _detect_backend(backend_name: str) -> str:
+    """Determine the canonical backend family from a named entry.
 
     E.g., "Dymola 2025" -> "Dymola", "OpenModelica 1.23" -> "OpenModelica"
     """
-    for prefix, backend in SIMULATOR_BACKENDS.items():
-        if simulator_name.startswith(prefix):
+    for prefix, backend in BACKEND_FAMILIES.items():
+        if backend_name.startswith(prefix):
             return backend
-    return simulator_name
+    return backend_name
 
 
 def detect_os() -> str:
@@ -112,6 +116,34 @@ class ConfigError(ValueError):
     missing explicit --config path)."""
 
 
+def baseline_points_refused(named: str, value: object) -> str | None:
+    """Why ``value`` is no ``baseline_points`` — in ``testing.json`` or on a
+    ``test_spec.json`` entry, ``named`` saying which — or ``None``. It is
+    ``"all"`` or a whole number of 2 or more: a thinned baseline keeps both
+    ends of its run. ``true`` is no number, and neither is ``2000.0``."""
+    if isinstance(value, str) and value == ALL_POINTS:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 2:
+        return None
+    return (
+        f"{named} is {json.dumps(value, default=str)}: the points a baseline "
+        f'keeps are "{ALL_POINTS}" or a whole number of 2 or more'
+    )
+
+
+#: testing.json keys renamed when the "simulator" vocabulary became Backend.
+#: Reading one fails loudly: an untouched config still using these would
+#: otherwise keep PARSING while every setting in it silently did nothing,
+#: which a user experiences as "the tool ignores my config" with no
+#: diagnostic. Naming the replacement is a diagnostic, not a deprecation
+#: path — the old key never works again, it just says so.
+_RENAMED_CONFIG_KEYS = {
+    "simulator": "backend",
+    "simulators": "backends",
+    "simulator_setup": "backend_setup",
+}
+
+
 def load_config_file(path: Path) -> dict:
     """Load a testing.json config file.
 
@@ -129,38 +161,51 @@ def load_config_file(path: Path) -> dict:
     except OSError as e:
         raise ConfigError(f"Cannot read config file {path}: {e}") from e
     try:
-        return json.loads(text)
+        data = json.loads(text)
     except json.JSONDecodeError as e:
         raise ConfigError(f"Malformed JSON in config file {path}: {e}") from e
+    if isinstance(data, dict):
+        stale = [k for k in _RENAMED_CONFIG_KEYS if k in data]
+        if stale:
+            renames = ", ".join(f"{k!r} -> {_RENAMED_CONFIG_KEYS[k]!r}" for k in stale)
+            raise ConfigError(
+                f"{path} uses renamed key(s): {renames}. The old names are no "
+                f"longer read; rename them so the settings take effect."
+            )
+    return data
 
 
 def _create_default_config(config_dir: Path, library_name: str) -> dict:
     """Create a default testing.json and return its contents."""
     config = {
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         "dependencies": [],
     }
     config_path = config_dir / CONFIG_FILENAME
     # review 2026-07-06 finding 19: the target dir may not exist yet (e.g.
     # first run with a fresh --reference-root) — create it before writing.
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    # LF on every platform: testing.json is a surface
+    # users version-control, so it must not depend on the writing OS.
+    config_path.write_text(
+        json.dumps(config, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     logger.info("Created default %s at %s", CONFIG_FILENAME, config_path)
     print(f"Created default {CONFIG_FILENAME} at {config_path}")
     return config
 
 
-def _resolve_simulator_path(
-    simulators_config: dict[str, list[str]],
-    simulator_name: str,
+def _resolve_backend_path(
+    backends_config: dict[str, list[str]],
+    backend_name: str,
 ) -> str | None:
-    """Resolve a simulator executable path from the simulators config.
+    """Resolve a backend's executable path from the backends config.
 
     Looks up the named entry and returns the first path that exists on disk.
     Falls back to checking if the name is on PATH.
     """
-    paths = simulators_config.get(simulator_name, [])
+    paths = backends_config.get(backend_name, [])
     for p in paths:
         path = Path(p)
         if path.is_absolute() and path.exists():
@@ -171,14 +216,14 @@ def _resolve_simulator_path(
     return None
 
 
-def _auto_detect_simulator(
-    simulators_config: dict[str, list[str]],
+def _auto_detect_backend(
+    backends_config: dict[str, list[str]],
 ) -> tuple[str, str] | None:
-    """Pick the first simulator in ``simulators_config`` whose binary resolves.
+    """Pick the first backend in ``backends_config`` whose binary resolves.
 
     Resolution order per candidate entry:
-      1. Any path in its ``simulators`` list that exists on disk or resolves
-         on ``PATH`` (via :func:`_resolve_simulator_path`).
+      1. Any path in its ``backends`` list that exists on disk or resolves
+         on ``PATH`` (via :func:`_resolve_backend_path`).
       2. If the list contains no absolute paths (empty or bare-binary names
          only), fall back to the backend's canonical binary
          (``BACKEND_BINARY_NAMES``) on ``PATH``.
@@ -194,11 +239,11 @@ def _auto_detect_simulator(
     Iteration follows dict insertion order so users can express preference
     (list Dymola first on Windows; list OpenModelica first on Linux) —
     "first available wins" across both Windows and Linux machines with the
-    same ``testing.json``. Returns ``(simulator_name, resolved_path)`` or
+    same ``testing.json``. Returns ``(backend_name, resolved_path)`` or
     ``None`` if no entry resolves.
     """
-    for name, paths in simulators_config.items():
-        path = _resolve_simulator_path(simulators_config, name)
+    for name, paths in backends_config.items():
+        path = _resolve_backend_path(backends_config, name)
         if path:
             return name, path
         # No explicit entry resolved. Only fall back to a generic PATH
@@ -235,19 +280,29 @@ def _looks_like_path(entry: str) -> bool:
     return bool(_WINDOWS_DRIVE_RE.match(entry))
 
 
+def dependency_is_path(entry: str) -> bool:
+    """True if a ``dependencies`` entry is SPELLED as a filesystem path: a
+    separator, a ``.mo`` suffix, or a ``.``/``~`` prefix. Every entry of a
+    resolved ``Config.dependencies`` that names a path is (a relative one
+    was made absolute); a bare library name ("Modelica") is not — the
+    backend loads it by name."""
+    return (
+        "/" in entry
+        or "\\" in entry
+        or entry.endswith(".mo")
+        or entry.startswith((".", "~"))
+    )
+
+
 def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
     """True if a ``dependencies`` entry denotes a filesystem path.
 
     review 2026-07-06 finding 17: bare library names ("Modelica") must NOT
-    be absolutized — backends load them by name. Path signals: a separator,
-    a ``.mo`` suffix, a ``.``/``~`` prefix, or an existing file/dir relative
+    be absolutized — backends load them by name. Path signals: how it is
+    spelled (:func:`dependency_is_path`), or an existing file/dir relative
     to the config file's directory.
     """
-    if "/" in entry or "\\" in entry:
-        return True
-    if entry.endswith(".mo"):
-        return True
-    if entry.startswith(".") or entry.startswith("~"):
+    if dependency_is_path(entry):
         return True
     try:
         return (base_dir / entry).exists()
@@ -277,16 +332,16 @@ class Config:
     # Reference results location (can be a separate repo/directory)
     reference_root: Path | None = None
 
-    # Simulator selection. ``None`` means "not explicitly chosen" — the
-    # post-init resolution then consults testing.json's ``simulator`` key,
-    # then auto-detect from the ``simulators`` map, then falls back to
+    # Backend selection. ``None`` means "not explicitly chosen" — the
+    # post-init resolution then consults testing.json's ``backend`` key,
+    # then auto-detect from the ``backends`` map, then falls back to
     # ``"Dymola"`` as the historical default. A non-None value (typically
-    # from a CLI ``--simulator`` flag) is treated as authoritative and is
+    # from a CLI ``--backend`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
-    simulator: str | None = None
-    simulator_path: str | None = None
+    backend_name: str | None = None
+    backend_path: str | None = None
     show_ide: bool = False
-    simulator_setup: list[str] = field(
+    backend_setup: list[str] = field(
         default_factory=list
     )  # Commands run after loading libraries
 
@@ -309,6 +364,19 @@ class Config:
     tolerance: float | None = None
     default_points: bool = False
     timeout: int = 60
+    # Seconds a persistent worker's start may take (testing.json
+    # `worker_startup_timeout`). None means "not set": each backend's own
+    # default applies (`Worker.startup_timeout`: 600 s on every backend).
+    worker_startup_timeout: float | None = None
+
+    # The run's results will be read WHILE it is in progress (the authoring
+    # tool showing a running test). Set by that caller only: there is no
+    # testing.json key and no CLI flag, so a `dstf run` is never changed by
+    # it. A backend whose result file would otherwise reach the disk late
+    # pays to write it promptly — OpenModelica passes `-mat_sync=1`, measured
+    # at +3 % run time on a local disk and +59 % for an output-heavy run on a
+    # Windows mount. Dymola appends as it goes and needs nothing.
+    live_results: bool = False
 
     # Output
     work_dir: Path | None = None
@@ -334,6 +402,20 @@ class Config:
     # will let this rise to 2000 at the same budget.
     max_embedded_samples: int = 1000
 
+    # The points a stored baseline keeps of its run (D153, testing.json
+    # `baseline_points`): "all" — every row the simulator wrote — or a whole
+    # number of 2 or more, which thins the run to at most that many. The
+    # project's value: a test_spec.json entry's own `baseline_points` wins
+    # (`TestModel.baseline_points`).
+    # Scoring reads the run AT the baseline's time points, so this is also
+    # the resolution at which a regression can be seen.
+    baseline_points: int | str = ALL_POINTS
+
+    # The bundled theme (D148) the dashboard and the report pages are
+    # generated in and `dstf author` opens with: a NAME of
+    # reporting.theme.THEMES — no path, no inline colours, no CLI flag.
+    theme: str = "default"
+
     # User-provided recognizers (PTA.3) — parsed from testing.json's
     # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
     # Stored on Config so they're scoped to this run (no module-registry leak
@@ -344,6 +426,11 @@ class Config:
     # ["modelica:bundled-unit-tests"] when the user has only custom-convention
     # tests and wants the bundled UnitTests recognizer off.
     disabled_bundled: list[str] = field(default_factory=list)
+
+    # testing.json's `backends` map, kept whole for the authoring shell's
+    # backend select (brief §3.6); the executable-path resolution below reads
+    # the same map.
+    backends: dict[str, list[str]] = field(default_factory=dict)
 
     # Config file path
     config_file: Path | None = None
@@ -395,22 +482,35 @@ class Config:
         source_type_hint = file_config.get("source_type", self.source_type)
 
         if source_type_hint == "modelica":
-            # Resolve source path — CLI arg > config file > auto-detect
-            if self.source_path is not None:
-                self.source_path = Path(self.source_path).resolve()
-                if not (self.source_path / "package.mo").exists():
-                    self.source_path = find_package_dir(self.source_path)
-            elif "source_path" in file_config:
-                base_dir = config_found_dir or Path.cwd()
-                self.source_path = (base_dir / file_config["source_path"]).resolve()
-                if not (self.source_path / "package.mo").exists():
-                    self.source_path = find_package_dir(self.source_path)
-            else:
-                self.source_path = find_package_dir()
+            # Resolve source path — CLI arg > config file > auto-detect.
+            # "no package.mo anywhere" is a user error (wrong --source-path,
+            # wrong cwd, or source_type should have been "fmu"/"julia"), so
+            # find_package_dir's FileNotFoundError becomes a ConfigError and
+            # main() prints one line instead of a traceback.
+            try:
+                if self.source_path is not None:
+                    self.source_path = Path(self.source_path).resolve()
+                    if not (self.source_path / "package.mo").exists():
+                        self.source_path = find_package_dir(self.source_path)
+                elif "source_path" in file_config:
+                    base_dir = config_found_dir or Path.cwd()
+                    self.source_path = (base_dir / file_config["source_path"]).resolve()
+                    if not (self.source_path / "package.mo").exists():
+                        self.source_path = find_package_dir(self.source_path)
+                else:
+                    self.source_path = find_package_dir()
+            except OSError as e:
+                raise ConfigError(
+                    f"{e} Set 'source_path' in testing.json, pass --source-path, "
+                    f"or set 'source_type' if this library isn't Modelica."
+                ) from e
 
             # Read library name from package.mo
             if self.library_name is None:
-                self.library_name = read_package_name(self.source_path)
+                try:
+                    self.library_name = read_package_name(self.source_path)
+                except (FileNotFoundError, ValueError) as e:
+                    raise ConfigError(str(e)) from e
 
             # The parent of the package dir is where testing.json typically lives
             repo_root = self.source_path.parent
@@ -418,7 +518,7 @@ class Config:
             # Non-modelica source: no package.mo to discover. The "library"
             # is conceptually the FMU set / data set / Julia project / etc.
             # described by the config. Resolve source_path here too so
-            # backends that need it (JuliaRunner for --project=) find the
+            # backends that need it (JuliaBackend for --project=) find the
             # right directory. CLI arg > config file > config dir > cwd.
             if self.source_path is not None:
                 self.source_path = Path(self.source_path).resolve()
@@ -457,35 +557,35 @@ class Config:
         if self.os_name is None:
             self.os_name = file_config.get("os", detect_os())
 
-        # Simulator selection. Resolution order, first match wins:
-        #   1. Explicit constructor / CLI value (self.simulator is not None)
-        #   2. testing.json explicit "simulator" key
-        #   3. testing.json "simulators" map auto-detect (first entry whose
+        # Backend selection. Resolution order, first match wins:
+        #   1. Explicit constructor / CLI value (self.backend_name is not None)
+        #   2. testing.json explicit "backend" key
+        #   3. testing.json "backends" map auto-detect (first entry whose
         #      binary resolves on the current machine / PATH)
         #   4. Default "Dymola" (historical fallback)
-        if self.simulator is None:
-            if "simulator" in file_config:
-                self.simulator = file_config["simulator"]
+        if self.backend_name is None:
+            if "backend" in file_config:
+                self.backend_name = file_config["backend"]
             else:
-                simulators_config = file_config.get("simulators", {})
-                detected = _auto_detect_simulator(simulators_config)
+                backends_config = file_config.get("backends", {})
+                detected = _auto_detect_backend(backends_config)
                 if detected:
-                    self.simulator = detected[0]
+                    self.backend_name = detected[0]
                     # review 2026-07-06 finding 18: auto-detect may fill the
                     # simulator NAME, but must never clobber an explicitly
-                    # supplied simulator_path (CLI --simulator-path).
-                    if self.simulator_path is None:
-                        self.simulator_path = detected[1]
+                    # supplied backend_path (CLI --backend-path).
+                    if self.backend_path is None:
+                        self.backend_path = detected[1]
                 else:
-                    self.simulator = "Dymola"
+                    self.backend_name = "Dymola"
 
         # Show IDE
         if not self.show_ide and "show_ide" in file_config:
             self.show_ide = file_config["show_ide"]
 
-        # Simulator setup commands
-        if not self.simulator_setup and "simulator_setup" in file_config:
-            self.simulator_setup = file_config["simulator_setup"]
+        # Backend setup commands
+        if not self.backend_setup and "backend_setup" in file_config:
+            self.backend_setup = file_config["backend_setup"]
 
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
@@ -495,50 +595,117 @@ class Config:
         # documented testing.json `tolerance` key was never read). Precedence:
         # explicit constructor/CLI value > file > default, is-not-None
         # semantics so an explicit 0.0 anywhere is honored.
+        # The project's base tolerance, as a test's: ONE finite number
+        # (`is_base_tolerance`). Anything else is this config error, not a
+        # TypeError/OverflowError traceback — nor `"0.5"` or `true` read as
+        # a number by `float()`. `null` is unset.
+        from .comparison.sides import base_tolerance_refused, is_base_tolerance
+
         if self.tolerance is None:
-            file_tolerance = file_config.get("tolerance")
-            self.tolerance = (
-                float(file_tolerance)
-                if file_tolerance is not None
-                else DEFAULT_COMPARISON_TOLERANCE
-            )
+            tolerance, named = file_config.get("tolerance"), "testing.json tolerance"
         else:
-            self.tolerance = float(self.tolerance)
+            tolerance, named = self.tolerance, "--tolerance"
+        if tolerance is None:
+            self.tolerance = DEFAULT_COMPARISON_TOLERANCE
+        elif is_base_tolerance(tolerance):
+            self.tolerance = float(tolerance)
+        else:
+            raise ConfigError(base_tolerance_refused(named, tolerance))
+
+        # A worker start's bound: one positive finite number of seconds.
+        startup = file_config.get("worker_startup_timeout")
+        if startup is not None:
+            if (
+                isinstance(startup, bool)
+                or not isinstance(startup, int | float)
+                or not 0 < startup < float("inf")
+            ):
+                raise ConfigError(
+                    f"testing.json worker_startup_timeout must be a positive "
+                    f"number of seconds, got {startup!r}"
+                )
+            self.worker_startup_timeout = float(startup)
 
         # Reporter payload budget
         if "max_embedded_samples" in file_config:
             self.max_embedded_samples = int(file_config["max_embedded_samples"])
 
+        # A baseline's points: "all" or a whole number of 2 or more,
+        # wherever it was said. `null` is no value of it: absent is the
+        # only way to leave it unset.
+        if "baseline_points" in file_config:
+            self.baseline_points = file_config["baseline_points"]
+            named = "testing.json baseline_points"
+        else:
+            named = "baseline_points"
+        refused = baseline_points_refused(named, self.baseline_points)
+        if refused is not None:
+            raise ConfigError(refused)
+
+        # The theme: one of the bundled names, wherever it was said.
+        from .reporting.theme import THEMES
+
+        if "theme" in file_config:
+            self.theme, named = file_config["theme"], "testing.json theme"
+        else:
+            named = "theme"
+        if not isinstance(self.theme, str) or self.theme not in THEMES:
+            raise ConfigError(
+                f"{named} is {json.dumps(self.theme, default=str)}: the bundled themes are "
+                f"{', '.join(THEMES)}"
+            )
+
         # User-provided recognizers (PTA.3) — declarative JSON specs become
         # Recognizer instances stored on Config. CLI-provided recognizers
         # take precedence; testing.json fills in if Config wasn't given any.
         if not self.recognizers and "recognizers" in file_config:
-            from .discovery.json_recognizer import parse_recognizer_spec
+            from .discovery.json_recognizer import (
+                RecognizerSpecError,
+                parse_recognizer_spec,
+            )
 
-            self.recognizers = [
-                parse_recognizer_spec(spec) for spec in file_config["recognizers"]
-            ]
+            where = (
+                config_found_dir / CONFIG_FILENAME if config_found_dir else "the config"
+            )
+            specs = file_config["recognizers"]
+            if not isinstance(specs, list):
+                raise ConfigError(
+                    f"'recognizers' in {where} must be a list, "
+                    f"got {type(specs).__name__}"
+                )
+            try:
+                self.recognizers = [parse_recognizer_spec(spec) for spec in specs]
+            except RecognizerSpecError as e:
+                # A malformed recognizer is a testing.json problem the user
+                # must fix — one clean line and exit 2, not a traceback.
+                raise ConfigError(f"Invalid recognizer in {where}: {e}") from e
         if not self.disabled_bundled and "disable_bundled" in file_config:
             self.disabled_bundled = list(file_config["disable_bundled"])
 
-        # Resolve simulator executable path
-        if self.simulator_path is None:
-            simulators_config = file_config.get("simulators", {})
-            if simulators_config:
-                resolved = _resolve_simulator_path(simulators_config, self.simulator)
+        if not self.backends:
+            self.backends = {
+                name: list(paths)
+                for name, paths in (file_config.get("backends") or {}).items()
+            }
+
+        # Resolve backend executable path
+        if self.backend_path is None:
+            backends_config = file_config.get("backends", {})
+            if backends_config:
+                resolved = _resolve_backend_path(backends_config, self.backend_name)
                 if resolved:
-                    self.simulator_path = resolved
+                    self.backend_path = resolved
                 else:
                     logger.warning(
-                        "No working path found for simulator '%s' in config. "
+                        "No working path found for backend '%s' in testing.json's 'backends' map. "
                         "Falling back to PATH lookup.",
-                        self.simulator,
+                        self.backend_name,
                     )
-            if self.simulator_path is None:
-                backend = self.simulator_backend
+            if self.backend_path is None:
+                backend = self.backend
                 binary = BACKEND_BINARY_NAMES.get(backend, backend.lower())
                 if binary:
-                    self.simulator_path = shutil.which(binary) or binary
+                    self.backend_path = shutil.which(binary) or binary
 
         # Reference root (may already be set from CLI arg)
         if self.reference_root is None:
@@ -561,10 +728,10 @@ class Config:
         # so the OpenModelica backend's classify_dependency routes them to
         # ``loadModel(Modelica)`` instead of ``loadFile(<bogus path>)`` —
         # absolutizing them also suppressed the MSL auto-injection.
-        # Dymola note: its runners load dependencies via
+        # Dymola note: its backends load dependencies via
         # ``openModel(<dir>/package.mo)`` and cannot load by bare name, but
         # Dymola auto-loads MSL natively, so "Modelica" should simply be
-        # omitted there; a bare name reaching the Dymola runner fails at
+        # omitted there; a bare name reaching the Dymola backend fails at
         # startup with a clear message, exactly as the absolutized bogus
         # path did before this fix (no regression).
         if not self.dependencies and "dependencies" in file_config:
@@ -602,22 +769,22 @@ class Config:
                     work_path = (config_found_dir or repo_root) / work_path
                 self.work_dir = work_path.resolve()
             else:
-                sim_dir = self.simulator.replace(" ", "_")
+                backend_dir = self.backend_name.replace(" ", "_")
                 self.work_dir = (
                     Path.cwd()
                     / "testing_output"
                     / self.library_name
-                    / sim_dir
+                    / backend_dir
                     / self.os_name
                 )
         else:
             self.work_dir = Path(self.work_dir).resolve()
 
     @property
-    def simulator_backend(self) -> str:
-        """The simulator backend type (e.g., 'Dymola' from 'Dymola 2025')."""
-        assert self.simulator is not None  # resolved in __post_init__
-        return _detect_backend(self.simulator)
+    def backend(self) -> str:
+        """The canonical backend family (e.g., 'Dymola' from 'Dymola 2025')."""
+        assert self.backend_name is not None  # resolved in __post_init__
+        return _detect_backend(self.backend_name)
 
     @property
     def library_dir(self) -> Path:
@@ -631,7 +798,18 @@ class Config:
 
     @property
     def reference_dir(self) -> Path:
-        """Reference results directory, partitioned by simulator backend and OS."""
+        """Reference results directory, partitioned by backend and OS."""
         assert self.reference_root is not None  # resolved in __post_init__
         assert self.os_name is not None  # resolved in __post_init__
-        return self.reference_root / self.simulator_backend / self.os_name
+        return self.reference_root / self.backend / self.os_name
+
+    @property
+    def spec_path(self) -> Path:
+        """Where ``test_spec.json`` lives: the configured file, else
+        ``<reference_root>/test_spec.json``. The one spelling of a fallback
+        that ``add``, ``spec-update`` and the review loop each used to
+        carry; the authoring Session reads the same property."""
+        if self.test_spec_file is not None:
+            return self.test_spec_file
+        assert self.reference_root is not None  # resolved in __post_init__
+        return self.reference_root / "test_spec.json"

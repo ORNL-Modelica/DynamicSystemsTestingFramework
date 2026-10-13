@@ -29,13 +29,19 @@ class RecognizerResult:
 
     The shape today mirrors what the bundled Modelica recognizer extracts.
     PTA.4 broadens this with runtime-behavior fields (``simulate_only``,
-    ``requested_fmu_export``, ...).
+    ``requested_baselines``, ...).
     """
 
     model_id: str
     source_file: Path | None = None
     # Variables-to-track contribution (was UnitTestInfo)
     n_vars: int | None = None
+    # Instance name of the component whose ``x[i]`` the variables are: the
+    # result file names them ``<instance>.x[i]``. Contributed by a recognizer
+    # that takes those variables out of a matched component — their count
+    # (``n_vars``) or their expressions, either one; a recognizer that
+    # contributes neither leaves it None and the conventional default stands.
+    unit_tests_instance: str | None = None
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
     x_reference: list[float] | None = None
@@ -47,10 +53,9 @@ class RecognizerResult:
     number_of_intervals: int | None = None
     output_interval: float | None = None
     # PTA.4 — richer-contract runtime-behavior fields. Recognizers can set
-    # these; TestModel carries them through. Consumers land in PTA.5 (for
-    # simulate_only) and 4.B (for requested_fmu_export / requested_baselines).
+    # these; TestModel carries them through. Consumed by PTA.5 (simulate_only)
+    # and 4.B's cross-backend chain (requested_baselines).
     simulate_only: bool | None = None
-    requested_fmu_export: bool | None = None
     requested_baselines: list[str] | None = None
 
 

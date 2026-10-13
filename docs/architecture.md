@@ -25,24 +25,26 @@ The framework is a pipeline of six typed, plug-in layers:
   MetricTree      → composition: AND / OR / weighted / K-of-N → overall pass/fail + diagnostics
 ```
 
-**Backend capabilities** are declared on the runner contract, not inferred from type:
-- `supports_persistent_workers`, `supports_batch_fallback`, `supports_fmu_export`,
-  `supports_experiment_ingest`, `produced_datasets`.
+**Backend capabilities** are declared on the backend contract, not inferred from type:
+- `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`,
+  `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`) and `produced_datasets: frozenset[DatasetType]`.
 Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
 
 ### Layer ↔ Code mapping (Current)
 
 | Layer | Current implementation | Status |
 |---|---|---|
-| Source | Two concrete types: `"modelica"` (`config.source_path` → `package.mo` dir) and `"fmu"` (`config.source_path` → FMU dir; per-test `"fmu"` field in spec). `Config.source_type` gates Discovery + backend selection. | Julia / Simulink / data-file remain names only |
+| Source | Four concrete `Config.source_type` values in the shipped demos: `"modelica"` (default — `config.source_path` → `package.mo` dir), `"fmu"`, `"julia"` and `"python"` (`config.source_path` → the FMU / project / script dir; per-test `"source"` field in spec). Only `"modelica"` is branched on in code (`config.py` package.mo lookup, `test_registry.discover_tests`); the rest select recognizers via `Recognizer.applies_to` and are otherwise opaque strings. | Simulink / data-file remain names only |
 | Discovery | Pluggable `Recognizer` registry (`discovery/recognizer.py`). Bundled: `BundledModelicaUnitTestsRecognizer` (UnitTests + experiment) in `mo_parser.py`. User-provided: `JsonRecognizer` (`discovery/json_recognizer.py`) — declarative JSON in `testing.json`'s `"recognizers"` list, no Python. Plus `spec_parser.py` for `test_spec.json` (universal fallback). Merged by `model_id`. | Phase 5 / PTA: registry + bundled + JSON-driven all live; cross-source recognizers (FMU vendor-ext, Julia macros) unimplemented |
-| Backend | `simulators/` registry with five concrete backends: `DymolaRunner` / `OpenModelicaRunner` (native Modelica), `FmpyRunner` (FMU via FMPy), `JuliaRunner` (ModelingToolkit), and `PythonRunner` (arbitrary `simulate()`). Each declares `capabilities` + `produced_datasets`; Dymola/OpenModelica/Julia ship persistent-worker variants. `DymolaRunner` implements `export_fmu` via `translateModelFMU`. | Cross-backend chain (`simulators/cross_backend.py`) wires Dymola export → FMPy simulate → named baseline. Validation caveat: export step requires Windows + Dymola FMI license (D63). |
+| Backend | `backends/` registry with five concrete backends: `DymolaBackend` / `OpenModelicaBackend` (native Modelica), `FmpyBackend` (FMU via FMPy), `JuliaBackend` (ModelingToolkit), and `PythonBackend` (arbitrary `simulate()`). Each declares `capabilities` + `produced_datasets`; Dymola/OpenModelica/Julia ship persistent-worker variants. `PersistentDymolaBackend` implements `export_fmu` via `translateModelFMU` (it needs a live `DymolaInterface`; the batch `DymolaBackend` has no export path). | Cross-backend chain (`backends/cross_backend.py`) wires Dymola export → FMPy simulate → named baseline. Validation caveat: export step requires Windows + Dymola FMI license (D63). |
 | Dataset | Implicit `TimeSeries` returned by `read_result()`; `DatasetType` enum declared on backends | one concrete type materialized; additional types reserved for Phase 3 metrics |
-| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`; `VariableComparison.diagnostics` carries structured extras | 6 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, and spectral shapes |
-| MetricTree | `comparison/metric_tree.py` (`And`/`Or`/`KOfN`/`Warn`/`Weighted` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
-| Reference | Hybrid-schema storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; additional baselines under optional `baselines` key |
+| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode`; `VariableComparison.diagnostics` carries structured extras | 7 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, spectral shapes, and single-number (reduction / stored-statistic) checks |
+| MetricTree | `comparison/metric_tree.py` (`AndCombinator`/`OrCombinator`/`KOfNCombinator`/`WarnCombinator`/`WeightedCombinator` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
+| Reference | Role-partitioned storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; soft_checks and companions in role subdirs beside it |
+| (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. No printing, no exits, no browser, no prompts; failures are exceptions. Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | The CLI drives it (`cmd_run`); the authoring tool's queue drives the same steps one test at a time (`ItemRun` behind `open_pool`, in the same module) |
+| (the run's CLI) | `cli/run_cmds.py`: `cmd_run` is the wrapper — selection and filtering, `_get_backend` (the CLI's wrapper over `backends.select_backend`), `run_pipeline`, then the outcome's notices, `--accept` / `-i` / the report. `cmd_compare` shares the same helpers without simulating. | — |
 
-Forward work: multi-baseline reads into tree leaves (hybrid schema is there, but reading non-primary baselines into the tree is not), cross-backend verification (requires `DymolaRunner` FMU export), and richer metrics (event-timing, spectral, Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
+Forward work: cross-backend verification beyond the Dymola→FMPy chain (each new primary backend needs its own `export_fmu`), and richer metrics (Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
 
 ---
 
@@ -64,46 +66,189 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 
 ```
 src/dstf/
-├── cli.py                    # argparse CLI: discover, run, compare, export, manifest, add, spec-update,
-│                             #   companion, soft-check, import-baseline, export-schema, migrate-baselines, check-dymola
-├── config.py                 # Config dataclass, path resolution, testing.json loading, simulator auto-detect
+├── cli/                      # argparse CLI package: discover, run, compare, author, export, manifest, add, spec-update,
+│   │                         #   companion, soft-check, import-baseline, export-schema,
+│   │                         #   check-dymola, check-openmodelica, check-julia
+│   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
+├── config.py                 # Config dataclass, path resolution, testing.json loading, backend auto-detect
+├── pipeline.py               # run_pipeline + RunOutcome — the run as a library callable (no printing, no exits)
 ├── discovery/
 │   ├── recognizer.py         # Recognizer registry (bundled + user-declared, merged by model_id)
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
 │   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
+│   ├── plots.py              # A test's plots, derived from its criteria (D140): plots_of_test — the ONE
+│   │                         #   function both tiers call — runs derive_plots over plot_leaves (the
+│   │                         #   tree's leaves, in order) and the `plots` extras (context series,
+│   │                         #   watch plots); tracked_names, the plots of a test with no tree
 │   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
+│   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
+│   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
+│   │                         #   materialization, tree validation, apply_validated_patches
+│   ├── unit_tests.py         # unit_test_variables — the ONE place a UnitTests variable is named
+│   │                         #   (<instance>.x[i]) and paired with the expression the model wrote (D132)
+│   ├── scan_cache.py         # The source scan cached under $XDG_CACHE_HOME/dstf/scan/ (the authoring tool);
+│   │                         #   keyed by a DIGEST of the discovery modules' source, not a hand-bumped constant
 │   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
-├── simulators/
-│   ├── __init__.py           # Simulator registry: @register decorator, get_runner() factory
-│   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest, Capability flags
+├── backends/
+│   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
+│   ├── base.py               # Backend ABC + RunSetup/_prepare_run (types/persistent/batch_manifest split out, D116)
 │   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
-│   ├── common/               # Shared: mat_reader, persistent-worker dispatch scaffolding
+│   ├── persistent.py         # Worker ABC, WorkerRunner and PersistentBackendBase — the persistent-worker template
+│   ├── pool.py               # SimulationPool: run_tests' dispatch kept open, a FIFO queue of tests (the tool's
+│   │                         #   queue, D150)
+│   ├── common/               # Shared: mat_reader (rows counted from the file's size), process tree-kill,
+│   │                         #   result variables, JSON-driver base, statistics (the zero-count rule),
+│   │                         #   result_files (any variable of a result file, by name: .mat / result.json / .npz),
+│   │                         #   live_mat (LiveMatReader: a .mat polled while its run writes it)
 │   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
-│   ├── dymola/               # DymolaRunner (.mos batch) + PersistentDymolaRunner (Python interface)
-│   ├── fmpy/                 # FmpyRunner (in-process; per-test thread)
-│   ├── openmodelica/         # OpenModelicaRunner (omc -s) + PersistentOpenModelicaRunner (OMPython ZMQ)
-│   ├── julia/                # JuliaRunner (subprocess) + PersistentJuliaRunner (stdin-JSON pipe)
-│   └── python/               # PythonRunner — subprocess-per-test, any `simulate(stop_time, tol) -> dict`
+│   ├── dymola/               # DymolaBackend (.mos batch) + PersistentDymolaBackend (Python interface)
+│   ├── fmpy/                 # FmpyBackend (in-process; per-test thread)
+│   ├── openmodelica/         # OpenModelicaBackend (omc -s) + PersistentOpenModelicaBackend (OMPython ZMQ)
+│   ├── julia/                # JuliaBackend (subprocess) + PersistentJuliaBackend (stdin-JSON pipe)
+│   └── python/               # PythonBackend — subprocess-per-test, any `simulate(stop_time, tol) -> dict`
 ├── comparison/
 │   ├── comparator.py         # compare_test / compare_all orchestration; per-mode scoring functions
-│   ├── modes.py              # ComparisonMode ABC + 6 modes (nrmse, tube, points, range, event-timing,
-│   │                         #   dominant-frequency); typed configs; resolve_mode()
-│   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + implicit_and_tree() builder
+│   ├── modes.py              # ComparisonMode ABC + 7 modes (nrmse, tube, points, range, event-timing,
+│   │                         #   dominant-frequency, scalar); typed configs; resolve_mode()
+│   ├── mode_schema.py        # derive_schema — per-mode schema from typed comparison configs
+│   ├── handles.py            # edit_handle editors: a dragged handle back to a raw leaf (HandleEdit,
+│   │                         #   HandleEditError); wired on MetricDescriptor beside summarize
+│   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + synthesize_implicit_tree() builder
 │   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
+│   ├── metric_tree.py        # The combinators + MetricResult; implicit_and_tree() for a test with no tree
+│   ├── registry.py           # MetricDescriptor / CombinatorDescriptor + register_metric / register_combinator
+│   ├── sides.py              # Sides — the ONE place a tolerance's number-or-pair is read or written (D147)
+│   ├── snap.py               # snapped — the one snap rule for a value the pointer placed (D149)
 │   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
 ├── storage/
-│   └── reference_store.py    # RefIndex + ReferenceStore: primary + soft_checks + companions CRUD
+│   ├── baseline.py           # Baseline value type + PRIMARY_BASELINE
+│   ├── ref_index.py          # RefIndex + atomic text writes
+│   ├── roles.py              # soft_check/companion CRUD mixin
+│   ├── accept.py             # accept_run_results — the one accept path, with the aborted-run refusal
+│   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
+├── authoring/
+│   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
+│   ├── capabilities.py       # The capability contract: Capability, Placement, Panel, the five outcomes
+│   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
+│   ├── tree_pointer.py       # node_at / node_or_none — a raw tree node by its /metrics pointer (UI-free)
+│   ├── tree_text.py          # What a tree node reads as (leaf_name, node_text): the rows and Edit tree's
+│   │                         #   form titles say the same thing (UI-free)
+│   ├── family_rows.py        # A criterion over an array family as data (D152): which criteria rows fold,
+│   │                         #   the elements an Indices text names, an edit of a fold as one whole-tree op;
+│   │                         #   shell/family_fold.py draws the folded rows (UI-free)
+│   ├── layout.py             # The plot extras' edits as pure functions: context series and watch plots,
+│   │                         #   one op on /plots (D140)
+│   ├── variable_rows.py      # The Variables drawer's rows as data; picker_rows.py, the add form's variable
+│   │                         #   picker; suite_rows.py, a Suite row from the Session
+│   ├── queue_rows.py         # The simulation queue as data: a row per item, the header's indicator (D150)
+│   ├── live_rows.py          # A running test's page as data: reader snapshots to the series a plot draws, the
+│   │                         #   words of each state; live_runs.py, the Session's readers of the running tests'
+│   │                         #   result files and of unfinished runs' partial results (D151)
+│   ├── situation.py          # A test's situation and the status strip's sentence
+│   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
+│   │                         #   suite.py + test_page.py (one object per browser tab; the one open editor
+│   │                         #   or form row), tree_card.py (the criteria tree), plot_card.py (one plot,
+│   │                         #   its criteria rows with their swatches, its error select and its editor),
+│   │                         #   header.py, actions.py (ActionBar — a button per capability at a placement,
+│   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline, with
+│   │                         #   a RowTarget to open a form row under their row),
+│   │                         #   queue_panel.py (the simulation queue's panel and the header's indicator,
+│   │                         #   D150), tabstate.py, figure_hook.py (one hook per plot),
+│   │                         #   tab_theme.py (the tab's theme and its live switch, D148),
+│   │                         #   suite_grid.py + suite_grid.js (the Suite table), strip.py (the Test page's
+│   │                         #   status strip), stats_card.py, rail.py + test_list.py + variables_drawer.py
+│   │                         #   (the two drawers), picker.py, family_fold.py, live_view.py (what a running
+│   │                         #   test's drawn plots ask for, D151), placing.py (a field's ⌖ and the one armed
+│   │                         #   field, D149), grips.js (a plot's tolerance arrows, D147)
+│   ├── forms.py              # NiceGUI controls from a mode's derived schema
+│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_family.py, edit_tree.py,
+│                             #   accept.py (the shared accept function), enqueue.py (Queue: the selected
+│                             #   tests handed to the Session's simulation queue),
+│                             #   edit_on_plot.py (drag a handle or edit a list's table)
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
-    ├── html_report.py        # Builds index.html across the suite
-    ├── plot_comparison.py    # Per-test interactive.html generator + comparison_data.json sidecar
+    ├── status.py             # Shared per-test status classifier (NOT RUN > SIM_FAIL > FAIL > NO_REF > PASS)
+    │                         #   and every status word and class
+    ├── rows.py               # The row model both HTML surfaces render: TestRow, COLUMNS
+    ├── stats_rows.py         # The Statistics rows both tiers render: the report's table and the tool's card
+    ├── dashboard_render.py   # The one suite-wide HTML page (live + final + --report-format html)
+    ├── context_builder.py    # Per-test results → template context (the pure half)
+    ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
+    ├── tree_rows.py          # A plot's criteria rows off a tree view (leaves, crumbs): the one walk
+                              #   the report's sections and the tool's plot cards list criteria by
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
-    ├── templates/            # interactive.html + interactive.js (the reporter-as-IDE)
-    └── ui/mode_controls.py   # Auto-derived per-mode UI from typed comparison configs
+    ├── theme.py              # The token tables, one per bundled theme (`default`, `dark`; D148) —
+                              #   rendered to :root { --dstf-...: ... } for both pages and the tool,
+                              #   and to the tool's Quasar palette; a dark theme's dimmed status parts
+    └── templates/            # interactive.html (server-rendered tree, summary, banner) + axes.js
+                              #   (the report's: a secondary axis visible while a trace on it is) + report.js
+                              #   (both copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
+                              #   + dashboard.html / dashboard.js + filters.js (the typed column filters)
+                              #   + vendor/plotly.min.js
 ```
+
+The figure layer sits beside them, and both tiers draw from it:
+
+```
+src/dstf/figures/
+├── view.py                   # VariableView — the library-neutral picture of one variable
+├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes); editable=True
+│                             #   (the tool's, never the report's) adds a draggable ring per handle;
+│                             #   visibility=Visibility(hidden, error) (the tool's) keeps only signals in
+│                             #   the legend, hides the leaves the page hid and shows one error series
+│                             #   with its axis; the legend sits above the plot area on both tiers
+│                             #   plot_figure: several views on one plot (families in a hue ramp);
+│                             #   one view is variable_figure, unchanged
+├── palette.py                # What a figure takes from a theme, by name (D148): its chrome, the
+│                             #   eight series colours a dark plot lightens, the layout template
+│                             #   (none for `default`: that figure is the one it always was)
+├── families.py               # Array families: the last integer index, slice text, the hue ramp
+├── assemble.py               # Trajectories + evaluated leaves → a VariableView
+└── decimate.py               # LTTB decimation on the view, before any trace exists
+```
+
+`authoring/` is the authoring tier — the tool's state machine and the shell
+`dstf author` serves. Only `shell/`, `forms.py` and the built-in panels import a
+UI framework (`tests/test_authoring_imports.py` holds the line); the Session,
+the capability contract and the spec document stay pure, so the rest of `dstf`
+runs without the `[author]` extra. It shares the
+CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
+read-modify-write both `dstf spec-update` and `Session.save` call, and
+`storage/accept.py` is the one accept path `run --accept`, `compare --accept`,
+`run -i`'s `[a]` and the tool's Accept capability all call, and `pipeline.py` is
+the run itself: `cmd_run` drives `run_pipeline`, and the tool's queue drives the
+same path one test at a time (`open_pool` over `backends/pool.py`, D150).
+
+On-plot editing crosses the layers without either importing the tool. The
+figure layer draws the editable figure — `variable_figure(view, editable=True)`
+turns on plotly.js shape dragging and adds one ring shape per handle marker of
+the leaves `rings_for` names, each named with the handle's id — and
+`Session.figure` is its one caller. The
+comparison layer owns the inverse of each mode's handles in
+`comparison/handles.py`, reached as `MetricDescriptor.edit_handle`, and each
+list field's `columns` metadata in `modes.py`. The shell's figure hook — one per
+plot card — turns a drag into a per-shape payload, and the Edit on plot
+capability joins the two:
+the handle's id names the leaf, `edit_handle` returns the new leaf, and the
+Session stages one `replace` of it.
+
+What a plot shows is chosen the same way, without the figure layer knowing the
+page (D133). The tool's plot card keeps one choice per criterion — its row's
+swatch — and the error series its select names, decides each criterion with
+`drawn` (the open one always, then the swatch, then a failing one, then the
+metric's `MetricDescriptor.drawn_by_default`), and hands the result to
+`Session.plot_figure(…, visibility=Visibility(hidden, error))`. The figure
+built with a `Visibility` sets `visible` on the hidden leaves' traces and
+shapes, keeps them in place so shape indices do not move, and shows the chosen
+error series with its axis; the choice is part of the card's redraw
+signature, so a swatch click or a select change is one `Plotly.react`. A zoom
+survives that redraw, except on an error axis given a new series: it scales
+to that series afresh. The report's figure is built without one, keeps every
+legend entry, and `templates/axes.js` shows an error axis while a trace on it
+is visible and scales it afresh whenever the set of those traces changes.
 
 ## Data Flow
 
@@ -113,8 +258,8 @@ discover_tests(config)
     → spec_parser reads test_spec.json
     → test_registry merges both into list[TestModel]
 
-runner.run_tests(tests)
-    → creates ProgressReporter, registers each test (with report_dir from runner.ref_id_map)
+backend.run_tests(tests)
+    → creates ProgressReporter, registers each test (with report_dir from backend.ref_id_map)
     → generates startup.mos (loads libs, enables OutputCPUtime + TranslationInCommandLog)
     → generates per-test .mos (clearlog, simulateModel, savelog)
     → generates shutdown.mos, per-batch .mos scripts
@@ -122,10 +267,10 @@ runner.run_tests(tests)
     → submits all batches to ThreadPoolExecutor (queue-dispatched; worker_id from thread slot)
     → emits progress.on_start when batch begins, progress.on_finish per test as results parsed
     → parses dslog.txt (runtime stats) + translation_log.txt (structural stats) per test
-    → progress.finalize() strips auto-refresh from dashboard.html
+    → progress.finalize() writes the last snapshot; dashboard.html stays live until the command renders the final page
     → returns list[BatchManifest] with TestRunResult per test
 
-runner.read_results(manifests, tests)
+backend.read_results(manifests, tests)
     → lists variable names from .mat (fast header scan, no data loaded)
     → resolves variable patterns against available names
     → reads only needed variables from .mat via numpy.memmap (selective row access)
@@ -137,34 +282,42 @@ compare_all(tests, results, store, default_tolerance, default_points)
     → per-variable: resolve_mode(override, tolerance, default_points) → ComparisonMode
     → mode.compare(ref_time, ref_values, act_time, act_values) → VariableComparison
     → NrmseMode: piecewise NRMSE with event boundary handling
-    → TubeMode: envelope check with three width modes (rel, band, absolute)
+    → TubeMode: envelope check with three width modes (rel, band, abs)
     → PointsMode: declared-checkpoint comparison (empty list ⇒ final value only;
                   non-empty ⇒ multi-point with abs/rel y-tolerance + x-tolerance box)
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots
-    → HTML reporter builds a context dict and renders via Jinja2 templates
-    → generates comparison.html (static matplotlib) and interactive.html (Plotly.js)
+    → context_builder turns results + comparisons into a context dict
+    → report_suite writes the full-resolution comparison_data.json sidecar FIRST
+    → figures/view builds one VariableView per variable from the trajectories and
+      the evaluated leaves; figures/decimate thins it (LTTB) before any trace exists;
+      figures/plotly turns it into a figure dict (traces + shapes for the criterion
+      geometry each metric emitted: band, bounds, boxes, event windows, spectrum)
+    → the trajectory arrays are dropped from the page context — interactive.html
+      carries figure dicts and server-rendered markup only (tree, summary, pills,
+      decimation banner); axes.js keeps a secondary axis visible exactly while a
+      trace on it is; report.js paints the figures and toggles trace visibility
     → per-test report directories named ref_NNNN (has reference) or test_NNNN (no baseline)
-    → writes comparison_data.json sidecar (includes full trajectory data) for downstream tooling
+    → the sidecar keeps its shape (full trajectory data) for downstream tooling
 ```
 
 ## Key Types
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `Config` | `config.py` | All resolved paths, simulator settings, tolerances |
+| `Config` | `config.py` | All resolved paths, backend settings, tolerances |
 | `TestModel` | `discovery/test_registry.py` | One test: model ID, sim params, tracked variables, source |
-| `TestResult` | `simulators/base.py` | Simulation output: success flag, variables, diagnostics, statistics |
-| `VariableResult` | `simulators/base.py` | One variable's time series (time + values arrays) |
-| `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
+| `TestResult` | `backends/types.py` | Simulation output: success flag, variables, diagnostics, statistics |
+| `VariableResult` | `backends/types.py` | One variable's time series (time + values arrays), its result-file `name` and its optional `expression` label (D132) |
+| `TestComparison` | `comparison/types.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
-| `RefIndex` | `storage/reference_store.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
-| `BatchManifest` | `simulators/base.py` | Maps test keys to `{"model_id", "ref_id"}` within a batch run |
+| `RefIndex` | `storage/ref_index.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
+| `BatchManifest` | `storage/batch_manifest.py` | Maps test keys to `{"model_id", "ref_id", "last_run_status"}` within a batch run |
 
 ## Reference File Structure
 
-`<reference_root>/<Simulator>/<os>/ref_0001.json` — per simulator+OS, self-contained:
+`<reference_root>/<Backend>/<os>/ref_0001.json` — per backend+OS, self-contained:
 ```json
 {
   "model_id": "...", "test_id": "0001",
@@ -178,7 +331,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
       "nonlinear": [3, 1], "nonlinear_count": 2, "nonlinear_total": 4, "nonlinear_max": 3,
       "init_nonlinear": [5], "init_nonlinear_count": 1, ...
     },
-    "simulation": {"cpu_time": 0.5, ...},
+    "simulation": {"cpu_time_integration": 0.5, ...},
     "CPUtime": 12.3, "EventCounter": 42
   },
   "diagnostics": [
@@ -187,25 +340,30 @@ reporters render TestComparison → console / JUnit / HTML / plots
   ],
   "n_vars": 3,
   "time": [0.0, 0.1, ...],
-  "variables": [{"index": 1, "name": "pipe.T[1]", "values": [...]}]
+  "variables": [{"index": 1, "name": "pipe.T[1]", "expression": "", "values": [...]}]
 }
 ```
+
+A variable entry is `{"index", "name", "expression", "values"}` in that order
+(D132). `name` is the name the RESULT FILE gives the variable —
+`unitTests.x[1]` for a variable of the Modelica `UnitTests` component — and is
+what every key addresses. `expression` is the text the model wrote for it in
+`x={...}`, a display label and never a key; it is always written, `""`
+included, so an entry without the field is one no writer of this version made.
+A compare where both sides record an expression and they differ raises a
+structural warning, not a failure.
 
 The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings including `tolerance` and optional tube comparison parameters (`mode`, `tube_width_mode`, `tube_abs`/`tube_rel`, `tube_points`, `tube_interpolation`).
 
 No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).
 
-### Multiple named baselines (hybrid schema, Phase 1.7)
+### Multiple named baselines (D66)
 
-The reference file supports multiple named baselines via a **hybrid schema**:
-
-* The ``"primary"`` baseline is stored as flat top-level fields exactly as the
-  original format — no change to existing files, no migration utility, no
-  reader churn.
-* *Additional* named baselines (``experiment``, ``analytical``, user-defined)
-  live under an optional top-level ``baselines`` map. Primary is never
-  duplicated inside this map.
+A reference file carries exactly one baseline — the ``"primary"``, stored as
+flat top-level fields. Additional named baselines are separate files in the
+role subdirs beside it: ``soft_checks/ref_NNNN/<name>.json`` (scorable,
+warn-wrapped) and ``companions/ref_NNNN/<name>.{json,csv}`` (plot-only).
 
 ```json
 {
@@ -220,115 +378,124 @@ The reference file supports multiple named baselines via a **hybrid schema**:
   "diagnostics": [...],
   "n_vars": 3,
   "time": [...],
-  "variables": [...],
-
-  // --- optional: additional named baselines ---
-  "baselines": {
-    "experiment": {
-      "provenance": {
-        "origin": "rig-run-2024-03-15",
-        "captured_at": "2024-03-15T09:20:00Z",
-        "notes": "Benchmark 3B, lab 2 test stand.",
-        "citation": "Internal report XYZ-2024-042, §4.3"
-      },
-      "time": [...], "variables": [...]
-    },
-    "analytical": {
-      "provenance": {"origin": "closed-form", "citation": "Nomura et al. 2019, eq. 12"},
-      "time": [...], "variables": [...]
-    }
-  }
+  "variables": [...]
 }
 ```
 
-Readers use the ``Baseline`` view (``ReferenceStore.get_baseline(model_id, name="primary")``)
-which adapts both cases uniformly: for a file with no ``baselines`` key, only
-``primary`` is present (synthesized from flat fields, provenance filled in from
-``date_added`` / ``last_updated``). For a hybrid file, ``primary`` plus any
-additional entries are returned.
+A soft_check file holds the same per-baseline fields plus ``provenance``:
 
-Writer preservation: accepting fresh primary results carries any non-primary
-entries under ``baselines`` forward on rewrite; they are never clobbered.
+```json
+{
+  "provenance": {
+    "origin": "rig-run-2024-03-15",
+    "captured_at": "2024-03-15T09:20:00Z",
+    "notes": "Benchmark 3B, lab 2 test stand.",
+    "citation": "Internal report XYZ-2024-042, §4.3"
+  },
+  "time": [...], "variables": [...]
+}
+```
 
-Subsumes three distinct workflows in one schema:
+Readers use the ``Baseline`` view: ``ReferenceStore.get_baselines(model_id)``
+returns ``primary`` (synthesized from the flat fields, provenance filled in
+from ``date_added`` / ``last_updated``) merged with every soft_check.
+Companions are excluded — they cannot be scored against.
 
-* **Regression** — one primary baseline (current default).
-* **Validation against experiment** — primary + experiment baseline; a metric
-  referencing ``"against": "experiment"`` gates or warns on that comparison.
-* **Cross-simulator / cross-backend verification** — multiple simulator
-  baselines under different names; a metric compares them.
+Separate files mean accepting fresh primary results can never clobber a named
+baseline. A top-level ``baselines`` key left in an old ref file is ignored with
+a warning and dropped on the next accept.
 
-See ``src/dstf/storage/reference_store.py`` for the ``Baseline``
-dataclass and adapter logic. Comparator / reporter support for consuming
-non-primary baselines is deferred to a later phase and driven by real use cases.
+The three baseline roles serve three workflows:
+
+* **Regression** — the primary baseline alone (the default).
+* **Validation against experiment** — primary + an `experiment` soft_check; a
+  leaf referencing ``"against": "experiment"`` gates or warns on that
+  comparison.
+* **Cross-backend verification** — baselines from several backends
+  registered as soft_checks under different names, each targetable
+  by its own leaf.
+
+See ``src/dstf/storage/baseline.py`` for the ``Baseline`` dataclass and
+``src/dstf/storage/roles.py`` for the role CRUD. The comparator threads soft_checks into the tree evaluator and
+the reporter renders per-leaf `against=` provenance — both shipped in Phase 4 /
+D66.
 
 Two manifest files are written to the work directory before simulation starts:
-- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}` for all tests in the batch
+- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN", "last_run_status": "..."}` for all tests in the batch
 - `reference_manifest.json` — maps ref IDs to model names; also available via `manifest dump` CLI command
 
-## Simulator Abstraction
+## Backend Abstraction
 
-### Current (as of D79, 2026-04-23)
+### Current (as of D80)
 
 ```
-SimulatorRunner (ABC)
-  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT
-  ├── artifact_files: tuple[str, ...]              # backend-specific artifact filenames
+Backend (ABC)
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS, CANCEL
+  ├── artifact_files: tuple[tuple[str, str], ...]  # (filename, label) pairs for the report
   ├── run_tests(tests) → list[BatchManifest]       # override for batch execution
   ├── run_single_test(test, ...) → TestRunResult   # override for per-process execution
   ├── read_result(test, ...) → TestResult          # abstract — must implement
   └── read_results(manifests, tests) → dict        # shared implementation
         │
-        ├── DymolaRunner (simulators/dymola/)
+        ├── DymolaBackend (backends/dymola/)
         │     ├── Python interface (default) — persistent workers, live phase labels,
         │     │     per-test timeout watchdog with disk-check rescue, worker restart
         │     ├── Batch fallback (--batch) — .mos scripts, parallel workers, psutil kill
         │     └── read_result() — mat_reader + variable pattern resolution
         │
-        ├── FmpyRunner (simulators/fmpy/)
+        ├── FmpyBackend (backends/fmpy/)
         │     ├── fmpy.simulate_fmu on the prebuilt FMU, writes npz result
         │     ├── concurrent.futures timeout per test
         │     └── phase labels: loading / simulating
         │
-        ├── OpenModelicaRunner (simulators/openmodelica/)
-        │     ├── Persistent workers (default when OMPython available)
+        ├── OpenModelicaBackend (backends/openmodelica/)
+        │     ├── Persistent workers (the default; absent OMPython aborts)
         │     │     — OMCSessionZMQ per worker, library-load amortized across tests
         │     │     — psutil kill on timeout, disk-fallback, 3× worker restart
         │     ├── Batch fallback (--batch) — .mos + omc subprocess per test
         │     └── read_result() — mat_reader (DSresult-compatible)
         │
-        └── JuliaRunner (simulators/julia/)          ← D77/D78/D79
-              ├── Persistent workers (default)        ← D78
-              │     — long-lived julia --project=... subprocess reading JSON-per-line
-              │       requests from stdin, writes JSON responses to stdout
-              │     — `using MTK, OrdinaryDiffEq, JSON3` paid ONCE per worker
-              │     — ready-pulse handshake front-loads warmup cost
-              │     — Base.invokelatest(build_mtk_system) after include for fresh gen
-              │     — psutil kill on timeout, 3× worker restart
-              ├── Batch fallback (--batch) — `julia run_test.jl ...` per test
-              └── read_result() — JSON parser; materializes unknowns + observables
+        ├── JuliaBackend (backends/julia/)         ← D77/D78/D79
+        │     ├── Persistent workers (default)        ← D78
+        │     │     — long-lived julia --project=... subprocess reading JSON-per-line
+        │     │       requests from stdin, writes JSON responses to stdout
+        │     │     — `using MTK, OrdinaryDiffEq, JSON3` paid ONCE per worker
+        │     │     — ready-pulse handshake front-loads warmup cost
+        │     │     — Base.invokelatest(build_mtk_system) after include for fresh gen
+        │     │     — psutil kill on timeout, 3× worker restart
+        │     ├── Batch fallback (--batch) — `julia run_test.jl ...` per test
+        │     └── read_result() — JSON parser; materializes unknowns + observables
+        │
+        └── PythonBackend (backends/python/)       ← D80
+              ├── Subprocess per test only (no persistent worker yet) — shipped
+              │     driver imports the user's .py and calls
+              │     simulate(stop_time, tolerance) -> dict
+              ├── Shares backends/common/json_driver.py with JuliaBackend
+              └── read_result() — same JSON parser
 ```
 
-Each runner declares its capabilities via `frozenset[Capability]`:
+Each backend declares its capabilities via `frozenset[Capability]`:
 
 - `PERSISTENT_WORKERS` — long-lived worker process; library loads once, amortized across N tests.
 - `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
-- `FMU_EXPORT` — can export an FMU from the source (Dymola only today; OM deferred per D69).
+- `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaBackend` only today — the batch `DymolaBackend` has no `.mos` export path and does not declare it; OM deferred per D69).
+- `CANCEL` — can stop a test that is running, from another thread: the simulation queue's Cancel (the three persistent variants and `PythonBackend`; see [extensibility.md](extensibility.md) §3 "The simulation pool").
+- `LIVE_RESULTS` — the result file grows while the run is in progress; `live_result_path(test_dir)` names it and `backends/common/live_mat.py`'s `LiveMatReader` follows it (Dymola and OpenModelica; see [extensibility.md](extensibility.md) §3 "Live results").
 
-CLI's `_get_runner(persistent=True)` swaps to the persistent variant when the runner declares `PERSISTENT_WORKERS`; falls back to batch on `RuntimeError`.
+`backends.select_backend(config, persistent=True)` — which `cli/run_cmds.py`'s `_get_backend` wraps for the CLI — swaps to the persistent variant only when the backend **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
 
 ### Forward
 
-Rename to `Backend` (a `Runner` is one execution strategy *within* a Backend). Each Backend declares capabilities; the framework enables/disables workflows based on what the Backend supports rather than on its class.
+Each Backend declares capabilities; the framework enables/disables workflows based on what the Backend supports rather than on its class.
 
 ```
 Backend (ABC)
-  ├── capabilities: frozenset[Capability]           # supports_persistent_workers, supports_batch_fallback,
-  │                                                  # supports_fmu_export, supports_experiment_ingest, ...
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK,
+  │                                                  # FMU_EXPORT, ...
   ├── produced_datasets: frozenset[DatasetType]    # {TimeSeries, Events}, or {TimeSeries} for data-file ingest
   ├── run_tests(tests) → list[BatchManifest]       # orchestration (persistent workers / batch / ingest)
   ├── read_result(test) → Dataset                  # typed result (not only TimeSeries)
-  └── export_fmu(test) → Path                      # optional; present iff supports_fmu_export
+  └── export_fmu(test) → Path                      # optional; present iff FMU_EXPORT is declared
 ```
 
-Concrete targets (roadmap): `DymolaBackend` (implemented), `FmpyBackend` (Phase 2 — implemented), `OpenModelicaBackend` (D69–D70 — implemented), `JuliaBackend` (D77–D79 — implemented; Dyad untested but should work via same path), `MatlabBackend` (future), `DataFileBackend` (experiments — future).
+Concrete targets (roadmap): `DymolaBackend` (implemented), `FmpyBackend` (Phase 2 — implemented), `OpenModelicaBackend` (D69–D70 — implemented), `JuliaBackend` (D77–D79 — implemented; Dyad untested but should work via same path), `PythonBackend` (D80 — implemented), `MatlabBackend` (future), `DataFileBackend` (experiments — future).

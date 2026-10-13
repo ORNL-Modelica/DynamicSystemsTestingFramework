@@ -1,10 +1,10 @@
-"""Tests for `cli._wipe_stale_state_for_scope` — the per-test cleanup
+"""Tests for `pipeline.wipe_stale_state_for_scope` — the per-test cleanup
 that prevents prior runs' artifacts from bleeding into a fresh run.
 
 D91 — root cause was that `cmd_run` never wiped a test's prior
-`reports/<report_dir>/comparison_data.json` sidecar, so
-`_enrich_row_from_comparison` would override a fresh sim's PASS verdict
-with the stale FAIL from the prior run. This module locks down the wipe
+`reports/<report_dir>/comparison_data.json` sidecar, so the dashboard's
+sidecar enrichment (today `rows.enrich_row`) would override a fresh sim's
+PASS verdict with the stale FAIL from the prior run. This module locks down the wipe
 contract: only in-scope tests are touched; out-of-scope dirs are
 preserved (so `--merge` and `--rerun` keep working); both layers (sim
 work dir + report dir) get cleared by `cmd_run`; only the report dir
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from dstf.cli import _wipe_stale_state_for_scope
+from dstf.pipeline import wipe_stale_state_for_scope
 
 
 @dataclass
@@ -50,7 +50,7 @@ def test_wipe_in_scope_test_clears_both_dirs(tmp_path):
     _seed_dir(tmp_path / "test_0001")
     _seed_dir(tmp_path / "reports" / "ref_0042")
 
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
         [_FakeTest("Lib.A")],
         ref_id_map={"Lib.A": "ref_0042"},
@@ -70,7 +70,7 @@ def test_wipe_compare_mode_preserves_sim_dir(tmp_path):
     _seed_dir(tmp_path / "test_0001")
     _seed_dir(tmp_path / "reports" / "ref_0042")
 
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
         [_FakeTest("Lib.A")],
         ref_id_map={"Lib.A": "ref_0042"},
@@ -102,7 +102,7 @@ def test_wipe_preserves_out_of_scope_dirs(tmp_path):
     _seed_dir(tmp_path / "reports" / "ref_0001")
     _seed_dir(tmp_path / "reports" / "ref_0002")
 
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
         [_FakeTest("Lib.A")],  # Only A in scope
         ref_id_map={"Lib.A": "ref_0001", "Lib.B": "ref_0002"},
@@ -120,10 +120,10 @@ def test_wipe_preserves_out_of_scope_dirs(tmp_path):
 def test_wipe_first_time_test_no_op(tmp_path):
     """A test running for the first time (no batch_manifest entry,
     no prior dirs) is a no-op — the wipe must not crash, and the
-    runner will create the dir from scratch.
+    backend will create the dir from scratch.
     """
     # No batch_manifest.json, no dirs at all
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
         [_FakeTest("Lib.New")],
         ref_id_map={},
@@ -142,7 +142,7 @@ def test_wipe_falls_back_to_test_key_for_no_baseline_tests(tmp_path):
     _seed_dir(tmp_path / "test_0007")
     _seed_dir(tmp_path / "reports" / "test_0007")  # No baseline yet
 
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
         [_FakeTest("Lib.NewTest")],
         ref_id_map={},  # No baseline -> empty map -> fallback to test_key
@@ -161,7 +161,7 @@ def test_wipe_only_sim_dir_when_only_sim_dir_exists(tmp_path):
     _seed_dir(tmp_path / "test_0001")
     # reports/ doesn't exist
 
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
         [_FakeTest("Lib.A")],
         ref_id_map={"Lib.A": "ref_0042"},
@@ -169,3 +169,26 @@ def test_wipe_only_sim_dir_when_only_sim_dir_exists(tmp_path):
     )
 
     assert not (tmp_path / "test_0001").exists()
+
+
+def test_wipe_returns_how_many_report_pages_it_removed(tmp_path):
+    """The count is of PAGES, what a reader misses: a report dir that held
+    only a sidecar (no `interactive.html`) is removed and counts for none,
+    and a test with no report dir counts for none."""
+    _seed_batch_manifest(
+        tmp_path, {"test_0001": "Lib.A", "test_0002": "Lib.B", "test_0003": "Lib.C"}
+    )
+    _seed_dir(tmp_path / "reports" / "ref_0042")
+    (tmp_path / "reports" / "ref_0042" / "interactive.html").write_text("<html>")
+    _seed_dir(tmp_path / "reports" / "test_0002")  # a sidecar's dir, no page
+
+    removed = wipe_stale_state_for_scope(
+        _FakeConfig(tmp_path),
+        [_FakeTest("Lib.A"), _FakeTest("Lib.B"), _FakeTest("Lib.C")],
+        ref_id_map={"Lib.A": "ref_0042"},
+        wipe_sim_dirs=False,
+    )
+
+    assert removed == 1
+    assert not (tmp_path / "reports" / "ref_0042").exists()
+    assert not (tmp_path / "reports" / "test_0002").exists()

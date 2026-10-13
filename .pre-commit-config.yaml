@@ -1,13 +1,19 @@
-# Local fast-feedback hooks (D88). Install once with:
-#   uv run pre-commit install
+# Local fast-feedback hooks (D88). pre-commit is deliberately NOT in the dev
+# extra: CI never runs it (quality.yml has no pre-commit step), so shipping it
+# to every contributor and every CI run buys nothing. Installing it as a
+# standalone tool also puts it outside .venv, where `uv sync` cannot prune it.
+# Note the local mypy hook below is the exception — `entry: uv run mypy` does
+# resolve against .venv, so it needs the dev extra synced.
+#   uv tool install pre-commit
+#   pre-commit install        # if not found, `uv tool update-shell`, new shell
 # Mirrors the CI quality job's lint/format/type gates so issues surface
 # before push. The full test suite is NOT run here (too slow for a commit
 # hook) — CI owns that.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.16
+    rev: v0.16.6
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
 

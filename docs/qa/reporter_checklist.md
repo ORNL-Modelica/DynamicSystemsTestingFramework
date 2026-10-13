@@ -1,25 +1,27 @@
 # Reporter QA checklist
 
-Manual QA pass for the interactive reporter. Most data-contract, render,
-and state-mutation scenarios are now automated in Python + Playwright
-(`tests/test_interactive_playwright.py`); this checklist covers the
-remaining ~20% that requires human judgment — visual quality, drag-based
-plot interactions, and UX feel on real reports.
+Manual QA pass for the per-test report page. The page is read-only: it
+mutates nothing and computes nothing, so correctness of what it draws is
+covered in Python (figure goldens per mode) and in Playwright
+(`tests/test_interactive_report.py`, which asserts the kept behaviours on
+pages generated through the real render path). This checklist covers what
+those cannot judge — visual quality and feel on a real report.
 
 **What's automated** (skip these in manual QA):
 
 - Page renders without JS console errors (Playwright `pageerror` handler).
-- Variable section dedup, full-tree + per-variable mounts, leaf activation,
-  ESC deactivation, click-switch between leaves.
-- Scalar input edits → `leafState`, cross-mount input sync, window inputs
-  round-trip, `buildPatchData` emits correct ops.
-- `+` adds a leaf (via prompt), `−` marks `structureDirty` + emits
-  wholesale `/metrics` replace.
-- Tube editor activates with control-point table; add-point button commits.
-- Window brush button injected on leaf activation.
-- Overlay loading (missing file → `status="missing"`, bad parse → `"invalid"`).
+- Every variable plot paints from its own figure dict, with the trace count
+  the dict declares and the criterion shapes the metric emitted.
+- Zoom, hover and legend toggles are live; the overlay picker toggles a
+  soft_check and a companion trace; the error-overlay dropdown switches
+  between signed and absolute error on the right axis "Error [signal units]"
+  and per-point NRMSE on its own "NRMSE [–]".
+- The metric tree renders read-only, with the CLI verdict, score text and
+  detail pairs per leaf; no input element anywhere in it.
+- The decimation banner names the decimated traces with their sample counts.
+- Overlay loading (missing file -> `status="missing"`, bad parse -> `"invalid"`).
 
-**What stays manual** — everything below.
+**What stays manual** - everything below.
 
 ## Prep
 
@@ -64,75 +66,32 @@ uv run dstf --config examples/fmu/testing.json companion add \
       - Window x-band highlight: blue-tinted
       - Soft_check overlay: purple dotted
       - Companion overlay: green dashdot
-      - Active leaf highlight: blue left border, light blue background
 - [ ] Pass/fail pills visually distinct and legible (green vs red).
 - [ ] Node tree indentation clear enough to see combinator nesting
       (warn wrapper should visibly contain its child leaf).
 
-## Range autoscale (resolved D85)
+## Read-only page (viewing checks)
 
-- [ ] Range leaf with a min/max far outside the data's own range — e.g.,
-      set `max` to `5.0` on BouncingBall's `h` leaf (data is in [0, 1]).
-      The red dashed line should be visible AND a double-click reset
-      should snap the y-axis to include both the trajectory and the
-      bound. (D85 added invisible-marker scatter traces at each declared
-      bound's y-value; Plotly's autorange picks them up where it ignores
-      shape coordinates.)
-
-## Drag-based plot interactions (hard to test synthetically)
-
-- [ ] **Tube Shift+click adds a point.** Activate a tube leaf (click its
-      header), hold Shift, click somewhere on the plot above or below the
-      reference trajectory. A new row should appear in the control-point
-      table with the clicked `(time, |Δ from ref|)` values. The tube
-      polygon should redraw live to include the new point.
-- [ ] **Range drag.** Activate a range leaf. Click-and-drag one of the
-      dashed red min/max lines vertically. On drop, the line snaps to
-      the new y-value; the leaf's `min_value` / `max_value` text input
-      updates to match. Verify the export-patch JSON now has the new value.
-- [ ] **Window brush.** Activate any leaf. Click the `🔲 Set window from
-      plot` button in its editor slot; the button turns orange ("Drag on
-      plot…"). Drag a horizontal range on the plot. On release, the
-      window_start + window_end inputs populate; the blue x-band
-      highlight appears across the selected range. Verify the
-      export-patch JSON shows the window `add` op.
-
-## Points editor — full plot interactivity (D85)
-
-Activate a `points` leaf with at least one declared point (the
-`PointsCheckTest` in any of the fixture libraries works).
-
-- [ ] **Shift+click on empty plot adds a point.** A new diamond marker
-      appears at the click coordinates with explicit `value`, `abs`
-      tolerance mode, and the leaf's default tolerance. The table gains
-      a row.
-- [ ] **Shift+drag the diamond marker.** Diamond moves with the cursor.
-      Both `time` and `value` columns update. (Direct manipulation
-      promotes a previously-ref-relative point to explicit-value.)
-- [ ] **Shift+right-click the diamond marker.** Diamond and tolerance
-      box vanish from the plot; row vanishes from the table.
-- [ ] **Drag the right edge of the tolerance box outward.** On release
-      (no shift needed): `X-Tolerance` cell updates to the new value;
-      the box re-renders centered on the diamond with the new size
-      (left edge moves leftward to mirror). Caveat: the live drag does
-      NOT mirror the opposite edge — it only snaps on release. Plotly
-      doesn't emit `plotly_relayouting` for shape edits, so live mirror
-      requires a refactor we deferred. Snap-on-release is correct
-      behavior; the mid-drag visual lopsidedness is cosmetic only.
-- [ ] **Drag the box body (not an edge).** On release the box snaps
-      back to its original position centered on the diamond. No
-      tolerance change. Multiple translation drags should NOT
-      accumulate any growth in the box (was a bug; now fixed via
-      size-based change detection).
-- [ ] **Switch a point's mode dropdown** abs↔rel. The visible box size
-      stays the same; the stored value converts (rel = abs/|target|,
-      abs = rel·|target|). For a point at value=0 (or solver near-zero),
-      the abs→rel switch is rejected — dropdown reverts to abs and the
-      box doesn't vanish.
-- [ ] **📸 Snapshot from ref.** For every row whose Value cell is empty
-      (ref-relative), the button fills in the current `ref(time)` as an
-      explicit value. Idempotent — rows with explicit value are
-      untouched.
+- [ ] Every variable has a plot and it is painted (no empty chart div, no
+      console error). Nothing on the page offers to change a criterion:
+      no inputs, no `+` / `-` buttons, no download.
+- [ ] Hover a trace: the tooltip names the trace and reads the value at
+      that time. Zoom into a region and double-click to reset; the axes
+      come back including any declared bound that sits outside the data.
+- [ ] The overlay picker only appears above plots whose variable an
+      overlay carries data for, and each checkbox shows/hides that trace.
+- [ ] The error-overlay dropdown's three choices are visibly different
+      curves; "none" removes it. Signed and absolute error draw against
+      "Error [signal units]", NRMSE against "NRMSE [–]", and each axis
+      shows only while a series on it is visible — by the dropdown or by a
+      legend click.
+- [ ] The metric tree reads top-down: combinator nesting is clear (a
+      `warn` wrapper visibly contains its child), each leaf shows its
+      verdict, its one-line criterion and its detail pairs, and the
+      summary line above agrees with the leaves below it.
+- [ ] Where a trace was decimated, the banner is present, names the trace
+      and its full -> embedded counts, and points at `comparison_data.json`.
+      Where nothing was decimated, there is no banner.
 
 ## Soft_check / companion overlay visuals
 
@@ -150,56 +109,128 @@ Requires a registered companion (see Prep). On BouncingBall's `h` plot:
 - [ ] Overlays only appear on plots whose variable they carry data for —
       a companion with only `h` data doesn't show a picker on the `v` plot.
 
-## Structural editing (UX feel, not correctness)
+## Authoring tool
 
-Playwright covers correctness. These check the UX:
+`dstf author` is covered in Python (the shell's regions and the built-in
+capabilities through NiceGUI's in-process `user_simulation`) and by two
+Chromium smoke tests, neither of which saves: one edits a tolerance, the other
+drags a tube handle and a range bound. What stays
+manual is the feel of a live edit and the states a single page cannot reach.
 
-- [ ] `+` button prompts for metric + variable in sequence. The prompt
-      text names valid metrics. If the user types an unknown metric, the
-      error message is clear.
-- [ ] `−` button asks for confirmation before removing. Confirmation
-      text includes the node's label ("Remove leaf nrmse·h?").
-- [ ] After a structural edit, the full tree re-renders AND the plots
-      update. Per-variable mounts reflect the new structure.
-- [ ] Export JSON (click "Download JSON") shows a single `/metrics`
-      replace op when structure has changed, not dozens of scalar ops.
-- [ ] Applying the downloaded patch:
-  ```bash
-  uv run dstf --config examples/fmu/testing.json \
-    spec-update ~/Downloads/spec_patch.json
-  ```
-  - CLI exits 0 with the op applied.
-  - `examples/fmu/test_spec.json` reflects the structural change.
-  - Hand-authored sibling keys (description, metadata) on the test entry
-    survive unchanged.
+Accept writes baselines and Queue simulates: run the steps below against a
+throwaway copy of the example library, never a reference tree you would mind
+re-accepting.
+
+### Prep
+
+```bash
+uv sync --extra dev --extra author --locked
+uv run dstf --config examples/fmu/testing.json run --report
+uv run dstf --config examples/fmu/testing.json author
+```
+
+The second command leaves results and a dashboard for the tool to read; the
+third opens the tab. Discard anything staged before quitting, or the spec is
+left as you edited it.
+
+- [ ] The tab opens on the project: the header names the library and the
+      backend, and the test list carries one row per discovered test with its
+      status badge.
+- [ ] Click a test: the centre shows the variable picker, a painted figure and
+      the metric tree, and the tree's verdicts agree with what the CLI printed.
+- [ ] Click a leaf, open Edit criteria, and change the tolerance so the leaf
+      fails: the verdict flips, the figure follows, and the header's pending
+      count reads 2 (the tree materialized once, plus your edit) — not one per keystroke.
+- [ ] Discard: the verdict comes back, the drawer is empty, the count is 0.
+- [ ] Stage the edit again and Save: `test_spec.json` carries exactly that
+      change and the count is 0. Edit the file in another editor, stage
+      something and Save again: the tool refuses and offers to reload.
+- [ ] Export writes `<work_dir>/spec_patch.json`, and
+      `dstf --config ... spec-update <that file>` applies it.
+- [ ] Select two tests: Edit tree is greyed with "select exactly one test",
+      and Edit criteria is not listed at all — its scope is a leaf. Uncheck
+      them all and the tab area says nothing applies to the selection; no v1
+      capability is PROJECT-scope.
+- [ ] Select two tests with results and open Accept: each is listed as
+      `model · status · will store`, the button reads `Accept 2`. Click it —
+      the footer gains one line naming what it stored and where, and both
+      tests' verdicts flip to PASS (the tree is scored against the baseline
+      just written).
+- [ ] Select a test the last run never finished (interrupt a run with Ctrl-C
+      to make one): its Accept row reads `re-run before accepting`, the tab is
+      greyed with that same reason, and nothing offers to store it.
+- [ ] On the Suite page tick one test and click Queue (the toolbar's icon
+      whose tooltip is its caption, `Queue 1`): a dialog names the backend
+      (`runs through <backend>`) and the test. Click `Queue 1` — the
+      simulation queue beside the table (above it under 1200 px) gains row 1:
+      its badge and the test's Suite row read QUEUED, then RUNNING with
+      `running · N s · worker 1`, then the test's verdict with `finished ·
+      N s`; the header's indicator reads `1 running`, then `idle`. The
+      console that started `dstf author` printed nothing of the tool's own
+      the whole time — a logged warning (Python's last-resort handler) or a
+      simulator's own log lines can still reach it.
+- [ ] The next three steps need tests that run for seconds: an example FMU
+      is done before you can click. Tick three tests and Queue them (`Queue
+      3`): the rows are numbered in run order, the first runs, the others read
+      `waiting · 1 ahead` and `waiting · 2 ahead`. Remove on a waiting row
+      takes it out — the row goes and its Suite row reads its verdict again.
+      With the three still ticked, Queue's caption counts what the queue
+      holds: `Queue 1 (2 already queued)`.
+- [ ] Cancel on a running row stops its simulation: the row reads `cancelled`
+      under a CANCELLED badge, the test's Suite row reads CANCELLED, and its
+      Test page's strip offers `Queue again`. On a backend that cannot stop a
+      test (FMPy — so the example FMUs) a running row has no Cancel: an info
+      icon in its place says why.
+- [ ] When nothing is queued or running the panel's header counts what ended
+      (`2 finished · 1 cancelled`) and `<work_dir>/dashboard.html` is
+      rewritten with the tool's verdict for every test — CANCELLED for the
+      cancelled one. Clear finished empties the panel and leaves the results.
+      ⋮ → Stop workers ends the simulator processes and says `workers
+      stopped`; while a test runs it is refused with a sentence.
+- [ ] Make Queue fail to start — use a backend whose batch class builds but
+      whose persistent probe does not: point `testing.json` at `OpenModelica`
+      on a machine with no OMPython (re-sync the venv without `--extra om` if
+      it is installed), so the project opens and the queue's
+      `select_backend(persistent=True)` is what raises. The dialog says the
+      backend's sentence, nothing is queued and every verdict is exactly what
+      it was; from then on the Queue button is greyed, with that sentence as
+      its tooltip. (A backend that cannot be built at all — an unregistered
+      name, a missing executable — never gets that far: `dstf author` refuses
+      to open the project, printing one `Config error: ...` line.)
+- [ ] With a test queued or running, the header's ⋮ → Stop server asks first
+      (`2 tests are queued or running — stop anyway?`); Stop anyway ends the
+      tool and leaves no simulator process behind (`ps` shows none).
+- [ ] Select BouncingBall with `h` plotted: Edit on plot is enabled (the
+      `range` leaf). Zoom into part of the plot, then drag the `range` upper
+      bound line down: the pending count rises, the leaf's verdict follows,
+      the line stays where you dropped it, and the zoom is unchanged.
+- [ ] Select an `nrmse` leaf (BouncingBall's first), switch Edit criteria's
+      metric to `tube` with width mode `band`; Edit on plot's
+      `tube_points` table for that leaf appears. `Add row` stages a
+      zero-width row at the middle of the trajectory; type an `upper` and
+      a `lower` width and two green rings separate on the plot. Drag the
+      upper ring up by its centre: the band widens there, one pending op
+      for that leaf (not one per drag), zoom kept.
+- [ ] Grab a ring slightly off its centre and drag: it is resized, then
+      snaps back, and nothing is staged.
+- [ ] Select Dahlquist and drag one of its checkpoint tolerance boxes: the
+      box snaps back, and the Edit on plot tab shows the leaf path with
+      `cannot be moved on the plot`. Drag a checkpoint ring that has no
+      `value` in the table straight up, with no sideways movement: nothing is
+      staged (a visible sideways jitter is a time move, and stages the new
+      time).
+- [ ] In a table, change a cell, then `Add row` and `Remove row`: each
+      stages, and the drawer reads "leaf → new leaf". Clear a required
+      cell (a tube row's `time`): the cell is marked `time is required`, and
+      nothing is staged until it is filled.
+- [ ] Save: `test_spec.json` carries the dragged and table edits along
+      with the rest of what the drawer listed, and nothing it did not.
+- [ ] The dashboard link opens the suite page in a new tab.
+- [ ] Quit shuts the server down; the tab shows NiceGUI's disconnected banner.
 
 ## Schema export (one-off sanity)
 
 - [ ] `uv run dstf export-schema` emits valid JSON-Schema
       2020-12 to stdout.
-- [ ] `$defs` contains entries for all six modes.
+- [ ] `$defs` contains entries for every registered mode.
 - [ ] Pass it to any JSON-Schema validator; parses without errors.
-
-## Known limitations / deferred (don't file as bugs)
-
-- Pass/fail pills are CLI-authoritative across ALL modes — live recompute
-  was retired in Stage 2 along with `MODE_SCORERS`. Edits in the browser
-  don't flip pills until `dstf run` is re-invoked. The
-  `cli_authoritative` badge only appears on `event-timing` and
-  `dominant-frequency`, but the semantics apply everywhere now. Expected.
-- Shift+drag / Shift+right-click on existing tube control points (move /
-  delete via plot interaction) not yet wired — only Shift+click-to-add
-  works on the plot today. Table inputs + row − buttons are the other
-  edit paths. (Points has the full set as of D85; tube parity is open.)
-- Points box edge drag does NOT mirror the opposite edge live during the
-  drag — it only snaps to centered on release. Plotly's
-  `plotly_relayouting` event doesn't fire for shape edits, so true live
-  mirror requires disabling `edits.shapePosition` globally and
-  reimplementing range + points box drag through custom mousedown/move/up
-  handlers. Tracked as a D85 follow-up; snap-on-release accepted.
-- Window brush is one-shot per activation: drag once, set, brush mode
-  exits. No "keep selecting" lock.
-- `+` button only adds leaves. Wrapping a subtree in a new combinator
-  (e.g., `warn`) requires hand-editing the JSON spec.
-- Drag-to-edit range handles are input-driven ↔ drag two-way synced, but
-  Plotly's editable-shape drag can feel laggy on very zoomed-in plots.

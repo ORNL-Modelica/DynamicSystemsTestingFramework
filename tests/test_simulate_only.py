@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
+from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import TestResult, VariableResult
 
 
 def _make_test(simulate_only: bool) -> TestModel:
@@ -18,6 +18,7 @@ def _make_test(simulate_only: bool) -> TestModel:
         source_package="My.Sim",
         short_name="Only",
         n_vars=1,
+        variable_patterns=["x"],
         simulate_only=simulate_only,
     )
 
@@ -140,3 +141,35 @@ class TestSimulateOnly:
         comps = compare_all([test], results, _FakeStore())
         assert comps[0].passed is False
         assert comps[0].sim_success is False
+
+
+def test_the_report_page_of_a_test_that_declares_nothing_says_simulate_only():
+    """`dstf add <model>`'s entry: no comparison and no variable is what a
+    simulate-only run looks like, not a failed simulation's banner."""
+    from conftest import make_test_model
+    from dstf.reporting.context_builder import _compute_summary_flags
+
+    ran = TestResult(model_id="Lib.T", success=True, variables=[])
+    declares_nothing = make_test_model()
+    assert not declares_nothing.simulate_only
+    assert _compute_summary_flags([], ran, declares_nothing) == (0, 0, True, False)
+    tracks = make_test_model(variable_patterns=["x"])
+    assert _compute_summary_flags([], ran, tracks) == (0, 0, False, True)
+
+
+def test_the_report_page_names_what_its_two_counts_count(tmp_path):
+    """`Tracked Variables | 3 current / 2 reference` set the test's
+    CRITERIA beside the variables its baseline stores, as one quantity now
+    and then. Each is named for what it is, and a count that is not there
+    is no row."""
+    from dstf.reporting.context_builder import _build_ref_info
+
+    def rows(comparisons, ref_data) -> dict:
+        info = _build_ref_info(comparisons, ref_data, None, None)
+        return {row["label"]: row["value"] for row in info}
+
+    three, reference = [object()] * 3, {"n_vars": 2}
+    assert rows(three, reference) == {"Criteria": "3", "Reference Variables": "2"}
+    assert rows(three, None) == {"Criteria": "3"}
+    assert rows([], reference) == {"Reference Variables": "2"}
+    assert rows([], {}) == {} and rows([], None) == {}

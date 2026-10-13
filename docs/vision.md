@@ -8,7 +8,7 @@ A **regression and unit-testing framework for any time-dependent system behavior
 - **How it is produced** (Dymola Python interface, OMPython, FMPy, JuliaCall, MATLAB engine, a subprocess, nothing at all for data-file ingest).
 - **What counts as "correct"** (NRMSE, tube envelope, event timing, spectral coherence, statistical distribution, domain-specific metrics the user writes).
 
-The current codebase is a strong, careful Modelica/Dymola implementation of this idea. The framework already has extension points (`@register` runners, `ComparisonMode` strategies); they have not been exercised. This document captures where we are going, so Phase 1+ refactors and new backends hit a consistent target.
+The current codebase implements this idea for five backends — Dymola, OpenModelica, FMPy, Julia/ModelingToolkit and arbitrary Python — through the extension points it set out with (`@register` backends, the metric registry, recognizers). This document captures where we are going, so new backends and metrics hit a consistent target.
 
 ---
 
@@ -35,7 +35,7 @@ The framework is structured around six layers. Each is a plug-in point; each has
   Discovery       — how tests are found from a Source (.mo scan, spec file, pytest-style, experiment registry)
     │
     ▼
-  Backend/Runner  — how a test is executed (Dymola Python, FMPy, OMPython, JuliaCall, MATLAB engine, nothing-for-data-file)
+  Backend         — how a test is executed (Dymola Python, FMPy, OMPython, JuliaCall, MATLAB engine, nothing-for-data-file)
     │
     ▼
   Dataset         — typed result (TimeSeries, Scalars, Events, Spectrum, Distribution; Field in future)
@@ -47,7 +47,7 @@ The framework is structured around six layers. Each is a plug-in point; each has
   MetricTree      — composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
 ```
 
-Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, points, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types, weighted combinator.
+Most layers are explicit: Source selects via `source_type` (Modelica, FMU, Julia or Python today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola, OpenModelica, FMPy, Julia and Python, Dataset is still time-series only, Metric offers seven built-ins (NRMSE, tube, points, range, event-timing, dominant-frequency, scalar), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn / weighted combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types.
 
 ---
 
@@ -61,7 +61,7 @@ A recognizer declares:
 
 - **What it looks for** (Modelica class name / annotation pattern / FMU vendor extension / Julia macro / …)
 - **How fields map** to the framework's `TestModel` (which parameter holds the variables-to-track, which holds the timeout, …)
-- **What it can extract** as a capability profile — `{variables, reference_signals, timeout, tolerance, requested_fmu_export, simulate_only, …}`. Recognizers don't need to extract everything; a "minimal" recognizer can declare only "this is a test, simulate it" and pass on success.
+- **What it can extract** as a capability profile — `{variables, reference_signals, timeout, tolerance, simulate_only, …}`. Recognizers don't need to extract everything; a "minimal" recognizer can declare only "this is a test, simulate it" and pass on success.
 
 Discovery composes results from every registered recognizer, merging by model_id. A library can ship its own recognizer alongside the bundled default — both run; results combine.
 
@@ -73,15 +73,17 @@ This is the natural completion of the "Modelica is the first consumer, not the r
 
 ---
 
-## Runner capabilities (first-class)
+## Backend capabilities (first-class)
 
-Runners are not all equivalent. Rather than assume every backend supports every workflow, runners declare **capabilities** on their contract:
+Backends are not all equivalent. Rather than assume every backend supports every workflow, backends declare **capabilities** on their contract — a `capabilities: frozenset[Capability]` class attribute. `Capability` has five members:
 
-- `supports_persistent_workers` — can hold a loaded model in memory and simulate many tests per worker (Dymola Python: yes, batch `.mos`: no, FMPy: trivially yes, CSV ingest: N/A).
-- `supports_batch_fallback` — exposes a script-driven non-interactive fallback (Dymola: yes via `.mos`, OMC: yes via `.mos`, FMPy: no, MATLAB: yes).
-- `supports_fmu_export` — can export a test artefact as an FMU (Dymola: yes, OMC: yes, FMPy: N/A). Enables cross-backend verification (see below).
-- `supports_experiment_ingest` — reads recorded data rather than simulating (data-file "runner").
-- `produced_datasets` — set of `Dataset` types this runner can yield (most produce `TimeSeries` and `Events`; a data-file runner may produce only `TimeSeries`).
+- `PERSISTENT_WORKERS` — can hold a loaded model in memory and simulate many tests per worker (Dymola, OpenModelica and Julia: yes; FMPy: no — it runs in-process and declares nothing). Declare it on the **registered** class: `backends.select_backend` (the CLI's `_get_backend` is its wrapper) reads the batch class's `capabilities` to decide whether to select the persistent variant, so declaring it only on the persistent class means it is never seen.
+- `BATCH_FALLBACK` — exposes a script-driven non-interactive fallback (Dymola, OpenModelica, Julia and Python: yes; FMPy: no).
+- `FMU_EXPORT` — can export a test artefact as an FMU. Declared by `PersistentDymolaBackend`, since the export needs a live interface; the batch class does not have one. Enables cross-backend verification (see below).
+- `LIVE_RESULTS` — the result file grows while the run is in progress and can be read then (Dymola and OpenModelica). What lets the authoring tool draw a running test's trace.
+- `CANCEL` — can stop a test that is running, from another thread (the persistent Dymola, OpenModelica and Julia backends, and Python; FMPy: no). What the authoring tool's queue cancels through.
+
+A separate class attribute, `produced_datasets: frozenset[DatasetType]`, declares the set of dataset kinds a backend can yield (every backend declares `TimeSeries` alone today).
 
 Capabilities let the framework enable/disable features per backend without special-casing, and let users query at config time ("does this backend support what my test needs?").
 
@@ -89,25 +91,23 @@ Capabilities let the framework enable/disable features per backend without speci
 
 ## Cross-backend verification (forward bet)
 
-A deliberate forward architectural bet: if backend A declares `supports_fmu_export` and backend B can consume FMUs, the framework can run the same test through both and compare results. This is Gap E from the evaluation report ("cross-simulator validation") rendered as a composable feature on top of capabilities, not a hardcoded mode.
+A deliberate forward architectural bet: if backend A declares `FMU_EXPORT` and backend B can consume FMUs, the framework can run the same test through both and compare results. This is Gap E from the evaluation report ("cross-simulator validation") rendered as a composable feature on top of capabilities, not a hardcoded mode.
 
-Not implemented in initial broadening phases — but the capability hook is in the interface from day one so we don't have to re-break the contract later.
+Now implemented, and still marked EXPERIMENTAL: `backends/cross_backend.py` exports from Dymola and replays through FMPy, gated on the `FMU_EXPORT` declaration. Making every backend pair compare automatically is the part that remains forward-looking.
 
 ---
 
-## Reporter as authoring IDE (D66)
+## The two tiers: reporting and authoring (D125)
 
-The interactive HTML report is the **primary authoring surface** for acceptance criteria — not just a review UI. Users compose tube widths, range bounds, combinator structures, and multi-criteria scoring interactively against a freshly-simulated signal, then download a patch and apply it via the CLI. Editing `test_spec.json` by hand stays supported; it is not the intended default.
+**The line is mutation.** A surface either changes something or it does not. Reporting is everything that reads: zoom, hover, legend and overlay toggles, error overlays, the test filter, sweeping a selection and copying a command, and reading the metric tree with its verdicts and score text. Authoring is everything that writes: a tolerance, a mode, a window, an `against`, the shape of the tree, accepting results as baselines, running or rerunning tests. The CLI remains the execution surface and keeps its own mutations (`--accept`, `spec-update`, `run -i`); the terminal review loop is not a report.
 
-**Workflow boundary (hard)**: the reporter is the authoring surface; the CLI is the execution surface. Reporter state lives in the browser until an explicit download. No local server; no live-apply; no auto-rerun. The download payload is an **RFC 6902 JSON-Patch** against the test spec. The `spec-update` CLI applies the patch via read-modify-write, preserving unknown keys and the `description` / `info` / `metadata` conventions for human notes.
+**The report computes nothing.** Every number it draws comes from an embedded figure dict or a string the server rendered. Geometry is a result of comparison, not a browser re-derivation: each metric emits the primitives that describe its criterion (band, bounds, boxes, event windows, spectrum), the figure layer turns them into traces and shapes, and the page paints them. The page's single script paints figures and toggles the visibility of traces that are already in them.
 
-**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). UI controls are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) with override slots where richer UI makes sense (tube conditional fields, range visual handles). Tightening Config types to use `Literal[...]` for enum-like fields buys JSON-Schema export as a first-class handoff artifact.
+**Authoring is a Python-side tool**, driven by the same figure layer and the same registry the CLI scores with — so what the author sees is what the CLI will decide, with no second implementation to keep in step. It emits an **RFC 6902 JSON-Patch** against the test spec; `spec-update` applies the patch via read-modify-write, preserving the `description` / `info` / `metadata` conventions for human notes (any other key nothing reads is a spec error that names it). Editing `test_spec.json` by hand stays supported.
 
-**Live preview policy**: modes with tractable math ship an in-browser JS recompute function so users see pass/fail update as they drag. Today this covers `nrmse`, `tube`, `range`, `points`, and `dominant-frequency` (the FFT path was added in D75-D76 once both sides agreed on a power-of-2 resampling that gives bit-identical bin frequencies). `event-timing` is the only mode that stays CLI-authoritative — its event-pairing algorithm has too many tie-breakers to mirror cleanly.
+**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). Forms are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) via `derive_schema`, which also emits the JSON-Schema handoff artifact. Tightening Config types to use `Literal[...]` for enum-like fields is what makes that export first-class.
 
-**Testing asymmetry, with a parity floor**: the Python data contract (patch schema, spec-update round-trip, JSON-Schema export, validator rules) is exhaustively tested. The JS layer's structural shape is covered by golden-file HTML snapshots; behavioral correctness of the live-preview scorers is covered by `tests/test_scorer_parity.py`, which renders a synthetic fixture suite, runs the Python `_compare_*` functions for the authoritative verdict, and asserts every JS `MODE_SCORERS[mode](leaf)` agrees. Drift between the two implementations is the only failure mode this catches mechanically — interaction bugs (drag handlers, plot wiring) still rely on the human QA checklist (`docs/qa/reporter_checklist.md`).
-
-**Performance budget**: interactive.html for a 50-variable test stays under ~5 MB embedded payload. Trajectories decimated when needed; full-resolution data lives in a sidecar the reporter lazy-loads on demand.
+**Performance budget**: the page carries figures, not trajectories; full-resolution data lives in the `comparison_data.json` sidecar beside it, and a banner names every trace the page decimated.
 
 ---
 
@@ -130,14 +130,14 @@ A lightweight heuristic layer that looks at a signal (and optional baseline) and
 
 ## Metric composition
 
-Today, a test passes iff every variable's single metric passes. This is too narrow for the target audience:
+Without a tree, a test passes iff every variable's single metric passes. That is too narrow for the target audience:
 
 - Users want to stack metrics: *"pass if NRMSE < 0.01 **AND** dominant-frequency shift < 1%"*.
 - Users want disjunctive fallbacks: *"pass if tube OK **OR** NRMSE loose-bound OK"* — captures "one of these two views is fine."
 - Users want roll-up logic: per-variable metrics aggregate into per-test; per-test can have global metrics (overall simulation time, event count, final energy balance).
 - Users want custom metrics: a domain-specific score (e.g. power-system stability margin) should slot in via the same interface as NRMSE.
 
-**MetricTree** is the abstraction: a tree whose leaves are `Metric` evaluations and whose internal nodes are combinators (AND, OR, weighted-sum-with-threshold, K-of-N, `warn`). Evaluates to a boolean + numeric score + diagnostics, not just a boolean. The diagnostic shape carries through to reports — the interactive HTML report will visualize *which* branch of the tree failed.
+**MetricTree** is the abstraction: a tree whose leaves are `Metric` evaluations and whose internal nodes are combinators (AND, OR, weighted-sum-with-threshold, K-of-N, `warn`). Evaluates to a boolean + numeric score + diagnostics, not just a boolean. The diagnostic shape carries through to reports — the per-test report page shows *which* branch of the tree failed.
 
 The `test_spec.json` schema extends to express MetricTrees. Simple cases remain terse (a bare variable list with a scalar tolerance stays valid and is interpreted as a flat AND of NRMSE-per-variable).
 
@@ -153,7 +153,7 @@ The tool is a **regression testing** framework. "Does this signal match the stor
 
 **Companion references** — visual overlays, never scored.
 - External time-series data (experimental CSV, analytical solution output, vendor reference, digitized plot data).
-- Stored as file paths in the test spec; two storage options — `external` (path points outside the repo; tool loads best-effort on each run) or `frozen` (file copied into `ReferenceResults/.../companions/`; immutable).
+- Registered as metadata under `ReferenceResults/.../companions/ref_NNNN/<name>.json`, never in the test spec; two storage options — `external` (the metadata points at a path; tool loads best-effort on each run) or `frozen` (file copied in beside it; immutable).
 - Load failures emit a warning on the test but do not affect pass/fail — graceful degradation.
 - MetricTree leaves cannot target companions (schema error). Companions are plot-only.
 - Commands: `companion add <test> <name> <path>` / `companion freeze <test> <name>`.
@@ -180,7 +180,7 @@ The single question this tool answers: *"does this time-dependent signal match t
 - Unit testing of simulated behavior (single-run pass/fail with tolerances).
 - Experiment / calibration regression via composable instances (experiment data gets its own regression test suite; sim tests soft_check against those baselines).
 - Cross-backend verification as a composable feature on top of capabilities.
-- Acceptance-criteria authoring via the interactive reporter (Phase 6 — reporter-as-IDE).
+- Acceptance-criteria authoring via a Python-side tool sharing the framework's figure layer and metric registry (D125). The report is read-only.
 - Rule-based recommender for starter criteria on new signals (Phase 7).
 - Deterministic and stochastic (via `Distribution` dataset + KS-style metrics) — stochastic is a later phase, but the abstraction accommodates it.
 
@@ -212,11 +212,11 @@ The single question this tool answers: *"does this time-dependent signal match t
 ## Forward-looking principles
 
 1. **The framework is the primitive; backends and metrics are plug-ins.** If we find ourselves writing backend-specific code in the framework core, we re-draw the line.
-2. **Capabilities over `isinstance`.** Feature availability is a runner-declared capability, not a type check.
+2. **Capabilities over `isinstance`.** Feature availability is a backend-declared capability, not a type check.
 3. **The baseline is the contract.** Tolerances, metric choices, and per-variable overrides live *with* the baseline so they travel with it — no separate config drift. (Already a strength of the current tool; preserve it.)
 4. **Clean breaks during development.** No backwards-compatibility shims while we are pre-1.0. Rename, restructure, remove as needed.
 5. **Modelica is the first consumer, not the reference model.** Design decisions must hold up when the source is an FMU or a CSV, not only when it's a `.mo` file.
 6. **Regression is the identity (D66).** The tool is a regression testing framework. Primary = stored regression anchor. Companions are visual-only. Soft_checks are warn-only. V&V against experiment is a composed use of the tool on experimental data, not a separate test shape.
 7. **Economy of tools (D66).** We do one thing well and emit well-shaped handoff artifacts. Calibration, RCA, parameter estimation, ML-backed ranking — those belong to downstream tools that consume our outputs. We do not grow into them.
-8. **Reporter is the authoring surface; CLI is the execution surface (D66).** No local servers, no live-apply. Download-patch + CLI-apply is the roundtrip.
-9. **Compute layers are UI-free (D66).** `ComparisonMode` and `SimulatorRunner` know nothing about presentation. Reporting is a parallel layer that derives UI from typed Config dataclasses + explicit overrides.
+8. **The line between the tiers is mutation (D125, superseding D66).** The report reads and computes nothing; the authoring tool writes, and emits a patch the CLI applies. The CLI is the execution surface.
+9. **Compute layers are UI-free (D66).** `ComparisonMode` and `Backend` know nothing about presentation. Reporting and authoring are parallel layers that derive their figures from geometry the metrics emit and their forms from typed Config dataclasses.

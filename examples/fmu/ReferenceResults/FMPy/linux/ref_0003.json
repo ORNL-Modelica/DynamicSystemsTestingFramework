@@ -1024,6 +1024,7 @@
     {
       "index": 1,
       "name": "x0",
+      "expression": "",
       "values": [
         2.0,
         1.9998,
@@ -2031,6 +2032,7 @@
     {
       "index": 2,
       "name": "x1",
+      "expression": "",
       "values": [
         0.0,
         -0.0394,

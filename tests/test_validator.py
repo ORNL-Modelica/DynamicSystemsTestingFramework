@@ -35,7 +35,12 @@ class TestValidatorRules:
                 "children": [
                     {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
                     {"metric": "nrmse", "variable": "v", "tolerance": 1e-3},
-                    {"metric": "range", "variable": "h", "min": -0.01, "max": 1.1},
+                    {
+                        "metric": "range",
+                        "variable": "h",
+                        "min_value": -0.01,
+                        "max_value": 1.1,
+                    },
                     {
                         "combinator": "warn",
                         "children": [
@@ -80,7 +85,7 @@ class TestValidatorRules:
             role_lookup_from_names(soft_checks=["experiment"]),
         )
         assert len(errors) == 1
-        assert "regression anchor" in errors[0].message
+        assert "a tree of warnings alone can never fail" in errors[0].message
 
     def test_soft_check_outside_warn_is_rejected(self):
         tree = _parse(
@@ -102,7 +107,7 @@ class TestValidatorRules:
             role_lookup_from_names(soft_checks=["experiment"]),
         )
         assert len(errors) == 1
-        assert "soft_check" in errors[0].message
+        assert "must sit under a 'warn'" in errors[0].message
         assert "warn" in errors[0].message
 
     def test_companion_target_is_rejected(self):
@@ -131,9 +136,7 @@ class TestValidatorRules:
         )
         assert len(errors) == 1
         assert "companion" in errors[0].message
-        assert (
-            "plot-only" in errors[0].message or "cannot be scored" in errors[0].message
-        )
+        assert "companions are only drawn" in errors[0].message
 
     def test_unknown_baseline_is_rejected(self):
         tree = _parse(
@@ -157,7 +160,7 @@ class TestValidatorRules:
         )
         errors = validate_tree(tree, role_lookup_from_names())
         assert len(errors) == 1
-        assert "unknown baseline" in errors[0].message
+        assert "is not a baseline of this test" in errors[0].message
         assert "typo-name" in errors[0].message
 
     def test_primary_inside_warn_counts_against_tree_level_rule(self):
@@ -173,7 +176,7 @@ class TestValidatorRules:
         )
         errors = validate_tree(tree, role_lookup_from_names())
         assert len(errors) == 1
-        assert "regression anchor" in errors[0].message
+        assert "a tree of warnings alone can never fail" in errors[0].message
 
     def test_multiple_errors_all_reported(self):
         """Validator reports all errors in one pass (not first-only)."""
@@ -270,3 +273,77 @@ class TestRoleLookup:
     def test_companion_recognized(self):
         lookup = role_lookup_from_names(companions=["rig"])
         assert lookup("rig") is BaselineRole.COMPANION
+
+
+class TestWeightedDirectionConsistency:
+    """`weighted` sums child scores against ONE threshold with ONE
+    direction — mixing lower-is-better (nrmse) with higher-is-better
+    (tube fraction) children is meaningless and must be rejected at
+    validation time (D101; the registry's score_direction is the
+    authority)."""
+
+    def _tree(self, children):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        return parse_metric_tree(
+            {
+                "combinator": "weighted",
+                "weights": [1.0] * len(children),
+                "threshold": 0.5,
+                "children": children,
+            }
+        )
+
+    def test_mixed_directions_rejected(self):
+        tree = self._tree(
+            [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                {"metric": "tube", "variable": "y", "tube_width_mode": "rel"},
+            ]
+        )
+        errors = validate_tree(tree, role_lookup_from_names())
+        msgs = [e.message for e in errors]
+        assert any("cannot mix lower-is-better" in m for m in msgs)
+        assert any("nrmse" in m and "tube" in m for m in msgs)
+
+    def test_uniform_directions_clean(self):
+        tree = self._tree(
+            [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                {"metric": "points", "variable": "y"},
+            ]
+        )
+        errors = validate_tree(tree, role_lookup_from_names())
+        assert not any("cannot mix lower-is-better" in e.message for e in errors)
+
+    def test_combinator_children_not_direction_checked(self):
+        """A combinator child's aggregate direction is ill-defined; the
+        eval layer already fails score-less children (warn) — only leaf
+        children participate in the direction check."""
+        tree = self._tree(
+            [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "tube", "variable": "y", "tube_width_mode": "rel"}
+                    ],
+                },
+            ]
+        )
+        errors = validate_tree(tree, role_lookup_from_names())
+        assert not any("cannot mix lower-is-better" in e.message for e in errors)
+
+
+def test_the_no_anchor_error_is_a_sentence_and_keeps_its_path():
+    """The tool shows ``message`` alone, beside the row it came from; the
+    CLI prints ``str()``, which keeps the location."""
+    tree = _parse(
+        {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "x"}]}
+    )
+    (err,) = validate_tree(tree, role_lookup_from_names())
+    assert err.message == (
+        "Every tree needs at least one criterion scored against the primary "
+        "baseline outside a 'warn': a tree of warnings alone can never fail."
+    )
+    assert str(err) == f"metrics: {err.message}"

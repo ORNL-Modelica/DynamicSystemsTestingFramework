@@ -1,7 +1,8 @@
 // Unified dashboard JS: filter / sort / fetch loop / refresh button.
 // Loaded inline via a Jinja include directive in dashboard.html.
-// Reads two top-level Jinja-injected constants: DASHBOARD_MODE
-// ('live' or 'final') and DASHBOARD_TOTAL (int).
+// Reads the top-level Jinja-injected constants: DASHBOARD_MODE
+// ('live' or 'final'), DASHBOARD_TOTAL (int) and STATUSES (the count
+// pills, [status class, word] in PILL_STATUSES' order).
 
 (function() {
   const tbody = document.getElementById('results-tbody');
@@ -102,62 +103,54 @@
   const activeStatuses = new Set();
   const colFilterValues = {};
 
-  // Maps the pill key (counter category) to the row data-status value(s)
-  // it should match. Most are direct; warnings is a cross-cut that
-  // checks any row with sortWarnings>0 regardless of pass/fail outcome.
-  const PILL_TO_STATUSES = {
-    queued:     ['queued'],
-    running:    ['running'],
-    passed:     ['pass'],
-    failed:     ['fail'],
-    sim_failed: ['sim-fail'],
-    no_ref:     ['no-ref'],
-    timed_out:  ['timed-out'],
-    warnings:   ['__warnings__'],   // sentinel handled below
-  };
-
-  // Convert a per-column filter string to a matcher. If the input contains
-  // glob metacharacters (* or ?), build a case-insensitive regex from the
-  // glob; otherwise fall back to plain case-insensitive substring match.
-  // This way "Freq" still works for naive users while *.Freq* / Lib.* etc.
-  // power-users get glob semantics matching the CLI's --filter behavior.
-  function patternMatcher(q) {
-    if (!q) return null;
-    if (!q.includes('*') && !q.includes('?')) {
-      const needle = q.toLowerCase();
-      return (val) => (val || '').toLowerCase().indexOf(needle) !== -1;
-    }
-    const escaped = q.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp('^' + escaped.replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
-    return (val) => regex.test(val || '');
-  }
+  // Every column filter compiles through DstfFilters (filters.js): text by
+  // substring, glob or (with .* on) regex; numbers by comparison or range.
+  // A number filter reads the row's data-sort-<key> — the raw value, never
+  // its display text. The .* and Aa toggles apply to every column at once.
+  const toggles = { regex: false, case: false };
 
   function statusMatches(rowStatus, sortWarnings) {
     if (activeStatuses.size === 0) return true;
+    // A pill carries its status class, the row's data-status; "warnings"
+    // is the cross-cut: any row with a warning, whatever its status.
     for (const pill of activeStatuses) {
-      const targets = PILL_TO_STATUSES[pill] || [pill];
-      for (const t of targets) {
-        if (t === '__warnings__' && sortWarnings > 0) return true;
-        if (t === rowStatus) return true;
-      }
+      if (pill === 'warnings' && sortWarnings > 0) return true;
+      if (pill === rowStatus) return true;
     }
     return false;
   }
 
   function applyFilters() {
     // Compile per-column matchers once per filter event (cheap; rebuilt
-    // when any input changes via the input event handler below).
-    const matchers = {};
-    for (const [col, q] of Object.entries(colFilterValues)) {
-      const m = patternMatcher(q);
-      if (m) matchers[col] = m;
-    }
+    // when any input or toggle changes). A query that cannot be read marks
+    // its input (red outline, the reason in its tooltip) and filters
+    // nothing.
+    const matchers = [];
+    colFilters.forEach(inp => {
+      const col = inp.dataset.colFilter;
+      const kind = inp.dataset.kind;
+      if (inp.dataset.help === undefined) inp.dataset.help = inp.title;
+      inp.classList.remove('bad');
+      inp.title = inp.dataset.help;
+      let pred = null;
+      try {
+        pred = DstfFilters.compile(kind, colFilterValues[col] || '', toggles);
+      } catch (e) {
+        if (!(e instanceof DstfFilters.BadFilter)) throw e;
+        inp.classList.add('bad');
+        inp.title = e.message;
+      }
+      if (pred) {
+        const attr = kind === 'number' ? 'sort' + col[0].toUpperCase() + col.slice(1) : col;
+        matchers.push(row => pred(row.dataset[attr]));
+      }
+    });
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       const sortWarnings = parseInt(row.dataset.sortWarnings || '0');
       let visible = statusMatches(row.dataset.status, sortWarnings);
       if (visible) {
-        for (const [col, match] of Object.entries(matchers)) {
-          if (!match(row.dataset[col])) {
+        for (const match of matchers) {
+          if (!match(row)) {
             visible = false;
             break;
           }
@@ -196,6 +189,23 @@
     applyFilters();
   };
 
+  const TOGGLE_BUTTONS = [['regex', 'toggle-regex'], ['case', 'toggle-case']];
+  function syncToggles() {
+    for (const [key, id] of TOGGLE_BUTTONS) {
+      const b = document.getElementById(id);
+      if (b) b.setAttribute('aria-pressed', toggles[key] ? 'true' : 'false');
+    }
+  }
+  for (const [key, id] of TOGGLE_BUTTONS) {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', () => {
+      toggles[key] = !toggles[key];
+      syncToggles();
+      applyFilters();
+      persistState();
+    });
+  }
+
   colFilters.forEach(inp => {
     inp.addEventListener('input', () => {
       colFilterValues[inp.dataset.colFilter] = inp.value;
@@ -233,10 +243,12 @@
       rows.sort((a, b) => {
         const ak = 'sort' + key[0].toUpperCase() + key.slice(1);
         let av = a.dataset[ak], bv = b.dataset[ak];
+        // An empty sort value (the row has no value there) sorts last in
+        // both directions.
+        const ae = av === undefined || av === '', be = bv === undefined || bv === '';
+        if (ae || be) return ae === be ? 0 : (ae ? 1 : -1);
         if (kind === 'num') {
           av = parseFloat(av); bv = parseFloat(bv);
-          if (isNaN(av)) av = -Infinity;
-          if (isNaN(bv)) bv = -Infinity;
         } else {
           av = (av || '').toLowerCase();
           bv = (bv || '').toLowerCase();
@@ -277,16 +289,7 @@
   // an outcome appears. Total acts as the clear-all button.
   function renderCounters(counts, total) {
     const cn = document.getElementById('counters');
-    const order = [
-      ['queued',     'queued'],
-      ['running',    'running'],
-      ['passed',     'passed'],
-      ['failed',     'failed'],
-      ['sim_failed', 'sim failed'],
-      ['no_ref',     'no baseline'],
-      ['timed_out',  'timed out'],
-      ['warnings',   'warnings'],
-    ];
+    const order = STATUSES.concat([['warnings', 'warnings']]);
     let html = '';
     for (const [k, label] of order) {
       const n = counts[k] || 0;
@@ -305,33 +308,27 @@
 
     const bar = document.getElementById('progress-bar');
     const pct = (n) => total ? (n / total * 100).toFixed(2) : 0;
+    // A simulated row with no verdict yet is "pending": its segment moves
+    // the live bar while tests finish.
     bar.innerHTML =
-      `<span class="b-passed" style="width:${pct(counts.passed || 0)}%"></span>` +
-      `<span class="b-failed" style="width:${pct(counts.failed || 0)}%"></span>` +
-      `<span class="b-timed_out" style="width:${pct(counts.timed_out || 0)}%"></span>` +
+      `<span class="b-pass" style="width:${pct(counts.pass || 0)}%"></span>` +
+      `<span class="b-fail" style="width:${pct((counts.fail || 0) + (counts['sim-fail'] || 0))}%"></span>` +
+      `<span class="b-timed-out" style="width:${pct(counts['timed-out'] || 0)}%"></span>` +
+      `<span class="b-pending" style="width:${pct(counts.pending || 0)}%"></span>` +
       `<span class="b-running" style="width:${pct(counts.running || 0)}%"></span>`;
   }
 
   // Initial render from inline data (read from data-* on tbody rows).
-  // Rows use the filter-vocab status_class (pass/fail/sim-fail/no-ref/
-  // timed-out/queued/running). The counter keys use underscored variants
-  // so the JS class names + CSS rules stay sane. Warnings cross-cuts
-  // status — any row with sortWarnings>0 contributes regardless of its
-  // pass/fail outcome.
+  // Counts are keyed by status class — the row's data-status and the
+  // pill's key — plus "pending" (simulated, no verdict yet: in no pill,
+  // only in the bar). Warnings cross-cuts status — any row with
+  // sortWarnings>0 contributes regardless of its outcome.
   function initialCountsFromRows() {
-    const counts = {
-      queued: 0, running: 0, passed: 0, failed: 0,
-      sim_failed: 0, no_ref: 0, timed_out: 0, warnings: 0,
-    };
+    const counts = { pending: 0, warnings: 0 };
+    for (const [cls] of STATUSES) counts[cls] = 0;
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       const s = row.dataset.status;
-      if      (s === 'pass')      counts.passed++;
-      else if (s === 'fail')      counts.failed++;
-      else if (s === 'sim-fail')  counts.sim_failed++;
-      else if (s === 'no-ref')    counts.no_ref++;
-      else if (s === 'timed-out') counts.timed_out++;
-      else if (s === 'queued')    counts.queued++;
-      else if (s === 'running')   counts.running++;
+      if (s in counts && s !== 'warnings') counts[s]++;
       if (parseInt(row.dataset.sortWarnings || '0') > 0) counts.warnings++;
     });
     return counts;
@@ -373,13 +370,27 @@
     syncSelectionUI();
   };
 
+  // RERUN_PREFIX carries the global flags only (`dstf --config <cfg>`); the
+  // subcommand comes from the #cmd-kind menu, so the builder is the one place
+  // that decides what `dstf` is actually asked to do. --merge/--report belong
+  // to a plain `run`: `compare` never re-simulates (nothing to merge) and
+  // `--rerun` already selects its own scope.
+  function commandKind() {
+    const sel = document.getElementById('cmd-kind');
+    return (sel && sel.value) || 'run';
+  }
   function buildRerunCommand(modelIds) {
     if (!modelIds.length) return '';
-    if (modelIds.length <= 3) {
-      return `${RERUN_PREFIX} --filter "${modelIds.join(',')}" --merge --report`;
-    }
-    return `${RERUN_PREFIX} --filter @selected.txt --merge --report`;
+    const kind = commandKind();
+    const filter = modelIds.length <= 3
+      ? `--filter "${modelIds.join(',')}"`
+      : '--filter @selected.txt';
+    const tail = kind === 'run' ? ' --merge --report' : '';
+    return `${RERUN_PREFIX} ${kind} ${filter}${tail}`;
   }
+  window.syncCommand = function() {
+    cmdOut.value = buildRerunCommand(selectedRows().map(r => r.dataset.model));
+  };
 
   function syncSelectionUI() {
     const sel = selectedRows();
@@ -445,7 +456,10 @@
   // its own scope. Failures (private mode, quota, blocked) fall through
   // silently — the dashboard still works without persistence, just resets
   // each tick.
-  const STATE_KEY = 'dstf-dashboard-v1:' + location.pathname;
+  // v2: the pills and counts are keyed by status class; a v1 state named
+  // pill keys ("passed", "failed", ...) no pill carries, and restoring one
+  // hid every row.
+  const STATE_KEY = 'dstf-dashboard-v2:' + location.pathname;
 
   function loadState() {
     try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; }
@@ -456,6 +470,12 @@
       localStorage.setItem(STATE_KEY, JSON.stringify({
         activeStatuses: Array.from(activeStatuses),
         colFilterValues: { ...colFilterValues },
+        toggles: { ...toggles },
+        // Stamped with the report the selection was made in — see the
+        // restore step for why. Filters / sort / widths are user
+        // preferences and deliberately carry across reports; a selection
+        // is a claim about a specific run's rows and does not.
+        selectionKey: REPORT_KEY,
         selection: selectedRows().map(r => r.dataset.model),
         sort: lastSorted.th
           ? { key: lastSorted.th.dataset.key, dir: lastSorted.dir }
@@ -488,19 +508,34 @@
       for (const k of s.activeStatuses) activeStatuses.add(k);
       syncPillStates();
     }
-    if (s.colFilterValues && typeof s.colFilterValues === 'object') {
-      Object.assign(colFilterValues, s.colFilterValues);
-      colFilters.forEach(inp => {
-        const k = inp.dataset.colFilter;
-        if (s.colFilterValues[k]) inp.value = s.colFilterValues[k];
-      });
+    // Only the filters of columns this page has (DstfFilters.known): a
+    // column renamed since the view was stored has no input to show it in.
+    Object.assign(colFilterValues, DstfFilters.known(
+      s.colFilterValues, Array.from(colFilters, inp => inp.dataset.colFilter)));
+    colFilters.forEach(inp => {
+      const k = inp.dataset.colFilter;
+      if (colFilterValues[k]) inp.value = colFilterValues[k];
+    });
+    // The toggles BEFORE applyFilters below: a restored regex filter is
+    // compiled as a regex, not as the text it would read without .* on.
+    if (s.toggles && typeof s.toggles === 'object') {
+      toggles.regex = !!s.toggles.regex;
+      toggles.case = !!s.toggles.case;
+      syncToggles();
     }
     // Re-render counters so the active class on pills reflects the
     // restored set (initial render happened before restore).
     renderCounters(initialCountsFromRows(), DASHBOARD_TOTAL);
     applyFilters();
 
-    if (s.selection && Array.isArray(s.selection)) {
+    // Selection is restored ONLY when it was made in THIS report. The
+    // storage key is location.pathname, which every run into the same
+    // work_dir shares, so a prior run's selection used to be re-applied
+    // to whichever of its models still existed — and then rode silently
+    // into the rerun command the user built from a fresh selection here.
+    // A selection stamped with any other report (or with none, from a
+    // page written before this stamp existed) is dropped on load.
+    if (s.selection && Array.isArray(s.selection) && s.selectionKey === REPORT_KEY) {
       const wantSet = new Set(s.selection);
       Array.from(tbody.querySelectorAll('tr')).forEach(row => {
         if (wantSet.has(row.dataset.model)) setRowSelected(row, true);

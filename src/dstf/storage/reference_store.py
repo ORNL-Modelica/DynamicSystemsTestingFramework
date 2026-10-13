@@ -2,78 +2,102 @@
 
 Reference files (ref_NNNN.json) are the source of truth. Each file contains
 model_id, test_id, status, date_added, and last_updated metadata. An in-memory
-index is built by scanning ref files — no persistent manifest file needed.
+index is built by scanning ref files — no persistent manifest file needed
+(:mod:`dstf.storage.ref_index`).
 
-Phase 1.7a: a `Baseline` view is exposed alongside the raw-dict API. Today the
-on-disk format is flat (one implicit baseline per file); the view synthesizes
-a single baseline named ``"primary"`` from the flat fields. Phase 1.7b will
-write the new format (``baselines: {name: {...}}``) and this reader will
-present both formats through the same view API.
+A :class:`~dstf.storage.baseline.Baseline` view is exposed alongside the raw-dict
+API. The on-disk format is flat — one baseline per file — and the view
+synthesizes a single baseline named ``"primary"`` from those fields. Additional
+named baselines are separate files under ``soft_checks/ref_NNNN/<name>.json``
+(D66); that CRUD lives in :mod:`dstf.storage.roles`.
 """
 
 import csv
+import io
 import json
 import logging
-import os
-import re
 import shutil
-import time
-import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from ..backends import TestResult
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..simulators import TestResult
+from .baseline import PRIMARY_BASELINE, Baseline
+from .ref_index import RefIndex, _atomic_write_text
+from .roles import _companion_dir, _RolesMixin, _soft_check_dir
 
 logger = logging.getLogger(__name__)
 
-#: Name of the default (and, for legacy flat files, only) baseline.
-PRIMARY_BASELINE = "primary"
+
+#: Significant digits a value is written with, by the precision it has:
+#: the fewest that identify EVERY number of that precision, so a stored
+#: value is the run's own. IEEE 754 binary32 needs at most 9 decimal digits
+#: to round-trip, binary64 at most 17. (A double was written with 15 — one
+#: more often than not another double than the run's, and a baseline scored
+#: 6.7e-10 against its own run on a signal of range 0.4 at 130450.) JSON
+#: then writes each at its SHORTEST spelling that reads back the same:
+#: `0.1` stays `0.1`.
+SINGLE_DIGITS = 9
+DOUBLE_DIGITS = 17
+
+#: ``sampling.precision`` of a reference JSON whose time and value arrays
+#: were ALL single precision in the run it was accepted from.
+SINGLE = "single"
+DOUBLE = "double"
 
 
-@dataclass(frozen=True)
-class Baseline:
-    """A single named baseline extracted from a reference file.
+def read_reference_file(path: Path) -> dict:
+    """A reference-shape JSON file as the dict it holds — THE reader of a
+    baseline's arrays (``time``, each variable's ``values``): a primary
+    reference of this partition (:meth:`ReferenceStore.get_reference`), of
+    a sibling one (the report's overlays), a soft check's file, a JSON
+    companion's (another library's reference file, or a frozen copy) and
+    the source of an ``import-baseline`` all come through here. ``OSError`` and
+    ``json.JSONDecodeError`` are the caller's: each says its own thing
+    about a file it could not read.
 
-    Phase 1.7a: populated either from the new ``baselines: {name: {...}}``
-    schema, or synthesized from a legacy flat reference file. Readers can
-    treat both the same way. See docs/architecture.md "Forward: multiple
-    named baselines".
-    """
+    A file that says its run was single precision (``sampling.precision``)
+    is read back THROUGH single precision: each stored number becomes the
+    nearest float32, as a Python float. Those are the run's own values, bit
+    for bit — the 9 digits written identify a float32, not the double a
+    JSON reader would otherwise make of them, which is a different number
+    than the one the run holds (and scored a baseline against its own run
+    at up to 6e-2 where the signal's range was small beside its level).
+    The arrays stay lists of floats: nothing downstream sees another type.
+    A file without the field is read exactly as it always was."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    sampling = data.get("sampling") if isinstance(data, dict) else None
+    if isinstance(sampling, dict) and sampling.get("precision") == SINGLE:
+        if isinstance(data.get("time"), list):
+            data["time"] = _through_single(data["time"])
+        for entry in data.get("variables") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("values"), list):
+                entry["values"] = _through_single(entry["values"])
+    return data
 
-    #: Baseline name (e.g. ``"primary"``, ``"experiment"``, ``"analytical"``).
-    name: str
-    #: Shared time vector (all variables in this baseline share one time grid).
-    time: list[float]
-    #: Variable entries: ``[{"index", "name", "values"}, ...]``.
-    variables: list[dict]
-    #: Diagnostic variable entries (same shape as ``variables``).
-    diagnostics: list[dict] = field(default_factory=list)
-    #: Simulation parameters that produced this baseline.
-    simulation: dict = field(default_factory=dict)
-    #: Comparison configuration (tolerance, variable_overrides).
-    comparison: dict = field(default_factory=dict)
-    #: Statistics captured at baseline-acceptance time.
-    statistics: dict = field(default_factory=dict)
-    #: Provenance metadata: origin, captured_at, simulator, os, notes,
-    #: citation, plus arbitrary user metadata. For legacy flat files this
-    #: is synthesized from ``date_added`` / ``last_updated``.
-    provenance: dict = field(default_factory=dict)
+
+def _through_single(values: list) -> list:
+    """``values`` as the float32 nearest each, widened back: Python floats
+    that ARE single-precision numbers. Anything that is not all numbers is
+    returned as it is — what such a list means is its reader's to say."""
+    try:
+        return np.asarray(values, dtype=np.float32).astype(np.float64).tolist()
+    except (TypeError, ValueError):
+        return values
 
 
 def _baseline_from_flat(data: dict) -> Baseline:
-    """Synthesize a ``"primary"`` baseline from a legacy flat reference dict.
+    """Synthesize the ``"primary"`` baseline from a flat reference dict.
 
-    The legacy format has fields (``time``, ``variables``, ``comparison``, ...)
-    at the top level of the ref JSON. This adapter lifts them into a Baseline
-    view so readers can target a single API across schema versions.
+    A ref file keeps its baseline fields (``time``, ``variables``,
+    ``comparison``, ...) at the top level. This adapter lifts them into a
+    Baseline view so readers target one API for primary and soft_checks alike.
     """
-    provenance: dict[str, Any] = {"origin": "legacy-flat"}
+    provenance: dict[str, Any] = {"origin": "flat"}
     if "date_added" in data:
         provenance["captured_at"] = data["date_added"]
     if "last_updated" in data and data.get("last_updated") != data.get("date_added"):
@@ -92,321 +116,25 @@ def _baseline_from_flat(data: dict) -> Baseline:
 
 
 def _extract_baselines(data: dict) -> dict[str, Baseline]:
-    """Return all baselines in a reference file, keyed by name.
+    """Return the ``"primary"`` baseline of a reference file, keyed by name.
 
-    Ref files use a **hybrid schema**:
-
-    * The ``"primary"`` baseline is always stored as flat top-level fields
-      (``time``, ``variables``, ``simulation``, ``comparison``,
-      ``statistics``, ``diagnostics``). This preserves compatibility with
-      every existing reader and every existing ref file.
-    * Optional *additional* named baselines (``experiment``, ``analytical``,
-      user-defined) live under a top-level ``baselines`` map whose entries
-      have the same per-baseline shape as the flat primary.
-
-    A file with only flat fields is read as ``{"primary": Baseline}``.
-    A file that also carries ``baselines`` is read as
-    ``{"primary": ..., <additional>: ..., ...}``. ``primary`` in a
-    ``baselines`` map is not legal — the flat fields are primary.
+    A ref file carries exactly one baseline: the primary, stored as flat
+    top-level fields (``time``, ``variables``, ``simulation``,
+    ``comparison``, ``statistics``, ``diagnostics``). Named baselines live
+    in the store's ``soft_checks/ref_NNNN/<name>.json`` subdir (D66) and are
+    merged in by :meth:`ReferenceStore.get_baselines`, not read from here.
     """
-    out: dict[str, Baseline] = {PRIMARY_BASELINE: _baseline_from_flat(data)}
-
-    extras = data.get("baselines")
-    if isinstance(extras, dict):
-        for name, entry in extras.items():
-            if name == PRIMARY_BASELINE:
-                # Flat fields are authoritative for primary; ignore any
-                # accidental primary entry under baselines.
-                logger.warning(
-                    "Ref file has a 'primary' entry under 'baselines' — "
-                    "ignoring; the flat top-level fields are the primary baseline."
-                )
-                continue
-            out[name] = Baseline(
-                name=name,
-                time=entry.get("time", []),
-                variables=entry.get("variables", []),
-                diagnostics=entry.get("diagnostics", []),
-                simulation=entry.get("simulation", {}),
-                comparison=entry.get("comparison", {}),
-                statistics=entry.get("statistics", {}),
-                provenance=entry.get("provenance", {}),
-            )
-    return out
+    return {PRIMARY_BASELINE: _baseline_from_flat(data)}
 
 
-# Pattern matching ref_NNNN.json filenames
-_REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
+class ReferenceStore(_RolesMixin):
+    """Manages per-test JSON reference files.
 
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Atomically replace ``path`` with ``text``.
-
-    review 2026-07-06 (finding 31): all reference writes were plain
-    ``write_text`` — a Ctrl-C mid-accept corrupted the baseline, the next
-    scan silently dropped it, and ``next_id()`` re-allocated its ID to a
-    different model. Same tmp-file + replace pattern as
-    ``dashboard_render._atomic_write`` (unique tmp name in the same
-    directory, retry loop for Windows file locking), except this variant
-    always raises on failure — a silently stale baseline is a
-    data-integrity bug, not a cosmetic one.
+    The soft_check / companion CRUD (``add_soft_check``, ``get_companions``,
+    ``freeze_companion``, ...) is inherited from
+    :class:`~dstf.storage.roles._RolesMixin`; it reaches back only through
+    ``ref_dir`` and :meth:`_ref_file_for_model`.
     """
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        last_err: OSError | None = None
-        for delay in (0, 0.05, 0.1, 0.2, 0.5):
-            if delay:
-                time.sleep(delay)
-            try:
-                tmp.replace(path)
-                return
-            except OSError as e:
-                last_err = e
-        assert last_err is not None
-        raise last_err
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
-
-
-# review 2026-07-06 (finding 35): soft_check/companion names are interpolated
-# into file paths (``soft_checks/ref_NNNN/<name>.json``) — an unvalidated name
-# containing a separator or ".." writes outside the role dir and becomes
-# invisible to list/remove/``against``. Windows-illegal characters are also
-# rejected because reference partitions are shared across OSes.
-_ROLE_NAME_FORBIDDEN = ("/", "\\", "..", ":", "*", "?", '"', "<", ">", "|", "\0")
-
-
-def _validate_role_name(name: str, role: str) -> None:
-    """Reject soft_check/companion names that differ from their filename-safe
-    form, with a clear error naming the offending character."""
-    if not name or not isinstance(name, str):
-        raise ValueError(f"{role} name must be a non-empty string")
-    for token in _ROLE_NAME_FORBIDDEN:
-        if token in name:
-            raise ValueError(
-                f"{role} name {name!r} contains {token!r} — names must be "
-                f"plain filenames (no path separators, '..', or characters "
-                f"illegal on Windows)"
-            )
-    if name == "." or name != name.strip():
-        raise ValueError(
-            f"{role} name {name!r} is not filename-safe (leading/trailing "
-            f"whitespace or '.' are not allowed)"
-        )
-
-
-def _ref_stem(ref_file: Path) -> str:
-    """Extract ``ref_NNNN`` stem from ``<ref_dir>/ref_NNNN.json``."""
-    return ref_file.stem
-
-
-def _soft_check_dir(ref_dir: Path, ref_file: Path) -> Path:
-    return ref_dir / "soft_checks" / _ref_stem(ref_file)
-
-
-def _companion_dir(ref_dir: Path, ref_file: Path) -> Path:
-    return ref_dir / "companions" / _ref_stem(ref_file)
-
-
-_COMPANION_FORMAT_EXT = {"csv": ".csv", "json": ".json"}
-
-
-def _infer_companion_format(path: str) -> str:
-    """Infer companion format from file extension. Defaults to JSON."""
-    lower = path.lower()
-    if lower.endswith(".csv"):
-        return "csv"
-    if lower.endswith(".json"):
-        return "json"
-    return "json"
-
-
-def _companion_extension(fmt: str) -> str:
-    """File extension for frozen-companion data files."""
-    return _COMPANION_FORMAT_EXT.get(fmt, ".json")
-
-
-@dataclass(frozen=True)
-class Companion:
-    """External or frozen reference data used as a plot-only overlay.
-
-    Companions are never scored against (D66) — they exist purely as
-    visual context (experimental data, analytical solutions, rig logs).
-    ``kind="external"`` stores only a path pointer; the file may move
-    or disappear and the reporter degrades gracefully.
-    ``kind="frozen"`` has been copied into ref storage (data_file sits
-    next to this metadata) and is stable across repo moves.
-    """
-
-    name: str
-    kind: str  # "external" | "frozen"
-    format: str  # "csv" | "json"
-    path: str | None = None  # absolute path for external
-    data_file: str | None = None  # basename for frozen (sibling of metadata)
-    provenance: dict = field(default_factory=dict)
-
-
-class RefIndex:
-    """In-memory index mapping model IDs to ref files.
-
-    Built by scanning ref_NNNN.json files in the reference directory.
-    No persistent manifest file — the ref files are the source of truth.
-    """
-
-    def __init__(self, ref_dir: Path):
-        self.ref_dir = ref_dir
-        self._by_model: dict[str, str] = {}  # model_id -> test_id
-        self._by_id: dict[str, dict] = {}  # test_id -> {model_id, status}
-        self._loaded = False
-
-    def _scan(self):
-        """Scan ref files and build the in-memory index."""
-        self._by_model.clear()
-        self._by_id.clear()
-
-        if not self.ref_dir.exists():
-            self._loaded = True
-            return
-
-        for ref_file in sorted(self.ref_dir.glob("ref_*.json")):
-            m = _REF_FILE_PATTERN.match(ref_file.name)
-            if not m:
-                continue
-            test_id = m.group(1)
-            try:
-                # Read only the first few KB — metadata is at the top
-                text = ref_file.read_text(encoding="utf-8")
-                data = json.loads(text)
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Skipping unreadable ref file %s: %s", ref_file.name, e)
-                continue
-
-            model_id = data.get("model_id")
-            if not model_id:
-                logger.warning("Ref file %s has no model_id — skipping", ref_file.name)
-                continue
-
-            status = data.get("status", "active")
-            self._by_id[test_id] = {"model_id": model_id, "status": status}
-            if status != "obsolete":
-                existing = self._by_model.get(model_id)
-                if existing is not None and existing != test_id:
-                    # review 2026-07-06 (finding 36): two active ref files
-                    # claim the same model_id. Keep the LOWEST-numbered one —
-                    # deterministic, and the oldest is the established
-                    # baseline — and warn loudly instead of silent last-wins.
-                    keep = min(existing, test_id, key=int)
-                    drop = max(existing, test_id, key=int)
-                    logger.warning(
-                        "Duplicate model_id %r in %s and %s — keeping the "
-                        "lowest-numbered file (%s); mark the other obsolete "
-                        "or delete it.",
-                        model_id,
-                        RefIndex.ref_filename(keep),
-                        RefIndex.ref_filename(drop),
-                        RefIndex.ref_filename(keep),
-                    )
-                    self._by_model[model_id] = keep
-                else:
-                    self._by_model[model_id] = test_id
-
-        self._loaded = True
-
-    def _ensure_loaded(self):
-        if not self._loaded:
-            self._scan()
-
-    def get_id(self, model_id: str) -> str | None:
-        """Look up the numeric ID for a model. Returns None if not found."""
-        self._ensure_loaded()
-        return self._by_model.get(model_id)
-
-    def get_model_id(self, test_id: str) -> str | None:
-        """Look up the model ID for a numeric test ID."""
-        self._ensure_loaded()
-        entry = self._by_id.get(test_id)
-        if entry and entry["status"] != "obsolete":
-            return entry["model_id"]
-        return None
-
-    def next_id(self) -> str:
-        """Return the next available numeric ID."""
-        self._ensure_loaded()
-        if not self._by_id:
-            return "0001"
-        max_id = max(int(k) for k in self._by_id)
-        return f"{max_id + 1:04d}"
-
-    def register(self, model_id: str) -> str:
-        """Register a model and return its ID. Reuses existing ID if already registered.
-
-        review 2026-07-06 (findings 32+33): new IDs are claimed by
-        *exclusively creating* the ref file on disk (``open(..., "x")``).
-        A stale in-memory index (e.g. after ``cleanup_obsolete`` freed the
-        highest ID) or a concurrent ``--accept`` in another process could
-        both hand out an already-taken ID — the O_EXCL create makes the
-        claim atomic; on collision we rescan and move to the next free ID
-        instead of silently overwriting another model's baseline.
-        """
-        existing = self.get_id(model_id)
-        if existing is not None:
-            return existing
-
-        self.ref_dir.mkdir(parents=True, exist_ok=True)
-        candidate = int(self.next_id())
-        while True:
-            test_id = f"{candidate:04d}"
-            ref_file = self.ref_dir / self.ref_filename(test_id)
-            try:
-                with open(ref_file, "x", encoding="utf-8") as f:
-                    # Minimal valid claim stub — store_reference atomically
-                    # replaces it with the full baseline immediately after.
-                    json.dump(
-                        {"model_id": model_id, "test_id": test_id, "status": "active"},
-                        f,
-                    )
-            except FileExistsError:
-                # ID already taken on disk (concurrent writer, or a file our
-                # stale index missed). Rescan, then move past the collision —
-                # the max() guard guarantees progress even when the colliding
-                # file is unreadable and therefore invisible to next_id().
-                self._scan()
-                claimed = self.get_id(model_id)
-                if claimed is not None:
-                    return claimed  # another process registered this model
-                candidate = max(candidate + 1, int(self.next_id()))
-                continue
-            self._by_id[test_id] = {"model_id": model_id, "status": "active"}
-            self._by_model[model_id] = test_id
-            return test_id
-
-    def active_tests(self) -> dict[str, str]:
-        """Return dict of test_id -> model_id for all active (non-obsolete, non-skip) tests."""
-        self._ensure_loaded()
-        return {
-            tid: entry["model_id"]
-            for tid, entry in self._by_id.items()
-            if entry["status"] not in ("obsolete",)
-        }
-
-    def all_tests(self) -> dict[str, dict]:
-        """Return dict of test_id -> {model_id, status} for all tests."""
-        self._ensure_loaded()
-        return dict(self._by_id)
-
-    @staticmethod
-    def ref_filename(test_id: str) -> str:
-        """Reference filename for a given numeric test ID."""
-        return f"ref_{test_id}.json"
-
-
-class ReferenceStore:
-    """Manages per-test JSON reference files."""
 
     def __init__(self, config: Config):
         self.config = config
@@ -427,6 +155,11 @@ class ReferenceStore:
             return None
         return self.ref_dir / RefIndex.ref_filename(test_id)
 
+    def reference_file(self, model_id: str) -> Path | None:
+        """The file a model's baseline is read from — what an error about
+        its contents names — or None for a model with none."""
+        return self._ref_file_for_model(model_id)
+
     def get_reference(self, model_id: str) -> dict | None:
         """Load reference data for a model. Returns None if not found.
 
@@ -438,10 +171,22 @@ class ReferenceStore:
         if ref_file is None or not ref_file.exists():
             return None
         try:
-            return json.loads(ref_file.read_text(encoding="utf-8"))
+            data = read_reference_file(ref_file)
         except (json.JSONDecodeError, OSError) as e:
             logger.error("Failed to read reference %s: %s", ref_file, e)
             return None
+        if isinstance(data.get("baselines"), dict):
+            # Old data, not old code: named baselines are read only from
+            # soft_checks/ now. The key is ignored here and dropped the next
+            # time this file is written.
+            logger.warning(
+                "%s carries a top-level 'baselines' key — it is ignored. "
+                "Re-add those baselines as soft_checks: "
+                "`dstf import-baseline %s soft_check <name> <source>`.",
+                ref_file,
+                model_id,
+            )
+        return data
 
     def get_baselines(self, model_id: str) -> dict[str, Baseline]:
         """Return the primary baseline plus any registered soft_checks.
@@ -455,8 +200,6 @@ class ReferenceStore:
         data = self.get_reference(model_id)
         if data is None:
             return {}
-        # Primary + any pre-migration flat-baselines (for transition).
-        # Post-migration the flat-baselines dict is empty.
         out = _extract_baselines(data)
         out.update(self.get_soft_checks(model_id))
         return out
@@ -477,331 +220,6 @@ class ReferenceStore:
         """Return the names of baselines available for a model."""
         return list(self.get_baselines(model_id).keys())
 
-    # ------------------------------------------------------------------
-    # Soft_checks (D66) — another regression system's primary imported
-    # here, or the output of a cross-backend chain (e.g. dymola-via-fmpy).
-    # Scored via ``against: "<name>"`` but validator enforces ``warn``
-    # wrapping — soft_checks never hard-fail.
-    # ------------------------------------------------------------------
-
-    def _soft_check_dir_for(self, model_id: str) -> Path | None:
-        ref_file = self._ref_file_for_model(model_id)
-        if ref_file is None:
-            return None
-        return _soft_check_dir(self.ref_dir, ref_file)
-
-    def get_soft_checks(self, model_id: str) -> dict[str, Baseline]:
-        """Return all soft_checks registered for a model.
-
-        Empty dict if the model has no primary baseline or no
-        soft_checks are registered.
-        """
-        sc_dir = self._soft_check_dir_for(model_id)
-        if sc_dir is None or not sc_dir.is_dir():
-            return {}
-        out: dict[str, Baseline] = {}
-        for sc_file in sorted(sc_dir.glob("*.json")):
-            name = sc_file.stem
-            try:
-                entry = json.loads(sc_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Skipping unreadable soft_check %s: %s", sc_file, e)
-                continue
-            out[name] = Baseline(
-                name=name,
-                time=entry.get("time", []),
-                variables=entry.get("variables", []),
-                diagnostics=entry.get("diagnostics", []),
-                simulation=entry.get("simulation", {}),
-                comparison=entry.get("comparison", {}),
-                statistics=entry.get("statistics", {}),
-                provenance=entry.get("provenance", {}),
-            )
-        return out
-
-    def add_soft_check(
-        self,
-        model_id: str,
-        name: str,
-        time: list[float],
-        variables: list[dict],
-        *,
-        diagnostics: list[dict] | None = None,
-        provenance: dict | None = None,
-        simulation: dict | None = None,
-        statistics: dict | None = None,
-        overwrite: bool = True,
-    ) -> bool:
-        """Register a soft_check baseline for a model.
-
-        The model must already have a primary baseline on disk.
-        Name collision with an existing companion is rejected.
-
-        Returns True on write, False if overwrite=False and the name exists.
-        """
-        if name == PRIMARY_BASELINE:
-            raise ValueError(
-                "'primary' is reserved for the stored simulation result; "
-                "soft_checks live alongside, not in place of, primary."
-            )
-        # review 2026-07-06 (finding 35): names become filenames — validate.
-        _validate_role_name(name, "soft_check")
-
-        ref_file = self._ref_file_for_model(model_id)
-        if ref_file is None or not ref_file.exists():
-            raise FileNotFoundError(
-                f"No primary baseline for {model_id!r}. Run the test with "
-                f"--accept first, then add soft_checks."
-            )
-
-        companions = self.get_companions(model_id)
-        if name in companions:
-            raise ValueError(
-                f"name {name!r} is already registered as a companion for "
-                f"{model_id!r}; companions and soft_checks share a namespace."
-            )
-
-        sc_dir = _soft_check_dir(self.ref_dir, ref_file)
-        sc_file = sc_dir / f"{name}.json"
-        if not overwrite and sc_file.exists():
-            return False
-
-        entry: dict[str, Any] = {
-            "time": list(time),
-            "variables": list(variables),
-        }
-        if diagnostics:
-            entry["diagnostics"] = list(diagnostics)
-        if simulation:
-            entry["simulation"] = dict(simulation)
-        if statistics:
-            entry["statistics"] = dict(statistics)
-        if provenance:
-            entry["provenance"] = dict(provenance)
-
-        sc_dir.mkdir(parents=True, exist_ok=True)
-        # review 2026-07-06 (finding 31): atomic — no partial soft_check files.
-        _atomic_write_text(sc_file, json.dumps(entry, indent=2) + "\n")
-        return True
-
-    def remove_soft_check(self, model_id: str, name: str) -> bool:
-        """Delete a soft_check. Returns True if removed, False if not found."""
-        # review 2026-07-06 (finding 35): reject path-escaping names here too.
-        _validate_role_name(name, "soft_check")
-        sc_dir = self._soft_check_dir_for(model_id)
-        if sc_dir is None:
-            return False
-        sc_file = sc_dir / f"{name}.json"
-        if not sc_file.exists():
-            return False
-        sc_file.unlink()
-        # Remove empty parent directory.
-        try:
-            sc_dir.rmdir()
-        except OSError:
-            pass
-        return True
-
-    # ------------------------------------------------------------------
-    # Companions (D66) — external CSV / JSON / analytical data pointed
-    # to by file path; plot-only overlays; never scored against. Stored
-    # as ``kind="external"`` (path pointer) or ``kind="frozen"``
-    # (copied into ref storage).
-    # ------------------------------------------------------------------
-
-    def _companion_dir_for(self, model_id: str) -> Path | None:
-        ref_file = self._ref_file_for_model(model_id)
-        if ref_file is None:
-            return None
-        return _companion_dir(self.ref_dir, ref_file)
-
-    def get_companions(self, model_id: str) -> dict[str, Companion]:
-        """Return all registered companions for a model (metadata only).
-
-        Does NOT read or validate the underlying data file — reporter
-        consumers are responsible for loading with graceful degradation.
-        """
-        co_dir = self._companion_dir_for(model_id)
-        if co_dir is None or not co_dir.is_dir():
-            return {}
-        out: dict[str, Companion] = {}
-        for meta_file in sorted(co_dir.glob("*.json")):
-            name = meta_file.stem
-            try:
-                entry = json.loads(meta_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning(
-                    "Skipping unreadable companion meta %s: %s", meta_file, e
-                )
-                continue
-            # Skip the sibling data file if it has a .json data extension
-            # — companion metadata is always the file matching the name
-            # with its `kind` declared inside. A frozen `.json` companion
-            # keeps its data in `<name>.data.json` (see add_companion).
-            if entry.get("kind") not in ("external", "frozen"):
-                continue
-            out[name] = Companion(
-                name=name,
-                kind=entry["kind"],
-                format=entry.get("format", "json"),
-                path=entry.get("path"),
-                data_file=entry.get("data_file"),
-                provenance=entry.get("provenance", {}),
-            )
-        return out
-
-    def add_companion(
-        self,
-        model_id: str,
-        name: str,
-        path: Path,
-        *,
-        format: str | None = None,
-        provenance: dict | None = None,
-    ) -> bool:
-        """Register an external file as a companion (pointer only, no copy).
-
-        The file must exist at registration (fail fast on a typo'd path);
-        if it disappears *later* the reporter degrades gracefully.
-
-        Args:
-            path: absolute or relative path to the external file. Relative
-                paths are resolved against the current working directory at
-                registration time; the resolved absolute path is stored.
-            format: ``"csv"`` or ``"json"``. Auto-detected from the file
-                extension if not given.
-        """
-        if name == PRIMARY_BASELINE:
-            raise ValueError("'primary' is reserved for the stored simulation result")
-        # review 2026-07-06 (finding 35): names become filenames — validate.
-        _validate_role_name(name, "companion")
-
-        ref_file = self._ref_file_for_model(model_id)
-        if ref_file is None or not ref_file.exists():
-            raise FileNotFoundError(
-                f"No primary baseline for {model_id!r}. Run the test with "
-                f"--accept first, then add companions."
-            )
-
-        soft_checks = self.get_soft_checks(model_id)
-        if name in soft_checks:
-            raise ValueError(
-                f"name {name!r} is already registered as a soft_check for "
-                f"{model_id!r}; companions and soft_checks share a namespace."
-            )
-
-        # review 2026-07-06 (finding 34): resolve against the CWD (what the
-        # user typed) and store the absolute path — the overlay loader used
-        # to resolve relative paths against ref_dir, so relative
-        # registrations always loaded as "missing". Companions are
-        # user-registered files, so a missing file is a registration error:
-        # fail fast here instead of surfacing a silent missing overlay later.
-        resolved = Path(path).resolve()
-        if not resolved.exists():
-            raise FileNotFoundError(
-                f"companion file does not exist: {path} "
-                f"(resolved to {resolved}) — companions must point at an "
-                f"existing file at registration time"
-            )
-        path_str = str(resolved)
-        fmt = format or _infer_companion_format(path_str)
-
-        meta: dict[str, Any] = {
-            "kind": "external",
-            "format": fmt,
-            "path": path_str,
-        }
-        if provenance:
-            meta["provenance"] = dict(provenance)
-
-        co_dir = _companion_dir(self.ref_dir, ref_file)
-        co_dir.mkdir(parents=True, exist_ok=True)
-        meta_file = co_dir / f"{name}.json"
-        # review 2026-07-06 (finding 31): atomic — no partial metadata files.
-        _atomic_write_text(meta_file, json.dumps(meta, indent=2) + "\n")
-        return True
-
-    def freeze_companion(self, model_id: str, name: str) -> bool:
-        """Copy an external companion's data into ref storage.
-
-        Converts ``kind="external"`` to ``kind="frozen"``. The data
-        file is copied beside the metadata as ``<name>.<ext>``
-        (preserving format). Already-frozen companions are a no-op.
-
-        Returns True on freeze, False if the companion is missing or
-        already frozen.
-        """
-        # review 2026-07-06 (finding 35): reject path-escaping names here too.
-        _validate_role_name(name, "companion")
-        companions = self.get_companions(model_id)
-        co = companions.get(name)
-        if co is None:
-            return False
-        if co.kind == "frozen":
-            logger.info("companion %r is already frozen; no-op", name)
-            return False
-
-        src = Path(co.path) if co.path else None
-        if src is None or not src.exists():
-            raise FileNotFoundError(
-                f"Cannot freeze companion {name!r}: source path {co.path!r} "
-                f"does not exist"
-            )
-
-        co_dir = self._companion_dir_for(model_id)
-        assert co_dir is not None
-        ext = _companion_extension(co.format)
-        data_basename = f"{name}{ext}"
-        dst = co_dir / data_basename
-        # review 2026-07-06 (finding 31): copy via tmp + replace so an
-        # interrupted freeze can't leave a truncated data file behind.
-        tmp_dst = dst.with_name(f"{dst.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-        try:
-            shutil.copyfile(src, tmp_dst)
-            tmp_dst.replace(dst)
-        finally:
-            try:
-                if tmp_dst.exists():
-                    tmp_dst.unlink()
-            except OSError:
-                pass
-
-        meta_file = co_dir / f"{name}.json"
-        meta: dict[str, Any] = {
-            "kind": "frozen",
-            "format": co.format,
-            "data_file": data_basename,
-        }
-        if co.provenance:
-            meta["provenance"] = dict(co.provenance)
-        # review 2026-07-06 (finding 31): atomic — no partial metadata files.
-        _atomic_write_text(meta_file, json.dumps(meta, indent=2) + "\n")
-        return True
-
-    def remove_companion(self, model_id: str, name: str) -> bool:
-        """Delete a companion registration. For frozen companions the
-        associated data file is also removed. Returns True if removed."""
-        # review 2026-07-06 (finding 35): reject path-escaping names here too.
-        _validate_role_name(name, "companion")
-        co_dir = self._companion_dir_for(model_id)
-        if co_dir is None:
-            return False
-        meta_file = co_dir / f"{name}.json"
-        if not meta_file.exists():
-            return False
-        companions = self.get_companions(model_id)
-        co = companions.get(name)
-        meta_file.unlink()
-        if co and co.kind == "frozen" and co.data_file:
-            data_file = co_dir / co.data_file
-            if data_file.exists():
-                data_file.unlink()
-        try:
-            co_dir.rmdir()
-        except OSError:
-            pass
-        return True
-
     def store_reference(
         self,
         test: TestModel,
@@ -810,7 +228,8 @@ class ReferenceStore:
         """Store simulation results as a new reference baseline.
 
         Raises :class:`ValueError` when the trajectory contains non-finite
-        values — callers that accept in bulk should catch it per test.
+        values or no rows at all — callers that accept in bulk should catch
+        it per test.
         """
         if not result.success or not result.variables:
             return False
@@ -822,6 +241,13 @@ class ReferenceStore:
         # that strict parsers reject. Name the model + variable so accept
         # flows can skip it and tell the user which signal is bad.
         time_arr = np.asarray(result.variables[0].time, dtype=float)
+        if time_arr.size == 0:
+            # A baseline of no points is one nothing can be scored against:
+            # said here, where an accept skips the test with the reason.
+            raise ValueError(
+                f"refusing to store baseline for {test.model_id}: the result "
+                "has no rows to store"
+            )
         if time_arr.size and not np.all(np.isfinite(time_arr)):
             raise ValueError(
                 f"refusing to store baseline for {test.model_id}: the time "
@@ -852,15 +278,30 @@ class ReferenceStore:
         # Build the reference JSON
         # All variables share the same time vector (Modelica spec).
         shared_time = result.variables[0].time
-        shared_time_list, _ = _downsample(shared_time, shared_time)
+        # The points kept (D153): every row the run wrote, unless
+        # `baseline_points` gives a number — the test's own, else the
+        # project's. "all" is the run's own row count — a budget
+        # `_downsample` returns every row within.
+        setting = (
+            test.baseline_points
+            if test.baseline_points is not None
+            else self.config.baseline_points
+        )
+        max_points = setting if isinstance(setting, int) else len(shared_time)
+        shared_time_list, _ = _downsample(shared_time, shared_time, max_points)
 
         variables = []
         for var in result.variables:
-            _, values_list = _downsample(shared_time, var.values)
+            _, values_list = _downsample(shared_time, var.values, max_points)
             variables.append(
                 {
                     "index": var.index,
                     "name": var.name,
+                    # Always written, "" included: what the model's ``x={...}``
+                    # said when this baseline was accepted, soft-checked on
+                    # every compare. An entry WITHOUT the key is one no
+                    # writer of this version produced.
+                    "expression": var.expression,
                     "values": values_list,
                 }
             )
@@ -891,18 +332,45 @@ class ReferenceStore:
                 "number_of_intervals": n_intervals,
                 "output_interval": out_interval,
             },
+            # What was done to the run's rows, always written: a reference
+            # WITHOUT the key was stored before it existed, under a cap of
+            # 2000 points that no key set.
+            "sampling": {
+                "setting": setting,
+                "source_points": len(shared_time),
+                "stored_points": len(shared_time_list),
+                # Always written. "single" only when the time vector and
+                # EVERY value array were single precision: the reader then
+                # takes each stored number back through float32
+                # (`read_reference_file`), which would move a double.
+                "precision": SINGLE
+                if all(
+                    np.asarray(a).dtype == np.float32
+                    for a in (shared_time, *(v.values for v in result.variables))
+                )
+                else DOUBLE,
+            },
         }
 
         # Comparison settings (per-test and per-variable tolerances)
+        # A base tolerance is written only when it is ONE finite number —
+        # the test's, or else the old reference's: whatever calls this, a
+        # reference JSON never holds a base the comparison refuses.
+        # Imported here: at module level it closes a cycle through
+        # `dstf.comparison` -> comparator -> this module.
+        from ..comparison.sides import is_base_tolerance
+
         comparison: dict[str, Any] = {}
-        if test.comparison_tolerance is not None:
+        if is_base_tolerance(test.comparison_tolerance):
             comparison["tolerance"] = test.comparison_tolerance
         if test.variable_overrides:
             comparison["variable_overrides"] = test.variable_overrides
         # Preserve existing comparison settings if not overridden
         if existing and "comparison" in existing:
             existing_comp = existing["comparison"]
-            if "tolerance" not in comparison and "tolerance" in existing_comp:
+            if "tolerance" not in comparison and is_base_tolerance(
+                existing_comp.get("tolerance")
+            ):
                 comparison["tolerance"] = existing_comp["tolerance"]
             if (
                 "variable_overrides" not in comparison
@@ -939,19 +407,6 @@ class ReferenceStore:
         ref_data["time"] = shared_time_list
         ref_data["variables"] = variables
 
-        # Preserve any additional named baselines (experiment, analytical, ...).
-        # Primary is always the flat top-level fields above; the ``baselines``
-        # key only carries non-primary baselines. Accepting new primary results
-        # must not wipe out user-supplied experiment/analytical baselines.
-        if existing and isinstance(existing.get("baselines"), dict):
-            extras = {
-                name: entry
-                for name, entry in existing["baselines"].items()
-                if name != PRIMARY_BASELINE
-            }
-            if extras:
-                ref_data["baselines"] = extras
-
         # review 2026-07-06 (finding 31): atomic — a Ctrl-C mid-accept must
         # not corrupt the baseline (a corrupt file is silently dropped by the
         # next scan and its ID re-allocated to a different model).
@@ -963,19 +418,22 @@ class ReferenceStore:
         self,
         tests: list[TestModel],
         results: dict[str, TestResult],
-    ) -> tuple[int, list[tuple[str, str]]]:
+    ) -> tuple[list[str], list[tuple[str, str]], list[str]]:
         """Accept simulation results as new baselines.
 
-        Returns ``(stored, skipped)`` where ``skipped`` lists
-        ``(model_id, reason)`` for tests that should have produced a
-        baseline but didn't — review 2026-07-06 finding 30: the CLI exits
-        nonzero (and says why) when an --accept run stores fewer baselines
-        than it attempted. Simulate-only tests never store a baseline by
-        design, so a successful simulate-only run is neither stored nor
-        skipped.
+        Returns ``(stored, skipped, simulate_only)``: the model ids whose
+        baseline was written, in the order given; ``(model_id, reason)`` for
+        tests that should have produced a baseline but didn't — review
+        2026-07-06 finding 30: the CLI exits nonzero (and says why) when an
+        --accept run stores fewer baselines than it attempted; and the model
+        ids of the simulate-only tests passed over, in the order given.
+        Simulate-only tests never store a baseline by design, so a
+        successful simulate-only run is neither stored nor skipped — and is
+        named, so that an accept can say why it stored nothing for it.
         """
-        stored = 0
+        stored: list[str] = []
         skipped: list[tuple[str, str]] = []
+        simulate_only: list[str] = []
         for test in tests:
             result = results.get(test.model_id)
             if result is None:
@@ -984,7 +442,8 @@ class ReferenceStore:
             if not result.success:
                 skipped.append((test.model_id, "simulation failed"))
                 continue
-            if test.simulate_only:
+            if test.is_simulate_only:
+                simulate_only.append(test.model_id)
                 continue
             try:
                 ok = self.store_reference(test, result)
@@ -995,10 +454,10 @@ class ReferenceStore:
                 skipped.append((test.model_id, str(exc)))
                 continue
             if ok:
-                stored += 1
+                stored.append(test.model_id)
             else:
                 skipped.append((test.model_id, "no tracked variables in result"))
-        return stored, skipped
+        return stored, skipped, simulate_only
 
     def set_status(self, model_id: str, status: str) -> bool:
         """Update the status field of a reference file.
@@ -1046,38 +505,58 @@ class ReferenceStore:
         models = self.list_models()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(output_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                [
-                    "test_id",
-                    "model_id",
-                    "status",
-                    "n_vars",
-                    "stop_time",
-                    "tolerance",
-                    "method",
-                    "date_added",
-                    "last_updated",
-                ]
-            )
-            for model_id in models:
-                ref = self.get_reference(model_id)
-                if ref:
-                    sim = ref.get("simulation", {})
-                    writer.writerow(
-                        [
-                            ref.get("test_id", ""),
-                            model_id,
-                            ref.get("status", "active"),
-                            ref.get("n_vars", ""),
-                            sim.get("stop_time", ""),
-                            sim.get("tolerance", ""),
-                            sim.get("method", ""),
-                            ref.get("date_added", ""),
-                            ref.get("last_updated", ""),
-                        ]
-                    )
+        buf = io.StringIO(newline="")
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+                "test_id",
+                "model_id",
+                "status",
+                "n_vars",
+                "stop_time",
+                "tolerance",
+                "method",
+                "date_added",
+                "last_updated",
+            ]
+        )
+        for model_id in models:
+            ref = self.get_reference(model_id)
+            if ref:
+                sim = ref.get("simulation", {})
+                writer.writerow(
+                    [
+                        ref.get("test_id", ""),
+                        model_id,
+                        ref.get("status", "active"),
+                        ref.get("n_vars", ""),
+                        sim.get("stop_time", ""),
+                        sim.get("tolerance", ""),
+                        sim.get("method", ""),
+                        ref.get("date_added", ""),
+                        ref.get("last_updated", ""),
+                    ]
+                )
+        # review 2026-07-06 (finding 31): atomic like every other export —
+        # an interrupted write must not leave a truncated summary behind.
+        _atomic_write_text(output_path, buf.getvalue(), newline="")
+
+    def list_obsolete(self) -> list[tuple[str, str, Path]]:
+        """``(test_id, model_id, ref_file)`` for every obsolete reference that
+        still has a file on disk.
+
+        The listing half of :meth:`cleanup_obsolete`, so ``manifest cleanup``
+        can show what it would delete before it deletes anything (dry-run is
+        the default for every destructive path).
+        """
+        out = []
+        for test_id, entry in self._index.all_tests().items():
+            if entry.get("status") != "obsolete":
+                continue
+            ref_file = self.ref_dir / RefIndex.ref_filename(test_id)
+            if ref_file.exists():
+                out.append((test_id, entry.get("model_id", ""), ref_file))
+        return sorted(out)
 
     def cleanup_obsolete(self) -> int:
         """Remove reference files with status 'obsolete'."""
@@ -1104,9 +583,10 @@ class ReferenceStore:
 
 
 def _downsample(
-    time: np.ndarray, values: np.ndarray, max_points: int = 2000
+    time: np.ndarray, values: np.ndarray, max_points: int
 ) -> tuple[list[float], list[float]]:
-    """Downsample a time series to at most max_points.
+    """Downsample a time series to at most max_points; one of at most
+    max_points rows is returned whole, so no point is ever invented.
 
     Always preserves the first and last samples. Event boundaries (duplicate
     time points) are preserved whenever they fit within the budget; if event
@@ -1167,11 +647,15 @@ def _downsample(
 def _to_json_list(arr: np.ndarray) -> list[float]:
     """Convert numpy array to JSON-serializable list of Python floats.
 
-    Rounds to significant digits matching the source precision:
-    - float32 (older Dymola): 7 significant digits
-    - float64 (newer Dymola): 15 significant digits
-    This avoids noise from float32→float64 promotion while preserving
-    full precision for native float64 data.
+    Rounds to the significant digits that identify a value of the source's
+    precision (:data:`SINGLE_DIGITS`, :data:`DOUBLE_DIGITS`):
+    - float32 (Dymola's single-precision result files): 9 — the fewest
+      that round-trip every float32, so the reader can give the run's own
+      number back (`read_reference_file`). At 7, which this wrote before,
+      a stored value was a different float32 than the run's more often
+      than not.
+    - float64: 17, the fewest that round-trip every double — the stored
+      value IS the run's.
     """
-    sig = 7 if arr.dtype == np.float32 else 15
+    sig = SINGLE_DIGITS if arr.dtype == np.float32 else DOUBLE_DIGITS
     return [float(f"%.{sig}g" % v) for v in arr]

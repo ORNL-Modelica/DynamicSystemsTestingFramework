@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+body { margin: 0; background: #fafafa; color: #333333; font-family: "Segoe UI", Roboto, system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.4; }
+a { color: #1976D2; text-decoration: none; } a:hover { color: #1565C0; text-decoration: underline; }
+.mono { font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.h1 { font-size: 20px; font-weight: 600; margin: 0; }
+.h2 { font-size: 16px; font-weight: 600; margin: 0; color: #555555; }
+.small { font-size: 12px; }
+.muted { color: #888888; }
+.text2 { color: #666666; }
+.label { font-size: 10px; color: #888888; text-transform: uppercase; letter-spacing: 0.03em; }
+.wordmark { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; color: #333333; }
+.header { position: sticky; top: 0; z-index: 5; background: #fafafa; border-bottom: 1px solid #dddddd; padding: 10px 24px; }
+.card { background: #ffffff; border: 1px solid #dddddd; border-radius: 4px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 3px; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; border: 1px solid transparent; background: transparent; color: #1976D2; }
+.btn.primary { background: #1976D2; color: #ffffff; }
+.btn.outline { border-color: #1976D2; }
+.btn.danger { border-color: #f44336; color: #C62828; }
+.btn.disabled { opacity: 0.5; cursor: default; }
+.btn.icon { width: 28px; padding: 0; justify-content: center; color: #666666; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; color: #ffffff; text-transform: uppercase; white-space: nowrap; }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; border: 1px solid; }
+.input { display: inline-flex; align-items: center; height: 32px; padding: 0 8px; border: 1px solid #cccccc; border-radius: 2px; background: #ffffff; font-size: 13px; color: #333333; box-sizing: border-box; }
+.input.sm { height: 26px; font-size: 12px; padding: 0 6px; }
+.input.ph { color: #999999; }
+.select { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 8px; border: 1px solid #cccccc; border-radius: 2px; background: #ffffff; font-size: 13px; box-sizing: border-box; }
+.select.sm { height: 26px; font-size: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; height: 20px; border-radius: 3px; font-size: 11px; border: 1px solid #dddddd; background: #ffffff; }
+.chip.role-soft { background: #e8d8f3; color: #5e3a80; border-color: #c4a8df; }
+.chip.role-comp { background: #d8f3e4; color: #2b6b48; border-color: #a8dfc0; }
+.chip.on { border-color: #1976D2; background: #e3f2fd; }
+table { border-collapse: collapse; width: 100%; background: #ffffff; font-size: 12px; }
+th, td { border: 1px solid #dddddd; padding: 4px 8px; text-align: left; height: 28px; box-sizing: border-box; }
+th { background: #f5f5f5; font-weight: 600; }
+td.num, th.num { text-align: right; font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; }
+tr.group td { background: #f5f5f5; font-weight: 600; color: #666666; }
+tr.sel td { background: #e3f2fd; }
+.counter { background: #ffffff; border: 1px solid #dddddd; border-left-width: 4px; border-radius: 4px; padding: 6px 12px; min-width: 90px; }
+.counter .value { font-size: 18px; font-weight: 600; }
+.counter.active { box-shadow: 0 0 0 2px #1976D2 inset; background: #e3f2fd; }
+.bar { height: 14px; background: #eeeeee; border-radius: 7px; overflow: hidden; display: flex; }
+.bar span { display: block; height: 100%; }
+.check { width: 16px; height: 16px; border: 1px solid #999999; border-radius: 2px; background: #ffffff; display: inline-block; box-sizing: border-box; }
+.check.on { background: #1976D2; border-color: #1976D2; }
+.crit { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid #eeeeee; }
+.crit .name { font-weight: 600; }
+.crit.open { background: #e3f2fd; }
+.editor { margin: 0 0 8px 16px; padding: 12px; border-left: 3px solid #1976D2; background: #ffffff; border-top: 1px solid #eeeeee; border-bottom: 1px solid #eeeeee; }
+.hint { font-size: 12px; color: #666666; }
+.why { font-size: 12px; color: #666666; font-style: italic; }
+.rule { height: 1px; background: #eeeeee; }
+.stat { background: #ffffff; border: 1px solid #dddddd; border-radius: 4px; padding: 6px 12px; min-width: 120px; }
+.stat .value { font-size: 18px; font-weight: 600; }
+.stat .ref { font-size: 11px; color: #999999; }
+.progress { height: 6px; background: #eeeeee; border-radius: 3px; overflow: hidden; }
+.progress span { display: block; height: 100%; background: #2196F3; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; }
+.header span, .header button, .sub span, .sub button, .h2, .btn, .label, .stat .ref { white-space: nowrap; }
+.header > div > *, .sub > div > * { flex: none; }
+.header > div > div[style*="flex-grow"], .sub > div > div[style*="flex-grow"] { flex: 1 1 0; }
+</style>
+</helmet>
+<div style="width: 1440px; min-height: 760px; background: #fafafa; box-sizing: border-box"><div class="header"><div style="display: flex; flex-direction: row; align-items: center; gap: 16px; "><div style="display: flex; flex-direction: row; align-items: center; gap: 14px; "><span class="wordmark">DSTF</span><span style="font-size: 16px; font-weight: 600">ModelicaTestingLib</span><span class="select sm" style="width: 150px"><span>Dymola</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#666666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><path d="M3 6l5 5 5-5"/></svg></span></div><div style="flex-grow: 1"></div><div style="display: flex; flex-direction: row; align-items: center; gap: 6px; "><span class="dot" style="background: #bbbbbb"></span><span class="small text2">queue idle</span></div><div style="flex-grow: 1"></div><div style="display: flex; flex-direction: row; align-items: center; gap: 12px; "><div style="display: flex; flex-direction: row; align-items: center; gap: 8px; "><span class="small muted">no pending edits</span><button class="btn primary disabled">Save 0 spec edits</button><button class="btn disabled">Discard</button><button class="btn disabled">Export patch</button></div><span style="width: 1px; height: 24px; background: #dddddd"></span><button class="btn " title="Opens the run's dashboard.html in a new tab."><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#1976D2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><path d="M9 3h4v4M13 3L7 9M11 9v4H3V5h4"/></svg>Dashboard</button><button class="btn " title="Stops dstf author. Asks first when edits are pending or the queue is not empty."><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#1976D2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><path d="M4 4h8v8H4z"/></svg>Stop server</button></div></div></div><div style="display: flex; flex-direction: column; gap: 16px; padding: 24px"><div class="card" style="padding: 12px 16px"><div style="display: flex; flex-direction: column; gap: 8px; "><div style="display: flex; flex-direction: row; align-items: center; gap: 10px; "><span class="h2">Opening ModelicaTestingLib on Dymola</span><div style="flex-grow: 1"></div><span class="small text2">0.8 s</span></div><div class="progress"><span style="width: 45%"></span></div><div style="display: flex; flex-direction: row; align-items: center; gap: 16px; "><span class="small"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#4CAF50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><path d="M3 8l3 3 7-7"/></svg> testing.json read</span><span class="small" style="color: #1976D2; font-weight: 600">scanning library… 9 of about 12 tests found (cached scan from 2026-09-14 in use)</span><span class="small muted">reading results · scoring · pending</span></div></div></div><div style="display: flex; flex-direction: row; align-items: center; gap: 10px; "><span class="select sm" style="width: 170px"><span>Grouped by package</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#666666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><path d="M3 6l5 5 5-5"/></svg></span><span class="select sm" style="width: 120px"><span>Short names</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#666666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><path d="M3 6l5 5 5-5"/></svg></span><span class="input sm ph" style="width: 240px; gap: 6px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#999999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/></svg>filter tests…</span><div style="flex-grow: 1"></div><button class="btn outline disabled">Rerun 0 selected tests</button><button class="btn outline disabled">Accept 0 selected results</button><span class="why">batch actions unlock when loading finishes</span></div><div style="display: flex; flex-direction: row; align-items: flex-start; gap: 24px; "><div style="display: flex; flex-direction: column; gap: 6px; flex: 1 1 0; min-width: 0"><div class="card" style="overflow: hidden"><table><thead><tr><th style="width: 28px"></th><th style="width: 90px">status</th><th>test</th><th>detail</th><th class="num" style="width: 80px">last run</th><th style="width: 110px">baseline</th></tr></thead><tbody><tr class="group"><td colspan="6">ModelicaTestingLib.Examples · 9 so far</td></tr><tr><td style="background: #f1f8e9"><span class="check"></span></td><td style="background: #f1f8e9"><span class="badge" style="background: #4CAF50">pass</span></td><td style="background: #f1f8e9"><a href="#">SimpleTest</a></td><td style="background: #f1f8e9"></td><td class="num" style="background: #f1f8e9">2 min</td><td style="background: #f1f8e9"><span class="mono">ref_0001</span></td></tr><tr><td style="background: #f1f8e9"><span class="check"></span></td><td style="background: #f1f8e9"><span class="badge" style="background: #4CAF50">pass</span></td><td style="background: #f1f8e9"><a href="#">ConstantTest</a></td><td style="background: #f1f8e9"></td><td class="num" style="background: #f1f8e9">2 min</td><td style="background: #f1f8e9"><span class="mono">ref_0002</span></td></tr><tr><td style="background: #ffebee"><span class="check"></span></td><td style="background: #ffebee"><span class="badge" style="background: #f44336">fail</span></td><td style="background: #ffebee"><a href="#">MetricTreeTest</a></td><td style="background: #ffebee"><span class="text2">y: 2 of 5 points missed</span></td><td class="num" style="background: #ffebee">2 min</td><td style="background: #ffebee"><span class="mono">ref_0003</span></td></tr><tr><td style="background: #ffffff"><span class="check"></span></td><td style="background: #ffffff"><span class="pill" style="background: #f5f5f5; color: #888888; border-color: #dddddd">scoring…</span></td><td style="background: #ffffff"><span class="muted">EventTest</span></td><td style="background: #ffffff"></td><td class="num" style="background: #ffffff"></td><td style="background: #ffffff"><span class="mono"></span></td></tr><tr><td style="background: #ffffff"><span class="check"></span></td><td style="background: #ffffff"><span class="pill" style="background: #f5f5f5; color: #888888; border-color: #dddddd">scoring…</span></td><td style="background: #ffffff"><span class="muted">FrequencyTest</span></td><td style="background: #ffffff"></td><td class="num" style="background: #ffffff"></td><td style="background: #ffffff"><span class="mono"></span></td></tr><tr><td style="background: #ffffff"><span class="check"></span></td><td style="background: #ffffff"><span class="pill" style="background: #f5f5f5; color: #888888; border-color: #dddddd">scoring…</span></td><td style="background: #ffffff"><span class="muted">MultiFrequencyTest</span></td><td style="background: #ffffff"></td><td class="num" style="background: #ffffff"></td><td style="background: #ffffff"><span class="mono"></span></td></tr><tr><td style="background: #ffffff"><span class="check"></span></td><td style="background: #ffffff"><span class="pill" style="background: #f5f5f5; color: #888888; border-color: #dddddd">scoring…</span></td><td style="background: #ffffff"><span class="muted">TubeToleranceTest</span></td><td style="background: #ffffff"></td><td class="num" style="background: #ffffff"></td><td style="background: #ffffff"><span class="mono"></span></td></tr><tr><td style="background: #ffffff"><span class="check"></span></td><td style="background: #ffffff"><span class="pill" style="background: #f5f5f5; color: #888888; border-color: #dddddd">scoring…</span></td><td style="background: #ffffff"><span class="muted">IntervalTest</span></td><td style="background: #ffffff"></td><td class="num" style="background: #ffffff"></td><td style="background: #ffffff"><span class="mono"></span></td></tr><tr><td style="background: #ffffff"><span class="check"></span></td><td style="background: #ffffff"><span class="pill" style="background: #f5f5f5; color: #888888; border-color: #dddddd">scoring…</span></td><td style="background: #ffffff"><span class="muted">RangeCheckTest</span></td><td style="background: #ffffff"></td><td class="num" style="background: #ffffff"></td><td style="background: #ffffff"><span class="mono"></span></td></tr></tbody></table></div><span class="small text2">A test opens as soon as it is scored.</span></div><div class="card" style="width: 420px; flex: none; padding: 12px"><span class="h2">Simulation queue</span><div class="small text2" style="margin-top: 6px">empty · available now</div></div></div></div></div>
+</x-dc>
+</body>
+</html>

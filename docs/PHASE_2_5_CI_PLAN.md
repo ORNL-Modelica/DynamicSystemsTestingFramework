@@ -65,7 +65,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install package + extras
-        run: uv sync --extra dev --extra fmpy
+        run: uv sync --extra dev --extra fmpy --locked
 
       - name: Cache Reference-FMUs
         uses: actions/cache@v4

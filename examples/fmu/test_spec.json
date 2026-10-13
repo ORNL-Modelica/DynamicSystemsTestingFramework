@@ -2,7 +2,7 @@
   "tests": [
     {
       "model": "BouncingBall",
-      "fmu": "reference-fmus-binaries/2.0/BouncingBall.fmu",
+      "source": "reference-fmus-binaries/2.0/BouncingBall.fmu",
       "variables": ["h", "v"],
       "simulation": {
         "stop_time": 3.0,
@@ -13,7 +13,7 @@
         "children": [
           {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
           {"metric": "nrmse", "variable": "v", "tolerance": 1e-3},
-          {"metric": "range", "variable": "h", "min": -0.01, "max": 1.1},
+          {"metric": "range", "variable": "h", "min_value": -0.01, "max_value": 1.1},
           {"combinator": "warn", "children": [
             {"metric": "nrmse", "variable": "h", "against": "experiment", "tolerance": 0.2}
           ]}
@@ -22,7 +22,7 @@
     },
     {
       "model": "Dahlquist",
-      "fmu": "reference-fmus-binaries/2.0/Dahlquist.fmu",
+      "source": "reference-fmus-binaries/2.0/Dahlquist.fmu",
       "variables": ["x"],
       "simulation": {
         "stop_time": 10.0,
@@ -45,7 +45,7 @@
     },
     {
       "model": "VanDerPol",
-      "fmu": "reference-fmus-binaries/2.0/VanDerPol.fmu",
+      "source": "reference-fmus-binaries/2.0/VanDerPol.fmu",
       "variables": ["x0", "x1"],
       "simulation": {
         "stop_time": 20.0,

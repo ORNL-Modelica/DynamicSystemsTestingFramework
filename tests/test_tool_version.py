@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dstf.simulators.base import PersistentRunnerBase
+from dstf.backends.persistent import PersistentBackendBase
 
 # ---------------------------------------------------------------------------
 # Dymola worker version parsing (stubbed DymolaInterface)
@@ -30,7 +30,7 @@ class _FakeDymola:
 
 
 def _dymola_worker(value):
-    from dstf.simulators.dymola.persistent_runner import DymolaWorker
+    from dstf.backends.dymola.persistent_backend import DymolaWorker
 
     # Bypass __init__ (needs a real DymolaConfig + interface class); we only
     # exercise tool_version(), which reads self.dymola.
@@ -49,7 +49,7 @@ class TestDymolaWorkerVersion:
         assert _dymola_worker("  Dymola 2025x  ").tool_version() == "Dymola 2025x"
 
     def test_none_when_interface_absent(self):
-        from dstf.simulators.dymola.persistent_runner import DymolaWorker
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
 
         w = DymolaWorker.__new__(DymolaWorker)
         w.dymola = None
@@ -80,7 +80,7 @@ class _FakeSession:
 
 
 def _om_worker(raw):
-    from dstf.simulators.openmodelica.persistent_runner import OpenModelicaWorker
+    from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
 
     w = OpenModelicaWorker.__new__(OpenModelicaWorker)
     w.session = _FakeSession(raw)
@@ -95,7 +95,7 @@ class TestOpenModelicaWorkerVersion:
         )
 
     def test_none_when_session_absent(self):
-        from dstf.simulators.openmodelica.persistent_runner import OpenModelicaWorker
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
 
         w = OpenModelicaWorker.__new__(OpenModelicaWorker)
         w.session = None
@@ -109,11 +109,11 @@ class TestOpenModelicaWorkerVersion:
 
 
 # ---------------------------------------------------------------------------
-# Probe orchestration on PersistentRunnerBase / concrete runners
+# Probe orchestration on PersistentBackendBase / concrete backends
 # ---------------------------------------------------------------------------
 
 
-class _ConcretePersistent(PersistentRunnerBase):
+class _ConcretePersistent(PersistentBackendBase):
     """Minimal concretization so ABC lets us __new__ an instance."""
 
     def read_result(self, test, test_key, run_result):  # pragma: no cover
@@ -133,7 +133,7 @@ class _FakeDymolaLibs:
 
 
 def _dymola_worker_libs(root):
-    from dstf.simulators.dymola.persistent_runner import DymolaWorker
+    from dstf.backends.dymola.persistent_backend import DymolaWorker
 
     w = DymolaWorker.__new__(DymolaWorker)
     w.dymola = _FakeDymolaLibs(root)
@@ -163,7 +163,7 @@ class TestDymolaLibraryVersions:
         assert _dymola_worker_libs(None).library_versions() == {}
 
     def test_empty_when_interface_absent(self):
-        from dstf.simulators.dymola.persistent_runner import DymolaWorker
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
 
         w = DymolaWorker.__new__(DymolaWorker)
         w.dymola = None
@@ -172,7 +172,7 @@ class TestDymolaLibraryVersions:
 
 class TestOpenModelicaLibraryVersions:
     def _worker(self, getversion_raw):
-        from dstf.simulators.openmodelica.persistent_runner import OpenModelicaWorker
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
 
         class _Sess:
             def sendExpression(self, expr, parsed=False):
@@ -191,7 +191,7 @@ class TestOpenModelicaLibraryVersions:
         assert self._worker('""\n').library_versions() == {}
 
     def test_empty_when_session_absent(self):
-        from dstf.simulators.openmodelica.persistent_runner import OpenModelicaWorker
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
 
         w = OpenModelicaWorker.__new__(OpenModelicaWorker)
         w.session = None
@@ -216,22 +216,22 @@ class TestProbeOrchestration:
         assert b._safe_probe_worker_version([SimpleNamespace()]) is None
 
     def test_dymola_probe_first_non_none_wins(self):
-        from dstf.simulators.dymola.persistent_runner import PersistentDymolaRunner
+        from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        runner = PersistentDymolaRunner.__new__(PersistentDymolaRunner)
+        backend = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
         workers = [
             SimpleNamespace(tool_version=lambda: None),
             SimpleNamespace(tool_version=lambda: "Dymola 2026x"),
             SimpleNamespace(tool_version=lambda: "Dymola 2025x"),
         ]
-        assert runner._probe_worker_version(workers) == "Dymola 2026x"
+        assert backend._probe_worker_version(workers) == "Dymola 2026x"
 
     def test_dymola_probe_none_when_all_none(self):
-        from dstf.simulators.dymola.persistent_runner import PersistentDymolaRunner
+        from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        runner = PersistentDymolaRunner.__new__(PersistentDymolaRunner)
+        backend = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
         workers = [SimpleNamespace(tool_version=lambda: None)]
-        assert runner._probe_worker_version(workers) is None
+        assert backend._probe_worker_version(workers) is None
 
     def test_base_library_probe_returns_none(self):
         base = _ConcretePersistent.__new__(_ConcretePersistent)
@@ -247,14 +247,14 @@ class TestProbeOrchestration:
         )
 
     def test_dymola_library_probe_first_nonempty_wins(self):
-        from dstf.simulators.dymola.persistent_runner import PersistentDymolaRunner
+        from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        runner = PersistentDymolaRunner.__new__(PersistentDymolaRunner)
+        backend = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
         workers = [
             SimpleNamespace(library_versions=lambda: {}),
             SimpleNamespace(library_versions=lambda: {"Modelica": "4.1.0"}),
         ]
-        assert runner._probe_library_versions(workers) == {"Modelica": "4.1.0"}
+        assert backend._probe_library_versions(workers) == {"Modelica": "4.1.0"}
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +262,10 @@ class TestProbeOrchestration:
 # ---------------------------------------------------------------------------
 
 
-class TestPythonRunnerVersion:
+class TestPythonBackendVersion:
     def test_reports_interpreter_version(self, tmp_path):
+        from dstf.backends.python.backend import PythonBackend
         from dstf.config import Config
-        from dstf.simulators.python.runner import PythonRunner
 
         lib = tmp_path / "MyPyLib"
         (lib / "Examples").mkdir(parents=True)
@@ -277,20 +277,20 @@ class TestPythonRunnerVersion:
         cfg_path = ref_root / "testing.json"
         cfg_path.write_text(
             '{"source_type": "python", "source_path": "../..", '
-            '"library_name": "MyPyLib", "simulators": {"Python": ["python"]}, '
-            '"simulator": "Python"}'
+            '"library_name": "MyPyLib", "backends": {"Python": ["python"]}, '
+            '"backend": "Python"}'
         )
         cfg = Config(config_file=cfg_path)
-        version = PythonRunner(cfg).describe_tool_version()
+        version = PythonBackend(cfg).describe_tool_version()
         assert version is not None
         assert version.startswith("Python ")
 
 
-class TestFmpyRunnerVersion:
+class TestFmpyBackendVersion:
     def test_reports_fmpy_version(self, tmp_path):
         pytest.importorskip("fmpy")
+        from dstf.backends.fmpy.backend import FmpyBackend
         from dstf.config import Config
-        from dstf.simulators.fmpy.runner import FmpyRunner
 
         lib = tmp_path / "fmus"
         lib.mkdir()
@@ -299,10 +299,10 @@ class TestFmpyRunnerVersion:
         cfg_path = ref_root / "testing.json"
         cfg_path.write_text(
             '{"source_type": "fmu", "source_path": "../..", '
-            '"library_name": "fmus", "simulators": {"FMPy": ["fmpy"]}, '
-            '"simulator": "FMPy"}'
+            '"library_name": "fmus", "backends": {"FMPy": ["fmpy"]}, '
+            '"backend": "FMPy"}'
         )
         cfg = Config(config_file=cfg_path)
-        version = FmpyRunner(cfg).describe_tool_version()
+        version = FmpyBackend(cfg).describe_tool_version()
         assert version is not None
         assert version.startswith("FMPy ")

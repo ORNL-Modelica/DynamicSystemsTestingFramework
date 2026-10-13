@@ -2,12 +2,27 @@
 
 import sys
 
-from ..comparison.comparator import TestComparison, VariableComparison
+from ..comparison.comparator import TestComparison
+from .status import (
+    FAIL,
+    NO_REF,
+    NOT_RUN,
+    SIM_FAIL,
+    STATUS_LABELS,
+    FailedCriterion,
+    advisory_failures,
+    advisory_text,
+    classify,
+    exit_code,
+    failed_criteria,
+    group_failures,
+)
 
 # ANSI color codes
 _GREEN = "\033[92m"
 _RED = "\033[91m"
 _YELLOW = "\033[93m"
+_GREY = "\033[90m"
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 
@@ -19,14 +34,10 @@ def _color(text: str, code: str) -> str:
     return text
 
 
-def _pass_fail(passed: bool) -> str:
-    if passed:
-        return _color("PASS", _GREEN)
-    return _color("FAIL", _RED)
-
-
 def print_report(comparisons: list[TestComparison]) -> int:
-    """Print a console report and return exit code (0=all passed, 1=failures)."""
+    """Print a console report and return exit code (0 when nothing FAILED or
+    failed to simulate — NOT RUN and NO_REF do not fail it — and something
+    ran, else 1: ``exit_code``)."""
     if not comparisons:
         print("No comparisons to report.")
         return 1
@@ -35,27 +46,31 @@ def print_report(comparisons: list[TestComparison]) -> int:
     n_failed = 0
     n_no_ref = 0
     n_sim_fail = 0
+    n_not_run = 0
     failures: list[TestComparison] = []
     warned: list[TestComparison] = []
+    advised: list[tuple[TestComparison, list[FailedCriterion]]] = []
 
     for comp in comparisons:
-        status = _pass_fail(comp.passed)
-
-        # Order matters: a failing test counts as FAILED even without a
-        # baseline (baseline-free modes carry a real verdict). NO_REF is
-        # reserved for tests where nothing was evaluated at all — review
-        # 2026-07-06, finding 5 (failing range-mode tests exited 0).
-        if not comp.sim_success:
+        # Ordering (SIM_FAIL > FAIL > NO_REF > PASS) and its rationale live
+        # in reporting.status — this is one of its call sites, not a copy.
+        state = classify(comp)
+        if state == NOT_RUN:
+            # No result: nothing ran, so nothing failed (D145).
+            n_not_run += 1
+            status = _color(STATUS_LABELS[NOT_RUN], _GREY)
+        elif state == SIM_FAIL:
             n_sim_fail += 1
             status = _color("SIM_FAIL", _RED)
-        elif not comp.passed:
+        elif state == FAIL:
             n_failed += 1
             status = _color("FAIL", _RED)
-        elif not comp.has_reference and not comp.evaluated:
+        elif state == NO_REF:
             n_no_ref += 1
             status = _color("NO_REF", _YELLOW)
         else:
             n_passed += 1
+            status = _color("PASS", _GREEN)
 
         # Show warning indicator if structural changes detected
         warn_tag = ""
@@ -69,7 +84,14 @@ def print_report(comparisons: list[TestComparison]) -> int:
             id_tag = "[new] "
         else:
             id_tag = ""
-        print(f"  {status}  {id_tag}{comp.model_id}{warn_tag}")
+        # A test that passes with a failure under `warn` says so: it read a
+        # plain PASS, with no word of the criterion that failed.
+        advisory = advisory_failures(comp)
+        advisory_tag = ""
+        if advisory:
+            advised.append((comp, advisory))
+            advisory_tag = _color(f" ({advisory_text(len(advisory))})", _YELLOW)
+        print(f"  {status}  {id_tag}{comp.model_id}{advisory_tag}{warn_tag}")
 
         if not comp.passed and comp.sim_success:
             failures.append(comp)
@@ -84,6 +106,10 @@ def print_report(comparisons: list[TestComparison]) -> int:
         print(_color(f"  Simulation errors: {n_sim_fail}", _RED))
     if n_no_ref:
         print(_color(f"  No baseline: {n_no_ref}", _YELLOW))
+    if n_not_run:
+        print(_color(f"  {STATUS_LABELS[NOT_RUN]}: {n_not_run}", _GREY))
+    if advised:
+        print(_color(f"  With advisory failures: {len(advised)}", _YELLOW))
     if warned:
         print(_color(f"  Structural warnings: {len(warned)}", _YELLOW))
 
@@ -97,9 +123,25 @@ def print_report(comparisons: list[TestComparison]) -> int:
             print(f"\n  {id_tag}{comp.model_id}")
             if comp.error_message:
                 print(f"    Error: {comp.error_message}")
-            for var in comp.variables:
-                if not var.passed:
-                    _print_var_failure(var)
+            for block in failure_blocks(comp):
+                for line in block:
+                    print(line)
+            # A group that fails on its own: the test's reason where no
+            # criterion failed.
+            for line in group_failures(comp):
+                print(f"    {line}")
+
+    # The criteria that failed under a `warn` in the tests that passed
+    if advised:
+        print()
+        print(_color("Advisory Failures (under `warn`: they fail no test):", _BOLD))
+        print("-" * 80)
+        for comp, advisory in advised:
+            id_tag = f"[{comp.test_id}] " if comp.test_id else ""
+            print(f"\n  {id_tag}{comp.model_id}")
+            for block in _blocks(advisory):
+                for line in block:
+                    print(line)
 
     # Print structural warnings
     if warned:
@@ -109,24 +151,37 @@ def print_report(comparisons: list[TestComparison]) -> int:
         for comp in warned:
             print(f"\n  {comp.model_id}")
             for w in comp.warnings:
-                print(f"    {w.field}: {w.reference_value} -> {w.current_value}")
+                print(f"    {w.text}")
 
-    return 0 if n_failed == 0 and n_sim_fail == 0 else 1
+    return exit_code(comparisons)
 
 
-def _print_var_failure(var: VariableComparison):
-    """Print details for a failed variable comparison."""
-    name = var.name or f"x[{var.index}]"
-    print(f"    {name}:")
-    if var.is_constant:
-        print(f"      RMSE:               {var.rmse:.6e} (constant signal)")
-    else:
-        print(
-            f"      NRMSE:              {var.nrmse:.6e} (signal range: {var.signal_range:.4e})"
-        )
-        print(f"      RMSE:               {var.rmse:.6e}")
-    print(
-        f"      Max abs error:      {var.max_abs_error:.6e} (at t={var.max_abs_error_time:g})"
-    )
-    print(f"      Reference final:    {var.reference_final:.6e}")
-    print(f"      Actual final:       {var.actual_final:.6e}")
+def failure_blocks(comp: TestComparison) -> list[list[str]]:
+    """One block of lines per criterion of ``comp`` that did not pass
+    (:func:`~.status.failed_criteria`, which JUnit's lines are read from
+    too), in TREE order: the line that says which criterion it is, the
+    criterion in its metric's own words — or why it was not scored — and
+    that metric's detail pairs.
+
+    The blocks used to be the same five generic numbers under the
+    variable's name alone: a start-up window's nrmse and an advisory
+    comparison against a soft check read as one variable failing twice,
+    with nothing to tell them apart."""
+    return _blocks(failed_criteria(comp))
+
+
+def _blocks(criteria: list[FailedCriterion]) -> list[list[str]]:
+    blocks: list[list[str]] = []
+    for criterion in criteria:
+        lines = [f"    {criterion.head}"]
+        if criterion.reason:
+            # A sentinel (config that could not build, no data to compare)
+            # has no meaningful numbers — the reason is the whole finding.
+            lines.append(f"      {'Not scored:':<20}{criterion.reason}")
+        else:
+            lines.append(f"      {criterion.sentence}")
+            lines += [
+                f"      {label + ':':<20}{value}" for label, value in criterion.details
+            ]
+        blocks.append(lines)
+    return blocks

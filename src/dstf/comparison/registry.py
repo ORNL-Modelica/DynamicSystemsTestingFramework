@@ -1,0 +1,230 @@
+"""Registries for comparison metrics and MetricTree combinators.
+
+The extension seam docs/extensibility.md promises for the Metric layer.
+Before this module the metric and combinator name spaces were closed
+if/elif chains duplicated across four files (``modes.resolve_mode``,
+``tree_spec.VALID_METRICS`` / ``_MODE_TO_METRIC``,
+``tree_eval._build_combinator`` / ``_METRIC_TO_MODE_KEY``,
+``reporting/schema_export._MODES``) — adding a metric meant editing all
+of them. Now each of those derives from the descriptors registered here,
+so a third-party metric only has to call :func:`register_metric`.
+
+Builtins register in :mod:`dstf.comparison.builtins`, imported by the
+package ``__init__`` — mirroring how ``backends`` self-registers its
+backends.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
+
+from ..backends.types import DatasetType
+from .sides import Sides
+from .summaries import summarize_default
+from .types import ScoreSummary, VariableComparison
+
+if TYPE_CHECKING:
+    from .handles import HandleEdit, RowPlace
+    from .metric_tree import Combinator
+    from .modes import ComparisonMode
+    from .seeds import SeedData
+    from .tree_spec import CombinatorSpec
+
+#: The metric a leaf/override falls back to when none is named. Also the
+#: one metric whose name is *absent* from the flat override dict (there is
+#: no ``{"mode": "nrmse"}`` in stored specs — no key means NRMSE).
+DEFAULT_METRIC = "nrmse"
+
+#: The metric a flat override with no ``mode`` gets under ``--default-points``
+#: instead (``modes.resolve_mode``).
+DEFAULT_POINTS_METRIC = "points"
+
+
+def unnamed_metrics() -> tuple[str, str]:
+    """The metrics an override that names no ``mode`` may be scored by: the
+    default, or ``points`` under ``--default-points``. What such an override
+    may carry is what either reads."""
+    return (DEFAULT_METRIC, DEFAULT_POINTS_METRIC)
+
+
+#: Default ``accepted_datasets`` — every backend produces time series today.
+TIME_SERIES_ONLY = frozenset({DatasetType.TIME_SERIES})
+
+
+@dataclass(frozen=True)
+class MetricDescriptor:
+    """Everything the framework needs to know about one leaf metric.
+
+    ``build`` takes the flat override dict (the ``variable_overrides``
+    payload shape, also used for a :class:`~.tree_spec.LeafSpec`'s params)
+    plus the resolved tolerance, and returns a ready-to-score mode.
+
+    ``score_direction`` says which way a better score runs: ``"lower"``
+    for error-like scores (NRMSE, point violations) and ``"higher"`` for
+    coverage-like ones (tube's in-band fraction). ``accepted_datasets``
+    declares which :class:`~dstf.backends.types.DatasetType` kinds the
+    metric can score — a leaf handed anything else hard-fails in
+    :func:`~.tree_eval._evaluate_leaf`.
+
+    ``accepts_quantity`` says the metric's ``quantity`` param names the
+    data it scores. For such a metric — and ONLY for such a metric — a
+    string ``quantity`` makes the evaluator resolve the value from the
+    run's statistics / diagnostics instead of a tracked trajectory, and
+    lets :func:`~.tree_spec._parse_leaf` default ``variable`` to the path.
+    Off by default: a metric that scores trajectories must keep scoring
+    trajectories, so an unrecognized ``quantity`` stays an inert param
+    rather than silently swapping that metric's data source.
+
+    ``summarize`` turns the mode's ``VariableComparison`` into the pill
+    text and criterion sentence; see :mod:`.summaries`.
+
+    ``edit_handle`` is the inverse of the mode's ``kind="handle"``
+    primitives: the raw leaf, the handle's local id and its dragged position
+    in, the new raw leaf out, :class:`~.handles.HandleEditError` for a drag
+    the leaf cannot take; see :mod:`.handles`. ``None`` for a metric no drag
+    edits (the builtins ``nrmse`` and ``event-timing``).
+
+    ``place_row`` is what a Ctrl+click on the plot adds to the metric's
+    table: the leaf with one more row, settled on the data it scores
+    (:class:`~.handles.RowPlace`); ``None`` for a metric with no rows.
+    ``row_noun`` says what that row is called for a leaf — "a point" — or
+    ``None`` where a click adds nothing to THAT leaf (a tube of constant
+    width); the editor's hint reads it.
+
+    ``seed`` gives a new leaf its first values from the data it will score
+    (the reference / actual series in, the params to add out), so a leaf
+    added with only a metric and a variable is valid and sensible; ``None``
+    for a metric valid bare (``nrmse``, ``points``, ``event-timing``). See
+    :mod:`.seeds`.
+
+    ``drawn_by_default`` says whether the Test page draws a closed criterion
+    of this metric that is not failing before its swatch is touched
+    (``range`` and ``scalar`` do not); a failing one draws regardless.
+    """
+
+    name: str
+    config_cls: type
+    build: Callable[[dict, Sides], ComparisonMode]
+    accepted_datasets: frozenset[DatasetType] = TIME_SERIES_ONLY
+    score_direction: Literal["lower", "higher"] = "lower"
+    accepts_quantity: bool = False
+    #: One leaf's verdict in words. The default is NRMSE-shaped; every
+    #: builtin supplies its own in :mod:`.builtins`.
+    summarize: Callable[[VariableComparison], ScoreSummary] = summarize_default
+    #: A drag on one of the mode's handles, as the new raw leaf.
+    edit_handle: Callable[[HandleEdit], dict] | None = None
+    #: Whether a closed criterion of this metric that is not failing draws on
+    #: the Test page until its swatch says otherwise (legend b). Off for
+    #: metrics whose drawing is a bound across the whole plot — range, scalar
+    #: — which would otherwise cover every plot they sit on. The open
+    #: criterion always draws, and a failing one draws by default.
+    drawn_by_default: bool = True
+    #: A new leaf's first values from the data it will score.
+    seed: Callable[[SeedData], dict] | None = None
+    #: A Ctrl+click on the plot, as the leaf with one more row.
+    place_row: Callable[[RowPlace], dict] | None = None
+    #: What that row is called for a leaf, or None where a click adds none.
+    row_noun: Callable[[dict], str | None] | None = None
+
+
+@dataclass(frozen=True)
+class CombinatorDescriptor:
+    """One MetricTree combinator: a name plus a spec → instance builder.
+
+    ``build`` reads whatever combinator-specific fields it needs off the
+    :class:`~.tree_spec.CombinatorSpec` (``k``, ``weights``, ...). The
+    *shape* validation of those fields stays in ``tree_spec`` at parse
+    time — this is dispatch only.
+    """
+
+    name: str
+    build: Callable[[CombinatorSpec], Combinator]
+
+
+# Insertion-ordered: registration order is the canonical presentation order
+# for the schema export, the reporter's mode-schema map, and the "valid: ..."
+# list in resolve_mode's error.
+_METRICS: dict[str, MetricDescriptor] = {}
+_COMBINATORS: dict[str, CombinatorDescriptor] = {}
+
+
+def register_metric(desc: MetricDescriptor) -> MetricDescriptor:
+    """Register a leaf metric. Raises on a duplicate name.
+
+    Duplicates are loud rather than last-writer-wins: two metrics sharing
+    a name would make spec parsing depend on import order.
+    """
+    if desc.name in _METRICS:
+        raise ValueError(f"metric {desc.name!r} is already registered")
+    _METRICS[desc.name] = desc
+    return desc
+
+
+def register_combinator(desc: CombinatorDescriptor) -> CombinatorDescriptor:
+    """Register a MetricTree combinator. Raises on a duplicate name."""
+    if desc.name in _COMBINATORS:
+        raise ValueError(f"combinator {desc.name!r} is already registered")
+    _COMBINATORS[desc.name] = desc
+    return desc
+
+
+def metric(name: str) -> MetricDescriptor | None:
+    """Return the descriptor for ``name``, or None if not registered."""
+    return _METRICS.get(name)
+
+
+def combinator(name: str) -> CombinatorDescriptor | None:
+    """Return the descriptor for ``name``, or None if not registered."""
+    return _COMBINATORS.get(name)
+
+
+def metric_names() -> frozenset[str]:
+    return frozenset(_METRICS)
+
+
+def combinator_names() -> frozenset[str]:
+    return frozenset(_COMBINATORS)
+
+
+def metrics() -> tuple[MetricDescriptor, ...]:
+    """All metric descriptors in registration order."""
+    return tuple(_METRICS.values())
+
+
+def summarize(vc: VariableComparison) -> ScoreSummary:
+    """The pill text and criterion for one leaf, by its mode's descriptor.
+
+    Any sentinel carrying a reason — a leaf config that could not build, an
+    empty-data failure — shows that reason instead of a numeric score there
+    is none of. Mode-agnostic on purpose: the flat variable_overrides path
+    emits the same shape. Uses ``vc.mode`` raw: the unknown-mode sentinel
+    has no mode, and "nrmse leaf" would name the wrong metric.
+    """
+    error = (vc.diagnostics or {}).get("error")
+    if error:
+        label = f"{vc.mode} leaf" if vc.mode else "leaf"
+        return ScoreSummary(
+            display="not scored", criterion=f"{label} not scored — {error}"
+        )
+    # A mode nothing is registered under — none at all, or a plug-in's that
+    # is not loaded — reads as the default summary does.
+    desc = metric(vc.mode)
+    fn = desc.summarize if desc is not None else summarize_default
+    return fn(vc)
+
+
+def combinators() -> tuple[CombinatorDescriptor, ...]:
+    """All combinator descriptors in registration order."""
+    return tuple(_COMBINATORS.values())
+
+
+def _reset_for_tests() -> None:
+    """Drop user registrations and restore the builtins — unit tests only."""
+    _METRICS.clear()
+    _COMBINATORS.clear()
+
+    from .builtins import register_builtins
+
+    register_builtins()

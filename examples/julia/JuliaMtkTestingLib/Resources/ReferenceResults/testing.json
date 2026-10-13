@@ -4,9 +4,9 @@
   "library_name": "JuliaMtkTestingLib",
   "test_spec": "./test_spec.json",
   "reference_root": "./",
-  "simulators": {
+  "backends": {
     "Julia": ["julia"]
   },
-  "simulator": "Julia",
+  "backend": "Julia",
   "tolerance": 0.15
 }

@@ -1,4 +1,4 @@
-"""Tests for DymolaRunner.export_fmu (4.B.2).
+"""Tests for DymolaBackend.export_fmu (4.B.2).
 
 VALIDATION CAVEAT: the real export_fmu requires Windows + Dymola + the FMI
 export license option. These tests use a mock DymolaInterface to verify the
@@ -15,8 +15,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from conftest import make_test_model as _tm
+from dstf.backends.dymola.persistent_backend import DymolaWorker
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.dymola.persistent_runner import DymolaWorker
 
 
 def _mock_test() -> TestModel:
@@ -33,13 +34,13 @@ def _make_worker(tmp_path: Path) -> DymolaWorker:
     """Worker with a mock dymola already attached (no real start())."""
     config = SimpleNamespace(
         work_dir=tmp_path,
-        simulator_path=None,
+        backend_path=None,
         dependencies=[],
         library_dir=tmp_path,
     )
     dymola_config = SimpleNamespace(
         show_ide=False,
-        simulator_setup=[],
+        backend_setup=[],
         diagnostic_variables=["CPUtime", "EventCounter"],
     )
     worker = DymolaWorker(
@@ -123,20 +124,81 @@ class TestAbstractExportFmuDefault:
     """4.B.1 — base class default raises NotImplementedError."""
 
     def test_default_raises_with_helpful_message(self, tmp_path):
-        from dstf.simulators.fmpy.runner import FmpyRunner
+        from dstf.backends.fmpy.backend import FmpyBackend
 
-        # FmpyRunner doesn't declare FMU_EXPORT — base default applies
+        # FmpyBackend doesn't declare FMU_EXPORT — base default applies
         config = SimpleNamespace(
             source_type="fmu",
-            simulator="FMPy",
+            backend_name="FMPy",
             parallel=1,
             timeout=60,
             work_dir=tmp_path,
         )
-        # Skip if fmpy not installed — instantiation would fail before our test
+        # Skip if fmpy not installed — instantiation would fail before our
+        # test. The constructor signals that with the Backend contract's
+        # RuntimeError, not an ImportError.
         try:
-            runner = FmpyRunner(config)  # type: ignore[arg-type]
-        except ImportError:
+            backend = FmpyBackend(config)  # type: ignore[arg-type]
+        except RuntimeError as exc:
+            if "fmpy" not in str(exc):
+                raise  # any other construction failure is a real failure
             pytest.skip("fmpy not installed")
         with pytest.raises(NotImplementedError, match="FMU_EXPORT"):
-            runner.export_fmu(_mock_test(), tmp_path)
+            backend.export_fmu(_mock_test(), tmp_path)
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# Finding 76-part — the one-shot export worker is torn down through the
+# guarded ``worker.close()`` hard-kill path, not ``worker.dymola.close()``.
+# =========================================================================
+
+
+class TestExportFmuCleanup:
+    def test_one_shot_worker_closed_via_guarded_close(self, tmp_path, monkeypatch):
+        from dstf.backends.dymola import persistent_backend as pr
+
+        created: list = []
+        closed: list = []
+
+        def fake_start(self):
+            self.dymola = MagicMock()
+            created.append(self)
+
+        orig_close = pr.DymolaWorker.close
+
+        def spy_close(self, grace: float = 5.0):
+            closed.append(self)
+            orig_close(self, grace=0.1)
+
+        monkeypatch.setattr(pr.DymolaWorker, "start", fake_start)
+        monkeypatch.setattr(pr.DymolaWorker, "close", spy_close)
+        monkeypatch.setattr(pr, "load_dymola_interface", lambda p=None: MagicMock())
+        monkeypatch.setattr(
+            pr.DymolaWorker,
+            "export_fmu",
+            lambda self, test, output_dir: output_dir / "X.fmu",
+        )
+
+        cfg = SimpleNamespace(
+            show_ide=False,
+            backend_setup=[],
+            diagnostic_variables=[],
+            work_dir=tmp_path,
+            dymola_interface_path=None,
+            backend_path=None,
+            dependencies=[],
+            library_dir=tmp_path,
+        )
+        backend = pr.PersistentDymolaBackend(cfg)
+        out = tmp_path / "out"
+        out.mkdir()
+        backend.export_fmu(_tm("M.X"), out)
+
+        assert created, "worker was never started"
+        assert created[0] in closed, (
+            "export_fmu cleanup must call worker.close() (guarded hard-kill "
+            "path), not worker.dymola.close()"
+        )

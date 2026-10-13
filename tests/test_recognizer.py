@@ -12,6 +12,7 @@ from dstf.discovery.recognizer import (
     RecognizerResult,
     get_recognizers,
 )
+from dstf.discovery.unit_tests import unit_test_variables
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLE_DIR = PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib"
@@ -67,6 +68,29 @@ class TestBundledRecognizer:
         assert result.stop_time == 10.0
         assert result.tolerance == 1e-6
         assert result.method == "Dassl"
+
+    def test_bundled_threads_the_instance_name(self, tmp_path):
+        """The UnitTests component's instance name reaches the TestModel —
+        its variables are ``<instance>.x[i]`` in the result file."""
+        from dstf.discovery import mo_parser  # noqa: F401
+        from dstf.discovery.test_registry import (
+            _build_test_model_from_recognizer_results,
+        )
+
+        mo = tmp_path / "M.mo"
+        mo.write_text(
+            "within L;\nmodel M\n  Real x;\n  UnitTests ut(n=1, x={x});\nend M;\n",
+            encoding="utf-8",
+        )
+        rec = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name == "modelica:bundled-unit-tests"
+        ][0]
+        result = rec.recognize(mo)
+        assert result.unit_tests_instance == "ut"
+        merged = _build_test_model_from_recognizer_results("L.M", [result])
+        assert merged.unit_tests_instance == "ut"
 
     def test_bundled_returns_none_for_non_test_file(self):
         from dstf.discovery import mo_parser  # noqa: F401
@@ -145,6 +169,92 @@ class TestRegistryMerge:
         merged = _build_test_model_from_recognizer_results("My.Model", [partial])
 
         assert merged.stop_time == 5.0
-        # n_vars defaults to 1 when no recognizer sets it
-        assert merged.n_vars == 1
+        # no recognizer declared a UnitTests variable, so the test has none:
+        # a default of 1 made every such test look for `unitTests.x[1]`
+        assert merged.n_vars == 0
+        assert unit_test_variables(merged) == []
         assert merged.x_expressions == []
+        # and the UnitTests component's conventional instance name stands
+        assert merged.unit_tests_instance == "unitTests"
+
+    def test_expressions_without_a_count_are_as_many_variables(self):
+        """A recognizer that gives the expressions and no ``n_vars`` declared
+        that many variables — the count is theirs, not a default."""
+        from dstf.discovery.test_registry import (
+            _build_test_model_from_recognizer_results,
+        )
+
+        result = RecognizerResult(model_id="L.M", x_expressions=["a", "b", "c"])
+        merged = _build_test_model_from_recognizer_results("L.M", [result])
+        assert merged.n_vars == 3
+        assert [v.name for v in unit_test_variables(merged)] == [
+            "unitTests.x[1]",
+            "unitTests.x[2]",
+            "unitTests.x[3]",
+        ]
+
+    def test_a_declared_count_stands_over_the_expressions(self):
+        """``n_vars`` from any recognizer is the count, whatever the number
+        of expressions another one gave (one expression may cover an array)."""
+        from dstf.discovery.test_registry import (
+            _build_test_model_from_recognizer_results,
+        )
+
+        merged = _build_test_model_from_recognizer_results(
+            "L.M",
+            [
+                RecognizerResult(model_id="L.M", n_vars=4),
+                RecognizerResult(model_id="L.M", x_expressions=["y"]),
+            ],
+        )
+        assert merged.n_vars == 4
+
+    def test_a_later_recognizer_without_an_instance_keeps_the_earlier_one(self):
+        """A field not contributed is not a field contributed empty: a second recognizer
+        that only adjusts the stop time must not blank the instance name the
+        first one read off the component."""
+        from dstf.discovery.test_registry import (
+            _build_test_model_from_recognizer_results,
+        )
+
+        first = RecognizerResult(
+            model_id="L.M", n_vars=1, unit_tests_instance="ut", x_expressions=["a"]
+        )
+        later = RecognizerResult(model_id="L.M", stop_time=5.0)
+        merged = _build_test_model_from_recognizer_results("L.M", [first, later])
+        assert merged.unit_tests_instance == "ut"
+        assert merged.stop_time == 5.0
+
+    def test_a_both_test_keeps_the_scanned_instance(self):
+        """A spec entry for a scanned test names no component, so the merge
+        must leave the scanned instance alone — the component's variables are
+        still ``ut.x[i]`` in the result file."""
+        from dstf.discovery.test_registry import (
+            TestModel,
+            _build_test_model_from_recognizer_results,
+            merge_tests,
+        )
+
+        scanned = _build_test_model_from_recognizer_results(
+            "L.M",
+            [
+                RecognizerResult(
+                    model_id="L.M",
+                    n_vars=1,
+                    unit_tests_instance="ut",
+                    x_expressions=["a"],
+                )
+            ],
+        )
+        spec = TestModel(
+            model_id="L.M",
+            source_file=Path(""),
+            source_package="L",
+            short_name="M",
+            n_vars=0,
+            variable_patterns=["q"],
+            source="spec",
+        )
+        (merged,) = merge_tests({"L.M": scanned}, {"L.M": spec})
+        assert merged.source == "both"
+        assert merged.unit_tests_instance == "ut"

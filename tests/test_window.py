@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dstf.backends import VariableResult
 from dstf.comparison.tree_eval import (
     BaselineView,
     evaluate_spec,
@@ -26,7 +27,6 @@ from dstf.comparison.tree_spec import (
     spec_to_view,
     synthesize_implicit_tree,
 )
-from dstf.simulators import VariableResult
 
 
 def _var(time, values, index=1, name="x"):
@@ -95,7 +95,10 @@ class TestWindowParsing:
         assert tree.window_end is None
 
     def test_window_end_before_start_rejected(self):
-        with pytest.raises(MetricSpecError, match="must be > start"):
+        with pytest.raises(
+            MetricSpecError,
+            match=r"metrics\.window: The window must end after it starts",
+        ):
             parse_metric_tree(
                 {
                     "metric": "nrmse",
@@ -105,7 +108,7 @@ class TestWindowParsing:
             )
 
     def test_window_not_dict_rejected(self):
-        with pytest.raises(MetricSpecError, match="expected an object"):
+        with pytest.raises(MetricSpecError, match="must be an object with start / end"):
             parse_metric_tree(
                 {
                     "metric": "nrmse",
@@ -405,7 +408,12 @@ class TestCollectVariables:
                 "combinator": "and",
                 "children": [
                     {"metric": "nrmse", "variable": "h"},
-                    {"metric": "range", "variable": "h", "min": -1.0, "max": 1.0},
+                    {
+                        "metric": "range",
+                        "variable": "h",
+                        "min_value": -1.0,
+                        "max_value": 1.0,
+                    },
                     {"metric": "nrmse", "variable": "v"},
                     {"metric": "tube", "variable": "h", "tube_rel": 0.02},
                 ],
@@ -422,7 +430,12 @@ class TestLeavesForVariable:
                 "children": [
                     {"metric": "nrmse", "variable": "h"},
                     {"metric": "nrmse", "variable": "v"},
-                    {"metric": "range", "variable": "h", "min": 0.0, "max": 1.0},
+                    {
+                        "metric": "range",
+                        "variable": "h",
+                        "min_value": 0.0,
+                        "max_value": 1.0,
+                    },
                 ],
             }
         )
@@ -475,11 +488,13 @@ class TestSynthesizeImplicitTree:
     def test_override_range_metric(self):
         tree = synthesize_implicit_tree(
             ["h"],
-            variable_overrides={"h": {"mode": "range", "min": -1.0, "max": 1.0}},
+            variable_overrides={
+                "h": {"mode": "range", "min_value": -1.0, "max_value": 1.0}
+            },
         )
         leaf = tree.children[0]
         assert leaf.metric == "range"
-        assert leaf.params == {"min": -1.0, "max": 1.0}
+        assert leaf.params == {"min_value": -1.0, "max_value": 1.0}
 
     def test_base_tolerance_filled_when_override_silent(self):
         tree = synthesize_implicit_tree(["h"], base_tolerance=1e-3)

@@ -1,24 +1,24 @@
-"""Tests for RunMetadata — run-level provenance (backend/simulator/version)."""
+"""Tests for RunMetadata — run-level provenance (backend family, configured name, version)."""
 
 from types import SimpleNamespace
 
-from dstf.simulators.run_metadata import RunMetadata
+from dstf.backends.run_metadata import RunMetadata
 
 
-def _stub_config(simulator="Dymola 2026x", backend="Dymola", os_name="linux"):
+def _stub_config(backend_name="Dymola 2026x", backend="Dymola", os_name="linux"):
     """Duck-typed Config: from_config only reads these three members."""
     return SimpleNamespace(
-        simulator=simulator,
-        simulator_backend=backend,
+        backend_name=backend_name,
+        backend=backend,
         os_name=os_name,
     )
 
 
 class TestFromConfig:
-    def test_copies_backend_simulator_os(self):
+    def test_copies_backend_name_os(self):
         meta = RunMetadata.from_config(_stub_config(), now=1000.0)
         assert meta.backend == "Dymola"
-        assert meta.simulator == "Dymola 2026x"  # user-configured label preserved
+        assert meta.backend_name == "Dymola 2026x"  # user-configured label preserved
         assert meta.os == "linux"
 
     def test_injectable_timestamp_is_deterministic(self):
@@ -36,10 +36,10 @@ class TestFromConfig:
         assert meta.dstf_version  # non-empty string, never None
         assert isinstance(meta.dstf_version, str)
 
-    def test_simulator_falls_back_to_backend_when_unset(self):
-        cfg = _stub_config(simulator=None, backend="Dymola")
+    def test_backend_name_falls_back_to_backend_when_unset(self):
+        cfg = _stub_config(backend_name=None, backend="Dymola")
         meta = RunMetadata.from_config(cfg)
-        assert meta.simulator == "Dymola"
+        assert meta.backend_name == "Dymola"
 
     def test_os_falls_back_when_unset(self):
         cfg = _stub_config(os_name=None)
@@ -50,7 +50,7 @@ class TestAsDict:
     def test_roundtrips_all_fields(self):
         meta = RunMetadata(
             backend="Julia",
-            simulator="Julia",
+            backend_name="Julia",
             os="linux",
             tool_version="1.11.2",
             dstf_version="0.1.0",
@@ -60,7 +60,7 @@ class TestAsDict:
         d = meta.as_dict()
         assert d == {
             "backend": "Julia",
-            "simulator": "Julia",
+            "backend_name": "Julia",
             "os": "linux",
             "tool_version": "1.11.2",
             "dstf_version": "0.1.0",
@@ -88,3 +88,48 @@ class TestAsDict:
         d = RunMetadata.from_config(_stub_config(), now=1.0).as_dict()
         # must survive the status.json round-trip
         assert json.loads(json.dumps(d))["backend"] == "Dymola"
+
+
+class TestBatchDymolaStampsProvenance:
+    def test_batch_run_writes_metadata_into_status_json(self, tmp_path, monkeypatch):
+        """``--batch`` Dymola once had its own copy of the ``run_tests``
+        prologue and skipped the metadata — leaving status.json (and therefore
+        the report banner) with ``metadata: null``.
+        """
+        import json
+        from pathlib import Path
+
+        from dstf.backends.dymola.backend import DymolaBackend
+        from dstf.config import Config
+        from dstf.discovery.test_registry import TestModel
+
+        lib = tmp_path / "Lib"
+        lib.mkdir()
+        (lib / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=lib,
+            reference_root=tmp_path / "refs",
+            backend_name="Dymola",
+            work_dir=tmp_path / "work",
+        )
+        backend = DymolaBackend(cfg)
+        # Don't spawn Dymola — the prologue is what's under test.
+        monkeypatch.setattr(DymolaBackend, "_run_batch", lambda *a, **k: [])
+
+        test = TestModel(
+            model_id="Lib.A",
+            source_file=Path(""),
+            source_package="Lib",
+            short_name="A",
+            n_vars=0,
+            variable_patterns=["x"],
+            stop_time=1.0,
+            tolerance=1e-6,
+            method="dassl",
+        )
+        backend.run_tests([test])
+
+        status = json.loads((cfg.work_dir / "status.json").read_text())
+        assert status["metadata"]["backend"] == "Dymola"
+        assert status["metadata"]["os"] == cfg.os_name
+        assert status["metadata"]["dstf_version"]

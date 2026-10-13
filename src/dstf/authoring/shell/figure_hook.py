@@ -1,0 +1,249 @@
+"""A plot's event hook (two-tier design §4.6 "Panel", amended in sub-project 6
+and in 3b; D131): ``panel.figure.on(kind, handler)``. One hook per plot card,
+created with the card and attached to its ``ui.plotly`` when the plot is
+drawn; a panel hosted under that card subscribes through ``owned(owner)``, so
+closing or rebuilding it takes back exactly its handlers."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from typing import Any
+
+from nicegui import ui
+
+# The index is bounded so a hostile key cannot reach `int()`'s digit limit;
+# `[0-9]`, not `\d` (which matches any Unicode digit, and `int()` accepts
+# those), and `\Z`, not `$` (which also matches before a trailing newline).
+_SHAPE_KEY = re.compile(r"^shapes\[([0-9]{1,9})\]\.(.+)\Z")
+
+
+class FigureHook:
+    """``panel.figure.on(kind, handler)``: handlers get a primitive id and a
+    payload. Wired to one plot's Plotly events — the card's, so a drag on one
+    plot of a stacked page reaches that card's subscribers and no other. The
+    payload contract (the spike's, over the payloads plotly.js actually
+    sends):
+
+    - ``plotly_click`` / ``plotly_selected``: the id of the first point whose
+      trace ``meta.kind`` is ``"handle"``, else of the first point —
+      ``customdata``, then ``meta.id``, then ``curveNumber`` — with the event
+      payload. Under the figure's ``hovermode: "x unified"`` a click lists
+      every trace at that x, so a handle is not necessarily ``points[0]``.
+    - ``plotly_relayout`` with keys matching ``shapes[N].<key>``: dispatched
+      ONCE PER SHAPE INDEX, ascending. The payload never names the shape;
+      the hook resolves the id from the rendered figure's
+      ``layout.shapes[N].name`` (``""`` when that lookup fails) and hands the
+      handler that shape's keys with the ``shapes[N].`` prefix stripped —
+      ``{"y0": 6.0, "y1": 6.0}`` for a line, ``{"xanchor": 4.0, "yanchor":
+      2.99, "path": "M …"}`` for a ring (a pixel path). Positions arrive in
+      data coordinates. The hook does not interpret them: the capability does,
+      from the handle's primitive type (a Marker's ring moves only by
+      ``xanchor``/``yanchor``). ``on_shape_moved`` is then called once, in a
+      ``finally``: a raising handler still gets its snap-back. A relayout
+      mixing shape keys with others (a zoom) is a shape relayout; the other
+      keys are dropped.
+    - Any other relayout (a zoom): dispatched once with id ``""`` and the raw
+      payload (``{}`` when it is not a dict); ``on_shape_moved`` is not called.
+    - ``dstf_move`` (D149; `move`): a handle HELD on the plot. The page
+      sends ``{"seq": n, "update": {...}}``, ``update`` shaped as the
+      relayout its release would be, and it is dispatched as one — once per
+      shape index, the id resolved the same way — but ``on_shape_moved`` is
+      not called: nothing moved. ``{"seq": n, "end": True}`` (a drag that
+      ended with no release) is dispatched once with id ``""``. Every move
+      and every release carries a sequence number, the page's, rising: a
+      move numbered at or under the last release or end heard is DROPPED —
+      a preview that arrives after its drag was let go must not paint over
+      what the release staged.
+    - ``dstf_click`` / anything else a caller hands `emit`: dispatched once
+      with id ``""`` and the payload as given.
+
+    Handler semantics: each shape index is dispatched in turn, ascending,
+    from its own snapshot of the handlers, taken when that shape's dispatch
+    starts. A handler registered since the snapshot (a panel rebuilt by the
+    act it triggered) is not called for that shape; one removed since the
+    snapshot (``clear``) is skipped, checked by identity against the current
+    list, so a rebuilt panel's predecessor never runs. A handler registered
+    twice is called twice. A handler that raises ENDS the relayout: later
+    handlers and later shapes are not dispatched, the exception propagates,
+    and ``on_shape_moved`` still runs. A malformed payload never makes
+    dispatch raise."""
+
+    def __init__(self, on_shape_moved: Callable[[], None] | None = None) -> None:
+        self._on_shape_moved = on_shape_moved
+        self._handlers: dict[str, list[tuple[str, Callable[[str, dict], None]]]] = {}
+        self._plot: Any = None
+        self.dispatching = False  # true while handlers run
+        #: The sequence number of the last release or drag end heard: a
+        #: `move` numbered at or under it is of a drag already over.
+        self.released: float = -1
+
+    def clear(self, owner: str | None = None) -> None:
+        """Remove one owner's handlers, or every handler. A host rebuilds its
+        panels whenever what they show can have moved, and the card itself is
+        dropped on a rebuild of the page; a subscriber that re-registers in
+        `panel()` must not accumulate."""
+        if owner is None:
+            self._handlers = {}
+            return
+        # `_call` skips a handler removed mid-dispatch by IDENTITY against
+        # the current list, so the entries left here must be the SAME tuple
+        # objects — rebuilding them (`(o, h)` anew) would make every
+        # surviving handler look removed and skip it.
+        self._handlers = {
+            kind: [entry for entry in entries if entry[0] != owner]
+            for kind, entries in self._handlers.items()
+        }
+
+    def on(
+        self, kind: str, handler: Callable[[str, dict], None], owner: str = ""
+    ) -> None:
+        self._handlers.setdefault(kind, []).append((owner, handler))
+
+    def owned(self, owner: str) -> _OwnedFigureHook:
+        """The view of this hook a capability's panel holds: its `on`
+        registers under ``owner``, so `clear(owner)` removes exactly those."""
+        return _OwnedFigureHook(self, owner)
+
+    def attach(self, plot: ui.plotly, relayout_js: str | None = None) -> None:
+        """Wire ``plot``'s events to this hook. ``relayout_js``: a
+        JavaScript expression over ``e``, the relayout's payload in the
+        page, whose value is sent in its place — what the page alone can
+        say of a release (the card holds a dragged grip to the VISIBLE
+        range, which no server knows). The hook still interprets
+        nothing."""
+        self._plot = plot
+        for event in ("plotly_click", "plotly_relayout", "plotly_selected"):
+
+            def heard(e: Any, kind: str = event) -> None:
+                self._dispatch(kind, e.args)
+
+            if event == "plotly_relayout" and relayout_js is not None:
+                plot.on(event, heard, js_handler=f"(e) => emit({relayout_js})")
+            else:
+                plot.on(event, heard)
+
+    def emit(self, kind: str, payload: dict, primitive: str = "") -> None:
+        """One event of ``kind`` to its subscribers, as a dispatch: what
+        the card hears from the page beside Plotly's own events (a click),
+        and what one panel says to the others (a preview)."""
+        self._call(kind, primitive, payload if isinstance(payload, dict) else {})
+
+    def move(self, payload: Any) -> None:
+        """A held handle's would-be position, from the page (`dstf_move`
+        above). Dropped where its drag is already over."""
+        data = payload if isinstance(payload, dict) else {}
+        seq = data.get("seq")
+        if not isinstance(seq, (int, float)) or isinstance(seq, bool):
+            return
+        if seq <= self.released:
+            return
+        if data.get("end"):
+            self.released = seq
+            self._call("dstf_move", "", {"end": True})
+            return
+        for i, shape in sorted(_by_shape(data.get("update")).items()):
+            self._call("dstf_move", self._shape_name(i), shape)
+
+    def _shape_name(self, index: int) -> str:
+        # A known race: the index is resolved against the figure the SERVER
+        # last sent. A drag released after an in-place `update_figure` that
+        # changed the shape list, but resolved before the browser has applied
+        # that update and the relayout has flown back, can resolve to the
+        # wrong name. The window runs from `update_figure` through both
+        # websocket legs. The snap-back redraw corrects only the picture: once
+        # edits are staged from drags, a wrongly resolved handle's edit stays
+        # staged.
+        figure = getattr(self._plot, "figure", None)
+        layout = figure.get("layout") if isinstance(figure, dict) else None
+        shapes = layout.get("shapes") if isinstance(layout, dict) else None
+        if not isinstance(shapes, list) or index >= len(shapes):
+            return ""
+        shape = shapes[index]
+        name = shape.get("name") if isinstance(shape, dict) else None
+        return name if isinstance(name, str) else ""
+
+    def _dispatch(self, kind: str, payload: Any) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        if kind == "plotly_relayout":
+            by_shape = _by_shape(data)
+            if not by_shape:
+                self._call(kind, "", data)
+                return
+            # The release's number, before any handler runs: whatever
+            # move of this drag is still on its way is late from here on.
+            for shape in by_shape.values():
+                if _is_seq(shape.get("seq")):
+                    self.released = max(self.released, shape["seq"])
+            try:
+                for i in sorted(by_shape):
+                    self._call(kind, self._shape_name(i), by_shape[i])
+            finally:
+                if self._on_shape_moved is not None:
+                    self._on_shape_moved()
+            return
+        points = data.get("points")
+        points = (
+            [p for p in points if isinstance(p, dict)]
+            if isinstance(points, list)
+            else []
+        )
+        chosen = next(
+            (p for p in points if _meta(p).get("kind") == "handle"),
+            points[0] if points else {},
+        )
+        # The figure layer stamps every trace's primitive id in `meta.id`
+        # (figures/plotly.py); marker groups carry per-point ids in
+        # `customdata`. The trace index is the last resort.
+        primitive = chosen.get("customdata")
+        if primitive is None:
+            primitive = _meta(chosen).get("id")
+        if primitive is None:
+            primitive = chosen.get("curveNumber")
+        self._call(kind, "" if primitive is None else str(primitive), data)
+
+    def _call(self, kind: str, primitive: str, payload: dict) -> None:
+        """One event: the snapshot is taken here, and each entry is checked
+        by identity against the current list just before it is called."""
+        snapshot = list(self._handlers.get(kind, []))
+        was, self.dispatching = self.dispatching, True
+        try:
+            for entry in snapshot:
+                if not any(e is entry for e in self._handlers.get(kind, [])):
+                    continue  # removed since the snapshot
+                entry[1](primitive, payload)
+        finally:
+            self.dispatching = was
+
+
+def _is_seq(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _by_shape(update: object) -> dict[int, dict]:
+    """A relayout's ``shapes[N].<key>`` entries, grouped by shape index
+    with the prefix stripped; every other key is dropped."""
+    by_shape: dict[int, dict] = {}
+    if not isinstance(update, dict):
+        return by_shape
+    for key, value in update.items():
+        match = _SHAPE_KEY.match(key) if isinstance(key, str) else None
+        if match is not None:
+            by_shape.setdefault(int(match.group(1)), {})[match.group(2)] = value
+    return by_shape
+
+
+def _meta(point: dict) -> dict:
+    trace = point.get("data")
+    meta = trace.get("meta") if isinstance(trace, dict) else None
+    return meta if isinstance(meta, dict) else {}
+
+
+class _OwnedFigureHook:
+    """`FigureHook.owned(owner)`: satisfies the capability-side protocol."""
+
+    def __init__(self, hook: FigureHook, owner: str) -> None:
+        self._hook, self._owner = hook, owner
+
+    def on(self, kind: str, handler: Callable[[str, dict], None]) -> None:
+        self._hook.on(kind, handler, owner=self._owner)

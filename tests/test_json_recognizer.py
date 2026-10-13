@@ -86,6 +86,22 @@ class TestSchemaParsing:
                 }
             )
 
+    def test_the_instance_name_is_not_spec_writable(self):
+        """It comes from the matched component, never from the spec: a
+        recognizer naming a component names its instance by matching it."""
+        with pytest.raises(
+            RecognizerSpecError, match="unknown field 'unit_tests_instance'"
+        ):
+            parse_recognizer_spec(
+                {
+                    "name": "x",
+                    "match": {"type": "extends", "class_pattern": "*"},
+                    "fields": {
+                        "unit_tests_instance": {"from": "constant", "value": "ut"}
+                    },
+                }
+            )
+
     def test_unknown_field_name_raises(self):
         with pytest.raises(RecognizerSpecError, match="unknown field 'made_up'"):
             parse_recognizer_spec(
@@ -310,6 +326,131 @@ class TestComponentMatching:
         )
         result = rec.recognize(mo)
         assert result.x_expressions == ["pipe.T", "tank.level"]
+
+    def test_array_parameter_threads_the_instance_and_loses_whitespace(self, tmp_path):
+        """A recognizer that extracts expressions from a component names the
+        component too: the tracked variables are ``<instance>.x[i]``. The
+        source's line wrap is not part of an expression."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              MyLib.Testing.SafetyTest myTest(
+                numTracked=2,
+                trackedVars={pipe.T[
+             1], tank.level});
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {
+                    "x_expressions": {
+                        "from": "parameter",
+                        "name": "trackedVars",
+                        "shape": "array",
+                    },
+                },
+            }
+        )
+        result = rec.recognize(mo)
+        assert result.x_expressions == ["pipe.T[1]", "tank.level"]
+        assert result.unit_tests_instance == "myTest"
+
+    def test_a_count_alone_threads_the_instance(self, tmp_path):
+        """A recognizer that takes only the variable COUNT off the component
+        still names it: its variables are ``myTest.x[1..2]`` in the result
+        file, and without the instance every one of them is looked for under
+        the default ``unitTests.x[i]`` and found missing."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              MyLib.Testing.SafetyTest myTest(numTracked=2);
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {"n_vars": {"from": "parameter", "name": "numTracked"}},
+            }
+        )
+        result = rec.recognize(mo)
+        assert result.n_vars == 2
+        assert result.unit_tests_instance == "myTest"
+
+    def test_a_count_from_a_constant_names_no_instance(self, tmp_path):
+        """It is where ``n_vars`` came FROM that names the instance, not that
+        it has a value. A recognizer whose count is a ``constant`` may match
+        on any component at all — here a ``Sine`` block, matched because
+        every test in the library has one — and that component's instance
+        says nothing about where the variables live. Threaded anyway, every
+        variable of every such test went looking for ``sine.x[i]``."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              Modelica.Blocks.Sources.Sine sine(freqHz=1);
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "Modelica.Blocks.Sources.Sine",
+                },
+                "fields": {"n_vars": {"from": "constant", "value": 2}},
+            }
+        )
+        result = rec.recognize(mo)
+        assert result.n_vars == 2
+        assert result.unit_tests_instance is None
+
+    def test_a_recognizer_that_contributes_no_variables_names_no_instance(
+        self, tmp_path
+    ):
+        """Only a recognizer contributing the component's variables — their
+        count or their expressions — contributes its instance name. One that
+        reads an unrelated parameter off it leaves the default."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              MyLib.Testing.SafetyTest myTest(numTracked=2, tEnd=100);
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {"stop_time": {"from": "parameter", "name": "tEnd"}},
+            }
+        )
+        assert rec.recognize(mo).unit_tests_instance is None
 
     def test_constant_field(self, tmp_path):
         mo = _write_mo(
@@ -761,8 +902,8 @@ class TestExperimentAnnotationField:
         assert result.simulate_only is True
 
     def test_constant_bool_field(self, tmp_path):
-        # PTA.4 — recognizer can stamp a constant boolean (e.g., "all my
-        # tests should request FMU export")
+        # PTA.4 — recognizer can stamp a constant boolean (e.g., "every model
+        # matching this pattern is simulate-only")
         mo = _write_mo(
             tmp_path,
             "FooTest",
@@ -778,12 +919,12 @@ class TestExperimentAnnotationField:
                 "name": "test",
                 "match": {"type": "extends", "class_pattern": "*Icons.Example"},
                 "fields": {
-                    "requested_fmu_export": {"from": "constant", "value": True},
+                    "simulate_only": {"from": "constant", "value": True},
                 },
             }
         )
         result = rec.recognize(mo)
-        assert result.requested_fmu_export is True
+        assert result.simulate_only is True
 
     def test_constant_list_field(self, tmp_path):
         mo = _write_mo(
@@ -883,3 +1024,74 @@ class TestExperimentAnnotationField:
         )
         result = rec.recognize(mo)
         assert result.method == "Cvode"
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_discovery.py — regression tests for
+# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+#
+# Finding 50: component parameter values are extracted from the ORIGINAL text
+# span so string-valued parameters (algorithm="Dassl") are extractable.
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 50 — string-valued component parameters
+# ---------------------------------------------------------------------------
+
+
+class TestFinding50StringParameters:
+    def test_quoted_string_parameter_is_extractable(self, tmp_path):
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        mo = tmp_path / "FooTest.mo"
+        mo.write_text(
+            "within MyLib.Examples;\n"
+            "model FooTest\n"
+            '  MyLib.Testing.SafetyTest myTest(numTracked=2, algorithm="Dassl");\n'
+            "end FooTest;\n",
+            encoding="utf-8",
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {
+                    "method": {"from": "parameter", "name": "algorithm"},
+                    "n_vars": {"from": "parameter", "name": "numTracked"},
+                },
+            }
+        )
+        result = rec.recognize(mo)
+        assert result is not None
+        assert result.method == "Dassl"
+        assert result.n_vars == 2
+
+    def test_experiment_annotation_field_ignores_commented_annotation(self, tmp_path):
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        mo = tmp_path / "FooTest.mo"
+        mo.write_text(
+            "within MyLib.Examples;\n"
+            "model FooTest\n"
+            "  extends Modelica.Icons.Example;\n"
+            "  // experiment(StopTime=5)\n"
+            "  annotation(experiment(StopTime=42));\n"
+            "end FooTest;\n",
+            encoding="utf-8",
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+                "fields": {
+                    "stop_time": {"from": "experiment-annotation", "name": "StopTime"},
+                },
+            }
+        )
+        result = rec.recognize(mo)
+        assert result is not None
+        assert result.stop_time == 42

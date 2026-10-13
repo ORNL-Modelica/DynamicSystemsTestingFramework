@@ -1,21 +1,32 @@
 """Tests for discovery: mo_parser, spec_parser, test_registry."""
 
 import json
+import logging
 from pathlib import Path
 
-from dstf.config import Config
+import pytest
+
+from dstf.config import (
+    DEFAULT_METHOD,
+    DEFAULT_STOP_TIME,
+    DEFAULT_TOLERANCE,
+    Config,
+)
 from dstf.discovery.mo_parser import (
     _extract_model_name,
     _extract_within,
+    _parse_experiment,
     _parse_unit_tests,
+    normalize_expression,
     parse_mo_file,
 )
+from dstf.discovery.patch_apply import apply_patch
 from dstf.discovery.spec_parser import (
     add_to_test_spec,
     parse_test_spec,
     update_test_variables,
 )
-from dstf.discovery.test_registry import discover_tests
+from dstf.discovery.test_registry import TestModel, discover_tests
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -138,6 +149,132 @@ class TestMoParser:
             assert len(info.x_expressions) == 1
             assert info.x_expressions[0].startswith(f"{func}(")
 
+    def test_a_wrapped_index_loses_its_source_whitespace(self):
+        """An expression the .mo source wrapped over two lines is one line
+        here: the layout is the file's, not the expression's."""
+        info = _parse_unit_tests("UnitTests ut(n=2, x={a.b[\n        1, 1], c})")
+        assert info.x_expressions == ["a.b[1, 1]", "c"]
+
+    def test_the_instance_name_is_kept(self):
+        """The component's instance name — its variables are <instance>.x[i]."""
+        assert _parse_unit_tests("UnitTests ut(n=2, x={a, b})").instance == "ut"
+        assert (
+            _parse_unit_tests(
+                "Utilities.ErrorAnalysis.UnitTests unitTests(n=1, x={a})"
+            ).instance
+            == "unitTests"
+        )
+
+    def test_a_wrapped_cat_without_braces_is_normalized(self):
+        """The non-braced x=cat(...) branch normalizes too."""
+        info = _parse_unit_tests("UnitTests unitTests(n=3, x=cat(1, y,\n   y1))")
+        assert info.x_expressions == ["cat(1, y, y1)"]
+
+    def test_a_wrapped_cat_inside_braces_is_normalized(self):
+        info = _parse_unit_tests("UnitTests unitTests(n=3, x={cat(1, y,\n   y1)[ 2 ]})")
+        assert info.x_expressions == ["cat(1, y, y1)[2]"]
+
+    def test_a_wrapped_bare_name_is_normalized(self):
+        """The bare x=name branch normalizes too."""
+        info = _parse_unit_tests("UnitTests unitTests(n=1, x=a.b[1,\n   2])")
+        assert info.x_expressions == ["a.b[1, 2]"]
+
+    def test_only_the_expression_text_is_normalized(self):
+        """A comment inside x={...} is blanked by the literal stripper before
+        the whitespace run collapses — what is normalized is the expression
+        text the parser extracted, not the source around it."""
+        info = _parse_unit_tests("UnitTests ut(n=2, x={a /* why */ , b});")
+        assert info.x_expressions == ["a", "b"]
+
+    def test_a_single_wrapped_element_is_normalized(self):
+        """The only (equally: the last) element of ``x={...}`` leaves the
+        split loop by its own door and is normalized there too."""
+        info = _parse_unit_tests("UnitTests ut(n=1, x={a.b[\n        1, 1]})")
+        assert info.x_expressions == ["a.b[1, 1]"]
+
+    def test_runs_of_spaces_collapse_without_a_newline(self):
+        """A run of spaces or a tab is source layout as much as a wrap is."""
+        info = _parse_unit_tests("UnitTests ut(n=2, x={a   +\tb, c})")
+        assert info.x_expressions == ["a + b", "c"]
+
+    def test_whitespace_before_an_opening_bracket_is_kept(self):
+        """Only whitespace INSIDE a bracket goes: ``a * [1, 2]`` is a
+        product, and closing it up would make it an index."""
+        info = _parse_unit_tests("UnitTests ut(n=1, x={a * [1, 2]})")
+        assert info.x_expressions == ["a * [1, 2]"]
+
+    def test_a_brace_and_a_comma_are_bracket_edges_too(self):
+        """``{`` opens and ``,`` closes for the purposes of the normal form."""
+        info = _parse_unit_tests("UnitTests ut(n=1, x={sum({ a , b })})")
+        assert info.x_expressions == ["sum({a, b})"]
+
+    def test_the_normal_form_is_canonical_about_commas(self):
+        """Every spelling of the same comma-separated expression normalizes
+        to one text — no space before a comma, exactly one after it, which is
+        how Dymola's own result names read (``a[1, 2]``). Without this a
+        source reformat reads as a changed expression on compare."""
+        for source in ("a.b[ 1 ,2 ]", "a.b[1,2]", "a.b[1, 2]", "a.b[1,\n   2]"):
+            info = _parse_unit_tests("UnitTests ut(n=1, x={%s})" % source)
+            assert info.x_expressions == ["a.b[1, 2]"], source
+        info = _parse_unit_tests("UnitTests ut(n=3, x=cat(1,y,y1))")
+        assert info.x_expressions == ["cat(1, y, y1)"]
+        # A comma with nothing after it takes no space: the rule separates
+        # two things, and there is no second thing here. (A comma directly
+        # before a closing bracket needs no such exception — the space is
+        # taken back with every other space before a bracket.)
+        assert normalize_expression("a,") == "a,"
+        assert normalize_expression("a.b[1,]") == "a.b[1,]"
+
+    def test_the_normal_form_is_idempotent(self):
+        """Normalizing a normalized expression changes nothing — a stored
+        expression re-normalized on the next run must compare equal."""
+        for source in (
+            "a.b[ 1 ,2 ]",
+            "a.b[1,2]",
+            "a.b[1, 2]",
+            "a.b[1,\n   2]",
+            "cat(1,y,y1)",
+            "sum({ a , b })",
+            "a * [1, 2]",
+            "a   +\tb",
+        ):
+            once = normalize_expression(source)
+            assert normalize_expression(once) == once, source
+
+    def test_a_class_whose_name_merely_ends_in_unit_tests_is_not_the_component(
+        self,
+    ):
+        """``MyUnitTests bar(...)`` is some other class: the component is
+        ``UnitTests``, bare or under a dotted prefix, and the match needs the
+        word boundary to say so."""
+        assert (
+            _parse_unit_tests("model M\n  MyUnitTests bar(n=2, x={a, b});\nend M;")
+            is None
+        )
+
+    def test_a_longer_dotted_prefix_still_names_the_instance(self):
+        """TRANSFORM spells the component fully qualified."""
+        info = _parse_unit_tests(
+            "TRANSFORM.Utilities.ErrorAnalysis.UnitTests unitTests(n=1, x={a});"
+        )
+        assert info is not None
+        assert info.instance == "unitTests"
+        assert info.x_expressions == ["a"]
+
+    def test_a_bare_expression_runs_to_the_end_of_its_argument(self):
+        """The bare ``x=<expr>`` branch takes the whole argument — up to the
+        next top-level comma or the end of the component's argument list —
+        not the prefix some bracket regex happens to reach."""
+        assert _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c)").x_expressions == [
+            "a.b[1].c"
+        ]
+        assert _parse_unit_tests("UnitTests ut(n=2, x=a.b[1, :])").x_expressions == [
+            "a.b[1, :]"
+        ]
+        info = _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c, x_reference={1})")
+        assert info.x_expressions == ["a.b[1].c"]
+        assert info.x_reference == [1.0]
+
 
 # ---------------------------------------------------------------------------
 # spec_parser
@@ -158,6 +295,9 @@ class TestSpecParser:
         assert no_ut.variable_patterns == ["x"]
         assert no_ut.stop_time == 5
         assert no_ut.source == "spec"
+        # A spec-only entry names no component; the conventional instance
+        # name stands (nothing reads it for a spec-tracked test).
+        assert no_ut.unit_tests_instance == "unitTests"
 
     def test_add_to_spec(self, tmp_path):
         """add_to_test_spec creates and appends entries."""
@@ -264,6 +404,29 @@ class TestSpecParser:
         tests = parse_test_spec(Path("/nonexistent/test_spec.json"))
         assert tests == []
 
+    def test_fmu_key_is_not_a_source(self, tmp_path):
+        """`source` is the only source-file key. `fmu` is a key nothing
+        reads: an error that names it and lists the keys there are — it
+        used to warn, and the test ran without a source file."""
+        from dstf.config import ConfigError
+
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"")
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {"tests": [{"model": "Model", "fmu": "Model.fmu", "variables": ["x"]}]}
+            )
+        )
+
+        with pytest.raises(ConfigError) as caught:
+            parse_test_spec(spec_path)
+        assert str(caught.value).endswith(
+            'tests[Model]: unknown field "fmu"; the fields here are: '
+            "baseline_points, comparison, description, info, metadata, metrics, "
+            "model, plots, simulation, source, variables"
+        )
+
 
 # ---------------------------------------------------------------------------
 # test_registry (discover_tests)
@@ -352,6 +515,20 @@ class TestDiscoverTests:
             "metric_tree_spec from test_spec.metrics must survive the merge"
         )
 
+    def test_scan_reports_progress_per_file(self, tmp_path):
+        from dstf.discovery.test_registry import scan_source_tests
+
+        config = _write_lib(tmp_path)
+        ticks = []
+        scanned = scan_source_tests(
+            config, progress=lambda done, total: ticks.append((done, total))
+        )
+        assert scanned
+        assert (
+            ticks[-1][0] == ticks[-1][1] == len(list(config.library_dir.rglob("*.mo")))
+        )
+        assert [d for d, _ in ticks] == list(range(1, len(ticks) + 1))
+
 
 def test_field_sources_records_annotation_default():
     """A test discovered only via Modelica annotation has field_sources='annotation'."""
@@ -402,3 +579,746 @@ def test_field_sources_records_spec_override():
         tests = discover_tests(config)
     assert len(tests) == 1
     assert tests[0].field_sources["stop_time"] == "test_spec"
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_discovery.py — regression tests for
+# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+#
+# Decisions encoded here:
+#
+# * Finding 13: TestModel's stop_time/tolerance/method default to ``None`` so
+#   "explicitly set in the spec" is ``is not None`` — a spec value that happens
+#   to equal a framework default still overrides the experiment annotation.
+#   Defaults are applied once, at the END of discover_tests
+#   (``finalize_defaults``), so downstream consumers keep seeing concrete values.
+# * Finding 57: field_sources provenance is "test_spec" only for fields the
+#   spec actually set; fields no source set get provenance "default".
+# * Finding 16: JSON null in simulation.* means "not set"; a non-numeric value
+#   is a config error naming model + field.
+# * Finding 52: add_to_test_spec(overwrite=True) preserves hand-authored
+#   comparison/simulation/metrics sections, replacing only model + variables.
+# * Finding 53: a non-dict entry in "tests" is a config error naming its place
+#   (the edit helpers, which do not parse the tests, step over one).
+# * Finding 51: duplicate `model` entries in test_spec.json — FIRST entry wins
+#   everywhere (discovery, patch, update helpers), each with a warning.
+# * Findings 48/55/56: .mo scanners run on comment/string-stripped text with
+#   balanced-paren experiment parsing; numeric garbage warns and skips; multi-
+#   top-level-class files warn about what was skipped.
+# =========================================================================
+
+
+def _write_lib(
+    tmp: Path,
+    *,
+    annotation: str | None = 'StopTime=100, Tolerance=1e-6, __Dymola_Algorithm="Cvode"',
+    spec: dict | None = None,
+) -> Config:
+    """Build a minimal Modelica library + testing.json (+ optional test_spec)."""
+    (tmp / "package.mo").write_text("package MyLib\nend MyLib;\n", encoding="utf-8")
+    ann = f"  annotation(experiment({annotation}));\n" if annotation else ""
+    (tmp / "Foo.mo").write_text(
+        "within MyLib;\n"
+        "model Foo\n"
+        "  Real x;\n"
+        "  UnitTests unitTests(n=1, x={x});\n"
+        "equation\n"
+        "  x = time;\n" + ann + "end Foo;\n",
+        encoding="utf-8",
+    )
+    cfg: dict = {
+        "source_path": ".",
+        "backend": "Dymola",
+        "backends": {},
+        "dependencies": [],
+    }
+    if spec is not None:
+        (tmp / "test_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+        cfg["test_spec"] = "test_spec.json"
+    (tmp / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
+    return Config(config_file=str(tmp / "testing.json"))
+
+
+def _mk_model(**kw) -> TestModel:
+    defaults = dict(
+        model_id="MyLib.Foo",
+        source_file=Path(""),
+        source_package="MyLib",
+        short_name="Foo",
+        n_vars=1,
+    )
+    defaults.update(kw)
+    return TestModel(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# Finding 13 — spec-over-annotation merge sentinel
+# ---------------------------------------------------------------------------
+
+
+class TestFinding13SpecOverridesAnnotation:
+    def test_spec_value_equal_to_default_overrides_annotation(self, tmp_path):
+        """A spec that explicitly sets stop_time=1.0 (== framework default)
+        against experiment(StopTime=100) must run 1.0 s, not 100 s."""
+        config = _write_lib(
+            tmp_path,
+            spec={
+                "tests": [
+                    {
+                        "model": "MyLib.Foo",
+                        "variables": ["x"],
+                        "simulation": {
+                            "stop_time": DEFAULT_STOP_TIME,
+                            "tolerance": DEFAULT_TOLERANCE,
+                            "method": DEFAULT_METHOD,
+                        },
+                    }
+                ]
+            },
+        )
+        tests = discover_tests(config)
+        foo = {t.model_id: t for t in tests}["MyLib.Foo"]
+        assert foo.source == "both"
+        assert foo.stop_time == DEFAULT_STOP_TIME
+        assert foo.tolerance == DEFAULT_TOLERANCE
+        assert foo.method == DEFAULT_METHOD
+        assert foo.field_sources["stop_time"] == "test_spec"
+        assert foo.field_sources["tolerance"] == "test_spec"
+        assert foo.field_sources["method"] == "test_spec"
+
+    def test_annotation_wins_when_spec_silent(self, tmp_path):
+        config = _write_lib(
+            tmp_path,
+            spec={"tests": [{"model": "MyLib.Foo", "variables": ["x"]}]},
+        )
+        tests = discover_tests(config)
+        foo = {t.model_id: t for t in tests}["MyLib.Foo"]
+        assert foo.stop_time == 100.0
+        assert foo.tolerance == 1e-6
+        assert foo.method == "Cvode"
+        assert foo.field_sources["stop_time"] == "annotation"
+        assert foo.field_sources["tolerance"] == "annotation"
+        assert foo.field_sources["method"] == "annotation"
+
+    def test_discovered_tests_never_expose_none_sim_fields(self, tmp_path):
+        """finalize_defaults runs at the end of discover_tests — downstream
+        consumers (backends format these into scripts) must see concrete values."""
+        config = _write_lib(
+            tmp_path,
+            annotation=None,
+            spec={"tests": [{"model": "MyLib.SpecOnly", "variables": ["*"]}]},
+        )
+        for t in discover_tests(config):
+            assert t.stop_time is not None
+            assert t.tolerance is not None
+            assert t.method is not None
+
+    def test_finalize_defaults_unit(self):
+        t = _mk_model()
+        assert t.stop_time is None and t.tolerance is None and t.method is None
+        t.finalize_defaults()
+        assert t.stop_time == DEFAULT_STOP_TIME
+        assert t.tolerance == DEFAULT_TOLERANCE
+        assert t.method == DEFAULT_METHOD
+
+
+class TestFinding57Provenance:
+    def test_spec_only_defaults_stamped_default_not_test_spec(self, tmp_path):
+        """Spec-only test with a minimal entry: fields the spec did NOT set
+        must show provenance "default", not "test_spec"."""
+        config = _write_lib(
+            tmp_path,
+            annotation=None,
+            spec={
+                "tests": [
+                    {
+                        "model": "MyLib.SpecOnly",
+                        "variables": ["*"],
+                        "simulation": {"stop_time": 42.0},
+                    }
+                ]
+            },
+        )
+        tests = discover_tests(config)
+        t = {t.model_id: t for t in tests}["MyLib.SpecOnly"]
+        assert t.stop_time == 42.0
+        assert t.field_sources["stop_time"] == "test_spec"
+        assert t.field_sources["tolerance"] == "default"
+        assert t.field_sources["method"] == "default"
+        assert t.field_sources["number_of_intervals"] == "default"
+        assert t.field_sources["output_interval"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# Finding 16 — null / non-numeric simulation values
+# ---------------------------------------------------------------------------
+
+
+class TestFinding16NullAndGarbageSpecValues:
+    def _spec_with_sim(self, tmp_path, sim: dict) -> Path:
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {"tests": [{"model": "MyLib.A", "variables": ["x"], "simulation": sim}]}
+            ),
+            encoding="utf-8",
+        )
+        return spec_path
+
+    def test_json_null_means_not_set(self, tmp_path):
+        """The module docstring itself shows "output_interval": null — nulls
+        must be treated as "not set", not crash with float(None)."""
+        spec_path = self._spec_with_sim(
+            tmp_path,
+            {
+                "stop_time": None,
+                "tolerance": None,
+                "output_interval": None,
+                "number_of_intervals": None,
+                "timeout": None,
+                "method": None,
+            },
+        )
+        tests = parse_test_spec(spec_path)
+        assert len(tests) == 1
+        t = tests[0]
+        assert t.stop_time is None
+        assert t.tolerance is None
+        assert t.output_interval is None
+        assert t.number_of_intervals is None
+        assert t.timeout is None
+        assert t.method is None
+
+    def test_a_non_numeric_value_is_a_config_error_that_names_it(self, tmp_path):
+        """It was a warning and a run to the default stop time."""
+        from dstf.config import ConfigError
+
+        spec_path = self._spec_with_sim(
+            tmp_path, {"stop_time": "not-a-number", "tolerance": 1e-5}
+        )
+        with pytest.raises(ConfigError) as refused:
+            parse_test_spec(spec_path)
+        assert str(refused.value) == (
+            f"{spec_path}: tests[MyLib.A].simulation.stop_time: must be a number, "
+            'got "not-a-number"'
+        )
+
+
+# ---------------------------------------------------------------------------
+# Finding 53 — non-dict entries in "tests"
+# ---------------------------------------------------------------------------
+
+
+class TestFinding53NonDictEntries:
+    def test_a_non_dict_entry_is_a_config_error_that_names_its_place(self, tmp_path):
+        """It was skipped with a warning — and crashed discovery before that."""
+        from dstf.config import ConfigError
+
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {"model": "MyLib.A", "variables": ["x"]},
+                        "oops-a-string",
+                        42,
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError) as refused:
+            parse_test_spec(spec_path)
+        assert str(refused.value) == (
+            f'{spec_path}: tests[1]: must be an object, got "oops-a-string"'
+        )
+
+    def test_edit_helpers_tolerate_non_dict_entries(self, tmp_path):
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(
+            json.dumps({"tests": ["garbage", {"model": "MyLib.A", "variables": []}]}),
+            encoding="utf-8",
+        )
+        # Neither may raise on the non-dict entry.
+        assert add_to_test_spec(spec_path, "MyLib.B", ["y"]) is True
+        update_test_variables(spec_path, "MyLib.A", ["z"])
+        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        by_model = {e["model"]: e for e in data["tests"] if isinstance(e, dict)}
+        assert set(by_model) == {"MyLib.A", "MyLib.B"}
+        assert by_model["MyLib.A"]["variables"] == ["z"]
+
+
+# ---------------------------------------------------------------------------
+# Finding 52 — overwrite=True preserves hand-authored sections
+# ---------------------------------------------------------------------------
+
+
+class TestFinding52OverwritePreservesSections:
+    def test_overwrite_replaces_only_model_and_variables(self, tmp_path):
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {
+                            "model": "MyLib.A",
+                            "variables": ["old"],
+                            "simulation": {"stop_time": 10},
+                            "comparison": {"tolerance": 0.05},
+                            "metrics": {"metric": "nrmse", "variable": "old"},
+                            "description": "hand-authored",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert add_to_test_spec(spec_path, "MyLib.A", ["new"], overwrite=True) is True
+        entry = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0]
+        assert entry["variables"] == ["new"]
+        assert entry["simulation"] == {"stop_time": 10}
+        assert entry["comparison"] == {"tolerance": 0.05}
+        assert entry["metrics"] == {"metric": "nrmse", "variable": "old"}
+        assert entry["description"] == "hand-authored"
+
+
+# ---------------------------------------------------------------------------
+# Finding 51 — duplicate model entries: first wins, with a warning
+# ---------------------------------------------------------------------------
+
+
+class TestFinding51DuplicateEntries:
+    def test_discovery_uses_first_duplicate_and_warns(self, tmp_path, caplog):
+        config = _write_lib(
+            tmp_path,
+            annotation=None,
+            spec={
+                "tests": [
+                    {
+                        "model": "MyLib.Dup",
+                        "variables": ["x"],
+                        "simulation": {"stop_time": 11.0},
+                    },
+                    {
+                        "model": "MyLib.Dup",
+                        "variables": ["y"],
+                        "simulation": {"stop_time": 22.0},
+                    },
+                ]
+            },
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.test_registry"):
+            tests = discover_tests(config)
+        dup = {t.model_id: t for t in tests}["MyLib.Dup"]
+        assert dup.stop_time == 11.0  # FIRST entry wins (matches patch_apply)
+        assert dup.variable_patterns == ["x"]
+        assert any("MyLib.Dup" in r.message for r in caplog.records)
+
+    def test_apply_patch_warns_on_duplicates_and_edits_first(self, tmp_path, caplog):
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {"model": "M", "comparison": {"tolerance": 1e-4}},
+                        {"model": "M", "comparison": {"tolerance": 1e-5}},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.patch_apply"):
+            apply_patch(
+                spec_path,
+                "M",
+                [{"op": "replace", "path": "/comparison/tolerance", "value": 0.5}],
+            )
+        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        assert data["tests"][0]["comparison"]["tolerance"] == 0.5
+        assert data["tests"][1]["comparison"]["tolerance"] == 1e-5
+        assert any("duplicate" in r.message.lower() for r in caplog.records)
+
+    def test_update_helpers_warn_on_duplicates_and_edit_first(self, tmp_path, caplog):
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {"model": "M", "variables": ["a"]},
+                        {"model": "M", "variables": ["b"]},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.spec_parser"):
+            update_test_variables(spec_path, "M", ["c"])
+        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        assert data["tests"][0]["variables"] == ["a", "c"]
+        assert data["tests"][1]["variables"] == ["b"]
+        assert any("duplicate" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Finding 48 — raw-text parsing: comments/strings must not shadow real code
+# ---------------------------------------------------------------------------
+
+
+class TestFinding48StrippedParsing:
+    def test_commented_experiment_does_not_shadow_real_annotation(self):
+        text = (
+            "within MyLib;\n"
+            "model Foo\n"
+            "  // experiment(StopTime=5)\n"
+            "  Real x;\n"
+            "  annotation(experiment(StopTime=20, Tolerance=1e-7));\n"
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 20.0
+        assert info.tolerance == 1e-7
+
+    def test_model_keyword_in_comment_does_not_shadow_name(self):
+        text = "/* the model Bogus was removed */\nmodel RealOne\nend RealOne;\n"
+        assert _extract_model_name(text) == "RealOne"
+
+    def test_class_keyword_needs_word_boundary(self):
+        text = "// supermodel Nope\nblock B\nend B;\n"
+        assert _extract_model_name(text) == "B"
+
+    def test_experiment_with_nested_parens_is_fully_parsed(self):
+        """[^)]* used to truncate at the first ')' — StopTime after a nested
+        group was silently dropped."""
+        text = (
+            "annotation(experiment(__Dymola_Tuning(a=1), StopTime=10, Tolerance=1e-5));"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 10.0
+        assert info.tolerance == 1e-5
+
+    def test_experiment_method_string_survives_stripping(self):
+        """String values live in the original text — literal-stripping must not
+        blank __Dymola_Algorithm."""
+        text = 'annotation(experiment(StopTime=2, __Dymola_Algorithm="Esdirk45a"));'
+        info = _parse_experiment(text)
+        assert info.method == "Esdirk45a"
+
+    def test_double_slash_inside_string_does_not_desync_stripper(self):
+        """Regression (2026-07-07): a ``//`` inside a string literal (e.g. a
+        ``modelica://`` URI) must not be treated as a line comment. The old
+        3-pass stripper ran the line-comment regex before the string regex, so
+        the ``//`` in the URL blanked the string's closing quote and desynced
+        every following string — swallowing the real ``experiment()`` and
+        defaulting StopTime to 1.0. Mirrors TRANSFORM's InverseParameterization,
+        where a ``__Dymola_Commands`` URL precedes the experiment annotation."""
+        text = (
+            "within MyLib;\n"
+            "model Foo\n"
+            "  Real x;\n"
+            "  annotation(\n"
+            "    __Dymola_Commands(file(ensureSimulated=true)="
+            '"modelica://MyLib/Resources/Scripts/plotResults.mos" "plot"),\n'
+            "    experiment(StopTime=10, Interval=0.001),\n"
+            '    Documentation(info="<html><img src=\\"modelica://x.png\\"></html>"));\n'
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 10.0  # was None → default 1.0 before the fix
+        assert info.output_interval == 0.001
+
+    def test_quote_inside_line_comment_does_not_open_string(self):
+        """The dual hazard: a ``"`` inside a real ``//`` comment must not start
+        a string that swallows following code."""
+        text = (
+            "model Foo\n"
+            '  // a stray quote " here must not open a string\n'
+            "  annotation(experiment(StopTime=7));\n"
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 7.0
+
+    def test_block_comment_close_inside_string_is_ignored(self):
+        """A ``*/`` inside a string must not end a block comment that was never
+        opened; and a ``/*`` inside a string must not start one."""
+        text = (
+            "model Foo\n"
+            '  parameter String s = "not /* a comment */ really";\n'
+            "  annotation(experiment(StopTime=3));\n"
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Finding 56 — numeric garbage in experiment values
+# ---------------------------------------------------------------------------
+
+
+class TestFinding56NumericGarbage:
+    def test_arithmetic_expression_warns_and_skips(self, tmp_path, caplog):
+        """StopTime=0.5*3600 used to silently truncate to 0.5."""
+        mo = tmp_path / "Foo.mo"
+        mo.write_text(
+            "within MyLib;\n"
+            "model Foo\n"
+            "  UnitTests ut(n=1, x={x});\n"
+            "  Real x;\n"
+            "  annotation(experiment(StopTime=0.5*3600, Tolerance=1e-6));\n"
+            "end Foo;\n",
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.mo_parser"):
+            result = parse_mo_file(mo)
+        assert result is not None
+        assert result.experiment.stop_time is None  # skipped, NOT 0.5
+        assert result.experiment.tolerance == 1e-6  # sibling still parsed
+        assert any(
+            "StopTime" in r.message or "stop_time" in r.message for r in caplog.records
+        )
+        assert any("Foo.mo" in r.message for r in caplog.records)
+
+    def test_garbage_capture_does_not_crash_discovery(self):
+        info = _parse_experiment("annotation(experiment(StopTime=1.2.3));")
+        assert info is not None
+        assert info.stop_time is None
+
+    def test_error_expected_expression_warns_and_keeps_default(self, tmp_path, caplog):
+        """errorExpected=1e-3*2 used to silently truncate to 1e-3 — the
+        truncating character class survived here after the rest of the file
+        moved to _parse_number."""
+        mo = tmp_path / "Bar.mo"
+        mo.write_text(
+            "within MyLib;\n"
+            "model Bar\n"
+            "  UnitTests ut(n=1, x={x}, errorExpected=1e-3*2);\n"
+            "  Real x;\n"
+            "  annotation(experiment(StopTime=1));\n"
+            "end Bar;\n",
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.mo_parser"):
+            result = parse_mo_file(mo)
+        assert result is not None
+        assert result.unit_test.error_expected == 1e-6  # default, NOT 1e-3
+        assert any("errorExpected" in r.message for r in caplog.records)
+        assert any("Bar.mo" in r.message for r in caplog.records)
+
+    def test_plain_error_expected_still_parsed(self, tmp_path):
+        mo = tmp_path / "Baz.mo"
+        mo.write_text(
+            "within MyLib;\n"
+            "model Baz\n"
+            "  UnitTests ut(n=1, x={x}, errorExpected=1e-3);\n"
+            "  Real x;\n"
+            "end Baz;\n",
+            encoding="utf-8",
+        )
+        result = parse_mo_file(mo)
+        assert result is not None
+        assert result.unit_test.error_expected == 1e-3
+
+    def test_json_recognizer_drops_non_numeric_scalar(self, tmp_path, caplog):
+        """A JSON recognizer's best-effort scalar coercion returned the raw
+        STRING "0.5*3600" and set it on the float-typed stop_time field."""
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        mo = tmp_path / "FooTest.mo"
+        mo.write_text(
+            "within MyLib.Examples;\n"
+            "model FooTest\n"
+            '  MyLib.Testing.SafetyTest myTest(tEnd=0.5*3600, solver="dassl");\n'
+            "end FooTest;\n",
+            encoding="utf-8",
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {
+                    "stop_time": {"from": "parameter", "name": "tEnd"},
+                    "method": {"from": "parameter", "name": "solver"},
+                },
+            }
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.json_recognizer"):
+            result = rec.recognize(mo)
+        assert result is not None
+        assert result.stop_time is None  # left unset, not the string
+        assert result.method == "dassl"  # string fields still accept strings
+        assert any("stop_time" in r.getMessage() for r in caplog.records)
+        assert any("MyLib.Examples.FooTest" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Finding 55 — multi-class files warn about undiscovered siblings
+# ---------------------------------------------------------------------------
+
+
+class TestFinding55MultiClassFiles:
+    def test_second_top_level_class_warns(self, tmp_path, caplog):
+        mo = tmp_path / "Two.mo"
+        mo.write_text(
+            "within MyLib;\n"
+            "model First\n"
+            "  UnitTests ut(n=1, x={x});\n"
+            "  Real x;\n"
+            "end First;\n"
+            "model Second\n"
+            "  UnitTests ut(n=1, x={y});\n"
+            "  Real y;\n"
+            "end Second;\n",
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.mo_parser"):
+            result = parse_mo_file(mo)
+        assert result is not None
+        assert result.model_id == "MyLib.First"
+        assert any("Second" in r.message for r in caplog.records)
+
+    def test_single_class_file_does_not_warn(self, tmp_path, caplog):
+        mo = tmp_path / "One.mo"
+        mo.write_text(
+            "within MyLib;\n"
+            "model Only\n"
+            "  UnitTests ut(n=1, x={x});\n"
+            "  Real x;\n"
+            "end Only;\n",
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="dstf.discovery.mo_parser"):
+            result = parse_mo_file(mo)
+        assert result is not None
+        assert not any("skipped" in r.message.lower() for r in caplog.records)
+
+
+class TestSpecFromDocument:
+    """`spec_models_from_document` is `parse_test_spec` without the disk."""
+
+    def _spec(self):
+        return {
+            "tests": [
+                {
+                    "model": "Lib.A",
+                    "variables": ["x", "y"],
+                    "simulation": {"stop_time": 3.0},
+                    "comparison": {"variable_overrides": {"x": {"tolerance": 0.1}}},
+                },
+                {"model": "Lib.B", "variables": ["z"], "source": "Examples/B.py"},
+            ]
+        }
+
+    def test_document_and_file_produce_the_same_models(self, tmp_path):
+        from dstf.discovery.spec_parser import (
+            parse_test_spec,
+            spec_models_from_document,
+        )
+
+        (tmp_path / "Examples").mkdir()
+        (tmp_path / "Examples" / "B.py").write_text("")
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(json.dumps(self._spec()), encoding="utf-8")
+
+        from_file = parse_test_spec(spec_path)
+        from_doc = spec_models_from_document(
+            self._spec(), base_dir=tmp_path, label="in memory"
+        )
+        assert [t.model_id for t in from_file] == [t.model_id for t in from_doc]
+        for a, b in zip(from_file, from_doc):
+            assert (
+                a.variable_patterns,
+                a.stop_time,
+                a.variable_overrides,
+                a.source_file,
+            ) == (b.variable_patterns, b.stop_time, b.variable_overrides, b.source_file)
+        assert from_doc[1].source_file == (tmp_path / "Examples" / "B.py").resolve()
+
+    def test_a_root_that_can_hold_no_tests_is_a_config_error(self):
+        """It was a spec of no tests, with an error in the log."""
+        from dstf.config import ConfigError
+        from dstf.discovery.spec_parser import spec_models_from_document
+
+        with pytest.raises(ConfigError, match="x: must be an object"):
+            spec_models_from_document([], base_dir=Path("."), label="x")
+        with pytest.raises(ConfigError, match="x: tests: must be a list"):
+            spec_models_from_document({"tests": "no"}, base_dir=Path("."), label="x")
+
+    def test_bad_metric_tree_names_the_label(self):
+        from dstf.config import ConfigError
+        from dstf.discovery.spec_parser import spec_models_from_document
+
+        doc = {"tests": [{"model": "Lib.A", "variables": ["x"], "metrics": 42}]}
+        with pytest.raises(ConfigError, match="in memory"):
+            spec_models_from_document(doc, base_dir=Path("."), label="in memory")
+
+
+# ---------------------------------------------------------------------------
+# Discovery from a pre-parsed document; the scan and the merge are separable
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryFromDocument:
+    def test_merge_does_not_mutate_the_scan(self, tmp_path):
+        from dstf.discovery.test_registry import merge_tests, scan_source_tests
+
+        config = _write_lib(tmp_path)
+        scanned = scan_source_tests(config)
+        model_id = next(iter(scanned))
+        before = scanned[model_id].stop_time
+        spec_test = _mk_model(
+            model_id=model_id,
+            stop_time=99.0,
+            variable_patterns=["q"],
+            variable_overrides={"q": {"tolerance": 0.5}},
+        )
+        # The merge writes INTO these two containers on the merged copy; a
+        # shallow copy of the scan would leak the writes back here.
+        sources_before = dict(scanned[model_id].field_sources)
+        overrides_before = dict(scanned[model_id].variable_overrides)
+
+        merged = merge_tests(scanned, {model_id: spec_test})
+        assert next(t for t in merged if t.model_id == model_id).stop_time == 99.0
+        assert scanned[model_id].stop_time == before
+        assert scanned[model_id].variable_patterns != ["q"]
+        assert scanned[model_id].field_sources == sources_before
+        assert scanned[model_id].variable_overrides == overrides_before
+        # A second merge against a different spec sees the untouched scan.
+        again = merge_tests(scanned, {})
+        assert next(t for t in again if t.model_id == model_id).variable_patterns != [
+            "q"
+        ]
+
+    def test_merge_does_not_mutate_a_spec_only_model(self):
+        """The `else` branch stores the spec model; finalize_defaults then
+        fills its None sentinels — on the copy, never on the caller's."""
+        from dstf.discovery.test_registry import merge_tests
+
+        spec_only = _mk_model(model_id="Lib.SpecOnly", stop_time=None, tolerance=None)
+        spec_only.field_sources = {}
+        (merged,) = merge_tests({}, {"Lib.SpecOnly": spec_only})
+        assert merged.stop_time is not None and merged.tolerance is not None
+        assert spec_only.stop_time is None and spec_only.tolerance is None
+        assert spec_only.field_sources == {}
+
+    def test_the_fallback_spec_file_is_discovered(self, tmp_path):
+        """`dstf add` writes <reference_root>/test_spec.json when no test_spec
+        is configured; discovery reads that same file (Conventions #8)."""
+        from dstf.discovery.test_registry import discover_tests
+
+        config = _write_lib(tmp_path)  # no "test_spec" key in testing.json
+        assert config.test_spec_file is None
+        config.spec_path.parent.mkdir(parents=True, exist_ok=True)
+        config.spec_path.write_text(
+            json.dumps({"tests": [{"model": "Foo.Fallback", "variables": ["x"]}]}),
+            encoding="utf-8",
+        )
+        assert "Foo.Fallback" in {t.model_id for t in discover_tests(config)}

@@ -1,0 +1,721 @@
+"""The shell's stylesheet on top of `reporting.theme.css_variables()`
+(DESIGN.md "Typography", "Header", "Spacing, shape, elevation", "Status
+badges"): the font token on the body and on Quasar's controls — the
+roadmap left the tool on Quasar's stack until this shell applied it — the
+off-white header with its hairline, the 32 px rows with their status tint,
+the filled badge, the sentence beside a greyed button. Every colour is a
+token; nothing here names a hex."""
+
+from __future__ import annotations
+
+from ...reporting.theme import STATUS
+
+_PILLS = "".join(
+    f".dstf-pill-{status} {{ background: var(--dstf-{status}-pill); "
+    f"color: var(--dstf-{status}-dark); border-color: var(--dstf-{status}-border); }}\n"
+    for status in ("pass", "fail", "sim-fail", "no-ref", "not-run", "warn", "queued")
+)
+
+#: A criterion's swatch (legend b) in the colour its pill's border uses:
+#: filled while its drawing shows, and `.dstf-swatch-off` empties it.
+_SWATCHES = "".join(
+    f".dstf-swatch-{status} {{ border-color: var(--dstf-{status}-border); "
+    f"background: var(--dstf-{status}-border); }}\n"
+    for status in ("pass", "fail", "warn", "queued")
+)
+
+_TINTS = "".join(
+    f".dstf-tint-{status} {{ background: var(--dstf-{status}-tint); }}\n"
+    for status in STATUS
+)
+
+#: What Quasar draws itself, under a theme (D148; `Shell.page_setup` lays it
+#: after `STYLE`). Under `body--dark` — which `TabTheme` sets for a dark
+#: theme — Quasar paints its own surfaces from `--q-dark` / `--q-dark-page`
+#: (the palette's) and these are the pieces that name a colour of their own.
+QUASAR = """
+/* A filled primary button's text is the token's, not Quasar's white: on the
+   dark accent white reads 2.2:1. Quasar's `.text-white` is `!important`
+   INSIDE NiceGUI's `quasar_importants` layer, and a layered important beats
+   any unlayered one — the rule joins that layer and wins there on
+   specificity (unlayered, the button stayed rgb(255, 255, 255) in Chromium). */
+@layer quasar_importants {
+  .q-btn.bg-primary { color: var(--dstf-on-accent) !important; }
+  /* A disabled item of a bar's ⋮ menu reads its reason under its name:
+     Quasar dims the whole item to 60 % — an `!important` of that layer —
+     which put the reason, already the muted text, at 2:1. The name is
+     dimmed below; the sentence is not. */
+  .dstf-menu-action.disabled { opacity: 1 !important; }
+}
+.dstf-menu-action.disabled .dstf-menu-name { opacity: 0.6; }
+/* The window's own ground follows the tab's theme: `first_paint` gave it
+   the project's before this stylesheet arrived. */
+html { background: var(--dstf-page); }
+body.body--dark { background: var(--dstf-page); color: var(--dstf-text); }
+.body--dark .q-card, .body--dark .q-menu, .body--dark .q-dialog__inner > div,
+.body--dark .q-drawer { background: var(--dstf-surface); color: var(--dstf-text); }
+.body--dark .q-tooltip { background: var(--dstf-surface-active); color: var(--dstf-text); }
+.body--dark .q-field__native, .body--dark .q-field__input,
+.body--dark .q-field__label, .body--dark .q-item__label--caption {
+  color: var(--dstf-text-secondary); }
+.body--dark .q-separator { background: var(--dstf-border); }
+"""
+
+STYLE = (
+    """
+body, .q-header, .q-drawer, .q-btn, .q-field, .q-badge, .q-dialog, .q-tooltip, .q-item {
+  font-family: var(--dstf-font);
+}
+body { background: var(--dstf-page); color: var(--dstf-text); }
+.dstf-header.q-header {
+  background: var(--dstf-page) !important; color: var(--dstf-text) !important;
+  border-bottom: 1px solid var(--dstf-border); box-shadow: none;
+  /* No padding of its own — NiceGUI's `.nicegui-header` brings 16 px on
+     every side — because each ROW carries the side padding instead: on the
+     header it inset the sub-header's border-top, which then stopped short
+     of both edges while the header's own border-bottom ran to them. */
+  padding: 0;
+  /* NiceGUI's own `.nicegui-header { flex-direction: row }` outranks
+     Quasar's `.column`: without this the Test page's second row renders to
+     the RIGHT of the first with Rerun / Accept clipped off-screen, and
+     every simulation test still passes. */
+  flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+}
+.dstf-header-row { padding: 4px 24px; min-height: 40px; }
+.dstf-subheader {
+  border-top: 1px solid var(--dstf-border); padding: 4px 24px; min-height: 40px;
+}
+/* The Test page's subheader WRAPS: kept to one line beside a real
+   library's model id, it put Accept and Rerun past a 900 px window (wholly
+   off it on a TRANSFORM-length id) and squeezed Rerun to seven lines. The
+   id breaks at any character when a line cannot hold it. The TEST actions
+   are the status strip's now, below it. */
+.dstf-subheader .dstf-model { overflow-wrap: anywhere; }
+/* The Test page's status strip: a third row of the header, its tone a
+   3 px left border and a tint. The sentence takes what is left and wraps;
+   its buttons keep to the right as one group, below it when they do not
+   fit. */
+.dstf-strip {
+  border-top: 1px solid var(--dstf-border); border-left: 3px solid;
+  padding: 4px 24px 4px 21px; min-height: 36px; row-gap: 4px;
+}
+.dstf-strip-grey { background: var(--dstf-queued-tint); border-left-color: var(--dstf-queued-border); }
+.dstf-strip-red { background: var(--dstf-fail-tint); border-left-color: var(--dstf-fail-border); }
+.dstf-strip-amber { background: var(--dstf-warn-tint); border-left-color: var(--dstf-warn-border); }
+.dstf-strip-text { flex: 1 1 20em; }
+.dstf-strip > .dstf-strip-actions { margin-left: auto; }
+/* A pill is at least as wide as WARN, its text centred: PASS and FAIL are
+   one width, so the names after them on a plot's criteria rows start in
+   one column (D140; the report's `.node-status` keeps the same). */
+.dstf-pill {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
+  min-width: 4.8em; text-align: center;
+}
+/* A pill that carries its variable's name ("x FAIL", on a card drawing
+   more than one series): the name keeps the case the test wrote it in. */
+.dstf-pill-named { text-transform: none; }
+.dstf-tree-line, .dstf-stats-line { min-height: 32px; }
+.dstf-tree-row {
+  min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
+}
+.dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* A row whose click opens something (U5): a criterion's editor, a k-of-n's
+   or a weighted's fields — a button to the mouse and the keyboard. */
+.dstf-tree-row[role="button"] { cursor: pointer; }
+.dstf-tree-row[role="button"]:focus-visible {
+  outline: 2px solid var(--dstf-accent); outline-offset: -2px;
+}
+/* Where a row sits (U5, Q1): a 6 px bar per level, 2 px apart, the row's
+   full height, in place of an indent; the hovered group's branch takes its
+   level's deeper shade on that level's bar (`.dstf-lvl-on`, set by the
+   page's script on the BAR, never the row). Then the chevron's place,
+   kept on every row so the pills stay in line. The bars cover the row's
+   top border too (the -1 px): stretched inside it they stopped 1 px short
+   of the row above's, a gap in every branch. */
+.dstf-bars {
+  display: flex; flex: none; align-self: stretch; gap: 2px; margin-top: -1px;
+}
+.dstf-bar { width: 6px; flex: none; }
+.dstf-lvl-1 { background: var(--dstf-level-1); }
+.dstf-lvl-2 { background: var(--dstf-level-2); }
+.dstf-lvl-3 { background: var(--dstf-level-3); }
+.dstf-lvl-4 { background: var(--dstf-level-4); }
+.dstf-lvl-1.dstf-lvl-on { background: var(--dstf-level-1-on); }
+.dstf-lvl-2.dstf-lvl-on { background: var(--dstf-level-2-on); }
+.dstf-lvl-3.dstf-lvl-on { background: var(--dstf-level-3-on); }
+.dstf-lvl-4.dstf-lvl-on { background: var(--dstf-level-4-on); }
+.dstf-chev-slot { width: 28px; flex: none; display: inline-flex; justify-content: center; }
+/* A group's chevron (U5, Q3): a 28 px target, an 18 px glyph, turned
+   right while its row is folded; the row then says what it hides. */
+.dstf-chev {
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--dstf-text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.dstf-chev:hover { background: var(--dstf-surface-active); }
+.dstf-chev:focus-visible { outline: 2px solid var(--dstf-accent); }
+.dstf-chev .q-icon { font-size: 18px; transition: transform .12s; }
+.dstf-tree-row[data-folded="1"] .dstf-chev .q-icon { transform: rotate(-90deg); }
+.dstf-fold-summary { color: var(--dstf-text-secondary); font-size: 12px; }
+/* A long row never widens the page: its text wraps — anywhere, as a
+   TRANSFORM name has no space to break at — and its readout keeps one
+   line, cut with an ellipsis, the whole of it in its title (`_Row.paint`).
+   At 900 px a deep criterion's name and readout pushed the page 48 px
+   sideways. The readout shrinks with the name down to 80 px and no
+   further: shrinking from 0, a 200-character name left it 71 px at 900
+   (J2); kept whole up to 40% of the row, it left the J2 tests' names
+   119-143 px at 900, five lines and more, where now they have 290-350. */
+.dstf-tree-row > .dstf-tree-text { min-width: 0; overflow-wrap: anywhere; }
+.dstf-tree-row > .dstf-tree-readout {
+  flex: 0 1 auto; min-width: 80px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dstf-tree-row:not([data-folded="1"]) .dstf-fold-summary { display: none; }
+/* The root's tag (Q2): "and · 5 criteria · root". */
+.dstf-root-tag { color: var(--dstf-text-muted); font-size: 12px; }
+.dstf-root-tag::before { content: "· "; }
+/* The drag (U4): a handle before the pill, its place kept while hidden so
+   the pills stay in line (`.dstf-grip-off`: never Quasar's `.hidden`, whose
+   cascade layer beats an unlayered `!important`). Over a row: a line at the row's indent where the
+   node would go before it, an outline onto it, a red outline where the
+   move is refused — its reason then fills the card's header line, in place
+   of the line's text (`.dstf-line-why`): said in the row it reflowed the
+   row's icons. */
+.dstf-tree-row { position: relative; }
+.dstf-grip {
+  width: 20px; flex: none; display: inline-flex; justify-content: center;
+  color: var(--dstf-text-muted); cursor: grab;
+}
+.dstf-grip-off { visibility: hidden; }
+.dstf-drop-before::before {
+  content: ""; position: absolute; top: -2px; right: 0;
+  left: var(--indent, 0px); height: 3px; background: var(--dstf-accent);
+  pointer-events: none;
+}
+.dstf-drop-onto { outline: 2px solid var(--dstf-accent); outline-offset: -2px; }
+.dstf-drop-no {
+  outline: 2px solid var(--dstf-fail-border); outline-offset: -2px;
+  cursor: not-allowed;
+}
+.dstf-tree-line.dstf-line-why > * { display: none !important; }
+.dstf-tree-line.dstf-line-why::before {
+  content: attr(data-why); color: var(--dstf-fail-dark);
+}
+/* After a move (V4): its row flashed once as it comes into view, and one
+   line under it saying what the move changed. */
+@keyframes dstf-flash { from { background: var(--dstf-selection); } }
+.dstf-flash { animation: dstf-flash 1.2s ease-out; }
+/* Its scroll margin: what is above the tree settles a pixel lower after
+   the line is scrolled to (the page's header row and strip repaint). */
+.dstf-moved { color: var(--dstf-text-secondary); scroll-margin-bottom: 8px; }
+/* The tree card's live region (`TreeCard.live`): read, never seen. */
+.dstf-live {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* Move to… (U4): a place per line, its node's text cut in the middle,
+   then where in it — "— before" whole and the row it names cut in the
+   middle too; the menu no wider than the page allows. Kept whole, a
+   100-character name ran past the menu's edge and squeezed the node's
+   text to 0 px. The named row takes what the node's text and "— before"
+   leave (a basis of 0), so it is cut first; the node's text is cut only
+   past that, to no less than 6ch — shrunk alike, a k-of-n's read only
+   its tail. "Where" lays its parts out in the label's own row
+   (`contents`): as a box of its own, its minimum width was its whole
+   text, cut or not. */
+.dstf-move-menu { max-width: min(560px, 92vw); }
+.dstf-move-label {
+  display: flex; gap: .4em; min-width: 0; white-space: nowrap;
+}
+.dstf-move-label > .dstf-mid { flex: 0 1 auto; min-width: 6ch; }
+.dstf-move-where { display: contents; }
+.dstf-move-where > * { flex: none; }
+.dstf-move-where > .dstf-mid { flex: 1 1 0; min-width: 0; }
+/* A combinator's kind dropdown, in its row's lead place: a dense Quasar
+   field is 40 px tall, which stood a combinator's row well above a
+   leaf's; at 28 px the rows read as one list. */
+.dstf-kind .q-field__control, .dstf-kind .q-field__native,
+.dstf-kind .q-field__marginal { min-height: 28px; height: 28px; }
+/* A plot card: its title row, its plot, its criteria header and rows at
+   the card's own spacing (the brief's "col gap 10px"). */
+.dstf-plot { gap: 10px; }
+/* A card's header row wraps (3c's gate over a real library: at 900 px
+   beside a drawer, a long title, its pills and the toolbar in one row
+   that neither wrapped nor shrank scrolled the page sideways). The title
+   and its pills take what is left and wrap inside it, a long name cut in
+   its middle (`.dstf-mid`); the toolbar wraps as one unit, pushed to the
+   right. No
+   `no-wrap` on the row: kept to one line, the title shrank instead (to
+   three and four lines at 900 px beside a drawer). */
+.dstf-card-head { row-gap: 4px; }
+/* `min-width: 0`: a title cut in its middle is one unbreakable line, and
+   the row's automatic minimum — that whole line — pushed the page sideways
+   (1477 px on a 150-character title). */
+.dstf-card-title { flex: 1 1 auto; min-width: 0; }
+.dstf-card-tools { flex: none; margin-left: auto; }
+.dstf-plot-slot { min-height: 320px; --toolbar-gutter: 34px; }
+/* The plot's vertical toolbar stands in a gutter of its own, right of the
+   figure, instead of over the error axis's tick labels and title: a margin
+   reserved inside the figure could not know how wide those labels grow
+   (an error around 1e-5 outgrew every reserve measured). The plot is the
+   gutter's width narrower than its slot: `width: auto` undoes the plot's
+   `w-full`, so the margin narrows the plot instead of hanging the toolbar
+   15 px past the card. Plotly pins the toolbar's container with an inline
+   `right: 0px`, hence the `!important`. The width is not a `--dstf-`
+   token: those are the theme's table (theme.py). */
+.dstf-plot-slot > .js-plotly-plot {
+  width: auto; margin-right: var(--toolbar-gutter);
+}
+.dstf-plot-slot .js-plotly-plot .modebar-container {
+  right: calc(-1 * var(--toolbar-gutter)) !important;
+}
+/* A tolerance grip — the arrow outside each side of the open criterion's
+   tolerance — is hidden at rest: `grips.js` marks each grip's path with its
+   group (`data-grip`) and, of the cluster of groups the pointer is in,
+   every one (`data-grip-on`). `display: none`, never `visibility` or `opacity`:
+   Plotly writes inline `opacity: 1; pointer-events: all` on every editable
+   shape, so a grip hidden either way was still grabbed where nothing
+   showed. Without a hover — a touch screen — they are always shown.
+   But an arrow whose edge is OFF the plot (`data-grip-off`, marked by
+   `grips.js` on every redraw): that one is not displayed at all, its
+   group shown or not, hover or none. One rule for an edge that is not on
+   the plot — no arrow. Left Plotly's clip instead, an arrow was still
+   painted wherever the clip cut nothing: whole, inside the panel, when it
+   is drawn inward of an edge 2 px off it; a sliver on the border beside
+   a checkpoint just past it. And the hover label gave way next to it. */
+.js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]) { display: none; }
+.js-plotly-plot .shapelayer path[data-grip-off] { display: none; }
+/* And a grip is not clipped to the plot area. Plotly clips every shape to
+   it, and an arrow stands 10 to 17 px OUTSIDE its edge: with that edge at
+   the plot's edge, where any zoom can put it, the arrow was all in the
+   margin — not painted, and a press where it belonged landed on the axis
+   under it. Unclipped it is drawn whole in the margin, over the tick
+   labels, and takes the press: the shape layer lies above the axes' drag
+   layer. Only the svg's own edge cuts it. Every other shape keeps its clip
+   — a ring too: centred on its point, its inner half is drawn and pressed
+   while the point is on the plot.
+   Plotly writes the clip as the `clip-path` ATTRIBUTE, in two places: on
+   a shape's GROUP as it is drawn — every redraw draws new groups — and,
+   from a press to its release, on the held PATH itself, for every axis
+   whose range is set (any zoom sets them). A property of a stylesheet
+   beats a presentation attribute wherever it is written and whenever, so
+   these two rules are the whole mechanism: nothing takes an attribute
+   off, and an arrow pressed in the margin of a zoomed plot stays painted
+   while it is held. A browser without `:has` (Firefox before 121) drops
+   the group's rule, and the path's alone un-clips nothing: there an
+   arrow at the plot's edge is clipped as Plotly draws it.
+   The un-clip is for the 10 to 17 px an arrow stands outside an edge that
+   is ON the plot. An arrow whose edge is off it — the arrows of a
+   checkpoint zoomed just off the plot were painted in the margin beside
+   the axis title, and took a press — is not displayed (above), so no
+   rule here needs to leave it out. */
+.js-plotly-plot .shapelayer path[data-grip] { clip-path: none; }
+.js-plotly-plot .shapelayer g.shape-group:has(> path[data-grip]) { clip-path: none; }
+/* An arrow that would be drawn over another of its cluster is moved ACROSS
+   its own axis by whole steps of 9 px (`grips.js` `stagger`, which marks
+   it with the steps: `data-grip-shift`, -3, -1, 1 or 3): a time or a
+   frequency arrow up or down, a value arrow left or right. A `transform`
+   of the stylesheet, so the path Plotly drew and drags is untouched: held,
+   it follows the pointer from where it is painted, and a release says its
+   edge. The 9 is `grips.js`'s STEP — it works out which arrows clear which
+   at that step. */
+.js-plotly-plot .shapelayer path[data-grip-shift="-3"] { --grip-across: -27px; }
+.js-plotly-plot .shapelayer path[data-grip-shift="-1"] { --grip-across: -9px; }
+.js-plotly-plot .shapelayer path[data-grip-shift="1"] { --grip-across: 9px; }
+.js-plotly-plot .shapelayer path[data-grip-shift="3"] { --grip-across: 27px; }
+.js-plotly-plot .shapelayer path[data-grip-axis="x"][data-grip-shift] {
+  transform: translate(0, var(--grip-across));
+}
+.js-plotly-plot .shapelayer path[data-grip-axis="y"][data-grip-shift] {
+  transform: translate(var(--grip-across), 0);
+}
+/* The cursor over an arrow is the way it moves — up and down for a value
+   side, left and right for a time or a frequency side — by the axis
+   `grips.js` marks it with. Plotly's own for a draggable shape is `move`,
+   set as the pointer comes by a CLASS on the path (`.js-plotly-plot .plotly
+   .cursor-move`, specificity 0,3,0), never inline: these rules — two
+   classes, an attribute and an element, 0,3,1 — outrank it as they
+   stand. */
+.js-plotly-plot .shapelayer path[data-grip-axis="y"] { cursor: ns-resize; }
+.js-plotly-plot .shapelayer path[data-grip-axis="x"] { cursor: ew-resize; }
+/* While the pointer is near a shown arrow or the ring its group stands
+   around (`grips.js` marks the graph div), the plot's hover label is not
+   shown: coming at a checkpoint from above or below, the unified label's
+   box and its spike line covered the arrows and half the ring. It is back
+   as soon as the pointer is away from them — arrows shown or not. By
+   `visibility`: the layer keeps its layout, which Plotly measures to size
+   a label it draws meanwhile. */
+.js-plotly-plot[data-grip-near] .hoverlayer { visibility: hidden; }
+/* A shape no editor moves — a box, a window, a result line, another
+   criterion's bound — takes no pointer: `grips.js` marks it `data-inert`
+   from what the figure says is draggable. Plotly makes EVERY shape of an
+   editable figure draggable (inline `pointer-events: all`, hence the
+   `!important`), so such a shape showed a resize cursor, moved under the
+   mouse and snapped back on release with nothing said. A press on it is now
+   the plot's own. A line is dragged by a helper group of its own, marked
+   too — and that helper is not clipped to the plot area as the line is:
+   a bound line an editor DOES move is marked the same while it is off
+   the plot whole, where its helper alone was left to press. */
+.js-plotly-plot .shapelayer [data-inert],
+.js-plotly-plot .shapelayer [data-inert] * { pointer-events: none !important; }
+@media (hover: none), (pointer: coarse) {
+  .js-plotly-plot .shapelayer path[data-grip]:not([data-grip-on]):not([data-grip-off]) {
+    display: inline;
+  }
+}
+.dstf-crit {
+  min-height: 36px; padding: 4px 8px; cursor: pointer;
+  border-top: 1px solid var(--dstf-border-hairline);
+}
+.dstf-crit:hover { background: var(--dstf-surface-hover); }
+/* A row's name (metric · variable) is one line: beside an open drawer a
+   card is ~540 px at 900 px, and it broke inside itself ("tube" over
+   "· x"). The readout beside it may wrap. */
+.dstf-crit-name { white-space: nowrap; }
+/* A variable label cut in the MIDDLE (D140, Q20; `widgets.MiddleCut`): the
+   head ellipsized, the tail (`[3]`, the element) whole. Two inline-blocks
+   in an inline-block — never a flex pair — so innerText and a copy read the
+   whole label; the head is capped at the element's width less the tail's
+   (`--tail`, its length in ch), and the tail is at least that wide: in a
+   proportional font `[3]` is narrower than 3ch, and a head capped by more
+   than the tail took was cut with room to spare. In a flex row the element
+   shrinks: `overflow: hidden` makes its minimum width 0. */
+.dstf-mid {
+  display: inline-block; max-width: 100%; overflow: hidden;
+  white-space: nowrap; vertical-align: bottom;
+}
+.dstf-mid-head {
+  display: inline-block; max-width: calc(100% - var(--tail, 0ch));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+.dstf-mid-tail {
+  display: inline-block; min-width: var(--tail, 0ch); white-space: nowrap;
+  vertical-align: bottom;
+}
+/* A row's breadcrumb — its ancestors' kinds, `and › k-of-n ›` — leads it,
+   muted and on one line: a plot's rows are its variable's leaves from
+   anywhere in the tree, and the crumb says where each sits. Its minimum
+   width is its card's longest crumb, in ch (`PlotCard`), so a plot's
+   `and ›` and `and › k-of-n ›` rows start their names in one column (the
+   report's `.node-crumbs` does the same). */
+.dstf-crumb { white-space: nowrap; }
+/* A plot's context series (grey on the plot, not scored), listed above it
+   each with the × that takes it off: Plotly's legend cannot hold a
+   button. */
+.dstf-context { padding: 0 8px; }
+.dstf-context-chip {
+  border: 1px solid var(--dstf-border-hairline); border-radius: 4px;
+  padding: 0 0 0 6px;
+}
+/* A long criterion name keeps its one line, so at narrow widths the row
+   wraps (it carries no `no-wrap`): the readout and the node's controls move
+   to a second line, the controls at its right end, instead of pushing the
+   page sideways (3c's gate over a real library, 900 px beside a drawer). */
+.dstf-crit > .dstf-node-host { margin-left: auto; }
+/* A plot's criteria header: a muted "Criteria" and, at its right end, what
+   attaches at VARIABLE (the plot's +), level with the criteria rows'
+   controls below it. */
+.dstf-criteria-head { min-height: 32px; padding: 0 8px; }
+.dstf-criteria-head > .dstf-node-host { margin-left: auto; }
+/* It wraps (no `no-wrap`): under a lock the + gives way to "… is running
+   on <model>", longer than a card beside a drawer at 900 px. Its form
+   row's slot, below it, holds the host's hidden error labels even when no
+   form is open, so it is never `:empty` — it sits flush under the header
+   instead, and the card's gap is not paid twice. */
+.dstf-criteria-head + .dstf-criteria-slot { margin-top: -10px; }
+/* The open criterion's row, and a row with a form open under it, stay
+   lit. */
+.dstf-crit-open, .dstf-row-open { background: var(--dstf-selection); }
+/* A criterion's swatch: its status colour, filled while its drawing shows,
+   an outline of it while hidden; the open criterion's is locked on. */
+.dstf-swatch {
+  width: 12px; height: 12px; border-radius: 2px; flex: none;
+  border: 2px solid; cursor: pointer; box-sizing: border-box;
+}
+.dstf-swatch-locked { cursor: default; opacity: .6; }
+/* A family's folded criteria row (D152): its chevron sits in the swatch's
+   place — a 20 px target in the swatch's 12 px, so every row's name starts
+   in one column — turned right while the row is folded. A member's row is
+   a criterion's row, indented under its fold with a rule down its left;
+   folded away it is `hidden`, an attribute the row's `display: flex` would
+   otherwise beat. */
+.dstf-fold-chev.dstf-chev { width: 20px; height: 20px; margin: 0 -4px; flex: none; }
+.dstf-fold[data-folded="1"] .dstf-chev .q-icon { transform: rotate(-90deg); }
+.dstf-crit[data-member] {
+  margin-left: 14px; width: calc(100% - 14px);
+  border-left: 2px solid var(--dstf-border);
+}
+.dstf-criteria > [hidden] { display: none !important; }
+/* The editor belongs to the row above it: indented under it, with the
+   accent rule down its left saying how far it reaches. A node's form row
+   belongs to its row the same way (the 2026-09-21 board, 1A). */
+.dstf-editor, .dstf-form-row {
+  margin: 0 0 8px 16px; padding: 12px;
+  border-left: 3px solid var(--dstf-accent);
+  border-top: 1px solid var(--dstf-border-hairline);
+  border-bottom: 1px solid var(--dstf-border-hairline);
+}
+/* The criterion editor's fields in ONE wrapping row (the board: the plot
+   and its editor fit a screen together). `.dstf-form` is the mode form's
+   slot, which hands its controls straight to that row rather than stacking
+   them in a column of its own; `.dstf-field` is one control, wide enough
+   for its label ("Width mode" clipped to "Wid…" in the Task 6 screenshot);
+   `.dstf-field-wide` is a multi-line one (a JSON list), on its own line. */
+.dstf-fields { row-gap: 8px; }
+.dstf-form { display: contents; }
+.dstf-field { min-width: 140px; }
+/* `order`, not source order: a tube's "Control points" is declared in the
+   MIDDLE of its mode form, and a full-width box there broke the row into
+   three lines with two single-line fields stranded below it. */
+.dstf-fields .dstf-field-wide { order: 1; }
+.dstf-field-wide { width: 100%; }
+/* A tolerance's two sides (`forms.sides_control`): the lower field, the
+   link toggle and the upper field, one group on one line, the toggle level
+   with the two input lines. A group with a hint ("in effect: …") makes its
+   first field wide enough for it on one line — never wider than the row
+   leaves beside the toggle and the second field. Under 420 px of row (the
+   editor beside an open drawer in a 900 px window: 415) that width is
+   dropped rather than push the editor wider than its card: the group takes
+   the row, its first field what the row has left, and it wraps where even
+   that is too little. The row a group sits in is the container that says
+   how much room there is: the form's, or a table's rows. */
+.dstf-fields, .dstf-table-scroll { container-type: inline-size; }
+.dstf-sides { flex-wrap: nowrap; gap: 4px; }
+.dstf-sides > .q-btn { flex: none; margin-top: 8px; }
+/* The toggle's two states at a glance, as the board drew them: linked is
+   the accent, unlinked muted. Read off `aria-pressed` — an attribute the
+   server renders, not a class. */
+.dstf-sides > .q-btn[aria-pressed="true"] { color: var(--dstf-accent); }
+.dstf-sides > .q-btn[aria-pressed="false"] { color: var(--dstf-text-muted); }
+/* A field's ⌖ (D149): muted at rest, the accent on a fill while its field
+   is ARMED — the next click on the plot sets it. Read off `aria-pressed`,
+   which the server renders. And the armed criterion's PLOT says so where
+   the click is made: its card carries `data-armed`, the plot an accent
+   outline, the line under it what the click sets. */
+.dstf-arm { color: var(--dstf-text-muted); }
+/* Close to its field's end: Quasar's 12 px before an appended control made
+   a points row, ten controls and eight of these, a line taller at 1280. */
+.q-field__append:has(> .dstf-arm) { padding-left: 4px; }
+.dstf-arm[aria-pressed="true"] {
+  color: var(--dstf-accent);
+  background: color-mix(in srgb, var(--dstf-accent) 18%, transparent);
+}
+.dstf-plot[data-armed] .dstf-plot-slot {
+  outline: 2px solid var(--dstf-accent); outline-offset: -2px;
+}
+.dstf-plot-armed { color: var(--dstf-accent); }
+.dstf-sides-hinted > .q-field:first-child {
+  min-width: min(var(--dstf-hint-width), calc(100cqw - 180px));
+}
+@container (width < 420px) {
+  .dstf-sides { flex-wrap: wrap; }
+  .dstf-sides-hinted { flex: 1 1 100%; }
+  .dstf-sides-hinted > .q-field:first-child { min-width: 140px; flex: 1 1 140px; }
+}
+/* Focus (board 5A): "Showing 1 of N plots", the switcher naming it, and
+   the way back to all of them, on the accent tint so the page says at a
+   glance that what is below it is one plot of several. */
+.dstf-focus-bar {
+  background: var(--dstf-selection); border: 1px solid var(--dstf-accent);
+  border-radius: 4px; padding: 4px 12px;
+}
+/* Eight rows of 42 px, and then the rows scroll (board 2A) — the
+   container this sits on holds the rows alone, never `Add row`. */
+.dstf-table-scroll { max-height: 336px; overflow-y: auto; }
+/* A table's row: its cells on one line where they fit and wrapped INSIDE
+   the row where they do not (a points row is ten controls) — the table
+   never scrolls sideways. Top-aligned: a cell that grows a line to say
+   "required" leaves the row's input lines level. */
+.dstf-table-row { flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
+.dstf-table-row > .q-field, .dstf-table-row > .dstf-sides > .q-field {
+  width: 120px;
+}
+.dstf-table-row > .q-btn { margin-top: 6px; }
+.dstf-wordmark { font-size: 20px; font-weight: 700; }
+/* The pending drawer's preview (Q6 A): the entry as test_spec.json will
+   hold it, one line per row, never wrapped — a long line scrolls INSIDE
+   the diff, not the drawer. A flex item's min-width is its content's:
+   without the min-width 0 here and on the section and body columns a long
+   line widened the diff past the drawer, which clipped it, and nothing
+   scrolled. The lines sit in a box as wide as the longest of them, so an
+   added line's tint runs the whole scrolled width. */
+.dstf-diff {
+  font-family: var(--dstf-mono); font-size: 12px; overflow-x: auto;
+  width: 100%; min-width: 0; max-width: 100%;
+  border: 1px solid var(--dstf-border-hairline); border-radius: 3px;
+}
+.dstf-diff-lines { width: max-content; min-width: 100%; }
+.dstf-diff-line { display: flex; white-space: pre; line-height: 18px; padding: 0 6px; }
+.dstf-diff-line > * { flex: none; }
+.dstf-diff-add { background: var(--dstf-pass-tint); color: var(--dstf-pass-dark); }
+.dstf-diff-del { background: var(--dstf-fail-tint); color: var(--dstf-fail-dark); }
+.dstf-diff-gap, .dstf-diff-muted { color: var(--dstf-text-muted); }
+.dstf-mono { font-family: var(--dstf-mono); }
+.dstf-why { color: var(--dstf-text-muted); font-size: 12px; }
+/* A card's title reads the expression its model wrote; the result-file
+   name — what a criterion, an override or a --filter names — rides beside
+   it, muted. Drawn only when the two differ. */
+.dstf-varname { color: var(--dstf-text-muted); font-size: 12px; font-family: var(--dstf-mono); }
+.dstf-progress { font-size: 12px; color: var(--dstf-text-secondary); }
+.dstf-group {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--dstf-text-muted); padding: 12px 0 2px; overflow-wrap: anywhere;
+}
+/* A short, fixed title — the picker's sections, the Statistics card's —
+   never breaks (at 10 px "On this plot" measured 70 px in a 69.6 px box)
+   and spaces its words: uppercase at 10 px a space is 2.3 px, and "S P"
+   read "ON THISPLOT" in Chromium on one line. A drawer's package title
+   keeps `anywhere`. */
+.dstf-pick-list .dstf-group, .dstf-stats .dstf-group {
+  white-space: nowrap; word-spacing: .2em;
+}
+/* The Statistics card (U3): a row per statistic, the numbers in fixed
+   right-aligned columns so Run and Baseline read down, the `+` or the
+   criterion's pill at the end; a changed row wears the report's warn
+   tint. */
+.dstf-stats .dstf-group { padding-left: 8px; }
+.dstf-stat-row {
+  width: 100%; min-height: 28px; padding: 0 8px;
+  border-top: 1px solid var(--dstf-border-hairline);
+}
+.dstf-stat-head { color: var(--dstf-text-muted); font-size: 12px; border-top: none; }
+.dstf-stat-label {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* In px, not ch: the headings are not in the numbers' mono font, and a
+   `ch` column is as wide as its own font says. */
+.dstf-stat-num { flex: none; width: 84px; text-align: right; }
+.dstf-stat-delta { flex: none; width: 56px; text-align: right; }
+.dstf-stat-end {
+  flex: none; width: 150px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 6px;
+}
+.dstf-stat-changed { background: var(--dstf-warn-tint); }
+/* Open, a changed row wears the selection as every open criteria row does:
+   the tint, declared later, hid which row the editor was under. */
+.dstf-stats .dstf-crit-open { background: var(--dstf-selection); }
+/* The editor under a Statistics row, or a tree row (U5), keeps inside the
+   card: `w-full` plus the editor's 16 px indent ran 16 px past its right
+   edge (B12). */
+.dstf-stats .dstf-editor, .dstf-tree .dstf-editor { width: calc(100% - 16px); }
+/* The Tests drawer's rows at a real library's lengths: the name takes what
+   the badge and the edits pill leave it and is cut with an ellipsis (the
+   whole id is its title), and they never shrink. A TRANSFORM id in Full,
+   or a 40-character short name, pushed the badge out of the drawer at
+   900 px, and a package label ran past it. */
+.dstf-tests .dstf-name { flex: 1 1 auto; min-width: 0; }
+.dstf-tests .dstf-name .q-btn__content > .block {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A Full name is cut at its start, where ids sharing a package prefix
+   differ least (`test_list._full_name`: the id is a <bdi> inside). */
+.dstf-tests .dstf-name .dstf-cut-start { direction: rtl; }
+.dstf-tests .dstf-badge, .dstf-tests .dstf-pill-named { flex: none; }
+.dstf-row {
+  min-height: 32px; border-bottom: 1px solid var(--dstf-border-hairline);
+  background: var(--dstf-surface); transition: background .1s;
+}
+.dstf-row:hover { background: var(--dstf-surface-hover); }
+.dstf-badge.q-badge {
+  color: #ffffff; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; border-radius: 3px;
+}
+/* The Test page's rail (3c): labelled buttons in 40 px. NiceGUI pads a
+   drawer by 1rem, which put the rail's buttons at 16-56 px of a 40 px
+   drawer and clipped "Tests" to "Tes" (the review's screenshot, and again
+   with 10 px labels): the drawer carries no padding. The rail and the
+   panel may give up the 1 px of the drawer's border rather than overflow
+   it. The open drawer's button sits on the selection tint. */
+.nicegui-drawer.dstf-rail-drawer { padding: 0; gap: 0; }
+.dstf-rail { width: 40px; min-width: 0; padding-top: 4px; }
+.dstf-rail .q-btn { width: 100%; padding: 4px 0; min-width: 0; }
+.dstf-rail-label { font-size: 10px; letter-spacing: 0; line-height: 1.2; }
+.dstf-rail-on { background: var(--dstf-selection); color: var(--dstf-accent); }
+/* The panel's width is the tab's (`TabState.drawer_width`, set inline by
+   `Rail`); its right edge is the resize grip (K5), 6 px of the drawer over
+   the panel's border. */
+.dstf-drawer-panel { min-width: 0; flex: none; }
+.dstf-rail-row { position: relative; }
+.dstf-drawer-handle {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+  cursor: col-resize; touch-action: none; z-index: 1;
+}
+.dstf-drawer-handle:hover { background: var(--dstf-selection); }
+/* Focused from the keyboard, the grip is the accent: ←/→ move it (K5). */
+.dstf-drawer-handle:focus-visible { outline: none; background: var(--dstf-accent); }
+/* The Variables drawer's rows (3c): "+ new plot" is there on the hovered
+   row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
+   reflow as the mouse moves down the list — and on a row with focus in
+   it: a hidden button takes no focus, and Tab from a check skipped its
+   own. A family's members hang under it, indented; a family's swatch marks
+   an array, in the accent ramp (a plot picks a family's hue by its order
+   on that plot, not this). The target line is a tag on the accent tint
+   with the selected plot's ring inside it, as the owner's board drew it: a
+   bare ring beside the text read as an empty checkbox. */
+.dstf-var-row { min-height: 28px; }
+/* Two lines (2026-09-29): the label with the row's width on the first; the
+   muted name, "plot N" and "+ new plot" on the second, under the label
+   (past the check). A row with nothing but "+ new plot" is one line (K6). */
+.dstf-var-line1 { min-height: 26px; }
+.dstf-var-line2 { padding-left: 28px; min-height: 18px; font-size: 11px; }
+.dstf-var-line2 .q-btn { min-height: 18px; }
+.dstf-var-line2 .dstf-varname {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dstf-var-row:hover { background: var(--dstf-surface-hover); }
+.dstf-var-row .dstf-var-new { visibility: hidden; }
+.dstf-var-row:hover .dstf-var-new,
+.dstf-var-row:focus-within .dstf-var-new { visibility: visible; }
+.dstf-var-member { padding-left: 24px; }
+.dstf-var-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dstf-var-where, .dstf-var-row .dstf-var-new { flex: none; white-space: nowrap; }
+.dstf-var-ramp { display: inline-flex; flex: none; }
+.dstf-var-ramp > span { width: 5px; height: 9px; }
+.dstf-var-target {
+  cursor: pointer; font-size: 12px; padding: 4px 8px; border-radius: 3px;
+  background: var(--dstf-selection); color: var(--dstf-accent);
+}
+.dstf-var-ring {
+  width: 12px; height: 9px; border-radius: 2px; flex: none;
+  border: 2px solid var(--dstf-accent); box-sizing: content-box;
+}
+/* The add form's picker (U2): a list that scrolls inside the form row,
+   never a 200-row form; the chosen row on the selection tint, the
+   keyboard's cursor ringed; the Chosen line under it (K7). */
+.dstf-pick-list { max-height: 240px; overflow-y: auto; }
+.dstf-pick-row { cursor: pointer; min-height: 24px; padding: 0 4px; }
+.dstf-pick-row:hover { background: var(--dstf-surface-hover); }
+.dstf-pick-on { background: var(--dstf-selection); }
+.dstf-pick-cursor { box-shadow: inset 0 0 0 2px var(--dstf-accent); }
+.dstf-pick-chosen { color: var(--dstf-text-muted); padding: 2px 4px 0; }
+/* The drawers' one control set (Q7): a menu's current choice carries its
+   check; a count pill is a status pill that is a button, ringed while it
+   filters. */
+.dstf-menu-check { visibility: hidden; }
+.dstf-menu-checked .dstf-menu-check { visibility: visible; }
+.dstf-count-pill.q-btn { min-height: 20px; padding: 0 6px; font-size: 10.5px; }
+.dstf-count-pill-on.q-btn { box-shadow: 0 0 0 2px var(--dstf-accent); }
+.dstf-card {
+  border: 1px solid var(--dstf-border); border-radius: 4px; box-shadow: none;
+  background: var(--dstf-surface); padding: 16px;
+}
+/* The selected plot, the one the Variables drawer's checkboxes act on: two
+   classes and after `.dstf-card`, whose `box-shadow: none` otherwise wins
+   and the ring is classed but never painted (3c's LOOK, in Chromium). */
+.dstf-card.dstf-plot-selected { box-shadow: inset 0 0 0 2px var(--dstf-accent); }
+"""
+    + _TINTS
+    + _PILLS
+    + _SWATCHES
+    # After the fills, so an outline wins over the colour it is drawn in.
+    + ".dstf-swatch-off { background: transparent; }\n"
+    # Two classes: that alone beats the one-class status tints, whatever the
+    # order (as one class it tied with them and read the fail tint,
+    # rgb(255,235,238) — the 3c review). The order that matters is after
+    # `.dstf-row:hover`, which has the same specificity: last, the current
+    # row stays lit under the mouse.
+    + ".dstf-row.dstf-row-current { background: var(--dstf-selection); }\n"
+)

@@ -1,4 +1,4 @@
-"""Unit + integration tests for the persistent-worker OpenModelica runner.
+"""Unit + integration tests for the persistent-worker OpenModelica backend.
 
 Unit tests use a FakeSession that quacks like ``OMCSessionZMQ`` — no
 dependency on real OMPython. Integration tests require both omc on PATH
@@ -7,18 +7,32 @@ and OMPython installed, and are gated accordingly.
 
 from __future__ import annotations
 
+import logging
+import os
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
+from dstf.storage.batch_manifest import BatchManifest
 
 # ---------------------------------------------------------------------------
 # FakeSession + fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _fake_pids_name_no_process(monkeypatch):
+    """A FakeSession's PID is made up, which the watchdog's death watch
+    would read as "omc died". That watch has its own tests, over real
+    processes (test_worker_lifecycle.py)."""
+    monkeypatch.setattr(
+        "dstf.backends.persistent.process_gone", lambda pids, name_hint=None: False
+    )
 
 
 class FakeSession:
@@ -119,7 +133,7 @@ def _make_config(tmp_path: Path, **overrides) -> Config:
     defaults: dict[str, Any] = dict(
         source_path=tmp_path,
         reference_root=tmp_path / "refs",
-        simulator="OpenModelica",
+        backend_name="OpenModelica",
         work_dir=tmp_path / "work",
     )
     defaults.update(overrides)
@@ -134,12 +148,12 @@ def _make_config(tmp_path: Path, **overrides) -> Config:
 class TestWorkerStartup:
     def test_startup_sequence_with_msl_auto_injection(self, tmp_path):
         """Empty `dependencies` still triggers loadModel(Modelica) — matches
-        the batch runner's auto-injection so a unified testing.json works."""
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        the batch backend's auto-injection so a unified testing.json works."""
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=[])
@@ -161,11 +175,11 @@ class TestWorkerStartup:
         assert idx_msl < idx_lib
 
     def test_startup_respects_user_deps_order(self, tmp_path):
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica", "SDF"])
@@ -181,11 +195,11 @@ class TestWorkerStartup:
         assert any("loadModel(SDF)" in c for c in fake.calls)
 
     def test_startup_raises_on_library_load_failure(self, tmp_path):
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
@@ -202,11 +216,11 @@ class TestWorkerStartup:
             worker.start()
 
     def test_startup_captures_pid(self, tmp_path):
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
@@ -216,13 +230,64 @@ class TestWorkerStartup:
         worker.start()
         assert 12345 in worker.pids
 
-    def test_startup_applies_std_version(self, tmp_path):
-        """std_version threads into setCommandLineOptions."""
-        from dstf.simulators.openmodelica.persistent_runner import (
+    def test_startup_falls_back_to_the_popen_handle(self, tmp_path):
+        """OMPython dropped ``getpid()``; the session keeps its Popen at
+        ``omc_process._omc_process``. Without this fallback ``pids`` stays
+        empty and a timeout has nothing to kill — a hung omc then survives
+        the whole run (observed live, 2026-09-01)."""
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
             OpenModelicaWorker,
         )
-        from dstf.simulators.openmodelica.runner import (
+
+        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        om_cfg = OpenModelicaConfig.from_config(cfg)
+
+        class _NoGetpidSession(FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.omc_process = SimpleNamespace(
+                    _omc_process=SimpleNamespace(pid=54321)
+                )
+
+            getpid = None  # attribute exists but isn't callable in some builds
+
+        worker = OpenModelicaWorker(0, cfg, om_cfg, _NoGetpidSession)
+        worker.start()
+        assert worker.pids == {54321}
+
+    def test_unresolvable_pid_warns_about_the_missing_kill_target(
+        self, tmp_path, caplog
+    ):
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
+        )
+
+        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        om_cfg = OpenModelicaConfig.from_config(cfg)
+
+        class _OpaqueSession(FakeSession):
+            getpid = None
+
+        worker = OpenModelicaWorker(0, cfg, om_cfg, _OpaqueSession)
+        with caplog.at_level(logging.WARNING):
+            worker.start()
+
+        assert worker.pids == set()
+        assert "no kill target" in caplog.text
+
+    def test_startup_applies_std_version(self, tmp_path):
+        """std_version threads into setCommandLineOptions."""
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
@@ -230,7 +295,7 @@ class TestWorkerStartup:
         base = OpenModelicaConfig.from_config(cfg)
         om_cfg = OpenModelicaConfig(
             omc_path=base.omc_path,
-            simulator_setup=base.simulator_setup,
+            backend_setup=base.backend_setup,
             diagnostic_variables=base.diagnostic_variables,
             std_version="3.3",
         )
@@ -247,11 +312,11 @@ class TestWorkerStartup:
 
 class TestWorkerRunTest:
     def _bootstrap_worker(self, tmp_path, responses=None):
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
@@ -298,7 +363,7 @@ class TestWorkerRunTest:
         assert result.translation_wall == pytest.approx(0.1 + 0.05 + 0.01 + 0.02 + 0.9)
         assert result.sim_wall == pytest.approx(0.03)
         assert result.statistics["timing"]["total"] == pytest.approx(1.11)
-        # Artifact written (parity with batch runner)
+        # Artifact written (parity with batch backend)
         stdout_artifact = test_dir / "omc_stdout.txt"
         assert stdout_artifact.exists()
         assert "record SimulationResult" in stdout_artifact.read_text()
@@ -346,6 +411,32 @@ class TestWorkerRunTest:
         assert "numberOfIntervals=100" in expr
         assert 'outputFormat="mat"' in expr
         assert 'fileNamePrefix="result"' in expr
+
+    def test_mat_sync_is_in_the_simulate_call_only_for_a_watched_run(self, tmp_path):
+        """``Config.live_results`` is the one switch: off (every CLI run) the
+        expression is the one above; on, it ends with the simflags."""
+        from dstf.backends.openmodelica.backend import OpenModelicaConfig
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+        test = _make_test(stop_time=5.0, number_of_intervals=100)
+        sent: dict[bool, str] = {}
+        for live in (False, True):
+            root = tmp_path / f"live_{live}"
+            root.mkdir()
+            cfg = _make_config(root, dependencies=["Modelica"], live_results=live)
+
+            def fake_simulate(expr: str, live=live):
+                sent[live] = expr
+                return {"resultFile": "", "messages": "stopped here"}
+
+            fake = FakeSession(responses={"simulate(": fake_simulate})
+            worker = OpenModelicaWorker(
+                0, cfg, OpenModelicaConfig.from_config(cfg), lambda fake=fake: fake
+            )
+            worker.start()
+            worker.run_test(test, "test_0001")
+        assert "simflags" not in sent[False] and "mat_sync" not in sent[False]
+        assert sent[True] == sent[False][: -len(")")] + ', simflags="-mat_sync=1")'
 
     def test_failure_surfaces_error_notices(self, tmp_path):
         """When simulate returns a record with empty resultFile + Error
@@ -412,6 +503,39 @@ class TestWorkerRunTest:
         assert "OMCSessionZMQ error" in (result.error_message or "")
         assert "ZMQ connection dropped" in (result.error_message or "")
 
+    def test_success_record_with_partial_mat_is_refused(self, tmp_path):
+        """Belt on the accept-integrity invariant (D93 precedent / D99):
+        a success-reporting simulate() record whose .mat stops short of
+        stop_time must FAIL, not hand --accept a partial baseline. On
+        omc 1.27 mid-run aborts return an empty resultFile (verified
+        live), so this guards the future/unknown case where a success
+        record accompanies a truncated trajectory."""
+        test = _make_test(stop_time=2.0)  # fixture mat reaches only 1.0
+        test_dir = tmp_path / "work" / "test_0001"
+
+        def fake_simulate(expr: str):
+            test_dir.mkdir(parents=True, exist_ok=True)
+            _write_stub_mat(test_dir / "result_res.mat", stop_time=1.0)
+            return {
+                "resultFile": str(test_dir / "result_res.mat"),
+                "messages": "The simulation finished successfully.",
+                "timeFrontend": 0.0,
+                "timeBackend": 0.0,
+                "timeSimCode": 0.0,
+                "timeTemplates": 0.0,
+                "timeCompile": 0.0,
+                "timeSimulation": 0.0,
+                "timeTotal": 0.0,
+            }
+
+        worker, _, _ = self._bootstrap_worker(
+            tmp_path,
+            responses={"simulate(": fake_simulate},
+        )
+        result = worker.run_test(test, "test_0001")
+        assert result.success is False
+        assert "partial result refused" in (result.error_message or "")
+
 
 # ---------------------------------------------------------------------------
 # Timeout + close
@@ -423,11 +547,11 @@ class TestWorkerLifecycle:
         """A hung simulate() triggers close() and returns a timed_out result."""
         import time
 
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
@@ -448,12 +572,123 @@ class TestWorkerLifecycle:
         # close() resets session
         assert worker.is_alive() is False
 
-    def test_close_is_idempotent(self, tmp_path):
-        from dstf.simulators.openmodelica.persistent_runner import (
+    def test_disk_rescued_timeout_flags_worker_killed(self, tmp_path):
+        """A hang whose MAT already reached stop_time is salvaged from disk.
+
+        The rescue must carry ``worker_killed=True``: the dispatch loop's
+        benign-restart accounting keys on ``timed_out or worker_killed``, so
+        without the flag every disk-rescued timeout charges a strike against
+        ``max_restarts_per_worker`` — a budget reserved for genuinely broken
+        workers. Mirrors DymolaWorker.
+        """
+        import time
+
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
             OpenModelicaWorker,
         )
-        from dstf.simulators.openmodelica.runner import (
+
+        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        om_cfg = OpenModelicaConfig.from_config(cfg)
+        test = _make_test(stop_time=1.0)
+        test_dir = tmp_path / "work" / "test_0001"
+
+        def hang_after_writing_mat(expr: str):
+            _write_stub_mat(test_dir / "result_res.mat", stop_time=test.stop_time)
+            time.sleep(5.0)  # longer than the test's 0.3s timeout
+            return True
+
+        fake = FakeSession(responses={"simulate(": hang_after_writing_mat})
+        worker = OpenModelicaWorker(0, cfg, om_cfg, lambda: fake)
+        worker.start()
+
+        tr = worker.run_test_with_timeout(test, "test_0001", timeout=0.3)
+        assert tr.success is True
+        assert tr.timed_out is False
+        assert tr.worker_killed is True
+
+    def test_disk_rescued_timeouts_do_not_charge_the_restart_budget(
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
+    ):
+        """Slow-but-rescued tests must not consume ``max_restarts_per_worker``.
+
+        Each rescue leaves the worker dead (we killed it), so the next test
+        restarts it. Those restarts are benign — the worker was healthy, the
+        test was slow — and must not be counted, or a run of slow tests
+        exhausts the budget and synthesizes failures for the rest of the
+        queue.
+        """
+        import re
+        import time
+
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
+            PersistentOpenModelicaBackend,
+        )
+
+        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        om_cfg = OpenModelicaConfig.from_config(cfg)
+        monkeypatch.setattr(
+            "dstf.backends.openmodelica.persistent_backend.load_omc_session",
+            lambda: FakeSession,
+        )
+
+        # Each restart builds a fresh session; the simulate() hook needs the
+        # per-test dir, which the preceding cd() names.
+        state: dict = {}
+
+        def make_session():
+            def _cd(expr: str):
+                state["dir"] = Path(re.search(r'cd\("(.*)"\)', expr).group(1))
+                return str(state["dir"])
+
+            def _hang(expr: str):
+                _write_stub_mat(state["dir"] / "result_res.mat", stop_time=1.0)
+                time.sleep(2.0)  # longer than the per-test 0.3s timeout
+                return True
+
+            return FakeSession(responses={"cd(": _cd, "simulate(": _hang})
+
+        backend = PersistentOpenModelicaBackend(cfg)
+        worker = OpenModelicaWorker(0, cfg, om_cfg, make_session)
+        worker.start()
+        items = [
+            (_make_test(stop_time=1.0, timeout=0.3), f"test_{i:04d}")
+            for i in range(1, 4)
+        ]
+
+        results = backend._dispatch_with_restart(
+            [worker],
+            items,
+            total=len(items),
+            manifest=BatchManifest(
+                work_dir=backend.config.work_dir,
+                manifest={tk: {"model_id": t.model_id} for t, tk in items},
+            ),
+        )
+
+        assert len(results) == 3
+        assert all(r.success for r in results)
+        assert getattr(worker, "_n_restarts", 0) == 0
+        # The restart chatter says which accounting was applied.
+        err = capsys.readouterr().err
+        assert "not counted" in err
+        assert "attempt" not in err
+
+    def test_close_is_idempotent(self, tmp_path):
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
@@ -472,7 +707,7 @@ class TestWorkerLifecycle:
 
 class TestHelpers:
     def test_parsed_from_record_timings_and_success(self):
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             _parsed_from_record,
         )
 
@@ -495,7 +730,7 @@ class TestHelpers:
         assert parsed.timings["simulation"] == pytest.approx(0.6)
 
     def test_parsed_from_record_failed_messages(self):
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             _parsed_from_record,
         )
 
@@ -504,7 +739,7 @@ class TestHelpers:
         assert parsed.success is False  # "Failed" in messages
 
     def test_parsed_from_record_none_or_empty(self):
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             _parsed_from_record,
         )
 
@@ -512,7 +747,7 @@ class TestHelpers:
         assert _parsed_from_record({}, error_notices=[]).success is False
 
     def test_synthesize_stdout_artifact_contains_record(self):
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             _synthesize_stdout_artifact,
         )
 
@@ -540,38 +775,38 @@ class TestHelpers:
 
 
 class TestCLISelectionWiring:
-    def test_persistent_runner_inherits_batch(self):
-        from dstf.simulators.openmodelica.persistent_runner import (
-            PersistentOpenModelicaRunner,
+    def test_persistent_backend_inherits_batch(self):
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaBackend,
         )
-        from dstf.simulators.openmodelica.runner import (
-            OpenModelicaRunner,
+        from dstf.backends.openmodelica.persistent_backend import (
+            PersistentOpenModelicaBackend,
         )
 
-        assert issubclass(PersistentOpenModelicaRunner, OpenModelicaRunner)
+        assert issubclass(PersistentOpenModelicaBackend, OpenModelicaBackend)
 
-    def test_get_runner_selects_persistent_when_ompython_available(
+    def test_get_backend_selects_persistent_when_ompython_available(
         self,
         tmp_path,
         monkeypatch,
     ):
-        """CLI _get_runner(persistent=True) picks PersistentOpenModelicaRunner
+        """CLI _get_backend(persistent=True) picks PersistentOpenModelicaBackend
         when load_omc_session() succeeds (OMPython installed)."""
-        from dstf import cli as cli_mod
-        from dstf.simulators.openmodelica.persistent_runner import (
-            PersistentOpenModelicaRunner,
+        from dstf.backends.openmodelica.persistent_backend import (
+            PersistentOpenModelicaBackend,
         )
+        from dstf.cli import run_cmds as cli_mod
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
         # Stub load_omc_session so the import path resolves without OMPython.
         monkeypatch.setattr(
-            "dstf.simulators.openmodelica.session_loader.load_omc_session",
+            "dstf.backends.openmodelica.session_loader.load_omc_session",
             lambda: FakeSession,
         )
-        runner = cli_mod._get_runner(cfg, persistent=True)
-        assert isinstance(runner, PersistentOpenModelicaRunner)
+        backend = cli_mod._get_backend(cfg, persistent=True)
+        assert isinstance(backend, PersistentOpenModelicaBackend)
 
-    def test_get_runner_aborts_when_ompython_missing(
+    def test_get_backend_aborts_when_ompython_missing(
         self,
         tmp_path,
         monkeypatch,
@@ -579,7 +814,7 @@ class TestCLISelectionWiring:
     ):
         """load_omc_session raising RuntimeError → CLI prints a unified
         error and exits 1 (no silent fallback to batch)."""
-        from dstf import cli as cli_mod
+        from dstf.cli import run_cmds as cli_mod
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
 
@@ -587,54 +822,54 @@ class TestCLISelectionWiring:
             raise RuntimeError("OMPython is not installed.")
 
         monkeypatch.setattr(
-            "dstf.simulators.openmodelica.session_loader.load_omc_session",
+            "dstf.backends.openmodelica.session_loader.load_omc_session",
             _raise,
         )
         with pytest.raises(SystemExit) as excinfo:
-            cli_mod._get_runner(cfg, persistent=True)
+            cli_mod._get_backend(cfg, persistent=True)
         assert excinfo.value.code == 1
         stderr = capsys.readouterr().err
         assert "Persistent-worker OpenModelica unavailable" in stderr
         assert "Aborting" in stderr
         assert "--batch" in stderr
 
-    def test_get_runner_batch_mode_never_selects_persistent(
+    def test_get_backend_batch_mode_never_selects_persistent(
         self,
         tmp_path,
         monkeypatch,
     ):
-        from dstf import cli as cli_mod
-        from dstf.simulators.openmodelica.persistent_runner import (
-            PersistentOpenModelicaRunner,
+        from dstf.backends.openmodelica.persistent_backend import (
+            PersistentOpenModelicaBackend,
         )
+        from dstf.cli import run_cmds as cli_mod
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
         monkeypatch.setattr(
-            "dstf.simulators.openmodelica.session_loader.load_omc_session",
+            "dstf.backends.openmodelica.session_loader.load_omc_session",
             lambda: FakeSession,
         )
-        runner = cli_mod._get_runner(cfg, persistent=False)
-        assert not isinstance(runner, PersistentOpenModelicaRunner)
+        backend = cli_mod._get_backend(cfg, persistent=False)
+        assert not isinstance(backend, PersistentOpenModelicaBackend)
 
     def test_run_tests_raises_when_all_workers_fail_to_start(
         self,
         tmp_path,
         monkeypatch,
     ):
-        """Regression for a bug where the persistent runner printed
+        """Regression for a bug where the persistent backend printed
         ``"All workers failed to start. Aborting."`` but then *returned* the
         empty manifest, letting the read/compare/report phases run on
         non-existent results and emit fake "ok" outcomes. The fix raises
         :class:`RuntimeError`; the CLI converts it to a clean non-zero exit.
         """
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             OpenModelicaWorker,
-            PersistentOpenModelicaRunner,
+            PersistentOpenModelicaBackend,
         )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
         monkeypatch.setattr(
-            "dstf.simulators.openmodelica.persistent_runner.load_omc_session",
+            "dstf.backends.openmodelica.persistent_backend.load_omc_session",
             lambda: FakeSession,
         )
 
@@ -643,9 +878,12 @@ class TestCLISelectionWiring:
 
         monkeypatch.setattr(OpenModelicaWorker, "start", _always_fail)
 
-        runner = PersistentOpenModelicaRunner(cfg)
-        with pytest.raises(RuntimeError, match="All OpenModelica persistent workers"):
-            runner.run_tests([_make_test()])
+        backend = PersistentOpenModelicaBackend(cfg)
+        with pytest.raises(
+            RuntimeError,
+            match="No OpenModelica worker could start — worker 0: synthetic failure",
+        ):
+            backend.run_tests([_make_test()])
 
 
 # ---------------------------------------------------------------------------
@@ -673,13 +911,13 @@ class TestPersistentIntegration:
     def test_msl_smoke(self, tmp_path):
         """Spin up one real persistent worker; run one MSL-only test; ensure
         the worker loads MSL once and simulate() returns a usable record."""
-        from dstf.simulators.openmodelica.persistent_runner import (
-            OpenModelicaWorker,
-        )
-        from dstf.simulators.openmodelica.runner import (
+        from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
         )
-        from dstf.simulators.openmodelica.session_loader import (
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
+        )
+        from dstf.backends.openmodelica.session_loader import (
             load_omc_session,
         )
 
@@ -692,7 +930,7 @@ class TestPersistentIntegration:
         cfg = Config(
             source_path=lib_root,
             reference_root=tmp_path / "refs",
-            simulator="OpenModelica",
+            backend_name="OpenModelica",
             work_dir=tmp_path / "work",
             dependencies=["Modelica"],
             timeout=120,
@@ -745,3 +983,87 @@ def _write_stub_mat(path: Path, *, stop_time: float) -> None:
     import shutil as _sh
 
     _sh.copy(_FIXTURE_MAT, path)
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# Finding 26 — the persistent OM worker honors the configured omc path by
+# exporting OPENMODELICAHOME from it, and leaves the environment alone when
+# no path was configured.
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 26 — persistent OM honors the configured omc path
+# ---------------------------------------------------------------------------
+
+
+class _MiniOmcSession:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def sendExpression(self, expr: str, parsed: bool = True):
+        self.calls.append(expr)
+        if expr.startswith("getErrorString"):
+            return '""\n'
+        return "true\n"
+
+    def getpid(self):
+        return 4242
+
+
+class TestOmPersistentOmcPath:
+    def _worker(self, tmp_path, backend_path):
+        from dstf.backends.openmodelica.backend import OpenModelicaConfig
+        from dstf.backends.openmodelica.persistent_backend import OpenModelicaWorker
+
+        cfg = SimpleNamespace(
+            backend_path=backend_path,
+            dependencies=[],
+            library_dir=tmp_path,
+            work_dir=tmp_path / "work",
+        )
+        om_cfg = OpenModelicaConfig(omc_path=str(backend_path or "omc"))
+        return OpenModelicaWorker(0, cfg, om_cfg, _MiniOmcSession)
+
+    def test_configured_omc_path_exports_openmodelicahome(self, tmp_path, monkeypatch):
+        om_home = tmp_path / "om-1.24"
+        omc = om_home / "bin" / "omc"
+        omc.parent.mkdir(parents=True)
+        omc.write_text("#!/bin/sh\n")
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+
+        worker = self._worker(tmp_path, str(omc))
+        worker.start()
+        assert os.environ.get("OPENMODELICAHOME") == str(om_home)
+
+    def test_no_configured_path_leaves_env_alone(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+        worker = self._worker(tmp_path, None)
+        worker.start()
+        assert "OPENMODELICAHOME" not in os.environ
+
+
+def test_the_persistent_lane_filters_in_the_criterias_variables(tmp_path):
+    """Both OM lanes build the filter; this one through the worker."""
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    test = _make_test(
+        metric_tree_spec=parse_metric_tree({"metric": "range", "variable": "pipe.T[1]"})
+    )
+    test_dir = tmp_path / "work" / "test_0001"
+    captured: dict = {}
+
+    def fake_simulate(expr: str):
+        captured["expr"] = expr
+        test_dir.mkdir(parents=True, exist_ok=True)
+        _write_stub_mat(test_dir / "result_res.mat", stop_time=test.stop_time)
+        return {"resultFile": str(test_dir / "result_res.mat"), "messages": "ok"}
+
+    worker, _, _ = TestWorkerRunTest()._bootstrap_worker(
+        tmp_path, responses={"simulate(": fake_simulate}
+    )
+    worker.run_test(test, "test_0001")
+    assert "pipe\\\\.T\\\\[1\\\\]" in captured["expr"], captured["expr"]

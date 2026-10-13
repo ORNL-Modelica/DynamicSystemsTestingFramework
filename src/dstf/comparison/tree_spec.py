@@ -23,23 +23,45 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
-VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
-VALID_METRICS = frozenset(
-    {
-        "nrmse",
-        "tube",
-        "points",
-        "range",
-        "event-timing",
-        "dominant-frequency",
-    }
-)
+from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
+from .sides import _as_json, _is_number
+from .strict_keys import unknown_field, unread_param
+
+#: The keys the parser itself reads off a leaf; every other key of a leaf
+#: is one of its metric's params.
+_LEAF_KEYS = ("metric", "variable", "against", "window")
+
+#: A window's keys.
+_WINDOW_KEYS = ("start", "end")
+
+#: The keys every combinator has, and what each kind reads beyond them
+#: (``_parse_combinator``). A kind not named here reads nothing more.
+_COMBINATOR_KEYS = ("combinator", "children")
+COMBINATOR_KIND_KEYS: dict[str, tuple[str, ...]] = {
+    "k-of-n": ("k",),
+    "weighted": ("weights", "threshold", "direction"),
+}
 
 
 class MetricSpecError(ValueError):
-    """Raised on malformed MetricTree spec input. Message includes the path."""
+    """Raised on malformed MetricTree spec input: ``path`` says where,
+    ``message`` what is wrong. ``str()`` is ``"path: message"`` for the CLI,
+    as a validator's ``ValidationError`` reads; the tool shows ``message``
+    alone, beside the row it came from."""
+
+    def __init__(self, path: str, message: str) -> None:
+        self.path = path
+        self.message = message
+        super().__init__(f"{path}: {message}" if path else message)
+
+    def __reduce__(self):
+        # The default rebuilds from ``args`` — the one formatted string —
+        # and ``__init__`` takes two: pickle and copy raised TypeError.
+        return (type(self), (self.path, self.message))
 
 
 @dataclass
@@ -93,18 +115,20 @@ class CombinatorSpec:
     def __post_init__(self):
         if self.combinator == "k-of-n" and self.k <= 0:
             raise MetricSpecError(
-                f"k-of-n combinator requires positive 'k'; got {self.k}"
+                "", f"k-of-n combinator requires positive 'k'; got {self.k}"
             )
         if self.combinator == "weighted":
             if len(self.weights) != len(self.children):
                 raise MetricSpecError(
+                    "",
                     f"weighted combinator: weights ({len(self.weights)}) "
-                    f"must match children ({len(self.children)})"
+                    f"must match children ({len(self.children)})",
                 )
             if self.direction not in ("less", "greater"):
                 raise MetricSpecError(
+                    "",
                     f"weighted combinator: direction must be 'less' or 'greater', "
-                    f"got {self.direction!r}"
+                    f"got {self.direction!r}",
                 )
 
 
@@ -115,9 +139,9 @@ def collect_leaf_paths(spec: SpecNode, *, root: str = "/metrics") -> list[str]:
     """Return RFC 6901 JSON-Pointer paths for each leaf in tree order.
 
     Order matches :func:`tree_eval.collect_leaf_variables` (pre-order walk)
-    so callers can zip the two lists element-wise. Paths are entry-relative
-    — the reporter's ``buildPatchData`` uses them directly in RFC 6902
-    patch ops (the whitelist in :mod:`patch_apply` covers ``/metrics``).
+    and the paths the evaluator stamps on results. Paths are entry-relative
+    — an RFC 6902 patch op uses them directly (the whitelist in
+    :mod:`patch_apply` covers ``/metrics``).
 
     Example: a two-leaf AND under the root yields
     ``["/metrics/children/0", "/metrics/children/1"]``; a single-leaf root
@@ -149,6 +173,96 @@ def collect_variables(spec: SpecNode) -> list[str]:
         if leaf.variable not in seen:
             seen.add(leaf.variable)
             out.append(leaf.variable)
+    return out
+
+
+def resolves_a_variable(leaf: LeafSpec) -> bool:
+    """Does this leaf score a variable of the RESULT?
+
+    False for a stored-scalar leaf — a metric that accepts ``quantity``
+    given a string one reads its numbers from the run's statistics or
+    diagnostics, and its ``variable`` is free text naming that leaf, not a
+    series anything resolves. Treated as a variable it registered
+    ``CPUtime`` for the expression soft-check, which then compared a
+    baseline's recorded expression against a quantity nothing measured.
+    """
+    return not reads_a_statistic(leaf.metric, leaf.params)
+
+
+def reads_a_statistic(metric_name: str, params: Mapping[str, Any]) -> bool:
+    """The rule under :func:`resolves_a_variable`, over a metric's name and
+    its params — what a leaf and a leaf's `spec_to_view` dict both carry."""
+    desc = metric(metric_name)
+    return (
+        desc is not None
+        and desc.accepts_quantity
+        and isinstance(params.get("quantity"), str)
+    )
+
+
+def tree_variables(spec: SpecNode | None, diagnostics: Iterable[str] = ()) -> list[str]:
+    """The variables a tree makes a run track: every leaf's ``variable``
+    that resolves one (:func:`resolves_a_variable`), unique, in tree order,
+    without the ``diagnostics`` — a diagnostic is scored through a quantity
+    path over its stored summary, never extracted as a trajectory. A backend
+    APPENDS these after the UnitTests variables and the ``variables``
+    patterns, so a criterion added later renumbers neither of those two.
+    ``[]`` for no tree (the implicit tree scores only what is tracked)."""
+    if spec is None:
+        return []
+    skip = set(diagnostics)
+    out: list[str] = []
+    for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
+        if not resolves_a_variable(leaf):
+            continue
+        if leaf.variable in skip or leaf.variable in out:
+            continue
+        out.append(leaf.variable)
+    return out
+
+
+def statistic_leaves(spec: SpecNode | None) -> list[tuple[LeafSpec, str]]:
+    """The tree's statistics leaves (:func:`reads_a_statistic`) with their
+    paths, in tree order: which Statistics rows the tree scores. ``[]``
+    for no tree."""
+    if spec is None:
+        return []
+    return [
+        (leaf, path)
+        for leaf, path in _walk_leaves_with_paths(spec, "/metrics")
+        if reads_a_statistic(leaf.metric, leaf.params)
+    ]
+
+
+def statistic_paths(spec: SpecNode | None) -> list[str]:
+    """The quantity paths the tree's statistics leaves read, unique, in
+    tree order: what a Statistics row must exist for. ``[]`` for no tree."""
+    out: list[str] = []
+    for leaf, _ in statistic_leaves(spec):
+        path = str(leaf.params["quantity"])
+        if path not in out:
+            out.append(path)
+    return out
+
+
+def collect_variables_by_baseline(spec: SpecNode) -> dict[str, list[str]]:
+    """``{baseline name: the variables its leaves score}``, in tree order.
+
+    Unique on both sides, and ``"primary"`` is a key whenever a leaf takes
+    the default. The comparator reads it to run the expression soft-check
+    on every baseline a tree actually uses — once per PAIR, not per leaf
+    and not over every variable of the result: a baseline records the
+    expressions of the variables it holds, and a variable no leaf scores
+    against it is not being compared with it at all. A leaf that resolves
+    no variable (:func:`resolves_a_variable`) contributes none.
+    """
+    out: dict[str, list[str]] = {}
+    for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
+        if not resolves_a_variable(leaf):
+            continue
+        names = out.setdefault(leaf.against, [])
+        if leaf.variable not in names:
+            names.append(leaf.variable)
     return out
 
 
@@ -326,26 +440,16 @@ def synthesize_implicit_tree(
     leaves: list[LeafSpec] = []
     for var in variables:
         ov = dict(overrides.get(var, {}))
+        # The override-dict ``mode`` value and the spec ``metric``
+        # discriminator are the same identifier — no translation table, just
+        # a registry membership check. Absent or unrecognized falls back to
+        # the default metric, matching the flat-override scoring path.
         mode_key = ov.pop("mode", None)
-        metric = _MODE_TO_METRIC.get(mode_key, "nrmse")
+        metric_name = mode_key if mode_key and metric(mode_key) else DEFAULT_METRIC
         if base_tolerance is not None and "tolerance" not in ov:
             ov["tolerance"] = float(base_tolerance)
-        leaves.append(LeafSpec(metric=metric, variable=var, params=ov))
+        leaves.append(LeafSpec(metric=metric_name, variable=var, params=ov))
     return CombinatorSpec(combinator="and", children=list(leaves))
-
-
-# Inverse of tree_eval._METRIC_TO_MODE_KEY — translates the override-dict
-# ``mode`` value back into the spec ``metric`` discriminator. Kept here
-# (not in tree_eval) because synthesis is a tree_spec responsibility.
-_MODE_TO_METRIC = {
-    None: "nrmse",
-    "nrmse": "nrmse",
-    "tube": "tube",
-    "points": "points",
-    "range": "range",
-    "event-timing": "event-timing",
-    "dominant-frequency": "dominant-frequency",
-}
 
 
 def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
@@ -355,17 +459,19 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
     or semantic problem (unknown combinator, missing field, wrong type).
     """
     if not isinstance(raw, dict):
-        raise MetricSpecError(f"{_path}: expected an object, got {type(raw).__name__}")
+        # `null` too: an absent `metrics` is the only "no tree".
+        raise MetricSpecError(_path, f"must be an object, got {_as_json(raw)}")
 
     has_combinator = "combinator" in raw
     has_metric = "metric" in raw
     if has_combinator and has_metric:
         raise MetricSpecError(
-            f"{_path}: node has both 'combinator' and 'metric' keys; pick one"
+            _path, "node has both 'combinator' and 'metric' keys; pick one"
         )
     if not has_combinator and not has_metric:
         raise MetricSpecError(
-            f"{_path}: node must have either 'combinator' (internal) or 'metric' (leaf)"
+            _path,
+            "node must have either 'combinator' (internal) or 'metric' (leaf)",
         )
 
     if has_combinator:
@@ -375,22 +481,30 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
 
 def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
     name = raw["combinator"]
-    if not isinstance(name, str) or name not in VALID_COMBINATORS:
+    if not isinstance(name, str) or name not in combinator_names():
         raise MetricSpecError(
-            f"{path}.combinator: unknown combinator {name!r}; "
-            f"valid: {sorted(VALID_COMBINATORS)}"
+            f"{path}.combinator",
+            f"unknown combinator {name!r}; valid: {sorted(combinator_names())}",
         )
+
+    # A key this kind does not read is an error, not a note (`strict_keys`):
+    # `k` on an `and` says something the node will never do.
+    problem = unknown_field(
+        raw, (*_COMBINATOR_KEYS, *COMBINATOR_KIND_KEYS.get(name, ()))
+    )
+    if problem is not None:
+        raise MetricSpecError(path, f"{name} group: {problem}")
 
     children_raw = raw.get("children")
     if not isinstance(children_raw, list) or not children_raw:
         raise MetricSpecError(
-            f"{path}.children: combinator must have a non-empty 'children' list"
+            f"{path}.children", "combinator must have a non-empty 'children' list"
         )
 
     if name == "warn" and len(children_raw) != 1:
         raise MetricSpecError(
-            f"{path}.children: 'warn' combinator requires exactly 1 child, "
-            f"got {len(children_raw)}"
+            f"{path}.children",
+            f"'warn' combinator requires exactly 1 child, got {len(children_raw)}",
         )
 
     children = [
@@ -401,15 +515,24 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
     k = 0
     if name == "k-of-n":
         if "k" not in raw:
-            raise MetricSpecError(f"{path}.k: 'k-of-n' combinator requires 'k'")
+            raise MetricSpecError(f"{path}.k", "'k-of-n' combinator requires 'k'")
+        # Sentences with their subject: the tool shows them without the
+        # path, beside the node, and a cleared field is not a typed 0.
+        if raw["k"] is None:
+            raise MetricSpecError(
+                f"{path}.k", "k is empty; it must be a whole number of at least 1."
+            )
         if not isinstance(raw["k"], int) or raw["k"] <= 0:
             raise MetricSpecError(
-                f"{path}.k: must be a positive integer, got {raw['k']!r}"
+                f"{path}.k",
+                f"k must be a whole number of at least 1; got {raw['k']!r}.",
             )
         k = raw["k"]
         if k > len(children):
+            n = len(children)
+            has = "1 criterion" if n == 1 else f"{n} criteria"
             raise MetricSpecError(
-                f"{path}.k: k={k} exceeds number of children ({len(children)})"
+                f"{path}.k", f"k is {k}, but this k-of-n has only {has}."
             )
 
     weights: list[float] = []
@@ -419,33 +542,36 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
         weights_raw = raw.get("weights")
         if not isinstance(weights_raw, list):
             raise MetricSpecError(
-                f"{path}.weights: 'weighted' combinator requires a list of weights"
+                f"{path}.weights", "'weighted' combinator requires a list of weights"
             )
         if len(weights_raw) != len(children):
+            n_w, n_c = len(weights_raw), len(children)
             raise MetricSpecError(
-                f"{path}.weights: length ({len(weights_raw)}) must match "
-                f"children ({len(children)})"
+                f"{path}.weights",
+                f"{n_w} weight{'' if n_w == 1 else 's'} for {n_c} "
+                f"{'criterion' if n_c == 1 else 'criteria'}: a weighted node "
+                f"takes one weight per criterion.",
             )
         try:
             weights = [float(w) for w in weights_raw]
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise MetricSpecError(
-                f"{path}.weights: all weights must be numeric ({exc})"
+                f"{path}.weights", f"all weights must be numeric ({exc})"
             ) from exc
         if "threshold" not in raw:
             raise MetricSpecError(
-                f"{path}.threshold: 'weighted' combinator requires 'threshold'"
+                f"{path}.threshold", "'weighted' combinator requires 'threshold'"
             )
         try:
             threshold = float(raw["threshold"])
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise MetricSpecError(
-                f"{path}.threshold: must be numeric, got {raw['threshold']!r}"
+                f"{path}.threshold", f"must be numeric, got {raw['threshold']!r}"
             ) from exc
         direction = raw.get("direction", "less")
         if direction not in ("less", "greater"):
             raise MetricSpecError(
-                f"{path}.direction: must be 'less' or 'greater', got {direction!r}"
+                f"{path}.direction", f"must be 'less' or 'greater', got {direction!r}"
             )
 
     return CombinatorSpec(
@@ -459,22 +585,39 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
 
 
 def _parse_leaf(raw: dict, path: str) -> LeafSpec:
-    metric = raw["metric"]
-    if not isinstance(metric, str) or metric not in VALID_METRICS:
+    metric_name = raw["metric"]
+    if not isinstance(metric_name, str) or metric_name not in metric_names():
         raise MetricSpecError(
-            f"{path}.metric: unknown metric {metric!r}; valid: {sorted(VALID_METRICS)}"
+            f"{path}.metric",
+            f"unknown metric {metric_name!r}; valid: {sorted(metric_names())}",
         )
 
     variable = raw.get("variable")
+    quantity = raw.get("quantity")
+    desc = metric(metric_name)
+    if (
+        variable is None
+        and desc is not None
+        and desc.accepts_quantity
+        and isinstance(quantity, str)
+        and quantity
+    ):
+        # For a metric that declares ``accepts_quantity``, a string quantity
+        # names a stored scalar (statistics path / diagnostics summary), so
+        # the leaf has no tracked series to name — the path doubles as the
+        # display label. An explicit ``variable`` alongside it stays as the
+        # label the user chose. Every other metric scores a trajectory and
+        # still requires ``variable``.
+        variable = quantity
     if not isinstance(variable, str) or not variable:
-        raise MetricSpecError(f"{path}.variable: required string field")
+        raise MetricSpecError(f"{path}.variable", "required string field")
 
     # ``against`` picks which named baseline the leaf scores against.
     # Defaults to "primary"; must be a non-empty string if present.
     against = raw.get("against", "primary")
     if not isinstance(against, str) or not against:
         raise MetricSpecError(
-            f"{path}.against: must be a non-empty string, got {against!r}"
+            f"{path}.against", f"must be a non-empty string, got {against!r}"
         )
 
     # ``window`` scopes the leaf to a sub-interval [start, end] (idea #46).
@@ -483,34 +626,50 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
     # composes uniformly with the window.
     window_start: float | None = None
     window_end: float | None = None
-    window_raw = raw.get("window")
-    if window_raw is not None:
-        if not isinstance(window_raw, dict):
-            raise MetricSpecError(
-                f"{path}.window: expected an object with 'start'/'end', "
-                f"got {type(window_raw).__name__}"
+    # Absent is the only "no window": `"window": null` was taken for one,
+    # and `"start": null` was a TypeError out of the parser — the exported
+    # schema refuses both.
+    if "window" in raw:
+        window_raw = raw["window"]
+
+        def refused(problem: str) -> MetricSpecError:
+            return MetricSpecError(
+                f"{path}.window", f"{metric_name} · {variable}: window: {problem}"
             )
-        if "start" in window_raw:
-            window_start = float(window_raw["start"])
-        if "end" in window_raw:
-            window_end = float(window_raw["end"])
+
+        if not isinstance(window_raw, dict):
+            raise refused(
+                f"must be an object with start / end, got {_as_json(window_raw)}"
+            )
+        problem = unknown_field(window_raw, _WINDOW_KEYS)
+        if problem is not None:
+            raise refused(problem)
+        ends: dict[str, float] = {}
+        for end, value in window_raw.items():
+            if not _is_number(value):
+                raise refused(f"{end} must be a number, got {_as_json(value)}")
+            ends[end] = float(value)
+        window_start, window_end = ends.get("start"), ends.get("end")
         if (
             window_start is not None
             and window_end is not None
             and window_end <= window_start
         ):
             raise MetricSpecError(
-                f"{path}.window: end ({window_end}) must be > start ({window_start})"
+                f"{path}.window",
+                f"The window must end after it starts: it starts at {window_start} "
+                f"and ends at {window_end}.",
             )
 
-    # Everything else is metric-specific params (tolerance, tube_rel, ...).
-    params = {
-        k: v
-        for k, v in raw.items()
-        if k not in {"metric", "variable", "against", "window"}
-    }
+    # Everything else is metric-specific params (tolerance, tube_rel, ...) —
+    # and each has to be one the metric reads. A misspelled one used to ride
+    # along unread: `"max_val": 0.5` on a range scored with no upper bound.
+    params = {k: v for k, v in raw.items() if k not in _LEAF_KEYS}
+    problem = unread_param(metric_name, params, beside=_LEAF_KEYS)
+    if problem is not None:
+        raise MetricSpecError(path, f"{metric_name} · {variable}: {problem}")
     return LeafSpec(
-        metric=metric,
+        metric=metric_name,
         variable=variable,
         params=params,
         against=against,

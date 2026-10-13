@@ -160,6 +160,7 @@
     {
       "index": 1,
       "name": "x",
+      "expression": "",
       "values": [
         1.0,
         0.9,

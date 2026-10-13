@@ -9,6 +9,8 @@ from dstf.comparison.tree_spec import (
     LeafSpec,
     MetricSpecError,
     parse_metric_tree,
+    spec_to_raw,
+    synthesize_implicit_tree,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,13 +60,13 @@ class TestLeafSpec:
             {
                 "metric": "range",
                 "variable": "h",
-                "min": 0.0,
-                "max": 1.1,
+                "min_value": 0.0,
+                "max_value": 1.1,
             }
         )
         assert isinstance(node, LeafSpec)
         assert node.metric == "range"
-        assert node.params == {"min": 0.0, "max": 1.1}
+        assert node.params == {"min_value": 0.0, "max_value": 1.1}
 
     def test_leaf_against_defaults_to_primary(self):
         node = parse_metric_tree({"metric": "nrmse", "variable": "h"})
@@ -192,7 +194,9 @@ class TestCombinatorSpec:
             )
 
     def test_k_of_n_k_exceeding_children_rejected(self):
-        with pytest.raises(MetricSpecError, match="k=5 exceeds"):
+        with pytest.raises(
+            MetricSpecError, match=r"metrics\.k: k is 5, but this k-of-n has only 1 "
+        ):
             parse_metric_tree(
                 {
                     "combinator": "k-of-n",
@@ -202,7 +206,7 @@ class TestCombinatorSpec:
             )
 
     def test_k_of_n_negative_k_rejected(self):
-        with pytest.raises(MetricSpecError, match="positive integer"):
+        with pytest.raises(MetricSpecError, match="whole number of at least 1"):
             parse_metric_tree(
                 {
                     "combinator": "k-of-n",
@@ -280,7 +284,7 @@ class TestNesting:
 
 class TestShape:
     def test_root_must_be_dict(self):
-        with pytest.raises(MetricSpecError, match="expected an object"):
+        with pytest.raises(MetricSpecError, match=r"must be an object, got \[\]"):
             parse_metric_tree([])  # type: ignore[arg-type]
 
     def test_node_with_both_combinator_and_metric_rejected(self):
@@ -297,3 +301,162 @@ class TestShape:
     def test_empty_node_rejected(self):
         with pytest.raises(MetricSpecError, match="must have either"):
             parse_metric_tree({})
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
+# reporter batch (CODE_REVIEW_2026-07-06.md).
+#
+# ``spec_to_raw`` round-trips every parsed tree shape, including the
+# synthesized implicit tree (support for finding 41's materialization).
+# =========================================================================
+
+
+class TestSpecToRaw:
+    def test_round_trips_through_parse(self):
+        raw = {
+            "combinator": "k-of-n",
+            "k": 2,
+            "children": [
+                {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
+                {
+                    "metric": "tube",
+                    "variable": "v",
+                    "tube_width_mode": "rel",
+                    "tube_rel": 0.05,
+                    "against": "experiment",
+                    "window": {"start": 1.0, "end": 5.0},
+                },
+                {
+                    "combinator": "weighted",
+                    "children": [
+                        {"metric": "range", "variable": "p", "min_value": 0.0}
+                    ],
+                    "weights": [2.0],
+                    "threshold": 0.5,
+                    "direction": "greater",
+                },
+            ],
+        }
+        tree = parse_metric_tree(raw)
+        assert spec_to_raw(tree) == raw
+
+    def test_synthesized_implicit_tree_serializes_and_parses(self):
+        tree = synthesize_implicit_tree(
+            ["a", "b"],
+            variable_overrides={"b": {"mode": "range", "min_value": 0.0}},
+        )
+        raw = spec_to_raw(tree)
+        reparsed = parse_metric_tree(raw)
+        assert [leaf.metric for leaf in reparsed.children] == ["nrmse", "range"]
+        assert reparsed.children[1].params == {"min_value": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# MetricSpecError itself
+# ---------------------------------------------------------------------------
+
+
+class TestMetricSpecError:
+    def test_str_is_path_then_message(self):
+        assert str(MetricSpecError("metrics.k", "msg")) == "metrics.k: msg"
+
+    def test_no_path_reads_as_the_message_alone(self):
+        """No leading ": " where there is no location to name."""
+        assert str(MetricSpecError("", "msg")) == "msg"
+
+    @pytest.mark.parametrize("path", ["metrics.k", ""])
+    def test_it_round_trips_through_pickle_and_copy(self, path):
+        import copy
+        import pickle
+
+        e = MetricSpecError(path, "msg")
+        for back in (pickle.loads(pickle.dumps(e)), copy.copy(e)):
+            assert type(back) is MetricSpecError
+            assert (back.path, back.message, str(back)) == (path, "msg", str(e))
+
+
+# ---------------------------------------------------------------------------
+# tree_variables — the variables a tree makes a run track
+# ---------------------------------------------------------------------------
+
+
+class TestTreeVariables:
+    def _tree(self):
+        return parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "b"},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "scalar",
+                                "variable": "cpu",
+                                "quantity": "CPUtime.final",
+                            }
+                        ],
+                    },
+                    {
+                        "metric": "scalar",
+                        "variable": "CPUtime",
+                        "quantity": {"reduce": "max"},
+                    },
+                    {"metric": "range", "variable": "a", "min_value": 0},
+                    {"metric": "tube", "variable": "b", "tube_rel": 0.1},
+                ],
+            }
+        )
+
+    def test_unique_in_tree_order_quantities_and_diagnostics_out(self):
+        from dstf.comparison.tree_spec import tree_variables
+
+        assert tree_variables(self._tree(), ["CPUtime", "EventCounter"]) == ["b", "a"]
+
+    def test_without_diagnostics_a_reduce_on_one_is_a_variable(self):
+        from dstf.comparison.tree_spec import tree_variables
+
+        assert tree_variables(self._tree()) == ["b", "CPUtime", "a"]
+
+    def test_no_tree_names_nothing(self):
+        from dstf.comparison.tree_spec import tree_variables
+
+        assert tree_variables(None) == []
+
+
+class TestStatisticPaths:
+    def test_reads_leaves_under_nested_combinators(self):
+        from dstf.comparison.tree_spec import statistic_paths
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "scalar",
+                                "quantity": "CPUtime",
+                                "tolerance": 0.1,
+                                "tolerance_mode": "rel",
+                            }
+                        ],
+                    },
+                    {
+                        "combinator": "or",
+                        "children": [
+                            {
+                                "metric": "scalar",
+                                "quantity": "translation.typo",
+                                "tolerance": 0,
+                            },
+                            {"metric": "scalar", "quantity": "CPUtime", "tolerance": 0},
+                        ],
+                    },
+                ],
+            }
+        )
+        assert statistic_paths(spec) == ["CPUtime", "translation.typo"]

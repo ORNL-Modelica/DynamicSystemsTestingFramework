@@ -30,7 +30,7 @@ def fake_wheel(tmp_path: Path) -> Path:
 
 
 def test_extracts_wheel_on_first_call(monkeypatch, tmp_path, fake_wheel):
-    from dstf.simulators.dymola import interface_loader as il
+    from dstf.backends.dymola import interface_loader as il
 
     cache_root = tmp_path / "cache"
     monkeypatch.setattr(il, "_cache_root", lambda: cache_root)
@@ -50,7 +50,7 @@ def test_extracts_wheel_on_first_call(monkeypatch, tmp_path, fake_wheel):
 
 
 def test_reuses_cache_when_signature_matches(monkeypatch, tmp_path, fake_wheel):
-    from dstf.simulators.dymola import interface_loader as il
+    from dstf.backends.dymola import interface_loader as il
 
     cache_root = tmp_path / "cache"
     monkeypatch.setattr(il, "_cache_root", lambda: cache_root)
@@ -72,7 +72,7 @@ def test_reextracts_when_wheel_signature_changes(monkeypatch, tmp_path, fake_whe
     but our cache held a now-stale extraction. The path-only marker never
     invalidated. Now the marker records size+mtime so any wheel change is
     detected and the cache is wiped."""
-    from dstf.simulators.dymola import interface_loader as il
+    from dstf.backends.dymola import interface_loader as il
 
     cache_root = tmp_path / "cache"
     monkeypatch.setattr(il, "_cache_root", lambda: cache_root)
@@ -103,7 +103,7 @@ def test_reextracts_when_cache_marker_uses_old_path_only_format(
     """A cache populated by a pre-fix DSTF version has a marker containing
     just `str(archive)` — no size or mtime. Treat it as a mismatch and
     re-extract so users upgrading don't keep using broken caches."""
-    from dstf.simulators.dymola import interface_loader as il
+    from dstf.backends.dymola import interface_loader as il
 
     cache_root = tmp_path / "cache"
     monkeypatch.setattr(il, "_cache_root", lambda: cache_root)

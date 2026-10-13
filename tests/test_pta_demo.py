@@ -8,8 +8,10 @@ test carries `simulate_only=True` plus the experiment-annotation values.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from dstf.comparison.registry import combinator_names, metric_names
 from dstf.config import Config
 from dstf.discovery.test_registry import discover_tests
 
@@ -23,6 +25,7 @@ TESTING_JSON = (
     / "ReferenceResults"
     / "testing.json"
 )
+TEST_SPEC_JSON = TESTING_JSON.parent / "test_spec.json"
 
 
 def test_demo_recognizer_finds_simulate_only_model():
@@ -62,7 +65,76 @@ def test_simulate_only_model_does_not_trigger_bundled():
     tests = discover_tests(config)
     by_id = {t.model_id: t for t in tests}
     sim_only = by_id["ModelicaTestingLib.Examples.SimulateOnlyTest"]
-    # n_vars stays at TestModel default since neither bundled (no match)
-    # nor demo recognizer (no n_vars field) sets it.
-    assert sim_only.n_vars == 1
+    # No recognizer declared a UnitTests variable for it (bundled: no match;
+    # demo: no n_vars field), so it has none — and no run goes looking for
+    # a `unitTests.x[1]` the model never had.
+    assert sim_only.n_vars == 0
     assert sim_only.x_expressions == []
+
+
+def test_simulate_only_model_extracts_without_a_missing_variable_warning(caplog):
+    """The demo's simulate-only test has no UnitTests component: extracting
+    its result must not warn that `unitTests.x[1]` is missing from it."""
+    import logging
+
+    from dstf.backends.common.result_variables import extract_variables
+
+    config = Config(config_file=str(TESTING_JSON))
+    by_id = {t.model_id: t for t in discover_tests(config)}
+    sim_only = by_id["ModelicaTestingLib.Examples.SimulateOnlyTest"]
+    with caplog.at_level(logging.WARNING):
+        variables, _ = extract_variables({}, sim_only, [])
+    assert variables == []
+    assert "not found in simulation output" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Demo spec coverage — every metric and every combinator runs in the demo
+# ---------------------------------------------------------------------------
+
+
+def _demo_spec_usage() -> tuple[set[str], set[str]]:
+    """Return the (metrics, combinators) the bundled demo spec exercises."""
+    spec = json.loads(TEST_SPEC_JSON.read_text(encoding="utf-8"))
+    metrics: set[str] = set()
+    combinators: set[str] = set()
+
+    def walk(node: dict) -> None:
+        if "combinator" in node:
+            combinators.add(node["combinator"])
+            for child in node.get("children", []):
+                walk(child)
+            return
+        metrics.add(node["metric"])
+
+    for entry in spec["tests"]:
+        if "metrics" in entry:
+            walk(entry["metrics"])
+        overrides = entry.get("comparison", {}).get("variable_overrides", {})
+        for override in overrides.values():
+            metrics.add(override.get("mode", "nrmse"))
+    return metrics, combinators
+
+
+def test_demo_spec_exercises_every_metric_and_combinator():
+    """The bundled demo is the framework's own end-to-end coverage: a metric
+    or combinator nobody runs there is one nobody runs at all (D103)."""
+    metrics, combinators = _demo_spec_usage()
+    assert metric_names() - metrics == set()
+    assert combinator_names() - combinators == set()
+
+
+def test_demo_simple_test_carries_the_scalar_leaf():
+    """SimpleTest's tree is and[k-of-n(...), scalar] — the k-of-n coverage
+    stays, and the scalar leaf reduces the first tracked series, which the
+    result file names ``unitTests.x[1]`` (the model writes ``x`` for it, and
+    that is the label, not the key)."""
+    spec = json.loads(TEST_SPEC_JSON.read_text(encoding="utf-8"))
+    entry = next(t for t in spec["tests"] if t["model"].endswith("Examples.SimpleTest"))
+    root = entry["metrics"]
+    assert root["combinator"] == "and"
+    kinds = [c.get("combinator") or c.get("metric") for c in root["children"]]
+    assert kinds == ["k-of-n", "scalar"]
+    scalar = root["children"][1]
+    assert scalar["variable"] == "unitTests.x[1]"
+    assert scalar["quantity"] == {"reduce": "final"}

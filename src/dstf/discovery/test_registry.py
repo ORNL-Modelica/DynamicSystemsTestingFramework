@@ -1,9 +1,11 @@
 """Orchestrate test discovery: find test models and merge parameters."""
 
+import copy
 import logging
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..config import (
     DEFAULT_METHOD,
@@ -15,6 +17,8 @@ from .recognizer import RecognizerResult, get_recognizers
 
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
+    from .mo_parser import LocatedClass
+    from .plots import PlotExtra
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,12 @@ class TestModel:
     source_package: str
     short_name: str
     n_vars: int
+    # The UnitTests component's instance name: its variables are
+    # ``<instance>.x[i]`` in the result file. A test with no such component
+    # (``source == "spec"``) keeps the conventional default, and
+    # ``unit_test_variables`` returns nothing for it, so that default never
+    # ends up naming anything.
+    unit_tests_instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
     x_reference: list[float] | None = None
@@ -39,7 +49,7 @@ class TestModel:
     # a spec value that happened to equal the framework default. During
     # discovery they may be None; ``finalize_defaults()`` (called at the end
     # of discover_tests) resolves them to the framework defaults so
-    # downstream consumers (runners, reporters, storage) only ever see
+    # downstream consumers (backends, reporters, storage) only ever see
     # concrete values.
     stop_time: float | None = None
     tolerance: float | None = None
@@ -54,7 +64,9 @@ class TestModel:
     variable_patterns: list[str] = field(default_factory=list)
 
     # Comparison settings (per-test and per-variable overrides)
-    comparison_tolerance: float | None = None  # Overrides config.tolerance
+    #: Overrides config.tolerance. As the spec wrote it: a value that is no
+    #: number is carried to ``compare_test``, which refuses the test.
+    comparison_tolerance: Any = None
     variable_overrides: dict[str, dict] = field(default_factory=dict)
     # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
 
@@ -63,15 +75,25 @@ class TestModel:
     # of the implicit flat-AND. Parse-only today — no behavior gated on it.
     metric_tree_spec: Optional["SpecNode"] = None
 
+    # The entry's optional ``plots`` extras (`discovery.plots`): context
+    # series and watch plots beside the plots derived from the tree. None
+    # when the key is absent, ``()`` for ``[]`` — both mean no extras.
+    plots: tuple["PlotExtra", ...] | None = None
+
+    # The entry's own ``baseline_points`` (D153): ``"all"`` or a whole number
+    # of 2 or more — the points this test's stored baseline keeps of its
+    # run. None when the entry has no such key: the project's applies
+    # (``Config.baseline_points``).
+    baseline_points: int | str | None = None
+
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.
     #
-    # simulate_only: when True, the test passes iff the simulation completes
-    # without error — no per-variable comparison. Wired end-to-end in PTA.5.
+    # simulate_only: a recognizer's MARK — the test passes iff the simulation
+    # completes without error, whatever it declares, and no criterion staged
+    # on it is ever scored. What a reader asks is `is_simulate_only`, which
+    # is also true of a test that declares nothing to score.
     simulate_only: bool = False
-    # requested_fmu_export: placeholder for 4.B (cross-backend verification).
-    # Recognizers can set this today; no consumer until 4.B lands.
-    requested_fmu_export: bool = False
     # requested_baselines: names of additional baselines to produce for this
     # test (e.g., ["dymola-via-fmpy"]). Placeholder for 4.B.
     requested_baselines: list[str] = field(default_factory=list)
@@ -85,6 +107,36 @@ class TestModel:
 
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
+
+    @property
+    def is_simulate_only(self) -> bool:
+        """Whether the test passes iff its simulation completes — THE one
+        rule: a recognizer marked it (``simulate_only``), or it DECLARES
+        nothing to score: no UnitTests variable, no ``variables`` pattern,
+        no ``metrics`` tree and no ``comparison.variable_overrides`` entry.
+        That is the entry ``dstf add <model>`` writes (``"variables": []``),
+        which has no key of its own for it.
+
+        An override is a declaration: whoever wrote ``{"x": {"mode":
+        "range", ...}}`` asked for ``x`` to be checked. On an entry that
+        tracks nothing it scores nothing — an override changes how a TRACKED
+        variable is scored — and such a test passed, simulate-only, with no
+        word of the bound it never read.
+
+        Not the test that declares variables and whose result holds none of
+        them, nor the one whose overrides are all it declares: each scored
+        nothing it asked about, and fails
+        (``comparison.comparator.nothing_scored``)."""
+        from .unit_tests import unit_test_variables
+
+        if self.simulate_only:
+            return True
+        return (
+            not unit_test_variables(self)
+            and not self.variable_patterns
+            and self.metric_tree_spec is None
+            and not self.variable_overrides
+        )
 
     def finalize_defaults(self) -> "TestModel":
         """Resolve unset (None) simulation fields to framework defaults.
@@ -123,6 +175,12 @@ def _build_test_model_from_recognizer_results(
     registers first; user-provided recognizers (PTA.3) append, so user values
     win on conflicts. Fields no recognizer set fall back to TestModel's
     dataclass defaults.
+
+    The UnitTests variables are the ones a recognizer DECLARED: ``n_vars``
+    when one gave it, else as many as the expressions one gave, else none.
+    A test recognized by something other than the component (``extends
+    *Icons.Example``) has no ``<instance>.x[i]``, and a default of one made
+    every run look for ``unitTests.x[1]`` in its result and warn.
     """
     parts = model_id.rsplit(".", 1)
     source_package = parts[0] if len(parts) > 1 else ""
@@ -133,15 +191,19 @@ def _build_test_model_from_recognizer_results(
         source_file=Path(""),
         source_package=source_package,
         short_name=short_name,
-        n_vars=1,
+        n_vars=0,
         result_file=short_name,
     )
 
+    counted = False
     for r in results:
         if r.source_file is not None:
             model.source_file = r.source_file
         if r.n_vars is not None:
             model.n_vars = r.n_vars
+            counted = True
+        if r.unit_tests_instance:
+            model.unit_tests_instance = r.unit_tests_instance
         if r.x_expressions:
             model.x_expressions = list(r.x_expressions)
         if r.x_raw:
@@ -167,88 +229,171 @@ def _build_test_model_from_recognizer_results(
             model.field_sources["output_interval"] = "annotation"
         if r.simulate_only is not None:
             model.simulate_only = r.simulate_only
-        if r.requested_fmu_export is not None:
-            model.requested_fmu_export = r.requested_fmu_export
         if r.requested_baselines is not None:
             model.requested_baselines = list(r.requested_baselines)
 
+    if not counted:
+        model.n_vars = len(model.x_expressions)
     return model
 
 
-def discover_tests(config: Config) -> list[TestModel]:
-    """Discover all test models from registered recognizers and/or external spec.
+def scan_source_tests(
+    config: Config, progress: Callable[[int, int], None] | None = None
+) -> dict[str, TestModel]:
+    """Step 1 of discovery: recognizer results over the source tree, keyed
+    by model_id. Empty unless ``source_type == "modelica"``. ``progress(done,
+    total)`` is called after each ``.mo`` file is scanned."""
+    if config.source_type != "modelica":
+        return {}
+    return scan_files(config, sorted(config.library_dir.rglob("*.mo")), progress)
 
-    Sources (merged by model_id):
-    1. Source-file recognizers (PTA.1+) — for ``source_type == "modelica"``,
-       walks ``*.mo`` and runs every registered Modelica recognizer. Bundled
-       default is the ``UnitTests`` + ``experiment(...)`` recognizer; user-
-       provided recognizers (PTA.3) layer on top.
-    2. External test_spec.json (if configured, overrides recognizer values).
 
-    When a model appears in both recognizers and spec, variable patterns
-    from the spec are added alongside the recognizer-derived variables, and
-    the source is marked as "both". Spec simulation parameters override
-    recognizer values when explicitly set.
-    """
+def scan_files(
+    config: Config,
+    files: Iterable[Path],
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[str, TestModel]:
+    """The tests the recognizers find in ``files`` of a Modelica library,
+    keyed by model_id: :func:`scan_source_tests` over every ``.mo`` file of
+    it. ``progress(done, total)`` is called after each file."""
     # Trigger bundled-recognizer registration on first call.
     from . import mo_parser  # noqa: F401
 
-    # Step 1: Run recognizers over source files.
     # Bundled recognizers come from the module-level registry (filtered by
     # config.disabled_bundled); user-provided recognizers from config.recognizers
     # append, so user values win on per-field merge in
     # _build_test_model_from_recognizer_results.
-    ut_tests: dict[str, TestModel] = {}
-    if config.source_type == "modelica":
-        library_dir = config.library_dir
-        bundled = [
-            r
-            for r in get_recognizers("modelica")
-            if r.name not in config.disabled_bundled
-        ]
-        user = [r for r in config.recognizers if "modelica" in r.applies_to]
-        recognizers = bundled + user
+    library_dir = config.library_dir
+    bundled = [
+        r for r in get_recognizers("modelica") if r.name not in config.disabled_bundled
+    ]
+    user = [r for r in config.recognizers if "modelica" in r.applies_to]
+    recognizers = bundled + user
 
-        per_model: dict[str, list[RecognizerResult]] = {}
-        for mo_file in sorted(library_dir.rglob("*.mo")):
-            for recognizer in recognizers:
-                if not recognizer.applies_to_path(mo_file, library_dir):
-                    continue
-                result = recognizer.recognize(mo_file)
-                if result is not None:
-                    per_model.setdefault(result.model_id, []).append(result)
-
-        for model_id, results in per_model.items():
-            ut_tests[model_id] = _build_test_model_from_recognizer_results(
-                model_id,
-                results,
-            )
-
-    # Step 2: Load external test spec (if configured)
-    spec_tests: dict[str, TestModel] = {}
-    if config.test_spec_file and config.test_spec_file.exists():
-        from .spec_parser import parse_test_spec
-
-        for test in parse_test_spec(config.test_spec_file):
-            # review 2026-07-06 finding 51: duplicate model entries — FIRST
-            # wins (matching patch_apply / the spec edit helpers), with a
-            # warning. Last-wins here made applied patches silently
-            # ineffective (they edit the first entry).
-            if test.model_id in spec_tests:
-                logger.warning(
-                    "test_spec has duplicate entries for model '%s'; "
-                    "using the first — remove the duplicates",
-                    test.model_id,
-                )
+    files = list(files)
+    per_model: dict[str, list[RecognizerResult]] = {}
+    for done, mo_file in enumerate(files, start=1):
+        for recognizer in recognizers:
+            if not recognizer.applies_to_path(mo_file, library_dir):
                 continue
-            spec_tests[test.model_id] = test
+            result = recognizer.recognize(mo_file)
+            if result is not None:
+                per_model.setdefault(result.model_id, []).append(result)
+        if progress is not None:
+            progress(done, len(files))
 
-    # Step 3: Merge — union by model_id
-    merged: dict[str, TestModel] = {}
+    return {
+        model_id: _build_test_model_from_recognizer_results(model_id, results)
+        for model_id, results in per_model.items()
+    }
 
-    # Start with UnitTests
-    for model_id, test in ut_tests.items():
-        merged[model_id] = test
+
+def spec_tests_by_model(models: list[TestModel]) -> dict[str, TestModel]:
+    """Step 2: the spec's models keyed by model_id, first entry wins on a
+    duplicate (matching patch_apply / the spec edit helpers), with a warning."""
+    spec_tests: dict[str, TestModel] = {}
+    for test in models:
+        # review 2026-07-06 finding 51: duplicate model entries — FIRST
+        # wins (matching patch_apply / the spec edit helpers), with a
+        # warning. Last-wins here made applied patches silently
+        # ineffective (they edit the first entry).
+        if test.model_id in spec_tests:
+            logger.warning(
+                "test_spec has duplicate entries for model '%s'; "
+                "using the first — remove the duplicates",
+                test.model_id,
+            )
+            continue
+        spec_tests[test.model_id] = test
+    return spec_tests
+
+
+#: The simulation fields an ``experiment(...)`` annotation can give.
+_SIMULATION_FIELDS = (
+    "stop_time",
+    "tolerance",
+    "method",
+    "number_of_intervals",
+    "output_interval",
+)
+
+
+class SpecModelLocator:
+    """Finds the model of a test that only ``test_spec.json`` declares: its
+    file and its ``experiment(...)`` annotation
+    (:func:`~.mo_parser.find_class`), which :func:`merge_tests` fills the
+    entry's unset simulation fields from.
+
+    Modelica sources only — any other source type has no annotation to
+    read, and every ask answers None.
+
+    Each model is looked for ONCE per locator, a miss included: the
+    authoring Session re-merges on every edit of the spec, and on a slow
+    mount the probes for a few spec-only models are not something to repeat
+    at every keystroke. A locator therefore shows a model file as it was
+    when first asked; whoever holds one replaces it when the library is
+    scanned again, or takes one that knows better (:meth:`having`) when it
+    read a model's file again itself.
+    """
+
+    def __init__(self, config: Config):
+        self._config = config
+        self._found: dict[str, LocatedClass | None] = {}
+
+    def having(self, found: Mapping[str, "LocatedClass"]) -> "SpecModelLocator":
+        """A locator that answers *found* for those models and, for every
+        other, what this one has found so far (and looks for the rest)."""
+        other = SpecModelLocator(self._config)
+        other._found = {**self._found, **found}
+        return other
+
+    def __call__(self, model_id: str) -> "LocatedClass | None":
+        if self._config.source_type != "modelica":
+            return None
+        if model_id not in self._found:
+            from .mo_parser import find_class
+
+            config = self._config
+            assert config.library_name is not None  # resolved in __post_init__
+            self._found[model_id] = find_class(
+                config.library_dir, config.library_name, model_id
+            )
+        return self._found[model_id]
+
+
+def _fill_from_model(test: TestModel, located: "LocatedClass") -> None:
+    """Give a spec-only ``test`` what its model says: the file, and every
+    simulation field the entry left unset that the model's ``experiment``
+    annotation sets — the two-layer contract a scanned test already gets
+    (docs/usage.md). The entry's own ``simulation.*`` and ``source`` stay."""
+    if test.source_file == Path(""):
+        test.source_file = located.mo_file
+    experiment = located.experiment
+    if experiment is None:
+        return
+    for name in _SIMULATION_FIELDS:
+        value = getattr(experiment, name)
+        if getattr(test, name) is None and value is not None:
+            setattr(test, name, value)
+            test.field_sources[name] = "annotation"
+
+
+def merge_tests(
+    scanned: dict[str, TestModel],
+    spec_tests: dict[str, TestModel],
+    *,
+    locate: Callable[[str], "LocatedClass | None"] | None = None,
+) -> list[TestModel]:
+    """Step 3: union by model_id; the spec wins per field. Copies both
+    inputs, so a caller (the authoring Session) can keep one scan and
+    re-merge it against every edit of the spec.
+
+    ``locate`` finds the model of an entry the scan did not recognize
+    (:class:`SpecModelLocator`); such a test takes its model's file and
+    annotation. Without it a spec-only entry is taken as written."""
+    merged: dict[str, TestModel] = {
+        model_id: copy.deepcopy(test) for model_id, test in scanned.items()
+    }
 
     # Merge spec tests. Two-layer contract (docs/usage.md): the model's
     # experiment(...) annotation provides defaults; any field set in
@@ -258,6 +403,7 @@ def discover_tests(config: Config) -> list[TestModel]:
     # value like stop_time=1.0 against experiment(StopTime=100). Framework
     # defaults are applied only afterwards, by finalize_defaults() below.
     for model_id, spec_test in spec_tests.items():
+        spec_test = copy.deepcopy(spec_test)
         if model_id in merged:
             existing = merged[model_id]
             existing.variable_patterns = spec_test.variable_patterns
@@ -285,10 +431,17 @@ def discover_tests(config: Config) -> list[TestModel]:
                 existing.timeout = spec_test.timeout
             if spec_test.metric_tree_spec is not None:
                 existing.metric_tree_spec = spec_test.metric_tree_spec
+            if spec_test.plots is not None:
+                existing.plots = spec_test.plots
+            if spec_test.baseline_points is not None:
+                existing.baseline_points = spec_test.baseline_points
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults — review
             # 2026-07-06 finding 57 (the old blanket "test_spec" stamp lied).
+            located = locate(model_id) if locate is not None else None
+            if located is not None:
+                _fill_from_model(spec_test, located)
             merged[model_id] = spec_test
 
     # Sort by model_id for consistent ordering; resolve remaining None sim
@@ -298,3 +451,38 @@ def discover_tests(config: Config) -> list[TestModel]:
     for test in tests:
         test.finalize_defaults()
     return tests
+
+
+def discover_tests(config: Config) -> list[TestModel]:
+    """Discover all test models from registered recognizers and/or external spec.
+
+    Sources (merged by model_id):
+    1. Source-file recognizers (PTA.1+) — for ``source_type == "modelica"``,
+       walks ``*.mo`` and runs every registered Modelica recognizer. Bundled
+       default is the ``UnitTests`` + ``experiment(...)`` recognizer; user-
+       provided recognizers (PTA.3) layer on top.
+    2. External test_spec.json (the configured file, else
+       ``<reference_root>/test_spec.json`` when it exists; overrides
+       recognizer values). A model only the spec names is looked up in the
+       library (:class:`SpecModelLocator`) for its file and its
+       ``experiment`` annotation.
+
+    When a model appears in both recognizers and spec, variable patterns
+    from the spec are added alongside the recognizer-derived variables, and
+    the source is marked as "both". Spec simulation parameters override
+    recognizer values when explicitly set.
+
+    The three steps are separable: the authoring Session keeps one
+    :func:`scan_source_tests` result and re-runs :func:`merge_tests` against
+    its in-memory spec document on every edit.
+    """
+    scanned = scan_source_tests(config)
+    if config.spec_path.exists():
+        from .spec_parser import parse_test_spec
+
+        models = parse_test_spec(config.spec_path)
+    else:
+        models = []
+    return merge_tests(
+        scanned, spec_tests_by_model(models), locate=SpecModelLocator(config)
+    )

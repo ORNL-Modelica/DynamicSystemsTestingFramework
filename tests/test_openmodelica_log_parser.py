@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from dstf.simulators.openmodelica.log_parser import (
+from dstf.backends.openmodelica.log_parser import (
     parse_omc_stdout,
 )
 

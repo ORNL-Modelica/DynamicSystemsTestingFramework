@@ -1,0 +1,4835 @@
+"""The Session (two-tier design §4.5, tests per §6 "The Session"): pure
+Python against a Python-backend project whose run is on disk."""
+
+from __future__ import annotations
+
+import copy
+import json
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from conftest import make_test_model
+from dstf.authoring.capabilities import Artifact, OpenProject, Patch, StoreWrite
+from dstf.authoring.session import (
+    NO_TREE,
+    NOTHING_SCORED,
+    Selection,
+    Session,
+    SessionView,
+    StaleSpecError,
+)
+from dstf.authoring.spec_document import (
+    PatchOp,
+    SpecDocument,
+    edit_count,
+    edit_counts,
+)
+from dstf.backends.pool import ItemState
+from dstf.backends.types import TestResult, VariableResult
+from dstf.config import Config, ConfigError
+from dstf.discovery.patch_apply import PatchError
+from dstf.discovery.plots import PlotExtra, parse_plots
+from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
+from dstf.discovery.test_registry import TestModel
+from dstf.figures.plotly import RING_PATH
+from dstf.reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL, classify
+from dstf.storage.reference_store import ReferenceStore
+
+A, B, C, D, G = "FakeLib.A", "FakeLib.B", "FakeLib.C", "FakeLib.D", "FakeLib.G"
+
+
+def _project(tmp_path: Path) -> tuple[Path, Path]:
+    """testing.json + work dir. A: baseline x=t, result x=1.25t — nrmse 0.153,
+    FAIL at the config tolerance 0.01. B: no baseline (NO_REF). C: no result
+    — its manifest entry is still pending (NOT RUN, D145). D: baseline x=t, result x=1.001t — nrmse 6e-4, PASS at 0.01
+    and FAIL at the 1e-4 default, so a scorer that drops config.tolerance is
+    caught. G: like D but tracked as ["*"] — a glob spec whose verdict is
+    PASS as loaded, so a `*` sentinel leaf would flip it (Conventions #7)."""
+    lib = tmp_path / "FakeLib"
+    (lib / "Examples").mkdir(parents=True)
+    for short in ("A", "B", "C", "D", "G"):
+        (lib / "Examples" / f"{short}.py").write_text(
+            "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
+        )
+    refs = lib / "refs"
+    refs.mkdir()
+    (refs / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_type": "python",
+                "source_path": "..",
+                "library_name": "FakeLib",
+                "test_spec": "./test_spec.json",
+                "reference_root": ".",
+                "backend": "Python",
+                "backends": {"Python": ["python3", "python"]},
+                "tolerance": 0.01,
+            }
+        ),
+        encoding="utf-8",
+    )
+    entries = [
+        {
+            "model": m,
+            "source": f"../Examples/{m.rsplit('.', 1)[-1]}.py",
+            "variables": ["*"] if m == G else ["x"],
+            "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+        }
+        for m in (A, B, C, D, G)
+    ]
+    (refs / "test_spec.json").write_text(
+        json.dumps({"tests": entries}, indent=2) + "\n", encoding="utf-8"
+    )
+
+    work = tmp_path / "work"
+    work.mkdir()
+    t = [i / 4 for i in range(5)]
+    manifest = {
+        "test_0001": {"model_id": A, "ref_id": None, "last_run_status": "passed"},
+        "test_0002": {"model_id": B, "ref_id": None, "last_run_status": "passed"},
+        "test_0003": {"model_id": C, "ref_id": None, "last_run_status": "pending"},
+        "test_0004": {"model_id": D, "ref_id": None, "last_run_status": "passed"},
+        "test_0005": {"model_id": G, "ref_id": None, "last_run_status": "passed"},
+    }
+    (work / "batch_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    for key, values in (
+        ("test_0001", [v * 1.25 for v in t]),
+        ("test_0002", t),
+        ("test_0004", [v * 1.001 for v in t]),
+        ("test_0005", [v * 1.001 for v in t]),
+    ):
+        (work / key).mkdir()
+        (work / key / "result.json").write_text(
+            json.dumps({"success": True, "time": t, "variables": {"x": values}}),
+            encoding="utf-8",
+        )
+    (work / "status.json").write_text(
+        json.dumps({"metadata": {"backend_name": "Python"}, "tests": []}),
+        encoding="utf-8",
+    )
+
+    config = Config(config_file=refs / "testing.json", work_dir=work)
+    tt = np.asarray(t)
+    store = ReferenceStore(config)
+    for m in (A, D, G):
+        store.store_reference(
+            make_test_model(m, variable_patterns=["x"]),
+            TestResult(
+                model_id=m,
+                success=True,
+                variables=[VariableResult(index=1, time=tt, values=tt, name="x")],
+            ),
+        )
+    return refs / "testing.json", work
+
+
+def _modelica_project(tmp_path: Path) -> Path:
+    """test_discovery._write_lib's Modelica library, opened on the Python
+    backend so `select_backend` succeeds without a simulator. The scan is
+    what these tests are about; nothing is simulated."""
+    from test_discovery import _write_lib
+
+    lib = tmp_path / "MyLib"
+    lib.mkdir()
+    _write_lib(lib)
+    cfg_path = lib / "testing.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    return cfg_path
+
+
+def _bump_stop_time(tmp_path: Path) -> tuple[Path, TestModel]:
+    """Raise Foo.mo's StopTime by one; returns the file and the model as
+    scanned BEFORE the edit (model_id MyLib.Foo, stop_time 100.0)."""
+    from dstf.discovery.test_registry import scan_source_tests
+
+    lib = tmp_path / "MyLib"
+    before = scan_source_tests(Config(config_file=lib / "testing.json"))["MyLib.Foo"]
+    mo = lib / "Foo.mo"
+    text = mo.read_text(encoding="utf-8")
+    assert f"StopTime={before.stop_time:g}" in text
+    mo.write_text(
+        text.replace(
+            f"StopTime={before.stop_time:g}", f"StopTime={before.stop_time + 1:g}"
+        ),
+        encoding="utf-8",
+    )
+    return mo, before
+
+
+def _add_bar(tmp_path: Path) -> None:
+    """A second model in the Modelica library `_modelica_project` writes."""
+    (tmp_path / "MyLib" / "Bar.mo").write_text(
+        "within MyLib;\nmodel Bar\n  Real y;\n  UnitTests unitTests(n=1, x={y});\n"
+        "equation\n  y = time;\n  annotation(experiment(StopTime=1));\nend Bar;\n",
+        encoding="utf-8",
+    )
+
+
+def _snapshot(work: Path) -> list[tuple[str, bytes]]:
+    return sorted(
+        (str(p.relative_to(work)), p.read_bytes())
+        for p in work.rglob("*")
+        if p.is_file()
+    )
+
+
+def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
+    """`_project` with A and B tracking ["x", "y"], results for both, and a
+    two-variable baseline for each model in ``ref_models`` (A only by
+    default, so B stays NO_REF)."""
+    cfg, work = _project(tmp_path)
+    t = [i / 4 for i in range(5)]
+    for key in ("test_0001", "test_0002"):
+        (work / key / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {"x": [v * 1.25 for v in t], "y": [2 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] in (A, B):
+            entry["variables"] = ["x", "y"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    config = Config(config_file=cfg, work_dir=work)
+    tt = np.asarray(t)
+    store = ReferenceStore(config)
+    for m in ref_models:
+        store.store_reference(
+            make_test_model(m, variable_patterns=["x", "y"]),
+            TestResult(
+                model_id=m,
+                success=True,
+                variables=[
+                    VariableResult(index=1, time=tt, values=tt, name="x"),
+                    VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+                ],
+            ),
+        )
+    return cfg, work
+
+
+#: The untracked variables of A's result `_page_project` draws as watch plots.
+PAGE_WATCH = ("w1", "w2", "w3", "w4", "w5")
+
+
+def _page_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project`, scored by an explicit tree, with five WATCH plots
+    over `PAGE_WATCH`, extra variables of A's result file: seven plots, a
+    page taller than the viewport, so the cards below it are the ones
+    render-on-scroll has to reach.
+
+    A's tree is `and[tube · x, range · x, range · y]` (the tube is
+    `test_handles.TREE`'s band leaf, its control points inside the trace's
+    span): the tube and the range on y FAIL, the range on x passes, so the
+    closed tree line has a tally and two jumps, and the test's verdict is
+    FAIL. The tube is the leaf with rings; the range on x is the leaf whose
+    bound LINES are on the same plot, which is what a refused drag needs.
+    """
+    # test_handles imports this module: its TREE is read at call time.
+    from test_handles import TREE
+
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for k, name in enumerate(PAGE_WATCH, start=3):
+        payload["variables"][name] = [k * v for v in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] != A:
+            continue
+        entry["plots"] = [{"var": name} for name in PAGE_WATCH]
+        entry["metrics"] = {
+            "combinator": "and",
+            "children": [
+                copy.deepcopy(TREE["children"][0]),
+                {
+                    "metric": "range",
+                    "variable": "x",
+                    "min_value": -1.0,
+                    "max_value": 2.0,
+                },
+                {
+                    "metric": "range",
+                    "variable": "y",
+                    "min_value": -1.0,
+                    "max_value": 1.0,
+                },
+            ],
+        }
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+#: A model in a sub-package of FakeLib: the one id `_two_package_project` adds.
+CASES_X = "FakeLib.Cases.X"
+
+
+def _two_package_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_project` with a second package: `FakeLib.Cases.X` (tracks x, no
+    result, so NOT RUN). The project lists its tests by model id, so X
+    stands between C and D; a grouped list sorts by package first, so X
+    comes last under its own label. Every other id shares FakeLib, which is
+    why only this fixture tells the two orders apart: grouped reads A, B, C,
+    D, G, Cases.X; flat reads A, B, C, Cases.X, D, G."""
+    cfg, work = _project(tmp_path)
+    (cfg.parent.parent / "Examples" / "X.py").write_text(
+        "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"].append(
+        {
+            "model": CASES_X,
+            "source": "../Examples/X.py",
+            "variables": ["x"],
+            "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+        }
+    )
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+#: The expression that used to cost its variable its identity: the text a
+#: Modelica ``x={cat(1, a, b)}`` writes beside ``unitTests.x[1]``. No result
+#: file ever carried it as a NAME — the comparison relabelled the variable
+#: ``x[1]`` for scoring and display, which is what left ~70 TRANSFORM tests
+#: with no editable tree. It is a label now; the name is the result file's.
+AWKWARD_EXPRESSION = "cat(1, a, b)[1]"
+
+#: A UnitTests variable's result-file name, and the expression beside it.
+UT1, UT2 = "unitTests.x[1]", "unitTests.x[2]"
+UT1_EXPR, UT2_EXPR = AWKWARD_EXPRESSION, "cat(1, a, b)[2]"
+
+
+def with_expressions(session: Session, model_id: str, expressions: dict[str, str]):
+    """Stamp ``expression`` on the loaded result's variables, keyed by name.
+
+    FakeLib is a Python-backend project: its ``result.json`` carries names and
+    values, and the backend has no carrier for an expression — only a Modelica
+    UnitTests component writes one. A test that needs a UnitTests-shaped
+    variable sets it here, after ``open``. Nothing is renamed."""
+    for var in session.project.results[model_id].variables:
+        if var.name in expressions:
+            var.expression = expressions[var.name]
+
+
+def _unit_tests_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A's two variables named the way the result file
+    of a UnitTests test names them — the shape the expressions ride beside."""
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    t = [i / 4 for i in range(5)]
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {UT1: [v * 1.25 for v in t], UT2: [2 * v for v in t]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [UT1, UT2]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    tt = np.asarray(t)
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=[UT1, UT2]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name=UT1),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name=UT2),
+            ],
+        ),
+    )
+    return cfg, work
+
+
+def _awkward_expression_project(tmp_path: Path, *, with_baseline: bool = True):
+    """`_two_var_project` with A's first variable named the way a UnitTests
+    result file names it, `AWKWARD_EXPRESSION` the text the model wrote for
+    it — the shape of the ~70 TRANSFORM tests this plan is for. The
+    expression is stamped with `with_expressions` once a Session is open (a
+    Python backend carries none). Without a baseline for A, the fixture's
+    one-variable baseline is all there is and the result's names are what
+    the page has to go on."""
+    cfg, work = _two_var_project(tmp_path, ref_models=(A,) if with_baseline else ())
+    t = [i / 4 for i in range(5)]
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {UT1: t, "y": [2 * v for v in t]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [UT1, "y"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    if with_baseline:
+        tt = np.asarray(t)
+        ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+            make_test_model(A, variable_patterns=[UT1, "y"]),
+            TestResult(
+                model_id=A,
+                success=True,
+                variables=[
+                    VariableResult(index=1, time=tt, values=tt, name=UT1),
+                    VariableResult(index=2, time=tt, values=2 * tt, name="y"),
+                ],
+            ),
+        )
+    return cfg, work
+
+
+def _base_kinds(fig: dict) -> list[tuple[str, str]]:
+    """The act / ref / error traces a figure draws, as sorted (kind, id).
+    Leaves are not base traces; overlays are, but no fixture in this module
+    has one, so they are not collected here."""
+    return sorted(
+        (tr["meta"].get("kind"), tr["meta"].get("id"))
+        for tr in fig["data"]
+        if tr.get("meta") and tr["meta"].get("kind") in ("act", "ref", "error")
+    )
+
+
+@pytest.fixture
+def session(tmp_path) -> Session:
+    cfg, work = _project(tmp_path)
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+# The materialized leaf for A is {"metric": "nrmse", "variable": "x"} — no
+# tolerance key (the entry has no variable_overrides), so the op is an add.
+LOOSEN = PatchOp(A, "add", "/metrics/children/0/tolerance", 0.5)
+
+
+class TestOpen:
+    def test_loaded_verdicts_match_the_cli_classifier(self, session):
+        assert classify(session.comparisons[A]) == FAIL
+        assert classify(session.comparisons[B]) == NO_REF
+        assert classify(session.comparisons[C]) == NOT_RUN  # never finished (D145)
+        assert (
+            classify(session.comparisons[D]) == PASS
+        )  # config tolerance 0.01, not the 1e-4 default
+        assert classify(session.comparisons[G]) == PASS
+        assert session.project.config.backend_name == "Python"
+        assert [t.model_id for t in session.project.tests] == [A, B, C, D, G]
+        assert session.spec.pending == []
+
+    def test_open_writes_nothing_in_the_work_dir(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        before = _snapshot(work)
+        Session().open(cfg, work_dir=work)
+        assert _snapshot(work) == before
+
+    def test_open_warms_the_overlay_index_off_the_calling_thread(
+        self, tmp_path, monkeypatch
+    ):
+        """Brief §2.2: the first click paid 3 s for the sibling-backend
+        index. It is built once, right after open, on its own thread."""
+        from dstf.reporting import overlay_loader as ol
+
+        warmed_on = []
+        real_warm = ol.warm_sibling_backend_index
+
+        def spy(config):
+            warmed_on.append(threading.current_thread().name)
+            real_warm(config)
+
+        monkeypatch.setattr(ol, "warm_sibling_backend_index", spy)
+        cfg, work = _project(tmp_path)
+        ol._sibling_backend_index.cache_clear()
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.overlay_index_ready.wait(5.0)
+        assert warmed_on == ["dstf-overlay-index"]
+        before = ol._sibling_backend_index.cache_info()
+        s.view(A, "x")
+        after = ol._sibling_backend_index.cache_info()
+        assert before.misses == 1
+        assert after.misses == 1 and after.hits == before.hits + 1
+
+    def test_the_index_warms_alongside_the_results_read_not_after_it(
+        self, tmp_path, monkeypatch
+    ):
+        """The warm thread reads the sibling reference trees; the results read
+        reads this backend's. Neither waits on the other, so the warm belongs
+        at the commit point, where the project is live and the reload has not
+        started — over TRANSFORM the reload is 15.6 s of head start.
+
+        The reload here blocks until the warm thread is observed running, so a
+        start moved back after the reload deadlocks this test rather than
+        quietly costing the first click its overlays.
+        """
+        from dstf.reporting import overlay_loader as ol
+
+        warming = threading.Event()
+        monkeypatch.setattr(
+            ol, "warm_sibling_backend_index", lambda config: warming.set()
+        )
+        real_reload = Session._reload_results
+
+        def reload_waiting_for_the_warm(self):
+            assert warming.wait(5.0), "the overlay index was not warming yet"
+            return real_reload(self)
+
+        monkeypatch.setattr(Session, "_reload_results", reload_waiting_for_the_warm)
+        cfg, work = _project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.overlay_index_ready.wait(5.0)
+
+    def test_a_failed_warm_still_marks_the_index_ready(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """A sibling tree that raises (a PermissionError from iterdir) is
+        logged, and the Event is set anyway — a waiter never hangs on it."""
+        from dstf.reporting import overlay_loader as ol
+
+        def broken(config):
+            raise PermissionError("sibling tree unreadable")
+
+        monkeypatch.setattr(ol, "warm_sibling_backend_index", broken)
+        cfg, work = _project(tmp_path)
+        s = Session()
+        with caplog.at_level("ERROR", logger="dstf.authoring.session"):
+            s.open(cfg, work_dir=work)
+            assert s.overlay_index_ready.wait(5.0)
+        assert "warming the sibling-backend overlay index failed" in caplog.text
+
+    def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        (work / "status.json").write_text(
+            json.dumps({"metadata": {"backend_name": "Nonesuch"}, "tests": []})
+        )
+        from dstf.config import ConfigError
+
+        with pytest.raises(ConfigError, match="Nonesuch"):
+            Session().open(cfg, work_dir=work)
+
+    def test_a_backend_that_cannot_be_built_opens_as_a_config_error(
+        self, tmp_path, monkeypatch
+    ):
+        """A missing executable raises ``RuntimeError`` out of the backend's
+        constructor. ``open`` builds through ``select_backend``, so it reaches
+        `dstf author` as the ConfigError the CLI prints and exits 2 on, not a
+        traceback."""
+        import shutil
+
+        cfg, work = _project(tmp_path)
+        testing = json.loads(cfg.read_text(encoding="utf-8"))
+        testing["backends"] = {"Python": [str(tmp_path / "no-such-python")]}
+        cfg.write_text(json.dumps(testing), encoding="utf-8")
+        # The map's one path does not exist; without this neither does the
+        # PATH fallback, in the config and in the backend alike.
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+        from dstf.config import ConfigError
+
+        with pytest.raises(ConfigError, match="Python binary not found"):
+            Session().open(cfg, work_dir=work)
+
+    def test_a_snapshot_predating_the_backend_rename_notices_its_warning(
+        self, tmp_path
+    ):
+        """``metadata`` with no ``backend_name`` (written when the key was
+        "simulator") — ``recorded_backend``'s warning is the project's first
+        notice, so the queue panel shows it."""
+        cfg, work = _project(tmp_path)
+        (work / "status.json").write_text(
+            json.dumps({"metadata": {"simulator_name": "Python"}, "tests": []})
+        )
+        session = Session()
+        session.open(cfg, work_dir=work)
+        assert any("predates the Backend rename" in n for n in session.notices)
+        assert not hasattr(session, "warnings")
+
+    def test_the_projects_backend_is_quiet_and_open_narrates_nothing(
+        self, tmp_path, capsys
+    ):
+        """A UI process has no console to narrate to. Not the `session`
+        fixture: it opens before capsys starts capturing, so the assertion
+        would pass against nothing."""
+        cfg, work = _project(tmp_path)
+        session = Session()
+        session.open(cfg, work_dir=work)
+        assert session.project.backend.quiet is True
+        # Both streams: the run header and the progress bar go to stderr, the
+        # "Reading N result files..." and "Read phase:" lines to stdout.
+        assert capsys.readouterr() == ("", "")
+
+    def test_read_last_results_reports_each_result_with_its_run_verdict_applied(
+        self, tmp_path
+    ):
+        """The tool scores each result as it lands (Session._reload_results);
+        a test whose run failed must arrive already forced to success=False,
+        or it is scored green for the seconds before the batch verdict."""
+        cfg, work = _project(tmp_path)
+        # Record A's last run as failed in the manifest _project wrote. The
+        # file IS the test-key map (BatchManifest.save writes `.manifest`
+        # at the top level, src/dstf/storage/batch_manifest.py:69); A's
+        # result.json still reads as a success.
+        path = work / "batch_manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for entry in data.values():
+            if entry["model_id"] == A:
+                entry["last_run_status"] = "failed"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        seen = []
+        results = s.project.backend.read_last_results(
+            s.project.tests,
+            on_result=lambda model_id, result: seen.append((model_id, result.success)),
+        )
+        assert sorted(seen) == sorted((m, r.success) for m, r in results.items())
+        assert dict(seen)[A] is False  # the verdict, before the callback
+        assert dict(seen)[D] is True
+
+    def test_open_reports_its_phases_and_every_scored_test(self, tmp_path):
+        """Brief §3.8: the page shows "scanning… N found", fills rows as
+        results are scored, and a test opens as soon as it is scored."""
+        cfg, work = _project(tmp_path)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.on("results", lambda e: events.append({"event": "results", **e}))
+        s.open(cfg, work_dir=work)
+        phases = [e["phase"] for e in events if e["event"] == "loading"]
+        assert (
+            phases[0] == "scan" and phases[-1] == "done"
+        )  # "scanning…" fires even for a source that scans nothing
+        scored = [e["model"] for e in events if e.get("phase") == "results"]
+        # Every model the manifest names: C has no result.json and the reader
+        # returns it as a failed result, which is read and announced too.
+        assert set(scored) == {A, B, C, D, G}
+        # Each results event names a model already scored.
+        for e in events:
+            if e.get("phase") == "results":
+                assert e["done"] <= e["total"]
+        # ONE batch results event, after the per-test events (Conventions #7).
+        kinds = [e["event"] for e in events]
+        assert kinds.count("results") == 1
+        assert kinds.index("results") > max(
+            i for i, e in enumerate(events) if e.get("phase") == "results"
+        )
+        assert events[-1]["phase"] == "done" and events[-1]["seconds"] >= 0
+
+    def test_a_test_is_scored_when_its_loading_event_fires(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        s = Session()
+        verdicts = {}
+        s.on(
+            "loading",
+            lambda e: (
+                verdicts.update({e["model"]: s.comparisons[e["model"]].passed})
+                if e["phase"] == "results"
+                else None
+            ),
+        )
+        s.open(cfg, work_dir=work)
+        assert verdicts[A] is False and verdicts[D] is True
+
+    def test_a_test_added_since_the_last_run_is_announced_and_done_reaches_total(
+        self, tmp_path
+    ):
+        """FakeLib.E is in the spec and has no manifest entry: it is scored
+        after the per-result loop (NOT RUN, no result). It must be
+        announced like the others — a page filling rows per event has no
+        row for it otherwise — and the last announcement is done == total."""
+        cfg, work = _project(tmp_path)
+        e_id = "FakeLib.E"
+        (cfg.parent.parent / "Examples" / "E.py").write_text(
+            "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        spec["tests"].append(
+            {
+                "model": e_id,
+                "source": "../Examples/E.py",
+                "variables": ["x"],
+                "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+            }
+        )
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.open(cfg, work_dir=work)
+        announced = [e for e in events if e["phase"] == "results"]
+        assert {e["model"] for e in announced} == {A, B, C, D, G, e_id}
+        assert [e["done"] for e in announced] == list(range(1, 7))
+        assert announced[-1]["done"] == announced[-1]["total"] == 6
+        assert classify(s.comparisons[e_id]) == NOT_RUN  # never run (D145)
+
+    def test_one_models_scoring_failure_leaves_the_results_complete_and_is_raised(
+        self, session, monkeypatch
+    ):
+        """A scorer that raises for one model (a malformed reference, a
+        scorer bug) must not abort the read: every result is stored, every
+        model is announced, the batch event fires, the failed model's stale
+        verdict is dropped rather than shown, and the failure is raised once
+        — `open` propagates it."""
+        import dstf.authoring.session as session_mod
+
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        events = []
+        session.on("loading", events.append)
+        session.on("results", lambda e: events.append({"event": "results", **e}))
+        with pytest.raises(RuntimeError) as exc_info:
+            session._reload_results()
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert D in str(exc_info.value)
+        # C's run never finished it: the reader hands in no result (D145).
+        assert {A, B, D, G} <= set(session.project.results)
+        assert D not in session.comparisons
+        assert classify(session.comparisons[A]) == FAIL
+        announced = [e for e in events if e.get("phase") == "results"]
+        assert announced[-1]["done"] == announced[-1]["total"] == 5
+        assert events[-1]["event"] == "results"
+
+    def test_a_failed_models_announcement_carries_the_error_flag(
+        self, session, monkeypatch
+    ):
+        """A per-event row filler reads `comparisons[model]` for the announced
+        model; a model whose scoring raised has none there, and its event
+        must say so: `error=True` on that announcement, `False` on every
+        other (docs/ideas.md 2026-09-16, second entry)."""
+        import dstf.authoring.session as session_mod
+
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        events = []
+        session.on("loading", events.append)
+        with pytest.raises(RuntimeError):
+            session._reload_results()
+        flags = {e["model"]: e["error"] for e in events if e.get("phase") == "results"}
+        assert flags == {A: False, B: False, C: False, D: True, G: False}
+
+    def test_open_emits_done_and_starts_the_rescan_when_one_models_scoring_raised(
+        self, tmp_path, monkeypatch
+    ):
+        """After a partial scoring failure the project is open and its
+        results complete (the test above); a shell waiting for `done` — or
+        for `rescan_done` — must not wait forever. The failure still reaches
+        the caller, after `done`."""
+        import dstf.authoring.session as session_mod
+
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        cfg, work = _project(tmp_path)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        with pytest.raises(RuntimeError, match="scoring FakeLib.D failed"):
+            s.open(cfg, work_dir=work)
+        assert events[-1]["phase"] == "done"
+        assert s.rescan_done.wait(5)  # a Python project scans nothing: set at once
+        assert s.project is not None and {A, B, D, G} <= set(s.project.results)
+        assert D not in s.comparisons
+
+    def test_a_model_under_two_manifest_keys_is_one_failure(self, session, monkeypatch):
+        """`failures` counts models, not `_score` calls: a manifest listing one
+        model under two keys (hand-edited; the tool never writes one) read
+        "2 of 5 models" for one failing model (docs/ideas.md 2026-09-16)."""
+        import dstf.authoring.session as session_mod
+
+        manifest = session.project.config.work_dir / "batch_manifest.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["test_0009"] = dict(data["test_0004"])  # D, a second time
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        with pytest.raises(RuntimeError, match=r"\(1 of 5 models\)"):
+            session._reload_results()
+
+    def test_a_cached_open_parses_nothing_and_rescans_in_the_background(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.discovery import scan_cache, test_registry
+
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)  # helper: _write_lib + a Python backend entry
+        Session().open(cfg, work_dir=tmp_path / "work")  # cold: writes the cache
+        assert list(scan_cache.cache_dir().glob("*.json"))
+
+        calls = []
+        real = test_registry.scan_source_tests
+
+        def spy(config, progress=None):
+            calls.append(threading.current_thread().name)
+            return real(config, progress=progress)
+
+        monkeypatch.setattr("dstf.authoring.session.scan_source_tests", spy)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert (
+            threading.current_thread().name not in calls
+        )  # nothing parsed on the opening thread (the rescan thread may already have run)
+        assert any(e["phase"] == "scan" and e.get("cached") for e in events)
+        assert s.rescan_done.wait(10.0)
+        assert calls == ["dstf-rescan"]
+        phases = [e["phase"] for e in events]
+        assert phases.index("done") < phases.index(
+            "rescan"
+        )  # `done` is emitted before the thread starts
+        assert events[-1]["phase"] == "rescan" and events[-1]["changed"] is False
+
+    def test_a_source_edit_reaches_the_project_through_the_rescan(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        mo, before = _bump_stop_time(tmp_path)
+        s = Session()
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert (
+            s.project.test(before.model_id).stop_time == before.stop_time
+        )  # from the cache
+        assert s.rescan_done.wait(10.0)
+        assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert rescored[-1] == {before.model_id}  # only the changed model was rescored
+
+    def test_a_model_added_since_the_cache_reads_its_result_before_it_is_scored(
+        self, tmp_path, monkeypatch
+    ):
+        """The cache names Foo only; `dstf run` has since simulated Foo and
+        Bar. The stale open reads Bar as "not found in discovery"; the
+        rescan must re-read it with its TestModel before rescoring, or Bar
+        scores SIM_FAIL where a cold open says NO_REF."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        work = tmp_path / "work"
+        Session().open(cfg, work_dir=work)  # the cache names Foo only
+        _add_bar(tmp_path)
+        work.mkdir(exist_ok=True)
+        manifest = {
+            "test_0001": {
+                "model_id": "MyLib.Foo",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+            "test_0002": {
+                "model_id": "MyLib.Bar",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+        }
+        (work / "batch_manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        for key in manifest:
+            (work / key).mkdir()
+            (work / key / "result.json").write_text(
+                json.dumps({"success": True, "time": [0, 1], "variables": {}}),
+                encoding="utf-8",
+            )
+        stale = Session()
+        stale.open(cfg, work_dir=work)
+        assert stale.rescan_done.wait(10.0)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cold"))
+        cold = Session()
+        cold.open(cfg, work_dir=work)
+        assert classify(stale.comparisons["MyLib.Bar"]) == classify(
+            cold.comparisons["MyLib.Bar"]
+        )
+        assert stale.project.results["MyLib.Bar"].success is True
+
+    def test_the_rescan_stores_only_the_models_it_re_read(self, tmp_path, monkeypatch):
+        """`read_results` reports EVERY manifest entry, and a model outside
+        the re-read's own list comes back as "not found in discovery". Only
+        the changed models may be stored: without that filter an unchanged
+        Bar's result flips to a failed read on every rescan, and its next
+        rescore says SIM_FAIL where the open scored the result it read."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        _add_bar(tmp_path)
+        work = tmp_path / "work"
+        Session().open(cfg, work_dir=work)  # the cache names Foo and Bar
+        work.mkdir(exist_ok=True)
+        manifest = {
+            "test_0001": {
+                "model_id": "MyLib.Foo",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+            "test_0002": {
+                "model_id": "MyLib.Bar",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+        }
+        (work / "batch_manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        for key in manifest:
+            (work / key).mkdir()
+            (work / key / "result.json").write_text(
+                json.dumps({"success": True, "time": [0, 1], "variables": {}}),
+                encoding="utf-8",
+            )
+        _mo, before = _bump_stop_time(tmp_path)  # Foo changed, Bar not
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.rescan_done.wait(10.0)
+        assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert s.project.results["MyLib.Bar"].success is True
+        # Still the result read at open, which holds none of what Bar
+        # tracks (this project's Python backend reads no UnitTests
+        # variable): scored, it says so. A failed read would be SIM_FAIL.
+        comp = s.rescore("MyLib.Bar")
+        assert comp.sim_success and classify(comp) == FAIL
+        assert comp.error_message.endswith(" — nothing was scored")
+
+    def test_a_rescans_read_that_raises_leaves_the_session_as_it_was(
+        self, tmp_path, monkeypatch
+    ):
+        """The rescan re-reads a changed model with its new TestModel. The
+        read happened after the tests were swapped and the gone models'
+        comparisons dropped, so one that raised (the disk went away) left a
+        project whose tests were the new scan's and whose results and
+        comparisons were the old one's. Read first: a raise changes
+        nothing."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        _mo, before = _bump_stop_time(tmp_path)
+        posted: list = []
+        s = Session(post=posted.append)
+        s.open(cfg, work_dir=tmp_path / "work")
+        for fn in list(posted):  # the open's own hooks; the rescan may be among them
+            if fn.__name__ != "apply":
+                posted.remove(fn)
+                fn()
+        deadline = time.monotonic() + 10.0
+        while not any(fn.__name__ == "apply" for fn in posted):
+            assert time.monotonic() < deadline, "the rescan posted nothing"
+            time.sleep(0.02)
+        apply = next(fn for fn in posted if fn.__name__ == "apply")
+        project = s.project
+        tests, scanned = list(project.tests), dict(project.scanned)
+        comparisons, results = dict(s.comparisons), dict(project.results)
+
+        def gone(*_args, **_kwargs):
+            raise OSError("the work dir went away")
+
+        monkeypatch.setattr(project.backend, "read_last_results", gone)
+        with pytest.raises(OSError, match="went away"):
+            apply()
+        assert project.tests == tests
+        assert project.test(before.model_id).stop_time == before.stop_time
+        assert project.scanned == scanned
+        assert s.comparisons == comparisons and project.results == results
+        assert s.rescan_done.is_set()  # a waiter is never left hanging
+
+    def test_only_the_changed_model_of_two_is_rescored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        _add_bar(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        _mo, before = _bump_stop_time(tmp_path)
+        s = Session()
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert {"MyLib.Foo", "MyLib.Bar"} <= set(s.comparisons)
+        assert s.rescan_done.wait(10.0)
+        assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert rescored[-1] == {before.model_id}
+
+    def test_done_precedes_rescan_even_when_the_rescan_wins_the_race(
+        self, tmp_path, monkeypatch
+    ):
+        """The worst schedule: the rescan thread finishes inside `start()`.
+        `done` is emitted before the thread starts, so it still comes first."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        real_start = threading.Thread.start
+
+        def start(self):
+            if self.name == "dstf-rescan":
+                self.run()
+            else:
+                real_start(self)
+
+        monkeypatch.setattr(threading.Thread, "start", start)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert s.rescan_done.is_set()
+        phases = [e["phase"] for e in events]
+        assert phases.index("done") < phases.index("rescan")
+
+    def test_a_running_model_is_left_to_its_run_by_the_rescan(
+        self, tmp_path, monkeypatch
+    ):
+        """Its directory is being rewritten and its result arrives when its
+        run ends: the rescan's re-merge neither re-reads nor rescores it."""
+        import queue
+
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        _mo, before = _bump_stop_time(tmp_path)
+        posted: queue.Queue = queue.Queue()
+        s = Session(post=posted.put)
+        s.open(cfg, work_dir=tmp_path / "work")
+        comp = s.comparisons[before.model_id]
+        _running(s, before.model_id)
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
+        # The rescan's re-merge, run on "the UI loop" — and the open's other
+        # post, the sibling index ready (D141), in whichever order they came.
+        for _ in range(2):
+            posted.get(timeout=10)()
+        assert s.rescan_done.is_set()
+        assert s.comparisons[before.model_id] is comp  # not rescored mid-run
+        assert all(before.model_id not in r for r in rescored)
+
+    def test_a_late_thread_from_a_previous_open_does_not_mark_this_one_ready(
+        self, tmp_path, monkeypatch
+    ):
+        """Each open owns its Events; a rescan or index thread still running
+        from the previous open sets ITS events, never the new open's."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        s = Session()
+        s.open(cfg, work_dir=tmp_path / "work")
+        first_rescan, first_index = s.rescan_done, s.overlay_index_ready
+        s.open(cfg, work_dir=tmp_path / "work")  # nothing queued, no pending edits
+        assert s.rescan_done is not first_rescan
+        assert s.overlay_index_ready is not first_index
+        assert s.rescan_done.wait(10.0) and s.overlay_index_ready.wait(5.0)
+
+    def test_open_writes_nothing_in_the_work_dir_even_when_it_caches(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        work = tmp_path / "work"
+        work.mkdir()
+        Session().open(cfg, work_dir=work)
+        assert _snapshot(work) == []
+
+    def test_a_cold_open_that_cannot_cache_still_opens(self, tmp_path, monkeypatch):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        (cache / "dstf").write_text("not a directory", encoding="utf-8")
+        monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+        cfg = _modelica_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert "MyLib.Foo" in s.comparisons
+        assert s.rescan_done.is_set()  # a cold open has nothing to rescan
+
+    def test_a_rescan_that_cannot_cache_still_re_merges_and_finishes(
+        self, tmp_path, monkeypatch
+    ):
+        """The cache was written by a cold open and is readable; the rescan
+        finds a change and cannot write it back. The re-merge and the
+        `rescan` event must still happen and `rescan_done` must be set."""
+        import os
+        import stat
+
+        cache = tmp_path / "cache"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        from dstf.discovery.scan_cache import cache_dir
+
+        scan_dir = cache_dir()
+        assert list(scan_dir.glob("*.json"))
+        _mo, before = _bump_stop_time(tmp_path)
+        scan_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            if os.access(scan_dir, os.W_OK):
+                pytest.skip("this user can write a read-only directory (root)")
+            s = Session()
+            events = []
+            s.on("loading", events.append)
+            s.open(cfg, work_dir=tmp_path / "work")
+            assert s.rescan_done.wait(10.0)
+            assert events[-1]["phase"] == "rescan" and events[-1]["changed"] is True
+            assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        finally:
+            scan_dir.chmod(stat.S_IRWXU)
+
+
+def _written_out(session: Session, model_id: str):
+    """``model_id``'s implicit tree staged so that it STAYS, and the
+    comparison scored by it. Written out and nothing else it is no pending
+    edit, beside whatever else is pending (`Session.stage`) — so its first
+    leaf's tolerance is pinned at the value that leaf already scores with:
+    an edit of the tree that changes no number."""
+    in_effect = session.comparisons[model_id].variables[0].tolerance_used
+    assert in_effect.equal
+    session.stage(
+        [PatchOp(model_id, "add", "/metrics/children/0/tolerance", in_effect.upper)]
+    )
+    return session.comparisons[model_id]
+
+
+class TestRescoreAndStage:
+    def test_a_first_leaf_edit_stages_the_materialization_spec_update_would(
+        self, session
+    ):
+        entry = session.spec.entry(A)
+        assert "metrics" not in entry
+        _written_out(session, A)
+        assert session.spec.pending[:1] == [
+            PatchOp(A, "add", "/metrics", implicit_tree_op(entry)["value"])
+        ]
+        assert (
+            session.spec.pending[0].raw()
+            == materialize_implicit_metrics(entry, [LOOSEN.raw()])[0]
+        )
+        # And a rescore is a no-op: the tree is there now.
+        session.rescore(A)
+        assert len(session.spec.pending) == 2
+
+    def test_rescore_alone_on_a_flat_test_leaves_nothing_staged(self, session):
+        """The tree a flat entry scores by, written out and nothing else, is
+        the entry as saved: a look stages nothing that Save would write."""
+        comp = session.rescore(A)
+        assert session.spec.pending == []
+        assert "metrics" not in session.spec.entry(A)
+        assert comp is session.comparisons[A] and classify(comp) == FAIL
+
+    def test_rescore_verdict_equals_the_loaded_one_when_nothing_changed(self, session):
+        assert classify(session.rescore(A)) == FAIL
+        assert (
+            classify(session.rescore(D)) == PASS
+        )  # the tree path keeps config.tolerance too
+
+    def test_a_pattern_tracked_spec_materializes_its_resolved_names(self, session):
+        """Owner ruling (D126): the leaves are what the pattern resolved
+        today; the pattern stays in `variables` and keeps tracking. The
+        verdict is what it was."""
+        assert classify(_written_out(session, G)) == PASS
+        entry = session.spec.entry(G)
+        assert entry["variables"] == ["*"]
+        assert [c["variable"] for c in entry["metrics"]["children"]] == ["x"]
+        assert session.comparisons[G].warnings == []
+
+    def test_a_variable_that_matches_later_is_tracked_but_not_scored_and_says_so(
+        self, session
+    ):
+        """The consequence of D126 made visible: after materialization a
+        new match has no leaf. It is stored and plotted, not judged — and
+        the comparison carries the warning naming it, on both tiers."""
+        _written_out(session, G)
+        work = session.project.config.work_dir
+        t = [i / 4 for i in range(5)]
+        (work / "test_0005" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {"x": [v * 1.001 for v in t], "y": t},
+                }
+            ),
+            encoding="utf-8",
+        )
+        session._reload_results()
+        comp = session.comparisons[G]
+        assert classify(comp) == PASS  # y is not judged
+        (warning,) = comp.warnings
+        assert warning.text == "Tracked but not scored by any criterion: y"
+        # Cover it and the warning goes.
+        session.stage(
+            [
+                PatchOp(
+                    G,
+                    "add",
+                    "/metrics/children/-",
+                    {"metric": "nrmse", "variable": "y"},
+                )
+            ]
+        )
+        assert session.comparisons[G].warnings == []
+
+    def test_materialization_builds_leaves_from_what_the_flat_path_scored(
+        self, session
+    ):
+        """The report's tree: one leaf per scored comparison, in that order,
+        whatever the spec's own variable list says (for a test tracked by its
+        .mo annotation the spec lists none). An unnamed comparison cannot
+        become a leaf, so nothing is staged for it."""
+        op, why = session._materialization(D)
+        assert op is not None and why is None
+        assert [leaf["variable"] for leaf in op["value"]["children"]] == [
+            vc.name for vc in session.comparisons[D].variables
+        ]
+        # A leaf must name a variable the loaded result carries: a name that
+        # is not one of them — or no name at all — resolves to nothing on the
+        # tree path, so nothing is staged.
+        session.comparisons[D].variables[0].name = "x[1]"
+        assert session._materialization(D)[0] is None
+        session.comparisons[D].variables[0].name = ""
+        assert session._materialization(D)[0] is None
+
+    def test_a_unit_tests_test_materializes_and_the_tree_scores_what_the_flat_did(
+        self, tmp_path
+    ):
+        """The ~70 TRANSFORM tests this plan is for: their variables are the
+        UnitTests component's, expressions and all. The names are the result
+        file's on both paths, so the materialized tree scores the same
+        numbers the flat path did — and the expression rides on either."""
+        from dataclasses import asdict
+
+        cfg, work = _unit_tests_project(tmp_path)
+        session = Session()
+        session.open(cfg, work_dir=work)
+        with_expressions(session, A, {UT1: UT1_EXPR, UT2: UT2_EXPR})
+        # Score the flat path AFTER the expressions are on the result: the
+        # comparisons `open` built were made without them, so reading those
+        # asserted "rides on either" on the tree alone (the Task 3 review).
+        flat = session._score(A)
+        assert [vc.expression for vc in flat.variables] == [UT1_EXPR, UT2_EXPR]
+
+        def numbers(comp):
+            keep = (
+                "name",
+                "passed",
+                "nrmse",
+                "rmse",
+                "max_abs_error",
+                "max_abs_error_time",
+                "tolerance_used",
+                "mode",
+            )
+            return [{k: asdict(vc)[k] for k in keep} for vc in comp.variables]
+
+        flat_status, flat_numbers = classify(flat), numbers(flat)
+        op, _why = session._materialization(A)
+        assert op is not None
+        assert [leaf["variable"] for leaf in op["value"]["children"]] == [UT1, UT2]
+
+        tree = _written_out(session, A)  # stages the op, scores by the tree
+        assert session.spec.entry(A)["metrics"]["children"][0]["variable"] == UT1
+        assert classify(tree) == flat_status
+        assert numbers(tree) == flat_numbers
+        assert [vc.expression for vc in tree.variables] == [UT1_EXPR, UT2_EXPR]
+
+    def test_a_model_with_no_spec_entry_gets_one_from_the_materialization(
+        self, session
+    ):
+        """TRANSFORM's shape: 313 of 331 tests have no spec entry at all. The
+        op targets the model; staging creates the entry with the tree and
+        the verdict is what it was."""
+        from dstf.authoring.spec_document import SpecDocument
+
+        doc = session.spec.effective()
+        doc["tests"] = [e for e in doc["tests"] if e["model"] != D]
+        session.spec = SpecDocument(session.spec.path, doc, session.spec.content_hash)
+        assert session.spec.entry(D) is None
+        leaf = session.tree(D)["children"][0]
+        session.stage(
+            [PatchOp(D, "replace", "/metrics/children/0", {**leaf, "tolerance": 0.5})]
+        )
+        entry = session.spec.entry(D)
+        assert entry is not None and [
+            c["variable"] for c in entry["metrics"]["children"]
+        ] == ["x"]
+        assert classify(session.comparisons[D]) == PASS
+        assert session.export()["patches"][0]["model"] == D
+        # The edit put back, the tree written out alone is no entry: the
+        # file holds none for D, and one saying only what D already scores
+        # by says nothing.
+        session.stage([PatchOp(D, "replace", "/metrics/children/0", leaf)])
+        assert session.spec.pending == [] and session.spec.entry(D) is None
+
+    def test_a_reference_json_override_rescores_without_staging(self, tmp_path):
+        """The flat path merges the baseline's own comparison.variable_overrides
+        (the tier below the spec's); a synthesized tree ignores them. A's
+        baseline carrying tolerance 0.5 makes A PASS as loaded — a look must
+        not stage the tree that would fail it."""
+        cfg, work = _project(tmp_path)
+        config = Config(config_file=cfg, work_dir=work)
+        t = np.asarray([i / 4 for i in range(5)])
+        ReferenceStore(config).store_reference(
+            make_test_model(
+                A, variable_patterns=["x"], variable_overrides={"x": {"tolerance": 0.5}}
+            ),
+            TestResult(
+                model_id=A,
+                success=True,
+                variables=[VariableResult(index=1, time=t, values=t, name="x")],
+            ),
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert classify(s.comparisons[A]) == PASS
+        assert classify(s.rescore(A)) == PASS
+        assert s.spec.pending == []
+        # A spec override for x shadows the baseline's: the tree scores the
+        # same thing again, so materialization is back on the table.
+        s.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        assert s._materialization(A)[0] is not None
+
+    def test_an_unknown_mode_rescores_without_staging(self, tmp_path):
+        """The flat path fails a variable whose override names an unknown
+        mode; the synthesizer would fall back to nrmse and PASS it."""
+        cfg, work = _project(tmp_path)
+        doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+        entry = next(e for e in doc["tests"] if e["model"] == D)
+        entry["comparison"] = {
+            "variable_overrides": {"x": {"mode": "nrmsee", "tolerance": 0.01}}
+        }
+        (cfg.parent / "test_spec.json").write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert classify(s.comparisons[D]) == FAIL
+        assert classify(s.rescore(D)) == FAIL
+        assert s.spec.pending == []
+        assert s.tree_or_reason(D) == (None, NO_TREE)
+        # And the CLI's materialization refuses the same entry outright.
+        from dstf.discovery.patch_apply import PatchError
+        from dstf.discovery.spec_update import implicit_tree_op
+
+        with pytest.raises(PatchError, match="nrmsee"):
+            implicit_tree_op(s.spec.entry(D))
+
+    def test_a_string_quantity_rescores_without_staging(self, tmp_path):
+        """The flat path refuses a stats-path quantity in an override ("needs
+        a metrics tree"); a tree would score it — FAIL to PASS on a look."""
+        cfg, work = _project(tmp_path)
+        doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+        entry = next(e for e in doc["tests"] if e["model"] == D)
+        entry["comparison"] = {
+            "variable_overrides": {
+                "x": {"mode": "scalar", "quantity": "CPUtime.final", "max_value": 100}
+            }
+        }
+        (cfg.parent / "test_spec.json").write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert classify(s.comparisons[D]) == FAIL
+        assert classify(s.rescore(D)) == FAIL
+        assert s.spec.pending == []
+        assert s.tree_or_reason(D) == (None, NO_TREE)
+
+    def test_stage_materializes_like_rescore_and_refuses_an_unscored_test(
+        self, session
+    ):
+        """One rule on both paths: a per-leaf op on B (NO_REF, nothing scored)
+        cannot get a tree from the entry's list behind rescore's back."""
+        from dstf.discovery.patch_apply import PatchError
+
+        with pytest.raises(PatchError, match=f"{B}: {NOTHING_SCORED}$"):
+            session.stage([PatchOp(B, "add", "/metrics/children/0/tolerance", 0.5)])
+        assert session.spec.pending == []
+        session.stage([LOOSEN])
+        assert [c["variable"] for c in session.spec.pending[0].value["children"]] == [
+            vc.name for vc in session.comparisons[A].variables
+        ]
+
+    def test_open_emits_spec_before_results(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        s = Session()
+        seen = []
+        s.on("spec", lambda e: seen.append("spec"))
+        s.on("results", lambda e: seen.append("results"))
+        s.open(cfg, work_dir=work)
+        assert seen == ["spec", "results"]
+
+    def test_reload_drops_a_model_the_spec_no_longer_names(self, session):
+        p = session.spec.path
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc["tests"] = [e for e in doc["tests"] if e["model"] != D]
+        p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        session.reload()
+        assert D not in session.comparisons
+        assert [t.model_id for t in session.project.tests] == [A, B, C, G]
+
+    def test_view_of_an_unknown_model_is_an_error_like_rescore(self, session):
+        with pytest.raises(KeyError):
+            session.view("FakeLib.Nope", "x")
+
+    def test_rescore_reflects_a_staged_op(self, session):
+        session.stage([LOOSEN])
+        assert classify(session.comparisons[A]) == PASS
+        assert classify(session.rescore(A)) == PASS
+        assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
+
+    def test_save_refuses_a_base_tolerance_that_is_no_number(self, session):
+        """Save goes through `spec-update`'s check: the file is not written."""
+        from dstf.discovery.patch_apply import PatchError
+
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": [1]})])
+        before = session.spec.path.read_bytes()
+        with pytest.raises(PatchError, match=r"comparison\.tolerance is \[1\]\)"):
+            session.save()
+        assert session.spec.path.read_bytes() == before
+
+    def test_a_bad_op_leaves_the_session_unchanged(self, session):
+        from dstf.discovery.patch_apply import PatchError
+
+        with pytest.raises(PatchError):
+            session.stage([PatchOp(A, "replace", "/simulation/stop_time", 3)])
+        assert session.spec.pending == [] and classify(session.comparisons[A]) == FAIL
+
+    def test_stage_emits_spec_then_results(self, session):
+        seen = []
+        session.on("spec", lambda e: seen.append(("spec", e["models"])))
+        session.on("results", lambda e: seen.append(("results", e["models"])))
+        session.stage([LOOSEN])
+        assert seen == [("spec", {A}), ("results", {A})]
+
+    def test_each_spec_event_carries_the_next_revision(self, session):
+        """Numbered one up each, and `spec_revision` the last one's: the
+        number a page reads right after its own act is that act's event —
+        even when two stages fold into ONE pending op, as two moves do."""
+        seen = []
+        session.on("spec", lambda e: seen.append(e["revision"]))
+        first = session.spec_revision
+        session.stage([LOOSEN])
+        n = len(session.spec.pending)
+        session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.4)])
+        assert len(session.spec.pending) == n  # folded into LOOSEN's add
+        assert seen == [first + 1, first + 2] and session.spec_revision == first + 2
+
+    def test_no_result_and_no_baseline_rescore_to_the_cli_states(self, session):
+        assert classify(session.rescore(B)) == NO_REF
+        assert classify(session.rescore(C)) == NOT_RUN
+
+    def test_consecutive_replaces_of_one_path_collapse(self, session):
+        """Edit criteria stages on every control change; the drawer and the
+        export must read "leaf -> new leaf", not a keystroke log."""
+        session.stage([LOOSEN])
+        n = len(session.spec.pending)
+        for tol in (0.4, 0.3, 0.2):
+            session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", tol)])
+        # LOOSEN is an add, and a replace after an add of its path is that
+        # add with the new value: the three replaces collapse INTO it.
+        assert len(session.spec.pending) == n
+        assert session.spec.pending[-1] == PatchOp(
+            A, "add", "/metrics/children/0/tolerance", 0.2
+        )
+        session.stage(
+            [
+                PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.9),
+                PatchOp(A, "add", "/comparison", {"tolerance": 0.5}),
+            ]
+        )
+        assert len(session.spec.pending) == n + 2  # a batch is never collapsed
+        # The discriminators, each one op: a different path, a different
+        # model, and an add then a remove of one path (never collapsed).
+        m = len(session.spec.pending)
+        session.stage(
+            [PatchOp(A, "replace", "/comparison/tolerance", 0.6)]
+        )  # last is the add
+        session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.1)])
+        assert len(session.spec.pending) == m + 2  # a different path never collapses
+        session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.3})])
+        session.stage([PatchOp(D, "replace", "/comparison/tolerance", 0.2)])
+        session.stage([PatchOp(A, "replace", "/comparison/tolerance", 0.7)])
+        assert len(session.spec.pending) == m + 5  # a different model never collapses
+        session.stage([PatchOp(A, "add", "/comparison/tolerance", 0.8)])
+        assert len(session.spec.pending) == m + 6  # an add never collapses
+        session.stage([PatchOp(A, "remove", "/comparison/tolerance")])
+        # A remove after an ADD stays two ops: the add may have replaced a
+        # member that existed, and dropping both would leave that member.
+        assert len(session.spec.pending) == m + 7
+
+    def test_tree_or_reason_is_the_one_why(self, session):
+        """The tree, or why there is none — one short line each, true of the
+        test it is said of: nothing scored (B: no baseline; C: no result), a
+        simulate-only test, a last run the loaded result no longer matches
+        (a scored name it does not carry), and every other refusal of
+        `_materialization` (an unnamed comparison)."""
+        from dstf.authoring.session import SIMULATE_ONLY, STALE
+
+        tree, why = session.tree_or_reason(A)
+        assert tree == session.tree(A) and tree is not None and why is None
+        assert session.tree_or_reason(B) == (None, NOTHING_SCORED)
+        assert session.tree_or_reason(C) == (None, NOTHING_SCORED)
+        assert NOTHING_SCORED == "nothing is scored"
+        session.project.test(B).simulate_only = True
+        assert session.tree_or_reason(B) == (None, SIMULATE_ONLY)
+        assert SIMULATE_ONLY == "simulate-only: nothing is scored"
+        assert session.tree_or_reason(D)[1] is None
+        session.comparisons[D].variables[0].name = "x[1]"
+        assert session.tree_or_reason(D) == (None, STALE)
+        assert STALE == "its last run no longer holds what it scored — queue it again"
+        with pytest.raises(PatchError, match=f"{D}: {STALE}$"):
+            session.stage([PatchOp(D, "add", "/metrics/children/0/tolerance", 0.5)])
+        session.comparisons[D].variables[0].name = ""
+        assert session.tree_or_reason(D) == (None, NO_TREE)
+        assert all(
+            len(why) <= 110 for why in (NOTHING_SCORED, SIMULATE_ONLY, STALE, NO_TREE)
+        )
+        with pytest.raises(KeyError):
+            session.tree_or_reason("FakeLib.Examples.Nope")
+
+    def test_the_baseline_is_read_once_for_the_tree_and_its_reason(self, session):
+        """`tree_or_reason` asks `_materialization` once: the tree and the
+        reason come from one reading of the baseline JSON."""
+        calls = []
+        read = session.project.store.get_reference
+        session.project.store.get_reference = lambda m: calls.append(m) or read(m)
+        session.tree_or_reason(D)
+        assert calls == [D]
+
+    def test_stage_on_a_model_not_in_the_project_is_a_patch_error(self, session):
+        """A per-leaf op on a model the project does not have is refused as
+        a patch, never a KeyError out of the reason's lookup."""
+        with pytest.raises(PatchError, match="^FakeLib.Nope: "):
+            session.stage(
+                [PatchOp("FakeLib.Nope", "add", "/metrics/children/0/tolerance", 1)]
+            )
+        assert session.spec.pending == []
+
+    def test_a_null_metrics_is_refused_at_the_open(self, tmp_path):
+        """`"metrics": null` used to be "no tree": the flat path scored the
+        entry and the Session wrote a tree out over the null. Absent is the
+        only "no tree" now, and a file that holds a null is one the open
+        stops at, naming it — like any other block that is no object."""
+        cfg, work = _project(tmp_path)
+        doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+        next(e for e in doc["tests"] if e["model"] == A)["metrics"] = None
+        (cfg.parent / "test_spec.json").write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+        with pytest.raises(ConfigError) as refused:
+            Session().open(cfg, work_dir=work)
+        assert str(refused.value).endswith(
+            f"test_spec.json: tests[{A}].metrics: must be an object, got null"
+        )
+
+
+class TestAFlatTestScoresWhatItTracks:
+    def test_an_extra_in_the_result_is_neither_scored_nor_materialized(self, tmp_path):
+        """D tracks ["x"] with no tree; its result also holds w (a re-read
+        for a criterion since discarded leaves one). The verdict and the
+        tree a per-leaf op materializes are x's alone."""
+        cfg, work = _project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        x = s.project.results[D].variables[0]
+        s.project.results[D].variables.append(
+            VariableResult(index=2, time=x.time, values=x.values * 7, name="w")
+        )
+        # A flat-path rescore (an op no tree needs), then a per-leaf one
+        # that materializes the tree from what that scored.
+        s.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.01})])
+        assert [vc.name for vc in s.comparisons[D].variables] == ["x"]
+        assert classify(s.comparisons[D]) == PASS
+        s.stage([PatchOp(D, "add", "/metrics/children/0/tolerance", 0.01)])
+        tree = s.spec.pending[1]
+        assert tree.path == "/metrics"
+        assert [c["variable"] for c in tree.value["children"]] == ["x"]
+
+
+class TestView:
+    def test_a_scored_variable_carries_its_leaves(self, session):
+        view = session.view(A, "x")
+        assert view.ref_time is not None and len(view.leaves) == 1
+        assert view.leaves[0].path.startswith("/metrics")
+        fig = session.figure(A, "x")
+        assert {"data", "layout"} <= fig.keys() and len(fig["data"]) >= 2
+
+    def test_the_tools_figure_rings_every_marker_handle(self, session):
+        tree = {
+            "combinator": "and",
+            "children": [
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "band",
+                    "tube_points": [
+                        {"time": 0.5, "upper": 0.1, "lower": 0.2},
+                        {"time": 0.9, "upper": 0.1, "lower": 0.1},
+                    ],
+                },
+                {
+                    "metric": "range",
+                    "variable": "x",
+                    "min_value": -0.5,
+                    "max_value": 2.0,
+                },
+                {
+                    "metric": "points",
+                    "variable": "x",
+                    "points": [
+                        {"time": 0.25, "tolerance": 0.05},
+                        {"time": 0.75, "value": 0.75, "tolerance": 0.05},
+                    ],
+                },
+                {
+                    "metric": "scalar",
+                    "variable": "x",
+                    "quantity": {"reduce": "max"},
+                    "min_value": 0.0,
+                    "max_value": 2.0,
+                },
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "rel",
+                    "tube_points": [{"time": 0.5, "upper": 0.1, "lower": 0.1}],
+                },
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "abs",
+                    "tube_points": [{"time": 0.0, "upper": 1.5, "lower": -0.5}],
+                },
+            ],
+        }
+        session.stage([PatchOp(D, "add", "/metrics", tree)])
+        fig = session.figure(D, "x")
+        assert fig["config"]["edits"] == {"shapePosition": True}
+        rings = {
+            s["name"] for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH
+        }
+        c = "/metrics/children"
+        assert rings == {
+            f"{c}/0/tube/upper/0",
+            f"{c}/0/tube/lower/0",
+            f"{c}/0/tube/upper/1",
+            f"{c}/0/tube/lower/1",
+            f"{c}/2/points/target/0",
+            f"{c}/2/points/target/1",
+            f"{c}/4/tube/upper/0",
+            f"{c}/4/tube/lower/0",
+            f"{c}/5/tube/upper/0",
+            f"{c}/5/tube/lower/0",
+        }
+        assert not any("/points/box/" in name for name in rings)
+        # Each side of a checkpoint's tolerance is a grip — an arrow, never
+        # a ring: neither row holds a time tolerance, so two per row.
+        from dstf.figures.plotly import GRIP
+
+        grips = {
+            s["name"] for s in fig["layout"]["shapes"] if s.get("fillcolor") == GRIP
+        }
+        assert grips == {
+            f"{c}/2/points/upper/0",
+            f"{c}/2/points/lower/0",
+            f"{c}/2/points/upper/1",
+            f"{c}/2/points/lower/1",
+        }
+        # Real modes over several leaves: every ring and every grip is drawn
+        # after every other shape (the later shape takes a drag).
+        shapes = fig["layout"]["shapes"]
+        dragged = len(rings) + len(grips)
+        assert all(s["xsizemode"] == "pixel" for s in shapes[-dragged:])
+        assert not any("xsizemode" in s for s in shapes[:-dragged])
+
+    def test_editing_names_the_leaves_that_get_rings(self, session):
+        import copy
+
+        from test_handles import TREE
+
+        session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+
+        def rings(fig):
+            return {
+                s["name"] for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH
+            }
+
+        every = rings(session.figure(D, "x"))
+        leaf = "/metrics/children/0"
+        some = rings(session.figure(D, "x", editing=(leaf,)))
+        assert some and some < every and all(n.startswith(leaf + "/") for n in some)
+        none = session.figure(D, "x", editing=())
+        assert not rings(none)
+        assert (
+            none["config"] == session.figure(D, "x")["config"]
+        )  # react, never newPlot
+
+    def test_editing_refuses_a_str(self, session):
+        """One path, not a one-tuple: a str's membership is by substring, so
+        it must not reach the ring test. The refusal is the figure layer's."""
+        import copy
+
+        from test_handles import TREE
+
+        session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+        with pytest.raises(TypeError, match="not a str"):
+            session.figure(D, "x", editing="/metrics/children/0")
+
+    def test_no_baseline_is_the_empty_state_with_the_trajectory(self, session):
+        view = session.view(B, "x")
+        assert view.act_time is not None and view.ref_time is None and view.leaves == ()
+
+    def test_no_result_is_the_empty_state_without_a_trajectory(self, session):
+        view = session.view(C, "x")
+        assert view.act_time is None and view.leaves == ()
+        assert "layout" in session.figure(C, "x")
+
+    def test_tree_view_is_the_reports_tree(self, session):
+        view = session.tree_view(A)
+        assert view["kind"] == "combinator" and view["path"] == "/metrics"
+        (leaf,) = view["children"]
+        assert leaf["path"] == "/metrics/children/0" and leaf["variable"] == "x"
+        assert leaf["passed"] is False and leaf["score_display"]
+        assert session.tree_view(B) is None  # NO_REF: nothing compared
+
+    def test_tree_is_the_entry_or_the_materialization(self, session):
+        assert [c["variable"] for c in session.tree(A)["children"]] == [
+            "x"
+        ]  # would materialize
+        session.stage([LOOSEN])
+        assert session.tree(A)["children"][0]["tolerance"] == 0.5  # the entry's now
+        assert session.tree(B) is None
+        # A copy: editing it in place must not reach the document.
+        session.tree(A)["children"][0]["tolerance"] = 99.0
+        assert session.tree(A)["children"][0]["tolerance"] == 0.5
+        with pytest.raises(KeyError):
+            session.tree("FakeLib.Nope")
+
+
+class TestSaveDiscardExport:
+    def test_save_applies_exactly_the_pending_ops_and_clears_them(self, session):
+        session.stage([LOOSEN])
+        expected = session.spec.effective()
+        session.save()
+        on_disk = json.loads(session.spec.path.read_text(encoding="utf-8"))
+        assert on_disk == expected
+        assert session.spec.pending == [] and not session.spec.on_disk_changed()
+        assert on_disk["tests"][0]["metrics"]["children"][0]["tolerance"] == 0.5
+        assert classify(session.comparisons[A]) == PASS
+        assert b"\r\n" not in session.spec.path.read_bytes()
+
+    def test_save_refuses_on_a_changed_hash(self, session):
+        session.stage([LOOSEN])
+        p = session.spec.path
+        p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        before = p.read_bytes()
+        with pytest.raises(StaleSpecError, match=str(p)):
+            session.save()
+        assert p.read_bytes() == before and len(session.spec.pending) == 2
+
+    def test_accept_refuses_on_a_changed_hash_as_save_does(self, session):
+        """An entry edited by hand while the tool is open — its
+        `baseline_points` — is not the entry the Session holds: an Accept
+        stored the baseline at the OLD value and said nothing, where Save in
+        the same state refused."""
+        from dstf.authoring.builtin.accept import Accept
+
+        p = session.spec.path
+        spec = json.loads(p.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["baseline_points"] = 3
+        p.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        store = session.project.store
+        assert store.index.get_id(B) is None  # B has no baseline
+        view = SessionView(session, Selection(tests=frozenset({B})))
+        with pytest.raises(StaleSpecError) as refused:
+            session.apply(Accept().act(view))
+        assert str(refused.value) == (
+            f"{p} changed on disk since it was loaded; reload before accepting"
+        )
+        # Nothing was written, and nothing said to have been.
+        assert not list(session.project.config.reference_dir.glob("ref_0004*"))
+        assert not [n for n in session.notices if n.startswith("Accept")]
+
+        session.reload()
+        session.apply(
+            Accept().act(SessionView(session, Selection(tests=frozenset({B}))))
+        )
+        (ref,) = session.project.config.reference_dir.glob("ref_0004.json")
+        stored = json.loads(ref.read_text(encoding="utf-8"))
+        assert stored["model_id"] == B and stored["sampling"]["setting"] == 3
+        assert len(stored["time"]) == 3
+
+    def test_reload_after_a_refused_save(self, session):
+        session.stage([LOOSEN])
+        p = session.spec.path
+        p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        session.reload()
+        assert session.spec.pending == [] and not session.spec.on_disk_changed()
+        assert classify(session.comparisons[A]) == FAIL
+
+    def test_reload_with_the_file_gone_says_so_and_keeps_the_session(self, session):
+        """A spec file deleted under the tool: Reload read it as the empty
+        document and the Suite went empty. It is one sentence, the Session
+        is as it was — its tests, its pending edits — and a Reload after
+        the file is back finds it."""
+        from dstf.config import ConfigError
+
+        session.stage([LOOSEN])
+        p, held = session.spec.path, session.spec
+        text = p.read_bytes()
+        tests = [t.model_id for t in session.project.tests]
+        p.unlink()
+        with pytest.raises(ConfigError) as refused:
+            session.reload()
+        assert str(refused.value) == (
+            f"{p} is gone: nothing was reloaded — put the file back, then Reload"
+        )
+        assert session.spec is held and edit_count(session.spec.pending) == 1
+        assert [t.model_id for t in session.project.tests] == tests
+        p.write_bytes(text)
+        session.reload()
+        assert session.spec is not held and session.spec.pending == []
+        assert [t.model_id for t in session.project.tests] == tests
+
+    def test_reload_of_a_project_that_never_had_a_spec_file_is_no_refusal(
+        self, tmp_path
+    ):
+        cfg, work = _project(tmp_path)
+        cfg.with_name("test_spec.json").unlink()
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.spec.content_hash is None and not s.spec.path.exists()
+        s.reload()  # the empty document it loaded, again
+        assert s.spec.content_hash is None
+
+    def test_reload_over_a_file_that_is_no_spec_keeps_the_session(self, session):
+        """The file is read, and what it holds is refused: the Session
+        still holds the spec it had, with its pending edits."""
+        from dstf.config import ConfigError
+
+        session.stage([LOOSEN])
+        p, held = session.spec.path, session.spec
+        text = p.read_text(encoding="utf-8")
+        doc = json.loads(text)
+        doc["tests"][0]["comparison"] = "tolerance=5"
+        p.write_text(json.dumps(doc), encoding="utf-8")
+        with pytest.raises(ConfigError):
+            session.reload()
+        assert session.spec is held and edit_count(session.spec.pending) == 1
+        p.write_text(text, encoding="utf-8")
+        session.reload()
+        assert session.spec.pending == []
+
+    def test_discard_restores_the_loaded_verdicts(self, session):
+        session.stage([LOOSEN])
+        assert classify(session.comparisons[A]) == PASS
+        session.discard()
+        assert session.spec.pending == [] and classify(session.comparisons[A]) == FAIL
+        assert "metrics" not in session.spec.entry(A)
+
+    def test_export_is_the_multi_model_envelope(self, session):
+        session.stage([LOOSEN, PatchOp(B, "add", "/comparison", {"tolerance": 0.2})])
+        env = session.export()
+        assert [g["model"] for g in env["patches"]] == [A, B]
+        assert env["patches"][0]["patch"][-1] == LOOSEN.raw()
+        assert "model" not in env
+
+
+def _running(session: Session, model_id: str):
+    """``model_id`` as the queue's RUNNING item, no pool behind it
+    (`test_session_queue.fake_item`): what a test of a file read puts in
+    the queue. `_ended` takes it out. Imported here: that module imports
+    this one."""
+    from test_session_queue import fake_item
+
+    return fake_item(session, model_id, ItemState.RUNNING)
+
+
+def _ended(session: Session, item) -> None:
+    from test_session_queue import drop_item
+
+    drop_item(session, item)
+
+
+class TestOutcomes:
+    """Each Outcome kind reaches its effect and no other."""
+
+    def test_patch_stages_and_touches_nothing_else(self, session, tmp_path):
+        before = session.spec.path.read_bytes()
+        session.apply(Patch(ops=[LOOSEN]))
+        assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
+        assert session.spec.path.read_bytes() == before and session.queue == []
+        assert session.project.store.get_reference(B) is None
+
+    def test_store_write_runs_against_the_store_and_reloads_results(self, session):
+        calls = []
+        seen = []
+        session.on("results", lambda e: seen.append(e["models"]))
+        session.apply(
+            StoreWrite(run=lambda store: calls.append(store), models=frozenset({B}))
+        )
+        assert calls == [session.project.store]
+        assert session.spec.pending == [] and session.queue == []
+        assert seen and seen[-1] == {A, B, C, D, G}
+
+    def test_a_store_write_that_reports_a_line_notices_it_after_the_reload(
+        self, session
+    ):
+        order = []
+        session.on("results", lambda e: order.append("results"))
+        session.on("notice", lambda e: order.append("notice"))
+        events = []
+        session.on("notice", events.append)
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert session.notices == ["stored 1"]
+        assert events == [{"event": "notice", "message": "stored 1"}]
+        assert order == ["results", "notice"]  # the reload first
+
+    def test_a_store_write_that_reports_nothing_notices_nothing(self, session):
+        events = []
+        session.on("notice", events.append)
+        session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
+        assert session.notices == [] and events == []
+
+    def test_close_empties_the_notices(self, session):
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert session.notices == ["stored 1"]
+        session.close()
+        assert session.notices == []
+
+    def test_open_empties_the_notices(self, session):
+        """A notice names a project's models; an OpenProject swap calls open,
+        never close, so without this it would show in the next project's
+        panel."""
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert session.notices == ["stored 1"]
+        config = session.project.config
+        session.open(config.config_file, work_dir=config.work_dir)
+        assert session.notices == []
+
+    def test_open_empties_the_artifacts(self, session, tmp_path):
+        """An artifact's links point into this project's work dir; like a
+        notice, a swap must not leave them under the next project."""
+        session.apply(Artifact(paths=[Path("x.png")], label="PNG"))
+        other_cfg, other_work = _project(tmp_path / "other")
+        session.open(other_cfg, work_dir=other_work)
+        assert session.artifacts == [] and SessionView(session).artifacts == ()
+
+    def test_a_failed_open_keeps_the_live_projects_notices(self, session):
+        """The reset sits at the commit point, after the Project is built:
+        hoisting it to the top of ``open`` empties a live project's panel on
+        an open that never replaces it."""
+        from dstf.config import ConfigError
+
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        art = Artifact(paths=[Path("x.png")], label="PNG")
+        session.apply(art)
+        config = session.project.config
+        (config.work_dir / "status.json").write_text(
+            json.dumps({"metadata": {"backend_name": "Nonesuch"}, "tests": []})
+        )
+        with pytest.raises(ConfigError, match="Nonesuch"):
+            session.open(config.config_file, work_dir=config.work_dir)
+        assert session.notices == ["stored 1"] and session.artifacts == [art]
+        assert session.project is not None
+
+    def test_artifact_is_recorded_noticed_and_nothing_reloads(self, session):
+        seen = []
+        session.on("results", lambda e: seen.append(e))
+        noticed = []
+        session.on("notice", noticed.append)
+        art = Artifact(paths=[Path("x.png")], label="PNG")
+        session.apply(art)
+        assert session.artifacts == [art] and seen == []
+        assert noticed == [{"event": "notice", "artifact": art}]
+
+    def test_open_project_swaps_the_project(self, session, tmp_path):
+        other_cfg, other_work = _project(tmp_path / "other")
+        old = session.project
+        session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
+        assert (
+            session.project is not old
+            and session.project.config.spec_path == other_cfg.parent / "test_spec.json"
+        )
+
+    def test_open_and_close_refuse_while_edits_are_pending(self, session, tmp_path):
+        from dstf.authoring.session import PendingEditsError
+
+        session.stage([LOOSEN])
+        with pytest.raises(PendingEditsError, match="1 staged"):
+            session.close()
+        other_cfg, other_work = _project(tmp_path / "other")
+        with pytest.raises(PendingEditsError):
+            session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
+        session.discard()
+        session.close()
+        assert session.project is None and session.artifacts == []
+
+    def test_none_and_sequences(self, session):
+        session.apply(None)
+        session.apply([Patch(ops=[LOOSEN]), None])
+        assert LOOSEN in session.spec.pending
+
+
+class TestWhatAnOutcomeLeavesAlone:
+    """An outcome reaches no further than its own effect: a running model
+    is not read, a write that raises changes nothing, a patch rescores its
+    models only."""
+
+    def test_a_reload_while_a_model_runs_keeps_it_as_it_was(self, session):
+        """What the pool does when a test starts: clear its directory. A
+        StoreWrite on another model reloads results; the running model
+        keeps what the Session holds for it, and is read again only once
+        its run has ended."""
+        work = session.project.config.work_dir
+        before = session.comparisons[A]
+        item = _running(session, A)
+        (work / "test_0001" / "result.json").unlink()
+        events = []
+        session.on("loading", events.append)
+        session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
+        # A is running: to_read is B, C, D, G — four announcements, total 4.
+        assert [e["total"] for e in events if e.get("phase") == "results"] == [4] * 4
+        assert (
+            session.comparisons[A] is before
+            and classify(session.comparisons[A]) == FAIL
+        )
+        assert session.project.results[A].success
+        _ended(session, item)
+        session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
+        assert (
+            classify(session.comparisons[A]) == SIM_FAIL
+        )  # nothing runs it now: the reload sees the disk
+
+    def test_a_store_write_that_raises_leaves_the_session_unchanged(self, session):
+        before = dict(session.comparisons)
+
+        def boom(store):
+            raise OSError("disk full")
+
+        with pytest.raises(OSError):
+            session.apply(StoreWrite(run=boom, models=frozenset({B})))
+        assert session.comparisons == before and session.queue == []
+        assert session.spec.pending == []
+
+    def test_a_patch_rescores_only_its_models(self, session):
+        seen = []
+        session.on("results", lambda e: seen.append(e["models"]))
+        untouched = session.comparisons[B]
+        session.apply(Patch(ops=[LOOSEN]))
+        assert seen == [{A}] and session.comparisons[B] is untouched
+
+
+class TestReadCache:
+    # `compare_one` reads the reference too (comparator.py:569), on every
+    # rescore, so the spy is on the overlay load: `_reads_for` is the only
+    # caller of `load_overlays` in the Session.
+    @staticmethod
+    def _spy_overlays(monkeypatch):
+        from dstf.reporting import overlay_loader as ol
+
+        loads = []
+        real = ol.load_overlays
+        monkeypatch.setattr(
+            ol,
+            "load_overlays",
+            lambda store, m, config=None: (
+                loads.append(m) or real(store, m, config=config)
+            ),
+        )
+        return loads
+
+    def test_a_second_view_of_a_model_reads_nothing_from_disk(
+        self, session, monkeypatch
+    ):
+        loads = self._spy_overlays(monkeypatch)
+        session.view(A, "x")
+        session.view(A, "x")
+        assert loads == [A]
+
+    def test_a_second_figure_decimates_only_the_leaves(self, session, monkeypatch):
+        from dstf.figures import view as view_mod
+
+        calls = []
+        real = view_mod.lttb
+        monkeypatch.setattr(
+            view_mod, "lttb", lambda t, v, n: calls.append(len(t)) or real(t, v, n)
+        )
+        session.figure(A, "x")
+        first = len(calls)
+        session.figure(A, "x")
+        # The base — actual, reference, three error series (FakeLib has no
+        # overlays) — is decimated on the first call only; a second call
+        # decimates the leaves' Series primitives and nothing else. No
+        # bundled metric emits a Series (nrmse emits no geometry; tube is a
+        # Band plus Markers; Bands go through decimate.py's own `lttb`,
+        # which this spy does not see), so `leaf_series` is 0 here and the
+        # guard is "5, then 0"; per-call leaf decimation is guarded by
+        # `test_the_tools_figure_rings_every_marker_handle`.
+        from dstf.comparison.geometry import Series
+
+        leaf_series = sum(
+            isinstance(p, Series)
+            for leaf in session.view(A, "x").leaves
+            for p in leaf.geometry
+        )
+        assert first == 5 + leaf_series
+        assert len(calls) - first == leaf_series
+
+    def test_a_results_reload_drops_the_cache(self, session, monkeypatch):
+        loads = self._spy_overlays(monkeypatch)
+        session.view(A, "x")
+        session._reload_results()
+        session.view(A, "x")
+        assert loads == [A, A]
+
+    def test_a_store_write_drops_the_cache(self, session, monkeypatch):
+        loads = self._spy_overlays(monkeypatch)
+        session.view(D, "x")
+        session.apply(StoreWrite(run=lambda store: "", models=frozenset({D})))
+        session.view(D, "x")
+        assert loads == [D, D]
+
+    def test_a_staged_edit_keeps_the_cache_and_changes_the_leaves(self, session):
+        session.figure(A, "x")
+        session.stage([LOOSEN])
+        fig = session.figure(A, "x")
+        leaf = next(tr for tr in fig["data"] if tr["meta"].get("kind") == "act")
+        assert leaf  # the base traces are still drawn
+        assert session.comparisons[A].passed is True  # the loosened verdict
+
+    # A second Session over the same project, opened fresh, is the oracle:
+    # what it draws after the same staged op is what the cached one must
+    # draw. `_base_kinds` compares base traces only — the leaves are
+    # decimated per call and are not what the cache holds.
+    @staticmethod
+    def _pair(cfg, work):
+        s1, s2 = Session(), Session()
+        s1.open(cfg, work_dir=work)
+        s2.open(cfg, work_dir=work)
+        return s1, s2
+
+    def test_a_staged_edit_that_stops_scoring_a_variable_drops_its_base(self, tmp_path):
+        cfg, work = _two_var_project(tmp_path)
+        cached, fresh = self._pair(cfg, work)
+        assert [v.name for v in cached.comparisons[A].variables] == ["x", "y"]
+        cached.figure(A, "y")  # y scored: act + ref + errors cached
+        op = PatchOp(A, "remove", "/metrics/children/1")
+        cached.stage([op])
+        fresh.stage([op])
+        assert [v.name for v in cached.comparisons[A].variables] == ["x"]
+        assert _base_kinds(cached.figure(A, "y")) == _base_kinds(fresh.figure(A, "y"))
+
+    def test_a_staged_edit_that_starts_scoring_a_variable_rebuilds_its_base(
+        self, tmp_path
+    ):
+        cfg, work = _two_var_project(tmp_path)
+        cached, fresh = self._pair(cfg, work)
+        remove = PatchOp(A, "remove", "/metrics/children/1")
+        cached.stage([remove])
+        fresh.stage([remove])
+        cached.figure(A, "y")  # y unscored: an empty base cached
+        add = PatchOp(
+            A, "add", "/metrics/children/-", {"metric": "nrmse", "variable": "y"}
+        )
+        cached.stage([add])
+        fresh.stage([add])
+        assert [v.name for v in cached.comparisons[A].variables] == ["x", "y"]
+        assert _base_kinds(cached.figure(A, "y")) == _base_kinds(fresh.figure(A, "y"))
+
+    def test_a_baseline_free_leaf_on_another_variable_moves_an_unscored_one(
+        self, tmp_path
+    ):
+        """B has no baseline: with nothing scored, x is drawn through the
+        no-baseline path (act only). A tree scoring ONLY y (a baseline-free
+        range) makes the scored list non-empty and x — still unscored —
+        becomes the empty state. A key on "is x scored" does not move; the
+        key on the whole scored list does."""
+        cfg, work = _two_var_project(tmp_path)
+        cached, fresh = self._pair(cfg, work)
+        assert not cached.comparisons[B].evaluated
+        cached.figure(B, "x")
+        op = PatchOp(
+            B,
+            "add",
+            "/metrics",
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "range",
+                        "variable": "y",
+                        "min_value": -10,
+                        "max_value": 10,
+                    }
+                ],
+            },
+        )
+        cached.stage([op])
+        fresh.stage([op])
+        assert cached.comparisons[B].evaluated
+        assert _base_kinds(cached.figure(B, "x")) == _base_kinds(fresh.figure(B, "x"))
+
+    def test_figure_of_an_unknown_model_is_a_key_error_that_caches_nothing(
+        self, session
+    ):
+        with pytest.raises(KeyError):
+            session.figure("FakeLib.Nope", "x")
+        assert "FakeLib.Nope" not in session._reads
+
+    def test_a_model_the_spec_drops_loses_its_cached_read(self, session):
+        session.figure(D, "x")
+        p = session.spec.path
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc["tests"] = [e for e in doc["tests"] if e["model"] != D]
+        p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        session.reload()
+        assert D not in session._reads
+        with pytest.raises(KeyError):
+            session.figure(D, "x")
+
+    def test_the_cached_figure_is_the_one_shot_figure_under_decimation(self, tmp_path):
+        """The cache must draw exactly what one uncached ``variable_figure``
+        of the view would, before and after a staged edit moves a handle —
+        with a budget small enough that every trace is decimated, leaves
+        whose geometry is decimated, and a companion overlay. Caching the
+        leaves with the base, or letting the leaves-only view's zero
+        "act"/"ref" counts win the merge, both fail here."""
+        from dstf.figures.plotly import variable_figure
+
+        cfg, work = _project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        csv = tmp_path / "companion.csv"
+        csv.write_text(
+            "time,x\n" + "".join(f"{i / 40},{0.9 * i / 40}\n" for i in range(41)),
+            encoding="utf-8",
+        )
+        s.project.store.add_companion(A, "c1", csv)
+        s._reload_results()
+        s.project.config.max_embedded_samples = 3
+        tree = {
+            "combinator": "and",
+            "children": [
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "band",
+                    "tube_points": [
+                        {"time": 0.5, "upper": 0.1, "lower": 0.2},
+                        {"time": 0.9, "upper": 0.1, "lower": 0.1},
+                    ],
+                },
+                {
+                    "metric": "points",
+                    "variable": "x",
+                    "points": [
+                        {"time": 0.25, "tolerance": 0.05},
+                        {"time": 0.75, "value": 0.75, "tolerance": 0.05},
+                    ],
+                },
+                {
+                    "metric": "range",
+                    "variable": "x",
+                    "min_value": -0.5,
+                    "max_value": 2.0,
+                },
+            ],
+        }
+
+        def one_shot() -> str:
+            fig = variable_figure(s.view(A, "x"), 3, editable=True)
+            return json.dumps(fig, sort_keys=True, default=str)
+
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        first = json.dumps(s.figure(A, "x"), sort_keys=True, default=str)
+        assert "c1" in first  # the companion overlay is drawn
+        assert first == one_shot()
+        s.stage([PatchOp(A, "replace", "/metrics/children/0/tube_points/0/upper", 0.3)])
+        second = json.dumps(s.figure(A, "x"), sort_keys=True, default=str)
+        assert second == one_shot()
+        assert second != first
+
+    def test_close_drops_every_cached_read(self, session):
+        session.view(A, "x")
+        session.close()
+        assert session._reads == {}
+
+
+class TestSessionView:
+    def test_exposes_readers_and_no_writer(self, session):
+        view = SessionView(session)
+        public = {n for n in dir(view) if not n.startswith("_")}
+        assert public == {
+            "project",
+            "spec_path",
+            "pending",
+            "partial",
+            "selection",
+            "comparisons",
+            "artifacts",
+            "notices",
+            "rescore",
+            "view",
+            "figure",
+            "plot_figure",
+            "plots",
+            "variable_names",
+            # `labels` is a reader like the rest: a capability's caption
+            # ("Add a criterion for pipe.T[1]") reads what the page's titles
+            # read, and nothing is keyed by it (Task 4).
+            "labels",
+            # both readings: the add form's rows show the plain label with
+            # the muted name beside it, and say the name once
+            "variable_texts",
+            "tree_view",
+            "tree",
+            # the tree or why there is none, in the one text every surface
+            # says it with
+            "tree_or_reason",
+            # where a test stands in the queue, and why nothing can be
+            # queued: what Queue and Accept answer `available` from
+            "queue_state",
+            "queue_refusal",
+        }
+        assert not public & {
+            "stage",
+            "save",
+            "discard",
+            "apply",
+            "open",
+            "close",
+            "reload",
+            "select",
+            "enqueue",
+            "remove",
+            "cancel",
+        }
+
+    def test_the_project_view_reaches_no_store_writer(self, session):
+        """§4.6: enforcement is structural. The view's project is a frozen
+        projection; the store's writers exist only behind StoreWrite.run,
+        which the Session hands the store."""
+        import dataclasses
+
+        pv = SessionView(session).project
+        assert not hasattr(pv, "store") and not hasattr(pv, "backend")
+        assert isinstance(pv.tests, tuple) and pv.tests[0].model_id == A
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            pv.tests = ()
+        with pytest.raises(TypeError):
+            pv.results[A] = None
+        assert pv.reference(A) is not None and pv.reference(B) is None
+        assert pv.baseline_names(A) == ("primary",)
+        assert pv.baseline_names(B) == ()
+        t = [i / 4 for i in range(5)]
+        session.project.store.add_soft_check(
+            A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+        )
+        assert pv.baseline_names(A) == ("primary", "om_cross")
+        # Each baseline's role, as `stage` validates a tree against it: what
+        # a move checks its new tree with before it is staged (U4).
+        from dstf.comparison.validator import BaselineRole
+
+        roles = pv.role_lookup(A)
+        assert roles("primary") is BaselineRole.PRIMARY
+        assert roles("om_cross") is BaselineRole.SOFT_CHECK
+        assert roles("nope") is None
+        assert (
+            pv.config.backend_name == "Python"
+            and pv.dataset_kind is session.project.dataset_kind
+        )
+
+    def test_readers_reflect_the_session(self, session):
+        view = SessionView(session)
+        session.stage([LOOSEN])
+        assert view.pending == tuple(session.spec.pending)
+        assert view.comparisons[A] is session.comparisons[A]
+        assert view.queue_state(A) is None and view.queue_refusal is None
+        item = _running(session, D)
+        assert view.queue_state(D) is ItemState.RUNNING
+        _ended(session, item)
+        with pytest.raises(TypeError):
+            view.comparisons[A] = None  # a read-only mapping
+        assert view.notices == ()
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert view.notices == ("stored 1",)
+
+
+def _plots_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with an UNTRACKED variable `z` in A's result file."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    flat = [7.0 for _ in payload["time"]]
+    # `a0` sits BEFORE x in the file: file order is not tracked-first order.
+    payload["variables"] = {"a0": flat, **payload["variables"], "z": flat}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return cfg, work
+
+
+#: What `_drawer_project` adds to A's result after x and y: a name of every
+#: group the Variables drawer draws — top level, two families (one behind a
+#: two-dimensional index), a diagnostic.
+DRAWER_EXTRA = [
+    "a0",
+    "z",
+    "pipe.T[1]",
+    "pipe.T[2]",
+    "pipe.T[3]",
+    "port[2, 1].C[1]",
+    "port[2, 1].C[2]",
+    "port[2, 1].C[3]",
+    "CPUtime",
+]
+
+
+def _drawer_project(tmp_path: Path, extra: int = 0) -> tuple[Path, Path]:
+    """`_two_var_project` with A's result carrying, after x and y, the
+    untracked `DRAWER_EXTRA`, each a distinct ramp so a plot shows them
+    apart, and ``extra`` more untracked `v0`, `v1`, ... for the drawer's cap.
+    A's tree is the implicit one: x and y scored, one nrmse each."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    t = payload["time"]
+    names = DRAWER_EXTRA + [f"v{i}" for i in range(extra)]
+    for k, name in enumerate(names, start=3):
+        payload["variables"][name] = [k * v for v in t]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return cfg, work
+
+
+#: Two tracked names as long as a real library's (TRANSFORM's), which
+#: FakeLib's `x` and `y` are not: a card's header row and a drawer row
+#: that fitted every short name overflowed on these at 900 px.
+LONG = ("heater.flowModel.states[1].T", "condenser.heatTransfer.Q_flow_total")
+#: An UNTRACKED name of the same length in `_long_names_project`'s result:
+#: what a watch plot is made of.
+LONG_WATCH = "evaporator.flowModel.states[3].h_flow"
+
+
+def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_project` with A tracking the two `LONG` names, both with a
+    baseline (one nrmse each; the first fails, so its card has a pill and
+    an error select), drawn as two plots, the first with the second as its
+    context; the result also carries the untracked `LONG_WATCH`."""
+    cfg, work = _project(tmp_path)
+    t = [i / 4 for i in range(5)]
+    first, second = LONG
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {
+                    first: [v * 1.25 for v in t],
+                    second: [2 * v for v in t],
+                    LONG_WATCH: [3 * v for v in t],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [first, second]
+            entry["plots"] = [{"var": first, "context": [second]}]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    tt = np.asarray(t)
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=[first, second]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name=first),
+                VariableResult(index=2, time=tt, values=2 * tt, name=second),
+            ],
+        ),
+    )
+    return cfg, work
+
+
+#: A context series on x's plot: z, an untracked variable of A's result.
+LAYOUT = [{"var": "x", "context": ["z"]}]
+
+
+class TestPlots:
+    def _open(self, tmp_path) -> Session:
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        return s
+
+    def test_tracked_is_what_was_scored_then_the_rest_of_the_result(self, tmp_path):
+        """The page's default plots: the scored names in their order, then
+        the rest of the result's — never the file's, where `a0` sits before
+        `x`. The result's names are the union's second half because a test
+        keeps its variables while an edit is staged: a tree scoring x alone
+        must not take y's card, its `+` and every way back to it."""
+        s = self._open(tmp_path)
+        assert s.tracked(A) == ["x", "y"]
+        assert s.tracked(B) == ["x", "y"]  # nothing scored: the result's names
+        assert s.tracked(C) == []
+        s.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics",
+                    {
+                        "combinator": "and",
+                        "children": [{"metric": "nrmse", "variable": "x"}],
+                    },
+                )
+            ]
+        )
+        assert [vc.name for vc in s.comparisons[A].variables] == ["x"]
+        assert s.tracked(A) == ["x", "y"]
+        # the plots come from the tree: y's last criterion went, so did its plot
+        assert [p.series for p in s.plots(A)] == [("x",)]
+
+    def test_labels_read_the_results_expressions(self, tmp_path):
+        """What the page READS for each variable: the expression the model
+        wrote, else the name. A name with no entry is its own label, and
+        nothing is keyed by any of it."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.labels(A) == {UT1: UT1, UT2: UT2}  # no expression: the names
+        with_expressions(s, A, {UT1: UT1_EXPR})
+        assert s.labels(A) == {UT1: UT1_EXPR, UT2: UT2}
+        assert s.labels(C) == {}  # no result
+
+    def test_labels_are_the_text_the_page_reads_not_the_plain_label(self, tmp_path):
+        """`labels` is the TEXT: a capability's caption, a criteria row and
+        a pill carry no muted name, so the one that is ambiguous says its
+        own. Only a title beside a muted name reads `variable_texts`'
+        plain `label` — and `test_test_page` is not the only thing that
+        may pin this."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {UT1: "a.Q", UT2: "a.Q"})
+        assert s.labels(A) == {UT1: f"a.Q ({UT1})", UT2: f"a.Q ({UT2})"}
+        scope = s.variable_texts(A)
+        assert [scope[n].label for n in (UT1, UT2)] == ["a.Q", "a.Q"]
+        assert [scope[n].text for n in (UT1, UT2)] == [
+            f"a.Q ({UT1})",
+            f"a.Q ({UT2})",
+        ]
+
+    def test_the_label_scope_holds_a_plot_only_series(self, tmp_path):
+        """The scope is every name the page can SHOW, plot-only ones
+        included: the result-file variable `z` is what makes a tracked
+        variable whose EXPRESSION is `z` read its name beside it. Read
+        from the result's variables alone, both said `z`."""
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {"x": "z"})
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert s.labels(A)["x"] == "z (x)"
+        assert s.labels(A)["z"] == "z"  # its label IS its name: nothing ambiguous
+
+    def test_a_labelled_variable_with_no_baseline_still_reads_the_label(self, tmp_path):
+        """Nothing is scored without a reference, so the variable's view is
+        built from the NO-BASELINE trajectory instead. That is the only
+        place a brand-new test names its variables, and reading it as the
+        bare `unitTests.x[1]` told the reader nothing."""
+        cfg, work = _two_var_project(tmp_path)
+        t = [i / 4 for i in range(5)]
+        (work / "test_0002" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {UT1: t, "y": [2 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = [UT1, "y"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, B, {UT1: AWKWARD_EXPRESSION})
+        assert s.project.store.get_reference(B) is None  # the regime
+        assert s.comparisons[B].variables == []
+        view = s.view(B, UT1)
+        assert (view.name, view.label) == (UT1, AWKWARD_EXPRESSION)
+        assert s.view(B, "y").label == "y"  # no expression: its name
+        actual = next(
+            tr for tr in s.figure(B, UT1)["data"] if tr["meta"]["id"] == "actual"
+        )
+        assert actual["meta"]["label"] == AWKWARD_EXPRESSION
+
+    def test_a_labelled_variables_figure_reads_the_label(self, tmp_path):
+        """The figure the tool draws is the report's, so the label reaches
+        it the same way: through the trajectory the view is built from."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {UT1: UT1_EXPR})
+        assert s.view(A, UT1).label == UT1_EXPR
+        assert s.view(A, UT2).label == UT2  # no expression: its name
+        figure = s.figure(A, UT1)
+        actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
+        assert actual["name"] == "Actual"  # the picker's key, unchanged
+        assert actual["meta"]["label"] == UT1_EXPR
+
+    def test_a_failed_simulations_partial_result_is_not_tracked(self, tmp_path):
+        """A backend that stopped mid-run leaves what it had in the file.
+        Listing those variables gave the page a card each for a run that
+        produced nothing the test asked for (the final review); the page
+        says "no plots: the run failed" instead."""
+        s = self._open(tmp_path)
+        assert s.tracked(B) == ["x", "y"]
+        tt = np.asarray([i / 4 for i in range(5)])
+        # The Python driver's reader drops the variables of a failed run;
+        # a reader that keeps what the run wrote — a .mat file truncated
+        # mid-simulation — hands this in.
+        s.project.results[B] = TestResult(
+            model_id=B,
+            success=False,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2 * tt, name="y"),
+            ],
+        )
+        assert s.tracked(B) == []
+        assert s.plots(B) == ()
+
+    def test_variable_names_lists_the_file_tracked_first(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+
+    def test_variable_names_of_a_test_with_no_result_is_empty(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.variable_names(C) == []
+
+    def test_variable_names_of_an_unknown_model_is_a_key_error(self, tmp_path):
+        s = self._open(tmp_path)
+        with pytest.raises(KeyError):
+            s.variable_names("FakeLib.Nope")
+
+    def test_the_default_layout_is_one_plot_per_scored_variable(self, tmp_path):
+        s = self._open(tmp_path)
+        assert [(p.index, p.series, p.missing) for p in s.plots(A)] == [
+            (0, ("x",), ()),
+            (1, ("y",), ()),
+        ]
+
+    def test_plots_follow_the_tree_on_the_page_project(self, tmp_path):
+        """A's tree is `and[tube·x, range·x, range·y]`: plots [x, y], then
+        the key's watch plots in their order."""
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [(p.subject, p.watch) for p in s.plots(A)] == [
+            (("x",), False),
+            (("y",), False),
+            *(((w,), True) for w in PAGE_WATCH),
+        ]
+        assert all(p.missing == () for p in s.plots(A))
+
+    def test_nothing_compared_is_one_plot_per_tracked_name(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.comparisons[B].variables == []
+        assert [(p.subject, p.watch) for p in s.plots(B)] == [
+            (("x",), False),
+            (("y",), False),
+        ]
+
+    def test_unit_tests_variables_never_fold_whatever_their_expressions(self, tmp_path):
+        """O3: `unitTests.x[i]` is its own test quantity — one plot each, in
+        tree order, even where the expressions read as one array."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "range", "variable": UT2, "min_value": -9.0},
+                {"metric": "range", "variable": UT1, "min_value": -9.0},
+            ],
+        }
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        with_expressions(s, A, {UT1: "pipe.T[1]", UT2: "pipe.T[2]"})
+        assert [p.subject for p in s.plots(A)] == [(UT2,), (UT1,)]
+
+    def test_an_array_tracked_by_its_names_folds_on_any_scale(self, tmp_path):
+        """O3: any other array folds by its result-file names, with no
+        scale check — here nothing is scored (B has no baseline), and the
+        tracked array is still one plot."""
+        cfg, work = _two_var_project(tmp_path)
+        t = [i / 4 for i in range(5)]
+        (work / "test_0002" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {"p[1]": t, "p[2]": [1e5 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = ["p[1]", "p[2]"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [p.subject for p in s.plots(B)] == [("p[1]", "p[2]")]
+
+    def test_a_no_baseline_test_with_a_tree_draws_the_trees_plots(self, tmp_path):
+        """A NO_REF test's `metrics` tree names what will be scored: its
+        plots are the tree's, in its order — not one per tracked name."""
+        s = self._open(tmp_path)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "y"},
+                {"metric": "nrmse", "variable": "x"},
+            ],
+        }
+        s.stage([PatchOp(B, "add", "/metrics", tree)])
+        assert [p.subject for p in s.plots(B)] == [("y",), ("x",)]
+
+    def test_context_and_a_watch_plot_are_staged_extras(self, tmp_path):
+        from dstf.authoring.layout import add_context, layout_op, new_watch
+
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        extras = add_context(s.layout(A), s.plots(A)[0], ["y"])
+        extras = new_watch(extras, "a.untracked.name")
+        s.stage([layout_op(A, s.spec.entry(A), extras)])
+        assert [(p.subject, p.context, p.watch) for p in s.plots(A)] == [
+            (("x",), ("y",), False),
+            (("y",), (), False),
+            *(((w,), (), True) for w in PAGE_WATCH),
+            (("a.untracked.name",), (), True),
+        ]
+        assert s.plots(A)[-1].missing == ("a.untracked.name",)
+        assert s.layout(A) == (
+            *(PlotExtra(w) for w in PAGE_WATCH),
+            PlotExtra("x", ("y",)),
+            PlotExtra("a.untracked.name"),
+        )
+        assert [op.path for op in s.spec.pending] == ["/plots"]
+
+    def test_removing_a_variables_last_criterion_removes_its_plot(self, tmp_path):
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "remove", "/metrics/children/2")])
+        assert [p.subject for p in s.plots(A)] == [("x",), *((w,) for w in PAGE_WATCH)]
+
+    def test_with_an_extra_the_plot_stays_as_a_watch_plot(self, tmp_path):
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "replace", "/plots", [{"var": "y", "context": ["x"]}])])
+        s.stage([PatchOp(A, "remove", "/metrics/children/2")])
+        assert [(p.subject, p.context, p.watch) for p in s.plots(A)] == [
+            (("x",), (), False),
+            (("y",), ("x",), True),
+        ]
+
+    def test_painting_the_plots_never_loads_the_baseline(self, tmp_path, monkeypatch):
+        """The plots walk the tree SPEC, never the materialized tree: that
+        reads the baseline, and the page paints its cards before it."""
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        monkeypatch.setattr(
+            s, "tree", lambda *a, **k: pytest.fail("plots materialized the tree")
+        )
+        assert len(s.plots(A)) == 7
+
+    def test_view_of_an_untracked_variable_reads_the_result_file(self, tmp_path):
+        s = self._open(tmp_path)
+        view = s.view(A, "z")
+        assert view.act_values.tolist() == [7.0] * 5
+        assert view.ref_time is None and view.leaves == ()
+
+    def test_view_of_a_name_the_file_lacks_is_the_empty_state(self, tmp_path):
+        s = self._open(tmp_path)
+        view = s.view(A, "nowhere")
+        assert view.act_time is None and view.leaves == ()
+
+    def test_a_multi_series_plot_is_drawn_over_the_cached_bases(
+        self, tmp_path, monkeypatch
+    ):
+        session = self._open(tmp_path)
+        session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        first = session.plot_figure(A, 0)
+        import dstf.reporting.context_builder as cb
+
+        calls = []
+        real = cb.build_trajectories
+        monkeypatch.setattr(
+            cb, "build_trajectories", lambda *a, **k: calls.append(1) or real(*a, **k)
+        )
+        again = session.plot_figure(A, 0)
+        assert again == first
+        assert calls == []  # the second draw assembles nothing
+
+    def test_a_second_multi_series_figure_decimates_only_the_leaves(
+        self, tmp_path, monkeypatch
+    ):
+        """`TestReadCache.test_a_second_figure_decimates_only_the_leaves`,
+        over a plot: the base of EVERY series is decimated on the first draw
+        only, and the multi branch draws WITHOUT a budget — or `plot_figure`
+        would decimate each cached base a second time."""
+        from dstf.comparison.geometry import Series
+        from dstf.figures import view as view_mod
+
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s.plot_figure(A, 0)
+        # As in the single-series test, the bundled metrics emit no Series
+        # (A's materialized leaf is an nrmse, z has no leaves), so this is 0
+        # here; it is the per-call leaf decimation the assertion allows.
+        leaf_series = sum(
+            isinstance(p, Series)
+            for name in ("x", "z")
+            for leaf in s.view(A, name).leaves
+            for p in leaf.geometry
+        )
+        calls = []
+        real = view_mod.lttb
+        monkeypatch.setattr(
+            view_mod, "lttb", lambda t, v, n: calls.append(len(t)) or real(t, v, n)
+        )
+        s.plot_figure(A, 0)
+        assert len(calls) == leaf_series
+
+    def test_a_multi_series_plot_takes_editing(self, tmp_path):
+        import copy
+
+        from test_handles import TREE
+
+        session = self._open(tmp_path)
+        session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(TREE))])
+        every = session.plot_figure(A, 0)
+        assert [s for s in every["layout"]["shapes"] if s.get("path") == RING_PATH]
+        fig = session.plot_figure(A, 0, editing=())
+        assert not [s for s in fig["layout"]["shapes"] if s.get("path") == RING_PATH]
+        # `editing` moves the rings and NOTHING else: same traces, and the
+        # same config (react, never newPlot) — as on the single figure.
+        assert fig["config"] == every["config"] and fig["data"] == every["data"]
+
+    def test_editing_survives_every_forward_to_the_figure(self, tmp_path):
+        """`editing` is handed on through three hops that could silently drop
+        it: `SessionView.figure`, `SessionView.plot_figure`, and the
+        single-series branch of `Session.plot_figure` (which IS `figure`)."""
+        import copy
+
+        from dstf.authoring.session import Selection, SessionView
+        from test_handles import TREE
+
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(TREE))])
+        view = SessionView(s, Selection())
+
+        def rings(fig):
+            return [sh for sh in fig["layout"]["shapes"] if sh.get("path") == RING_PATH]
+
+        assert s.plots(A)[0].series == ("x",)  # the default layout: one series
+        assert rings(view.figure(A, "x"))
+        assert rings(view.plot_figure(A, 0))
+        assert rings(s.plot_figure(A, 0))
+        assert not rings(view.figure(A, "x", editing=()))
+        assert not rings(view.plot_figure(A, 0, editing=()))
+        assert not rings(s.plot_figure(A, 0, editing=()))
+
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert s.plots(A)[0].series == ("x", "z")  # and the branch with context
+        assert rings(view.plot_figure(A, 0))
+        assert not rings(view.plot_figure(A, 0, editing=()))
+
+    def test_a_staged_layout_is_what_plots_answers(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert [(p.series, p.missing) for p in s.plots(A)] == [
+            (("x", "z"), ()),
+            (("y",), ()),
+        ]
+        s.discard()
+        assert len(s.plots(A)) == 2
+
+    def test_layout_is_the_effective_plots_key(self, tmp_path):
+        """The extras a gesture edits are what the spec SAYS: no key is no
+        extras, and a name the result lacks stays in them."""
+        s = self._open(tmp_path)
+        assert s.layout(A) == () and s.layout(B) == ()
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert s.layout(A) == parse_plots(LAYOUT)
+        s.discard()
+        raw = [{"var": "x", "context": ["gone"]}]
+        s.stage([PatchOp(A, "add", "/plots", raw)])
+        assert s.layout(A) == parse_plots(raw)
+
+    def test_a_series_the_result_lacks_is_named_missing(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": ["gone"]}])])
+        plot = s.plots(A)[0]
+        assert plot.series == ("x", "gone") and plot.missing == ("gone",)
+
+    def test_an_error_in_the_edited_spec_says_it_is_not_the_files(self, tmp_path):
+        """A document with pending edits is not the file: its error says so.
+        One read from disk names the file alone — it said "(in memory)" of
+        both."""
+        from dstf.config import ConfigError
+
+        s = self._open(tmp_path)
+        with pytest.raises(ConfigError) as edited:
+            s.stage([PatchOp(A, "add", "/plots", [{"series": []}])])
+        assert str(edited.value).startswith(f"{s.spec.path} (with unsaved edits): ")
+        data = json.loads(s.spec.path.read_text(encoding="utf-8"))
+        data["tests"][0]["plots"] = [{"series": []}]
+        s.spec.path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(ConfigError) as on_disk:
+            s.reload()
+        assert str(on_disk.value).startswith(f"{s.spec.path}: tests[")
+
+    def test_staging_an_invalid_layout_changes_nothing(self, tmp_path):
+        from dstf.config import ConfigError
+        from dstf.discovery.patch_apply import PatchError
+
+        s = self._open(tmp_path)
+        with pytest.raises(
+            (PatchError, ConfigError), match=r"plots\[0\]: unknown field"
+        ):
+            s.stage([PatchOp(A, "add", "/plots", [{"series": []}])])
+        assert s.spec.pending == [] or tuple(s.spec.pending) == ()
+        assert len(s.plots(A)) == 2
+
+    def test_a_layout_edit_does_not_materialize_a_metrics_tree(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert [op.path for op in s.spec.pending] == ["/plots"]
+
+    def test_saving_writes_the_key_and_a_reopen_reads_it(self, tmp_path):
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s.save()
+        entry = next(
+            e
+            for e in json.loads((cfg.parent / "test_spec.json").read_text())["tests"]
+            if e["model"] == A
+        )
+        assert entry["plots"] == LAYOUT
+        again = Session()
+        again.open(cfg, work_dir=work)
+        assert [p.series for p in again.plots(A)] == [("x", "z"), ("y",)]
+
+    def test_plot_figure_of_one_series_is_the_variables_figure(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.plot_figure(A, 0) == s.figure(A, "x")
+
+    def test_plot_figure_draws_context_beside_its_subject(self, tmp_path):
+        """x alone is `figure`'s drawing, error traces and all; its context
+        z is one more trace on the same axis."""
+        s = self._open(tmp_path)
+        alone = s.plot_figure(A, 0)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        fig = s.plot_figure(A, 0)
+        ids = [
+            tr["meta"]["id"]
+            for tr in fig["data"]
+            if tr["meta"]["kind"] in ("act", "context")
+        ]
+        assert ids == ["actual", "context/z"]
+        assert fig["data"][: len(alone["data"])] == alone["data"]
+        assert fig["config"]["edits"] == {"shapePosition": True}
+
+    def test_a_context_variable_scored_elsewhere_signs_no_leaf_here(self, tmp_path):
+        """y is scored on its own plot; as context on x's it is a line."""
+        cfg, work = _page_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "replace", "/plots", [{"var": "x", "context": ["y"]}])])
+        fig = s.plot_figure(A, 0)
+        leaves = {tr["meta"]["leaf"] for tr in fig["data"] if "leaf" in tr["meta"]}
+        assert leaves and "/metrics/children/2" not in leaves
+
+    def test_plot_figure_keeps_the_leaves_of_a_tracked_series(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        single = s.figure(A, "x")
+        multi = s.plot_figure(A, 0)
+        leafy = lambda fig: sorted(  # noqa: E731
+            tr["meta"].get("id") or tr["meta"]["family"]
+            for tr in fig["data"]
+            if tr["meta"]["kind"] not in ("act", "ref", "error", "overlay", "context")
+        )
+        assert leafy(multi) == leafy(single)
+
+    def test_plot_figure_out_of_range_is_an_index_error(self, tmp_path):
+        s = self._open(tmp_path)
+        with pytest.raises(IndexError):
+            s.plot_figure(A, 5)
+
+    def test_the_file_read_is_cached_and_dropped_with_the_results(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        calls = []
+        real = PythonBackend.result_series.__func__
+
+        def counting(cls, test_dir, names):
+            calls.append(tuple(names))
+            return real(cls, test_dir, names)
+
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(counting))
+        s.view(A, "z")
+        s.view(A, "z")
+        assert calls == [("z",)]
+        s._reload_results()  # what TestReadCache's reload test calls
+        s.view(A, "z")
+        assert calls == [("z",), ("z",)]
+
+    def test_a_backend_that_cannot_list_draws_what_the_result_carries(
+        self, tmp_path, monkeypatch
+    ):
+        """No listing: what the result in memory carries is all the plots
+        can draw (`plots_of_test`, the report's rule too) — the tracked x is
+        there, the file-only z is named missing rather than drawn blank."""
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        monkeypatch.setattr(
+            PythonBackend, "result_names", classmethod(lambda cls, d: None)
+        )
+        s._reload_results()
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert s.plots(A)[0].missing == ("z",)
+
+    def test_a_running_model_whose_names_were_never_read_marks_nothing_missing(
+        self, tmp_path
+    ):
+        """While the model runs, the file is not listed — and a listing
+        never read is not a listing of nothing: the file-only z is not
+        named missing (it is, once the names are read)."""
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s._reads.pop(A, None)
+        item = _running(s, A)
+        assert [p.missing for p in s.plots(A)] == [(), ()]
+        assert not s._reads_for(A).names_read
+        _ended(s, item)
+        assert [p.missing for p in s.plots(A)] == [(), ()]
+        assert s._reads_for(A).names_read
+
+    def test_the_session_view_mirrors_the_three_reads(self, tmp_path):
+        s = self._open(tmp_path)
+        v = SessionView(s, Selection())
+        assert v.variable_names(A) == s.variable_names(A)
+        assert v.plots(A) == s.plots(A)
+        assert v.plot_figure(A, 0) == s.plot_figure(A, 0)
+
+
+def _ordered_project(tmp_path: Path, names: list[str]) -> tuple[Path, Path]:
+    """`_two_var_project` with A and B tracking ``names``, listed in that
+    order in the spec and in both results."""
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    t = [i / 4 for i in range(5)]
+    for key in ("test_0001", "test_0002"):
+        (work / key / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {
+                        n: [(k + 1) * v for v in t] for k, n in enumerate(names)
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] in (A, B):
+            entry["variables"] = list(names)
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
+class TestPlotsInTheSpecsOrder:
+    """With no tree the plots are the tracked names, in the order the spec
+    wrote them — never sorted (`resolve_variable_patterns`)."""
+
+    def test_unit_tests_elements_come_in_index_order(self, tmp_path):
+        names = [f"unitTests.x[{i}]" for i in range(1, 13)]
+        cfg, work = _ordered_project(tmp_path, names)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [p.subject for p in s.plots(B)] == [(n,) for n in names]
+
+    def test_names_come_as_the_spec_wrote_them(self, tmp_path):
+        names = ["heater.T", "condenser.Q"]
+        cfg, work = _ordered_project(tmp_path, names)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [p.subject for p in s.plots(B)] == [(n,) for n in names]
+
+
+class TestPlotsOfARunningModel:
+    """The file reads behave as `view` and `figure` always have for a model
+    the queue is running: from memory, never from the directory its run is
+    rewriting."""
+
+    def _open_running(self, tmp_path):
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        return s, _running(s, A)
+
+    def test_a_running_models_result_file_is_not_opened_and_nothing_is_cached(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends.python.backend import PythonBackend
+
+        s, item = self._open_running(tmp_path)
+
+        def boom(cls, *a):
+            raise AssertionError("a running model's work dir was read")
+
+        monkeypatch.setattr(PythonBackend, "result_names", classmethod(boom))
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(boom))
+        assert s.variable_names(A) == ["x", "y"]
+        assert s.view(A, "z").act_time is None
+        assert s._reads[A].names is None and s._reads[A].series == {}
+        _ended(s, item)
+        monkeypatch.undo()
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+        assert s.view(A, "z").act_values.tolist() == [7.0] * 5
+
+    def test_what_was_read_before_the_run_is_served_until_its_start_is_heard(
+        self, tmp_path
+    ):
+        """The pool marks an item RUNNING before it clears the directory,
+        and the Session hears of the start a tick later: until then it
+        serves what it read, and opens nothing."""
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.view(A, "z").act_values.tolist() == [7.0] * 5
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+        _running(s, A)
+        (work / "test_0001" / "result.json").write_text("{half", encoding="utf-8")
+        assert s.view(A, "z").act_values.tolist() == [7.0] * 5
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+
+    def _running_with_layout(self, tmp_path):
+        """A staged multi-series layout, then its model running."""
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        return s, _running(s, A)
+
+    def test_a_multi_series_base_read_while_it_runs_is_not_cached(self, tmp_path):
+        """`_file_series` answers None for a running model and caches nothing
+        — the run's end answers it. The base built from that None must not
+        be cached either: with the model's reads still held, z's EMPTY base
+        would be the one drawn."""
+        s, item = self._running_with_layout(tmp_path)
+        s.plot_figure(A, 0)
+        _ended(s, item)  # out of the queue, its reads still held
+        fig = s.plot_figure(A, 0)
+        drawn = [
+            (tr["meta"]["id"], len(tr["y"]))
+            for tr in fig["data"]
+            if tr["meta"]["kind"] in ("act", "context")
+        ]
+        assert drawn == [("actual", 5), ("context/z", 5)]
+
+    def test_a_single_series_base_read_while_it_runs_is_not_cached(self, tmp_path):
+        s, item = self._running_with_layout(tmp_path)
+        s.figure(A, "z")
+        _ended(s, item)
+        fig = s.figure(A, "z")
+        assert [
+            tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"
+        ] == ["actual"]
+
+    def test_a_run_that_ends_drops_what_was_read_of_its_model(self, tmp_path):
+        """Its run rewrote the files, whatever it came to: the Session,
+        taking the ended item in, drops that model's reads and no other's."""
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.view(A, "z")
+        s.view(D, "x")
+        item = _running(s, A)
+        item.state, item.message = ItemState.CANCELLED, "Cancelled"
+        s._item_ended(item)  # what the pool's `on_end` posts
+        assert A not in s._reads and D in s._reads
+
+
+class TestPlotsMisses:
+    def _open(self, tmp_path) -> Session:
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        return s
+
+    def test_a_miss_is_read_once(self, tmp_path, monkeypatch):
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        calls = []
+        real = PythonBackend.result_series.__func__
+
+        def counting(cls, test_dir, names):
+            calls.append(tuple(names))
+            return real(cls, test_dir, names)
+
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(counting))
+        assert s.view(A, "nowhere").act_time is None
+        assert s.view(A, "nowhere").act_time is None
+        assert calls == [("nowhere",)]
+        s._reload_results()
+        s.view(A, "nowhere")
+        assert calls == [("nowhere",), ("nowhere",)]
+
+    def test_an_empty_but_listable_file_still_names_a_series_missing(
+        self, tmp_path, monkeypatch
+    ):
+        """`[]` is "the file lists nothing"; only `None` is "cannot list"."""
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        monkeypatch.setattr(PythonBackend, "result_names", classmethod(lambda c, d: []))
+        s._reload_results()
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": ["gone"]}])])
+        plot = s.plots(A)[0]
+        assert plot.series == ("x", "gone") and plot.missing == ("gone",)
+
+    def test_a_negative_plot_index_is_an_index_error(self, tmp_path):
+        s = self._open(tmp_path)
+        with pytest.raises(IndexError):
+            s.plot_figure(A, -1)
+
+
+def test_plot_figure_passes_the_pages_visibility(tmp_path):
+    """Legend b: the page's Visibility reaches both figure reads, on the
+    Session and through SessionView, with no new public name."""
+    from dstf.figures.plotly import Visibility
+
+    cfg, work = _page_project(tmp_path)
+    s = Session()
+    s.open(cfg, work_dir=work)
+    range_x = "/metrics/children/1"
+    hide = Visibility(hidden=frozenset({range_x}))
+    for reader in (s, SessionView(s)):
+        # Plot 0 draws x alone (the one-series branch), then with y beside it.
+        for extras in ([], [{"var": "x", "context": ["y"]}]):
+            s.discard()
+            if extras:
+                s.stage([PatchOp(A, "replace", "/plots", extras)])
+            fig = reader.plot_figure(A, 0, editing=(), visibility=hide)
+            mine = [
+                t for t in fig["data"] if (t.get("meta") or {}).get("leaf") == range_x
+            ]
+            assert mine and all(t["visible"] is False for t in mine), extras
+        s.discard()
+        fig = reader.figure(A, "x", visibility=Visibility(error="error/signed"))
+        shown = [
+            t["meta"]["id"]
+            for t in fig["data"]
+            if t["meta"].get("kind") == "error" and t["visible"] is True
+        ]
+        assert shown == ["error/signed"]
+        assert fig["layout"]["yaxis3"]["visible"] is True
+        assert fig["layout"]["yaxis4"]["visible"] is False
+
+
+L1 = [{"var": "x", "context": ["z"]}]
+L2 = [{"var": "x", "context": ["z", "a0"]}]
+
+
+def _session_with_plots(tmp_path: Path, plots: list) -> Session:
+    """`_project` with A's entry holding ``plots`` on disk before `open`."""
+    cfg, work = _project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["plots"] = plots
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+#: A saved tree of two criteria on A's one variable.
+TWO_CRITERIA = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+        {"metric": "range", "variable": "x", "min_value": -1.0, "max_value": 2.0},
+    ],
+}
+
+
+class TestOneStageIsOneEdit:
+    """What every count of pending edits counts (`spec_document.edit_counts`):
+    the things done, not the ops they took."""
+
+    def test_a_flat_tests_first_edit_is_two_ops_and_one_edit(self, session):
+        session.stage([LOOSEN])
+        pending = session.spec.pending
+        assert [(op.path, op.materializes) for op in pending] == [
+            ("/metrics", True),
+            (LOOSEN.path, False),
+        ]
+        assert edit_counts(pending) == {A: 1} and edit_count(pending) == 1
+
+    def test_a_second_thing_done_is_a_second_edit_and_a_value_typed_over_is_not(
+        self, session
+    ):
+        session.stage([LOOSEN])
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x"}])])
+        assert edit_count(session.spec.pending) == 2
+        typed = PatchOp(A, "replace", "/plots", [{"var": "x", "context": []}])
+        session.stage([typed])  # lands where the last op did: the same edit
+        assert [op.path for op in session.spec.pending] == [
+            "/metrics",
+            LOOSEN.path,
+            "/plots",
+        ]
+        assert edit_count(session.spec.pending) == 2
+        session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        assert edit_counts(session.spec.pending) == {A: 2, D: 1}
+
+    def test_an_op_that_supersedes_the_last_is_the_edit_that_one_was(
+        self, session, tmp_path
+    ):
+        """Each fold of `Session.stage` keeps the number of the op it
+        replaces: that op may be one of several its act took, and a new
+        number would make the act two edits."""
+        # replace after add: a flat test's tolerance typed, then typed over
+        session.stage([LOOSEN])
+        session.stage([PatchOp(A, "replace", LOOSEN.path, 0.25)])
+        assert len(session.spec.pending) == 2
+        assert edit_counts(session.spec.pending) == {A: 1}
+        session.discard()
+        # add after add of an object member
+        both = [
+            PatchOp(A, "add", "/plots", L1),
+            PatchOp(A, "add", "/comparison/tolerance", 0.25),
+        ]
+        session.stage(both)
+        session.stage([PatchOp(A, "add", "/comparison/tolerance", 0.5)])
+        assert len(session.spec.pending) == 2
+        assert edit_counts(session.spec.pending) == {A: 1}
+        # remove after replace
+        s = _session_with_plots(tmp_path / "with-plots", L1)
+        s.stage(
+            [
+                PatchOp(A, "add", "/comparison/tolerance", 0.25),
+                PatchOp(A, "replace", "/plots", L2),
+            ]
+        )
+        s.stage([PatchOp(A, "remove", "/plots")])
+        assert [op.op for op in s.spec.pending] == ["add", "remove"]
+        assert edit_counts(s.spec.pending) == {A: 1}
+
+    def test_one_stage_over_two_tests_is_one_edit_of_each(self, session):
+        session.stage(
+            [
+                PatchOp(D, "add", "/comparison", {"tolerance": 0.5}),
+                PatchOp(A, "add", "/plots", [{"var": "x"}]),
+                PatchOp(A, "add", "/comparison/tolerance", 0.25),
+            ]
+        )
+        assert len(session.spec.pending) == 3
+        assert edit_counts(session.spec.pending) == {A: 1, D: 1}
+        # A discard of one test leaves the other's.
+        session.discard({A})
+        assert edit_counts(session.spec.pending) == {D: 1}
+
+    def test_a_rescore_that_writes_the_tree_out_is_no_act_of_the_users(self, session):
+        """An op on a flat entry's overrides — a capability's — and then a
+        `rescore`: it stages the tree those overrides now give, which
+        stays (it is no longer the tree the saved entry scores by). That
+        op is part of the edit that made it necessary: the count read 2
+        after one act."""
+        overrides = {"variable_overrides": {"x": {"tolerance": 0.5}}}
+        session.stage([PatchOp(G, "add", "/comparison", overrides)])
+        assert edit_counts(session.spec.pending) == {G: 1}
+        # Another test's edit in between: the tree is part of ITS test's.
+        session.stage([PatchOp(D, "add", "/plots", [{"var": "x"}])])
+        session.rescore(G)
+        assert [(op.model_id, op.path) for op in session.spec.pending] == [
+            (G, "/comparison"),
+            (D, "/plots"),
+            (G, "/metrics"),
+        ]
+        assert edit_counts(session.spec.pending) == {G: 1, D: 1}
+        # A second act is a second edit, and a rescore still adds none.
+        session.stage([PatchOp(G, "add", "/plots", [{"var": "x"}])])
+        session.rescore(G)
+        assert edit_counts(session.spec.pending) == {G: 2, D: 1}
+
+    def test_two_acts_on_one_criterion_in_a_row_read_one_edit(self, tmp_path):
+        """The collapse rule's reading (D155): an editor writes its
+        criterion whole, so a tolerance and then a window of ONE criterion
+        land on one path, and the second replaces the first."""
+        s = _session_with_entry(tmp_path, {"metrics": dict(TWO_CRITERIA)})
+        leaf = {"metric": "nrmse", "variable": "x", "tolerance": 0.05}
+        s.stage([PatchOp(A, "replace", "/metrics/children/0", leaf)])
+        windowed = {**leaf, "window": {"start": 0.0, "end": 0.5}}
+        s.stage([PatchOp(A, "replace", "/metrics/children/0", windowed)])
+        assert s.spec.pending == [
+            PatchOp(A, "replace", "/metrics/children/0", windowed)
+        ]
+        assert edit_count(s.spec.pending) == 1
+
+    def test_a_criterion_revisited_after_another_is_its_own_edit_until_all_is_as_saved(
+        self, tmp_path
+    ):
+        """The collapse rule's other reading (D155): only the LAST pending
+        op is superseded. Criterion 0, criterion 1, criterion 0 again are
+        three edits, and putting criterion 0 back lands on the third — the
+        count stays 3 while only criterion 1 differs from the file. Put
+        that back too and the entry is as saved: 0."""
+        s = _session_with_entry(tmp_path, {"metrics": dict(TWO_CRITERIA)})
+        first, second = TWO_CRITERIA["children"]
+
+        def stage(index: int, **fields) -> int:
+            leaf = {**TWO_CRITERIA["children"][index], **fields}
+            s.stage([PatchOp(A, "replace", f"/metrics/children/{index}", leaf)])
+            return edit_count(s.spec.pending)
+
+        assert stage(0, tolerance=0.05) == 1
+        assert stage(1, max_value=3.0) == 2
+        assert stage(0, tolerance=0.06) == 3
+        assert stage(0) == 3  # criterion 0 as saved: the third edit, rewritten
+        assert s.spec.entry(A)["metrics"]["children"][0] == first
+        assert stage(1) == 0  # the entry is the file's
+        assert (
+            s.spec.pending == [] and s.spec.entry(A)["metrics"]["children"][1] == second
+        )
+
+    def test_the_refusal_to_close_counts_edits(self, session):
+        from dstf.authoring.session import PendingEditsError
+
+        session.stage([LOOSEN])
+        with pytest.raises(PendingEditsError) as raised:
+            session.close()
+        assert raised.value.count == 1
+        session.discard()
+
+
+class TestStageCollapses:
+    """Every layout gesture stages the whole `/plots` list, so a run of
+    gestures on one path must read as one pending op, never five."""
+
+    def test_a_replace_after_an_add_of_one_path_is_one_add(self, session):
+        session.stage([PatchOp(A, "add", "/plots", L1)])
+        session.stage([PatchOp(A, "replace", "/plots", L2)])
+        assert session.spec.pending == [PatchOp(A, "add", "/plots", L2)]
+        assert session.spec.entry(A)["plots"] == L2
+
+    def test_a_remove_after_a_replace_is_one_remove(self, tmp_path):
+        s = _session_with_plots(tmp_path, L1)
+        s.stage([PatchOp(A, "replace", "/plots", L2)])
+        s.stage([PatchOp(A, "remove", "/plots")])
+        assert s.spec.pending == [PatchOp(A, "remove", "/plots")]
+        assert "plots" not in s.spec.entry(A)
+
+    def test_a_remove_after_an_add_is_not_collapsed(self, tmp_path):
+        """The add acts as a replace of the L1 on disk: dropping both ops
+        would leave L1 in place instead of removing it."""
+        s = _session_with_plots(tmp_path, L1)
+        s.stage([PatchOp(A, "add", "/plots", L2)])
+        s.stage([PatchOp(A, "remove", "/plots")])
+        assert len(s.spec.pending) == 2
+        assert "plots" not in s.spec.entry(A)
+
+    def test_ops_on_other_paths_or_models_do_not_collapse(self, session):
+        session.stage([PatchOp(A, "add", "/plots", L1)])
+        session.stage([PatchOp(B, "add", "/plots", L1)])
+        assert len(session.spec.pending) == 2
+        # A's replace of its own /plots follows B's add: another model's op.
+        session.stage([PatchOp(A, "replace", "/plots", L2)])
+        assert len(session.spec.pending) == 3
+
+    def test_a_refused_stage_keeps_the_op_a_collapse_would_have_replaced(
+        self, tmp_path
+    ):
+        """The collapse pops the last pending op from a COPY: a stage the
+        Session refuses must leave the live op where it was."""
+        s = _session_with_plots(tmp_path, L1)
+        s.stage([PatchOp(A, "replace", "/plots", L2)])
+        before = list(s.spec.pending)
+        with pytest.raises(ConfigError):
+            s.stage([PatchOp(A, "replace", "/plots", [{"var": "x", "kind": "nope"}])])
+        assert s.spec.pending == before
+
+    def test_a_batch_is_not_collapsed_through_its_last_op(self, session):
+        session.stage([PatchOp(A, "add", "/plots", L1)])
+        session.stage(
+            [
+                PatchOp(A, "add", "/comparison/tolerance", 0.5),
+                PatchOp(A, "replace", "/plots", L2),
+            ]
+        )
+        assert len(session.spec.pending) == 3
+
+    def test_an_add_after_an_add_of_one_member_is_the_second_add(self, session):
+        """Two whole trees in a row (two moves): an add on an object member
+        replaces what the first add put there, so it is one pending op."""
+        tree = session.tree(A)
+        other = copy.deepcopy(tree)
+        other["children"][0]["tolerance"] = 0.5
+        session.stage([PatchOp(A, "add", "/metrics", tree)])
+        session.stage([PatchOp(A, "add", "/metrics", other)])
+        assert session.spec.pending == [PatchOp(A, "add", "/metrics", other)]
+        assert session.tree(A) == other
+
+    def test_an_add_after_an_add_at_one_list_index_is_kept(self, session):
+        """An add at a list index INSERTS: both criteria are there."""
+        leaf = {"metric": "range", "variable": "x", "max_value": 9.0}
+        session.stage([PatchOp(A, "add", "/metrics/children/0", leaf)])
+        session.stage([PatchOp(A, "add", "/metrics/children/0", leaf)])
+        assert len(session.spec.pending) == 3  # the materialization first
+        assert session.tree(A)["children"][:2] == [leaf, leaf]
+        assert len(session.tree(A)["children"]) == 3
+
+    def test_a_replace_at_an_append_path_is_not_collapsed(self, session):
+        """``/-`` names no member a replace could land on: the add appended
+        one, and the replace is refused rather than folded into the add."""
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics/children/-",
+                    {"metric": "nrmse", "variable": "x"},
+                )
+            ]
+        )
+        with pytest.raises(PatchError):
+            session.stage(
+                [
+                    PatchOp(
+                        A,
+                        "replace",
+                        "/metrics/children/-",
+                        {"metric": "nrmse", "variable": "x"},
+                    )
+                ]
+            )
+
+
+class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
+    """An edit that leaves a test's entry exactly as saved is not a pending
+    edit: a value typed and cleared again, a refused value put back. Its ops
+    counted — "1 pending edit", Save enabled — and Save rewrote the file
+    for nothing. Decided where the ops are folded (`Session.stage`), so the
+    count, the strip, the Tests drawer's mark, Save and the preview all
+    read the one list."""
+
+    AUTHORED = {
+        "combinator": "and",
+        "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.3}],
+    }
+    LEAF = "/metrics/children/0"
+
+    def test_a_change_and_its_inverse_leave_nothing_pending(self, tmp_path):
+        s = _session_with_entry(tmp_path, {"metrics": self.AUTHORED})
+        saved = s.spec.saved_entry(A)
+        before = s.spec.path.read_bytes()
+        assert classify(s.comparisons[A]) == PASS  # nrmse 0.153 under 0.3
+        tight = {**self.AUTHORED["children"][0], "tolerance": 0.1}
+        s.stage([PatchOp(A, "replace", self.LEAF, tight)])
+        assert len(s.spec.pending) == 1 and classify(s.comparisons[A]) == FAIL
+        events: list[dict] = []
+        s.on("spec", events.append)
+        s.stage([PatchOp(A, "replace", self.LEAF, self.AUTHORED["children"][0])])
+        assert s.spec.pending == []
+        assert s.spec.entry(A) == saved
+        assert classify(s.comparisons[A]) == PASS  # rescored, as saved
+        assert [e["models"] for e in events] == [{A}]  # the pages hear it
+        assert s.export()["patches"] == []
+        s.save()
+        assert s.spec.path.read_bytes() == before
+
+    def test_an_add_and_its_remove_leave_nothing_pending(self, session):
+        """Two ops the fold keeps as two (a remove after an add): together
+        they put the entry back."""
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        assert classify(session.comparisons[A]) == PASS
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert session.spec.pending == []
+        assert classify(session.comparisons[A]) == FAIL
+
+    def test_a_batch_that_changes_nothing_stages_nothing(self, session):
+        session.stage(
+            [
+                PatchOp(A, "add", "/comparison", {"tolerance": 1.0}),
+                PatchOp(A, "remove", "/comparison"),
+            ]
+        )
+        assert session.spec.pending == []
+
+    def test_of_two_edited_tests_only_the_one_put_back_goes(self, session):
+        tighten_d = PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        session.stage([tighten_d])
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert session.spec.pending == [tighten_d]
+        assert classify(session.comparisons[A]) == FAIL  # as saved
+        assert classify(session.comparisons[D]) == FAIL  # still the edited one
+
+    def test_a_test_with_no_entry_in_the_file_gets_none_from_a_tree_added_and_removed(
+        self, tmp_path, monkeypatch
+    ):
+        """An annotation-only test: the file holds no entry for it, and a
+        tree staged then removed would leave it one holding its model and
+        nothing else — which says nothing the scan does not."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        s = Session()
+        s.open(_modelica_project(tmp_path), work_dir=tmp_path / "work")
+        foo = "MyLib.Foo"
+        scanned = s.project.test(foo)
+        assert scanned is not None and s.spec.saved_entry(foo) is None
+        tree = {
+            "combinator": "and",
+            "children": [{"metric": "nrmse", "variable": "unitTests.x[1]"}],
+        }
+        s.stage([PatchOp(foo, "add", "/metrics", tree)])
+        assert s.spec.entry(foo) == {"model": foo, "metrics": tree}
+        assert len(s.spec.pending) == 1
+        s.stage([PatchOp(foo, "remove", "/metrics")])
+        assert s.spec.pending == []
+        assert s.spec.entry(foo) is None
+        # The test is the scan's again, not one merged with a bare entry
+        # (whose `source` reads "both").
+        assert s.project.test(foo) == scanned
+
+    def test_a_number_rewritten_as_true_is_an_edit(self, tmp_path):
+        """The file's `1` and a staged `true` are two JSON values, though
+        Python's ``==`` calls them equal: the edit stays pending."""
+        leaf = {"metric": "event-timing", "variable": "x", "count_must_match": 1}
+        s = _session_with_entry(
+            tmp_path, {"metrics": {"combinator": "and", "children": [leaf]}}
+        )
+        s.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "count_must_match": True})])
+        assert len(s.spec.pending) == 1
+        # ... and the same number written `1.0` is none.
+        s.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "count_must_match": 1.0})])
+        assert s.spec.pending == []
+
+    def test_a_value_typed_and_cleared_on_a_flat_test_leaves_nothing_pending(
+        self, session
+    ):
+        """A flat entry's first per-leaf edit writes its tree out, and the
+        edit put back left that tree pending: "2 unsaved", and Save would
+        add a `metrics` block that scores as the entry already does. An
+        entry that differs from the saved one ONLY by the tree the Session
+        wrote out for it is as saved too, and its ops go."""
+        before = session.spec.path.read_bytes()
+        saved = session.spec.saved_entry(A)
+        leaf = session.tree(A)["children"][0]
+        session.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": 0.5})])
+        assert [op.path for op in session.spec.pending] == ["/metrics", self.LEAF]
+        assert classify(session.comparisons[A]) == PASS
+        session.stage([PatchOp(A, "replace", self.LEAF, leaf)])
+        assert session.spec.pending == []
+        assert session.spec.entry(A) == saved and "metrics" not in saved
+        assert classify(session.comparisons[A]) == FAIL  # rescored, as saved
+        assert session.export()["patches"] == []
+        session.save()
+        assert session.spec.path.read_bytes() == before
+        # The tree is there to edit again, as before the first edit.
+        assert session.tree(A)["children"][0] == leaf
+
+    def test_a_value_typed_and_left_on_a_flat_test_is_pending_with_its_tree(
+        self, session
+    ):
+        leaf = session.tree(A)["children"][0]
+        session.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": 0.5})])
+        tree, edit = session.spec.pending
+        assert (tree.path, tree.materializes) == ("/metrics", True)
+        assert edit.value == {**leaf, "tolerance": 0.5}
+        assert session.spec.entry(A)["metrics"]["children"][0]["tolerance"] == 0.5
+
+    def test_a_flat_tests_tree_written_out_alone_is_no_pending_edit(self, session):
+        """`rescore` stages the tree a flat entry scores by and nothing
+        else: the entry differs from the file's only by that tree."""
+        events: list[dict] = []
+        session.on("spec", events.append)
+        comp = session.rescore(A)
+        assert session.spec.pending == []
+        assert "metrics" not in session.spec.entry(A)
+        assert comp is session.comparisons[A] and classify(comp) == FAIL
+        assert [e["models"] for e in events] == [{A}]
+
+    def test_a_test_with_a_tree_in_the_file_is_as_it_was(self, tmp_path):
+        """The rule is the flat entry's: a saved tree whose leaf is edited
+        stays pending, and one put back goes as it always did."""
+        s = _session_with_entry(tmp_path, {"metrics": self.AUTHORED})
+        default = {"metric": "nrmse", "variable": "x"}
+        s.stage([PatchOp(A, "replace", self.LEAF, default)])
+        # The tree a flat entry would be written out as — and an edit here.
+        assert [op.path for op in s.spec.pending] == [self.LEAF]
+        s.stage([PatchOp(A, "replace", self.LEAF, self.AUTHORED["children"][0])])
+        assert s.spec.pending == []
+
+    def test_a_flat_tests_tree_carries_its_overrides(self, tmp_path):
+        """The tree written out holds the entry's ``variable_overrides``: a
+        leaf put back to THOSE is as saved; one cleared of them is an edit."""
+        s = _session_with_entry(
+            tmp_path, {"comparison": {"variable_overrides": {"x": {"tolerance": 0.3}}}}
+        )
+        leaf = s.tree(A)["children"][0]
+        assert leaf == {"metric": "nrmse", "variable": "x", "tolerance": 0.3}
+        s.stage([PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": 0.5})])
+        assert len(s.spec.pending) == 2
+        s.stage([PatchOp(A, "replace", self.LEAF, leaf)])
+        assert s.spec.pending == []
+        s.stage(
+            [PatchOp(A, "replace", self.LEAF, {"metric": "nrmse", "variable": "x"})]
+        )
+        assert [op.path for op in s.spec.pending] == ["/metrics", self.LEAF]
+
+    def test_a_tree_written_out_beside_an_edit_scoring_never_reads_does_not_stay(
+        self, session
+    ):
+        """A watch plot added, a tolerance typed and cleared: the entry
+        differs from the file's by its ``plots`` — and by ``metrics``, the
+        tree it already scores by. That tree is no edit beside another any
+        more than alone: its ops go and the plots edit stays. It stayed —
+        four ops pending, a preview saying Save also writes the tree, and a
+        Save that wrote a ``metrics`` block where only ``plots`` changed."""
+        plots = [{"var": "x", "context": []}]
+        session.stage([PatchOp(A, "add", "/plots", plots)])
+        session.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+        assert [op.path for op in session.spec.pending] == [
+            "/plots",
+            "/metrics",
+            f"{self.LEAF}/tolerance",
+        ]
+        session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+        assert session.spec.pending == [PatchOp(A, "add", "/plots", plots)]
+        assert "metrics" not in session.spec.entry(A)
+        # The TEST is the one that entry makes: merged from the document
+        # the tree's ops were taken out of, it has no tree of its own. (The
+        # verdict cannot tell: the tree written out scores as the flat
+        # entry does.)
+        assert session.project.test(A).metric_tree_spec is None
+        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
+        assert classify(session.comparisons[A]) == FAIL  # rescored, as saved
+        session.save()
+        saved = session.spec.saved_entry(A)
+        assert saved["plots"] == plots and "metrics" not in saved
+        # The tree is there to edit again, as before the first edit.
+        assert session.tree(A)["children"] == [{"metric": "nrmse", "variable": "x"}]
+
+    def test_a_tolerance_left_beside_a_plots_edit_is_saved_with_its_tree(self, session):
+        """The other half: a value typed and LEFT is an edit of the tree,
+        and the tree goes to the file with it."""
+        plots = [{"var": "x", "context": []}]
+        session.stage([PatchOp(A, "add", "/plots", plots)])
+        session.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+        assert [op.path for op in session.spec.pending] == [
+            "/plots",
+            "/metrics",
+            f"{self.LEAF}/tolerance",
+        ]
+        assert classify(session.comparisons[A]) == PASS
+        session.save()
+        saved = session.spec.saved_entry(A)
+        assert saved["metrics"]["children"] == [
+            {"metric": "nrmse", "variable": "x", "tolerance": 0.5}
+        ]
+        assert saved["plots"] == plots
+        again = Session()
+        again.open(
+            session.project.config.config_file, work_dir=session.project.config.work_dir
+        )
+        assert classify(again.comparisons[A]) == PASS and again.spec.pending == []
+
+    @pytest.mark.parametrize(
+        ("steps", "left"),
+        [
+            ("tolerance plot clear", ["/plots"]),
+            ("plot tolerance clear plot", ["/plots", "/plots/-"]),
+            ("plot tolerance plot clear", ["/plots", "/plots/-"]),
+            ("tolerance plot clear unplot", []),
+            ("plot rescore", ["/plots"]),
+            ("test-tolerance tolerance clear", ["/comparison"]),
+        ],
+    )
+    def test_the_order_of_the_edits_does_not_matter(self, tmp_path, steps, left):
+        """The tree's ops go wherever they sit among the others, and the
+        others stay in their order; with those undone as well, nothing is
+        pending and Save leaves the file's bytes alone. (`_two_var_project`'s
+        A scores x and y: a plots entry for each.)"""
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        before = s.spec.path.read_bytes()
+        plots = iter(
+            [("/plots", [{"var": "x", "context": []}]), ("/plots/-", {"var": "y"})]
+        )
+        for step in steps.split():
+            if step == "tolerance":
+                s.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+            elif step == "clear":
+                s.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+            elif step == "plot":
+                s.stage([PatchOp(A, "add", *next(plots))])
+            elif step == "unplot":
+                s.stage([PatchOp(A, "remove", "/plots")])
+            elif step == "test-tolerance":
+                s.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+            else:
+                s.rescore(A)
+        assert [op.path for op in s.spec.pending] == left
+        assert "metrics" not in s.spec.entry(A)
+        if not left:
+            s.save()
+            assert s.spec.path.read_bytes() == before
+
+    def test_a_tree_written_out_beside_the_tests_tolerance_scores_as_the_flat_entry(
+        self, session
+    ):
+        """The test's own tolerance is read by the flat path and by the
+        tree's leaves alike: the tree written out beside an edit of it is
+        still the tree the entry scores by, and goes. With the tolerance
+        put back nothing is pending. (This test pinned the opposite — "the
+        tree written out is part of what Save writes" — while the rule was
+        that every other member be as saved.)"""
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        flat = session.comparisons[A]
+        assert classify(flat) == PASS  # nrmse 0.153 under 1.0
+        session.rescore(A)
+        assert [op.path for op in session.spec.pending] == ["/comparison"]
+        assert classify(session.comparisons[A]) == PASS
+        assert session.comparisons[A].variables[0] == flat.variables[0]
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert session.spec.pending == []
+
+    def test_a_tree_the_edited_overrides_would_not_build_stays(self, session):
+        """A flat entry's tree is built from its ``variable_overrides``.
+        With those edited, the tree the SAVED entry scores by is not the
+        one the entry would score by without its ``metrics``: here the
+        override loosens x to 0.5 (PASS) and the tree's leaf, its tolerance
+        cleared, scores at the config's 0.01 (FAIL). Dropping the tree
+        would turn that FAIL into the override's PASS — an edit lost."""
+        loose = {"variable_overrides": {"x": {"tolerance": 0.5}}}
+        session.stage([PatchOp(A, "add", "/comparison", loose)])
+        assert classify(session.comparisons[A]) == PASS
+        session.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+        assert [op.path for op in session.spec.pending] == [
+            "/comparison",
+            "/metrics",
+            f"{self.LEAF}/tolerance",
+        ]
+        assert session.spec.entry(A)["metrics"] == session.tree(A)
+        assert session.tree(A)["children"] == [{"metric": "nrmse", "variable": "x"}]
+        assert classify(session.comparisons[A]) == FAIL
+
+    def test_a_tree_moved_and_moved_back_beside_a_plots_edit_does_not_stay(
+        self, tmp_path
+    ):
+        """A move stages the whole tree, unmarked: which tree the saved
+        entry scores by is asked of the saved entry."""
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        implicit = s.tree(A)
+        moved = {**implicit, "children": implicit["children"][::-1]}
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        s.stage([PatchOp(A, "add", "/metrics", moved)])
+        assert [op.path for op in s.spec.pending] == ["/plots", "/metrics"]
+        s.stage([PatchOp(A, "add", "/metrics", implicit)])
+        assert [op.path for op in s.spec.pending] == ["/plots"]
+
+    def test_two_models_in_one_stage_each_keep_what_is_theirs(self, session):
+        """Decided per model: A's tree goes and its plots edit stays, D's
+        tolerance — staged in the same call — stays with D's tree."""
+        for m in (A, D):
+            session.stage([PatchOp(m, "add", "/plots", [{"var": "x", "context": []}])])
+            session.stage([PatchOp(m, "add", f"{self.LEAF}/tolerance", 0.5)])
+        session.stage(
+            [
+                PatchOp(A, "remove", f"{self.LEAF}/tolerance"),
+                PatchOp(D, "replace", f"{self.LEAF}/tolerance", 0.25),
+            ]
+        )
+        assert [(op.model_id, op.path) for op in session.spec.pending] == [
+            (A, "/plots"),
+            (D, "/plots"),
+            (D, "/metrics"),
+            (D, f"{self.LEAF}/tolerance"),
+            (D, f"{self.LEAF}/tolerance"),
+        ]
+        assert session.spec.entry(D)["metrics"]["children"][0]["tolerance"] == 0.25
+
+    def test_a_saved_tree_beside_a_plots_edit_is_as_it_was(self, tmp_path):
+        """The rule is the flat entry's: a test with a tree in the file
+        keeps every op, whatever its tree is edited to."""
+        s = _session_with_entry(tmp_path, {"metrics": self.AUTHORED})
+        default = {"metric": "nrmse", "variable": "x"}
+        s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        s.stage([PatchOp(A, "replace", self.LEAF, default)])
+        assert [op.path for op in s.spec.pending] == ["/plots", self.LEAF]
+        assert s.spec.entry(A)["metrics"]["children"] == [default]
+
+    def test_a_leaf_removed_from_the_tree_written_out_is_an_edit(self, tmp_path):
+        """Not "any tree of default leaves": the tree the SAVED entry scores
+        — a tree short of one of its variables is a change."""
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert len(s.tree(A)["children"]) == 2
+        s.stage([PatchOp(A, "remove", "/metrics/children/1")])
+        assert [op.path for op in s.spec.pending] == ["/metrics", "/metrics/children/1"]
+
+    def test_a_keystroke_on_a_flat_test_does_not_score_the_saved_entry(
+        self, session, monkeypatch
+    ):
+        """Every keystroke in a flat test's editor is an entry that differs
+        from the saved one by its tree alone. Which tree the saved entry
+        scores by is read off the op that wrote it out, marked — never by
+        scoring the test as saved again (a merge of the whole spec and a
+        compare, per key)."""
+
+        def scored(*_a, **_k):
+            raise AssertionError("the saved entry was scored for a keystroke")
+
+        leaf = session.tree(A)["children"][0]
+        monkeypatch.setattr(session, "saved_comparisons", scored)
+        for typed in (0.0, 0.5, 0.55):
+            session.stage(
+                [PatchOp(A, "replace", self.LEAF, {**leaf, "tolerance": typed})]
+            )
+            assert len(session.spec.pending) == 2
+        session.stage([PatchOp(A, "replace", self.LEAF, leaf)])
+        assert session.spec.pending == []
+
+    def test_a_whole_tree_staged_and_put_back_is_no_pending_edit(self, session):
+        """A move or a wrap stages the WHOLE tree, with no op of the
+        Session's before it: moved back, the entry holds the tree it already
+        scores by and no marked op says so. It is asked of the saved entry."""
+        implicit = session.tree(A)
+        wrapped = {"combinator": "and", "children": [implicit]}
+        session.stage([PatchOp(A, "add", "/metrics", wrapped)])
+        (op,) = session.spec.pending
+        assert not op.materializes
+        session.stage([PatchOp(A, "add", "/metrics", implicit)])
+        assert session.spec.pending == []
+        assert "metrics" not in session.spec.entry(A)
+        # ... and staged outright, the tree it scores by is no edit at all.
+        session.stage([PatchOp(A, "add", "/metrics", implicit)])
+        assert session.spec.pending == []
+
+    def test_the_tree_asked_for_is_the_saved_entrys_not_the_edited_ones(self, tmp_path):
+        """A tree short of a variable is scored — and read — by that one
+        variable. The tree an entry may hold and be as saved is the one the
+        SAVED entry scores, its two: not the tree the test as edited would
+        be written out as."""
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        x, _y = s.tree(A)["children"]
+        short = {"combinator": "and", "children": [x]}
+        s.stage([PatchOp(A, "add", "/metrics", short)])
+        assert [vc.name for vc in s.comparisons[A].variables] == ["x"]
+        s.stage([PatchOp(A, "add", f"{self.LEAF}/tolerance", 0.5)])
+        s.stage([PatchOp(A, "remove", f"{self.LEAF}/tolerance")])
+        assert s.spec.entry(A)["metrics"] == short
+        assert [op.path for op in s.spec.pending][0] == "/metrics"
+
+    def test_a_tree_built_from_edited_overrides_is_an_edit_with_them_put_back(
+        self, session
+    ):
+        """The tree written out after an overrides edit holds THEM (and is
+        not marked): with the overrides put back it is not the tree the
+        saved entry scores, and stays. Replaced by that tree, it goes."""
+        implicit = session.tree(A)
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        session.rescore(A)
+        assert [op.materializes for op in session.spec.pending] == [False, False]
+        session.stage([PatchOp(A, "remove", "/comparison")])
+        assert [op.path for op in session.spec.pending] == [
+            "/comparison",
+            "/metrics",
+            "/comparison",
+        ]
+        assert session.spec.entry(A)["metrics"]["children"][0]["tolerance"] == 0.5
+        session.stage([PatchOp(A, "replace", "/metrics", implicit)])
+        assert session.spec.pending == []
+
+    @pytest.mark.parametrize(("saved", "staged"), [(1, True), (True, 1)])
+    def test_a_tree_holding_true_for_the_saved_trees_one_is_an_edit(
+        self, tmp_path, saved, staged
+    ):
+        """Which tree the saved entry scores by is compared as JSON reads
+        it, as the entry is: the override's `1` written out as `true` — or
+        its `true` as `1` — is another tree, though Python's ``==`` calls
+        the two equal, and stays pending. The same number as `1.0` goes."""
+        override = {"mode": "event-timing", "count_must_match": saved}
+        s = _session_with_entry(
+            tmp_path, {"comparison": {"variable_overrides": {"x": override}}}
+        )
+        implicit = s.tree(A)
+        (leaf,) = implicit["children"]
+        assert leaf["count_must_match"] is saved
+        other = {**implicit, "children": [{**leaf, "count_must_match": staged}]}
+        s.stage([PatchOp(A, "add", "/metrics", other)])
+        assert [op.path for op in s.spec.pending] == ["/metrics"]
+        assert s.spec.entry(A)["metrics"] == other
+        s.stage([PatchOp(A, "add", "/metrics", implicit)])
+        assert s.spec.pending == []
+        if saved == 1 and saved is not True:
+            as_float = {**implicit, "children": [{**leaf, "count_must_match": 1.0}]}
+            s.stage([PatchOp(A, "add", "/metrics", as_float)])
+            assert s.spec.pending == []
+
+    @pytest.mark.parametrize(
+        ("a", "b", "same"),
+        [
+            ({"x": 1, "y": [1, 2]}, {"y": [1, 2], "x": 1}, True),  # members, any order
+            ({"x": 1}, {"x": 1.0}, True),  # one number
+            ({"x": 1}, {"x": True}, False),  # `true` is no number
+            ({"x": 0}, {"x": False}, False),
+            ({"x": [1, 2]}, {"x": [2, 1]}, False),  # a list is ordered
+            ({"x": 1}, {"x": 1, "y": None}, False),
+            ({"x": None}, {"x": None}, True),
+            ({"x": "1"}, {"x": 1}, False),
+        ],
+    )
+    def test_equal_is_as_json_reads_it(self, a, b, same):
+        from dstf.authoring.spec_document import json_equal
+
+        assert json_equal(a, b) is same
+        assert json_equal(b, a) is same
+
+
+class TestTheMaterializationIsMarked:
+    """The drawer's preview diffs against the tree as scoring sees it: the
+    op `stage` prepends to write a flat entry's tree out says so."""
+
+    def test_the_prepended_tree_is_marked_and_the_edit_is_not(self, session):
+        session.stage([LOOSEN])
+        tree, edit = session.spec.pending
+        assert (tree.op, tree.path) == ("add", "/metrics") and tree.materializes
+        assert edit == LOOSEN and not edit.materializes
+
+    def test_an_edit_that_lands_on_the_tree_unmarks_it(self, session):
+        """Convention 8 folds a replace of ``/metrics`` onto the op that
+        added it: the value is no longer the scored tree."""
+        session.stage([LOOSEN])
+        tree = session.spec.pending[0]
+        session.spec = SpecDocument(
+            session.spec.path, session.spec.loaded, session.spec.content_hash, [tree]
+        )
+        other = copy.deepcopy(tree.value)
+        other["children"][0]["tolerance"] = 0.5
+        session.stage([PatchOp(A, "replace", "/metrics", other)])
+        (folded,) = session.spec.pending
+        assert (folded.op, folded.value) == ("add", other)
+        assert not folded.materializes
+
+    def test_a_tree_the_edit_supplies_is_not_marked(self, session):
+        tree = session.tree(A)
+        tree["children"][0]["tolerance"] = 0.5
+        session.stage([PatchOp(A, "add", "/metrics", tree)])
+        assert not session.spec.pending[0].materializes
+
+    def test_a_tree_built_from_edited_overrides_is_not_marked(self, session):
+        """The tree is built from the overrides as EDITED: it is not what
+        the saved entry scores, and the drawer shows it added."""
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        session.stage(
+            [
+                PatchOp(
+                    A, "add", "/metrics/children/0/window", {"start": 0.0, "end": 1.0}
+                )
+            ]
+        )
+        assert [op.materializes for op in session.spec.pending] == [False] * 3
+        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
+
+    def test_an_earlier_edit_the_tree_does_not_read_keeps_the_mark(self, session):
+        session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 0.5})])
+        session.stage([LOOSEN])
+        assert [op.materializes for op in session.spec.pending] == [
+            False,
+            True,
+            False,
+        ]
+
+    def test_rescores_materialization_is_marked(self, session, monkeypatch):
+        """`rescore` marks the tree it stages as `stage` marks its own, and
+        the mark is what lets it go again at no cost: which tree the saved
+        entry scores by is read off the op, never by scoring the test as
+        saved (a merge of the whole spec and a compare, per look)."""
+
+        def scored(*_a, **_k):
+            raise AssertionError("the saved entry was scored for a rescore")
+
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        monkeypatch.setattr(session, "saved_comparisons", scored)
+        session.rescore(A)
+        assert [op.path for op in session.spec.pending] == ["/plots"]
+
+    def test_a_tree_written_out_beside_a_plots_edit_is_not_previewed_as_added(
+        self, session
+    ):
+        from dstf.authoring.spec_preview import entry_lines
+
+        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
+        session.stage([LOOSEN])
+        _plots, tree, _edit = session.spec.pending
+        assert tree.materializes
+        lines = entry_lines(session.spec.preview_base(A), session.spec.entry(A))
+        added = [line.text.strip() for line in lines if line.kind == "add"]
+        assert '"plots": [' in added and '"tolerance": 0.5' in added
+        assert '"metric": "nrmse",' not in added
+
+    def test_a_capabilitys_patch_cannot_claim_a_mark(self, session):
+        """Only the Session's own materialization is the scored tree: a
+        Patch that says its op is one is staged unmarked."""
+        tree = session.tree(A)
+        tree["children"][0]["tolerance"] = 0.5
+        session.apply(
+            Patch(ops=[PatchOp(A, "add", "/metrics", tree, materializes=True)])
+        )
+        assert not session.spec.pending[0].materializes
+
+    def test_rescore_after_an_overrides_edit_is_not_marked(self, session):
+        """`rescore`'s tree, built from overrides a pending op edited, is not
+        what the saved entry scores: unmarked, as `stage`'s."""
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        session.rescore(A)
+        assert [op.materializes for op in session.spec.pending] == [False, False]
+        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
+
+    def test_an_override_whose_value_moved_unmarks_the_tree(self, tmp_path):
+        """The overrides are compared by value, not by their keys: x's saved
+        tolerance moved, so the tree built from it is not the saved one."""
+        s = _session_with_entry(
+            tmp_path, {"comparison": {"variable_overrides": {"x": {"tolerance": 0.3}}}}
+        )
+        s.stage(
+            [PatchOp(A, "replace", "/comparison/variable_overrides/x/tolerance", 0.5)]
+        )
+        s.stage(
+            [
+                PatchOp(
+                    A, "add", "/metrics/children/0/window", {"start": 0.0, "end": 1.0}
+                )
+            ]
+        )
+        assert [op.materializes for op in s.spec.pending] == [False, False, False]
+
+    def test_a_saved_tree_removed_is_not_what_the_saved_entry_scores(self, tmp_path):
+        """The saved entry scores its OWN tree: with it removed, the tree
+        `rescore` builds from the overrides is not that one, even though the
+        overrides are as saved — unmarked, it diffs as a change."""
+        from dstf.authoring.spec_preview import entry_lines
+
+        authored = {
+            "combinator": "and",
+            "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.3}],
+        }
+        s = _session_with_entry(tmp_path, {"metrics": authored})
+        s.stage([PatchOp(A, "remove", "/metrics")])
+        s.rescore(A)
+        assert not s.spec.pending[-1].materializes
+        assert entry_lines(s.spec.preview_base(A), s.spec.entry(A)) != []
+
+
+def _session_with_entry(tmp_path: Path, extra: dict) -> Session:
+    """`_project` with ``extra`` merged into A's entry on disk before `open`."""
+    cfg, work = _project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry.update(extra)
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+class TestAStagedValueIsTheSessions:
+    """`stage` keeps a copy of each op's value: the caller's dict is its own."""
+
+    def test_a_caller_editing_its_dict_after_staging_changes_nothing(self, session):
+        value = {
+            "combinator": "and",
+            "children": [{"metric": "nrmse", "variable": "x", "tolerance": 0.5}],
+        }
+        session.stage([PatchOp(A, "add", "/metrics", value)])
+        value["children"][0]["tolerance"] = 99.0  # the caller keeps editing
+        assert session.spec.pending[0].value["children"][0]["tolerance"] == 0.5
+        (patch,) = session.export()["patches"]
+        assert patch["patch"][0]["value"]["children"][0]["tolerance"] == 0.5
+        session.save()
+        saved = session.spec.saved_entry(A)
+        assert saved is not None
+        assert saved["metrics"]["children"][0]["tolerance"] == 0.5
+
+
+class TestPerTestDiscardAndSavedVerdict:
+    """The Test page's strip: one test's edits discarded, and the verdict
+    the test has as SAVED beside the one its edits give it."""
+
+    TIGHTEN_D = PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})
+    LOOSEN_A = PatchOp(A, "add", "/comparison", {"tolerance": 1.0})
+
+    def test_discard_of_one_model_keeps_the_others_ops(self, session):
+        session.stage([self.LOOSEN_A])
+        session.stage([self.TIGHTEN_D])
+        assert classify(session.comparisons[A]) == PASS
+        assert classify(session.comparisons[D]) == FAIL
+        session.discard(models={A})
+        assert session.spec.pending == [self.TIGHTEN_D]
+        assert classify(session.comparisons[A]) == FAIL
+        assert classify(session.comparisons[D]) == FAIL  # still the edited one
+        session.discard()
+        assert session.spec.pending == []
+        assert classify(session.comparisons[D]) == PASS
+
+    def test_discard_of_a_model_with_nothing_pending_says_nothing(self, session):
+        """No op of D is pending: the discard changes nothing, and says so
+        by emitting nothing — no page repaints for it."""
+        session.stage([self.LOOSEN_A])
+        events: list[dict] = []
+        session.on("spec", events.append)
+        session.on("results", events.append)
+        spec = session.spec
+        session.discard(models={D})
+        assert events == []
+        assert session.spec is spec
+
+    def test_saved_comparisons_merge_the_saved_spec_once(self, session, monkeypatch):
+        """The drawer asks for every edited test's saved verdict at once:
+        the loaded spec is merged ONCE for all of them, and each verdict is
+        the one `saved_comparison` gives."""
+        session.stage([self.LOOSEN_A])
+        session.stage([self.TIGHTEN_D])
+        merges: list[int] = []
+        real = session._merge
+
+        def counting(*args, **kwargs):
+            merges.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(session, "_merge", counting)
+        saved = session.saved_comparisons({A, D, B})
+        assert len(merges) == 1
+        assert set(saved) == {A, D, B}
+        assert classify(saved[A]) == FAIL and classify(saved[D]) == PASS
+        assert saved[B] is session.comparisons[B]  # nothing pending for B
+        merges.clear()
+        assert session.saved_comparisons({B}) == {B: session.comparisons[B]}
+        assert merges == []  # nothing pending: nothing merged
+        assert classify(session.saved_comparison(A)) == FAIL
+
+    def test_saved_comparison_with_nothing_pending_is_the_comparison(self, session):
+        assert session.saved_comparison(A) is session.comparisons[A]
+
+    def test_saved_comparison_is_the_verdict_as_saved(self, session):
+        session.stage([self.LOOSEN_A])
+        comparisons = dict(session.comparisons)
+        tests = list(session.project.tests)
+        loaded = copy.deepcopy(session.spec.loaded)
+        assert classify(session.comparisons[A]) == PASS
+        saved = session.saved_comparison(A)
+        assert session.spec.loaded == loaded
+        assert classify(saved) == FAIL
+        assert session.comparisons == comparisons  # nothing written
+        assert all(a is b for a, b in zip(session.project.tests, tests))
+        assert len(session.project.tests) == len(tests)
+        assert classify(session.comparisons[A]) == PASS
+
+    def test_saved_comparison_of_a_new_entry_is_none(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        # D drops out of the spec: it is scanned by no recognizer (Python
+        # source), so its entry is the only thing that makes it a test.
+        spec["tests"] = [e for e in spec["tests"] if e["model"] != D]
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.project.test(D) is None
+        s.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.01})])
+        assert s.saved_comparison(D) is None
+
+
+class TestACriterionOnAFileVariable:
+    """The owner's O2: staging a criterion on a variable the loaded result
+    lacks re-reads the model when its result FILE holds the variable (a
+    backend that records everything), so it scores at once; a name the
+    file lacks is left for the test's next run, and nothing is re-read."""
+
+    def _leaf(self, variable: str) -> PatchOp:
+        return PatchOp(
+            D,
+            "add",
+            "/metrics/children/-",
+            {"metric": "range", "variable": variable, "min_value": 0, "max_value": 1},
+        )
+
+    def test_a_variable_the_file_has_is_re_read_and_scored(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        path = work / "test_0004" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["w"] = [0.5 for _ in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert [v.name for v in s.project.results[D].variables] == ["x"]
+        s.stage([self._leaf("w")])
+        assert [(v.index, v.name) for v in s.project.results[D].variables] == [
+            (1, "x"),
+            (2, "w"),
+        ]
+        leaf = s.comparisons[D].metric_tree.children[-1]
+        assert leaf.passed, leaf.diagnostics
+        assert classify(s.comparisons[D]) == PASS
+        # The saved spec (no tree) scores what D tracks, not the re-read w.
+        assert classify(s.saved_comparison(D)) == PASS
+        s.discard()
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert [vc.name for vc in s.comparisons[D].variables] == ["x"]
+        assert classify(s.comparisons[D]) == PASS
+
+    def test_a_variable_the_file_lacks_is_not_re_read(self, session, monkeypatch):
+        before = session.project.results[D]
+        reads: list = []
+        real = session.project.backend.read_last_results
+        monkeypatch.setattr(
+            session.project.backend,
+            "read_last_results",
+            lambda tests, **kw: (reads.append(tests), real(tests, **kw))[1],
+        )
+        session.stage([self._leaf("z")])
+        assert reads == []
+        assert session.project.results[D] is before
+        leaf = session.comparisons[D].metric_tree.children[-1]
+        assert not leaf.passed
+
+    @staticmethod
+    def _with_w(tmp_path, *, tree: bool) -> tuple[Path, Path]:
+        """`_project` whose D result FILE holds ``w`` beside ``x``, and —
+        with ``tree`` — whose SAVED D entry is a tree scoring ``x``."""
+        cfg, work = _project(tmp_path)
+        if tree:
+            spec_path = cfg.parent / "test_spec.json"
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            for entry in spec["tests"]:
+                if entry["model"] == D:
+                    entry["metrics"] = {
+                        "combinator": "and",
+                        "children": [{"metric": "nrmse", "variable": "x"}],
+                    }
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        path = work / "test_0004" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["w"] = [0.5 for _ in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return cfg, work
+
+    def test_a_discarded_criterions_variable_is_not_tracked_after(self, tmp_path):
+        """The re-read w outlives its criterion in the result: a saved tree
+        does not then warn of it as a tracked variable without a criterion,
+        and the Variables drawer's Tracked group does not hold it."""
+        cfg, work = self._with_w(tmp_path, tree=True)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.comparisons[D].warnings == []
+        s.stage([self._leaf("w")])
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert s.comparisons[D].warnings == []
+        s.discard()
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert s.comparisons[D].warnings == []
+        assert s.tracked(D) == ["x"]
+        assert "w" in s.variable_names(D)  # still the file's
+
+    def test_the_saved_comparison_under_a_pending_criterion_does_not_warn(
+        self, tmp_path
+    ):
+        cfg, work = self._with_w(tmp_path, tree=True)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([self._leaf("w")])
+        assert s.saved_comparison(D).warnings == []
+
+    def test_a_flat_discard_leaves_the_plots_as_they_were(self, tmp_path):
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        before = [list(p.series) for p in s.plots(D)]
+        s.stage([self._leaf("w")])
+        s.discard()
+        assert [list(p.series) for p in s.plots(D)] == before
+        assert s.tracked(D) == ["x"]
+
+    def test_a_re_read_that_raises_leaves_the_result_and_the_reads(
+        self, tmp_path, monkeypatch
+    ):
+        """The re-read is atomic: a read that raises drops nothing — the
+        loaded result and the model's reads stand."""
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.variable_names(D)  # the model's reads, the file listed
+        before, reads = s.project.results[D], s._reads[D]
+
+        def boom(tests, **kw):
+            raise OSError("the disk went away")
+
+        monkeypatch.setattr(s.project.backend, "read_last_results", boom)
+        with pytest.raises(OSError, match="went away"):
+            s.stage([self._leaf("w")])
+        assert s.project.results[D] is before
+        assert s._reads[D] is reads
+
+    def test_a_stage_whose_re_read_raises_leaves_the_session_as_it_was(
+        self, tmp_path, monkeypatch
+    ):
+        """`stage`'s promise — on any error the Session is unchanged — holds
+        across the re-read: it reads before the spec and the tests are
+        replaced, so nothing is pending, the tests and the comparison are
+        the ones before, and no event said otherwise."""
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        spec, tests, comp = s.spec, s.project.tests, s.comparisons[D]
+        events: list[dict] = []
+        for kind in ("spec", "results"):
+            s.on(kind, events.append)
+
+        def boom(tests, **kw):
+            raise OSError("the disk went away")
+
+        monkeypatch.setattr(s.project.backend, "read_last_results", boom)
+        with pytest.raises(OSError, match="went away"):
+            s.stage([self._leaf("w")])
+        assert s.spec is spec and s.spec.pending == []
+        assert s.project.tests is tests
+        assert s.comparisons[D] is comp
+        assert events == []
+
+    def test_a_re_read_keeps_the_files_listing(self, tmp_path, monkeypatch):
+        """The file did not change: the re-read keeps its listing, and the
+        next `variable_names` does not list it again."""
+        cfg, work = self._with_w(tmp_path, tree=False)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        backend = type(s.project.backend)
+        real = backend.result_names
+        listed: list = []
+
+        def counting(test_dir):
+            listed.append(test_dir)
+            return real(test_dir)
+
+        monkeypatch.setattr(backend, "result_names", staticmethod(counting))
+        assert "w" in s.variable_names(D)
+        assert len(listed) == 1
+        s.stage([self._leaf("w")])
+        assert [v.name for v in s.project.results[D].variables] == ["x", "w"]
+        assert "w" in s.variable_names(D)
+        assert len(listed) == 1, listed
+
+
+# -- the Statistics rows (U3) -----------------------------------------------------
+
+#: Dymola-shaped statistics: the baseline was stored before the parser always
+#: wrote a list's summaries (an empty `nonlinear`, no `nonlinear_count`).
+STATS_RUN = {
+    "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
+    "simulation": {"state_events": 2},
+    "timing": {"total_wall": 4.02},
+    "CPUtime": 1.12,
+}
+STATS_BASE = {
+    "translation": {"nonlinear": []},
+    "simulation": {"state_events": 2},
+    "timing": {"total_wall": 3.91},
+    "CPUtime": 0.80,
+}
+
+
+def _stats_session(tmp_path: Path, *, result: bool = True) -> Session:
+    """`_two_var_project` with A's baseline carrying `STATS_BASE` and its
+    in-memory result `STATS_RUN` (FakeLib records only walls)."""
+    cfg, work = _two_var_project(tmp_path)
+    config = Config(config_file=cfg, work_dir=work)
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(config).store_reference(
+        make_test_model(A, variable_patterns=["x", "y"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+            ],
+            statistics=copy.deepcopy(STATS_BASE),
+            diagnostics=[
+                VariableResult(index=0, time=tt, values=0.80 * tt, name="CPUtime")
+            ],
+        ),
+    )
+    s = Session()
+    s.open(cfg, work_dir=work)
+    if result:
+        res = s.project.results[A]
+        res.statistics = copy.deepcopy(STATS_RUN)
+        res.diagnostics = [
+            VariableResult(index=0, time=tt, values=1.12 * tt, name="CPUtime")
+        ]
+    else:
+        s.project.results.pop(A, None)
+    return s
+
+
+class TestTheStatisticsRows:
+    def test_an_unknown_models_statistic_leaves_are_a_key_error(self, tmp_path):
+        """As for `statistics` and `tree`: a model the project does not
+        have is a caller's error, not a test with no criteria."""
+        s = _stats_session(tmp_path)
+        with pytest.raises(KeyError):
+            s.statistic_leaves("No.Such.Model")
+        assert s.statistic_leaves(A) == []
+
+    def test_the_run_beside_the_baseline_in_the_reports_order(self, tmp_path):
+        s = _stats_session(tmp_path)
+        rows = s.statistics(A)
+        assert [r.path for r in rows] == [
+            "translation.nonlinear",
+            "translation.nonlinear_count",
+            # the list's other summaries: 0 on the baseline's empty list,
+            # nothing on a run that wrote only the count
+            "translation.nonlinear_max",
+            "translation.nonlinear_total",
+            "CPUtime",
+            "simulation.state_events",
+            "timing.total_wall",
+        ]
+        by = {r.path: r for r in rows}
+        assert by["translation.nonlinear_max"].baseline == 0
+        assert by["translation.nonlinear_max"].run is None
+        assert by["translation.nonlinear_count"].baseline == 0
+        assert by["translation.nonlinear_count"].delta == "0→3"
+        assert by["translation.nonlinear_count"].changed
+        assert by["CPUtime"].changed and by["CPUtime"].delta == "+40%"
+        assert not by["timing.total_wall"].changed
+
+    def test_a_staged_leaf_on_an_unknown_quantity_gets_its_own_row(self, tmp_path):
+        s = _stats_session(tmp_path)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "scalar", "quantity": "translation.typo", "tolerance": 0},
+                {
+                    "metric": "scalar",
+                    "variable": "CPUtime",
+                    "quantity": "CPUtime.final",
+                    "tolerance": 0.1,
+                    "tolerance_mode": "rel",
+                },
+            ],
+        }
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        rows = s.statistics(A)
+        assert (rows[-1].path, rows[-1].section) == ("translation.typo", "other scored")
+        assert rows[-1].run is None and rows[-1].baseline is None
+        # `CPUtime.final` is the `CPUtime` row (S2): no second one.
+        assert [r.path for r in rows].count("CPUtime") == 1
+        assert "CPUtime.final" not in [r.path for r in rows]
+
+    def test_an_implicit_tree_is_never_materialized_for_them(self, tmp_path):
+        """The extra rows come from the ENTRY's own tree: an implicit tree
+        holds no statistics leaf, and materializing one reads the baseline
+        (Corrections B4)."""
+        s = _stats_session(tmp_path)
+
+        def refuse(model_id):
+            raise AssertionError("materialized")
+
+        s._materialization = refuse  # type: ignore[method-assign]
+        assert s.statistics(A)
+
+    def test_no_result_reads_the_baseline_rows_alone(self, tmp_path):
+        s = _stats_session(tmp_path, result=False)
+        rows = s.statistics(A)
+        assert rows and all(r.run is None and not r.changed for r in rows)
+        assert s.statistics(B) == []
+        with pytest.raises(KeyError):
+            s.statistics("FakeLib.Nope")
+
+    def test_the_cached_reference_is_never_written(self, tmp_path):
+        s = _stats_session(tmp_path)
+        before = copy.deepcopy(s._reads_for(A).ref)
+        s.statistics(A)
+        s.statistics(A)
+        assert s._reads_for(A).ref == before
+
+    def test_the_rows_take_each_diagnostics_own_samples(self, tmp_path):
+        s = _stats_session(tmp_path)
+        tt = np.asarray([i / 4 for i in range(5)])
+        res = s.project.results[A]
+        res.statistics = {**res.statistics, "Steps": 4.0, "Wall": 2.5}
+        res.diagnostics = [
+            VariableResult(index=0, time=tt, values=4 * tt, name="Steps"),  # whole
+            VariableResult(
+                index=0, time=tt, values=2.5 * tt, name="Wall"
+            ),  # fractional
+        ]
+        by = {r.path: r for r in s.statistics(A)}
+        assert by["Wall"].kind == "time"
+        assert by["Steps"].kind == "count"
+
+    def test_a_diagnostic_max_leaf_gets_its_own_row_from_both_sides(self, tmp_path):
+        s = _stats_session(tmp_path)
+        tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {
+                    "metric": "scalar",
+                    "variable": "CPUtime",
+                    "quantity": "CPUtime.max",
+                    "tolerance": 0.1,
+                    "tolerance_mode": "rel",
+                },
+            ],
+        }
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        row = s.statistics(A)[-1]
+        assert (row.path, row.section) == ("CPUtime.max", "other scored")
+        assert row.run == pytest.approx(1.12) and row.baseline == pytest.approx(0.80)
+
+    def test_a_statistics_leaf_is_no_tracked_variable(self, tmp_path):
+        """A statistics leaf scores a stored number, not a variable: its
+        parsed `variable` (its path, or a diagnostic's name) is never one of
+        the test's tracked variables, which the add form's picker lists
+        (Corrections B5)."""
+        s = _stats_session(tmp_path)
+        s.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics",
+                    {
+                        "combinator": "and",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x"},
+                            {
+                                "metric": "scalar",
+                                "quantity": "translation.nonlinear_count",
+                                "tolerance": 0,
+                            },
+                            {
+                                "metric": "scalar",
+                                "variable": "CPUtime",
+                                "quantity": "CPUtime.final",
+                                "tolerance": 0.1,
+                                "tolerance_mode": "rel",
+                            },
+                        ],
+                    },
+                )
+            ]
+        )
+        scored = [vc.name for vc in s.comparisons[A].variables]
+        assert "translation.nonlinear_count" in scored  # what B5 is about
+        assert s.tracked(A) == ["x", "y"]
+
+
+#: Dymola-shaped statistics at TRANSFORM's lengths (the keys `log_parser`
+#: writes), for the Statistics card: the baseline was stored before the
+#: parser wrote a list's zero summaries (an empty `nonlinear`, no `_count`),
+#: and the run's model grew three nonlinear systems. CPU time moved
+#: 0.80 -> 1.12 s (+40%); the total wall by 3%, inside the 10% a time's
+#: requirement allows.
+DYMOLA_BASE = {
+    "translation": {
+        "scalar_unknowns": 8715,
+        "scalar_equations": 8715,
+        "continuous_time_states": 120,
+        "numerical_jacobians": 0,
+        "nonlinear": [],
+        "init_homotopy_nonlinear_after_manipulation": [31, 31],
+        "init_homotopy_nonlinear_after_manipulation_count": 2,
+        "init_homotopy_nonlinear_after_manipulation_total": 62,
+        "init_homotopy_nonlinear_after_manipulation_max": 31,
+        "state_names": ["pipe_nParallel.pipe.flowModel.firstOrder_dps_K[1].y"],
+    },
+    "simulation": {
+        "cpu_time_integration": 0.201,
+        "result_points": 102,
+        "accepted_steps": 25,
+        "state_events": 0,
+    },
+    "timing": {
+        "translation_wall": 2.1,
+        "sim_wall": 1.2,
+        "other_wall": 0.61,
+        "total_wall": 3.91,
+    },
+    "CPUtime": 0.80,
+    "EventCounter": 0,
+}
+DYMOLA_RUN = copy.deepcopy(DYMOLA_BASE)
+DYMOLA_RUN["translation"].update(
+    {
+        "nonlinear": [3, 5, 1],
+        "nonlinear_count": 3,
+        "nonlinear_total": 9,
+        "nonlinear_max": 5,
+    }
+)
+DYMOLA_RUN["timing"]["total_wall"] = 4.02
+DYMOLA_RUN["CPUtime"] = 1.12
+
+
+def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A's run and baseline carrying `DYMOLA_RUN` /
+    `DYMOLA_BASE` ON DISK — the run's in `run_stats.json` (what a reload
+    reads; FakeLib's fixture never runs), the baseline's through the store —
+    so a served `dstf author` reads them too. B's run carries `DYMOLA_RUN`
+    and B has no baseline (NO_REF: nothing is scored)."""
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    for key, model in (("test_0001", A), ("test_0002", B)):
+        (work / key / "run_stats.json").write_text(
+            json.dumps(
+                {
+                    "model_id": model,
+                    "translation_wall": None,
+                    "sim_wall": None,
+                    "elapsed": 0.0,
+                    "statistics": DYMOLA_RUN,
+                }
+            ),
+            encoding="utf-8",
+        )
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=["x", "y"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+            ],
+            statistics=copy.deepcopy(DYMOLA_BASE),
+        ),
+    )
+    return cfg, work

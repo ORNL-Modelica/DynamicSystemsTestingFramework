@@ -7,12 +7,17 @@ runs against a real Reference-FMU when available.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
+from conftest import make_test_model as _tm
+from dstf.backends.types import Capability, TestRunResult
 from dstf.discovery.test_registry import TestModel
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -32,12 +37,13 @@ def _reference_fmus_available() -> bool:
     return REFERENCE_FMUS_DIR.exists() and any(REFERENCE_FMUS_DIR.rglob("*.fmu"))
 
 
-pytestmark = [
-    pytest.mark.skipif(
-        not _fmpy_available() or not _reference_fmus_available(),
-        reason="Requires fmpy + Reference-FMUs binaries",
-    ),
-]
+# Carried by the two chain tests rather than the module: the soft-check
+# regression folded in at the bottom drives a fake FmpyBackend and needs
+# neither fmpy nor the binaries.
+_needs_real_fmpy = pytest.mark.skipif(
+    not _fmpy_available() or not _reference_fmus_available(),
+    reason="Requires fmpy + Reference-FMUs binaries",
+)
 
 
 def _seed_primary_baseline(store_dir: Path, model_id: str) -> None:
@@ -71,6 +77,7 @@ def _make_chain_test(model_id: str = "BouncingBall") -> TestModel:
     )
 
 
+@_needs_real_fmpy
 def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     """Mock the export_fmu step (no Dymola available); the FMPy half is real.
 
@@ -78,11 +85,11 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     then verify the FMPy result lands as a 'dymola-via-fmpy' baseline on
     the primary reference file.
     """
-    from dstf.config import Config
-    from dstf.simulators.cross_backend import (
+    from dstf.backends.cross_backend import (
         CROSS_BACKEND_BASELINE_NAME,
         produce_dymola_via_fmpy_baseline,
     )
+    from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
 
     # Set up an FMU example directory + reference store
@@ -102,19 +109,22 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
         source_path=fmu_examples_dir,
         reference_root=store_root,
         source_type="fmu",
-        simulator="FMPy",
+        backend_name="FMPy",
         work_dir=tmp_path / "work",
     )
     store = ReferenceStore(config)
 
-    # Mock primary runner: its export_fmu just returns the staged FMU path.
-    primary_runner = MagicMock()
-    primary_runner.export_fmu.return_value = (
+    # Mock primary backend: it declares FMU_EXPORT (the chain gates on the
+    # capability, not on export_fmu raising) and its export_fmu just returns
+    # the staged FMU path.
+    primary_backend = MagicMock()
+    primary_backend.capabilities = frozenset({Capability.FMU_EXPORT})
+    primary_backend.export_fmu.return_value = (
         fmu_examples_dir / "BouncingBall.fmu"
     ).resolve()
 
     test = _make_chain_test("BouncingBall")
-    ok = produce_dymola_via_fmpy_baseline(test, primary_runner, config, store)
+    ok = produce_dymola_via_fmpy_baseline(test, primary_backend, config, store)
     assert ok is True
 
     # Verify the soft_check landed in the new on-disk layout (D66)
@@ -125,19 +135,19 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     assert len(cb_soft_check.variables) >= 1
     assert cb_soft_check.provenance["secondary_backend"] == "FMPy"
 
-    # Primary ref file is unchanged by soft_check writes — no legacy
-    # flat 'baselines' dict expected.
+    # Primary ref file is unchanged by soft_check writes.
     ref = store.get_reference("BouncingBall")
     assert ref is not None
     assert "baselines" not in ref or not ref["baselines"]
 
 
+@_needs_real_fmpy
 def test_chain_returns_false_when_export_fails(tmp_path):
-    """When primary backend can't export FMU, chain logs + returns False."""
-    from dstf.config import Config
-    from dstf.simulators.cross_backend import (
+    """A declared exporter whose export blows up: chain logs + returns False."""
+    from dstf.backends.cross_backend import (
         produce_dymola_via_fmpy_baseline,
     )
+    from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
 
     fmu_examples_dir = tmp_path / "fmu_examples"
@@ -151,16 +161,202 @@ def test_chain_returns_false_when_export_fails(tmp_path):
         source_path=fmu_examples_dir,
         reference_root=tmp_path / "refs",
         source_type="fmu",
-        simulator="FMPy",
+        backend_name="FMPy",
         work_dir=tmp_path / "work",
     )
     store = ReferenceStore(config)
 
-    primary_runner = MagicMock()
-    primary_runner.export_fmu.side_effect = NotImplementedError(
+    primary_backend = MagicMock()
+    primary_backend.capabilities = frozenset({Capability.FMU_EXPORT})
+    primary_backend.export_fmu.side_effect = RuntimeError(
         "no FMI export option in license"
     )
 
     test = _make_chain_test()
-    ok = produce_dymola_via_fmpy_baseline(test, primary_runner, config, store)
+    ok = produce_dymola_via_fmpy_baseline(test, primary_backend, config, store)
     assert ok is False
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# Finding 76-part — a ValueError from ``add_soft_check`` (name collision) is
+# logged and skipped, not raised out of the chain.
+#
+# This one drives a fake FmpyBackend and needs neither fmpy nor the
+# Reference-FMU binaries, which is why the dependency gate moved from a
+# module-level ``pytestmark`` onto the two chain tests that do need it.
+# =========================================================================
+
+
+class TestCrossBackendSoftCheckValueError:
+    def test_valueerror_from_add_soft_check_is_logged_and_skipped(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.config import Config
+
+        fmu_dir = tmp_path / "fmu_examples"
+        fmu_dir.mkdir()
+        fmu_path = fmu_dir / "Model.fmu"
+        fmu_path.write_bytes(b"fake")
+
+        config = Config(
+            source_path=fmu_dir,
+            reference_root=tmp_path / "refs",
+            source_type="fmu",
+            backend_name="FMPy",
+            work_dir=tmp_path / "work",
+        )
+
+        class _FakeFmpyBackend:
+            def __init__(self, cfg):
+                self.config = cfg
+
+            def run_single_test(self, test, test_key, index, total):
+                return TestRunResult(
+                    model_id=test.model_id, test_key=test_key, success=True
+                )
+
+            def read_result(self, test, test_key, run_result):
+                return TestResult(
+                    model_id=test.model_id,
+                    success=True,
+                    variables=[
+                        VariableResult(
+                            index=1,
+                            name="h",
+                            time=np.array([0.0, 1.0]),
+                            values=np.array([1.0, 0.5]),
+                        )
+                    ],
+                )
+
+        monkeypatch.setattr("dstf.backends.fmpy.backend.FmpyBackend", _FakeFmpyBackend)
+
+        primary = MagicMock()
+        primary.capabilities = frozenset({Capability.FMU_EXPORT})
+        primary.export_fmu.return_value = fmu_path
+
+        store = MagicMock()
+        store.add_soft_check.side_effect = ValueError("name collides with companion")
+
+        test = _tm("Model", variable_patterns=["h"])
+        with caplog.at_level(logging.WARNING):
+            ok = produce_dymola_via_fmpy_baseline(test, primary, config, store)
+        assert ok is False  # logged + skipped, not raised
+        assert "cannot store baseline" in caplog.text
+
+
+class TestCrossBackendBaselinePayload:
+    def test_the_written_baseline_carries_name_and_expression(
+        self, tmp_path, monkeypatch
+    ):
+        """The chain writes a baseline like any other writer does: keyed by
+        the result-file name, with the expression recorded beside it (``""``
+        for an FMU variable, which has none)."""
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.config import Config
+
+        fmu_dir = tmp_path / "fmu_examples"
+        fmu_dir.mkdir()
+        fmu_path = fmu_dir / "Model.fmu"
+        fmu_path.write_bytes(b"fake")
+
+        config = Config(
+            source_path=fmu_dir,
+            reference_root=tmp_path / "refs",
+            source_type="fmu",
+            backend_name="FMPy",
+            work_dir=tmp_path / "work",
+        )
+
+        class _FakeFmpyBackend:
+            def __init__(self, cfg):
+                self.config = cfg
+
+            def run_single_test(self, test, test_key, index, total):
+                return TestRunResult(
+                    model_id=test.model_id, test_key=test_key, success=True
+                )
+
+            def read_result(self, test, test_key, run_result):
+                t = np.array([0.0, 1.0])
+                return TestResult(
+                    model_id=test.model_id,
+                    success=True,
+                    variables=[
+                        VariableResult(
+                            index=1,
+                            name="unitTests.x[1]",
+                            time=t,
+                            values=t,
+                            expression="pipe.T[1]",
+                        ),
+                        VariableResult(index=2, name="h", time=t, values=t),
+                    ],
+                )
+
+        monkeypatch.setattr("dstf.backends.fmpy.backend.FmpyBackend", _FakeFmpyBackend)
+
+        primary = MagicMock()
+        primary.capabilities = frozenset({Capability.FMU_EXPORT})
+        primary.export_fmu.return_value = fmu_path
+
+        store = MagicMock()
+        test = _tm("Model", variable_patterns=["h"])
+        assert produce_dymola_via_fmpy_baseline(test, primary, config, store) is True
+
+        payload = store.add_soft_check.call_args.kwargs["variables"]
+        assert [(v["name"], v["expression"]) for v in payload] == [
+            ("unitTests.x[1]", "pipe.T[1]"),
+            ("h", ""),
+        ]
+
+
+class TestCrossBackendFmpyMissing:
+    """Step 3's ``except RuntimeError`` — the chain skips on the
+    unavailable-backend signal ``FmpyBackend.__init__`` raises, and writes
+    nothing on the way out."""
+
+    def test_missing_fmpy_is_logged_and_skipped_without_a_write(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.config import Config
+
+        fmu_dir = tmp_path / "fmu_examples"
+        fmu_dir.mkdir()
+        fmu_path = fmu_dir / "Model.fmu"
+        fmu_path.write_bytes(b"fake")
+
+        config = Config(
+            source_path=fmu_dir,
+            reference_root=tmp_path / "refs",
+            source_type="fmu",
+            backend_name="FMPy",
+            work_dir=tmp_path / "work",
+        )
+
+        # The REAL FmpyBackend, with its deferred `import fmpy` failing:
+        # `None` in sys.modules is what makes that import raise ImportError,
+        # which the constructor translates into the RuntimeError this path
+        # catches. A constructor that let the ImportError out would
+        # traceback through the chain instead of skipping.
+        monkeypatch.setitem(sys.modules, "fmpy", None)
+
+        primary = MagicMock()
+        primary.capabilities = frozenset({Capability.FMU_EXPORT})
+        primary.export_fmu.return_value = fmu_path
+
+        store = MagicMock()
+
+        test = _tm("Model", variable_patterns=["h"])
+        with caplog.at_level(logging.WARNING):
+            ok = produce_dymola_via_fmpy_baseline(test, primary, config, store)
+        assert ok is False
+        assert "FMPy not installed" in caplog.text
+        store.add_soft_check.assert_not_called()

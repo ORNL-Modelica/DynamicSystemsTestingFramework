@@ -1,5 +1,11 @@
 # Session handoff — stale-state fix + dashboard UX polish + CLI cleanup + 100% TRANSFORM Linux Dymola
 
+> **Historical record, 2026-05-01. Not a runbook.** Commands, test counts
+> and file paths below describe the tree as it stood that day; several no
+> longer resolve — the vocabulary rename (D123) alone moved the backend
+> package, the config keys and two CLI flags. For how the tool works today
+> see [usage.md](usage.md); for why it changed, [decisions.md](decisions.md).
+
 **Date**: 2026-05-01
 **Covers**: 5 user-reported issues addressed in 4 commits on top of prior session HEAD `a9be593`. Plus field-verification of the stale-state fix on TRANSFORM (326/326 PASS, up from 319/326 in the prior session).
 

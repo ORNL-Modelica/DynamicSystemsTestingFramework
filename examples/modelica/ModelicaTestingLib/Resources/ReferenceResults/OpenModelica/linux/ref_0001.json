@@ -3,7 +3,7 @@
   "test_id": "0001",
   "status": "active",
   "date_added": "2026-04-22T14:39:43.144497+00:00",
-  "last_updated": "2026-04-22T18:58:16.855382+00:00",
+  "last_updated": "2026-10-13T00:17:10.876424+00:00",
   "simulation": {
     "stop_time": 10.0,
     "tolerance": 1e-06,
@@ -11,19 +11,28 @@
     "number_of_intervals": 500,
     "output_interval": null
   },
+  "sampling": {
+    "setting": "all",
+    "source_points": 502,
+    "stored_points": 502,
+    "precision": "double"
+  },
   "statistics": {
     "timing": {
-      "frontend": 0.0806075,
-      "backend": 0.0035491000000000003,
-      "simcode": 0.0009544000000000001,
-      "templates": 0.0021755000000000004,
-      "compile": 1.4116206,
-      "simulation": 0.0172827,
-      "total": 1.5163231,
-      "translation_wall": 1.5,
-      "sim_wall": 0.02,
-      "other_wall": 0.21,
-      "total_wall": 1.72
+      "frontend": 0.0018940999999998986,
+      "backend": 0.0023168,
+      "simcode": 0.0007056,
+      "templates": 0.0021166,
+      "compile": 0.5370888,
+      "simulation": 0.0133474,
+      "total": 0.5576289999999999,
+      "translation_wall": 0.54,
+      "sim_wall": 0.01,
+      "other_wall": 0.12,
+      "total_wall": 0.68
+    },
+    "translation": {
+      "continuous_time_states": 2
     }
   },
   "n_vars": 2,
@@ -534,7 +543,8 @@
   "variables": [
     {
       "index": 1,
-      "name": "x",
+      "name": "unitTests.x[1]",
+      "expression": "x",
       "values": [
         5.0,
         5.0,
@@ -1042,7 +1052,8 @@
     },
     {
       "index": 2,
-      "name": "y",
+      "name": "unitTests.x[2]",
+      "expression": "y",
       "values": [
         0.0,
         0.0,

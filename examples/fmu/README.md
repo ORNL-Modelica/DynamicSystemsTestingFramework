@@ -49,9 +49,10 @@ specific `fmusim-*` standalone-simulator binaries (unrelated).
 FMPy is an optional extra of this package:
 
 ```bash
-uv pip install -e ".[fmpy]"
-# or bundled with dev extras:
-uv pip install -e ".[dev,fmpy]"
+uv sync --extra dev --extra fmpy --locked
+# fmpy alone. Drop the --inexact and this UNINSTALLS the dev tools you have —
+# pytest included, so the marked tests below could no longer run.
+uv sync --extra fmpy --locked --inexact
 ```
 
 Tests that exercise the FMPy backend are marked with `@pytest.mark.fmpy` and

@@ -2,7 +2,7 @@
 
 ## Platform
 
-- **Windows MAX_PATH (260 chars)**: Modelica model paths are deeply nested. Reference filenames derived from model paths easily exceed this limit. Solved with numeric IDs (`ref_0001.json`), but `testing_output/` work directories can still hit this with deep library names + long simulator names.
+- **Windows MAX_PATH (260 chars)**: Modelica model paths are deeply nested. Reference filenames derived from model paths easily exceed this limit. Solved with numeric IDs (`ref_0001.json`), but `testing_output/` work directories can still hit this with deep library names + long backend names.
 
 - **Dymola working directory behavior**: `openModel()` changes Dymola's cwd to the model's directory. Every `.mos` script that writes output must explicitly `cd()` to the desired output directory after any `openModel()` call.
 
@@ -22,15 +22,15 @@
 
 - **Float32/64 precision**: Older Dymola versions store `.mat` values as float32; newer versions (2024+) may use float64. When float32 is promoted to float64, trailing noise appears (e.g., `0.001` becomes `0.0010000000474974513`). `_to_json_list()` detects the array dtype and rounds to matching precision — 7 significant digits for float32, 15 for float64.
 
-- **Variable name characters in filenames**: Modelica variable names can contain newlines and whitespace (from multi-line expressions like `heatTransfer.alphas[\n        1, 1]`). Plot filenames must sanitize these — `_sanitize_filename()` collapses whitespace, removes filesystem-unsafe characters.
+- **Variable name characters in filenames**: no longer a constraint on names. A tracked variable is named by its result file (D132), and the source whitespace a multi-line `x={...}` used to carry (`heatTransfer.alphas[\n        1, 1]`) is collapsed by `discovery/mo_parser.py::normalize_expression` where the EXPRESSION is parsed. `report_suite._sanitize_filename()` remains, and takes model ids only.
 
 ## Simulator Behavior
 
-- **Event handling varies by solver settings**: Dymola's `Evaluate=true` and `storeVariablesAtEvents` flags affect whether duplicate time points appear in results. The comparator handles both cases (with and without events), but reference results should be generated with consistent settings via `simulator_setup` in `testing.json`.
+- **Event handling varies by solver settings**: Dymola's `Evaluate=true` and `storeVariablesAtEvents` flags affect whether duplicate time points appear in results. The comparator handles both cases (with and without events), but reference results should be generated with consistent settings via `backend_setup` in `testing.json`.
 
 - **Triple time points at events**: Dymola sometimes produces 3 duplicate time points per event (pre-event, intermediate, post-event) rather than the expected 2. The comparator groups consecutive duplicates and uses the first as the segment end and the last as the next segment start, skipping intermediates.
 
-- **Numeric results are platform-dependent**: The same model with the same solver settings produces different floating-point results on Windows vs Linux, and between Dymola vs OpenModelica. References must be partitioned by simulator backend + OS.
+- **Numeric results are platform-dependent**: The same model with the same solver settings produces different floating-point results on Windows vs Linux, and between Dymola vs OpenModelica. References must be partitioned by backend + OS.
 
 - **Translation log capture requires Dymola 2025x+**: `Advanced.UI.TranslationInCommandLog := true;` is the correct flag for Dymola 2025x and newer. Older versions may use `Advanced.TranslationInCommandLog` (without `UI`). The framework hardcodes the 2025x+ syntax.
 

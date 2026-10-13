@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from dstf.config import Config
+from dstf.config import Config, ConfigError
 from dstf.discovery.json_recognizer import (
     JsonRecognizer,
     RecognizerSpecError,
@@ -31,8 +31,8 @@ def _write_testing_json(config_dir: Path, source_path_rel: str, **extra) -> Path
     """Write a minimal testing.json with optional recognizer config."""
     cfg = {
         "source_path": source_path_rel,
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         **extra,
     }
     p = config_dir / "testing.json"
@@ -95,8 +95,13 @@ class TestConfigLoadsRecognizers:
             "../TestLib",
             recognizers=[{"name": "bad", "match": {"type": "no-such-type"}}],
         )
-        with pytest.raises(RecognizerSpecError, match="unknown match type"):
+        # C-v item 2: a malformed recognizer in testing.json is a user error.
+        # Config re-raises it as ConfigError so main() prints one
+        # "Config error: ..." line and exits 2 instead of dumping a traceback;
+        # the underlying RecognizerSpecError message is preserved verbatim.
+        with pytest.raises(ConfigError, match="unknown match type"):
             Config(config_file=str(cfg_path))
+        assert not issubclass(ConfigError, RecognizerSpecError)
 
 
 # ---------------------------------------------------------------------------

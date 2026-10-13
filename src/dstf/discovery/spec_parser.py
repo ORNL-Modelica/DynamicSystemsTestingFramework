@@ -2,37 +2,241 @@
 
 import json
 import logging
+import math
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from ..config import ConfigError, baseline_points_refused
+from ..storage.ref_index import _atomic_write_text
+from . import spec_shape
 from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
 
 
-def _spec_number(section: dict, key: str, conv, model_id: str):
-    """Return ``conv(section[key])``, or None when absent / null / invalid.
+class EntryKeyError(ValueError):
+    """A key in a test entry that nothing reads: ``where`` it sits
+    (``tests[Lib.M].simulation``) and the ``message`` that names it."""
 
-    review 2026-07-06 finding 16: JSON ``null`` means "not set" (this
-    module's own docstring shows ``"output_interval": null``) — it must not
-    crash discovery with ``float(None)``. A non-numeric value logs a warning
-    naming the model + field and is skipped so one bad entry doesn't abort
-    the whole run.
+    def __init__(self, where: str, message: str) -> None:
+        self.where = where
+        self.message = message
+        super().__init__(f"{where}: {message}")
+
+
+def check_entry_keys(entry: dict, model_id: str) -> None:
+    """Refuse a key of ``entry`` that nothing reads (``strict_keys``): one
+    of its own, of its ``simulation`` or ``comparison`` block, or of a flat
+    override — which is one metric's params, as a leaf's are. The
+    ``metrics`` tree and ``plots`` have their own parsers, each as strict.
+
+    ``"simulaton": {"stop_time": 100}`` used to be skipped without a word
+    and the test ran for the default second. The known keys are
+    ``spec_shape``'s — the table ``export-schema`` publishes.
+
+    And refuse a block that is no object where one is read — ``simulation``,
+    ``comparison``, ``variable_overrides`` and each override in it; a
+    ``null`` too: absent is the only "not set". ``"simulation":
+    "stop_time=5"`` was a warning and a run on defaults,
+    ``"variable_overrides": [1]`` and ``{"x": "tube"}`` a traceback — the
+    second one at compare.
+
+    And refuse a value the parser reads that is not what it reads there:
+    ``variables`` that is no list of strings (``"x"`` was a warning and a
+    test tracking nothing, ``[1]`` a traceback at compare), a ``source``
+    that is no string, a ``simulation`` value of another type than
+    ``spec_shape.SIMULATION`` gives its key (``"stop_time": "abc"`` was a
+    warning and a run to the default second; ``"100"`` and ``true`` were
+    converted, ``2.5`` intervals cut to 2). ``null`` there stays "not set".
+
+    Raises :class:`EntryKeyError`.
     """
-    if key not in section:
-        return None
-    raw = section[key]
-    if raw is None:
-        return None
-    try:
-        return conv(raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Test '%s': ignoring non-numeric simulation/comparison value %s=%r",
-            model_id,
-            key,
-            raw,
+    from ..comparison.sides import _as_json
+    from ..comparison.strict_keys import unknown_field, unread_override_key
+
+    here = f"tests[{model_id}]"
+
+    def refuse(where: str, keys: Iterable[str], known: Iterable[str]) -> None:
+        problem = unknown_field(keys, known)
+        if problem is not None:
+            raise EntryKeyError(where, problem)
+
+    def block(where: str, holder: dict, key: str) -> dict | None:
+        """``holder[key]`` when it is there; an object, or refused."""
+        if key not in holder:
+            return None
+        value = holder[key]
+        if not isinstance(value, dict):
+            raise EntryKeyError(
+                f"{where}.{key}", f"must be an object, got {_as_json(value)}"
+            )
+        return value
+
+    refuse(here, entry, spec_shape.ENTRY)
+    if "variables" in entry:
+        variables = entry["variables"]
+        if not isinstance(variables, list):
+            raise EntryKeyError(
+                f"{here}.variables",
+                f"must be a list of names or patterns, got {_as_json(variables)}",
+            )
+        for i, pattern in enumerate(variables):
+            if not isinstance(pattern, str):
+                raise EntryKeyError(
+                    f"{here}.variables[{i}]",
+                    f"must be a name or a pattern, got {_as_json(pattern)}",
+                )
+    if "source" in entry and not isinstance(entry["source"], str):
+        raise EntryKeyError(
+            f"{here}.source", f"must be a path, got {_as_json(entry['source'])}"
         )
+    simulation = block(here, entry, "simulation")
+    if simulation is not None:
+        refuse(f"{here}.simulation", simulation, spec_shape.SIMULATION)
+        for key, value in simulation.items():
+            # `null` is "not set", as this module's own example writes it.
+            if value is None:
+                continue
+            kind = spec_shape.SIMULATION[key]["type"]
+            if not _HOLDS[kind](value):
+                raise EntryKeyError(
+                    f"{here}.simulation.{key}",
+                    f"must be {_SAID[kind]}, got {_as_json(value)}",
+                )
+    comparison = block(here, entry, "comparison")
+    if comparison is None:
+        return
+    refuse(f"{here}.comparison", comparison, spec_shape.COMPARISON)
+    overrides = block(f"{here}.comparison", comparison, "variable_overrides")
+    if overrides is None:
+        return
+    for variable, override in overrides.items():
+        where = f"{here}.comparison.variable_overrides[{variable}]"
+        if not isinstance(override, dict):
+            raise EntryKeyError(where, f"must be an object, got {_as_json(override)}")
+        found = unread_override_key(override)
+        if found is not None:
+            mode, problem = found
+            raise EntryKeyError(where, f"{mode} · {variable}: {problem}")
+
+
+def _is_number(value: object) -> bool:
+    """A JSON number that is one: no bool, no NaN, no infinity — and no
+    integer too large for a float (a 1 and 400 zeros), which no simulator
+    can be handed: ``math.isfinite`` raises on it."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+#: A JSON-Schema ``type`` of ``spec_shape.SIMULATION`` → whether a value is
+#: one, and how a refusal says it. An integral float is a whole number, as
+#: it is to JSON Schema.
+_HOLDS: dict[str, Callable[[object], bool]] = {
+    "number": _is_number,
+    "integer": lambda v: _is_number(v) and float(v).is_integer(),  # type: ignore[arg-type]
+    "string": lambda v: isinstance(v, str),
+}
+_SAID = {"number": "a number", "integer": "a whole number", "string": "a string"}
+
+
+def check_root_keys(data: object, label: str) -> list:
+    """The spec document's ``tests`` list, or :class:`ConfigError` naming
+    ``label`` when the document cannot hold one: a root that is no object,
+    a root key nothing reads (``spec_shape.ROOT``), a ``tests`` that is no
+    list. Each used to be a spec of NO tests — an error in the log, or
+    nothing at all for ``{"Tests": [...]}`` — and the command went on
+    without them, exit 0."""
+    from ..comparison.sides import _as_json
+    from ..comparison.strict_keys import unknown_field
+
+    if not isinstance(data, dict):
+        raise ConfigError(f"{label}: must be an object, got {_as_json(data)}")
+    problem = unknown_field(data, spec_shape.ROOT)
+    if problem is not None:
+        raise ConfigError(f"{label}: {problem}")
+    tests = data.get("tests", [])
+    if not isinstance(tests, list):
+        raise ConfigError(f"{label}: tests: must be a list, got {_as_json(tests)}")
+    return tests
+
+
+def spec_document_from_bytes(raw: bytes, label: str) -> dict:
+    """The spec document a file's bytes hold — its root object, ``tests``
+    there (empty when the file names none) — or :class:`ConfigError` naming
+    ``label``: bytes that are no UTF-8 text, text that is no JSON, a root
+    that cannot hold a ``tests`` list (:func:`check_root_keys`).
+
+    THE one decoder of a ``test_spec.json``. Every reader comes through it —
+    discovery, ``spec-update`` and the edit helpers (:func:`read_spec_document`)
+    and the authoring Session, which hashes the same bytes — so a file is
+    read by all of them or by none, with one sentence. ``discover`` /
+    ``run`` / ``compare`` logged ``Failed to read test spec`` and went on
+    with a spec of no tests (exit 1, ``No tests found.``), and a UTF-16 or
+    binary file was a traceback out of every command but ``dstf author``.
+
+    ``utf-8-sig``: a spec a Windows editor saved keeps a BOM, and a BOM is
+    not a reason to refuse a file that otherwise parses."""
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{label}: not UTF-8 text ({e})") from e
+    if not text.strip():
+        raise ConfigError(f"{label}: the file is empty")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"{label}: not JSON ({e})") from e
+    tests = check_root_keys(data, label)
+    assert isinstance(data, dict)  # check_root_keys
+    data.setdefault("tests", tests)
+    return data
+
+
+def read_spec_document(spec_path: Path) -> dict | None:
+    """The spec document in ``spec_path`` (:func:`spec_document_from_bytes`),
+    or ``None`` when there is no such file — a project without a spec file
+    has no spec tests. A file that is there and cannot be opened is a
+    :class:`ConfigError` with the system's reason."""
+    try:
+        raw = spec_path.read_bytes()
+    except FileNotFoundError:
         return None
+    except OSError as e:
+        raise ConfigError(f"{spec_path}: {e}") from e
+    return spec_document_from_bytes(raw, str(spec_path))
+
+
+def _load_spec_for_edit(spec_path: Path) -> dict:
+    """Load a spec about to be modified in place.
+
+    A missing file is a new spec (``{"tests": []}``). An EXISTING file that
+    cannot be read or parsed raises :class:`ConfigError`
+    (:func:`read_spec_document`): the edit helpers below load-modify-write,
+    so swallowing the parse error and carrying on with an empty dict
+    replaced the user's hand-authored spec with a near-empty one on a
+    single JSON typo.
+    """
+    data = read_spec_document(spec_path)
+    return {"tests": []} if data is None else data
+
+
+def _write_spec(spec_path: Path, data: dict) -> None:
+    """Persist an edited spec atomically — an interrupted write must not
+    leave the user's spec truncated."""
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
+
+
+def _spec_number(section: dict, key: str, conv):
+    """``conv(section[key])``, or None when absent or ``null`` — "not set"
+    (this module's own docstring shows ``"output_interval": null``). The
+    value is a number: :func:`check_entry_keys` refused anything else."""
+    raw = section.get(key)
+    return None if raw is None else conv(raw)
 
 
 def _entries(data: dict) -> list:
@@ -85,7 +289,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             "variable_overrides": {
               "pipe.T[1]": {"tolerance": 0.1}
             }
-          }
+          },
+          "baseline_points": 2000
         }
       ]
     }
@@ -98,61 +303,74 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     - Glob: "medium.T*" — matched against .mat variable names after simulation
     - Empty list [] — simulate only, no variable comparison
     - Wildcard ["*"] — track all variables
-    """
-    try:
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error("Failed to read test spec %s: %s", spec_path, e)
-        return []
 
-    tests_data = data.get("tests", [])
-    if not isinstance(tests_data, list):
-        logger.error("'tests' must be a list in %s", spec_path)
+    Reads the file (:func:`read_spec_document`: a file that is no spec is
+    a :class:`ConfigError`, a missing one a spec of no tests), then hands
+    the document to :func:`spec_models_from_document`; the authoring
+    Session calls that directly with its in-memory document.
+    """
+    data = read_spec_document(spec_path)
+    if data is None:
         return []
+    return spec_models_from_document(
+        data, base_dir=spec_path.parent, label=str(spec_path)
+    )
+
+
+def spec_models_from_document(
+    data: object, *, base_dir: Path, label: str
+) -> list[TestModel]:
+    """TestModels from an already-parsed spec document.
+
+    ``base_dir`` anchors each entry's relative ``source``; ``label`` names the
+    document in log messages and in the ``ConfigError`` a bad spec raises —
+    a root that holds no ``tests`` list (:func:`check_root_keys`), an entry
+    key nothing reads, a bad ``metrics`` tree. Not named ``test_...``:
+    pytest collects such a name when a test module imports it.
+    """
+    from ..comparison.sides import _as_json
+
+    tests_data = check_root_keys(data, label)
 
     tests = []
     for i, entry in enumerate(tests_data):
-        # review 2026-07-06 finding 53: a non-dict entry must be skipped with
-        # a warning, not crash discovery with AttributeError.
+        # An entry that cannot be a test is an error that names its place,
+        # like a key nothing reads: it was a warning and a test skipped,
+        # which a run of 300 others does not show.
         if not isinstance(entry, dict):
-            logger.warning(
-                "Skipping non-dict entry tests[%d] in %s: %r", i, spec_path, entry
+            raise ConfigError(
+                f"{label}: tests[{i}]: must be an object, got {_as_json(entry)}"
             )
-            continue
         model_id = entry.get("model")
-        if not model_id:
-            logger.warning("Skipping spec entry with no 'model' field")
-            continue
+        if model_id is None or model_id == "":
+            raise ConfigError(f'{label}: tests[{i}]: has no "model"')
+        if not isinstance(model_id, str):
+            raise ConfigError(
+                f"{label}: tests[{i}].model: must be a model's name, "
+                f"got {_as_json(model_id)}"
+            )
 
-        variables = entry.get("variables", [])
-        if not isinstance(variables, list):
-            logger.warning("'variables' must be a list for %s", model_id)
-            variables = []
+        # A key nothing reads is an error that names it, like a malformed
+        # tree: one "Config error: ..." line and exit 2.
+        try:
+            check_entry_keys(entry, model_id)
+        except EntryKeyError as e:
+            raise ConfigError(f"{label}: {e}") from e
+
+        variables = entry.get("variables", [])  # a list of strings: ditto
 
         parts = model_id.rsplit(".", 1)
         source_package = parts[0] if len(parts) > 1 else ""
         short_name = parts[-1]
 
-        # Optional source-file field: path (relative to spec file) to a
-        # simulation source. Generic across non-Modelica backends:
-        #   "source" → the source file (.jl for Julia, .py for Python,
-        #              .fmu also accepted here for symmetry).
-        #   "fmu"    → legacy FMPy-specific alias (pre-D77); still
-        #              supported but "source" is preferred for new tests.
+        # Optional "source" field: path (relative to spec file) to the
+        # simulation source — .jl for Julia, .py for Python, .fmu for FMPy.
         # Modelica tests omit this and source_file stays empty (the .mo
         # lives in the package discovered via source_package).
         source_file = Path("")
-        fmu_rel = entry.get("fmu")
         source_rel = entry.get("source")
-        if fmu_rel:
-            fmu_path = (spec_path.parent / fmu_rel).resolve()
-            if not fmu_path.exists():
-                logger.warning(
-                    "Test '%s' references missing FMU: %s", model_id, fmu_path
-                )
-            source_file = fmu_path
-        elif source_rel:
-            source_path_resolved = (spec_path.parent / source_rel).resolve()
+        if source_rel:
+            source_path_resolved = (base_dir / source_rel).resolve()
             if not source_path_resolved.exists():
                 logger.warning(
                     "Test '%s' references missing source file: %s",
@@ -175,63 +393,85 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         # provenance "test_spec" here (review 2026-07-06 finding 57) — unset
         # fields stay None and get provenance "default" when
         # TestModel.finalize_defaults runs at the end of discover_tests.
-        sim = entry.get("simulation", {})
-        if not isinstance(sim, dict):
-            logger.warning(
-                "Test '%s': 'simulation' must be an object, got %r — ignored",
-                model_id,
-                sim,
-            )
-            sim = {}
-        stop_time = _spec_number(sim, "stop_time", float, model_id)
+        sim = entry.get("simulation", {})  # an object: `check_entry_keys`
+        stop_time = _spec_number(sim, "stop_time", float)
         if stop_time is not None:
             test.stop_time = stop_time
             test.field_sources["stop_time"] = "test_spec"
-        tolerance = _spec_number(sim, "tolerance", float, model_id)
+        tolerance = _spec_number(sim, "tolerance", float)
         if tolerance is not None:
             test.tolerance = tolerance
             test.field_sources["tolerance"] = "test_spec"
         if sim.get("method") is not None:
             test.method = str(sim["method"])
             test.field_sources["method"] = "test_spec"
-        n_intervals = _spec_number(sim, "number_of_intervals", int, model_id)
+        n_intervals = _spec_number(sim, "number_of_intervals", int)
         if n_intervals is not None:
             test.number_of_intervals = n_intervals
             test.field_sources["number_of_intervals"] = "test_spec"
-        output_interval = _spec_number(sim, "output_interval", float, model_id)
+        output_interval = _spec_number(sim, "output_interval", float)
         if output_interval is not None:
             test.output_interval = output_interval
             test.field_sources["output_interval"] = "test_spec"
-        timeout = _spec_number(sim, "timeout", int, model_id)
+        timeout = _spec_number(sim, "timeout", int)
         if timeout is not None:
             test.timeout = timeout
 
         # Comparison settings
-        comp = entry.get("comparison", {})
-        if not isinstance(comp, dict):
-            logger.warning(
-                "Test '%s': 'comparison' must be an object, got %r — ignored",
-                model_id,
-                comp,
+        comp = entry.get("comparison", {})  # an object: `check_entry_keys`
+        # The base tolerance is carried as written, number or not. One that
+        # is no number (a lower/upper pair, a string, a list) refuses the
+        # test at compare (`refused_base_tolerance`); dropped here like a simulation
+        # value, the test was scored — and could pass — at the project's.
+        raw_tolerance = comp.get("tolerance")
+        if raw_tolerance is not None:
+            from ..comparison.sides import is_base_tolerance
+
+            test.comparison_tolerance = (
+                float(raw_tolerance)
+                if is_base_tolerance(raw_tolerance)
+                else raw_tolerance
             )
-            comp = {}
-        comparison_tolerance = _spec_number(comp, "tolerance", float, model_id)
-        if comparison_tolerance is not None:
-            test.comparison_tolerance = comparison_tolerance
         if "variable_overrides" in comp:
             test.variable_overrides = comp["variable_overrides"]
 
         # Phase 3.2: optional MetricTree spec. Parse-only — Phase 3.3 wires
         # it into compare_test. Errors here are raised so a malformed spec
         # is loud at discovery, not silently ignored at compare time.
-        metrics_raw = entry.get("metrics")
-        if metrics_raw is not None:
-            from ..comparison.tree_spec import parse_metric_tree
+        if "metrics" in entry:  # null is refused: absent is the only "no tree"
+            from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
 
-            test.metric_tree_spec = parse_metric_tree(
-                metrics_raw,
-                _path=f"tests[{model_id}].metrics",
+            try:
+                test.metric_tree_spec = parse_metric_tree(
+                    entry["metrics"],
+                    _path=f"tests[{model_id}].metrics",
+                )
+            except MetricSpecError as e:
+                # Still loud at discovery (never silently ignored), but as a
+                # user error: one "Config error: ..." line and exit 2 rather
+                # than a traceback out of the parser.
+                raise ConfigError(f"{label}: {e}") from e
+
+        if "plots" in entry:  # null is refused: absent is the only default
+            from .plots import PlotsSpecError, parse_plots
+
+            try:
+                test.plots = parse_plots(
+                    entry["plots"], path=f"tests[{model_id}].plots"
+                )
+            except PlotsSpecError as e:
+                raise ConfigError(f"{label}: {e}") from e
+
+        # The test's own baseline points (D153), over the project's. Refused
+        # like `plots`, null included: a value that is neither form would
+        # otherwise store this test's baseline at the project's setting.
+        if "baseline_points" in entry:
+            refused = baseline_points_refused(
+                f"tests[{model_id}].baseline_points", entry["baseline_points"]
             )
+            if refused is not None:
+                raise ConfigError(f"{label}: {refused}")
+            test.baseline_points = entry["baseline_points"]
 
         tests.append(test)
 
@@ -249,15 +489,7 @@ def add_to_test_spec(
     Returns True if the entry was added/updated, False if it already existed
     and overwrite was not set.
     """
-    # Load existing or create new
-    data: dict = {"tests": []}
-    if spec_path.exists():
-        try:
-            data = json.loads(spec_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "tests" not in data:
-            data["tests"] = []
+    data = _load_spec_for_edit(spec_path)
 
     # Check if model already exists (non-dict entries skipped — finding 53;
     # duplicates: first wins with a warning — finding 51)
@@ -268,15 +500,14 @@ def add_to_test_spec(
             return False
         # review 2026-07-06 finding 52: overwrite replaces only
         # model + variables — hand-authored comparison/simulation/metrics
-        # (and any unknown keys) must survive.
+        # and notes must survive.
         entry = data["tests"][matches[0]]
         entry["model"] = model_id
         entry["variables"] = variables
     else:
         data["tests"].append({"model": model_id, "variables": variables})
 
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_spec(spec_path, data)
     return True
 
 
@@ -286,14 +517,7 @@ def update_test_variables(
     additional_patterns: list[str],
 ) -> None:
     """Add variable patterns to an existing test entry, or create a new one."""
-    data: dict = {"tests": []}
-    if spec_path.exists():
-        try:
-            data = json.loads(spec_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "tests" not in data:
-            data["tests"] = []
+    data = _load_spec_for_edit(spec_path)
 
     # Find existing entry (non-dict entries skipped, duplicates warned —
     # review 2026-07-06 findings 53/51)
@@ -311,70 +535,4 @@ def update_test_variables(
             }
         )
 
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def update_test_comparison(
-    spec_path: Path,
-    update_data: dict,
-) -> None:
-    """Update or add a test entry's comparison settings in test_spec.json.
-
-    Preserves existing simulation settings and variables. Only merges
-    the comparison section from update_data.
-
-    update_data format: {"model": "...", "comparison": {"tolerance": 0.05, ...}}
-    """
-    data: dict = {"tests": []}
-    if spec_path.exists():
-        try:
-            data = json.loads(spec_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "tests" not in data:
-            data["tests"] = []
-
-    model_id = update_data.get("model")
-    if not model_id:
-        return
-
-    comparison = update_data.get("comparison", {})
-
-    # Find existing entry and merge comparison, preserve everything else
-    # (review 2026-07-06 finding 54: this used to REPLACE the section
-    # wholesale, dropping variable_overrides — merge per the docstring:
-    # keys present in update_data win, other keys survive, and
-    # variable_overrides merge per-variable).
-    matches = _find_entry_indices(data, model_id)
-    if matches:
-        entry = data["tests"][matches[0]]
-        existing_comp = entry.get("comparison")
-        if not isinstance(existing_comp, dict):
-            existing_comp = {}
-        entry["comparison"] = existing_comp
-        for key, value in comparison.items():
-            if key == "variable_overrides" and isinstance(value, dict):
-                overrides = existing_comp.setdefault("variable_overrides", {})
-                if not isinstance(overrides, dict):
-                    overrides = {}
-                    existing_comp["variable_overrides"] = overrides
-                for var, override in value.items():
-                    if isinstance(override, dict) and isinstance(
-                        overrides.get(var), dict
-                    ):
-                        overrides[var].update(override)
-                    else:
-                        overrides[var] = override
-            else:
-                existing_comp[key] = value
-    else:
-        data["tests"].append(
-            {
-                "model": model_id,
-                "comparison": comparison,
-            }
-        )
-
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_spec(spec_path, data)

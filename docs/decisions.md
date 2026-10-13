@@ -159,7 +159,7 @@
 - **Why**: The alternative — interpolating raw values between control points and applying modes after — creates discontinuities at mode boundaries. For example, interpolating a band value of 0.25 toward a relative value of 1.0 produces a smooth raw curve, but applying the mode stepwise causes a jump when the mode switches from band to relative. Resolve-first ensures the tube envelope is always a smooth interpolation between the user's intended bounds.
 - **Trade-offs**: The interpolated bound between two control points is a straight line in y-space, which may not match what you'd get from interpolating in width-space for a single mode. This is acceptable — mixed-mode points are inherently about defining specific bound values at specific times.
 
-## D27: Variable naming fallback for complex expressions
+## D27: Variable naming fallback for complex expressions (superseded by D132)
 
 - **What**: When a UnitTests component uses a complex expression like `cat(1, eta, lambda)` for its tracked variables, all variables fall back to `x[1]`...`x[n]` naming. The comparator also sanitizes names from stored reference JSON (newlines, `cat(` prefix).
 - **Why**: The parser can decompose simple `x={a, b, c}` into individual names, but `cat()` requires knowing array sizes at parse time (which array has how many elements). Guessing is worse than admitting we don't know. Showing `cat(1, eta, lambda)` as the first variable's name and `x[2]`...`x[n]` for the rest is misleading — the expression describes the whole array, not one element.
@@ -414,7 +414,7 @@
   - `simulators/fmpy/runner.py` module docstring gained a **"Limitations"** block documenting the shared scope: today the FMPy path calls `fmpy.simulate_fmu` with only `filename` / `stop_time` / `solver` / `relative_tolerance` / `output` / `output_interval` — no `input=` schedule, no `fmi_type=` override (FMPy auto-picks CS if present else ME), no `start_values=`. Autonomous FMUs only (inputs baked in). Reference FMUs (BouncingBall / Dahlquist / VanDerPol) are the validated shape. This does **not** reverse Phase 2's "complete" status — it honestly scopes what "complete" covers.
   - New `scripts/smoke_test_dymola_export.py` — 30-line standalone script the user runs on Windows to validate `translateModelFMU`'s signature + FMI license + cwd-on-Windows in one shot, independently of the test suite. Not wired into CI (no value on Linux). Prints pass/fail.
 - **Why**: The grill on D63's deferred validation surfaced a bigger concern than "does export_fmu call the right API": the cross-backend chain assumes "Dymola-exports-FMU + FMPy-default-simulates = meaningful cross-check", which is only true for **autonomous** tests — models with no external inputs, no python driver script stepping the FMU, no need to pick between co-simulation and model-exchange. For a test that is fundamentally "a python script driving an FMU with a scheduled input sequence", the chain would silently produce a baseline whose values don't reflect what the test actually does, and `"against": "dymola-via-fmpy"` would compare apples to oranges. Same semantic gap exists on the primary FMPy path but is less acute because FMPy-as-primary is explicitly opt-in per test (via `source_type: "fmu"` on a config or per-test `"fmu"` field) and was validated end-to-end for autonomous Reference FMUs. Labeling honestly is cheaper than generalizing now — generalization (input drivers, CS/ME choice, start-value overrides, python-driver tests) deserves a dedicated phase driven by real use cases.
-- **Defer-window rationale**: Horizon to feature-complete is ~2-4 months with a conference paper landing this week (idea-level, no live demo) and a public demo later. No planned work hooks `export_fmu`. Blast radius is contained: `export_fmu` has one caller (`produce_dymola_via_fmpy_baseline`); the chain has one caller (`cli._run_cross_backend_chains`); both gated on opt-in `requested_baselines`; zero tests currently set it. `translateModelFMU` API has been stable in Dymola for ~10 years. Code is well-defended (empty-return path, glob fallback, exception wrapping). Rollback cost if validation surfaces a bug at month 3: signature-level issue = tens of minutes; cwd/path quirk = half a day.
+- **Defer-window rationale**: Horizon to feature-complete is ~2-4 months with an external milestone landing this week (idea-level, no live demo) and a public demo later. No planned work hooks `export_fmu`. Blast radius is contained: `export_fmu` has one caller (`produce_dymola_via_fmpy_baseline`); the chain has one caller (`cli._run_cross_backend_chains`); both gated on opt-in `requested_baselines`; zero tests currently set it. `translateModelFMU` API has been stable in Dymola for ~10 years. Code is well-defended (empty-return path, glob fallback, exception wrapping). Rollback cost if validation surfaces a bug at month 3: signature-level issue = tens of minutes; cwd/path quirk = half a day.
 - **Smoke-test outcome (2026-04-17)**: `scripts/smoke_test_dymola_export.py` ran clean on **Dymola 2026x** against `Modelica.Blocks.Examples.PID_Controller`. Signature passes verbatim (all six kwargs accepted), FMI export license is present, `cd(<Windows temp>)` works with backslashes, a 1.6 MB FMU was produced. One interesting quirk: Dymola sanitizes the output basename with a disambiguation `_0` — `PID_Controller` → `PID_0Controller.fmu`. `DymolaWorker.export_fmu` is immune because it uses Dymola's returned basename verbatim (not a computed name from `model_id`) and has a glob fallback regardless. **Net effect**: the signature/license/cwd dimensions of D63's validation caveat are now locked; only the full chain (export → FMPy-simulate → baseline write) and the semantic-gap generalization remain deferred. Also updated: Dymola 2026x+ ships as a pip-installable wheel — `pip install .\dymola-2026.0-py3-none-any.whl` from the `python_interface` dir is the preferred setup. Smoke script's fallback path list extended to include 2026x.
 - **Trade-offs**: "Experimental" labeling is a soft signal — nothing enforces it at runtime. A user who reads the code before the docstring could still wire a chain against a non-autonomous test and get a misleading baseline; the one-time log warning is the only runtime surface for that. Accepting that because (a) `requested_baselines` is authored only by users who opt in explicitly via a recognizer, (b) the failure mode is a misleading comparison, not a crash, and (c) the chain semantics issue is called out in the warning text. The generalization phase ("FMU-path semantic gap closure") is filed as a dedicated follow-on; it bundles: input-schedule wiring in both `FmpyRunner` and chain, CS-vs-ME selection (test-spec field), start-value overrides, optional python-driver test shape (test declares a python entry point rather than a single model ID). Until that phase, both pathways are scoped to autonomous FMUs and the chain is scoped further to also-unvalidated-on-real-Dymola.
 
@@ -1807,7 +1807,10 @@ renders `modelica-om-multifrequency` overlay (502 time points,
 
 - **What**: Python package `modelica_testing` → `dstf`; CLI command
   `modelica-testing` → `dstf`; pypi project name `modelica-testing`
-  → `dstf`; brand in docs "ModelicaTesting" → "Dynamic Systems
+  → `dstf` (SUPERSEDED by D124 — the PyPI name is
+  `dynamic-systems-testing-framework`, because `dstf` is taken there by an
+  unrelated project; the import package and the CLI command are unchanged);
+  brand in docs "ModelicaTesting" → "Dynamic Systems
   Testing Framework (DSTF)".
 - **Why**: After D80, the tool supports five simulator backends (only
   one of which is Dymola-specific) plus arbitrary Python scripts and
@@ -2709,3 +2712,6155 @@ the OM/TRANSFORM `compare` now reports `221/14/91 SIM_FAIL/3 NO_REF` (was
 +6 tests (`test_compare_accept.py`). Suite **1044**, ruff + mypy clean.
 Follow-on still open: persisting run results in the manifest would make the
 status.json cross-check unnecessary and is the cleaner long-term fix.
+
+## D94 — Data-integrity trio: frozen-JSON companion self-overwrite, corrupt-spec wipe, last non-atomic writers (2026-08-31)
+
+Pre-v1.0 review (see the plan doc referenced in the session memory) found two
+data-loss bugs, both untested. (1) `freeze_companion` for JSON companions
+copied the data to `<name>.json` — the exact path the metadata write then
+replaced, destroying the frozen data (`get_companions` even documented a
+`.data.json` scheme that was never implemented). Fixed: frozen JSON data now
+lives at `<name>.data.json` (`_frozen_data_basename`); `get_companions` skips
+the sibling; `add_companion` rejects names ending `.data` so a companion's
+metadata can never occupy another's data path. No shim for previously frozen
+JSON companions — their data was already destroyed by the bug; the reader
+degrades to "invalid" without crashing. (2) The three spec load-modify-write
+helpers swallowed `JSONDecodeError` and wrote `{"tests": []}` over a corrupt
+`test_spec.json` — one typo in a hand-authored spec (a promised seam) and the
+file was gone. Fixed: shared `_load_spec_for_edit` raises `ConfigError`
+(caught cleanly in `cli.main`) and writes nothing; writes go through
+`_atomic_write_text`, as do `export_csv` and `apply_patch` (the last
+non-atomic writers). `_atomic_write_text` gained a `newline` passthrough so
+csv's embedded `\r\n` isn't doubled on Windows; a raw-bytes assertion pins
+that, since `csv.reader` can't see it on Linux. Review notes for later: move
+`_atomic_write_text` to a neutral util module during the storage split (the
+discovery→storage import is a latent cycle), and a pinning test for the
+legacy corrupted-frozen shape would be nice. +14 tests, 8 failing on pre-fix
+source.
+
+## D95 — Explicit tolerance 0 (and any finite value) honored end-to-end (2026-08-31)
+
+The comparator deliberately honors an explicit tolerance of 0 as the
+strictest setting (is-not-None chains, D89-era finding 7), but two entry
+points silently dropped it: `_build_config` gated `--tolerance` on
+truthiness, and the reporter's `_paramNumber`/`getGlobalTolerance`/
+`getDefaultTolerance` treated `> 0` as "set" — so typing 0 in the browser
+kept the pill scoring at the old tolerance while the exported patch carried
+0, which the CLI then honored. Divergence class: pill disagrees with
+`dstf run` on the same spec. Fix: CLI uses `is not None`; the JS helpers pass
+ANY finite number through (adversarial review caught that clamping negatives
+would recreate the same divergence — a typo'd `-0.01` must fail loudly in
+the pill exactly as the CLI would), with unset/cleared (`null`/`''`/blank)
+still falling back — the guard matters because `Number(null) === 0` would
+otherwise turn a cleared field into "strictest". Per-item authoring
+validators (event tolerance cell, points-table tolerance) accept 0, reject
+negatives visibly. Parity fixtures gained a `tolerance_used` override so
+zero/negative cases are non-vacuous (the fallback would otherwise equal the
+tested value), + 3 parity rows and 2 CLI tests.
+
+## D96 — Persistent-worker lifecycle: tree kill, rescue accounting, pinned interfaces (2026-08-31)
+
+Four fixes from the pre-v1.0 backend review, all in the persistent-worker
+watchdog path. (1) The per-test timeout kill killed only the tracked
+dymola/omc PID — the name filter would have excluded `dymosim`/the compiled
+model binary anyway, and children were never enumerated — so the process
+actually simulating survived, burning CPU and holding result files open
+(Windows rmtree PermissionError on the next run). The batch runner had fixed
+exactly this (finding 22); the persistent path hadn't. Now both workers
+delegate to a shared `common/proc_kill.kill_process_tree` (children first;
+`name_hint` guards only the tracked parent against PID reuse; never raises —
+an exception here would misreport the timeout as a worker exception). Marked
+DEBT: children resolve from the live parent, so a parent that died on its own
+leaves orphans unreachable — the child-pid snapshot belongs in the Phase C
+watchdog hoist. Coverage includes one real-process test (spawn parent+child,
+assert both die); fakes pin ordering and guards. (2) An OM disk-rescued
+timeout left `worker_killed=False`, so the (benign) restart charged one of
+the worker's 3 strikes — genuine deaths then hit exhaustion earlier. NOTE the
+plan's original framing overstated this as a direct cascade; rescued
+successes reset the budget (`base.py` reset on success), so the defect was
+strike-creep, not immediate exhaustion. Now mirrors Dymola. The OM
+worker-EXCEPTION path deliberately stays uncounted-as-benign — a worker that
+keeps raising should consume its budget (matches Dymola's rationale). (3)
+`run_test` in both workers pins the interface handle at entry, and the
+Dymola broken-worker probe's `self.close()` is guarded by `self.dymola is
+dymola` — an abandoned watchdog thread could otherwise RPC against, or
+close, the RESTARTED worker mid-next-test (the "Mismatch request/response
+ID" poisoning). (4) Julia `start()` recreates the stdout queue so a killed
+worker's stale "ready" pulse can't satisfy the new worker's handshake
+(stderr buffer deliberately kept — diagnostically useful); batch-Dymola
+`run_tests` now stamps run metadata into ProgressReporter/status.json like
+the base paths (third copy of that prologue — collapse target for the Phase
+C dedup). +10 tests, 9 verified failing pre-fix.
+
+## D97 — Browser test lane recovered: D88 autofix had silently broken it (2026-08-31)
+
+Installing Playwright to verify D98's JS work revealed the browser lane had
+been broken since D88: the ruff F401 autofix (c41be89) stripped
+`playwright_browser` from the per-mode files' imports — a pytest fixture
+import is invisible to pyflakes because only the parameter name appears in
+tests — and every environment since lacked Playwright, so 51 of the browser
+tests errored at setup with "fixture not found" and nobody saw it. Fixes:
+(1) the fixture now lives in tests/conftest.py (lazy playwright import;
+conftest placement cannot be autofix-stripped), local copies deleted. (2)
+The documented `-m "not playwright"` incantation had NEVER worked — no
+`playwright` marker existed, so the filter was a no-op and the real gate was
+module-level importorskip. The marker is now registered and applied
+(module-level pytestmark on the four browser files; per-test on the parity
+suite's one browser test; test_interactive_html_snapshot stays unmarked —
+it is headless), so `-m "not playwright"` deselects 121 browser tests and
+`-m playwright` runs exactly them. (3) One stale test surfaced by the
+revived lane: test_points_scorer_window_clips_points asserted that a leaf
+window silently drops out-of-window declared checkpoints — the pre-parity
+JS behavior. Python's authoritative rule (verified directly): a ref-relative
+checkpoint outside the window-sliced reference range FAILS loudly
+("checkpoint time outside reference range", the anti-clamp rule, review
+2026-07-06 finding 2). Renamed to
+test_points_scorer_window_excluded_checkpoint_fails_loudly with the
+assertion inverted. Lanes after: 1076 passed hardware-free, 121 passed in
+the browser lane. Lesson recorded in the conftest docstring: fixture
+imports between test modules are an autofix hazard; fixtures shared across
+files belong in conftest.
+
+## D98 — Reporter trust batch: six pill-vs-CLI divergences closed (2026-08-31)
+
+The reporter's contract is that the live pill agrees with `dstf run`; the
+pre-v1.0 review found six places it could lie. (1) The dominant-frequency
+live scorer FFTs the LTTB-decimated embedded arrays while the CLI FFTs full
+resolution — different pow-2 bin grids whenever a trajectory exceeds
+max_embedded_samples, so a high-frequency peak could fail live yet pass on
+the CLI (both sides' comments claimed bit-identical parity). Chosen fix:
+decimation-aware CLI-authoritative badge — plot_comparison marks a
+dominant-frequency leaf cli_authoritative iff its variable's embed was
+decimated (JS reads the same full_samples stamp the decimation banner
+uses; recomputePassStates skips gated leaves so the pill keeps the CLI
+verdict). Undecimated variables keep exact live scoring. ORDER CONSTRAINT
+commented at the call site: the mark runs after the comparison_data.json
+write — the sidecar carries full resolution, so its tree deliberately keeps
+cli_authoritative=false. (2) The event-timing live Match column used greedy
+nearest-neighbor pairing while Python uses optimal interval matching
+(right-endpoint sort, smallest unclaimed wins — the D89-wave fix); the JS
+comment claiming "same pairing rule" was false. Ported. (3) Shift+click
+add-point cancelled on >1e-10 DATA-unit mouse drift — trackpad jitter made
+it a no-op; now a 5-screen-pixel slop from the raw event coords. (4) Tube
+with tube_width_mode unset: scorer assumed 'rel', plot drew
+max(abs, rel·|ref|) — drawn band and scored band differed; one shared
+DEFAULT_TUBE_WIDTH_MODE now feeds scorer, plot, and editor (known residual:
+'abs' without tube_points draws a band while both sides fail the leaf —
+verdict-agreeing). (5) Malformed passthrough JSON was stored as a raw
+string and exported into the spec with no visible error; now refused with
+the textarea marked invalid, last-good value kept. (6) A structural export
+froze inherited defaults (config-level tolerance) into per-leaf params via
+nodeToSpec, silently detaching those leaves from config.tolerance; params
+are now exported only if spec-authored or user-edited (shared _paramEdited
+backs both the structural strip and the granular patch diff — ops verified
+identical pre/post refactor). Coverage: Node-harness trust test for 2-6,
+4 Python tests for the marking rule including one end-to-end through the
+real _build_template_context (review finding: hand-built contexts can
+drift from _augment_tree_view's real shape), and the revived browser lane
+(D97) exercising the whole surface in Chromium. Remaining accepted debt:
+no automated JS test pins the recomputePassStates gate itself
+(manually verified in review); un-augmented leaves (spec/eval drift
+guard) keep live scoring as before.
+
+## D99 — Small-fixes batch: ID high-water mark, parser typing, guard scoping, schema gaps (2026-08-31)
+
+Five pre-v1.0 review items. (1) "IDs never reused" only held while ref files
+existed: `manifest cleanup` deleting the highest obsolete ref let
+`next_id() = max(scan)+1` re-allocate that ID to a different model,
+silently re-pointing external artifacts keyed on ref_NNNN. Each partition
+now persists `.id_high_water.json` (additive dot-file, invisible to every
+`ref_*.json` glob — the layout seam is unbroken; absent file → scan-only,
+old partitions keep working; write failure warns, never fails an accept;
+a shipped example partition carries none — it has lost no baseline, and
+the two an accept on a scratch copy left in the Modelica example were
+removed on 2026-10-12, the next id being the scan's either way).
+Adversarial review caught that a read-check-then-write bump is
+last-writer-wins and could REGRESS the mark under two racing `--accept`
+processes — and a write-verify-retry does not close it (the higher writer
+can verify before the lower writer's overwrite). Robust form: every bump
+folds in a fresh disk scan; since register() O_EXCL-claims the ref file
+BEFORE bumping, any mark a slow writer could clobber corresponds to a ref
+already visible on disk, so writing max(claimed, scan) makes the race
+harmless. (2) mo_parser's errorExpected still used the truncating
+number-class regex finding 56 removed elsewhere (`1e-3*2` → silently
+`1e-3`); now `_parse_number` + warn + default. json_recognizer typed its
+numeric fields: non-numeric strings destined for float fields warn + stay
+unset (annotation/spec layers can still fill them) instead of pushing a
+raw string into runners; bool is rejected (float(True)==1.0 defeated the
+naive guard); int fields (n_vars, number_of_intervals) get an
+exact-integer check. (3) migrate-baselines' role-dir skip was a
+posix-substring test — inert on Windows paths; now path components
+RELATIVE to the reference root (absolute parts would also match a
+role-named directory ABOVE the root and silently skip everything). (4)
+export-schema gained number_of_intervals / output_interval and the
+canonical `source` key (fmu documented as legacy alias, precedence noted).
+(5) Leaf/comparison count mismatch in the reporter now logs instead of
+silently dropping augmentation; read_mat_time_extents refuses binNormal
+layouts like its siblings. +19 tests.
+
+## D100 — OM success path refuses partial results; omc failure modes verified live (2026-08-31)
+
+Empirical grounding first (omc 1.27.0-dev, WSL): both canonical mid-run
+failure modes — an assert() violation and an integrator failure
+(DASSL error-test cascade at a singularity) — leave a PARTIAL result_res.mat
+on disk but return an EMPTY resultFile in the SimulationResult record, so
+the parser's `bool(result_file)` clause already fails them; and neither
+produces the capital-F "Failed" the log parser's case-sensitive substring
+looks for (that clause's provenance is unknown; its live risk is actually
+the inverse — a benign warning containing "Failed to ..." could fail a
+successful run — left for the cleanup pass). The gap that remains is a
+success-reporting record alongside a truncated trajectory (future omc
+behavior, torn write). Following the D93 accept-integrity precedent (a
+partial .mat blessed by --accept poisons a baseline), both OM success
+paths (batch + persistent) now verify the trajectory reached stop_time via
+a shared `mat_reaches_time` helper in common/mat_reader — the same
+rule + tolerance the persistent disk rescue already used, deduped onto the
+helper so the two paths cannot disagree about the same file. Refusal is
+loud: "partial result refused" with the reached-vs-requested times. One
+batch-test fixture that staged a one-byte garbage .mat with a success
+record now correctly fails the gate and was upgraded to a real fixture
+mat. +3 tests.
+
+## D101 — Metric + combinator registries: the Metric-layer extension seam is real (2026-08-31)
+
+`docs/extensibility.md` promises a registry per layer; before this,
+only backends and recognizers had one — metrics and combinators were closed
+if/elif chains duplicated across four files (resolve_mode, VALID_METRICS /
+_MODE_TO_METRIC in tree_spec, _build_combinator / _METRIC_TO_MODE_KEY in
+tree_eval, schema_export's mode list), so "adding a metric" meant editing
+all of them. Now `comparison/registry.py` holds MetricDescriptor (name,
+config_cls, build, accepted_datasets, score_direction) and
+CombinatorDescriptor; builtins self-register on package import (idempotent
+under importlib.reload); spec parsing, evaluation, resolve_mode's dispatch
+and error text, the auto-derived report controls, and export-schema all
+derive from it. The four duplicated name sources are deleted. Behavioral
+equivalence for the six builtins was verified by adversarial review down
+to a byte-identical exported schema against the pre-change commit and a
+byte-identical unknown-metric error message. A toy third-party metric in
+tests/test_metric_registry.py proves the seam end-to-end (parse → evaluate
+→ derived controls → exported schema) with zero framework edits; the
+negative half is pinned too (unregistered → parse rejects).
+
+Review-driven decisions folded in: `has_plot_editor`/`_UI_EXTRAS` deleted
+(unconsumed, and wrong for two of five modes — JS owns that fact);
+`mode_cls` deleted from the descriptor (unread; `build` closes over the
+class); `score_direction` made load-bearing immediately by pulling the
+planned W-4 forward — the validator now REJECTS a `weighted` node whose
+leaf children mix directions (summing lower-is-better NRMSE with
+higher-is-better tube fraction against one threshold is meaningless). The reporter's
+CLI-authoritative badge rule generalized from `mode == "event-timing"` to
+`mode not in _JS_SCORED_METRICS`, so a Python-registered metric is badged
+honestly instead of silently not re-scoring. Dataset-incompatibility
+hard-fails at EVALUATION time as a labeled leaf (extensibility.md's
+"fails at config resolution" promise corrected — the kind is only known
+once a backend produced data); both hard-fail sentinels now carry the
+leaf's real metric in `mode`. extensibility.md's Metric/Combinator
+sections rewritten to the shipped API (the old @register class sketch
+never existed), including the JS boundary: live re-scoring and the
+add-leaf dropdown are template-JS surfaces, so third-party metrics are
+CLI-authoritative in the report. Known limits recorded there. +32 tests.
+
+## D102 — Entry-point plug-ins; Capability flags made load-bearing (2026-08-31)
+
+Two halves of the same promise ("plug-ins install alongside DSTF as a
+separate package; the framework gates on declarations, not class names").
+(1) `dstf.plugins.load_plugins()` loads the single entry-point group
+`dstf.plugins` (one group, not one per layer — a plug-in package
+routinely ships a backend AND its metrics); module entries import,
+callable entries are invoked, a CLASS entry is rejected with guidance
+(instantiating it with no args is never what the author meant). Loaded in
+`cli.main` before dispatch and exported as `dstf.load_plugins` for
+library use. A broken plug-in is a HARD ConfigError naming the entry
+point — a metric that quietly failed to register changes scoring
+semantics. Per-entry completion tracking so a caught-and-retried load
+cannot re-invoke the healthy plug-ins and blame them for duplicate
+registration (review finding). `plugins.py` joined the mypy tier.
+(2) Capability flags were validated at registration but consulted
+nowhere; now `_get_runner` gates persistent dispatch on
+PERSISTENT_WORKERS, the cross-backend chain gates on FMU_EXPORT (before
+creating its work dir) instead of catching NotImplementedError, and
+`produced_datasets` threads into comparison as the evaluator's
+dataset_kind. Honesty fixes that fell out: batch `DymolaRunner` no longer
+claims FMU_EXPORT (its implementation was a raising stub — the flag and
+the implementation live on `PersistentDymolaRunner`, declared explicitly
+rather than inherited so the batch class's BATCH_FALLBACK isn't a false
+claim there either); `Capability.EXPERIMENT_INGEST` deleted (declared and
+consulted by nothing); dead `TestModel.requested_fmu_export` and
+`BatchManifest.batch_id` deleted (batch_id was never persisted — old
+manifests load unchanged). Capability-vs-hook biconditional pinned per
+backend by iterating the registry (not a hardcoded five-name list), so a
+sixth backend is covered automatically. Docs: extensibility.md gained the
+real plug-in packaging section; vision.md swept for the deleted names.
++15 tests. Both suites + lint/format/mypy green.
+
+## D103 — Demo aligned to the documented flagship example; import-baseline arg-shadowing bug (2026-08-31)
+
+MetricTreeTest is specified as "an NRMSE bound on the
+start-up transient and a tube on the steady-state window against the
+primary, plus a warn-wrapped leaf scoring the same trajectory against an
+OpenModelica soft_check" — but the shipped demo was and[nrmse(x),
+warn(nrmse(y))] on sin/cos: no windows, no tube, no soft_check anywhere in
+the example tree, and a pure sinusoid has no transient/steady-state to
+window. Fixed by making the demo BE that example: MetricTreeTest is
+now a first-order step response (tau=0.5, settled ~2.5s) feeding a slower
+lag; its tree is and[nrmse(x, window [0,2.5]), tube(x, rel 2%, window
+[2.5,10]), warn(nrmse(x, against=openmodelica))]. The OM result is
+imported as soft_check "openmodelica" into Dymola/linux AND
+OpenModelica/linux (on OM it compares OM to itself — trivially green, but
+the shared spec then shows no spurious "baseline not found" warning on
+either backend; the run path never validates roles, only spec-update does,
+so a missing name would have been warn-absorbed rather than fatal).
+Verified end-to-end on live simulators: 12/12 pass on BOTH omc 1.27 and
+Dymola 2026x, and the evaluated tree shows the warn leaf scoring a real
+cross-simulator NRMSE (1.1e-6), not a sentinel. Dymola/windows could not
+be regenerated from this machine: its stale MetricTreeTest primary is set
+status="skip" (the designed exclusion) with the soft_check staged; Phase S
+re-accepts it on a Windows box.
+
+Also closed the coverage gap ("every metric and every combinator"):
+the demo spec now exercises or (IntervalTest: tight nrmse OR loose tube),
+k-of-n (SimpleTest, k=1 of 2), weighted (ConstantTest, direction-uniform
+nrmse pair — the D101 validator forbids mixing), and event-timing
+(EventTest's stepped output, auto-detected events, 10ms tolerance) —
+every metric and combinator now runs in the bundled demo on both backends.
+
+Bug found live: `dstf import-baseline` was unusable with a config — its
+positional was NAMED source_path, colliding with the global --source-path,
+so _build_config treated the ref JSON as the library root and
+find_package_dir iterdir()'d a file (raw NotADirectoryError). Positional
+renamed to import_source (metavar keeps the CLI face); regression test
+pins that the global stays None. The raw-traceback UX for such errors is
+the known Phase C item.
+
+2026-10-13: the tree has a fourth leaf, `range(unitTests.x[2], max 1.0)` —
+"the lag never overshoots" — last under the root `and`. The model tracks `y`
+through its UnitTests component and no criterion scored it, so every green
+run of the shipped example ended with a "Tracked but not scored" warning.
+
+## D104 — Authored windows now pre-fill the reporter's window inputs (2026-08-31)
+
+Eyeballing the D103 demo report showed the window inputs empty on leaves
+whose spec authored windows (the tube band on the plot honored them, so
+scoring was correct — only the input seeding was broken). Root cause: the
+extractor read `vc.diagnostics["window"]`, but the evaluator stashes the
+window on the MetricResult, never the VariableComparison — so
+`window_values` had been empty for every authored window since windows
+shipped, masked by the browser fixtures hand-setting `window_values`.
+Seeding now comes from the authored `window` on the spec view (already
+correct there); the dead extractor is deleted. Regression test drives the
+real `_build_template_context` and asserts values mirror the authored
+window; re-render verified visually (2.5 boundaries shown, open sides as
+placeholders). Lesson repeated from D97: fixtures that hand-set what the
+pipeline should produce hide exactly these seams.
+
+## D105 — Reporter authors `against`: baseline selector in the add-leaf modal (2026-08-31)
+
+`against` was display-only in the reporter: the label and the patch export
+handled it, but every new leaf was hardcoded to primary — so a patch
+adding a leaf with `"against": "openmodelica"`) could not actually
+be produced in the reporter (F-12/W-7). Now the template injects the
+test's baseline roster as `OVERLAY_ROWS` (the `overlay_rows` context the
+report already carried) and the add-leaf modal shows an "Against" select
+— primary plus the unique soft_check names — only when soft_checks exist,
+so the modal is unchanged for the common case. Companions are never
+offered (unscorable, per the validator); every *registered* soft_check is
+offered regardless of report-side load status or per-variable coverage —
+registered names are legal targets and the CLI evaluation is the
+authority. Picking a non-primary name with no `warn` ancestor on the
+target node shows a non-blocking notice that spec-update's validator will
+reject the patch unless the leaf is warn-wrapped; the JS ancestor walk
+reproduces the validator's `in_warn` propagation (the target combinator
+itself counts).
+
+Honesty fix that fell out on both sides: a leaf with `against != primary`
+is now CLI-authoritative — the JS live scorers only have the primary
+trajectory arrays, so re-scoring such a leaf silently compared against
+the wrong baseline. That divergence was pre-existing for CLI-provided
+against-leaves (the D103 demo's warn leaf); `_augment_tree_view` and
+`_leafIsCliAuthoritative` both gate on it now, without disturbing D101's
+metric rule or D98's decimation flip (verified by fresh-context review).
++2 hardware-free tests (real `_build_template_context`), +5 browser tests
+(selector presence/absence, companion exclusion, patch round-trip with
+primary omitted, warn notice). Known limits recorded, not widened here:
+adding any child INTO an existing `warn` violates its exactly-one-child
+arity and the modal is silent about it (pre-existing — the add button
+predates this change), and plot-side contributions (tube envelope etc.)
+still draw against primary for an against-leaf (display-only; the badge
+suppresses the scoring dishonesty).
+
+## D106 — `scalar` metric leaf: one number, from a stored statistic or a series reduction (2026-08-31)
+
+Owner-approved for v1.0 as the answer to a review finding: translation
+statistics and CPU time were compared only as
+structural *warnings*; nothing could hard-fail a test on them. A seventh
+built-in metric, `scalar`, scores a single number. Its `quantity` param
+has exactly two v1 shapes, chosen so a later `{"expr": ...}` object slots
+in as a third without a format break (the owner's ruling: no free-form
+expression evaluator in v1): `{"reduce": max|min|mean|final|integral}`
+reduces the leaf's tracked series on both sides (window honored, integral
+= trapezoid, mean = time-weighted integral/span so a finer output grid
+cannot move it — sample mean only when the span is zero); or a bare
+dotted string that reads a stored scalar — resolved first in the ref
+file's `statistics` block, then as a diagnostics summary (`CPUtime.final`
+→ the stored `{final,min,max}` on the baseline side, computed live from
+the diagnostic trajectory on the current side; statistics wins a name
+collision; a legacy full-array diagnostics entry is summarized on read).
+Comparison is abs/rel `tolerance` against the baseline scalar (|ref|=0
+falls back to abs and says so), or declared `min_value`/`max_value`
+bounds (baseline-free, tolerance ignored). Missing path on either side is
+a labeled hard-fail sentinel. A stats-path quantity needs a `metrics`
+tree: the flat `variable_overrides` path only has the variable's own
+trajectory and now hard-fails such an override instead of quietly
+reducing that (second review). `accepted_datasets` = {TIME_SERIES,
+SCALARS} — the reserved SCALARS kind is now scorable.
+
+Where the data-source switch lives was the review's one real finding:
+the first cut resolved a string `quantity` for ANY leaf as an
+evaluator-owned rule "like the window", and a stray `quantity` on an
+nrmse/points/range leaf silently collapsed both sides to one identical
+sample and passed. The registry now owns it — `MetricDescriptor.
+accepts_quantity` (True only for scalar) gates both the evaluator
+redirect and the parser's rule that `variable` may be omitted for a
+string quantity (it defaults to the path; an explicit `variable` is the
+display label). The exported JSON-Schema derives the same rule from the
+registry so the two grammars cannot drift.
+
+Reporter: no live JS scorer in v1, so the D101 rule badges scalar leaves
+CLI-authoritative; the JS side now derives the add-leaf dropdown from the
+registry-fed `MODE_SCHEMAS` (the last hardcoded metric-name list is gone;
+Jinja's `tojson` sorts keys, so the dropdown is alphabetical) and badges
+any metric without a `MODE_SCORERS` entry, which made the event-timing
+special case redundant. Demo: SimpleTest became `and[k-of-n(...),
+scalar(final x, abs 1e-3)]` — MetricTreeTest untouched (it is the
+flagship example) — restoring "every metric and combinator runs in the
+bundled demo", verified live 12/12 on omc 1.27 AND Dymola 2026x with the
+leaf scoring from the stored trajectory (no re-accept). Two fresh-context
+review rounds (the registry gate, the flat-path guard, schema/parser
+agreement pinned by a test that evaluates the EMITTED rule, time-weighted
+mean, legacy diagnostics shape on read, sentinel display). +74 tests
+(1141 → 1215 hardware-free; 76 browser in the reporter file). Known,
+watch-only: a tree `scalar` leaf with no `quantity` raises out of
+`resolve_mode` like a tree `range` leaf with no bounds does (closed in
+D107).
+
+## D107 — Phase C-i: the three legacy shim families are gone (2026-08-31)
+
+Pre-release stage, an owner ruling, and re-verified seam evidence
+(a structural JSON walk over 894 TRANSFORM-UnitTests files and 77 demo
+files: zero in-file `baselines` maps, zero `min`/`max` range overrides,
+zero symmetric tube points, zero `fmu` spec keys, zero saved flat-dict
+exports — the 656 text hits for `min`/`max` in TRANSFORM refs are all
+`diagnostics[]` scalar summaries, not overrides). Deleted, each with a
+rejection test in its place: (D-1) the flat-dict `spec-update` branch
+"preserved for a transition cycle" and `update_test_comparison`, whose
+last caller it was — spec-update takes only the RFC 6902 envelope and a
+non-envelope file is a ConfigError naming it; (D-2) the in-file
+`baselines` map read/write and the `migrate-baselines` command with
+`migrate_baselines_tree` — named baselines come ONLY from the store's
+`soft_checks/ref_NNNN/` subdir now; a stray `baselines` key still in a
+ref file is ignored with one warning naming the file (old data, not old
+code — emitted in `ReferenceStore.get_reference`, the only read site that
+knows the path) and is dropped on the next accept; (D-3) the `min`/`max`
+range shorthand, the symmetric `abs`/`rel` tube-point format (Python
+raises naming `upper`/`lower`, the JS scorer returns false where Python
+raises, per that file's convention), and the `fmu` spec alias for
+`source` (an fmu-only entry warns naming `source`; the schema no longer
+documents `fmu`). The FMU demo spec was the only real user of two of the
+aliases and was rewritten. `Baseline` stays (soft_checks use it); its
+in-memory provenance origin is now `"flat"`, not `"legacy-flat"`.
+
+Structural fix pulled in because the pass raised its stakes: a config
+error on a `metrics`-tree leaf (a now-rejected `min`/`max`, a symmetric
+tube point, `scalar` without `quantity`) raised out of `resolve_mode` /
+`mode.compare` and aborted the ENTIRE `compare_all` with an anonymous
+traceback — one stale key would have lost a 331-test run's comparison —
+while the flat `variable_overrides` path caught the same error and
+failed only that variable. The tree path now does the same: the leaf
+becomes a labeled hard-fail sentinel carrying the error, the rest of the
+run evaluates. Two consequences the reviews forced: a CONFIG-error
+sentinel (flagged `config_error` in its diagnostics — not every error:
+an empty-window `_no_data_failure` on a live-scorable metric must stay
+live so dragging the window back un-fails it) is CLI-authoritative in
+the reporter, because a leaf whose config never built has no
+live-scoring state — before this the JS range scorer read absent bounds
+as "unbounded" and would have flipped the pill to PASS on the next
+re-score; the JS now returns false where Python raises, pinned in the
+parity suite (a range leaf freshly added in the modal therefore shows
+FAIL until a bound is typed, matching what `dstf run` would do). And the
+sentinel's reason is actually shown — console ("Not scored: <error>"),
+JUnit, and the interactive leaf (pill tooltip + a muted line: "<mode>
+leaf not scored — <error>") — which also upgraded the pre-existing
+empty-data failures from "NRMSE inf vs tolerance → FAIL" to the real
+reason on every surface. Review also re-pinned the one end-to-end path the pass had left
+unguarded (`compare_test` with a store that returns a soft_check and an
+`against` leaf — the previous positive test had been swapped for a
+negative-only one) and deleted a dead `baselines` fallback in
+`overlay_loader`.
+
+Read-only real-library check: `dstf discover` on TRANSFORM-UnitTests
+reports 331 tests (313 scan + 18 spec) with no warnings — the plan's 326
+is library drift (its HEAD moved 2026-08-11; the discovery path is
+untouched here), recorded in memory. Live OpenModelica demo 12/12 with
+MetricTreeTest's warn leaf resolving the `openmodelica` soft_check from
+the subdir — the only remaining named-baseline path. Four review rounds
+(the last, mechanical one verified in the main session: the six golden
+HTML hashes were refreshed, and the template's whole diff is the one
+`.node-error` CSS rule); every new behavioral guard was mutation-checked
+(the guard reverted → its test fails). Suites 1215 → 1215 hardware-free
+(−16 tests whose subject was deleted, +16 rejection/sentinel/surface
+tests), 76 → 77 browser.
+
+## D108 — Phase C-ii: dead code and stale docstrings swept (2026-08-31)
+
+Plan §3.2 D-4…D-8, behavior-preserving with one deliberate exception.
+D-4 had already been finished by D101/D102 (verified; one orphaned
+`has_plot_editor` comment block removed). D-5: the reporter's Python-side
+plot-contribution stub machinery in `ui/mode_controls.py`
+(`PlotContribution`, `custom_renderer`, `contribute_to_plot` and the
+`register_mode_ui` kwargs that fed them) had no production caller —
+the JS `MODE_PLOT_CONTRIBUTIONS` registry was always the real half —
+and is deleted with its four tests; `register_mode_ui` stays as the
+explicit-registration seam. D-6: thirteen unreferenced CSS rules and
+one dead hidden `plot-spectrum` div gone from `interactive.html`,
+`.tube-table` collapsed from three definitions to one preserving the
+cascade's effective values (`min-width: 300px` came from the FIRST
+block — the implementer read computed styles of the built tube table
+before/after via Playwright, identical; review re-derived the cascade
+property by property against the three originals and agreed), the
+`buildExportData` alias inlined; the six
+golden hashes were refreshed with the template diff as evidence, and a
+structural diff of all twelve rendered demo reports shows nothing but
+the removed div. D-7: eleven docstrings/comments that contradicted
+shipped code now describe it — persistent workers are the default and
+the CLI ABORTS when one is unavailable (no automatic batch fallback);
+the JSON recognizer's "deferred" matchers all shipped; the dashboard
+refreshes via `<meta http-equiv="refresh" content="5">` (a JS fetch is
+CORS-blocked on `file://`), not a 2 s JS fetch as CLAUDE.md claimed;
+`_slice_window` returns empty arrays for a degenerate window (its
+redundant `mask.any()` branch is gone); `against` is present tense;
+And/Or state what they compute (min/max over child scores) and that
+they do not consult `score_direction`; `_scan` reads whole files (lazy
+header read is idea #64). Two plan items were NOT stale and were left:
+the `<name>.data.json` frozen-companion scheme IS implemented (D94), and
+`PersistentRunnerBase`'s docstring makes no fallback claim. D-8: the
+identical-branch ternary, the literal-filename glob, the dead
+`WeightedCombinator` score guard (now a `cast` directly under the
+`any(score is None)` early return that justifies it), and `dstf
+export`'s accepted-but-ignored `--filter`/`--package` flags are gone —
+TRANSFORM-UnitTests' only `dstf` usage is its README (run / compare /
+--accept / --parallel / --report), so the CLI seam is untouched. The one
+behavior change: `plot_comparison`'s `max_embedded_samples` default is
+1000, agreeing with `Config` (both production callers pass it
+explicitly). The `test_review_fixes_*` fold-in waits for the C-iv
+restructure. Net −250/+116 lines.
+
+## D109 — `register_mode_ui` deleted (amends D108); `sample_mean` reduction (2026-09-01)
+
+D108 kept `register_mode_ui` as "the explicit-registration seam" while
+deleting its siblings. The owner asked what it had been for before
+deleting it, so its history was traced: born in Phase 6.1.1 (April) as
+the ONLY way a mode got a control panel, and within its first two days
+it carried three powers — a custom renderer when the auto-derived form
+wasn't enough, a has-plot-editor flag, and registering a UI for a config
+dataclass with no metric behind it. D101 derived every registered
+metric's controls from its config dataclass (`label`/`help`/`ui_min`/
+`ui_max` metadata), which made the renderer redundant, and deleted the
+plot-editor flag ("JS owns that fact"); D108 deleted the renderer/
+plot-contribution hooks as unconsumed. What was
+left was a strict subset of the auto-derivation, and its one residual
+power was a defect: a UI-only mode appeared in the add-leaf dropdown
+but not in the exported JSON-Schema and could be neither parsed nor
+evaluated — a dropdown entry that builds an unrunnable leaf. Owner
+ruling: delete it, with `_REGISTRY` and the re-exports;
+`registered_modes()` is now exactly the metric registry's names, so the
+dropdown, `emit_mode_schemas`, `schema_export` and `tree_spec` all read
+one list. The home for "my metric wants different controls than its
+fields imply" is the dataclass metadata channel or a new
+`MetricDescriptor` field — not a parallel name-keyed dict that can
+disagree with the registry. Recorded as an amendment, not slipped in as
+cleanup, because it reverses a keep-decision made the day before.
+
+Same ruling added `sample_mean` to the scalar leaf's closed reduction
+set beside the time-weighted `mean`: the arithmetic mean of the samples,
+for parity with tools that report that; documented in one sentence with
+`mean` so the difference is one glance. The closed set is a table
+lookup, so the D106 format is untouched.
+
+## D110 — Phase C-iii U-2: the per-worker watchdog is one template method (2026-09-01)
+
+The Dymola and OpenModelica persistent workers each carried a private
+copy of the same watchdog — spawn the simulation on a daemon thread,
+`join(timeout)`, on timeout close the tool and kill its process tree,
+try to rescue a result from disk, account `worker_killed` — plus their
+own `close()` and `_kill_tracked_pids()`; Julia had a third, poll-based
+shape with an inlined psutil kill; the batch Dymola runner had a fourth
+tree-kill copy. The copies had already diverged once (C-6/C-7/C-8, fixed
+in D96 on each side separately). Now `Worker` owns the template:
+`run_test_with_timeout` and `close` and `_kill_tracked_pids` live once
+in `simulators/base.py`, parameterised by hooks — abstract `start` /
+`is_alive`; `run_test` (the in-process execution the template runs on
+the thread); optional `_evaluate_from_disk` (default None), `_quiet`
+(default `nullcontext`; Dymola supplies `_suppress_stderr_noise`),
+`_detach_interface` + `_shutdown_interface(handle, grace)` (split so the
+handle is None-ed synchronously BEFORE the graceful-quit thread starts —
+otherwise `is_alive()` and Dymola's in-run identity guard would race a
+slow thread), and class attributes `kill_name_hint` / `timeout_kill_grace`
+(Dymola 5.0 so dslog.txt flushes; default 1.0) / `exec_thread_prefix`.
+`Worker.__init__` declares `pids` and `_n_restarts`, so the dispatcher's
+`getattr` and its two `type: ignore` reads are gone; `_dispatch_with_restart`
+keeps its signature and stderr wording byte for byte. Julia overrides
+only the deadline-poll body and adopts the shared kill, tracks its pid
+in `pids`, and reports `worker_killed=True` on timeout. The proc_kill
+DEBT note is resolved: descendants are snapshotted while the parent is
+alive (`snapshot_children`: pid + create time, name-guarded) so an
+orphan whose parent vanished during the graceful close is still found —
+and killed only if the pid's current occupant still has the snapshotted
+create time, because a pid recycled during the graceful window can be
+another worker's brand-new dymosim (review finding; Windows recycles
+freed pids almost immediately). The two workers lost ~120 lines each
+(Dymola −121/+15, OM −116/+45); docs/extensibility.md §3 carries the
+hook table (abstract / hook / template) and states that
+`_detach_interface` is required whenever the worker holds a handle,
+since `close()` relies on it to flip `is_alive()`.
+
+The live gate earned its keep: forced timeouts on Dymola and Julia left
+zero orphans, but on OpenModelica one `omc` survived — this OMPython
+build has no `session.getpid()`, so the OM worker had NEVER had a kill
+target on its timeout path (the except clause left `pids` empty; the
+dead sessions were only ever finished off by the abandoned graceful-quit
+thread). Fixed as part of the pass: the pid now falls back to the
+session's process handle, with one warning if neither source yields a
+pid. Also surfaced and fixed: after Julia's kill, `proc.poll()` could
+still read alive, so the dispatcher handed the dying worker the next
+test ("crashed mid-test") and the following restart was charged to the
+budget — the timeout branch now waits for the process to exit and
+detaches the handle before returning. Adversarial review then found
+three defects the live runs could not (they only exercise the kill
+landing): closing Julia's stdout pipe from the dispatch thread while
+the reader thread holds the buffer lock blocks until the child exits
+(measured 7.8 s on an 8 s child; a truly hung julia would have hung the
+run) — the timeout branch now keeps HEAD's `proc.kill()` belt-and-braces
+before the wait and closes only stdin until the process is actually
+reaped; the batch Dymola runner's timeout path had lost its
+`proc.kill()` fallback behind the name guard (a non-exec wrapper script
+fails the guard and nothing dies) — restored; and the orphan-kill reuse
+guard above. Also hardened the contract: `close()` raises `TypeError`
+when a backend detaches a handle but never overrode
+`_shutdown_interface` (the graceful thread's exceptions were silently
+swallowed), and its exceptions are now logged — type and message at
+WARNING, the stack at DEBUG, because OM's `quit()` on a mid-simulate
+ZMQ socket raises as a matter of course on every timeout and a
+12-line traceback per timeout would have violated the "run completes
+with a summary, no traceback" gate. And the live gate found one more
+hole in the design itself: when a Dymola timeout lands during
+TRANSLATION, dymosim does not exist at snapshot time — it is spawned
+inside the graceful window by the `simulateModel` the abandoned exec
+thread already issued, and is orphaned the instant dymola exits. A
+single snapshot before or after the graceful wait cannot see it;
+`close()` therefore re-samples the child tree every 0.25 s while the
+graceful attempt runs (bounded by `grace` plus at most one tick),
+pinned by a test that fails when the sampling interval is set past the
+window. A third review pass found the test meant to pin the Julia
+pipe-close fix was vacuous (its fake stream's assertion was swallowed
+by the very `except` under test) — fixed to record the attempt instead
+of raising — and that the sampling loop had overshot `grace` by the
+walk time; both closed before commit. +22 tests (1216 → 1238
+hardware-free; 77 browser); every new behavioral guard was
+mutation-checked. Known, watch-only (same exposure as before the
+hoist): the create-time reuse guard fails SAFE if the wall clock is
+stepped between snapshot and kill (psutil's own `is_running` shares
+it); `_detach_interface` is read-then-clear, so a Dymola broken-worker
+probe closing on the exec thread can race the watchdog into a double
+close (benign); and using OM's ZMQ socket from two threads on the
+timeout path is libzmq-documented UB inherited from HEAD — the socket
+is deliberately not closed under a parked `recv()`.
+
+## D111 — Phase C-iii U-1: one `run_tests` prologue (2026-09-01)
+
+Three copies of the run prologue — the batch template
+`SimulatorRunner.run_tests`, `PersistentRunnerBase.run_tests`, and the
+`.mos`-batch `DymolaRunner.run_tests` — each did the same seven steps
+(work dir, run-provenance metadata via `_build_run_metadata(
+_safe_tool_version())`, `ProgressReporter`, `assign_test_keys`, per-test
+`progress.register` with the ref-id report_dir map, `BatchManifest` +
+save) and had already drifted once: C-9 was the batch-Dymola copy
+losing the metadata line, so `status.json` stamped `"metadata": null`.
+The steps now live once in `SimulatorRunner._prepare_run(tests) ->
+RunSetup` (work_dir, total, run_metadata, progress, keyed_tests,
+manifest); the batch template rebuilds its 1-based 3-tuples from
+`keyed_tests`, the persistent base calls `setup_before_workers()` first
+so backend state exists before the provenance probe, and the Dymola
+batch runner keeps its mos-generation stages between `_prepare_run` and
+its header. `_print_run_summary` moved up to `SimulatorRunner` behind a
+`run_summary_phrase` property, so the two batch sites print the same
+number set the persistent one always did (wall, total work, speedup);
+`n_fail` is `total − ok − timeouts` everywhere (stricter than the old
+"not success and not timed out" count only when a result is lost).
+Finalize is unguarded everywhere, called on the `RunSetup`'s reporter
+(a known non-None reference) — the three `is not None` guards were
+covering a case `_prepare_run` makes impossible. Pinned by the C-9 test
+(tests/test_run_metadata.py) plus a three-site parity test that drives
+the real `run_tests` methods with stubbed execution and compares the
+resulting `batch_manifest.json` and `status.json` metadata. Verified
+live on all six lanes with stamped metadata: Dymola persistent and
+`--batch`, OpenModelica, Julia `--batch`, Python, FMPy (via `uv run
+--with fmpy`). Surfaced, pre-existing, not fixed here: the batch
+`DymolaRunner` and `JuliaRunner` classes have no `describe_tool_version`,
+so their `tool_version` is null — Julia's probe joins the JSON-driver
+base in U-4; Dymola's batch probe is a small follow-up.
+
+## D112 — Phase C-iii U-3: one variable-extraction path for Dymola and OM (2026-09-01)
+
+`_compute_needed_variables` and `_extract_variables` were ~100-line
+near-identical copies in the Dymola and OpenModelica runners, with two
+smaller duplicates in their `read_result` callers (the diag→statistics
+fold with its float32→7-significant-digit rule, and the timing-stats
+block). They now live once in `simulators/common/result_variables.py`
+(`compute_needed_variables` / `extract_variables` /
+`fold_diagnostics_into_statistics` / `merge_timing_stats`), with
+`diagnostic_vars` a required list — the None-default divergence is
+gone. Two deliberate unifications: the missing-requested-variable
+warning is loud on BOTH backends now (it was Dymola-only; the OM demo's
+SimulateOnlyTest line is now identical across backends), and the timing
+block uses OM's non-destructive `setdefault().update()` merge — reading
+the Dymola log parser settled that this is a no-op there (it writes
+only `translation`/`simulation` categories), while OM's per-phase omc
+timings genuinely coexist with the wall summary under the merge.
+Pattern-resolved names missing from the output stay silent on both, as
+before — only explicitly requested variables warn. Verified live:
+12/12 on Dymola persistent and OM with `--accept` into scratch roots
+showing the statistics blocks unchanged (Dymola: CPUtime/EventCounter/
+simulation/timing/translation; OM: timing only, matching the committed
+refs).
+
+## D113 — Phase C-iii U-4: the JSON-driver subprocess base (2026-09-01)
+
+The Julia and Python batch runners were ~85% the same file — the same
+driver-script subprocess skeleton (source resolve, per-test dir,
+progress phases, timeout mapping, identical `subprocess.run` kwargs,
+stdout/stderr artifacts, the rc≠0 error precedence result-file error >
+stderr tail > generic, wall-time statistics) differing in the driver
+path, the tool's argv flags, message nouns and artifact prefixes. The
+skeleton now lives once in `simulators/common/json_driver.py::
+JsonDriverRunner`, and each runner is its config plus eight class-level
+hooks (`driver_path`, `tool_label`, `action_label`, `stdio_prefix`,
+`source_suffix`, `result_filename`, `tool_binary`, `build_command`) —
+Julia 354 → 148 lines, Python 385 → 133 — the template for any future
+driver backend. Two deliberate changes riding along: Julia's
+`read_result` gains the numeric hardening Python already had (a
+non-numeric payload value fails the test instead of crashing the run),
+and `JuliaRunner` gains `describe_tool_version` (the probe moved off
+the persistent class, which now inherits it), so Julia batch runs stamp
+a real `tool_version` in `status.json` instead of null — verified live
+on Julia batch, Julia persistent and Python lanes. Source resolution is
+module-level `resolve_source_file` so the persistent `JuliaWorker`
+shares it too. One timing shift on the persistent Julia lane: the
+version is now probed synchronously in the prologue (≤15 s before
+the header) instead of patched in after worker startup — same value,
+earlier.
+
+C-iii acceptance (same day): the full TRANSFORM-UnitTests suite — 331
+tests, Dymola/linux, --parallel 4, report-only — ran through the
+hoisted watchdog/prologue/extraction/driver paths with ZERO sim
+failures, timeouts or crashes: 325 passed, 1 failed, 5 no-baseline.
+Both non-pass groups are library-side, for the owner: the failure is
+PointKinetics_Drift_Test_flat_Xenon at NRMSE 1.54e-04 against the
+1e-4 default — marginal drift on a four-day xenon transient whose
+final values agree exactly — and the 5 NO_REFs are tests the library
+gained since July (326 → 331) that have never had baselines accepted.
+No baselines were touched.
+
+## D114 — Phase C-iv split 1: cli.py becomes the cli/ package (2026-09-01)
+
+`cli.py` had grown to 2,147 lines holding 14 commands and every helper
+they share. It is now `cli/` split along helper-ownership lines:
+`__init__` (exactly `main` + `main_entry` — the console-script and
+`python -m dstf` seams, pyproject untouched), `main` (parser + the
+`_COMMANDS` dispatch table and its parity test), `common` (config
+building, filter/review parsing), `run_cmds` (run/compare, runner
+selection, report routing — the coupling cluster), `review` (the
+interactive loop), `spec_cmds`, `baseline_cmds`, `diag_cmds`. Every
+function moved whole; a normalization diff shows no executable body
+line changed. One deliberate asymmetry: `run_cmds` imports the review
+loop at module scope while `review` imports `_get_runner` INSIDE the
+function — so a monkeypatch of `dstf.cli.run_cmds._get_runner` still
+reaches the review path (a module-scope import would freeze the
+pre-patch object). `cmd_discover` went to `diag_cmds` (a listing
+command with zero coupling to the run cluster). Eight test files
+retargeted imports and patch targets to the functions' new homes; no
+assertion weakened. Seam evidence: `dstf --help` byte-identical to
+`python -m dstf --help`, 14 subcommands, parser ↔ dispatch parity,
+demo discover 12, check-dymola OK, live OpenModelica run + compare
+12/12. Known, accepted: `from .main import main` in the package
+`__init__` shadows the submodule name, so `import dstf.cli.main` then
+attribute access reaches the FUNCTION (use `from dstf.cli.main import
+X`, as every caller does); and the review loop binds `_get_runner`
+once at entry rather than per keypress — a monkeypatch applied after
+the loop starts would not be seen (none does).
+
+## D115 — Phase C-iv split 2: reference_store splits along its seams (2026-09-01)
+
+`storage/reference_store.py` (1,232 lines) is now four modules:
+`baseline.py` holds the `Baseline` value type and `PRIMARY_BASELINE` —
+its own leaf module because the roles code constructs `Baseline` at
+runtime while the store needs the roles mixin at class-creation time,
+so keeping the type in the store is a hard cycle; `ref_index.py` holds
+`RefIndex`, `_atomic_write_text` and the ref-file pattern/high-water
+constants (simulators, discovery and reporting retarget their imports —
+base.py's lazy-import comment now states the true reason, the old
+circularity claim being false once ref_index imports nothing from
+dstf); `roles.py` holds the nine soft_check/companion CRUD methods as
+`_RolesMixin`, moved verbatim, whose entire store coupling is two
+declared members (`ref_dir` and `_ref_file_for_model`); the store keeps
+primary CRUD, the accept path, `get_reference` and `_extract_baselines`
+and subclasses the mixin, so every public call site is unchanged. Every
+moved region byte-identical to HEAD (verified as exact substrings).
+Three test files retargeted imports, monkeypatch targets and — the
+silent-vacuum risk — the two caplog logger names, which now differ
+deliberately: duplicate-model_id warnings come from
+`dstf.storage.ref_index`, the stray-`baselines` warning from
+`dstf.storage.reference_store`. Live: OpenModelica 12/12 run + compare,
+soft-check/companion listings, manifest dump — all through the split
+store.
+
+## D116 — Phase C-iv split 3: base.py becomes base + types + persistent (2026-09-01)
+
+`simulators/base.py` (1,717 lines after the U-2 template moved in) is
+now three modules plus one relocation: `types.py` (Capability,
+DatasetType, the result dataclasses, `resolve_variable_patterns` — it
+imports nothing from dstf, which is what keeps the package import
+order safe), `persistent.py` (the Worker template and
+PersistentRunnerBase, 917 lines), `storage/batch_manifest.py`
+(BatchManifest joins the storage layer), and base keeping
+SimulatorRunner, `_prepare_run`/RunSetup, the printers and
+`assign_test_keys`. The package `__init__`'s `__all__` is
+byte-identical — only the sourcing changed — and all five backends
+still register. 59 of 61 moved definitions are token-identical; the
+two exceptions are one annotation-quoting pair on `BatchManifest.load`
+(`"BatchManifest"` → `BatchManifest` under `from __future__ import
+annotations`, with TestRunResult behind TYPE_CHECKING — the runtime
+import would be a genuine cycle; PEP 563 makes it a no-op). 41 files
+retargeted imports, including the watchdog tests' monkeypatch aliases
+(kill_process_tree/snapshot_children are looked up in persistent.py
+now). Verified live on OpenModelica: clean 12/12 run + compare, and a
+forced-timeout case through the moved template — three TIMEOUTs, three
+"not counted" restarts, pgrep omc 0 before and after. The lazy
+`_atomic_write_text` import in `save()` was hoisted to module level in
+the same commit (both live in storage now; review-sanctioned) — the
+finding-66 atomic-replace rationale stays.
+
+## D117 — Phase C-iv split 4: reporting split, one status classifier, html_report retired (2026-09-01)
+
+Three coupled pieces. (A) `plot_comparison.py` (1,675 lines) is gone:
+`context_builder.py` holds the pure results→context half,
+`report_suite.py` the Jinja rendering, LTTB decimation, sidecar and
+suite orchestration — moved whole, no thin shim (no cycle forced one),
+and the six golden interactive hashes did not move. (B) The per-test
+status classification existed in four copies (finding 69 once fixed
+the same bug twice); the divergence-table-first rule found console,
+JUnit and html_report identical — branch order differs in JUnit but
+the arms are mutually exclusive — and those now call ONE classifier in
+`reporting/status.py`, with console and JUnit output pinned
+byte-identical by embedded goldens. The report-suite copy is a REAL
+divergence and stays: its `simulate_only` branch needs the TestModel
+(a passing simulate-only test is PASS there, while console/JUnit class
+it with the no-baseline rows — a pre-existing incongruity now
+documented at the site, queued for C-v adjudication). (C)
+`html_report.py` — the third overlapping HTML surface — is deleted;
+`--report-format html` writes the DASHBOARD page via
+`dashboard_render.render_final_to`, byte-identical to the run's own
+dashboard.html. Riding along because the brief's own live check
+exposed it: `_output_report` read an `--output` flag that no
+run/compare parser ever defined (dead since birth) — the flag now
+exists on the shared report parent, so junit/html reports can be
+written to a chosen path. Known: dashboard links to per-test reports
+are relative, so a page written outside the work dir has dangling
+row links (documented in the docstring and usage.md); interactive.js
+comments still name plot_comparison.py (frozen behind the golden
+hashes; follow-up with hash-diff evidence). Kept, commented, not fixed: the shared latent quirk that
+a driver-omitted variable leaves a numbering gap (`enumerate` over the
+requested list). Known spelling split: this base uses
+`result_filename`; `FmpyRunner` keeps its own `RESULT_FILENAME`. Verified live per backend: normal
+demo runs 12/12 (Dymola, OM) and 8/8 (Julia); forced-timeout runs
+complete with a summary, restart "not counted", and pgrep counts equal
+before and 30 s after on all three.
+
+## D118 — Phase C-iv split 5: interactive.js becomes five fragments (2026-09-01)
+
+The 5,308-line `interactive.js` is five contiguous slices cut on its
+own section banners — `scorers.js` (embedded data, runtime state, the
+MODE_SCORERS registry, FFT/event detection), `editors.js` (the five
+plot editors and the modal), `plots.js` (init + Plotly rendering),
+`tree-ui.js` (the recursive tree, structural editing, nodeToSpec),
+`export.js` (summary, overlays, patch building) — concatenated at
+report-copy time by `report_suite.INTERACTIVE_JS_PARTS` +
+`write_interactive_js`, which is now the load-bearing ordering
+contract (a reorder silently breaks load semantics; the browser lane
+is what would catch it). The page keeps one script tag; no build
+step; the shipped artifact is byte-identical to the join. The parity
+harness loads `scorers.js` ALONE behind a stub that is nothing but
+`window.MT_REPORT` — the smallness of that stub is itself the standing
+check that scoring math stays browser-independent; the full DOM shim
+survives only for the two Node tests that exercise the bundle. One
+ratified code motion: `_interpStep` (nine lines, hoisted declaration,
+body byte-identical) moved from the editor region into scorers.js so
+the fragment loads standalone — byte order was a means, the standalone
+parity target is the end. Strip-comments-and-sort proves identical
+code-line multisets; the three stale plot_comparison.py comments were
+fixed in the same pass. The goldens did not move — they hash the
+rendered HTML, which references the script by src — closing C-iv's
+split sequence with the demo live 12/12 and zero console errors over
+the concatenated artifact.
+
+## D119 — Phase C-iv closes: review-wave test files folded home (2026-09-01)
+
+The seven `test_review_fixes_*.py` files — named for the review wave
+that produced them, not the modules they pin — are gone; their 244
+tests moved whole into the per-module files (two new homes were
+justified: `test_report_suite.py`, since the reporting split left no
+per-module file for that pair, and `test_julia_driver.py` for the
+driver pins that deliberately need no julia binary). Every finding
+citation and section header moved verbatim — those docstrings are the
+incident record. The count invariant was proven mechanically: 1305
+collected / 1287 passed / 18 skipped before and after, and the full
+browser lane at 129 (77 of them in the reporter file — the review
+caught that quoting "77" alone as "the browser lane" was ambiguous),
+with all 222 node-ids from the deleted files present unrenamed. The
+only body edit anywhere is one helper rename forced by a genuine name
+collision (`_mk_result` → `_mk_valued_result`, seven call sites);
+two module-level fmpy skip-gates became class/function gates so
+folded fake-fmpy tests run while the real-fmpy tests keep skipping —
+the 18 skips are the same 18. Noted follow-up: `_tm` now exists in
+six test files; a conftest helper is the cleanup when next touched.
+This closes Phase C-iv — six restructuring commits, D114–D119, each
+review-gated and behavior-preserving.
+
+## D120 — Phase C-v round 1: the CLI batch, honest run verdicts, recorded backends (2026-09-01)
+
+Ten sanctioned behavior changes. Global flags now work on either side
+of the subcommand (a `global_parent` whose copies default to
+`argparse.SUPPRESS`, so the subparser's namespace copy cannot erase a
+pre-subcommand value — the mechanism is pinned in both directions).
+Five raw-traceback paths became ConfigError usage lines (missing
+@filter file, malformed recognizers entry, malformed metrics block, no
+package at the source path, missing positionals on the companion and
+soft-check actions). `manifest cleanup` dry-runs by default everywhere,
+`--apply` executes. `--parallel`'s two meanings are documented in each
+subparser. Timeout messages name `simulation.timeout` as the per-test
+override, through one shared `timeout_message`. A failed post-timeout
+worker restart gets exactly ONE retried `start()` after a five-second
+backoff inside the same budgeted restart, so a licence blip at
+--parallel 1 no longer fails the remaining queue. The D93 follow-on
+landed, hardened by review: `_prepare_run` stamps this run's scope
+`pending` before anything starts, and each verdict is persisted
+per-result the moment it lands (the bulk epilogue writer was deleted —
+one mechanism, not two), so an interrupted run leaves `pending` on the
+tests it never reached and real verdicts on those it did; the reader
+treats only recorded verdicts as authoritative and falls back to the
+status.json cross-check for `pending` and pre-field entries alike (old
+data, not old code). A work dir whose manifest says a run failed
+compares as SIM_FAIL, and `compare --accept` accepts only tests whose
+last RUN completed successfully — `failed`, `timed_out` and `pending`
+(the in-flight-at-abort state) all refuse, while a drifted test whose
+run passed but comparison failed stays acceptable (re-baselining drift
+is legitimate); field-less pre-D120 manifests keep the status.json
+guard. Live-proven with a genuinely interrupted OpenModelica run:
+manifest 9 pending / 3 passed, compare honestly 3-of-12 — under the
+pre-fix code all twelve would still have read green.
+`_dispatch_with_restart` gained the manifest as a fourth argument
+(signature change, no shim). `compare` without `--simulator`
+adopts the backend the run recorded in its metadata (explicit still
+wins) — forcing the wrong backend on an OM work dir reproduces the old
+0/12 exactly, which is the whole point. Batch Dymola stamps a real
+tool_version by printing `DymolaVersion()` from startup.mos into a
+work-dir file read back after the first batch — live-verified in the
+main session (12/12, `Dymola Version 2026x, 2025-10-10` in the
+metadata). The eight `_tm` test helpers consolidated onto one conftest
+`make_test_model` (two thin wrappers keep genuinely different
+defaults; the watchdog's stays standalone by design).
+
+## D121 — Phase C-v round 2: the reporter batch (2026-09-01)
+
+Ten items; the two structural ones first. Against-leaves live-score
+now: a leaf with `against != primary` resolves its baseline from the
+variable's EMBEDDED soft_check overlay (companions are never
+scorable), so live re-scoring and the tube envelope use the curve the
+CLI scored — mutation-proven by fixtures where the primary and the
+soft_check give different verdicts, and live on MetricTreeTest's warn
+leaf (perturbing the soft_check flips the pill; perturbing the primary
+does not). The D105 CLI-authoritative pin narrows to overlay-absent
+(plus the unchanged D98 decimation rule), symmetric between the Python
+stamp and the JS rule. And the D117 simulate_only carve-out ends:
+`TestComparison.simulate_only` lets the ONE shared classifier call a
+passing simulate-only PASS everywhere — console, JUnit and the report
+now agree, and the report suite's private classifier copy is deleted.
+
+The rest: the owner-reported cross-report selection leak is fixed by
+gating selection restore on a per-report key (work dir + run start;
+filters/sort/widths deliberately still shared); the add-leaf `+` is
+disabled with a tooltip on a `warn` that has its one child; Plotly is
+vendored (cartesian 2.35.0, 1.25 MB — the full bundle phones home for
+map CSS and fails the offline gate) ONCE per report suite at
+`reports/plotly.min.js` after review pushed back on per-dir copies
+(22 MB → 8.3 MB per demo run; ~414 MB → 1.25 MB at TRANSFORM scale;
+the dashboard needs no Plotly at all — pinned; single-dir portability
+cost documented); legends use variable + metric names, not JSON-pointer
+paths; warn-wrapped failures no longer paint the summary red — the
+root verdict rules and an advisory chip counts them (the documented
+baseline-role semantics applied to the UI); browser-created `weighted`
+nodes carry the CLI-authoritative badge and a pending verdict that is
+deliberately not a pass; range out-of-window segments are gray traces
+(Plotly's shapes[].editable=false empirically does not pin under
+global shape editing); rich-editor modes lost their duplicated
+passthrough textarea under a general rule that spared event-timing's
+panel, whose time_tolerance/count_must_match have no other editor; the
+scalar Quantity box fits one line; and the dashboard's Worst-NRMSE
+column says "n/a (N unscored)" instead of "—" when a sentinel leaf
+poisons the max. Reports are now fully offline-capable (zero console
+errors and zero failed requests with the network disabled). Review
+pushed two more honesty fixes in before commit: overlay arrays are
+decimated under the same cap as the primary, so per-overlay
+full-sample counts are now stamped, the decimation banner discloses
+decimated overlays, and the banner
+discloses decimated soft_checks by name (companions count toward the
+totals but are never listed — they cannot be scored against). One
+clause of that fix was REFUSED by the implementer and the refusal
+ratified: pinning dominant-frequency on overlay decimation would be
+STRICTER than the primary's treatment, because the DF scorer FFTs the
+actual trajectory only — the baseline never enters the spectrum, which
+is also why a decimated primary ref does not pin DF today. The ruling
+is pinned by a guard test that fails loudly if the scorer ever starts
+reading the reference arrays — the one condition that would flip the
+call; and
+a root wrapped in `weighted` shows a pending summary matching its
+pending pill instead of painting red. Accepted, watch-only: two
+same-metric leaves on one variable now share a legend label (the
+pointer disambiguated before); pre-`start_wall` snapshots churn their
+selection key per refresh (old data tolerated, silently); the vendor
+copy's freshness check is size-only; a zero-length embedded overlay
+fails closed rather than falling back to the CLI badge; a pinned
+against-leaf's tube editor centres on y=0 rather than wrongly on the
+primary.
+
+## D122 — Every JSON DSTF writes lands with LF, on every platform (2026-09-03)
+
+`_atomic_write_text` forwarded `newline=None` to `open`,
+so Python translated `\n` to `os.linesep`: a baseline accepted on Windows
+landed CRLF, the same file accepted from WSL landed LF. Observed in the
+user's TRANSFORM-UnitTests tree — `ref_0011.json` and `ref_0222.json`
+showed as modified with +6881/-6881 and +231/-231 while being
+byte-identical to HEAD once `\r` was stripped. CORRECTION (same day,
+verified in that repo): the observation was real but its stated cause was
+not. An earlier note recorded "no `.gitattributes` and no `core.autocrlf`, so
+nothing normalises it back"; that was true when written and the owner
+closed it hours later — `6471d47` adds `* text=auto eol=lf` and `1372809`
+renormalizes, both 2026-09-03. That tree now reads clean with a
+6,881-CR working copy, because git cleans on compare. Do not repeat the
+claim: a consuming repo may or may not normalise, which is exactly why
+the writer must not depend on it. The cost is not tidiness: the reference tree is the
+seam other people version-control (the stage block names it), and a real
+one-value edit inside a 6,881-line whole-file diff is invisible in review.
+This repo could never surface the bug itself — its own `.gitattributes`
+carries `* text=auto eol=lf`.
+
+The fix is the default, not the call sites. `_atomic_write_text`'s
+`newline` narrows from `str | None = None` to `str = "\n"`, which corrects
+all ten of its JSON callers at once (`patch_apply`, `spec_parser`,
+`batch_manifest`, `reference_store` ×3, `roles` ×3, `ref_index`) and means
+a caller added later cannot reintroduce the defect by forgetting a keyword.
+Three JSON writers bypass that primitive and took the explicit kwarg
+instead: `config.py` (`testing.json`), `cli/common.py`
+(`reference_manifest.json`) and `cli/spec_cmds.py` (the exported schema).
+The scope is wider than the defect report, which named only the baseline
+tree: `spec_parser` and `patch_apply` write `test_spec.json`, also a
+promised surface. `reporting/report_suite.py`'s `interactive.js` joins them
+for one specific reason — unlike everything else under `reports/` it is
+byte-stable across runs, so an archived report tree regenerated from the
+other OS would diff wholly for nothing.
+
+Deliberately excluded, all regenerated wholesale with content that differs
+every run anyway: report HTML/JSON, simulator stdout/stderr dumps, work-dir
+result JSON, progress files, the Dymola/OM `.mos` scripts (forcing LF on a
+script a Windows tool reads is a separate question nobody has asked), and
+the JUnit XML at `reporting/junit_report.py` — `ElementTree.write`'s
+filename branch opens without `newline=`, so that one would need a file
+object rather than a kwarg, and it is a CI artifact, not a committed file.
+`ref_index`'s ID-claim stub is excluded on different grounds: `json.dump`
+with no `indent` emits a single line containing no `\n` at all.
+
+The CSV export keeps its explicit `newline=""`, now belt-and-braces rather
+than load-bearing — per CPython's `textio.c` neither `""` nor `"\n"`
+translates on write, so the `\r\n` that `csv` embeds survives either way.
+That also means the existing `\r\r\n` regression assertion at
+`tests/test_storage.py` can no longer fail on any platform; it was restated
+to pin the CSV terminator rather than pretend to guard the argument.
+
+Old data, not old code: baselines already stored with CRLF read back fine —
+every reader goes through `read_text` (universal newlines) or `json.loads`,
+and nothing hashes, seeks or appends over reference-tree content. They stay
+CRLF until re-accepted, at which point each flips to LF and produces one
+whole-file diff. That is a one-time cost and no migration is offered.
+
+Verification, and its limit. Full suite green (1403 passed, 26 skipped);
+the mechanism was proved directly — an explicit `newline` controls the
+terminator independently of `os.linesep`, and `Path.write_text`'s `newline`
+parameter exists on the 3.10 floor (executed on CPython 3.10.20, not
+recalled). No byte assertion can gate this on Linux: CPython compiles the
+CRLF write translation in under `#ifdef MS_WINDOWS` rather than reading
+`os.linesep`, so setting `os.linesep` at runtime changes nothing. The gates
+are therefore call-site assertions — the signature default for the
+primitive, and a `Path.write_text` spy for each of the three direct writers
+— each mutation-checked by reverting the decision and confirming the test
+fails. **What remains unrun: an actual accept on Windows.** The platform
+where the defect manifests is the one that cannot be tested from here.
+
+## D123 — The "simulator" vocabulary becomes Backend; three config keys and two CLI flags break (2026-09-03)
+
+The architecture has called the abstraction a **Backend** — a role: test
+descriptor in, trajectories out — since the layer model was written, but the
+code said "simulator" throughout: the package, the ABC, every concrete class,
+the config keys, the CLI flags. Residue from ModelicaTesting; D81 renamed the
+project around it rather than through it. The word was not merely dated, it
+was false for one of the five — the Python backend runs an arbitrary
+`simulate()` — and for its shipped `ConstantCsv` example, which replays a
+recorded file and simulates nothing. That a backend need not be a simulator is the
+architecture's central claim, so the vocabulary contradicted the design it
+was supposed to document.
+
+**Why now rather than after 1.0.** The stage block names the `dstf` CLI and
+the `testing.json` format as promised surfaces whose change must be
+coordinated. Nothing is published — `origin/main` predates all of this — so
+today the coordination is one line in one consumer file. After a 1.0 release
+the identical rename becomes a breaking change against a published surface,
+and the realistic outcome is that it never happens and the wrong word becomes
+permanent. The cost of this decision only ever goes up.
+
+**The break, in three commits.** Internal names first (01e1a43): package
+`simulators/` → `backends/`, `SimulatorRunner` → `Backend`, the five
+`*Runner` families → `*Backend`, `get_runner*` → `get_backend*`,
+`persistent_runner_cls` → `persistent_backend_cls`. Then the promised
+surfaces (96a13a6): `simulator`/`simulators`/`simulator_setup` →
+`backend`/`backends`/`backend_setup`, `--simulator`/`--simulator-path` →
+`--backend`/`--backend-path`, `RunMetadata.simulator` → `backend_name`. Then
+docs. No aliases, no read-both shim, no migration utility: the stage rules ban
+deprecation paths, and an alias would have made the dead vocabulary permanent
+by being convenient.
+
+**`Worker` was not renamed, and "simulator" survives on purpose** where the
+referent is a real external tool — a binary on PATH, a long-lived simulator
+subprocess, a licence seat, "as reported by the simulator". Dymola is a
+simulator; the abstraction is not. Registered backend names, the
+`dstf.plugins` entry-point group, the reference-tree layout and the work_dir
+path shape are all values or structure, not vocabulary, and did not move.
+
+**The one real hazard was a name collision, not a rename.** `Config.simulator`
+and `Config.simulator_backend` were never synonyms: the first is the label the
+user configured and may carry a version ("Dymola 2026x"), the second the
+canonical family ("Dymola") that selects the reference partition. They are now
+`backend_name` and `backend` — one word apart, and trivially merged by a later
+refactor. Merging them sends every versioned-name user's lookups to a
+directory none of their baselines occupy: whole-suite NO_BASELINE, and an
+`--accept` then writes a full parallel reference tree in the wrong place. The
+existing `reference_dir` test could not catch it, because its unversioned
+default made the two strings equal. A new test pins a versioned name against
+both paths and was mutation-checked — collapsing the split fails it.
+
+**A hard break has a failure mode worse than either state, and it needed its
+own fix.** An untouched `testing.json` still PARSES with the old keys while
+every setting in it silently does nothing — experienced as "the tool ignores
+my config", with no diagnostic. `load_config_file` therefore rejects the three
+old keys by name and says what each became. That is a diagnostic, not a
+compatibility path: the old key never works again, it just stops failing
+silently. A parametrized test pins it, because nothing else in the tree failed
+if the break were undone — a rebase restoring an old-key read would have kept
+the suite green.
+
+**One field was deliberately NOT deleted despite an instruction to delete it.**
+`RunMetadata` carries `backend` (family) and the configured label as two
+fields by design, and they diverge in practice — TRANSFORM's own config
+auto-detects exactly that pair. `meta.get("simulator") or meta.get("backend")`
+was therefore "prefer the versioned label, else the family". The FIELD was
+never legacy; only the OR-arm was dead, and only because both fields are
+always written today. Deleting the field would have erased the version from
+every report
+banner — the provenance that module exists to capture. The field was renamed
+to `backend_name` instead. What *was* deleted is the `or meta.get("backend")`
+tail, which was dead for anything this version writes.
+
+Review caught that the first version of this entry claimed dropping that tail
+produced an explicit error. It does not, and the truth is worse: a work dir
+written before the rename records its backend under the old key, so
+`_recorded_backend` returns `None`, the adoption branch is skipped, and
+D120's guard stops firing precisely when it is needed — `compare` falls back
+to environment auto-detect and will score an OpenModelica work dir against
+the Dymola partition, SIM_FAIL for every test, silently. Reading the old key
+would be a compatibility path, so instead a stale stamp now warns and names
+`--backend`.
+
+**Known consequence, stated rather than discovered:** `compare` against a work
+dir produced before this change cannot identify its backend; it now warns and
+names `--backend`. Re-run rather than compare, once.
+
+**Verified.** 1410 hardware-free tests; ruff clean; live runs green on Dymola
+(12/12), OpenModelica batch (12/12) and Python (3/3) through the renamed key
+and flags; and a full 331-test run against TRANSFORM-UnitTests through the
+renamed key reproduced the pre-rename verdicts exactly — same test set, 330
+pass, the same single `SteamWater_HCSG` 60s timeout, zero regressions. The
+word "pre-existing" is anchored on a full pre-rename run captured in the same
+session before any file was touched — not on the last recorded 331/331, which
+was a `compare` and so could not have re-simulated. That timeout is a slow
+model against the 60s default, not a wrong answer, and is unrelated to this
+work. **Unrun:** Windows, and the Julia and FMPy backends (no `julia`
+on this machine, `fmpy` not installed) — both are covered by the hardware-free
+suite but were not exercised live.
+
+
+## D124 — The PyPI distribution name is `dynamic-systems-testing-framework` (2026-09-04)
+
+D81 declared the PyPI project name `dstf`. That name is not available: it
+belongs to "A framework for Deterministic Scheduling Theory" (v0.0.12, last
+released 2020-08-06), which is unrelated to this project. So the install
+instruction the README has been advertising does not work — `uv tool install
+dstf` fetches the 2020 package and then fails with `No executables are provided
+by package dstf`.
+
+The distribution name and the import name are separate fields, and only the
+first one moves. You install `dynamic-systems-testing-framework`; you still
+`import dstf`, the console script is still `dstf`, `python -m dstf` still works,
+coverage still measures `dstf`, and the plug-in entry-point group is still
+`dstf.plugins`. Hatchling already pinned `packages = ["src/dstf"]`, so the wheel
+layout does not move either: the built artifact carries
+`Name: dynamic-systems-testing-framework`, a top-level `dstf/` package and the
+`dstf = dstf.cli:main_entry` entry point.
+
+The split introduces one hazard worth recording, because it is silent.
+`importlib.metadata.version()` is the only thing that reads the distribution
+name back, and both call sites (`dstf/__init__.py`, `backends/run_metadata.py`)
+catch `PackageNotFoundError` and substitute a fallback string. A future rename
+that misses a call site therefore does not fail — it writes `unknown` into the
+`dstf_version` provenance field of every result file, and the pre-existing test
+asserted only that the field was non-empty, so `unknown` satisfied it. The name
+now lives once, as `dstf._DIST_NAME`, and `tests/test_distribution_name.py`
+pins it to `pyproject.toml` and refuses to skip when an install of this source
+tree exists under a different name — the state in which the old test reported
+green.
+
+**Verified.** Built the wheel and installed it into a clean environment:
+`dstf --version` and `python -m dstf --version` both report 1.0.0,
+`version("dstf")` raises `PackageNotFoundError`, and both internal lookups
+resolve. Stored baselines are unaffected — `dstf_version` is display-only, never
+compared. **Unrun:** the published install path itself. Nothing is on PyPI yet,
+so `uv tool install dynamic-systems-testing-framework` is correct in form and
+untested in fact; publishing is tracked in `docs/ideas.md`.
+
+
+## D125 — The two-tier split supersedes D66's boundary (2026-09-08)
+
+The line between the two surfaces is **mutation**. A surface either changes
+something or it does not, and that is the whole rule: zoom, hover, legend and
+overlay toggles, error overlays, reading values off a plot, filtering tests,
+sweeping a selection, copying a command, and reading the metric tree with its
+verdicts and score text are reporting; changing a tolerance, a mode, a window or
+an `against`, adding or removing or wrapping leaves, accepting results as
+baselines, and running tests are authoring. D66 drew the line in the same place
+in words — reporter authors, CLI executes — but put the authoring surface inside
+the report, so the report both mutated and computed. It no longer does either.
+
+The report page now computes nothing. Every number it draws comes from an
+embedded figure dict Python built or from a string the server rendered. Geometry
+is a result of comparison (sub-project 1): each metric emits the primitives that
+describe its criterion, the figure layer turns them into traces and shapes, and
+the page paints them. Authoring moves to a Python-side tool driven by the same
+figure layer and the same metric registry the CLI scores with (sub-projects 3–6,
+not yet built); `spec-update` is unchanged and stays the CLI's patch applier —
+it applies an RFC 6902 envelope from any source, and only the browser stopped
+producing one.
+
+What was deleted, and why. Three registries were re-deriving Python's geometry
+in JavaScript — `MODE_SCORERS` in `scorers.js`, the five per-mode editors in
+`editors.js`, and the tree builder and patch export in `tree-ui.js` /
+`export.js` — and with them the Python that existed only to feed them
+(`_JS_SCORED_METRICS`, `cli_authoritative` and its badge,
+`_mark_decimated_cli_authoritative`, `_extract_mode_values`, `_extract_spectrum`,
+the mode-schema and form emitters in `reporting/ui/`), plus
+`tests/test_scorer_parity.py`, which existed to prove the two implementations
+agreed. The reason is the failure mode that suite was built to catch and could
+not close: a second implementation of scoring means the page can show a passing
+tube the CLI failed. A parity test constrains drift where it has a fixture; it
+cannot make one implementation be the other. Deleting the second implementation
+does.
+
+What the report keeps, each asserted by Playwright on pages generated through
+the real render path before the deletion landed: the per-variable figure with
+the trace count its dict declares; zoom, hover and legend toggles; the overlay
+picker (overlay traces are already in the figure, `legendonly`, and the checkbox
+toggles visibility); the error-overlay toggle on the right axis; the test
+filter, selection sweep and command copy on the dashboard; the metric tree,
+read-only, with the CLI's verdict and `summarize` text per leaf, server-rendered;
+statistics, diagnostics and artifact sections; diagnostic and no-baseline plots,
+which became figure dicts too; and a leaf's window shown as a band, open-ended
+when one end is `None`. The `comparison_data.json` sidecar keeps what the
+documented downstream readers use: each `trajectories` entry's shape and full
+resolution (one entry per variable now — a variable whose leaves include a
+sentinel used to get a second, empty entry of the same name), and the `summary`
+block the dashboard reads. Its `tree_view` leaves changed with the page: the
+per-leaf numeric fields and form artifacts the browser scorer read are gone
+(`nrmse`, `rmse`, `signal_range`, `max_abs_error`, the finals, `tolerance_used`,
+the `tube_*` fields, `mode_values`, `mode_controls_html`, `window_controls_html`,
+`cli_authoritative`, `spectrum`), and each leaf carries `details` and
+`advisory` instead; the top level lost `mode_schemas` and gained `tree_summary`.
+The spectrum arrays now live only in the figure. The page's decimation banner
+points at the sidecar for the full-resolution input trajectories.
+
+What changed for a user who never opens the tool, all on the CLI's surfaces:
+`run -i`'s detail text is mode-aware, because `summarize` on the metric
+descriptor replaced the reporter's private score formatter (sub-project 1) and
+the console reads the same function, and it now prints each mode's own detail
+pairs. A leaf that could not be scored carries its variable's name in the
+console and JUnit output with the reason beside it, rather than carrying the
+reason where the name belongs — the sentinel's label was the diagnostic, which
+made a not-scored leaf unfindable by variable; the missing-variable sentinel,
+which used to print only the inf/nan numbers, now says what was missing. A
+scalar leaf whose reduction is not finite (a NaN in the samples) is a no-data
+failure with a reason; under bounds with only `min_value` declared it used to
+pass, because `max(0, nan)` is `0`. The dashboard's copied command is built
+from a prefix without a subcommand, so the command menu can offer `run`,
+`compare`, `compare --accept` and `run --rerun`. The dominant-frequency
+"no peaks declared" text no longer names a browser button.
+
+Payload, measured at the 50-variable budget fixture: **11.9 MB** after the cut,
+against 15.8 MB with the trajectory arrays still on the page. D66's ~5 MB budget
+no longer applies; the owner dropped it on 2026-09-08 in favour of a 25 MB
+ceiling watched as a regression, because a page that carries figure geometry for
+50 variables is not the page that budget was written for.
+
+Sources: the design is
+`docs/superpowers/specs/2026-09-08-two-tier-architecture-design.md` (§4.1 the
+line, §4.4 the reporter after the split, §5 the build order); the two plans
+executed so far are
+`docs/superpowers/plans/2026-09-08-geometry-and-figures.md` and
+`docs/superpowers/plans/2026-09-08-the-cut.md`. This entry supersedes D66's
+"reporter is the authoring surface" commitment; D66's other commitments (the
+baseline-role split, recommender containment, economy of tools) stand.
+
+- `src/dstf/reporting/templates/report.js` — the page's one script, replacing
+  `plots.js` and the viewing half of `export.js`; still served as
+  `interactive.js`. `scorers.js`, `editors.js`, `tree-ui.js`, `plots.js` and
+  `export.js` are gone.
+- `src/dstf/reporting/templates/interactive.html` — server-rendered metric tree
+  (a recursive Jinja macro), summary line, variable pills and decimation banner;
+  `MT_REPORT` carries figure dicts only.
+- `src/dstf/reporting/report_suite.py` — `INTERACTIVE_JS_PARTS = ("report.js",)`;
+  the page context is stripped of trajectory arrays after the sidecar is
+  written; `decimated` is computed from the figures' sample stamps.
+- `src/dstf/reporting/context_builder.py` — the leaf view carries
+  `score_display`, `criterion`, `details`, `error`, `advisory`, `against` and
+  `window`; the raw numeric leaf fields and the JS-facing extractors are gone.
+- `src/dstf/reporting/ui/mode_controls.py` — `derive_schema` only, for
+  `export-schema` and the authoring tool's forms.
+- `src/dstf/comparison/tree_eval.py`, `reporting/console_report.py` — sentinel
+  comparisons keep the leaf's variable name and carry the reason in
+  `diagnostics["error"]`.
+- `src/dstf/reporting/templates/dashboard.js`, `dashboard.html`,
+  `reporting/dashboard_render.py` — the command menu offers the commands that
+  exist today (`run`, `compare`, `compare --accept`,
+  `run --rerun failed,sim-failed`); the `dstf author` entry waits for the
+  command.
+- `tests/test_interactive_report.py` and `tests/test_figure_goldens.py` (new);
+  `test_scorer_parity.py`, `test_interactive_html_snapshot.py` and its hash
+  goldens, `test_interactive_playwright.py`, `test_interactive_points.py`,
+  `test_interactive_event_timing.py`, `test_interactive_range_window.py`,
+  `test_interactive_against_baselines.py` deleted; `test_mode_controls.py`,
+  `test_export_schema.py`, `test_report_suite.py`, `test_report_size_budget.py`,
+  `test_comparator.py`, `test_metric_registry.py`, `test_scalar_metric.py`,
+  `test_tree_eval.py`, `test_reporters.py` and the two dashboard suites trimmed
+  or adapted.
+- `README.md`, `docs/vision.md`, `docs/architecture.md`,
+  `docs/extensibility.md`, `docs/usage.md`, `docs/qa/reporter_checklist.md`,
+  `CLAUDE.md` — updated to the read-only page and the two tiers.
+
+## D126 — A tree scores what it names; the rest of what a test tracks is warned about (2026-09-09)
+
+A test's `variables` list, patterns included, decides what is tracked: read
+from the result, stored in the baseline, plotted. Scoring is the other layer.
+With no `metrics` tree the flat path scores every tracked variable by name;
+with a tree, only the leaves score. A tracked variable no leaf names is stored
+and plotted and never judged, and CI stays green while it drifts. That gap
+existed for every hand-authored tree; the authoring tool made it reachable in
+one click, because editing a criterion on a test with no tree writes one.
+
+Two questions were open. The tool's tree for a pattern-tracked spec, `"variables":
+["tank.*"]`: freeze today's matches into leaves, or leave such tests uneditable?
+The owner chose the leaves — the pattern keeps tracking, the tree scores what it
+names — on the condition that the gap is never silent. So every comparison run
+through a tree carries a structural warning, "Tracked variables without a
+criterion", naming each tracked variable no leaf covers, on the console and the
+report page like every other structural warning. The flat path never emits it.
+`spec-update`, which has no simulation result to resolve a pattern against,
+still refuses to write a tree for one.
+
+The tool builds the tree from the variables the flat path actually scored, in
+the report's order, so leaf *i* is `/metrics/children/i` on both tiers; a test
+tracked by its `.mo` annotation (TRANSFORM's shape, where the spec entry lists
+no variables or does not exist) gets its entry created by the same op. It
+stages that tree only when the tree would score exactly what the flat path
+scored; the ways the two paths differ are enumerated in the Session, each with
+its negative test.
+
+- `src/dstf/comparison/comparator.py` — the warning, tree path only.
+- `src/dstf/authoring/session.py` — materialization from the scored names.
+- `docs/usage.md`, the design spec's §4.6 amendment and §9.
+
+## D127 — The visual system is one token table; the tool's scan cache lives in the user's cache dir (2026-09-15)
+
+The redesign brief (`docs/superpowers/specs/2026-09-15-authoring-tool-redesign-brief.md`)
+and `DESIGN.md` name the colours and type both tiers share. They live once, in
+`reporting/theme.py`, as a mapping rendered to `:root { --dstf-...: ... }` for the
+dashboard, the per-test report and the authoring tool's page, and mirrored into
+the tool's Quasar palette. Status fills, baseline-role chips and plot series
+never change with a theme; a theme (the redesign roadmap's sub-project 7) will
+be another mapping in the same module, named in `testing.json` (owner ruling,
+brief §3.10). The shipped
+type stack ended in `monospace` with no generic sans-serif, so a Linux browser
+without Segoe UI or Roboto rendered every report in monospace; the stack now
+ends in `sans-serif`. Two colours the report used that are in no table — the
+metric tree's combinator purple and the decimation banner's amber — map onto
+the neutral and `warn` tokens.
+
+The tool caches the library scan across restarts under
+`$XDG_CACHE_HOME/dstf/scan/` (default `~/.cache/dstf/scan/`), keyed by the
+library path and the recognizer set (a cache another DSTF version wrote is
+ignored and replaced) — never in the work dir,
+which is a run's artifact directory, and `Session.open` still writes nothing
+there. The cache validates nothing per file: on the owner's `/mnt/d` mount a
+`stat` sweep over TRANSFORM's 3 269 `.mo` files measured 27 s, longer than
+parsing them (20 s). A cached open trusts the cache, rescans on a background
+thread, and re-merges what changed.
+
+Also here, no decision needed but recorded: the report's error overlays ride on
+one right axis per unit family (brief §3.4), shown while a series on it is
+visible, by one shared script (`templates/axes.js`); the Session reads a model's
+reference and overlays once per reload and decimates its base traces once; the
+sibling-backend overlay index is built at open on its own thread; the Session
+reports its phases as `loading` events and scores each result as it is read.
+
+- `src/dstf/reporting/theme.py`, `templates/axes.js`, `discovery/scan_cache.py`,
+  `authoring/session.py`.
+- Brief §3.1, §3.4, §3.8, §3.10; roadmap sub-project 1.
+
+## D128 — The run verdict is applied in the one reader (2026-09-16)
+
+`Backend.read_results` applies the batch manifest's `last_run_status` (via
+`run_verdicts`) to every result before storing it and before its `on_result`
+callback; `read_last_results` is that reader over the manifest on disk. Until
+now only `read_last_results` applied the verdict, and `run_pipeline` read back
+through `read_results` directly — so `run --merge` and `--rerun`, whose
+merged-in models have no in-memory run result, reported PASS for a test whose
+run had timed out while `compare` on the same work dir reported SIM_FAIL, and
+`run --rerun failed -i` then offered that run's partial `.mat` for acceptance
+as the primary baseline. The guard lives at the read because a call-site
+patch leaves a second place to forget; `tests/test_pipeline.py` drives the
+reader and the merged pipeline, `tests/test_cli.py` the review loop over a
+merged outcome.
+
+The partial-rerun flip over OLD data noted in `docs/ideas.md` (2026-09-14)
+is a different cause — `status.json`'s subset snapshot losing rows for
+manifest entries written before `last_run_status` existed — and stays open.
+
+## D129 — Selection is the page's; capabilities attach by placement (2026-09-16)
+
+The authoring tool's selection — the checked tests, the variable, the
+criterion's path — is the state of a page in one browser tab, kept in
+NiceGUI's tab storage, and reaches a capability through the view the page
+builds for it: `SessionView(session, selection)`. The Session holds none;
+`Session.select`, `Session.selection` and the `selection` event are gone. Two
+tabs on one server keep two selections, which the one-tab shell (D125's tool,
+sub-projects 4–6) could not — its `Shell.select_one` wrote the Session's
+selection, so a second tab's click moved the first tab's plot. The Test page
+(redesign sub-project 3) needs the same for its variable and criterion, so
+the move was made once, here, where the shell was being rewritten anyway.
+
+With it, `Scope` — where a capability's TAB appeared — became `Placement`,
+where its BUTTON attaches: `SUITE` (the Suite page's batch bar), `TEST` (the
+Test page's header), `VARIABLE` (a variable section's toolbar), `CRITERION`
+(the inline criterion editor); a capability names a frozenset of them and a
+`caption(view)`, the sentence its button carries (object, effect, count). The
+shell draws one outlined button per capability at each placement and hosts
+its panel in a dialog; it still knows no capability by name. `PROJECT` has no
+successor because Close project is gone and the project-less state is
+unreachable. The contract's spec is amended in §4.6 of the two-tier design;
+`tests/test_capability_conformance.py` is the executable form over the four
+placements and the five outcomes.
+
+Two behaviours moved with the structure. `Session.open` runs on a thread the
+shell owns and every Session event crosses to the UI loop through one queue
+an app-level timer drains, so the page appears before a result is read and
+rows fill in per `loading` event (brief §3.8); a model whose scoring raised is
+announced with `error=True`, and `open` emits `done` and starts the rescan
+even then. And the old shell's tests of behaviours the Test page re-hosts
+(panels following a rescore, the leaf's config error above the editor, an
+error cleared in place, the plot redrawn in place after a drag) were deleted
+and named in the roadmap's sub-project 3 and 4 blocks rather than carried as
+text: their shape depends on the page sub-project 3 designs. `Session.close`
+stays as the library's counterpart to `open` — the Session is also driven
+without a page — although no page calls it since Close project went.
+
+## D130 — A test's plot layout is spec data; a result file is read by its backend class (2026-09-20)
+
+**Context.** The redesigned Test page draws any number of plots per test, any
+series per plot, tracked or not, and the report must draw the same plots
+(brief §3.9, §3.10). Three things stood in the way: a loaded `TestResult`
+holds only the tracked variables; spec patches were whitelisted to
+`/comparison` and `/metrics`; the report page was one section per variable.
+
+**Decision.** `plots` is an optional key per `test_spec.json` entry —
+`[{"kind": "time", "series": [{"var": ...}]}]` — strict inside (unknown keys,
+kinds, patterns, duplicates, blank names and empty series are refused by
+name; `null` is refused), ignored by scoring, carried on `TestModel.plots`
+(`None` = absent = one plot per tracked variable; `()` = no plots), patchable
+under `/plots`, described in the exported schema. Any variable of a result
+file is listed and read through two classmethods,
+`Backend.result_names(test_dir)` and `Backend.result_series(test_dir, names)`,
+default "none": a classmethod because the report reads a test's files without
+instantiating a backend. Neither raises on a missing, half-written or
+malformed file — a run killed mid-write leaves exactly that, and one test's
+file must not break a whole report. `plot_figure(views)` draws a plot: one
+view is `variable_figure` unchanged; several draw families (the last integer
+index) in a hue ramp with a folded legend, every leaf's geometry laid out
+against the union of the series' time spans and the panels any series opens,
+and no overlays or error traces. Both tiers resolve a layout through
+`resolved_plots`; the report page is sections per plot, numbered by position.
+
+**Consequences.** Dymola, Julia and Python result files hold every variable,
+so any of them can be plotted; OpenModelica's variable filter and FMPy's
+requested outputs keep only the tracked ones, and the tool says so rather
+than widening the run. A layout that names a variable a rerun dropped keeps
+its plot and names the series as missing. The Session never opens the work
+dir of a model a job holds — it serves what it read before the lock — and a
+failed job, which no reload follows, drops what was read of its models. A
+test with no `plots` key costs the report nothing: its result file is not
+opened again. `/variables` stays outside the patch whitelist until tracking
+from the Variables drawer needs it.
+
+## D131 — The Test page: three ways to host a capability, one figure per plot (2026-09-20)
+
+**Context.** The Test page is where an author edits a criterion (brief §3.2;
+the owner's board of 2026-09-20). Its controls are capabilities, and D129's
+placement model draws a capability one way only: an outlined button whose panel
+opens in a dialog. The page needs a tree node's `+` / wrap / `−` cluster and a
+criterion's editor to be capabilities too, or the shell has to know Edit tree
+and Edit criteria by name — which `tests/test_capability_conformance.py
+::test_the_shell_names_no_capability` refuses as an AST scan over `shell/*.py`.
+
+**Decision.** A placement is hosted in one of three ways, and the way is the
+placement's, not the capability's. `SUITE`, `TEST` and `VARIABLE` stay a
+captioned button whose panel opens in a dialog (`ActionBar`) — `VARIABLE`'s
+sits in a plot card's footer, so "Add a criterion for x" is a button under the
+plot that draws x. `CRITERION` is an inline editor (`InlineHost`): every
+capability placed there is built, without a heading and without a button of its
+own, into the slot below the criterion's row, so Edit criteria and Edit on plot
+read as one editor. `NODE` is new and is a node's controls: the same inline
+host, drawn inside a tree row or a criteria row, which is how `+` / wrap / `−`
+appear without the shell naming Edit tree. `Selection` gains `node_path` — the
+node whose controls are being drawn, a leaf or a combinator — while `leaf_path`
+goes on meaning "a criterion". Edit tree moves to `{NODE, VARIABLE}` and its old
+rows-and-forms panel is deleted; each of its forms opens in a `ui.menu` anchored
+to its button, built when that menu opens from the tree as it is then (a cluster
+is ~28 elements, and 40 leaves built eagerly made a 2,387-element page). Edit on
+plot moves from `VARIABLE` to `CRITERION` and is scoped to `selection.leaf_path`:
+a drag on another leaf's handle is refused by name.
+
+Each plot card owns its `ui.plotly`, its `FigureHook` and its snap-back, and a
+panel hosted under that card subscribes through `hook.owned(owner)`; the host
+takes the owner back when the editor closes, when it is rebuilt, and — for a
+dialog — however the dialog closes, so a panel nobody can see stages nothing
+from a drag. The tool's figure is always built `editable=True` and carries rings
+for the OPEN leaf only (`rings_for` in `figures/plotly.py`, `editing=` on
+`Session.figure` / `Session.plot_figure`). The Plotly `config` therefore never
+depends on what is being edited, so opening an editor is a `Plotly.react` on the
+same node and the zoom survives it. `scrollZoom` is off in the tool and stays on
+in the report: the tool stacks plots full-width down a scrolling page, where one
+wheel notch over a plot ends the page's scrolling and the cards below are never
+drawn. Each card stamps an incrementing `layout.editrevision` on every figure it
+sends, because `uirevision: "keep"` alone makes Plotly keep a shape the user
+dragged when the server re-sends the value it sent before — which is exactly the
+snap-back after a refused drag (measured in Chromium).
+
+A card is a 320 px slot until it is drawn: one page-level `IntersectionObserver`
+over `.dstf-plot-slot` fires one global event per slot near the viewport, which
+`ui.on("dstf_plot_visible")` answers by building that plot. The page then follows
+the Session by signature: on each event it re-sends only the figures whose
+signature — the open leaf, and every leaf on that plot's series with its metric,
+parameters, window, baseline and verdict — has moved. A finished, failed or
+written job forces every drawn plot instead, since a rerun moves the
+trajectories and no leaf's signature sees that. A change of the tree's SHAPE
+(paths and variables) or of the plot layout rebuilds the cards, closes the
+editor and re-draws the plots that were on screen. The open editor follows its
+own leaf: it is rebuilt when that leaf moved behind its back (a Discard, a Save,
+an edit staged from another node), and otherwise left alone so a field being
+typed in survives.
+
+Both tiers draw a test's default plots by ONE rule, `discovery.plots
+.tracked_names`: what the comparison scored, in the test author's order, then
+the rest of what the loaded result tracks, each taken under its name. (It took
+the comparison's own `variable_label` when this was written; D132 deleted that
+relabelling, and the rule is unchanged apart from it.) The report drew one
+section per SCORED variable and the tool the union, so a tracked variable no
+criterion covers had a plot on one tier and none on the other; the report page
+now follows the tool.
+
+**Alternatives considered.** A `controls()` method on the capability contract,
+beside `panel()`: it makes "a node's controls" a second thing every capability
+must implement, where a placement already says how a capability is drawn.
+Rings for every leaf at once: they overlap, and the spike grabbed the wrong
+leaf's ring on FakeLib's tree. A CSS-sticky sub-header below the shared header:
+Quasar's header is `position: fixed`, so a second row INSIDE it is sticky with
+no offset arithmetic and no dependence on the first row's height — at the cost
+of one explicit rule, since NiceGUI's own `.nicegui-header { flex-direction:
+row }` outranks Quasar's `.column` and otherwise renders the second row to the
+right of the first. Redrawing every plot on every Session event: a twelve-plot
+page re-sends twelve figures for an edit that moved one. Keying the open
+editor's follow on the whole document's pending ops: an edit staged on ANOTHER
+test rebuilt this editor and threw away a half-typed table row.
+
+**Not built here**, so nobody looks for it: the key-stats row (its numbers come
+from the run's statistics files, which the Session does not read); a plot
+toolbar beyond Focus — the overlays and the error traces are already in the
+figure as `legendonly` traces and the legend toggles them; "Set window"
+(sub-project 4); Add series / Separate / Remove plot / Add plot, the 40 px rail
+with the Tests and Variables drawers, and array folding (3c); the running state
+(sub-projects 5 and 6).
+
+## D132 — A tracked variable has one identity: the name its result file gives it (2026-09-21)
+
+**What.** A tracked variable is keyed everywhere by the name its result file
+gives it, and the text a model wrote for it is a separate, recorded
+*expression* that is only ever a label. For a variable of the Modelica
+`UnitTests` component that name is `<instance>.x[i]` — `unitTests.x[3]` — and
+the text parsed out of `x={...}` (`pipe.T[1]`, `cat(1, y, y1)[2]`) becomes the
+expression: stored beside the name in the reference JSON, shown as the display
+label on both tiers, and soft-checked on every compare. Overrides, tree
+leaves, `plots` series, baseline entries, figure ids, DOM attributes and test
+markers are all the name. `backends/types.py::display_label(name, expression)`
+is the one label rule; `variable_texts` is the ONE scope rule above it, and
+what keeps two variables that share an expression tellable apart.
+
+**One text rule, scoped to the test.** `variable_texts(labels, plot_series)`
+returns, per name, a `label` (the `display_label`) and a `text` — the label,
+with the name in parentheses when another name in the SCOPE carries the same
+label and the label is not already the name. The scope is every name the
+test's page can show: the result's tracked variables, the scored comparisons'
+variables and every series of the test's resolved plots, plot-only ones
+included. `reporting/context_builder.py::test_texts` builds it and both tiers
+call it — the report through `_build_template_context`, the tool through
+`Session.variable_texts` (`Session.labels` is its `text` half). The two
+surfaces that already show the muted name beside their title — the report's
+variable heading and the tool's card title — read the plain `label` there;
+every other human-facing surface reads `text`. The console, JUnit and the
+interactive review are outside the rule and keep `label_with_name`: a line of
+CI output is read with no page around it, so there is no scope to
+disambiguate within.
+
+The scope is the test because five narrower ones disagreed on one page (the
+b147918 review): a criteria row disambiguated over the SCORED list read
+`nrmse · a.Q` under a card titled `a.Q` with `unitTests.x[1]` muted beside
+it, once the other variable sharing `a.Q` lost its last criterion; a legend
+disambiguated over its PLOT read `a.Q` where the row two lines below read
+`a.Q (unitTests.x[1])`; and a plot-only variable genuinely NAMED `z` read the
+same as a tracked variable whose EXPRESSION is `z`. The `label != name` half
+of the rule is what resolves that last one: the plain `z` is unambiguous, so
+the one carrying the expression is the one that says its name.
+
+**Families fold over the label.** `figures/families.py` groups indexed names
+into an array family by what a person READS, and a label the model wrote must
+additionally be a plain indexed name to fold, so `der(x)[1]` and `der(x)[2]`
+are two elements of one array and do, while `der(x[1], 2)` does not — a second
+derivative's index belongs to the ARGUMENT of a two-argument call, not to what
+the call returns.
+
+**Why.** Two layers used to rename a variable behind the scoring's back:
+`backends/common/result_variables.py::extract_variables` set the name to the
+expression text (or `expr[i]`, or `x[i]`), and
+`comparison/comparator.py::variable_label` turned a name holding a newline or
+starting `cat(` into `x[N]` for scoring and display. Measured over the owner's library on 2026-09-21 —
+331 baselines, 877 variables, read-only — the stored names were 385 plain, 60
+expression text, 178 `x[i]`, 210 holding a newline (plain names whose `.mo`
+source wrapped the line: `heatTransfer.alphas[\n        1, 1]`, whitespace
+kept by the parser), and 44 starting `cat(`. A variable renamed by either
+layer could not be addressed: about 70 tests had no editable criteria tree in
+`dstf author`, because no leaf could be written against a name that only
+existed inside the comparison. One identity, decided by the source of the
+data, is what makes a criterion, an override and a baseline entry able to name
+the same thing.
+
+**Discovery and extraction.** `discovery/mo_parser.py` captures the component's
+instance name and normalizes every parsed expression
+(`normalize_expression`: whitespace runs collapse, none after an opening
+bracket or before a closing one, one space after each comma — the way a
+Dymola result name reads), so a source reformat is not a changed expression.
+`discovery/unit_tests.py::unit_test_variables(test)` is the ONE place those
+variables are named: `name = f"{instance}.x[{i}]"`, and the expression is the
+i-th when there is one per variable, `f"{the one expression}[{i}]"` when one
+covers several, else `""`. The backends and the OpenModelica variable filter
+ask it instead of spelling `unitTests.x[` themselves.
+`VariableResult.expression` and `VariableComparison.expression` carry it from
+there.
+
+**The expression is a soft check.** When a baseline entry and the run's
+variable both record a non-empty expression and they differ, the test gains a
+`StructuralWarning` — the console prints it as
+`Expression of unitTests.x[2]: a.Q -> b.Q` — through the same channel as the
+structural warnings. It never fails the test. That is
+what makes a positional name safe: the position is the key, and the check says
+when the quantity under it moved. Against the PRIMARY baseline every variable
+of the result is checked; a NAMED baseline is checked only on the variables
+some leaf actually scores against it — it is imported whole, so a difference
+in a quantity nothing compares with it is not a finding about this run — and
+then once per (variable, baseline) pair, not once per leaf. A leaf that
+resolves no variable of the result (a `scalar` leaf reading a stored
+statistics path, whose `variable` is free text naming the leaf) registers
+nothing.
+
+**Overlay matching is the one exception, and the record is the companion's
+own** (owner ruling 2026-09-22, replacing the fallback-only rule this
+paragraph first carried). An overlay is another source's data — the repo's
+example companions are Julia baselines naming the quantity `x` / `y` — and no
+other tool can be expected to spell a positional `unitTests.x[2]`. Which of a
+companion's variables draws on which of the test's is a fact only whoever
+registered it knows, so the companion records it in its metadata JSON:
+`"variables": {<test variable name>: <companion variable name>}`, written by
+`dstf companion add … --map TEST_VAR=COMPANION_VAR` (repeatable), carried
+through `freeze_companion`, read into `Companion.variables` and onto
+`Overlay.mapping`. `add` refuses a mapping naming a variable the test's stored
+baseline does not hold, or one the companion's file does not hold; two test
+variables MAY name one companion variable, which draws the one curve twice.
+`add` is the only action that writes the record, so it is the only one that
+accepts `--map` — `freeze`, `remove` and `list` refuse it as a usage error
+rather than ignoring it — and a model with no stored baseline is told exactly
+that, by the same error `add_companion` raises for it, instead of being shown
+an empty list of the variables its baseline holds.
+Where an overlay HAS a mapping, that is the whole rule in
+`attach_overlays_to_trajectories`: a trajectory the mapping does not name gets
+no trace from it, even when the overlay holds a variable spelled exactly like
+it — guessing behind a recorded answer is how somebody else's curve ends up
+under the wrong plot.
+
+**The fallbacks are for a COMPANION nobody mapped** — the ones registered
+before there was a mapping to write — and for nothing else (review correction,
+2026-09-22). In order: the companion variable whose NAME is the trajectory's
+name (the two sources agree on a spelling); whose NAME is the trajectory's
+EXPRESSION (the positional name is on the test's side, and the text the model
+wrote is what the two share); whose own EXPRESSION is the trajectory's name or
+expression (the mirror, for a companion that is itself a DSTF baseline of
+another library — which is what the repo's example companions are, and why
+none of the seven Julia-side ones drew anything before this change). A step
+that finds MORE THAN ONE candidate attaches nothing and records a warning on
+the overlay, surfaced by `overlay_summary` on the report's overlay table,
+naming the trajectory, the candidates and the `--map` that settles it:
+`x={a.Q, a.Q}` is legal, so one expression can belong to two of a companion's
+variables. That remedy is worded as `dstf companion add … --map`, which is the
+only command there is for it — and, the fallbacks being a companion's alone,
+the only overlay that can reach the warning.
+
+**Everything else on the picker matches BY NAME ONLY**: a soft_check, a
+cross-backend import (stored as one), and the auto-discovered primary of a
+sibling partition are DSTF's own data, keyed by the names this test uses.
+A soft_check is also SCORED by name, through `against:`, so the curve drawn
+for it has to be the curve scored for it — a spelling rule that found some
+OTHER variable of it would draw one thing and score another. The first
+version of this paragraph let every unmapped overlay fall back, and a
+soft_check holding `other.name` with expression `a.Q` drew on every
+trajectory whose expression was `a.Q`.
+
+**A malformed record is a record.** `variables` holding an entry whose value
+is not a variable name, or not being an object at all, is a hand-edit, not an
+old registration: `storage/roles.py::_read_variable_mapping` drops the entry
+and RETURNS the finding beside the pairs, `Companion.mapping_warnings` carries
+it to `Overlay.warnings` and the overlay table, and `Overlay.mapping_malformed`
+keeps the companion on its own record — it draws what survived reading and
+never falls back. A mapping naming a variable the companion's file does not
+hold is read the same way at load time: one warning per stale entry, naming
+the test variable, the companion variable and the file. Only an ABSENT record
+falls back — the key missing, or the empty object a registration with no
+`--map` writes.
+
+**The seam, and its coordination.** Reference-JSON variable names and the
+`test_spec.json` keys that named an expression both changed, and stored
+baselines are a surface other trees depend on. There is NO compatibility
+read: an un-migrated baseline meets the existing "the baseline holds no
+variable named … — treating as missing baseline" path, whose message gains a
+clause naming the command. `dstf migrate-variable-names` is the coordination
+— dry-run by default, `--apply` writes; it walks every
+`<reference_root>/<Backend>/<os>/` partition (primary refs and soft_checks),
+rewrites a UnitTests entry whose stored name normalizes to that index's
+expression, gives every other entry `"expression": ""`, and renames the
+matching `variable_overrides` keys, `metrics` leaf variables and `plots`
+series in `test_spec.json`. A file it cannot match entirely — or cannot read
+at all — is reported and left untouched, and it exits 1; that skip stops that
+one file and not the run, because no cross-file decision reads a baseline's
+content and one stray junk file must not stall a tree of 900. The spec is the
+exception: while IT cannot be read nothing at all is written, its keys and the
+names the baselines are stored under being one coordinated change. **It is
+deleted at the v1.0 tag**: nothing reads the old shape, so once the trees that
+matter have been migrated it is a code path nobody exercises.
+
+**Deleted.** `comparator.variable_label`; the seven `name or f"x[{index}]"`
+index fallbacks (a nameless result variable is a backend bug, not an
+invitation to score it against whatever entry sits at its index); the
+`ref_var.get("name") or ref_var.get("expression")` name fallbacks in the
+comparator and the overlay loader — nothing has written `expression`-as-a-name
+since before v1.0, and the key now means something else.
+
+**The scan cache.** `discovery/scan_cache.py` rebuilds `TestModel`s from disk,
+so a change to what a scan MEANS can make a cached entry mean something the
+current code would never have written, with no source file changed for a
+staleness check to see. Its key is no longer a hand-bumped constant alone: it
+carries a digest of the discovery modules' own source bytes
+(`json_recognizer`, `mo_parser`, `recognizer`, `test_registry`,
+`unit_tests`), because the hand-bumped version was forgotten twice — once for
+the instance name and once for expression whitespace.
+
+**Alternatives considered.** A bespoke label→name mapping table, so a baseline
+could keep its expression as a name: it makes the mapping a third thing to
+keep in step with the model and the store, and the model's own `x={...}` is
+already the mapping. Renaming only the variables whose expression is awkward
+(`cat(`, a newline): the identity would then depend on how the source happened
+to be formatted, which is exactly the coupling this removes. Reading an
+un-migrated baseline by falling back to the expression: a compatibility read
+that hides the very drift the soft check exists to report, and one the v1.0
+tag could never remove.
+
+**Addendum, 2026-10-13 — the command is gone.** `dstf migrate-variable-names` and its module `storage/migrate_names.py` were removed at the v1.0 release, as this entry planned; a `variable_overrides` key or a baseline entry that still names expression text is reported with the result-file name to write instead; a `metrics` leaf or a `plots` entry written as an expression gets no such hint (the leaf reads as a variable not found in the result).
+
+## D133 — A node's forms open as a row under it; a plot's legend holds its signals (2026-09-24)
+
+**Context.** The owner's board of 2026-09-21 ruled two things about the Test
+page (D131): Edit tree's add / wrap / edit forms opened in a `ui.menu` over
+the node's row, covering the rows around it; and a plot's legend listed every
+criterion's drawing and all three error series beside the signals, inside the
+plot area, on top of the trace's start and of the rings an author drags.
+
+**The form row.** A node's forms open as a ROW below the node's row — a tree
+row or a criteria row — indented like the criterion editor, with its rule; the
+node's row stays lit, and the form's title names the node the way its row reads
+(`authoring/tree_text.py`, shared by the rows and the titles). A form shows
+only the chosen combinator kind's fields, one sentence saying what the action
+does to the tree, and Cancel beside the action; Unwrap lives inside Edit. One
+thing is open at a time on the page: a form replaces the open criterion editor,
+the editor replaces a form, and a click on a criteria row closes a form open
+under it and opens nothing. The page owns that rule (`TestPage.open_row`), and
+a capability reaches it through two methods the `Panel` contract gains:
+`row(title, build)` and `reveal(leaf_path)` — after an Add, the new criterion's
+editor opens under its plot. A form is built when its icon is clicked, from the
+tree as it is then, and rebuilt when an edit staged elsewhere moves its node —
+the criterion editor's rule applied to a node — so it never shows a value the
+node no longer has; it closes with its host, when its row is hidden, and when
+its node is gone. `Panel.submit` returns whether the act went through, and a
+form closes on that and only then: a refused Wrap, Add or Edit keeps its row
+open with what was typed, and the refusal shows under the node's row, above the
+form. That error belongs to its row: it goes when THAT row's form opens or
+closes or its host rebuilds, and another row's form leaves it alone. Two
+rulings of 2026-09-25 complete it: a row that opens below the fold scrolls just
+far enough to show itself (`scrollIntoView({block: "nearest"})`), and a row
+already in view does not move the page; and a weighted form's threshold starts
+empty, its action grey with `enter a threshold` until one is typed, because
+threshold 0 with `less` always fails, while its weights start as one `1` per
+child. Edit stages only what changed.
+
+Unwrap of a combinator with ONE child gives its place to that child, as
+before. With several, they take its place in its parent, in order: `remove` the
+node, then `add` each child at the node's index plus its own. That goes through
+the validator like any op, so a `warn` or `weighted` parent refuses it. The
+root has no parent to take them, so its Unwrap is disabled with that reason.
+`+` is grey where a child cannot be added alone — under a `warn`, which takes
+exactly one child, and under a `weighted` node, which has one weight per child —
+with the reason as its tooltip, and it follows the parent's kind when an edit
+changes it.
+
+**Legend b.** In the tool, a plot's legend holds its SIGNALS — actual,
+reference, overlays — and nothing else. Each criterion's drawing is shown and
+hidden by a swatch on its criteria row, and the three error series are one
+Error select per plot that draws one series, on the card's toolbar.
+`figures/plotly.py` takes a `Visibility(hidden, error)`: with one (the tool),
+every leaf trace and every error trace is out of the legend, a hidden leaf's
+traces and shapes are `visible: false`, and only the chosen error series shows,
+with its axis. A hidden shape stays in `layout.shapes`, so shape indices do not
+move and the figure hook still resolves a dragged ring by its index. The card
+keeps the choices, and they are part of its redraw signature, so a swatch click
+or a select change is one `Plotly.react`. A zoom survives that redraw, and a
+signal the author hid by a legend click stays hidden, because the server never
+changed that trace's `visible` and `uirevision` keeps the user's. Both were
+measured in Chromium. A newly chosen error series is the exception: its axis's
+`uirevision` is the chosen series, so the axis scales to it afresh rather than
+keeping a zoom made over another series, or made while it hid.
+
+What draws before a swatch is touched is a property of the metric:
+`MetricDescriptor.drawn_by_default`, `True` unless the metric says otherwise.
+The builtins `range` and `scalar` say `False`, because their bounds cross the
+whole plot. Over that default, a failing criterion draws, and the open
+criterion always draws, since the plot is its editing surface. Its swatch is
+locked while its editor is open. A FAILING criterion's swatch hides it like
+any other (owner ruling, 2026-09-24). The failure stays visible without its
+drawing: the row's FAIL pill beside the swatch, the card's pill, the closed
+tree line's tally and jump, the test's header badge and the Suite page. A
+swatch that worked on one row and was grey on the next, by a verdict that
+flips on every rerun, would read as broken.
+
+The legend moved ABOVE the plot area on both tiers: one layout dict,
+`LEGEND`, horizontal and anchored at the plot's top, for which Plotly grows the
+top margin. The report keeps its criterion entries for now; its eight-entry
+legend, measured at 900 px, wrapped to a second row.
+
+**The toolbar gutter.** A legend above the plot met Plotly's toolbar, which
+appears across the plot's top on hover: at 900 px the report's eight-entry
+legend wrapped to two rows and the toolbar covered two of its entries. The
+owner chose a VERTICAL toolbar, on both tiers, over a legend below the plot,
+which collided with the x-axis title, and over no toolbar. Standing on the
+right edge, the toolbar then covered the error axis's title and tick labels. A
+margin reserved inside the figure while an error axis shows was built and
+failed. A fixed reserve cannot know how wide the labels will be: an error
+around 1e-5, the usual size for a passing test, printed `0.00002000` and
+reached the toolbar at every reserve measured. The toolbar and the right-hand
+axes were competing for one strip inside the figure. So the toolbar gets a
+gutter OUTSIDE the figure, in CSS on each tier (`shell/style.py`,
+`templates/interactive.html`): the plot is 34 px narrower than its container,
+and `.modebar-container` sits in those 34 px. Measured in Chromium: no label or
+title box meets the toolbar, for any error series the tier allows, including
+1e-5 labels. Browser tests on both tiers hold that and hold the toolbar inside
+its card.
+
+Two more rulings of 2026-09-24 settled what the labels print. Every y axis
+uses Plotly's automatic tick labels with `e` exponents (`0.2`, not `0.2000`;
+`2e−5`, not `0.00002000`). Every y value in a hover reads four significant
+digits with trailing zeros trimmed, d3 `.4~g`, in the y axes' `hoverformat`
+and in every trace's own `hovertemplate`; the time axis hovers with `.6~g`.
+In the tool's figure, each error axis's `automargin` follows its visibility:
+a hidden axis left at automargin kept the right margin it had grown, through
+every later react. NRMSE's axis is anchored to the plot there, since the tool
+shows one error axis at a time. The report keeps it free and auto-shifted,
+since its legend can show signed and NRMSE together.
+
+**The axes.js regression, and why the fix is structural.** When the old shell
+was deleted (22d3284), the tool's page stopped loading `templates/axes.js`,
+which 39363f4 had added so that a legend click on an error trace shows that
+trace's axis. From then on, an error trace clicked on in `dstf author`'s legend
+drew against a hidden axis. Loading the script again would
+have fixed the symptom and kept the cause: the page following a client-side
+restyle the server never hears, one script watching another's plot. After this
+change the tool's error traces are not in its legend. The select is on the
+server, and the figure it sends says which error axis is visible. No client
+code has anything to follow, so the tool needs no axis script. `axes.js` is the
+report's alone, where a legend click and the error select are still
+client-side restyles. `report_suite.axes_js_source`, which only a test still
+called, is deleted, and the prose that said the tool loads the script is
+corrected.
+
+**Alternatives considered.** Keeping the menus: an open one covered the
+neighbouring rows' icons (3b's gate over a copy of the owner's library), and
+the board put the form where its node is. A swatch greyed on a failing
+criterion: the ruling above. The report's legend below its plots: it
+collided with the x-axis title. A margin reserve: see the toolbar gutter. Tick
+labels inside the plot area: they still met the toolbar. Loading axes.js in the
+tool again: the regression paragraph.
+
+**Not built here**, so nobody looks for it: the report's criterion entries
+leaving its legend (a later change, on the board's table); the "Add a
+criterion for x" footer stays a dialog; the choices a card keeps reset when a
+criterion is added or removed, because paths shift then; a tooltip can stay
+up after its icon is clicked.
+
+## D134 — The layout is edited on the plot you selected, one op on `/plots`; the rail holds two drawers (2026-09-25)
+
+**Context.** D130 made a test's plot layout spec data — the `plots` key — but
+the tool could only draw it; nothing in `dstf author` edited it. The owner's
+3c rulings (2026-09-25, in chat and on a rendered board) scoped the editing:
+3c is layout only, and 3d adds the slice field and the save-time expansion of
+a folded row into one criterion per index. The Variables drawer's checkboxes
+act on the plot you CLICKED, the first until then, and the drawer names its
+target (Q5 A). The drawer does the layout edits: a check adds a series to the
+selected plot or takes it off, "+ new plot" puts a row on a plot of its own
+below it, and the plot toolbar gains only Add series and Remove plot — the
+series chips DESIGN.md had scheduled are dropped (Q6 A). A variable a
+criterion scores cannot leave its last plot (Q7 A). Reset layout sits in the
+tree card's line while the entry has a `plots` key (Q8 A). A Tests drawer
+shows the Suite page's list and switches test (Q9). A name folds on its last
+index whenever that index is a single integer, whatever comes before it
+(`massPorts[4, 1].C[]` is a family). Save says when it creates an entry. The
+header's rarely used actions go into a ⋮ menu, which fixes a 900 px header
+that cut off "dashboard" and "Stop server" (Q10 A).
+
+**Decision.** Five moves.
+
+1. *The family rule* (`figures/families.py`, `family_of`): a
+   multi-dimensional index refuses a family only when it comes AFTER the last
+   single-integer index (`a[1].b[2,3]` has none), and an expression may index
+   with an integer list (`_INT_INDEX`, `[4, 1]`, no space just inside the
+   brackets); a slice (`[6, :]`) still refuses it.
+2. *The layout is data, edited by pure functions* (`authoring/layout.py`,
+   UI-free): `current_layout` (the key, else one plot per tracked variable),
+   `add_series`, `remove_series` (a plot left empty goes), `new_plot` (below
+   the selected one, returning its index), `remove_plot`, `stranded` and its
+   one sentence `stranded_sentence`, and `layout_op` — the ONE op a gesture
+   stages, `add /plots` when the effective entry has no key, `replace` when it
+   has — with `reset_op`, the `remove`. `Session.layout` is the layout a
+   gesture edits: unlike `Session.plots` it keeps a series the result lacks.
+   `Session.stage` collapses a run of such ops into one pending op.
+3. *The drawer's rows are data too* (`authoring/variable_rows.py`, UI-free):
+   `variable_groups` groups the result's names (Tracked, then the first dot
+   component of the name, "(top level)", Diagnostics), folds families over the
+   test's texts and reads each row through its labels, filters by `matcher`,
+   and gives each row its state on the selected plot; `cap` keeps the first
+   rows, 200 in the drawer, and counts the rest for the drawer to say.
+4. *The rail* (`shell/rail.py`): `Rail` puts 40 px of labelled buttons in a
+   `ui.left_drawer` with `behavior=desktop`, so an open 320 px drawer pushes
+   the plots narrower at every width instead of covering them. `TestsDrawer`
+   draws a `TestList` (`shell/test_list.py`, extracted from the Suite page in
+   its own refactor commit) without checkboxes; `VariablesDrawer`
+   (`shell/variables_drawer.py`) draws the rows. The Test page owns the
+   selection (`TestPage.selected`, `select`), the one way an edit is staged
+   (`stage_layout`: the selection set before the stage, put back on a
+   refusal, which is a notification), `remove_plot` and `reset_layout`.
+   `PlotCard`'s toolbar gains Add series and Remove plot, and a click on the
+   card outside `.dstf-plot-slot` selects it; `TreeCard` gains Reset layout.
+   `TabState` gains `drawer` and `tests_needle`, so the open drawer and the
+   Tests drawer's filter survive a switch of test within the tab.
+5. *The header* (`shell/header.py`): Save and Discard stay in the row, and a
+   ⋮ menu at its end holds Export, Change backend…, Open in another
+   backend…, dashboard and Stop server at every width. The row names the
+   backend as plain text; Change backend… opens the dialog that holds the
+   select, and while it is grey its item carries the sentence that says
+   why. The backend select had stayed in the row after Q10, and in two real
+   states — a rerun running with an edit pending, and a Save caption naming
+   a new entry, the usual one on TRANSFORM — Save took three lines at 800 to
+   900 px and two at 1280; so the select left the row (the owner's ruling,
+   Q13 A), which reverses DESIGN.md's header line that drew the backend as a
+   select. The board said A holds the longest Save caption on one line at
+   900 px; that was never measured, and it is false (corrected 2026-09-26):
+   the new-entry caption alone is 357 px, and one line needs 960 px even with
+   the run indicator and Save's why-sentence hidden. Measured with A built,
+   in that busiest state: at 900 px Save and Discard take two lines, nothing
+   is cut off and nothing scrolls sideways; at 1280 px every button is one
+   line. That meets the owner's earlier ruling (2026-09-25) — at most two
+   lines at 900 px, one at 1280, nothing cut off — and not one line at 900.
+   The Test page's subheader wraps: kept to one line, it put Accept and
+   Rerun past a 900 px window beside a real library's model id, wholly off
+   it beside a TRANSFORM-length one, with Rerun squeezed to seven lines. Now
+   the id breaks inside itself only when no line holds it, and the TEST
+   actions keep to the right, below the id as one group when they do not
+   fit beside it. `save_caption` counts the entries a Save creates over the
+   document as LOADED, since in the effective one the pending op has already
+   made the entry; `plural` takes an irregular plural.
+
+Nothing in the pre-release seams moves: the CLI, `testing.json`, the
+reference-JSON layout and the `test_spec.json` format are unchanged. The tool
+writes the `plots` key `parse_plots` already defined; a layout staged for a
+test that only its `.mo` annotation declares creates that test's first entry,
+and Save's caption says "1 new entry".
+
+**Consequences.**
+
+*The collapse rules* (`Session.stage`, its Convention 8 block; the tests in
+`TestStageCollapses`). Every layout gesture stages the whole `/plots` list,
+so without a collapse five clicks read "5 spec edits". When a single staged
+op lands on the model and path of the last pending one: a `replace` after an
+`add` or a `replace` is that op with the new value, and a `remove` after a
+`replace` is the `remove` — the `replace` needed the member to exist, and
+the `remove` takes it. Both hold in RFC 6902 for any path. A `remove` after
+an `add` is NOT collapsed: when the member existed before, the `add` replaced
+it, so dropping both would leave it in place, and keeping only the `remove`
+would fail when it did not exist. Nothing collapses at an append path
+(`/-`), which names no member and is left for the effective document to
+refuse, and a batch never collapses, into the last pending op or through its
+own last op: its ops belong together. A refused stage keeps the op a
+collapse would have replaced.
+
+*The family rule changed, and a differential pins the change.*
+`test_family_of_over_names_changed_only_where_3c_ruled`
+(`tests/test_plot_figure.py`) runs 25,000 generated result-file names
+through `family_of` and through `_family_of_after_3c`, a copy of the earlier
+rule with only the ruled change: they agree on every name, and every name
+the change touched belonged to no family before and now folds with a
+multi-dimensional index before its `[]`. The plan's review of this task
+parsed all 332 of TRANSFORM's `.mo` files read-only: six expressions change
+their `family_of` (the `massPorts[4, 1].C[1]` expressions of `pipe_single` and
+`pipe_nParallel`, in three models), and the families of two or more stay ten
+before and after, because each such port carries one species — a family of
+one. So TRANSFORM's expressions gain no new family of two or more.
+
+*The folded criteria row moved to 3d* (the owner's ruling, 2026-09-25). In
+3c a family's criteria stay one row per member; the folded row belongs with
+the save-time expansion that writes one criterion per index.
+
+*What the drawer costs.* `TestPage.rebuild` reads the layout and the scored
+counts ONCE and hands both to every `PlotCard`: a card that read them itself
+cost one layout and one tree read per plot, and the page's existing cost
+tests (`test_a_rebuild_reads_the_tree_and_the_tracked_names_once`,
+`test_the_page_costs_the_same_whether_it_has_five_cards_or_forty`) hold
+unedited. The Variables drawer reads each of the Session's facts once per
+build (`VariablesDrawer._read`). `Rail.refresh` is the one way the page's
+changes reach it, and the open drawer builds again only when its inputs —
+the reads, the selection, the number of plots, the filter, the opened
+families — moved (`VariablesDrawer.refresh`, `_signature`): a rerun's job
+events that change none of them build nothing. A closed drawer is not
+followed; it is rebuilt when it opens. `variable_groups` indexes the layout
+once rather than scanning every plot per name, which cost 395 ms over 6,093
+names and 300 plots.
+
+*The glob cannot backtrack.* The drawer's glob means what a spec's
+`variables` list means (`_pattern_to_regex`: anchored, `[ ]` literal), but
+compiled to that one regex, `*a*a*a*a*a*a*a*b` over one 60-character name
+took over 20 s on the UI event loop, which blocks every tab. `matcher`'s
+`_glob` splits the needle on `*` into quantifier-free pieces: the first
+must match at the start, the last at the end, and each middle one is found
+left to right, where the leftmost place leaves the most text for the rest.
+`test_the_glob_means_what_the_specs_regex_means` holds it identical to the
+anchored regex over every glob and text of up to four characters, both case
+settings. A typed regex (`.*` on) is the `regex` package's, not `re`'s:
+`re` has no timeout, so nothing can stop a pattern that backtracks (both
+hold the GIL for a search, `regex` because `concurrent=False` asks it to),
+and the owner chose `regex` (in `[author]`), whose `timeout=` does, under
+one budget per filter: 1 s of the searching thread's CPU (`thread_time`),
+so the filter's waits for the GIL between searches, behind a busy thread
+of the tool, never make a plain pattern "too long". That budget does not
+bound the freeze, since the filter runs on the UI event loop and every tab
+waits out its wall time (17.4 s for a backtracking pattern beside a thread
+holding the GIL), so a second limit of 5 s of wall time (`monotonic`),
+checked between searches, does. Not bounded: `regex.compile` of
+nested fixed-count repeats (`(a{5000}){5000}`) can take seconds or exhaust
+memory before any budget applies, where `re` compiled it at once;
+accepted as contrived, on the user's own local tool.
+
+*A row acts on the layout as it is now.* A check or "+ new plot" re-reads
+the layout when clicked, decides on or off from what the selected plot holds
+then, and does nothing for a selection outside it: a row is drawn before the
+last change, and a double-click on the last plot's only series raised on its
+second click. The check is a button with `role=checkbox` and
+`aria-checked`, not a `ui.checkbox`, whose `set_value` fires its own
+`on_change`: a repaint would stage an edit. Row markers carry no whitespace
+(`variables_drawer.marker`), because NiceGUI splits a marker on it.
+
+*The gate.* The TRANSFORM gate's numbers: see the roadmap's 3c BUILT
+paragraph.
+
+**Alternatives considered.** Series chips on each plot (DESIGN.md's earlier
+plan): the owner ruled the drawer the one place for adding and removing
+series. A drawer that overlays the plots: below Quasar's 1024 px breakpoint
+that is what a drawer without `behavior=desktop` does, and it would cover the
+plots it edits. Collapsing a `remove` after an `add`: the case above, where
+either collapse is wrong for one of the two starting states.
+
+**Not built here**, so nobody looks for it: the slice field, the save-time
+expansion and the folded criteria row (3d); moving plots up and down, and
+plot titles (`docs/ideas.md`); tracking a variable from the drawer, so
+`/variables` stays outside the patch whitelist (D130).
+
+## D135 — A new criterion is valid when it is added; errors read as their reason; only a handle's drag is staged (2026-09-26)
+
+**Context.** The owner's first hands-on look at `dstf author` (the feedback
+board's settled block, 2026-09-26) found four defects that no later redesign
+step rebuilds, ruled "these bugs get fixed whatever you choose": a criterion
+with a time window could not be dragged; a new `range`, `tube`, `scalar` or
+`dominant-frequency` criterion arrived misconfigured; errors showed raw
+exception text; and the dominant-frequency spectrum squeezed real peaks into
+its left edge. The rest of that board waits for the steps that rebuild it.
+
+**Decision.** Four fixes.
+
+1. *Area shapes under lines; a drag on what is not a handle snaps back*
+   (`figures/plotly.py::_layout`, `authoring/builtin/edit_on_plot.py`).
+   Under `edits.shapePosition` every shape takes a drag and the topmost wins.
+   A real-mouse spike in Chromium on the tool's plotly.js 3.1.1: the window's
+   rect, drawn after the bound, took every drag on the bound inside the
+   window; `layer: "below"` restacks the drawing but does NOT change what a
+   grab takes, and a per-shape `editable: false` has no effect. So `_layout`
+   draws every rect before every line, on both tiers. The bound's dotted
+   `<id>/outside` continuation is full width, so inside the window it lies
+   over the bound and a grab there arrives under its name: it resolves to the
+   bound. A drag on a primitive that is not a `Marker` or `HLine` of
+   `kind="handle"` — a window, a box (`points/box/i` and `peaks/window/i`
+   are `kind="handle"` Boxes, so the check is by type), a result line —
+   returns nothing, before the open-leaf check; the figure hook's redraw
+   snaps it back. A rect still takes a drag: only a handle's is staged.
+2. *A metric may seed a new leaf* (`MetricDescriptor.seed`,
+   `comparison/seeds.py`): a pure function of the reference series, else the
+   actual one, giving the params a leaf needs. Edit tree calls it on add and
+   Edit criteria on a metric switch (`seed_data` reads the variable's view,
+   cut to the leaf's window when it keeps one across the switch).
+   `range` brackets the data with a 5% margin, `tube` a band 5% of the span
+   wide — either margin at least 1e-6 of the data's magnitude, since a
+   reference stored at 7 significant digits excluded its float32 result
+   (TRANSFORM OilWater_PTHX `STHX.tube.mediums[2].h`) — `scalar` the final
+   value (within 1% of the baseline's, or between bounds when there is no
+   reference), `dominant-frequency` the strongest peak, 5% or two FFT bins
+   wide; a peak whose two bins exceed +-50% (the lowest three bins) is a
+   trend's leakage, not a frequency — 279 of TRANSFORM's 322 varying
+   variables have their strongest peak there — and is not seeded. A bound or width is
+   rounded AWAY from the data at the margin's leading digit, or left
+   unrounded where that would land on the data: rounded to 6
+   significant digits, 101325 +- 0.001 seeded `min_value == max_value` and
+   the leaf failed on its own data. `nrmse`, `points` and `event-timing` are
+   valid bare and have no seed.
+3. *Errors carry a reason* (`PatchError.reason`, `HandleEditError.reason`,
+   `authoring/errors.py::user_text`). `str()` keeps the location the CLI
+   prints — `validator rejected the patched tree: metrics: ...`,
+   `/metrics/children/1: range/max: ...` — and the tool shows the reason,
+   since the location is already on the screen beside the row or plot it
+   came from. A person's own error (the five `USER_ERRORS`) or a ValueError
+   reads as its reason; anything else keeps its class name. A ValueError can
+   also be a bug (a JSONDecodeError is one), so the two act `submit` sites
+   log whatever is not a `USER_ERRORS`. The validator's five messages are
+   sentences ("Every tree needs at least one criterion scored against the
+   primary baseline outside a 'warn': a tree of warnings alone can never
+   fail."), joined by a space. A tree the parser refuses carries its
+   location apart too: `MetricSpecError` has a `path` and a `message`, as
+   `ValidationError` does, and the reason is the message alone.
+4. *The spectrum is ranged to its peaks* (`figures/plotly.py::
+   _spectrum_range`). Autoranged, `xaxis2` ran 0..Nyquist, and Nyquist
+   follows the sample count, not the physics: TRANSFORM's peaks near
+   1.2e-5 Hz sat in the leftmost ~10 px of an axis to ~1.7e-3 Hz. The axis
+   now runs to 3x the highest declared or matched peak (its window's upper
+   edge), else the strongest detected one, clamped to Nyquist but never
+   short of a declared peak; with no peak above zero it keeps its autorange.
+
+Nothing in the pre-release seams moves: the CLI, `testing.json`, the
+reference-JSON layout and the `test_spec.json` format are unchanged. A seeded
+leaf is ordinary spec data.
+
+**Consequences.** A figure's shape ORDER changed (`figure_event_timing.json`
+re-blessed: its window rect comes first); the figure hook resolves a dragged
+shape's index through the current figure, and nothing in the report
+addresses a shape by index. Every seeded leaf is tested to pass when scored
+on the data it came from, through `evaluate_spec`: `resolve_mode` alone
+accepts a bare `tube` and a bare `dominant-frequency`. A variable no
+criterion scores has no reference in its view even when the baseline file
+holds it, so it seeds from its actual result (a scalar then gets bounds).
+
+**Alternatives considered.** `layer: "below"` on the rects and
+`editable: false` per shape: measured, neither stops a grab. Ranging the
+spectrum to the highest detected peak: the reference's ten detected peaks
+include leakage sidelobes, and on a 2 Hz sine that put the axis at 40.8 Hz.
+
+**Not built here**, so nobody looks for it: the "Add a criterion for x"
+dialog not opening its editor, the tree `+` wording and placement and the
+weighted-combinator hint (the Test page step); rows waiting for the scan
+(the Suite table step); the squeezed tolerance column (the tolerance step).
+
+## D136 — One row model and one vocabulary for the dashboard and the Suite page (2026-09-26)
+
+**Context.** The owner ruled on the feedback board (2026-09-26): "The
+dashboard and the Suite page share one row model: the same columns and the
+same words on both. The dashboard stays a static file, for CI and for
+archiving." And, for filtering, typed column filters: status by the count
+pills, numbers by `>1e-4` / `1..10`, text by glob, with `.*` and `Aa` once in
+the toolbar. Before this, one state had four spellings — the classifier's
+`PASS/FAIL/SIM_FAIL/NO_REF`, status.json's `queued/running/passed/failed/
+timed_out`, the dashboard's own map of those, and pills reading "passed / sim
+failed / no baseline" — and the dashboard spelled its fifteen columns out
+twice in the template (header, filter row) and a third time in each row's
+`data-*` attributes.
+
+**Decision.** Three modules own it.
+
+1. *One vocabulary* (`reporting/status.py`). The four verdicts plus the
+   three live states `QUEUED`, `RUNNING`, `TIMED_OUT`; `STATUS_ORDER` (the
+   pills' order and a status sort's), `STATUS_CLASSES` (the CSS class both
+   HTML surfaces style a status with), `STATUS_LABELS` (the word a person
+   reads; only `TIMED OUT` differs from its key) and `live_status(raw)`. A
+   status.json "passed" means the simulation ran, not that the test passed,
+   so it maps to no status: such a row reads **SIMULATED**, styled with the
+   theme's existing `pending` token ("no verdict yet"). SIMULATED is a word,
+   not a status — it is in no pill and no count, and the bar's pending
+   segment carries it so a live bar still moves while tests finish.
+2. *One row model* (`reporting/rows.py`). `TestRow` (a frozen dataclass),
+   `COLUMNS` — each column's key, label, kind (`text` / `number` /
+   `status`: what a filter on it means), display text and sort value — and
+   the builders: `summary_fields` (the one computation of a row's numbers),
+   `row_from_status` (a live row) and `enrich_row` (a sidecar's summary onto
+   a row, behind the two D91 guards). The per-test sidecar's `summary` is
+   written through `summary_fields` from the `TestComparison` itself:
+   `generate_comparison_plots` takes `comparison=` instead of a status pair,
+   and gains `status` (the classifier's word) beside `status_text` /
+   `status_class`. A sidecar written before carries only `status_text`;
+   `enrich_row` reads the status back through `STATUS_LABELS`. The
+   dashboard's template loops over `COLUMNS`: every row carries
+   `data-<key>` (what a filter reads) and `data-sort-<key>` (what a sort
+   reads; empty for no value, which sorts last in both directions) for every
+   column. `data-status` stays the status class — the pills', the counts'
+   and the live tick's key. The Message column keeps the key `detail` (the
+   column-resize follow reads `--col-w-detail`). The Variables column sorts
+   and filters on the number passed, as it sorted before: `>2` means more
+   than 2 passed, and its header tooltip says so. (Renamed **Criteria**,
+   key `criteria`, on 2026-10-12: what it counts is the leaves of the
+   test's tree — `3/3` for a test that scores ONE variable three ways,
+   `21/21` for twenty elements of an array and one more criterion on one
+   of them — and it said "Variables". The number is unchanged. Two more
+   places said "Variables" of that count and say Criteria since: the
+   interactive review's `Variables: 2/3 passed, 1 failed` is `Criteria:
+   2/3 passed, 1 failed`; and the report page's Reference Info row
+   `Tracked Variables | 23 current / 21 reference`, which set the run's
+   criteria beside the variables its baseline stores as if they were one
+   quantity, is two rows, `Criteria | 23` and `Reference Variables | 21`,
+   each left out when there is no such count.)
+3. *One typed-filter module* (`templates/filters.js`, `DstfFilters.compile(
+   kind, query, {regex, case})`), inlined before `dashboard.js`. Text: a
+   substring, an anchored glob when the query holds `*` or `?` (every other
+   character literal, so `x[1]` is an index — the rule a spec's `variables`
+   list and the tool's Python `_glob` use), or with `.*` on a regex. Numbers:
+   `>`, `>=`, `<`, `<=`, `=`, a bare number, or an inclusive range `a..b`,
+   read off `data-sort-<key>` — the raw value, never its display text, so
+   `=1.23456e-5` matches a cell that reads `1.2346e-05`. A query that cannot
+   be read marks its input red with the reason as its tooltip and filters
+   nothing. The status column has no text filter: the pills filter it, and
+   they now read the verdict words (`PASS 330 · FAIL 0 · SIM_FAIL 1 ...`).
+
+Two defects this fixes. The Resolution column had a filter input and no
+`data-resolution` on its rows, so any text typed there hid every row;
+generating every column's attributes from one list fixes it by construction.
+And a final page without sidecars — `dstf run` / `compare` without
+`--report` — read PASS for every test that simulated, including one whose
+criteria failed: `render_final` / `render_final_to` now take the comparisons
+their callers hold, and each row with a comparison gets its verdict through
+`summary_fields`, the same computation the sidecar uses; a fresh sidecar
+still enriches it after.
+
+**Consequences.** The dashboard's saved-state key moved from
+`dstf-dashboard-v1:` to `dstf-dashboard-v2:`: pill and filter keys changed,
+and a v1 state restored a pill key no pill carries, hiding every row. A
+filter or sort saved under v1 is dropped once. The pills, the bar and the
+counts are keyed by status class (`.counter.pass`, `.b-fail` = fail +
+sim-fail). The duplicate row numbers `_build_per_test_args` and the report
+index computed and nothing read are gone. JS globs and regexes backtrack: the
+same semantics as the Python `_glob`, not the same cost (`_glob` exists
+because `*a*a*a*b` took more than 20 s), so a runaway pattern can freeze the
+browser tab it is typed in — only that tab. Nothing in the pre-release seams
+moves: the CLI, `testing.json`, `test_spec.json` and the reference-JSON
+layout are unchanged; the sidecar gains a field.
+
+**Not built here**, so nobody looks for it: the tool's Suite table. It will
+build `TestRow`s from its Session and give the same `COLUMNS` and
+`filters.js` to its grid in S2, whose gate renders the dashboard over a copy
+of TRANSFORM's work dir.
+
+**Amendment (2026-09-27): a final page lists every test scored.** The S2
+gate over TRANSFORM found the final rows narrowed to the last run's scope:
+rows came from `status.json`, which each run rewrites with its own tests
+only, so `compare --report-format html --output` over 331 comparisons
+showed 5 rows after a 5-test `--filter` run, and a tool Rerun of one test —
+and every Save / Discard re-render after it — wrote a 1-row dashboard. A
+FINAL page now lists `status.json`'s rows and, after them, every other test
+the caller holds a comparison for: in `batch_manifest.json`'s order, then
+by model id for a test the manifest does not key. Such a row takes its
+work-dir key and baseline from the manifest (its report dir, as a run's
+row does: `ref_NNNN`, else the key), then goes the way every final row
+goes — a fresh sidecar, else the timing its run kept, then its comparison's
+verdict. "Fresh" is against the test's OWN last run — its manifest
+entry's `last_run_at`, which `assign_test_keys` stamps with `time.time()`
+as that run starts: the clock a sidecar's `written_at` uses, with the
+meaning of `status.json`'s `start_wall` (every one of TRANSFORM's 331
+entries carries it, ~13 ms after its run's `start_wall`) — not the last
+run's `start_wall`, which every sidecar outside the last run's scope
+predates (a first cut did that: 638 stale warnings and no Reference link
+over a 331-test tool session). A refused sidecar's warning names the clock
+it was held to (`last_run_at=` for such a row). An entry without a number
+there is no guard, as for a `status.json` without `start_wall`. (A second
+cut anchored on `run_stats.json`'s mtime, on the premise that the manifest
+kept no per-test time; it does, and a test that kept no `run_stats.json`
+went unguarded.) The page's test count is its rows; its status bar names
+the last run's count beside it when they differ, and no last run when
+there is no `status.json` to name one. A LIVE page is unchanged: the
+running run's scope. So `compare`, a `--merge` and the tool's Rerun list
+every test (its Save, Discard and Reload write no page: D137 §6); a plain `--filter` run without
+`--merge` still lists only its own, because the comparisons it holds are
+only its own.
+
+## D137 — The Suite page is an AG Grid table over the row model (2026-09-27)
+
+**Context.** The owner ruled on the feedback board (2026-09-26, v2): the
+Suite page keeps its name and becomes a table over the row model D136 made
+for both surfaces. Q1 A — group rows inside the table, collapsible, a sort
+ordering the rows within each group. Q1a B — "2 selected · Clear", Rerun and
+Accept as icon buttons with tooltips (their confirm dialogs stay), and no
+"(Dymola)" in Rerun's caption: the header shows the backend. Q1b A —
+column filters only, typed (status by the count pills, numbers by `>1e-4` /
+`1..10`, text by glob), with `.*` and `Aa` once in the toolbar; icons with
+tooltips for the view controls; an EDITED pill and an Edits column. Before,
+the page was a list of NiceGUI rows (`TestList`) with a filter box, chips
+and checkboxes, rebuilt from Python on a layout toggle.
+
+**Decision.**
+
+1. *AG Grid Community, as NiceGUI bundles it* (`ui.aggrid`, AG Grid 34.2).
+   The spike (2026-09-26) measured every requirement without Enterprise:
+   a one-row `applyTransaction` in 24–66 ms and ~190 B; a filter keystroke
+   22–25 ms with nothing sent to the server; 331 rows first drawn in ~1.1 s
+   cold and 2,000 in ~0.8 s. Row grouping is Enterprise, so group rows are
+   emulated: a full-width row per package, an external filter (which also
+   hides collapsed and, flat, every group row) and `postSortRows` (each
+   package's rows under its header, in the sort's order). Enter or Space on
+   a focused group row collapses it too; Enter on a focused Test cell opens
+   the test's page, as its link does. `ui.table` (Quasar) was rejected: it
+   worked only through four NiceGUI private APIs, gave screen readers no grid
+   and sorted by mouse only.
+2. *The browser filters, sorts and groups; Python sends rows.* The toolbar's
+   pills and view icons and the selection's label are drawn by
+   `shell/suite_grid.js` into two `div`s Python never updates; it filters
+   through D136's `filters.js`, the file the dashboard inlines (one module,
+   two surfaces), and both scripts are served from `/_dstf/` and put in the
+   page's FIRST HTML — after the handshake NiceGUI inserts head HTML with
+   `insertAdjacentHTML`, which never runs a script. A number filter reads a
+   row's sort value, never its text; a text filter reads a cell's text only
+   when the row has a value. The pills count every row, whatever the
+   filters; EDITED is OR'd with the status pills. Each row is the row
+   model's `TestRow` built from the Session (`authoring/suite_rows.py`: its
+   comparison through `summary_fields`, the result's timing, the staged ops,
+   a running job — running beats the comparison, which beats the open's
+   scoring failure, else the row waits and reads "…").
+3. *The no-update rule and its guard.* NiceGUI's aggrid re-creates the whole
+   grid on ANY Python-side update of the element (its `update_grid`): sort,
+   selection and every row patched since are lost. `SuiteGrid` is sealed
+   after the page's build and its `update()` raises; `.classes` / `.props`
+   reach `update()` through an observable whose handler logs, so such a
+   caller is blocked and sees only the log. After the build, rows reach the
+   grid only as transactions — `SuitePage` collects what each Session event
+   touches and `Shell.tick` has every page `flush` once per tick, so the
+   Accept path's N + 2 events are one transaction, not 333.
+4. *Where the state lives.* The view — pills, filters, `.*` / `Aa`,
+   grouping, names, sort, columns, closed groups — is the viewer's, in
+   `localStorage` under `dstf-suite-v1:<config file>` (per project; two tabs
+   on one project share it; a storage that refuses leaves the table
+   working). A stored view is older than the page that reads it: a filter, a
+   sort, a column state or a pill whose key the page does not have is dropped
+   when the grid is ready and the storage rewritten (`DstfFilters.known`,
+   which the dashboard reads its stored filters by too) — a filter stored
+   under the Criteria column's earlier key emptied the table and had no
+   input to undo it. The resolved config path, because it is known before the open
+   and the same after it: keyed by the work dir, the key before an open
+   without `--work-dir` was the config path and after it the derived work
+   dir. `dstf author` needs `--config`, so there always is one; a reopen on
+   another backend keeps the view.
+   The selection is the tab's (D129): sent to Python on `selectionChanged`,
+   selected again when a grid is ready, and carried with rows added later.
+   `TabState` keeps only the selection and the Test page's drawer state.
+5. *Rows before the scan.* `Session.open` emits `known` after the spec
+   document loads: the models its entries and the last run's
+   `batch_manifest.json` name, read without the scan or the spec parser
+   (which validates trees). The shell filters them as it filters the
+   project's tests and keeps them until the merge's `spec` event (a close
+   clears them too; an open that fails takes them back); the Suite page draws
+   them waiting — during a reopen the Session's comparisons are still the
+   previous project's.
+6. *A tool Rerun ends on a scored dashboard.* (Replaced by D150: the `Job`
+   and its contract below are gone; a drained queue writes the dashboard,
+   and Save, Discard and Reload are no longer refused.) A `Job` may carry
+   `after_reload`, called once the Session has reloaded and rescored; Rerun's
+   renders `dashboard.html` with the Session's verdicts (the run's own
+   `finally` render stays, for a run that fails before the reload). A
+   plug-in's job writes no file, and nor does the Session: the dashboard
+   is the report of the last `dstf run` / `compare` or tool Rerun; Save,
+   Discard and Reload do not rewrite it, as a hand edit of `test_spec.json`
+   does not. (Until 2026-09-27 the Session re-rendered it after each, so a
+   rerun's page never kept the verdicts of edits no longer pending; the
+   re-render kept producing edge cases — a guard for a run started since
+   the tool's read that missed `compare` and a CLI accept, a render lost
+   at shutdown, a Save's render landing on a rerun's live page — and was
+   deleted: a page a Rerun wrote under unsaved edits keeps their verdicts
+   until the next run replaces it.) Save, Discard and Reload are
+   refused while a job runs, in the Session as in the header: the job's
+   reload scores the spec. A job's `after_reload` runs off the UI loop, on
+   one background thread, in the order the jobs finished, on a snapshot of
+   the comparisons its reload scored — 1.6 s over TRANSFORM's work dir
+   with `--report` sidecars; the next job's run waits for it (it must not
+   land on that run's live page), and so does the app's shutdown (a daemon
+   thread would die mid-write). Both waits are bounded — 60 s for a job,
+   5 s at shutdown — and one that runs out goes on with a warning in the
+   log: the render writes `dashboard.html` atomically, so what an
+   unfinished render leaves is at most a stray `.tmp` beside the last
+   whole page, never a torn one. Known limits, not built around: a job
+   whose run waits on a render still starts when that render lands inside
+   the shutdown's wait, and the process then ends under it; and an
+   `after_reload` that itself waits on the background thread waits on
+   itself until the 60 s bound runs out.
+
+**Consequences.** The row model's labels: the model column reads "Test" and
+the work-dir key column "Key" on both surfaces (keys unchanged). The tool
+offers no Key, Worker or Elapsed column, not even in its chooser: they are
+a live run's and always "—" there. A capability
+may declare an `icon`; a bar that draws icons draws it, and the shell still
+names no capability. `TestList` is the Tests drawer's alone. Nothing in the
+pre-release seams moves. Not measured here: TRANSFORM's time to first row
+through the grid, cold and warm — the plan's gate over a copy measures it.
+
+## D138 — A run's statistics and timing are kept beside its result (2026-09-27)
+
+**Context.** The TRANSFORM gate of the Suite table (D137) read "—" in Sim (s)
+on every row of both surfaces, and the owner named sim time as one of the
+things a row must show (feedback 2026-09-26). The walls a run measures
+(translation, simulation, elapsed) and the statistics its backend parses
+lived only on the in-process `TestRunResult`. `BatchManifest.save` writes
+the entries, not the results, so every reader without the run in hand — a
+`compare`, a reload in `dstf author`, a test `--merge` did not re-run —
+called `read_result(test, key, None)` and got no timing; for Dymola, not the
+dslog `translation` / `simulation` statistics either. And only Dymola's and
+OpenModelica's `read_result` built a `statistics["timing"]` block at all:
+FMPy, Julia and the Python backend measured a `sim_wall` and showed none.
+
+**Decision.**
+
+1. *One timing block for every backend.* `run_timing(run_result)`
+   (`backends/common/result_variables.py`) builds `translation_wall`,
+   `sim_wall`, `other_wall`, `total_wall` (seconds, rounded to 2, only the
+   keys the run measured), and `Backend.read_run_result` — the read every
+   result goes through in `read_results` — merges it into the result's
+   statistics, a failed run's included, on a copy. The two copies in
+   Dymola's and OpenModelica's `read_result` are gone; OpenModelica's own
+   omc-reported `timing` keys are updated, not replaced. `other_wall` is
+   written only when both walls are known: the old block counted a missing
+   wall as 0 (OpenModelica without an omc simulation time, a Dymola
+   translation failure).
+2. *Dymola batch shows no timing.* A `.mos` batch measures no per-test wall;
+   its `elapsed` is the batch's average. A block built from it would show a
+   time no test took, so `run_timing` builds none, as before.
+3. *The file.* `BatchManifest.record_result` — which every backend lane
+   calls as a test's verdict lands — writes `<work_dir>/<test_key>/run_stats.json`
+   (`storage/run_stats.py`): `{"model_id", "translation_wall", "sim_wall",
+   "elapsed", "statistics"}`, absent walls as null, a value JSON cannot hold
+   as its `str`. It is written after the manifest is saved and never raises:
+   `record_result` is the abort-proof verdict record, and a failed write is
+   one `# WARN:` line. A run wipes a test's directory exactly when it re-runs
+   the test, so the file is as fresh as the result beside it, under
+   `--merge` and `--rerun` too. `status.json` could not hold it: each run
+   rewrites it with its own scope only.
+4. *Read back as a run result.* With no run result in hand,
+   `read_run_result` rebuilds one from the file (`kept_run_result`,
+   `success=True`), so `read_result` and `run_timing` run unchanged. The
+   verdict stays the manifest's (`run_verdicts`), applied after the read as
+   on any reload. Only a test that reaches the read opens its file. No file
+   (a run from before this) reads back with no timing and no word; a
+   corrupt file, or one written for another model, with no timing and one
+   warning. The review loop's `[a]` after `[v]` re-reads through the same
+   path, so the accepted baseline keeps the run's statistics.
+5. *The dashboard.* A final page's row with no fresh sidecar (no
+   `--report`, or a sidecar the stale guard refused) takes Translate / Sim /
+   Total from the file, through `run_timing`. A fresh sidecar's walls still
+   win; a live page reads no file. The Suite table needed no change: its row
+   reads the Session's results, which a reload now reads with their timing.
+
+**Consequences.** Restored Dymola `translation` statistics make the
+structural-change warnings appear on `compare`, on a reload in the tool and
+on a `--merge`d test, as they already did on an in-process `run`: the
+verdict is unchanged, `n_warnings` and the `warnings` category change.
+`compare --accept` stores the restored statistics into the reference JSON,
+as `run --accept` in process always did — wall times are nondeterministic, so
+a re-accept shows them in `git diff` (327 of TRANSFORM's 331 baselines
+already carry timing); the four stored without `translation` / `simulation`
+/ `timing` (ref_0195–0197, ref_0307) gain them on their next
+`compare --accept`. Stored TRANSFORM results were written before this
+change: their rows read "—" until those tests are re-run. *Amended
+2026-09-27 (the owner: "Fill Sim (s), marked"):* where no wall was kept,
+Sim (s) shows the result file's final `CPUtime` (Dymola's diagnostic, which
+`read_result` folds into the statistics; every stored Dymola `dsres.mat`
+carries it, 329 of TRANSFORM's 331 rows fill), tagged "cpu" with a tooltip
+naming it: a CPU time is not a wall — it leaves out what the process waited
+on — so a column that holds either says which. A kept wall always wins
+(`TestRow.sim_source`); the final page takes the CPU time from the results
+the command holds (`render_final(..., results=)`), the Suite from the
+Session's. Nothing in the pre-release seams moves: the CLI, `testing.json`, `test_spec.json` and the
+reference-JSON layout are unchanged; the work dir gains a file per test.
+
+**Scalar leaves on a statistics path.** A `scalar` leaf whose `quantity` is
+a dotted statistics path (`simulation.wall_time`) now scores on `compare`,
+on a reload in the tool and on a `--merge`d test, as it did only in an
+in-process `run`: the statistics are read back from the file. The review proved it on the Python
+example: `simulation.wall_time` scored FAIL "not found" on `compare` before
+and PASS after, matching `run`. `compare --accept` stores that path's value
+into the baseline, as `run --accept` always did.
+
+*Amended 2026-09-30 (the owner's ruling): Dymola's logs are the fallback
+reader.* A Dymola result written before `run_stats.json` existed still has
+`dslog.txt` and `translation_log.txt` beside its `dsres.mat` (330 of the
+owner's 331 stored TRANSFORM results), yet `read_result` took statistics only
+from the run result, so `compare` and the tool showed none of its
+`translation` / `simulation` statistics. The parse-and-merge of the two logs
+is now one function, `log_parser.parse_test_logs`: the batch run (its
+timeout salvage too, which read `dslog.txt` alone), the persistent worker's
+disk read and `read_result` call it, the last when the run result carries no
+statistics. A log that does not parse (a `1.2.3 s` where a number belongs)
+costs that test that log's statistics and one `# WARN:` line naming the
+file, never the read of the suite. Kept run statistics still win — they are the run's own record;
+the logs are what code that reads files tolerates for a result from before
+them. The logs hold no phase walls, so such a result still has no `timing`
+block and its Sim (s) reads the marked CPU time. The consequences above
+follow for these results too: their structural-change warnings appear on
+`compare` and on a reload, and `compare --accept` stores the statistics.
+OpenModelica is unchanged: the file beside its result (`omc_stdout.txt`)
+holds only omc's phase times — a `timing` block, no counts — so reading it
+back is another change, not made here.
+
+**Cost.** A final render reads each row's `run_stats.json` once, whether or
+not its walls are shown: ~135 ms over TRANSFORM's 331 files on `/tmp`,
+per render (the tool renders once per Rerun, off its UI loop; Save, Discard
+and Reload render nothing, D137 §6). Not cached: the file is as fresh as
+the result beside it.
+
+**Not built here**, so nobody looks for it: nothing. The gap this entry
+first named here — a no-`--report` dashboard of a `--filter` run showing
+only that run's rows, even with `--merge` — is D136's amendment.
+
+**Addendum, 2026-10-12 — OpenModelica records the state count.** omc
+prints no translation statistics, so an OpenModelica run's statistics were
+timing only, and a model that gained a state gave `Continuous states: 2 ->
+3` on Dymola and nothing on OpenModelica. omc does write the system's size
+as attributes of the root element of `<prefix>_init.xml`, the file it
+generates beside the executable. `backends/openmodelica/init_xml.py` reads
+`numberOfContinuousStates` into `statistics.translation.
+continuous_time_states` — the key Dymola's translation log fills — in
+`OpenModelicaBackend.read_result`, the one read the persistent workers,
+`--batch` and a later `compare` share; only the root's start tag is
+parsed (the file lists every variable). A count is a non-negative decimal
+integer, all of the attribute, or it is not recorded: `int()` also read
+`-1`, `+3`, `1_000`, ` 3 ` and another script's digits. `0` is one — a
+model with no state, whose first state then reads `Continuous states: 0
+-> 1`. Executed on real omc, both
+backends: the example's `SimpleTest` reads 2, and with a third state
+added the run says `Continuous states: 2 -> 3`. Read from the file each
+time, so nothing new is kept beside the result. *Old data:* an
+OpenModelica baseline accepted before this has no such statistic, and a
+statistic one side lacks is no change on either tier (no structural
+line, no "changed" row); the first accept after it records the number.
+The Modelica example's twelve `OpenModelica/linux` baselines were accepted
+again for it on 2026-10-12, with real omc on a scratch copy, so the
+shipped ones say what the README does: each now records its state count
+(and its `sampling`, at 17 digits — no value moved by more than 6e-14),
+and every example test passes on OpenModelica and on Dymola after it.
+*Not read:* omc's other counts there (event indicators, algebraic
+variables and parameters by type) have no twin among Dymola's keys —
+its `free_parameters` and `scalar_unknowns` count other things — and
+the sizes of nonlinear and linear systems are not in that file
+(`<prefix>_info.json` lists the equations).
+
+## D139 — The Test page: a status strip, one add model, a Save preview and the drawers' one control set (2026-09-27)
+
+**Context.** The owner ruled on the feedback board (2026-09-26, v2) on the
+Test page. Q2 A — a full-width status strip directly under the test's row,
+inside the part that stays at the top, saying the test's situation and
+filling the one next action. Q3 A — every `+` opens the same inline row
+where it was clicked; a new criterion lands right after the clicked one;
+a combinator's kind is a dropdown changed in place. Q6 A — the
+pending-edits drawer is a preview of each test's entry as `test_spec.json`
+will hold it. Q7 — one control set on every list (the Suite table's half
+is D137). Before, Accept and Rerun sat outlined in the test's row (DESIGN.md
+"Buttons"); a plot's "Add a criterion for x" was a VARIABLE button with a
+dialog (D131); a combinator's kind and Unwrap lived in its Edit form
+(D133); the drawer listed one raw line per op; the Tests drawer had a
+substring filter, the Variables drawer a filter and nothing else. The
+owner ruled twice more on 2026-09-27, before the build (O1, O2 below), and
+accepted the planner's choices ("No objections").
+
+**Decision.**
+
+1. *The strip (Q2 A; reverses DESIGN.md "Buttons").* `authoring/situation.py`
+   decides, pure: running, edits, scoring failed, waiting, no result,
+   SIM_FAIL, NO_REF, FAIL, simulate-only, PASS — the first that applies
+   wins — each with a tone (grey, red, amber) and one sentence
+   (`shell/strip.py` draws it). Accept and Rerun leave the test's row for
+   the strip. The controller's calls: "N unsaved edits" counted OPS when
+   this was written, so the first criterion edit on a flat test read 2
+   (the materialization and the edit), as the header's count did — it
+   counts what the user did since D155, and reads 1; a saved spec that cannot be scored
+   reads "verdict would change scoring failed → PASS"; an unscored test
+   while the project is read waits ("Scoring…"); a result counts only when
+   the manifest does not list its model as unfinished (what Accept's
+   "re-run before accepting" reads); a simulate-only test that ran says
+   "Simulate-only: it runs, and nothing is compared." The strip's Discard
+   is this test's (`Session.discard(models=)`, planner's choice), labelled
+   "Discard" as the board drew it, its tooltip "Discards this test's edits;
+   the header's Discard drops every test's." *O1:* there is no
+   simulation-settings state — `/simulation` is not stageable
+   (`spec-update`'s whitelist is `/comparison`, `/metrics`, `/plots`, and
+   widening it changes the TRANSFORM seam); the state waits for a
+   simulation-settings editor.
+2. *A capability says when it is next.* `Capability.emphasis` maps a
+   `Situation` to `Emphasis.NEXT` (drawn filled) or `MENU` (the strip's ⋮);
+   a situation it does not name draws it quiet. Read with `getattr`, like
+   `icon`, and only by a bar the page tells its situation; the shell still
+   names no capability. Accept is NEXT on FAIL and NO_REF and in the menu
+   on PASS, edits, SIM_FAIL and no result; Rerun is NEXT on SIM_FAIL and no
+   result and in the menu on edits. The strip's verdict clause asks
+   `Session.saved_comparison` —
+   the saved spec scored afresh, uncached, `None` for an entry only a
+   pending op creates: ~12 ms a call on a TRANSFORM copy, 8 ms of it the
+   331-test merge.
+3. *One add model (Q3 A; reverses D131's dialog for VARIABLE).* `+` on a
+   criterion stages the new one right after it; on a combinator, as its
+   last child. The plot's "Add a criterion for x" is a `+` in the card's
+   criteria header, an inline row like every other: VARIABLE is an
+   `InlineHost` now, and `ActionBar` hosts SUITE and TEST only (its
+   `figure=` is deleted). After Add the new criterion's editor opens on the
+   plot the `+` was on when that plot draws it (`RowTarget.index`,
+   `TestPage.reveal(path, index)`), scrolled into view.
+4. *The kind dropdown (Q3 A; reverses D133's kind in the Edit form and
+   Unwrap there).* `Panel.lead` draws in a combinator row's lead place,
+   where its kind is read, and raises on a row without one. The dropdown
+   holds and / or / k-of-n / warn / weighted and, below a separator,
+   "unwrap — its children take its place" — omitted where Unwrap is refused
+   by rule (a root with several children): an option cannot carry a
+   why-tooltip. and / or / warn stage at once; k-of-n and weighted open the
+   Edit form preset to that kind, which needs k or a threshold first. The
+   tune icon stays only on k-of-n and weighted nodes. The Edit form says
+   "Changes this node's fields; its children stay." — "…kind and
+   fields…" when the dropdown preset it.
+5. *The preview (Q6 A).* `authoring/spec_preview.py`: the entry as
+   `json.dumps(indent=2)` writes it, before and after, diffed by `difflib`
+   with `autojunk` off (on, a 60-leaf entry tightened at two leaves read
+   ~400 changed lines (201 replaced) instead of 4); variables read by their label, the
+   result-file name muted. *O2:* the `before` is the tree as scoring sees
+   it — when a test's ops begin with the materialization `Session.stage`
+   prepends (`PatchOp.materializes`), the saved entry with that applied, and
+   one note line says Save also writes the criteria out as a tree; a tree
+   built from edited overrides, or after a pending op removed the saved
+   entry's own tree (`_saved_scoring_tree`), is not marked, so it shows as
+   added and there is no note. `stage` keeps a copy of each op's value: a
+   caller editing its dict after staging changes neither the preview, the
+   export nor Save. A section whose edits leave the entry as saved (a
+   series added, then Reset layout: no diff and no tree written out) says
+   "These edits leave the entry as saved." and draws no diff box. Built
+   only while the drawer is open, and again only when the pending ops, the
+   file or an edited test's verdict moved; `Session.saved_comparisons`
+   merges the saved spec once per rebuild. Save these / Discard these are
+   the header's own; the close button and Esc close it, which under 1024 px
+   — where it is an overlay over the header and the strip — are the only
+   ways out besides a click behind it. Esc is one `document` keydown per
+   page load dispatching to the drawer's column: `ui.on` re-sent the page's
+   listeners and failed the Suite's Playwright tests. An Esc while a Quasar
+   dialog or menu is open is left to it: the stale-file dialog over the
+   drawer closes, and the drawer stays. One already fading out (Quasar's
+   `-leave-` classes, ~300 ms (Quasar's default transition-duration)) is
+   not open: a second Esc 40 ms after the first closes the drawer. The
+   board's per-edit sentences
+   ("edit nrmse on pulse.y: tolerance 0.01 → 0.005") are not built
+   (planner's choice): each section has its edit count and verdict line.
+6. *The drawers' one control set (Q7).* The budgeted matcher moves to
+   `authoring/needle.py`; every control is the tab's (`TabState`), drawn by
+   `shell/drawer_controls.py`, so a switch of test keeps them. Each menu's
+   choices are `menuitemradio` with the current one checked; the arrow keys
+   wrap, Home and End jump (Quasar's QMenu has none), Tab closes the menu,
+   and the choices are out of the tab order. The Tests drawer: the filter
+   with `.*` / `Aa` beside it; sort by package order, name A→Z, or status,
+   failures first (FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, unscored,
+   then package order — not `STATUS_ORDER`, which lists PASS first); a
+   group toggle; Short / Full names — a Short name cut at its end, a Full
+   one at its START (the controller's call: TRANSFORM's ids share long
+   package prefixes, and cut at the end two of them read alike), the id in
+   a `<bdi>` inside a right-to-left span: a bare `direction: rtl` moved a
+   leading or trailing `_` to the other end in Chromium, and isolates drawn
+   by `::before` / `::after` entered the button's accessible name; status
+   pills with EDITED, OR'd as on
+   the Suite, counting every test whatever the filter, a scoring failure
+   counted and kept as SIM_FAIL (the Suite's rule). Its kept set is cached
+   on the needle, the toggles and the set of tests — a pathological regex
+   cost 0.79 s of CPU per pass over 331 ids, and events repaint every
+   second during a job; a bad pattern or one out of time hides nothing and
+   says why. The Variables drawer: sort by result-file order or A→Z by what
+   is shown; group by component, flat or tracked first — in each group the
+   tracked names fold apart from the result's own, so under Flat a tracked
+   `x={pipe.T[1], pipe.T[2]}` and the result's `pipe.T[1:2]` are two rows,
+   not one reading `pipe.T[1,1,2,2]`; names as expression, result-file name
+   or both — Expression keeps the name, muted, beside a label another name
+   of the test carries (the one label rule, `variable_texts`) or another
+   row the drawer draws reads (the controller's call: a tracked expression
+   `a.Q` beside an untracked variable named `a.Q` that no plot or criterion
+   holds is outside the test's scope, and two rows read "a.Q"). A family
+   has no one name: what is muted beside it is its names folded
+   (`unitTests.x[1:2]`) when they read otherwise, so under Flat a tracked
+   `pipe.T[1:2]` and the result's own — TRANSFORM's
+   `batemanEquations.Ns[1:4]` twice — read apart, and so do their checks'
+   and chevrons' labels and their titles, which carry it under every names
+   setting. A family is
+   opened by its key and whether it is tracked — not by its row's id, which
+   carries the group, nor by its members, which a filter narrows — so it
+   stays open across a switch of group and under a filter that keeps some
+   of it, and a tracked family and the result's own that share a key open
+   apart. Rebuilt over 6,011 names: 164-255 ms in every
+   group × order × names mode (the default 166-215 ms).
+7. *A figure beside a drawer.* Reported during the review fixes: after
+   the pending drawer closed at 1280 px, a figure kept the width it had
+   beside it. Measured, it does not: read as the drawer lands, the figure is
+   still the drawer's width narrower, and it fills its card ~150 ms later —
+   NiceGUI's plotly element observes its size, and Plotly redraws 100 ms
+   after it is told — for the pending drawer and the rail's alike. Nothing
+   is added; a Playwright test holds both to it.
+
+**Consequences.** DESIGN.md "Buttons" no longer holds on the Test page: its
+next action is filled. The contract gains `Capability.emphasis`,
+`Panel.lead` (a host's panel must implement it), `RowTarget.index` and
+`reveal(path, index)`; `ActionBar(figure=)` is gone. Nothing in the
+pre-release seams moves: the preview writes nothing, Save still goes
+through `spec-update`'s read-modify-write, and the CLI, `testing.json`,
+`test_spec.json` and the reference-JSON layout are unchanged. Watch-only
+items went to `docs/ideas.md`. Not measured here: the TRANSFORM gate over
+a copy, which the plan leaves to its controller.
+
+**Not built here**, so nobody looks for it: the strip's simulation-settings
+state (O1); the preview's per-edit sentences; a fix for the page error
+"Resize must be passed a displayed plot div element." after a rebuild in a
+page's first ~1 s (the TRANSFORM gate, a Discard just after the page
+opened) — NiceGUI's plotly element starts observing its div only after
+`await import("nicegui-plotly")`, so it observes a div already removed;
+nothing visible breaks, and a page-side guard cannot be ordered ahead of
+it (watch-only in `docs/ideas.md`).
+
+## D140 — Plots are derived from the criteria tree; `plots` holds a person's extras (2026-09-28)
+
+**Context.** The owner used the Test page over TRANSFORM and ruled on a
+grill and a board over a real test (BranchingDynamicPipes, 2026-09-28: "A
+for both"): the page should be about the test's variables and their
+criteria, not a layout a person assembles. Q1 b — one test-wide criteria
+tree; plots are views of it. Q10 — one plot per scored variable or array
+family, derived from the criteria. Q11 c — the plots stacked, plus Focus
+with a variable switcher. Q12 — context series: other variables drawn
+greyed on a plot, same y axis, not scored, added from the Variables drawer
+and removable. Q13 / Q14 — watch plots: a person can make an unscored plot
+of a variable, add context to it and remove it; a watch plot whose
+variable later gets a criterion becomes its derived plot, keeping its
+context. Q15 — the board over a real test before any plan. Q16 — a
+derived plot has no Remove: it goes when its last criterion goes. Q17 —
+derived plots in tree order (where a depth-first walk first names the
+variable), watch plots after, in the order they were made. Q19 — a family
+is an array of one quantity. Q20 — variable labels are cut in the MIDDLE
+(the head says what it is, the tail its index); model ids keep their
+start cut. Two executing reviews then built the plan in archives, and the
+owner ruled twice more: O2 — nothing scored is one plot per tracked
+variable on both tiers; O3 — a UnitTests variable never folds, every
+other array always folds, by its result-file name, with no scale rule.
+O3 replaced O1 (fold only on one scale, max|v| within 10x), which is
+deleted: the scale question existed only because the fold read UnitTests
+expressions as arrays — `check_atm`'s local `x` holds 1 Pa in atm beside
+1 atm in Pa.
+
+Before, a test's plots were the `plots` key's layout (D130) or one per
+tracked variable; the Variables drawer added and removed series and plots
+(D134), a scored variable could not leave its last plot (D134 Q7 A, the
+stranded rule), and a plot's criteria rows were its variables' leaves in
+variable order (D133).
+
+**Decision.**
+
+1. *The rule (Q1 b, Q10, Q17, O2, O3).* `discovery/plots.py::derive_plots`
+   is the one rule both tiers draw by: the leaves `plot_leaves(test,
+   compared)` returns — the authored tree's, even with nothing compared
+   (a test with no baseline: its tree names what will be scored), else
+   the implicit tree of what was compared, else none — in depth-first
+   order, a stored-scalar leaf skipped (its `variable` names the leaf, not
+   a series); one plot per lone variable or family, placed where the tree
+   first names any member; with no tree, one plot per tracked variable or
+   array in `tracked_names` order. The fold is by RESULT-FILE NAME
+   (`pipe.T[1]..pipe.T[n]` is one plot), never by label, and each of the
+   test's UnitTests elements (`is_unit_test_variable`: `<instance>.x[i]`,
+   ASCII digits) is a plot of its own whatever its expression reads.
+   `Session.plots` never calls `Session.tree()` (which reads the
+   baseline). Both tiers call ONE function over it,
+   `plots_of_test(test, compared, result, *, listed)` — `Session.plots` and
+   the report's `plot_inputs` alike: it asks which names are UnitTests
+   elements of every leaf AND every tracked name (a leaf the result lacks
+   is an element too), and says a name is missing when the plots cannot
+   draw it — not in the file's listing nor in the result in memory, or,
+   with no listing (the report lists the file only for a test with
+   extras), not in the result. While a job holds a model whose names the
+   tool never read, `Session.plots` marks nothing missing: a listing not
+   taken is not a file without the series. A run that FAILED has no plots
+   on either tier, its extras included (O2, literally); the tool's count
+   line reads "no plots: the run failed", and its Variables drawer "The
+   run failed: no plots", its checks and "+ new plot" grey. Every line of
+   the Test page words its reason by ONE run-state rule,
+   `TestPage.run_state`: a test with no result, or whose last run never
+   finished it (its manifest entry still pending), reads "this test has no
+   result" on the count and tree lines, as the strip says "No result yet",
+   and its drawer "No result yet: no plots" over the partial result the
+   reader hands in; only a run that finished and failed reads "the run
+   failed". A run that succeeded and draws no plot says which of two things
+   it is (2026-10-12): "no plots: the result has no variables" for a
+   result with nothing in it, and "no plots: this test tracks none of the
+   result's variables" where it holds some and the test's patterns match
+   none (or it is simulate-only) — the first was said for both, beside a
+   Variables drawer listing them.
+2. *The new `plots` schema.* A list of extras `{"var", "context"?}`: an
+   entry on a scored variable (or a member of its family) adds its
+   `context` to that plot; any other entry is a watch plot. No glob, no
+   duplicate `var`, no context naming its own `var`, no unknown key, no
+   `null`. No migration: no spec used the key (TRANSFORM-UnitTests' spec
+   and the four examples' carry none), and `/plots` stays on
+   `spec-update`'s whitelist as it was. `migrate-variable-names` rewrites
+   `var` and `context`; `export-schema` describes the extras.
+3. *The edits (reverses D134's layout editing and the stranded rule).*
+   `authoring/layout.py` edits the extras: `add_context`, `remove_context`
+   (an entry left with no context on a derived plot is dropped),
+   `new_watch` (refuses a duplicate), `remove_watch`; removing the last
+   extra writes `remove /plots`, so Reset layout hides again. New plot,
+   Remove plot and Reset layout act on watch plots and context only; a
+   derived plot cannot lose its subject, so nothing is stranded — `stranded`
+   and `stranded_sentence` are deleted, and so is Add series (it did
+   nothing visible).
+4. *Context in the figure (Q12).* `plot_figure(..., *, context=())`: a
+   context view draws one grey (`CONTEXT_COLOR`, pinned equal to the
+   theme's text-muted), thinner trace on the subject's y axis, named
+   `<label> · context`, its hover the label through `meta`, with no
+   reference and no criteria geometry. The overlays and the error select
+   apply whenever the SUBJECT is one variable.
+5. *The rows (changes D133's).* A plot's criteria rows are the leaves on
+   its subject in TREE order, each led by its ancestors' kinds, the root
+   first (`and › k-of-n ›`); a stored-scalar leaf is on no card and in no
+   report section (`names_a_series`). Both tiers list them by one walk,
+   `reporting/tree_rows.py::criteria_rows` (the tool imports it; the
+   report never imports the tool), and every crumb on a plot is as wide
+   as its longest, in ch (the report's `crumb_ch`, the tool's `PlotCard`),
+   so a plot's leaf names start in one column — a fixed 14ch was outgrown
+   by a fourth level. For the same column a hidden swatch keeps its box
+   (`invisible`, never display:none) and a verdict pill has a minimum
+   width with its text centred (the tool's `.dstf-pill`, the report's
+   `.node-status`), so PASS and FAIL are one width.
+6. *The controller's calls* (said to the owner; reversible on the owner's
+   word). C1: context series are listed in a row above the plot, each
+   with a `×` ("Remove {text} from this plot") — Plotly's legend cannot
+   hold a button. C2: a watch card's `+` is grey while its variable is not
+   tracked, until U2. C3: "+ new plot" is grey on a family's row ("A
+   watch plot shows one variable: open the family"). C4: the Focus
+   switcher's options are plain labels. C5: the count line reads
+   "N plots · one per tracked variable or array" with no tree, else
+   "N plots · derived from the criteria[ · K watch]", the derived plots
+   counted apart from the watch plots, and with no derived plot at all
+   "K watch plots · no criteria on a signal yet" (never "0 plots"); whether
+   the plots come from a tree is `Session.plots_from_tree`, not whether
+   there is a tree view. C6: a
+   derived card's missing Remove is an info icon, "This plot exists
+   because of its criteria." C7: Reset layout's tooltip says the context
+   series and watch plots go. And O3 applied to the Variables drawer
+   (changes D139's grouping): its rows fold as the plots do — by name, a
+   UnitTests element a row of its own — so the "family names muted beside
+   it" of D139 goes; a name-folded family reads its names.
+7. *The Test page.* The selected plot follows its subject across a
+   rebuild (a watch plot given a criterion moves up); the page reads the
+   tracked names once and hands them to every card's `+`
+   (`Selection.tracked`), and they are part of the page's `shape`, so a
+   variable that becomes tracked rebuilds the cards. Focus gains a select (`focus-switch`, Q11 c)
+   through the same path a card's Focus takes; it names the plot, so the
+   bar beside it only counts: "Showing 1 of N plots". A variable label — a card's
+   title, a criteria row's name, a drawer row — is a `MiddleCut`: the head
+   and the tail from the last `[` (else, or when that `[` is more than 12
+   characters from the end, the last 12 characters) as two
+   inline-blocks in an inline-block, never a flex pair, so innerText and a
+   copy are the whole label; the head is capped at the width less the
+   tail's `--tail` (its length in ch), the tail at least that wide.
+8. *The report (O2).* Its plots are the tool's: the "Simulated Variables
+   (No Baseline)" block goes (a no-baseline or simulate-only test draws
+   one plot per tracked variable, with its overlay picker); each plot
+   section lists its criteria in tree order with their crumbs under a
+   `nodes-{i}` mount per PLOT (was one per variable), its context muted
+   ("Context: …" — a context series may be scored on a plot of its own,
+   so not "not scored"), a watch plot "No criteria yet."; the "criteria
+   are under its first plot" and "plot only" notes go. A family's badges
+   name their members (`pipe.T[2] FAIL`), as the tool's pills do. A tree
+   leaf on a variable the result lacks keeps its FAIL badge and says "Not
+   in this result: …", with no chart and no error select — a plot whose
+   subject is entirely missing is its heading, badges, note and criteria
+   rows, on both tiers. The
+   sidecar's `plots` record gains `subject`, `context` and `watch`: it is
+   what the report drew.
+9. *The pattern order.* `resolve_variable_patterns` returned its names
+   sorted, so a test with no tree drew `x[10]` before `x[2]`; it returns
+   them in pattern order (explicit names as written, a glob's matches in
+   the file's order, the first occurrence kept). An accept now writes
+   pattern-tracked `variables` in that order: a stored baseline's variable
+   index changes on its next accept. Pairing is by name, so no score
+   moves — and neither does a drawing: the report's and the tool's drawn
+   reference (and the error overlays taken from it,
+   `context_builder.build_trajectories`) paired by INDEX until the U1
+   review, so a baseline accepted under the old sorted order drew another
+   variable's reference under a name; it pairs by name now, as scoring
+   does.
+
+**Consequences.** The report and the tool draw the same plots from the
+same two functions, and a criterion added or removed moves a plot on both.
+The `plots` key changes meaning; `test_spec.json`'s other keys, the CLI and
+the reference-JSON layout do not (item 9 changes the ORDER a baseline's
+variables are written in, not the layout). D134's layout editing and D133's
+criteria rows no longer hold as written. Not measured here: the
+TRANSFORM gate over a copy (plot counts per test before and after, with
+the reason for each change), which the plan leaves to its controller.
+
+**Next (U2-U4).** U2 — the add form: one searchable picker over every
+variable of the file and the diagnostics, metrics narrowed to the variable,
+and Q18 b: a variable is tracked because a criterion names it (runs
+record, store and score it; no `spec-update` change; rerun, then accept),
+which lifts C2's grey `+`. U3 — the Statistics card, collapsed to one line
+naming the changed rows; a missing zero count read as 0. U4 — moving a
+subtree: drag and "Move to…", auto-wrapped in `and`. Per-plot log or linear
+axes are logged in `docs/ideas.md`, not built.
+
+## D141 — Nothing on the UI loop waits for the open's disk reads (2026-09-29)
+
+**Context.** A TRANSFORM gate opened a Test page first, on a cold scan
+cache: the page stayed at "Scoring…" / "no plots: this test has no result"
+until a reload. Reproduced over a copy of the gate's run (four of five
+runs stuck) and instrumented. The page, open in the gone state while the
+scan ran, synced in full on the UI loop the moment `Session.open` set
+`project`. That sync held the loop about 5.5 s: about 4 s scanning the
+reference index (every `ref_*.json` read whole, lazily, from `_paint`'s
+baseline name), the rest waiting on the sibling-backend index's lock,
+held by the warm thread D127 starts at the commit point. NiceGUI's ping
+budget at its default `reconnect_timeout` of 3 s is 6 s: a 4 s interval
+plus a 2 s timeout, its floors (it scales them from `reconnect_timeout`
+by 0.8 and 0.4, and 3 s scales below both). The browser dropped the
+socket and reconnected to the same client within 0.1 s, and NiceGUI
+3.16's outbox replay sent the stale update after the fresh one (logged in
+`docs/ideas.md`). A warm-cache open never hits this: the
+project exists before any page does.
+
+**Decision.**
+
+1. `Session.open` loads the reference index (`RefIndex.ensure_loaded`)
+   on the open thread before the commit point. The loop never scans it,
+   and the open thread and the loop no longer both run `_scan`, which
+   clears and refills.
+2. A read never waits on the sibling-backend index. Until the project's
+   `Project.overlays_ready` is set, `_reads_for` loads overlays without
+   the sibling-backend ones. Once the index is built, the Session emits
+   ONE new `overlays` event naming the models read without it, and the
+   next read of each reloads its overlays with the sibling ones and drops
+   its decimated bases. The reads are kept, not dropped: they hold what
+   was read from the result file, which a model a job holds cannot read
+   again until the job's reload. The Test page re-sends its drawn plots on
+   the event (no leaf's signature sees an overlay). The flag is the
+   project's, not the Session's: a reopen set `project` before it replaced
+   a Session-level flag, and a read in between saw the old project's set
+   flag and built the new project's sibling index on the loop.
+   `Session.overlay_index_ready` reads the open project's. **Changed
+   behaviour:** a plot drawn in the first seconds after an open gains its
+   sibling-backend overlays a moment later instead of the loop waiting for
+   them. The warm thread stays where D127 put it. A warm that fails emits
+   nothing, and a warm whose post finds the UI loop gone (a shutdown) logs
+   it and ends.
+3. A page's build asks `connected_tab_state`: it waits until the client
+   really has a connection and returns None when the client was deleted,
+   and the page returns. A plain GET (a readiness probe, a curl) makes a
+   client that never connects; NiceGUI prunes it a minute later, which
+   ended the page's `connected()` wait, and `tab_state` raised.
+4. One tick handles each run of adjacent `loading`/`scan` events as its
+   last (`shell._folded`): a step carries the running count. One by one,
+   every step synced an open Test page in full and re-read `status.json`
+   in each page's header; a probe of one tick over 3,269 queued steps
+   (TRANSFORM's `.mo` count, a TRANSFORM-sized `status.json`, one Test
+   page) took about 13 s, and 0.02 s folded.
+5. `dstf author` keeps NiceGUI's default `reconnect_timeout`. A first cut
+   of this fix raised it to 10 s (a 12 s ping budget) as a margin. With 1–4
+   nothing measured stalls the loop near the 6 s budget, and a longer
+   timeout keeps a dropped client alive longer, so more real drops end in
+   a reconnect to it — the path on which NiceGUI's replay-order bug
+   (`docs/ideas.md`) leaves a page on an older state.
+
+**Consequences.** A cold open's first page reaches its verdict without a
+reload. Measured over a copy of the gate's run (cold cache, the page
+opened 5 s into the scan, five runs each): before, 3 of 5 stuck, with the
+longest loop stall 5.5–6.1 s; with 1–3 at NiceGUI's default
+`reconnect_timeout`, 0 of 5, longest stall ≤ 2.8 s (≤ 3.0 s with it at
+10 s); with 1–5, 0 of 5 stuck, no socket drop before the browser closed,
+longest stall 2.7 s. What remains of it is the Test page's first full
+sync after the open (the result file's names read for its plots, the
+header's `status.json`), not the scan steps. The sibling-backend overlays
+of a test read before the index is ready arrive in a second draw. `tests/test_cold_open.py`.
+
+## D142 — A criterion tracks its variable; one picker adds it; the editor says the values in effect (2026-09-29)
+
+**Context.** Before U2 a criterion could only be added on a variable the
+test already tracked — its `UnitTests` variables and its `variables`
+patterns — through a select of those names; a watch plot of any other
+variable had a grey `+` (D140 C2). What a run recorded, stored and scored
+was that tracked set on every backend. The owner ruled on a grill
+(2026-09-28, D140 "What U2-U4 will do"): Q8 — one searchable picker in the
+add form, with the drawers' filter rules (substring, glob, `.*`, `Aa`),
+in sections "On this plot", "Other variables" (every result-file name)
+and "Diagnostics"; Q2 — the metric list narrows to the variable, a
+diagnostic offering `scalar` only; Q7 + Q18 b — a variable is tracked
+because a criterion names it: runs record, store and score it beside the
+UnitTests variables and the patterns, with NO `spec-update` or whitelist
+change, and after adding one the strip says to rerun (then accept, for a
+metric that needs a baseline). The owner's feedback on the editor
+("shouldn't all these fields be prepopulated with the correct values? …
+tolerance is floating above the others") and on the drawers (2026-09-29:
+a row's result-file name and "plot N" on a second line under the label;
+the rail's drawers resizable by dragging, the width kept per tab) joined
+the step. Two executing reviews then built the plan in archives, and the
+owner ruled three more (O1-O3, the plan's Corrections 1): O1 — with pending
+edits that name a new variable only Rerun is filled; Preview and save and
+Discard are quiet, Accept is in the ⋮; O2 — where the result FILE already
+holds the variable (Dymola, the JSON driver — Julia, Python) staging the
+criterion re-reads that model's result and scores it at once, no rerun;
+O3 — after a Save without a rerun, the sentence "N new variable(s) the
+last run did not record: rerun to score it/them."
+
+**Decision.**
+
+1. *Tracking by criteria (Q7 + Q18 b).* `comparison/tree_spec.py::
+   tree_variables(spec, diagnostics)` names the variables a tree needs:
+   every leaf that resolves a variable, unique, in tree order, the
+   diagnostics out (a diagnostic is scored through a quantity path over
+   its stored summary, never extracted as a trajectory). Every backend
+   reads them through `result_variables.criterion_variables(test,
+   diagnostics)`:
+   - Dymola and OpenModelica, read side: `compute_needed_variables` names
+     them and `extract_variables` gains a third pass (before the
+     diagnostics); one the file lacks is warned about like a missing
+     UnitTests variable.
+   - OpenModelica, simulate side: `build_simulate_args` adds them to the
+     `variableFilter`'s literal names, so both lanes (batch `.mos`, the
+     persistent worker) record them.
+   - FMPy: `_tracked` on the simulate and the read side. With no pattern
+     it records fmpy's default set (`fmpy.simulation._get_output_variables`
+     in 0.3.29: the outputs, else up to five states, else local
+     variables) beside the UnitTests and criterion variables — `output=None`
+     records that set, not every variable, so the criterion names alone
+     would have taken the outputs off the plot. The read side warns of a
+     UnitTests or criterion variable the saved columns lack.
+   - The JSON driver (Julia, Python): the read appends them and warns of
+     one the payload lacks.
+2. *The index rule.* On every backend a result's variables are the
+   UnitTests variables, then the patterns', then the criteria's, each
+   group's names appended only if not already there. The first two
+   groups' indices are what they were, so a stored baseline and
+   `migrate_names`, which reads indices 1..N as the UnitTests variables,
+   stay valid. FMPy followed this order only after the Part A review.
+3. *What the test tracks is not everything the result holds.*
+   `backends/common/result_variables.py::tracked_results(test, result)` —
+   the UnitTests variables and the patterns matched against the result's
+   names (`"*"` every one) — is what the flat path (no `metrics` tree)
+   scores (b4a730d), what a tree's "Tracked variables without a criterion"
+   warning reads, and the Variables drawer's Tracked group
+   (`Session.tracked`). A result read while a criterion was staged (a
+   rerun runs with the pending edits, a re-read with the merged TestModel)
+   keeps that variable after the criterion is discarded; scored as tracked
+   it failed the test for want of a baseline. The flat path's scoring is
+   unchanged on TRANSFORM, measured by the Part A mutation review
+   (2026-09-29): all 331 TRANSFORM results scored with 493d1b7 and with
+   7234ec8 — 0 differences in verdict, scored lists (873 variables) or
+   NRMSE. That is measured at 7234ec8; 8d017cf's move of `tracked_results`
+   (behaviour-identical, unit-tested) is not re-measured over TRANSFORM.
+   TRANSFORM has no `variables` patterns and no trees, so the glob branch
+   is unit-tested only.
+4. *The re-read (O2).* `Session.stage` re-reads a model whose criteria
+   name a variable the loaded result lacks and its result FILE holds, with
+   the merged TestModel, and rescores it. The read happens before the spec
+   and the tests are replaced, into a dict of its own: a read that raises
+   leaves the Session as it was. The background rescan re-reads the same
+   way, before it replaces the scan, the tests and the comparisons
+   (`_rebuild_tests(scanned=...)`). On both, a scoring that raises after
+   the swap (`_score_all`) is not rolled back: the new spec and tests
+   stand, scored as far as the raise. The file's listing is kept (the file did
+   not change). A name the file lacks (OpenModelica, FMPy, a typo) only a
+   rerun records, and the strip asks for that: EDITS_NEW, "N unsaved edits
+   · <verdict> · N new variable(s): rerun to score it/them", Rerun the one
+   filled action (O1); NEW_VARIABLES, after SIM_FAIL and before NO_REF, O3's
+   sentence, Rerun next and Accept in the ⋮ — accepted now, the baseline
+   would not hold it. A simulate-only test never reaches either: nothing is
+   scored there, and its add form says so with a grey Add.
+5. *The picker (Q8).* `authoring/picker_rows.py::picker_rows` is the rows
+   as data: On this plot (the plot's subject and context), Other variables
+   (every name of the result file, `Session.variable_names`, tracked or
+   not), Diagnostics (what the run RECORDED, `result.diagnostics` — a JSON
+   driver run records none) — each name once, in the first section that
+   has it, so a diagnostic on the plot is under On this plot; filtered on
+   the label OR the result-file name. `shell/picker.py::VariablePicker` is
+   the drawers' filter box over a list filtered on the SERVER — never a
+   `ui.select` over every name: TRANSFORM has a test of 76,992. ↑/↓ move a
+   ring from the box, Enter chooses, a click chooses and moves the ring to
+   its row. A key carries the box's text as typed: the filter reaches the
+   server 250 ms after the last keystroke, and ↓ Enter typed inside that
+   chose a row of the list before the filter, which the list then hid. It
+   flushes the box's debounced value first, so text deleted inside the
+   debounce still redraws the list. The box is a combobox over a listbox,
+   the ring's row its active descendant; each section a group named by its
+   title, and "no variable matches" a status line outside the list. A row
+   shows the plain label with the muted name beside it, and its accessible
+   name is `label (name)` — the name once. The Metric select
+   follows the choice (Q2): a diagnostic offers `scalar`, any other
+   variable every metric that scores a time series, and coming back from
+   a diagnostic restores the metric chosen before it.
+6. *Values in effect.* A leaf without a tolerance of its own is scored
+   with the test's base one; its editor says which on the field's hint
+   line — `in effect: 0.01 (the test's tolerance)` — whenever the field is
+   EMPTY (at open, after a typed value is cleared, after the leaf's own is
+   cleared), and never writes it: the hint names what applies with the
+   field empty, the base.
+   The source is carried from the one base-tolerance resolution in
+   `comparator.py` (tree and flat paths) as `TestComparison.
+   tolerance_source`: `test` ("the test's tolerance"), `reference` ("the
+   baseline's tolerance", the baseline JSON's) or `project` ("the
+   project's tolerance", `Config.tolerance`: the CLI's, `testing.json`'s
+   or 1e-4). The value and the source ride `TestComparison.base_tolerance`
+   and `tolerance_source` through `Session.tree_view` into the leaf's
+   `in_effect` only: the base tolerance, on every leaf whose metric's form
+   has the field and that has no `min_value` / `max_value` — a leaf with
+   its own tolerance carries the base too, shown once that value is
+   cleared; the report's view carries none. A leaf that returned before it
+   scored (a variable the result lacks, a baseline the test does not have)
+   reports the tolerance it would have applied (`tolerance_used`), not the
+   comparison's 0.0. A value in the field takes the hint away; cleared,
+   the field says it again.
+7. *Aligned fields.* Every one-line field of the editor row — the form's
+   numbers, selects and inputs, and the mode, window and `against`
+   controls — carries Quasar's `bottom-slots`, so each reserves the hint
+   line and their input lines share one y (measured in Chromium at 1280
+   and 900: 0.0 px apart; before, a number with a validation rule sat
+   20 px above the rest).
+8. *The drawer.* A Variables-drawer row is two lines: the chevron, the
+   check, the ramp and the label with the row's whole width, then —
+   muted — the result-file name where the names mode shows it, "plot N"
+   and "+ new plot". The rail's drawer resizes by the panel's right edge,
+   a 6 px grip: 240 px at least, at most 60% of the window AND the window
+   less the rail and 480 px for the plots column (`rail.max_panel`),
+   default 320, kept in `TabState.drawer_width`, so a switch of test keeps
+   it. The drag runs in the browser — the panel and the drawer's `width`
+   prop follow the pointer through NiceGUI 3.16's internal element store,
+   guarded so a NiceGUI that renames it still moves the panel — and the
+   release sends the width once; the server holds the same bounds. A
+   width the window no longer holds (kept from a wider one) is clamped in
+   the browser on load and on a window resize, and sent once. The grip is
+   a focusable separator: ←/→ 16 px, with Shift 64, Home and End the
+   bounds, one send on the key's release — or, when a key moved it and the
+   focus left before the release (→ held, Tab), one send on leaving it.
+9. *The controller's calls* (said to the owner; reversible on the owner's
+   word). K1: a diagnostic criterion is `{"metric": "scalar", "variable":
+   <name>, "quantity": "<name>.final"}`, seeded `tolerance 0 abs` for a
+   count (`EventCounter`, or any diagnostic whose every finite sample is
+   whole) and `0.1 rel` otherwise; `CPUtime` is a time by name (a tiny
+   model's can end on a whole 0.0 or 1.0). Amended by the Part B review: a
+   time (`seeds.TIMES`, today `CPUtime`) is seeded INSIDE a `warn` — a
+   run's CPU time moves with the machine's load, under `--parallel` most of
+   all, and 10% failed tests whose model did not change; a count stays
+   bare. Only where it lands in an `and` (an `and` node, or beside a root
+   leaf, which makes the root one): a `warn` child passes whatever it
+   scores, so under an `or` or a `k-of-n` parent it is added bare, with its
+   `0.1 rel` — a warn there would pass an `or` or a `k-of-n` with nothing
+   else passing. (Under a `weighted` one the `+` is grey: a child cannot
+   be added alone.) `EditTree.act("add")` hands
+   `seed_diagnostic` the landing combinator's kind. The Add still opens
+   the leaf's row. K2: at most 200 rows, "Showing
+   200 of N — narrow the search" when capped. K3: the value in effect on
+   the hint line (item 6). K4: `bottom-slots` on every one-line field
+   (item 7). K5: the grip's bounds and default (item 8; its widest gained
+   the plots' 480 px in the Part A review). K6: a drawer row's second line
+   collapses when it holds nothing but the hover-only "+ new plot", which
+   then sits at line 1's right. K7: a `Chosen: <label>` line under the
+   picker's list, so a choice the filter hides is still named before Add.
+   K8: a field with a hint is at least as wide as the hint (Quasar's hint
+   line never widens its field; at 140 px it wrapped to three lines): 5.4
+   px a character of the 11 px hint font plus 24 px.
+
+**What it reverses.** D140's C2: a watch plot's `+` is live — a criterion
+on its variable is what tracks it — and with it went `edit_tree.
+_variable_names`, `Selection.tracked`, `PlotCard`'s `tracked` and the
+Test page's tracked reads. The plan's K1 said a diagnostic criterion is
+not wrapped in `warn`, leaving that default to U3; CPU time added to an
+`and` now is.
+
+**Consequences.** A result holds the criteria's variables after the
+tracked ones on every backend, so a rerun records a criterion's variable
+and an accept stores it; `test_spec.json`, the CLI and the reference-JSON
+layout do not change. Known gaps: a diagnostic's criterion has no plot,
+so after its Add the tree card opens on its row (B6), and nothing on the
+Test page edits its values until U3's Statistics card hosts that editor;
+on the flat path a baseline JSON's `variable_overrides` tolerance scores
+its variable, while the hint names the test's base. Not
+measured here: the TRANSFORM gate over a copy (the picker over the
+76,992-name test, the hints on a real test, the drawer), which the plan
+leaves to its controller.
+
+## D143 — The Statistics card: every recorded statistic, run vs baseline; a click adds a criterion on one (2026-09-30)
+
+**Context.** A run records statistics beside its result (D138): Dymola's
+translation and simulation counts, the walls every backend gets
+(`timing.*`), OpenModelica's phase times, and the diagnostics' finals
+(`CPUtime`, `EventCounter`) folded in. The report showed them in a table
+that tinted any difference; `dstf author` showed them nowhere, and a
+criterion scored through one — U2's diagnostic add, `scalar` with
+`quantity: "<name>.final"` — had no plot and nothing on the Test page that
+edited it (D142's known gap, the add-form plan's B6). The owner's rulings:
+the grill of 2026-09-28 (Q1 b — the card is a view of the one tree; Q6 —
+its `+` adds a requirement at the END of the root) and the plot-model
+board (Q2 A — a Statistics card above the Criteria card, columns
+Statistic / Run / Baseline / a `+` or the criterion's pill); then, on
+2026-09-29, **a row is "changed" when the criterion its `+` would add
+would fail**, and **expanded, the card lists every numeric statistic the
+run or the baseline recorded, by section**. Built from
+`docs/superpowers/plans/2026-09-29-the-statistics-card.md`, whose
+"Corrections 1" (two executing reviews) override its task text, and four
+fix batches from the reviews.
+
+**Decision.**
+
+1. *The zero rule, and why it is narrow.* The Dymola parser wrote a
+   system-size list's `<key>_count` / `_total` / `_max` only for a
+   non-empty list, so a model with no nonlinear systems stored
+   `nonlinear: []` and no count, and a `translation.nonlinear_count`
+   criterion hard-failed "not found in baseline". `backends/common/
+   statistics.py` holds the rule in one place: `summaries` is what the
+   parser now writes ALWAYS (0, 0, 0 for an empty list — code that writes
+   never leaves a field out), and `read_summary` is what a reader falls
+   back to for a side written before that: 0 only where the list is
+   present AND empty in the same category. A missing list, or a non-empty
+   one without its count, stays missing. `comparison/tree_eval.py::
+   resolve_scalar_path` (made public for the rows) reads its last hop
+   through it, and a path missing from a side still hard-fails its leaf on
+   purpose (`_missing_scalar_path_comparison`: a stats path that silently
+   scored as 0 would be a green test measuring nothing). Re-accepting a
+   Dymola baseline that holds an empty list writes up to three more keys
+   per list into its reference JSON (Corrections A10; additive). The
+   report now shows an empty list's summaries as 0, in its table and in
+   Key stats. And the rule SURFACES (fix batch 3): a system-size list —
+   whole numbers, `statistics.sizes_systems`; `state_names` is none — on
+   EITHER side gives its three summary rows on both, each side read as a
+   leaf reads it (`read_summary`; nothing, `—` on the card, where a side
+   has no list). A row existed only where a side already held the key, so
+   289 of TRANSFORM's stored baselines, holding `nonlinear: []` and no
+   count, beside a run that recorded no count either, showed no "Nonlinear
+   count" row: nothing said the count stays 0, and no `+` could require
+   it.
+2. *A quantity's kind by its path (S5).* `comparison/seeds.py::
+   quantity_kind` says count or time by the PATH, never the value's type
+   (a Dymola `result_points` can be written as a float): the `timing`
+   section, `CPUtime` and the `*_time` / `*_wall` / `cpu_time*` keys are
+   times, every other statistic a count; a diagnostic's summary (`X.final`)
+   keeps D142's K1 (by name, else whole samples mean a count), and a
+   top-level statistic naming a diagnostic reads the run's samples the
+   same way (A5). `seed_quantity` is the one seed — a count exact
+   (`tolerance 0 abs`), a time `0.1 rel` inside a `warn` where it lands in
+   an `and` — and `seed_diagnostic` delegates to it, so ANY diagnostic time
+   is now warn-wrapped there (D142 wrapped `CPUtime` alone).
+3. *One row model, one "changed".* `reporting/stats_rows.py::
+   statistics_rows` is what BOTH tiers render — the report's Statistics
+   table and Key stats, and the card. A number's row is changed when the
+   scalar mode's own verdict over the seed `seed_quantity` writes fails, so
+   the tolerance lives in the seed alone; a row with no value on one side
+   is never changed (S3). The report adopts the rule (S7): a time within
+   the seed's 10% is no longer tinted, a count that moved still is. List
+   and text statistics (`translation.nonlinear`, `state_names`) are `text`
+   rows: the report keeps showing them under its old rule (formatted text
+   differs, both non-empty); the card leaves them out (S1). The report
+   keeps its row ORDER and sections (A2): keys alphabetical in a section,
+   `timing`'s four first, the top-level scalars among the Simulation keys
+   (or a Simulation section of their own at the end). Its LABELS become
+   the row model's — `Nonlinear count`, `CPU time integration` (`cpu`
+   spelled `CPU`), a top-level name as is: `CPUtime`, where the report
+   said `Cputime`. Its VALUES keep their precision (`stats_rows.
+   report_text`): a time as recorded, with its unit (`0.045845 s`,
+   `1.600425 s`, `1234567.89 s` — `:.15g`; until fix batch 4 it was `:g`,
+   six significant figures, `1.60042 s` and `1.23457e+06 s`, while the
+   docstring said "in full"), a count whole (`1234567`). Only the card
+   rounds (`card_text`): a time to 3 significant figures keeping its
+   zeros (`0.800 s`), and whole seconds
+   from 999.5 s (`1234 s` — `#.3g` wrote `1.00e+03 s`). Fix batch 3 split
+   the two (a controller's call, reversible); before it both tiers printed
+   the card's rounding. A delta
+   (S6) reads `0→3` for a count and `+40%` for a time — one decimal under
+   1% (`+0.3%`), `+<0.1%` under 0.05%, `+0.12 s` over a zero baseline —
+   whenever both sides differ, changed or not (A7). A leaf reading a path
+   no row holds gets a row of its own under "Other scored quantities"
+   (S4); `X.final` is the row `X` only for a top-level `X` (S2); a leaf
+   reading a list statistic gets such a row too. The builder no longer
+   writes into its inputs.
+4. *The Session's reads.* `Session.statistics(model_id)` is those rows
+   over the last result and the CACHED baseline (never copied, never
+   written). Which paths need a row, and which rows are scored, come from
+   the entry's OWN tree, staged edits included (`tree_spec.
+   statistic_leaves` / `statistic_paths`, through `Session.
+   statistic_leaves`) — never `Session.tree()`, which materializes a flat
+   entry's implicit tree by reading the baseline (B4), and never the tree
+   view: a test with nothing compared (no baseline) has no view, and its
+   staged criterion is a criterion all the same. The view only says each
+   one's verdict, "pending" where it has none. `Session.tracked` skips the
+   names statistics leaves score (B5).
+5. *The card.* `authoring/shell/stats_card.py::StatsCard`, above the
+   tree card, closed on every page open to one line: the changed COUNTS
+   — a list's `_count` / `_total` / `_max` are one entry, in section
+   order, at most three named, then `+N more` (B6) — or `no count
+   changed`; then, after a `·`, at most two changed times, the farthest
+   moved (|relative change|) first, then `+N more` (`1 changed: Nonlinear
+   count 0→3 · CPUtime +116%`). That is the owner's ruling of 2026-09-30,
+   on the TRANSFORM gate's measurement: CPUtime ran about 2.2x its
+   baseline (median 2.24x) on 324 of 331 tests, so a line naming times
+   among the counts named CPUtime on every test. Where no count and no
+   time changed the line says `all match`, as before the ruling (fix batch
+   3 had turned that into `no count changed`; it was restored by the
+   controller (fix batch 4)); `no count changed` leads only a line of
+   times. The line
+   otherwise says `no run result`, `no baseline statistics` or `nothing
+   recorded`. The open table still tints a changed time (the seed's 10%).
+   Open, every
+   count and time under Translation / Simulation / Timing (then any other
+   section), columns Statistic / Run / Baseline; a changed row wears the
+   report's warn tint, and the open row the selection. A scored row shows
+   its first criterion's pill, its requirement in a word or two (`exact`,
+   `±10%`, `in [a, b]`, `≥ a`, B11) and `+1` per further criterion (B10);
+   a click on it opens that criterion's editor under it. Rows are rebuilt
+   only when their paths, the criteria reading them or the root a `+`
+   lands in move; otherwise repainted in place.
+6. *Placements; the shell names no capability (B1, B2).* A row no
+   criterion reads ends in whatever attaches at the new `Placement.
+   STATISTIC` (its selection's new `quantity` is the row's): `EditTree`
+   draws a `+` that stages `act(add, path=/metrics, quantity=...)` — the
+   seed, at the END of a root combinator or as `and[root, new]` beside a
+   root leaf — and reveals the new criterion's editor. Its tooltip is the
+   seed's requirement ("exact match", "within 10%, as a warning"). It is
+   drawn grey with the reason where nothing can take it — a job holding
+   the test, a simulate-only test, nothing scored, a `warn` or `weighted`
+   root — while `available` stays true for it, so no row carries a
+   why-line (a TRANSFORM card would have repeated one 57 times); the card
+   redraws its `+`s when a lock comes or goes. A statistics criterion's
+   editor is hosted at the new `Placement.STATISTIC_CRITERION`, where only
+   `EditCriteria` attaches (at CRITERION, Edit on plot answered with a
+   why-line). There `EditCriteria` draws no mode select, no window and no
+   quantity field, and puts the quantity back on every edit (B3). At both
+   placements it reads the leaf from the tree as AUTHORED (`SessionView.
+   tree`, staged edits included), and the values-in-effect hints only
+   where a tree view says what the leaf was scored with; the card's open
+   editor redraws when the authored leaf moves. Before fix batch 3 it read
+   the leaf from the view, and a `+` on a test with no baseline — nothing
+   compared, no view — opened an editor with no field, and an open editor
+   there never followed an edit staged elsewhere.
+7. *One editor page-wide.* `TestPage.open` keeps its shape with a
+   sentinel: `(STATS, leaf path)`, `STATS = -1` (B9). Opening the card's
+   editor closes a plot's and a form row, and they close it; Focus and
+   closing the card close it; a plot rebuild does not (it hangs under no
+   plot). The page's shape leaves statistics leaves out: a `+` in the card
+   rebuilt every plot card, ending Focus and re-sending every figure. A
+   reveal or a jump to a statistics criterion lands in the card.
+
+**What it closes.** D142's known gap (the add-form plan's B6): a
+diagnostic's criterion has a home on the Test page — its row — where its
+values are edited.
+
+**What it reverses.** The report's any-difference tint on the Statistics
+table and Key stats (item 3). The report's statistics labels, to the row
+model's (`CPUtime`, where it said `Cputime` — Corrections A2), and Key
+stats' values, now read from the row (a baseline's empty list reads its
+count as 0, not blank — Corrections A4). The report's value formats: it
+printed a value bare (`str(v)`); a time now carries its unit and a count
+is whole (item 3). `TestPage._reveal_in_tree` is deleted: its
+one case (a criterion with no plot) now opens in the card. So is the
+jump's "… is on no plot of this test" notice (with `_variable_of`): every
+leaf of a tree view is on a plot or in the card.
+
+**Consequences.** `test_spec.json`, the CLI and the reference-JSON layout
+do not change; a re-accepted Dymola baseline gains the zero summaries
+(item 1). Known gaps: a genuine rebuild of the plot cards (a `+` beside a
+root LEAF moves every path) that unmounts a plot still awaiting NiceGUI
+3.16's async mount during plotly.js's first import leaves its resize
+observer on a detached div, and the console says "Resize must be passed a
+displayed plot div element"; the Playwright tests wait for every plot to be
+mounted before such a click. The structural-warning check still skips a
+statistic missing on either side (logged in `docs/ideas.md`). A `+` on a
+row whose run has no value adds a criterion that fails "not found in
+current run" until a rerun — by design. For a result from before
+run-side statistics that is its `timing` rows; a Dymola result's
+`translation` / `simulation` rows have their values, which its logs give
+back (D138, amended 2026-09-30). Where a test was compared but the
+Session will not materialize its flat entry's tree (`Session._materialization`'s refusals), a plot
+criterion's editor draws no field and says the Session's own refusal.
+One method returns a test's tree or why it has none,
+`Session.tree_or_reason` (`tree` is its first half), and `stage`'s
+refusal of a per-leaf op, a criterion's editor, Edit tree's why and its
+add, Edit on plot and a Statistics row's `+` all read it. The reason is
+`_materialization`'s own refusal, so the baseline JSON is read once for
+the tree and the reason (fix batch 6). Four reasons, each one line:
+"nothing is scored" (`session.NOTHING_SCORED`) where no comparison
+scored a variable (no baseline, a failed run, no result; `stage`'s
+refusal of a per-leaf op on a model not in the project says it too, where
+`tree_or_reason` raises a KeyError for that model, as `tree_view` does);
+"simulate-only: nothing is scored"
+(`session.SIMULATE_ONLY`) for the same on a simulate-only test, which is
+also the add form's grey Add there, tree or not; "its last run no longer
+holds what it scored — rerun it" (`session.STALE`) where a scored name
+is not one the loaded result carries; and for every other refusal (an
+unnamed or non-literal scored name, a string `quantity` or an
+unregistered mode in an override, a reference-JSON override the spec does not shadow)
+`session.NO_TREE`: "its flat criteria can't become a tree without
+changing its scores — write a metrics tree in test_spec.json". An edit
+that reaches a test with no tree is refused with
+`session.no_tree_error`, a `PatchError` whose `reason` is that line: the
+tool shows it alone beside the edit, and the error's message names the
+model. A criterion's editor says a reason once: its host draws one
+why-line per distinct sentence, the first capability's, and Edit criteria
+says the Session's reason as its `available` answer, so Edit on plot,
+refused for the same reason, draws no second line; a sentence only one
+capability says ("nrmse has no on-plot handles") keeps its own line.
+Until fix batch 5 Edit tree said "no tree to edit (nothing scored)" and
+the `+` "nothing is scored" of a test that WAS scored, and `NO_TREE`
+blamed flat settings for every refusal, a last run the loaded result no
+longer matches included; batch 5's `NO_TREE` ran to 244 characters, and
+a surface that asked for the tree and then its reason read the baseline
+twice. Until fix batch 6 Edit on plot read the comparison's tree, not the
+Session's: on a test
+the Session has no tree for it offered the handles, and every drag and
+row edit raised "has no tree to edit" (the defect is older than this
+step); a simulate-only test's add form said "This test is simulate-only:
+nothing is scored", and `stage` of a per-leaf op on a model not in the
+project raised a KeyError from the reason's lookup, where it had been a
+`PatchError`. Until fix batch 7 the editor of a test with no tree read
+the reason twice, from Edit criteria's panel and Edit on plot's
+why-line, and a job holding the test twice likewise. The editor read the view's
+leaf before fix batch 3, while the Session refused its every edit, and
+between fix batches 3 and 4 said "this leaf is not in the scored tree",
+false of a leaf on the plot with its verdict; that line is now only for
+a path naming no leaf of a tree (Edit tree wrapped it). A spec entry
+whose `metrics` is `null` has no tree (fix batch 5; the defect is older
+than this step): `spec_update.has_metrics` is the one question
+`needs_materialization`, the D66 validator's entry check, `Session.tree`,
+`_materialization` and the materialization's mark all ask, as
+`spec_parser` already scored such an entry by the flat path; an empty
+tree (`{}`) is a tree, which the validator refuses. Before it,
+`tree` was None beside a tree view, a per-leaf `stage` failed "cannot
+descend into NoneType", and the validator refused any op that left the
+null in place. `spec-update`'s note for a per-leaf op on such an entry,
+"entry had no 'metrics' block", stands: a null is no block. Of
+the TRANSFORM gate over a copy (the plan's Task 7) only the counts
+above are recorded here (items 1 and 5); the rest is the controller's.
+
+## D144 — A criterion or group moves within its test's tree, by a grip or Move to…, as one whole-tree edit (2026-09-30)
+
+**Context.** The tree card edited a tree in place — wrap, unwrap, add,
+remove, a combinator's kind and fields (D133, D139) — and nothing moved a
+criterion: putting one elsewhere in its tree meant removing it and adding
+it again, its settings typed anew. The grill of 2026-09-28 (Q4, Q9) and the
+plot-model board asked for a move by drag AND by a "Move to…" menu in the
+tree card, a drop on a criterion wrapping both in `and`, and a refused drop
+that says why. On 2026-09-30 the owner ruled on four questions, asked with
+drawn previews (D1-D4 below). Built from
+`docs/superpowers/plans/2026-09-30-move-a-subtree.md`, whose "Corrections
+1" (two executing reviews, and the owner's amendment of D1) override its
+task text, and one fix batch from the review of its first part.
+
+**Decision.**
+
+1. *Where a node can go (D1, as amended).* Every row of the tree card but
+   the root's has a grip (⋮⋮) before its pill, wherever Edit tree is
+   offered on it. While dragging, a row's TOP half is "before it" — an
+   accent line drawn from the row's indent — and its BOTTOM half is "onto
+   it", outlined: onto a combinator appends at its
+   end, onto a criterion wraps both in `and` (the criterion first, then the
+   moved node). There is no "after": every pixel line means one place, and
+   a node goes last at an outer level by a drop onto that outer combinator.
+   The root's row is all "onto": nothing sits beside the root. (The plan
+   drew quarters — before / onto / after; the amendment replaced them
+   before the drag was built.) Move to… lists the same places with every
+   position spelled out, in tree order (`tree_move.move_destinations`):
+   each combinator's "before <the row there>" … "at the end" — the drag's
+   own word, naming a row the person can see (the controller's call after
+   the review of the build; it drew "at 1" … "at N" first) — and each
+   criterion's "wrap both in and". Where two siblings read the same,
+   "before" either would not say which, and their places are numbered
+   ("at 2"). `Dest("at", path, i)` is before the child at `i` as the tree
+   is NOW, before the move (C2).
+2. *What a move repairs, and says (D2, D3).* `authoring/tree_move.py::
+   plan_move` computes the whole new tree on a copy: it holds the
+   destination by the dicts themselves before anything shifts, takes the
+   node out, puts it in, and only then repairs the source's side upward
+   (C1). A combinator the move empties is removed, and its parent if that
+   empties, up the tree (D2); the root never empties, since it holds the
+   destination. Every `k-of-n` on that chain left with fewer children than
+   its `k` lowers `k` to them — "k 3 → 2" (D3). A node moved into a
+   `weighted` gets weight 1 at its index ("weight 1 given"); one moving out
+   takes its weight with it, and that is said too ("weight 2 went with it"
+   — the controller's call after the first part's review, on D3's "the
+   row says what changed"); a reorder among one `weighted`'s own children
+   carries the weight with its child and says nothing (C3). A move whose
+   new tree equals the old — two equal siblings trading places — is None,
+   no edit (the first part's review).
+3. *What it refuses, in this order, each in one sentence (V5, C5).* The
+   root ("The root holds the whole tree: move what is in it instead.");
+   a node into itself or its own subtree ("A criterion group can't move
+   into itself."); then a place where the node already is, which is no
+   refusal but None — listed once, as "— where it is", greyed; then into
+   a `warn` ("A warning holds exactly one criterion or group: drop onto it
+   to wrap both in `and`."); then D4 (item 4); then the validator's own
+   sentence (`tree_move.validator_for`: the parser's message, or
+   `validate_tree`'s messages joined — the text `Session.stage`'s refusal
+   shows), such as no primary criterion left outside a `warn`.
+   `MoveRefused` is one of the tool's user errors (`errors.USER_ERRORS`):
+   a stale menu's or drag's refusal is said under the row, never logged
+   as a bug.
+4. *D4, applied to D142's reason (C4, the controller's call).* The owner
+   ruled that a move putting a `warn` directly under an `or` or a `k-of-n`
+   is refused, and only moves are checked. D142's reason is wider than a
+   `warn`: a child that can never fail passes its parent with nothing else
+   passing. `tree_move.always_passes` says which children cannot fail: a
+   `warn`; an `and` all of whose children cannot; an `or` with one that
+   cannot; a `k-of-n` with at least `k` that cannot; never a `weighted`
+   or a criterion. A move is refused — "A warning passes whatever it
+   scores: under or / k-of-n it would pass its parent with nothing else
+   passing." — when the NEW tree pairs an `or` / `k-of-n` with such a
+   child and the old tree did not have that pairing, compared node for
+   node by reference. A tree that already has one is left as it is, and a
+   move elsewhere in it goes through.
+5. *One edit (V1).* `EditTree.act(action="move", model_id=..., path=src,
+   dest=...)` stages ONE op, `add /metrics` carrying the whole new tree —
+   the root add Edit tree already staged where an add beside a root
+   criterion wraps both in `and`. No RFC 6902 `move`: `patch_apply`
+   supports `add` / `replace` / `remove` only, and `dstf spec-update`
+   applies the same envelope, so the patch format does not change. A flat
+   test materializes nothing first: the move's tree is its first tree,
+   and the preview shows the whole `metrics` block added (C9, the
+   controller's call: true, the test gains a tree); a saved tree's move
+   previews as the reorder it is. `Session.stage` folds an `add` after an
+   `add` at the same OBJECT member — the second replaces what the first
+   put there — so two moves in a row are one pending op, the second tree
+   (C8); an `add` at a list index inserts, and both stay. A move folded
+   onto the `add /metrics` that materialized a flat test's tree replaces
+   it, and the op is no longer marked as that materialization
+   (`PatchOp.materializes`).
+6. *The tree card only (V2).* A plot's criteria rows host the same
+   `Placement.NODE` and move nothing: `Panel.can_move` is true only where
+   the host's `RowTarget.drag` is, which the tree card alone sets, so they
+   draw no grip and no Move to…. The panel's hooks are `Panel.can_move`,
+   `Panel.movable(on_drop, zones)` and `Panel.moved(node_path, text)`; the
+   shell names no capability (C12).
+7. *The drag (C12, C14, C17).* Plain HTML5 drag-and-drop, drawn in the
+   browser: only a drag's start and its drop reach the server. At each
+   start the page empties the last drag's map and asks the panel once for
+   `{row path: {zone: reason}}` (`tree_move.zone_map`: `None` allowed,
+   `""` where the node is, else the refusal), so a slow reply never draws
+   one drag with another's map; until it arrives a zone draws as allowed,
+   and a drop there is the act's to refuse. A refused zone outlines its
+   row red, takes no drop, and says its reason in ONE place, the tree
+   card's header line, in place of the line's text while it is dragged
+   over (C14, the controller's call): said inside the row it reflowed the
+   row's icons, and the browser shows no title while it drags. Over no
+   row — a form row, a move's line — nothing is drawn. The drag carries
+   its own MIME type (`application/x-dstf-node`), never text: a drag of
+   text or a file over the tree draws nothing and drops nothing, and a
+   node released over a text field types nothing into it. It carries the
+   revision of the rows it started on, too (`TreeCard.revision`): a drop
+   on rows rebuilt since — an edit staged mid-drag — is refused under its
+   row, "The tree changed while you dragged: try again."
+   (`tree_move.TREE_CHANGED`, a `MoveRefused`), since its paths name the
+   nodes of a tree that is gone.
+8. *After a move (V4, C11).* The panel plans the move BEFORE it submits
+   (`edit_tree.planned_move`; afterwards `src` names another node) and,
+   once the submit went through, calls `Panel.moved`: every open editor
+   and form row closes — two criteria on one variable trading places move
+   no shape, and an editor left open showed the other one — and, once the
+   tree is redrawn, the moved row is scrolled into view and flashed, with
+   one line under it saying what changed: "Moved." and each note as a
+   sentence — "Moved. k 3 → 2.", "Moved. The empty warn was removed.",
+   "Moved. Weight 1 given." It goes with the next form, editor or edit.
+   One visually hidden live region in the tree card, there from its build,
+   announces a move: told the line's text — a repeat with a zero-width
+   character added, so it still changes — while the line is no live region.
+   The plan closed the editors before staging; after the submit is
+   enough, since the Session's events cross the Shell's queue (C11).
+9. *Move to… (C7, C13).* An icon among a row's controls, tooltip "Move
+   to…", whose menu is built when it opens, from the tree as it is then
+   (see Consequences). Each place reads its node's text — the page's
+   labels, cut in the middle — then where in it ("— before range · x").
+   The menu cuts the row a "before" names in the middle too, ahead of the
+   node's text and with "— before" whole: kept whole, a 100-character name
+   ran past the menu's edge. A refused place is greyed with its reason as
+   a second line, "where it is" greyed with none; the node's
+   own row is not listed, and its subtree's places are, refused. The arrow
+   keys move among the places, skipping the greyed ones, Enter chooses,
+   and the button shows no tooltip while its menu is open.
+
+**What it enforces that the validator does not.** D4 (item 4), on moves
+only. `validate_tree` does not check what sits under an `or` or a
+`k-of-n`; D142 keeps a `warn` out of one only in the seed an add writes. A
+tree written by hand, or edited otherwise, may still hold such a pairing,
+and the tool neither refuses it nor a move elsewhere in it.
+
+**What it reverses.** Nothing.
+
+**Consequences.** `test_spec.json`, the patch envelope, the CLI and the
+reference-JSON layout do not change: a move is an `add /metrics` that
+any `spec-update` applies. Limits: nothing moves between tests; nothing
+moves on a plot's criteria rows (item 6); there is no undo but the
+pending edit itself — Discard, or a move back. `move_destinations` and
+`zone_map` plan a move to every place in the tree, so they grow with the
+square of its size — on a 134-node tree about 0.14 s for the menu and
+0.2 s for a drag's zones — which is why the menu is built when it opens
+(one built per row with the rows was about 20 s of rebuild on such a
+tree) and the zones are asked for once per drag, never per rebuild. The
+TRANSFORM gate is the controller's; nothing of it is recorded here.
+
+## D145 — A test with no result is NOT RUN, not a failed simulation (2026-09-30)
+
+**Context.** A test the last run never ran — no entry in
+`batch_manifest.json` — and one a run started and never finished — its
+entry still `pending`, the stamp a run puts on every test in scope and
+overwrites as each result lands — both read SIM_FAIL: the comparator built
+`TestComparison(sim_success=False, "No simulation results found")` for the
+first, and the reader read the second's result file off disk, which is
+missing (a failed result) or partial (a green one). So an aborted run and
+a test nobody ran looked like a model that fails to simulate, counted
+against the exit code, and the Test page's badge said SIM_FAIL beside a
+strip that said "No result yet". The owner's ruling of 2026-09-30, chosen
+from drawn options: such a test gets a status of its own, **NOT RUN**.
+
+**Decision.**
+
+1. *The line, and where it is drawn.* "No result exists" and "the
+   simulation failed" are told apart in ONE place, `Backend.read_results`,
+   which holds the manifest: an entry whose `last_run_status` is
+   `pending`, with no result from this process's run and no recorded
+   failure for it (`run_verdicts` — the `status.json` row a pending entry
+   falls through to), yields NO result — its result file is not read,
+   whatever it holds. A model with no manifest entry yields none either.
+   `compare_one` makes "no result" (`result is None`) a comparison with
+   `ran=False`, and `reporting.status.classify` reads that first: NOT RUN.
+   Everything a run REACHED a verdict on stays as it was: a recorded
+   `failed` or `timed_out`, a failed result from this run, a result file
+   missing after a run that recorded passed, a translation error — SIM_FAIL
+   (a timeout is TIMED_OUT while the run is live). A pending entry whose
+   `status.json` row says `failed` ran and failed: SIM_FAIL. An entry
+   written before `last_run_status` existed is read as before (old data).
+2. *The word.* `NOT_RUN = "NOT RUN"` in `reporting.status`'s one table —
+   the key is the word, so every surface that shows the classifier's key
+   (the tool's badges, the Tests drawer's pills, the strip's verdict
+   phrase) reads it; its class is `not-run`, last in `STATUS_ORDER`.
+   Nothing else spells it: the Suite's count pills are handed to its script
+   from Python (`suite_grid.PILLS`), not listed in it.
+3. *The colour.* The existing neutral grey — the `queued` token —
+   under the `not-run` class (`theme.STATUS["not-run"]` is that mapping),
+   so its pills, row tint and badge are grey while a pill and a filter can
+   still tell NOT RUN from a queued live row.
+4. *Every surface.* The Suite row and a NOT RUN count pill (after NO_REF);
+   the Test page header's badge, which now agrees with the strip's "No
+   result yet — rerun to simulate it." (the strip reads NOT RUN as that
+   situation); the Tests drawer's pills and its status sort (after PASS,
+   before unscored); the dashboard's row, badge and pill (it filters by
+   the class, as every pill); the per-test report's sidecar summary; the
+   console, which prints `NOT RUN` and a `NOT RUN: n` line; the
+   interactive review (`run -i`), which says `NOT RUN` and passes the test
+   over. JUnit writes the testcase with `<skipped message="not run"/>` and
+   counts it skipped, never a failure or an error.
+5. *Not a failure — unless nothing ran.* `reporting.status.FAILURES`
+   (FAIL, SIM_FAIL) is what `compare` and `run` exit on (`exit_code`),
+   and what the console and the review count as still failing: exit 0
+   when everything that ran passed. A command in which NOTHING ran — no
+   comparison, or every one NOT RUN (`nothing_ran`) — exits 1 on every
+   route (console, `--report-format junit`, `--report-format html`,
+   `--report`, `run -i`), as the console's "No comparisons to report"
+   always did, and says so in ONE stderr line from one CLI helper over
+   `exit_code` (`cli.common._exit_code`): "Nothing ran: no test in scope
+   has a result (N NOT RUN) — exit 1.", or, with no test in scope at all,
+   "Nothing ran: no test in scope." — with nothing in scope there is
+   nothing to count, and "(0 NOT RUN)" counted it anyway (the
+   controller's call after the review of the build). NOT RUN arises four ways, and the exit code in each:
+   a test never in a run, beside tests that ran — 0 when those passed;
+   a run aborted by its process ending (Ctrl+C, a crash) — a later
+   `compare` exits by every result the work dir holds — this run's and
+   older runs' — and 1 only when it holds none; a persistent pool whose
+   workers ALL fail to start — every test in its scope is stamped
+   `pending` and `run` itself exits 1 ("Run aborted"); a later `compare`
+   exits as after any aborted run (1 when no older result is left); and
+   a `compare` over an empty or wrong work dir — 1. A pool that dies mid-run records every test it could not
+   reach as failed (`_drain_remaining`): SIM_FAIL, exit 1.
+
+**Consequences.** A pending test's partial result is no longer read by
+`compare` or the tool: it has no plots, and the Variables drawer says
+what it says for a test never run. `--rerun sim-failed` and `run -i
+sim-failed` still select NOT RUN tests: a category selects by the
+classifier's status (`cli.common._should_review`), and `sim-failed` takes
+SIM_FAIL and NOT RUN (nothing succeeded).
+
+## D146 — The tree card shows where each row sits, folds its groups, and its rows open what they hold (2026-10-01)
+
+**Context.** The tree card's rows were indented 16 px per level, nothing
+folded, and a row's click did nothing: a criterion was edited on its plot
+only, and a `k-of-n`'s or a `weighted`'s fields behind a `tune` icon. On a
+tree several levels deep it was hard to tell what sat under what. The
+tree-card grill of 2026-10-01 put thirteen questions to the owner on a
+drawn board (Q1-Q13, confirmed); the controller made seven calls, said to
+the owner and reversible (Y1-Y7). Built from
+`docs/superpowers/plans/2026-10-01-tree-card-structure.md`, whose
+"Corrections 1" — two executing reviews, a spike, and two owner rulings
+(R1, R2) — override its task text, and from the fix batches of its review.
+
+**Decision.**
+
+1. *Where a row sits (Q1, Q2, Y1-Y3).* One 6 px bar per LEVEL at a row's
+   far left, 2 px apart, the row's full height, in place of the 16 px
+   indent: a row's content starts after its bars (8 px per level) and a
+   28 px chevron place, kept on every row — empty on a criterion — so the
+   pills line up. Level i's bar is coloured `--dstf-level-<(i-1) % 4 + 1>`:
+   blue, violet, cyan, slate (`#7fb0ec`, `#a990dc`, `#5fbfcf`, `#9aa8b8`),
+   never a status's green, red or amber. The tokens are
+   `reporting/theme.py::LEVELS`, declared by the tool's pages alone
+   (`level_variables`, added in `Shell.page_setup`): in `css_variables`
+   they were eight unused properties on every report. The root draws no
+   bar and carries a muted `root` tag ("and · 5 criteria · root").
+   Hovering a group's row deepens that group's level bar on its row and
+   every row under it (`--dstf-level-k-on`: `#2f7fd8`, `#7650c6`,
+   `#1f97ab`, `#6b7b8f`); hovering a criterion's row does the same for its
+   parent; the root deepens nothing. It is done in the page (no round
+   trip) by marking the BAR (`.dstf-lvl-on`), never the row (item 3).
+2. *Folding (Q3, Q4, Q8, Q10, Y6, Y7).* A chevron (a 28 px target, an
+   18 px glyph, `aria-expanded`, named "Fold …" / "Unfold …") on every
+   group's row but the root's — the root folds with the card's Show /
+   Hide tree. Everything is open by default. A folded group's row adds
+   "· N hidden · x pass · y fail" — every criterion under it, however
+   deep, each once, by verdict, with "· z advisory" and "· z unscored"
+   when there are any. Expand all / Collapse all are icon buttons beside
+   the tally (`unfold_more` / `unfold_less`, named "Expand all groups" /
+   "Collapse all groups"): as words they wrapped the line at 900 px.
+   Collapse all leaves the root open, and closes a form or an editor under
+   a row it hides — one under a folded group's own row stays. The folded
+   groups are the browser TAB's, per test (`TabState.tree_folded`: model
+   id → paths), so they survive a switch of test and the test opened again
+   in the tab.
+   While dragging (U4, D144), resting 700 ms on a folded group's row
+   (`REST_MS`) unfolds it as its chevron's click would; leaving the row,
+   the drop and the drag's end cancel the timer, and a drop onto it still
+   appends.
+3. *Why folding is attributes set in the page.* A server rebuild of the
+   rows bumps U4's revision token (`TreeCard.revision`), which refuses a
+   drag in progress. So the page's script folds by ATTRIBUTES alone —
+   `hidden` on every row and form slot (`data-slot-of`) under a folded
+   group, `data-folded="1"` on its row — and tells the server, which
+   records it and sets the same attributes by a props update, never a
+   rebuild; the revision stands. The plan's spike measured eight kinds of
+   server repaint on the real card: only `row.classes(...)` undoes a
+   client change, and it wipes EVERY client-set class on the row; client
+   attributes and inline style survive all eight. Hence attributes for
+   folding, and the hover's class on the bar, which the server never
+   re-classes.
+4. *Folds follow their groups (R1).* Every edit of the tree reports where
+   each node it kept went, old → new (`Panel.edited`, from
+   `tree_move.path_map(tree, ops)` by the ops' own semantics; a move's
+   `Moved.paths`), and the folded set is re-keyed through that map before
+   the rows are redrawn; a folded group that is deleted loses its fold. A
+   folded path that names no group after an edit that said nothing is
+   dropped when the rows are rebuilt.
+5. *A tree change this tab did not make unfolds every group (the owner's
+   ruling of 2026-10-01).* A Discard, a Save that reloads, another tab's
+   edit, a spec reload: any `spec` event that no act of this tab produced
+   clears the folds of every test it names — of every test when it names
+   none (a close). Every action bar and inline host on the Test page
+   applies through `TestPage.apply`, and a layout edit through `_own`,
+   which note the revisions the act produced in `TabState.own_revisions`.
+   The rule is one function, `tabstate.heard_spec`, and EVERY page of the
+   tab calls it — the Test page of any test and the Suite page: heard only
+   by a Test page of that test, a Discard, another tab's edit or a reload
+   heard while the tab showed another test or the Suite page left the
+   folds on the paths the change had moved. The record is the TAB's, not
+   the page's: a page navigated away from stays in `Shell.pages` until
+   NiceGUI's reconnect timeout and hears every event, and with a record
+   of its own it heard the new page's edit as foreign. A revision stays in
+   the record until a later one is heard, since the Shell hands each event
+   to every page before the next. A tab with no live page hears nothing:
+   `TabState.seen_revision` is the last revision a page of the tab heard
+   or produced, and a page opening on a later Session revision, with one
+   in between that no act of the tab produced, clears every fold
+   (`tabstate.caught_up`) — it cannot know which tests those named.
+6. *What unfolds a path (Q9 as narrowed by R2).* Only TREE events: a
+   move's line under its row, a refused act's sentence under a row, a form
+   row or a tree editor opened under a row — each unfolds the folded
+   groups it is inside, and nothing else. What is done outside the tree —
+   an add from a plot's `+`, a criterion opened on its plot, the ⤓, the
+   header's named jumps — leaves the folds alone, and a folded group's
+   summary updates. (The grill's Q9 said "a jump" too; the owner confirmed
+   the narrowing.)
+7. *A click on a row (Q5, Q6, Q11, Y4, Y5).* A criterion's row opens its
+   editor under the row — `Placement.TREE_CRITERION`, where `EditCriteria`
+   attaches (on a statistics criterion it hides what it hides on the
+   Statistics card), with no figure — and a second click closes it
+   (`TestPage.open == (TREE, path)`, `TREE = -2` beside `STATS = -1`). It
+   is the page's one editor (Q11): opening it closes one on a plot or the
+   Statistics card and any form row, and those close it; an edit typed in
+   it repaints the plot's row, its figure and the tree row's readout. A
+   `k-of-n`'s or a `weighted`'s row — the root's too, or a `k-of-n` root's
+   `k` could not be edited at all — opens its fields form, the one the
+   `tune` icon opened, and a second click closes it; an `and` / `or` /
+   `warn` row's click does nothing (its kind is its dropdown). A click on
+   a row with a form open under it closes the form. The capability says
+   what a group row's click does, `Panel.on_click(handler)`: offered on
+   the tree card's GROUP rows only (`RowTarget.clickable`) — a
+   criterion's row, in the tree or on a plot, has a click of its own, its
+   editor — so the shell names no capability. The chevron, the grip, the
+   kind dropdown, the ⤓ and the icon cluster stop their clicks before
+   they reach the row.
+8. *The keyboard (the controller's call, reversible).* The `tune` icon
+   was the only keyboard way to `k` and the weights. A row whose click
+   opens something is `role="button" tabindex="0"`, shows a focus ring,
+   Enter or Space on it is its click — a key pressed in a control inside
+   it is the control's — Space does not scroll the page, and
+   `aria-expanded` says whether its editor or fields are open.
+9. *"Edit on its plot" (Q12).* Drawn by the tree card beside the tree
+   editor's Done while some capability placed at CRITERION and not at
+   TREE_CRITERION is available for the criterion on its plot — one that
+   drags its handles — and repainted with the editor (a mode switched to
+   one with no handles takes it away). It moves the editor to the first
+   plot holding the criterion, found when it is clicked: a sync refreshes
+   the tree before the cards rebuild, and an index read when the link was
+   drawn could name the plot the criterion had been on.
+10. *The ⤓ (Q7, Q13).* A `vertical_align_bottom` icon at the start of a
+    criterion row's cluster, named "Show on its plot" or "Show on the
+    Statistics card" (repainted when a mode switch moves it): it scrolls
+    the criterion's row on its first plot to the middle of the viewport
+    and flashes it — drawing the plot, and ending a Focus that hides it —
+    or opens the Statistics card at its row. No editor opens or moves, and
+    no fold opens. The closed line's named jumps keep opening the
+    criterion on its plot (Q13); both scroll to a row found by its id.
+11. *A long row.* Its name wraps anywhere (a TRANSFORM name has no space
+    to break at); its readout keeps one line, cut with an ellipsis, the
+    whole in its title, and shrinks with the name down to 80 px and no
+    further (`flex: 0 1 auto; min-width: 80px`). Shrinking from 0, a
+    200-character name left the readout 71 px at 900 px; kept whole up to
+    40% of the row, it left the name 119-143 px there, five lines and
+    more — now 290-350 px, three lines. The tests hold a name's box to at
+    least 240 px beside the readout's 80. No row is wider than the card,
+    and the page never scrolls sideways.
+
+**What it removes.** The `tune` icon ("Change this combinator's fields",
+`edit:{path}`): a row's click opens those fields. The 16 px indent per
+level: the bars say the depth.
+
+**What it reverses.** Nothing.
+
+**Consequences.** Only the tool's tree card changes: no scoring, spec,
+patch or report change, and a plot's criteria rows are unchanged. Folds
+are volatile, the tab's, gone with it. Rows do not move by keyboard. The
+TRANSFORM gate is the controller's; nothing of it is recorded here.
+
+## D147 — A tolerance is a number or a lower/upper pair (2026-10-08)
+
+**Context.** Every tolerance a criterion carried was one number, applied
+the same on both sides of its target: a checkpoint that may overshoot but
+must not undershoot, an event that may come late but not early, could not
+be said. Step E of the tool's redesign asked for a lower and an upper
+tolerance with a link toggle, and handles for both on the plot. The owner
+ruled on the shape, its reach, the scalar's drawing and — after a spike
+with a real mouse — the handles' form and when they show; the controller
+made the calls numbered below, said to the owner and reversible. This is
+step E's first half (E1). Built from
+`docs/superpowers/plans/2026-10-02-two-sided-tolerance.md`, whose
+"Corrections 1" — two executing reviews and two spikes — override its task
+text, and from the fix batches of its reviews, which changed more than the
+plan held; what follows is the contract as built.
+
+**Decision.**
+
+1. *The shape (the owner's ruling).* A `tolerance` is one number OR the
+   pair `{"lower": a, "upper": b}`: one key, no second pair of keys beside
+   it. Chosen over two extra keys because now is the time to do it right,
+   and a pair object leaves room for more dimensions later. A number is
+   both sides. `comparison/sides.py` is the ONE place a number-or-pair is
+   read or written: `Sides(lower, upper)`; `parse_sides(value, what)` takes
+   a finite real number that is not a bool, a dict whose keys are EXACTLY
+   `lower` and `upper` (each such a number), or a `Sides`, and raises a
+   `ValueError` naming the field and the value as the JSON file holds it,
+   cut to 60 characters, for anything else. That is stricter than the
+   `float(...)` it replaces: the string `"0.01"` and `true` were scored as
+   tolerances and are config errors now, in every field of item 2 —
+   deliberate. (A scan of the owner's spec, `testing.json` and 898
+   baselines found 29 tolerance values, none a non-number.) `null` stays
+   what it was: an absent key for a row's `tolerance` / `time_tolerance`,
+   "no width" for `tube_abs` / `tube_rel`.
+2. *Which fields take a pair (the owner's ruling: every tolerance; the
+   list is the controller's).* The criterion's `tolerance` on `points` and
+   `scalar`; a `points` row's `tolerance` and `time_tolerance`;
+   `event-timing`'s `time_tolerance` and an `events` row's `tolerance`; a
+   `peaks` row's `tolerance`; a constant tube's `tube_abs` and `tube_rel`.
+   The same keys in `comparison.variable_overrides`. NOT `nrmse`'s
+   `tolerance` — one ceiling: an unequal pair is that leaf's config error,
+   "nrmse has one ceiling: tolerance must be a number" — and not
+   `tube_min_width`, a floor under both sides: anything there but one
+   finite number is that leaf's config error too, "tube_min_width must be
+   one number, got …" (`sides.parse_number`, read where the widths are:
+   when the mode is built and by the scorer). It was compared with zero as
+   it came, and a pair or a string raised a `TypeError` out of
+   `compare_test`.
+3. *What the sides mean.* `d = actual − target`; a check passes iff
+   `−lower ≤ d ≤ upper`. In a `rel` mode each side is that fraction of
+   `|target|`. In time, `lower` is how much EARLIER and `upper` how much
+   LATER: a checkpoint's time box is `[t − lower, t + upper]`, an event's
+   window likewise. A peak's window is `[f·(1 − lower), f·(1 + upper)]`
+   (`rel`) or `[f − lower, f + upper]` (`abs`), from ONE helper the scorer
+   and the figure share (`_peak_window`; it was computed twice). A constant
+   tube's edges are `ref + upper` and `ref − lower` (`band`), or those
+   fractions of `|ref|` (`rel`); `tube_min_width` floors both. Each check
+   stays inclusive or strict as it was — declared points, scalar, events
+   and peaks inclusive, the implicit final-value check strict — on both
+   sides. The scalar's score stays the magnitude of its deviation, so what
+   a `weighted` combinator reads does not change meaning.
+4. *No sign check in the scorer.* A negative number was never refused and
+   is not refused in a pair: a negative number can never be met, and a
+   band inverted by a negative side holds nothing and is crossed by
+   nothing. A negative `tube_min_width` is no floor at all; a positive
+   one floors a negative tube width as it does any other, and that tube
+   holds its reference. The EDITOR refuses to write these (item 12).
+5. *Identity.* A spec holding only numbers scores bit for bit as it did,
+   and `v` and `{"lower": v, "upper": v}` give the same verdict, score
+   fields and geometry coordinates, for every mode and field. So the pass
+   test is on `d` itself, never on the band's edges (see Rejected);
+   `_violation_in_box` judges a checkpoint that way, with the old
+   `_min_delta_in_box` still supplying every reported number.
+6. *Where a malformed tolerance lands.* It is that criterion's config
+   error — the leaf's on the tree path, the variable's on the flat path —
+   naming the field (`points[1].tolerance must be a number or …`), and the
+   rest of the test is scored. Row tolerances are parsed in the mode's
+   `__init__`, where both paths catch, and again at use in the scorer. A
+   `ValueError` a mode raises at compare time fails its variable on the
+   flat path too, where it used to take the run down.
+7. *A base tolerance is ONE finite number (the owner's ruling).* The base
+   is what a criterion without a tolerance falls back to:
+   `comparison.tolerance` in a spec entry or a reference JSON,
+   `testing.json`'s `tolerance`, `--tolerance`. `sides.is_base_tolerance`
+   says which values are one: not a pair (nrmse, the default metric, has
+   one ceiling), not a string, a bool or a list, not NaN or an infinity.
+   Anything else is refused, never read loosely and never skipped for the
+   next base down:
+   - `comparator.refused_base_tolerance` is the one decision, asked first —
+     by `compare_one` right after the reference is read, before the
+     no-baseline and baseline-free short-circuits, and by `compare_test`
+     for a direct caller — of the base IN EFFECT (spec > baseline >
+     project). The test FAILS with no variable scored and the sentence as
+     its `error_message`: "the base tolerance must be a number; a
+     lower/upper pair belongs on a criterion (test_spec.json
+     comparison.tolerance is {…})" — where a pair belongs is said to a dict
+     alone. A failed simulation and a test with no result keep their own
+     status.
+   - `reporting.status.refusal` names that state once, and every surface
+     says the reason where it would name failing variables: the console,
+     the JUnit `<failure>`, the dashboard row's Message, the per-test page
+     ("Not scored: …"), the interactive review ("Error: …", and no
+     `[a]ccept`), and the tool — a `REFUSED` situation whose strip reads
+     "Not scored: …" and which no capability takes as its next action,
+     since accepting would not clear it.
+   - Accept refuses it: `storage.accept.accept_refusal` skips the test in
+     the one accept path with the sentence, its reference file untouched;
+     `store_reference` writes a base tolerance only when it is one, the
+     test's or else the old reference's.
+   - The project's is a `ConfigError` (one "Config error: …" line, exit 2;
+     `Session.open` refuses the project). `null` is unset.
+   - `spec-update` and the tool's Save refuse a patch that CHANGES
+     `comparison.tolerance` to something that is not one; a bad base the
+     patch did not touch does not block it, or nothing could remove it.
+     "Unchanged" compares the JSON text, so `1 → true` is a change.
+8. *What leaves Python, and what is said.* `VariableComparison.
+   tolerance_used` is a `Sides`. Where it leaves as data — the tree view's
+   `tolerance`, a leaf's diagnostics — it is `as_written`: the number when
+   the sides are equal, else the pair. In a sentence it is `sides_text`:
+   the one number as before, else the band's two edges as signed numbers,
+   `−1.000e-02 / +5.000e-02` (so a negative lower side reads `+`). With
+   uneven sides the criterion sentence says the deviation SIGNED, and of
+   the point or event pair furthest outside its own band, else of the
+   largest `|Δ|`. Words changed for some numbers-only specs too, never a
+   verdict or a score: a `points` or declared-events sentence names the
+   row it reports and the sides THAT row was held to wherever they are not
+   simply the criterion's one number ("Point at t=0.5: error 2.000e-03 vs
+   tolerance 1.000e-03 → FAIL"; "(relative)" after a `rel` row's); a
+   checkpoint that was never scored is reported first, with how many
+   scored rows fail beside it; declared events that were never found are
+   counted as such. Those sentences read new diagnostics keys, written
+   only where they apply: a leaf of one number whose reported row defers
+   to it — absolute, and of the largest delta — prints what it always
+   printed and records what it always recorded.
+9. *Geometry (the owner's ruling for the scalar; the kind is the
+   controller's).* A new primitive kind, `grip`: the resolved position of
+   one SIDE of a tolerance, id `<family>/<edge>/<key>` —
+   `points/upper|lower/i`, `points/before|after/i` only where the row
+   holds a `time_tolerance`, `points/upper|lower/final`,
+   `tube/upper|lower/const` (a tube of constant width; one with control
+   points has their rings), `events/early|late/i`, `peaks/lower|upper/i`.
+   A grip is never a trace and never drawn in a figure that is not
+   editable — four more dots per checkpoint would sit on every report
+   page: the report's figure is what the same geometry without its grips
+   draws, and six of the seven figure goldens are byte-identical. The
+   seventh is the one deliberate change to a report figure: a scalar
+   scored against its baseline draws what it allows, two lines
+   `scalar/upper` and `scalar/lower` of `kind="handle"`, as its bounds
+   form's lines are. A scalar on a statistic has no plot; its sides are
+   fields only.
+10. *The schema and the forms.* A field kind `sides` in `derive_schema`
+    (a `Sides` hint), its default as a spec would hold it, and
+    `FieldSpec.side_labels` — `−` / `+` unless the field's metadata says
+    (`event-timing`'s time tolerance: `early` / `late`). Row `columns`
+    gain the kinds `sides` and `sides?` and an optional third element, the
+    column's side labels (a checkpoint's time tolerance: `before` /
+    `after`). `export-schema` writes a `sides` field as `oneOf` a number
+    or an object with exactly `lower` and `upper`; nrmse's stays a number.
+11. *The editor's control (the owner's ruling).* Two number fields and a
+    link toggle, `forms.sides_control`, on a criterion's form and in a
+    table row. The shape the file holds IS the link state — nothing or a
+    number is linked, a pair is not, equal sides or not — and the tool
+    keeps no flag beside it. Linked, typing in either field sets both and
+    writes the number; unlinked, it writes the pair. Unlinking writes the
+    number twice; linking takes the LARGER side for both, so it never
+    narrows what the criterion allows (not "never fails a passing
+    criterion": a wider `dominant-frequency` window can take in a
+    neighbouring peak). With one side blank nothing is written, the blank
+    says "required" through the field's own `validation=` — NiceGUI resets
+    an `error` prop it did not set — and a table holds its whole list
+    back; a side emptied by way of values typed on the way puts back the
+    pair the spec held when the field took the focus. A half-typed pair
+    outlives a rebuild of its panel through `Panel.kept`, a record the
+    browser tab keeps per criterion (`TabState.kept`).
+12. *What the editor refuses, and how typing behaves.* A value that can
+    never score is refused where it is typed, before the stage
+    (`authoring/unscorable.py`): a negative tolerance — a number or either
+    side of a pair, the criterion's or a row's — a tube width whose sides
+    sum below zero (a negative number, or a pair: the upper bound is under
+    the lower one; a pair with one negative side and a sum of zero or more
+    is taken) while the leaf's minimum width is no positive number — a
+    positive one widens both sides to itself, so the width over it holds
+    its reference, and the first build refused every edit of such a leaf,
+    the Min width that would repair one included — bounds out of order, a
+    scalar's bounds equal. With them, a
+    tube's minimum width below zero: it scores, as no floor, and says
+    nothing. A refused edit puts the leaf (or the row) back as the field
+    found it, and the field keeps what was typed. It is the editor's rule
+    alone: the Session, the parser and the scorer take a hand-written
+    negative as they always did. A typed negative zero is a zero
+    (`TypedNumber`: `-0`, on the way to every negative number, was staged
+    as `-0.0`). Every number field is a `TypedNumber`
+    (`authoring/typed_number.py` + `.js`): it shows what was typed until it
+    is left and takes a server value only while it is not being typed in —
+    a stage outlasts the gap between two keys, and the answer to one key
+    landed under the next (`0.25` over `0.3` read and staged `0.025`) —
+    and the wheel over a focused one scrolls the page, stepping nothing.
+13. *An edit that leaves the entry as saved is not pending.*
+    `Session.stage`, after the fold and the validation, drops every op of a
+    model whose entry with its pending ops applied equals its saved entry
+    as JSON reads it (`json_equal`: members in any order, `1` is `1.0`,
+    `true` is no number), and rescores it to its saved verdict. Before
+    that it drops, for a test with no tree in the file, the ops on
+    `/metrics` while the entry's `metrics` is the tree the saved entry
+    already scores by — its implicit tree written out — and the test's
+    `variable_overrides`, which that tree is built from, are as saved: the
+    tree is no edit alone, and none beside a plots edit either (the first
+    build asked that every other member be as saved, and Save wrote a
+    `metrics` block where only `plots` had changed). With an override
+    edited the tree stays: without it the entry would score by another.
+    The count, the strip, the Tests drawer's mark, Save and
+    the preview read the one pending list; the preview's "These edits
+    leave the entry as saved." line is gone with the state it described.
+14. *The arrows (the owner's ruling, on a spike's pictures).* In the
+    tool's figure a grip is an arrow: a pixel-sized `path` triangle
+    anchored at its edge's data value, its apex 10 px outside the edge and
+    pointing at it, orange (`#E65100`) beside the rings' green. A window
+    spans its panel, so an event's and a peak's arrows are anchored on the
+    paper at the panel's mid-height. A ring is a pixel `path` too — a
+    pixel circle larger than 10 px has resize zones in plotly.js, and a
+    ring pressed off its centre was resized and staged nothing. An arrow
+    whose far end would pass a SET axis range (the spectrum's x) is drawn
+    on the inside of its edge.
+15. *The pointer map.* The editable figure says which of its shapes take
+    the pointer, in `layout.meta.dstf`: `grips` (per grip shape, its
+    `group`, the `axis` it moves on and its tooltip `label`), `targets`
+    (per ring its grips stand around, that group) and `draggable` (the
+    names an editor moves: the open leaves' rings, grips and handle
+    lines). `authoring/shell/grips.js` marks every other shape inert, so a
+    press on a box, a window, a result line or another criterion's bound
+    is the plot's own — under `edits.shapePosition` Plotly drags them all.
+    The map rides IN the figure, so it is always the map of the figure the
+    browser holds, and the page knows no metric's id pattern.
+16. *When the arrows show (the owner's rulings).* Hidden at rest; shown
+    while the pointer is on or near their checkpoint, event or peak, and
+    for the whole of a drag; and points that overlap or stand very close
+    show together. Each group has a hover area — the box of its ring and
+    its arrows' anchors, 25 px larger on every side; a window's, its edges
+    over its panel's whole height — and groups whose areas overlap or
+    touch are one CLUSTER: with the pointer in a cluster's areas every
+    arrow of every member shows, outside every area none. Two arrows of
+    ONE cluster that would be painted over each other — of different
+    groups, both on the plot, sharing more than 1 px of what is painted
+    of them on both axes — are STAGGERED (the owner's ruling, on a
+    spike's pictures): each is moved across its own axis, a time or a
+    frequency arrow up or down, a value arrow left or right, by whole
+    steps of 9 px. In order along their axis each takes the first of one
+    step up (left), one down (right), three up, three down at which it
+    clears every arrow already placed and still lies inside its own
+    group's hover area — so the pointer never hides it on the way to it —
+    and a pair that leans parts the way it leans. Found on every redraw,
+    with the marks and the clusters, never on a move of the pointer. The
+    move is an attribute of the path that the stylesheet makes a
+    `transform`: the path Plotly drags is the one it drew, and a release
+    stages the edge where the pointer took it. The mechanism is
+    the page's and never the figure's — a drag names a shape by index, and
+    a figure changed mid-drag loses it: `grips.js` marks each grip's path,
+    and the ones to show, and one static stylesheet rule hides a marked
+    grip that is not to show by `display: none`, since Plotly writes inline
+    `opacity` and `pointer-events` on every editable shape and a grip
+    hidden any other way is still grabbed. Every
+    redraw replaces the paths, so a `MutationObserver` marks them again
+    before paint, and what is shown is latched from a press to its
+    release. A scroll is read as a move: the page keeps ONE pointer
+    position for every plot (`grips.js` `pointer`), and in the frame
+    after a scroll each plot asks what is under it — once per frame,
+    however many scroll events the frame brings — so a checkpoint wheeled
+    out from under a pointer at rest hides its arrows and one wheeled
+    under it shows them, on a plot the pointer never moved over too. The
+    plot's hover label gives way within 20 px of a shown
+    arrow or its ring. Where nothing hovers (`hover: none`, `pointer:
+    coarse`) the open criterion's arrows are always shown. An arrow whose
+    anchor is off the plot area, by more than half a pixel, is not
+    displayed at all — one rule: no edge on the plot, no arrow; left
+    Plotly's clip alone, one drawn inward was painted whole inside the
+    panel — it is of no hover test, and its group's hover area is made of
+    what is on the plot. A ring is on the plot while any of it is drawn:
+    its centre within its own radius of the area. An arrow whose edge is
+    the plot's own edge is drawn whole in the margin (see Rejected, the
+    padding).
+17. *A release.* `grips.js` reads every release on its way to the server:
+    an axis the pointer travelled under 8 px along, press to release, is
+    sent as unchanged — 8 px is Plotly's own threshold, under which it
+    re-snaps the position it did not move (a sideways drag wrote `0.08`
+    as `0.0800462`) — and a position let go outside the plot area is held
+    to the axis range of the PRESS, so it lands on the plot's edge. A
+    grip moves on ONE axis: its editor is handed the released anchor on
+    that axis and the grip's own resolved position on the other.
+18. *A dragged side back to the leaf.* One rule, `handles._set_side`:
+    where the holder has no tolerance or a number, the drag writes a
+    number (linked: both sides move); where it has a pair, that side
+    alone; rounded to 12 significant digits like every dragged number.
+    The holder is the row's own tolerance where the row has one, else the
+    criterion's; a peak's row gets one on its first drag; auto-detected
+    events write the criterion's `time_tolerance`. Where the rows that
+    defer to the criterion differ in `tolerance_mode`, the dragged row
+    takes a tolerance of its own, seeded from the criterion's, because one
+    number means a fraction to a `rel` row and signal units to an `abs`
+    one. What a mode reads off the reference it reads off the reference AS
+    WINDOWED, as the scorer does. `HandleEdit` gains `target` (a scalar's
+    baseline scalar) and `span` (the run's first and last time inside the
+    leaf's window, which bounds where a checkpoint's ring may be let go);
+    `event-timing` gains an editor, `edit_events_handle`. Refused, each in
+    one sentence: a side dragged across its target, in its own name ("the
+    before side would cross its point's time"; a zero side is taken); a
+    `rel` side over a target, reference or baseline scalar of zero; a
+    peak's window that would reach 0 Hz, whichever arrow or ring moved it
+    there ("already reaches", of one that was there before the drag: a
+    pair's lower side under its upper arrow, an `abs` window under its
+    ring); a side measured from the reference on a leaf scored against
+    another baseline, or with none; a tolerance that would be no finite
+    number.
+19. *What the plot says.* A refused DRAG's reason is said in the editor
+    and on a line directly under the plot — the editor measured a screen
+    below the hand. The editor's hint is read off what the plot draws for
+    the open criterion (`figures.plotly.drags_of`): rings and arrows,
+    arrows alone, rings alone, lines alone, nothing. Each arrow carries a
+    tooltip naming the side it sets and a cursor for the axis it moves on.
+
+**Rejected, and why.**
+
+- *Two more keys beside `tolerance`.* The controller's recommendation;
+  the owner chose the pair (item 1).
+- *A pass test on the band's edges.* `lo ≤ v ≤ hi` with `lo = target −
+  limit` is not `|v − target| ≤ limit`: at target 1.0 and tolerance 0.1 an
+  actual of 1.1 fails the second (`1.1 − 1.0` exceeds `0.1` by a rounding
+  step) and passes the first. It would have broken item 5 at the
+  boundary, so the test is on `d`.
+- *Rings at the tolerance's edges.* They bury the target's ring whenever
+  a box is under about 16 px: with a tolerance of 0.001 a sideways drag
+  on the checkpoint rewrote the tolerance and left the time. Hence arrows
+  that stand outside the edge and never touch the ring.
+- *Hiding a grip by `visibility` or `opacity`, or by changing the figure
+  on hover.* Item 16 says why each fails.
+- *One group shown at a time.* Built first: the group nearest the
+  pointer, then by the arrows' drawn tips too, then with an advantage for
+  the shown one. At some spacings a facing arrow still could not be
+  reached, the display flickered between two groups, and a press where a
+  hidden arrow belonged moved the neighbour's ring. Replaced by the
+  clusters, on the owner's ruling.
+- *On a shared spot, only the arrow whose edge is nearer the pointer is
+  drawn.* Measured on the spike not to work: at one spacing an arrow kept
+  4 px of its own, and of three arrows on one spot one was never drawn.
+- *A colliding arrow drawn inside its own box.* On the same spike's
+  pictures; not chosen — the owner chose the stagger (item 16).
+- *Our own axis padding for the arrows.* Invisible points past each grip
+  gave an autoranged axis headroom, and squashed the plot: with every
+  tolerance past the data, opening a criterion took 22.5 % off the value
+  axis's scale. plotly.js already autoranges over its shapes and pads a
+  pixel-sized path by its extent — the arrows alone take 14.6 % — so the
+  figure pads nothing, and the arrows are un-clipped by the stylesheet
+  instead: Plotly writes a shape's clip as an attribute, on its group and,
+  while it is held, on the path, and a stylesheet property beats both.
+
+**What was measured.** A 20,000-case sweep with a fixed seed, half of it
+with a sample placed exactly on an edge, holds the checkpoint's new
+verdict to the old one for equal sides, and a 3,000-case sweep per mode
+does for the scalar; 34 recorded cases — every mode, both scoring paths:
+fields, geometry coordinates, sentences, tree view — were identical across
+the refactor that made a tolerance travel as `Sides`. The controller's
+gate, a compare over a copy of the TRANSFORM work dir before and after
+the scoring change: 0 of 331 verdicts changed, 0 of 873 leaves' scores
+differ, the owner's files hash-identical. The arrows, the clusters, the
+8 px rule, the clamp and the un-clip were each tested in Chromium with a
+real mouse (plotly.js 3.1.1), a pixel at a time where the claim is a
+boundary: anchors 50 px apart are one cluster and 51 px two. The stagger
+likewise, over pairs with their facing edges 18 to 40 px apart, event
+windows, three arrows on one spot, two facing value arrows and thirty
+checkpoints 12 px apart: every arrow pressed at its middle staged its own
+side, by the pixels dragged; one pass over 120 arrows took 2.3 ms.
+
+**Known limits, left.**
+
+- A drag on a row that defers to the criterion's tolerance rewrites the
+  criterion's, so every deferring row moves (item 18). Nothing yet SAYS
+  when a row stopped deferring instead: an act returns a patch, and no
+  channel carries a note that is not an error.
+- An arrow that no level clears stays at the first level it tried,
+  under the one drawn over it: the third on one spot where its group is
+  flat — three steps is 33.5 px from the arrow's line, and a hover area
+  reaches 25 px past its group's anchors — and the fifth on one spot
+  anywhere (reasoned from the four levels, not run). Two RINGS on one
+  spot are not staggered: the later-drawn takes the press, at its centre
+  and on its edge.
+- An arrow can stand on a neighbour's ring and take the press there: the
+  stagger parts arrows from arrows, not from rings. With time tolerances
+  of 12 px a side, of two checkpoints 25 px apart the second's `before`
+  arrow lies over the first ring's centre, and 18 or 15 px apart over
+  its far edge; a press on that part of the ring sets the neighbour's
+  side. (Both run with a real mouse: the rings on one spot, and the
+  arrows over those three spacings and three checkpoints in a row.)
+- A browser without CSS `:has` (Firefox before 121) clips an arrow at the
+  plot's edge as Plotly draws it. Reasoned from the rules, not run: only
+  Chromium was run.
+- The Playwright browser tests are not run in CI.
+
+**What E2 still owes.** (Built since, as D149.) The second half of step E, none of it built: the
+fields following a drag live (a handle still commits on release); arm a
+field, then click the plot; Ctrl+click adding a row that settles on the
+data; dragged values snapped to a readable precision (a drag writes 12
+significant digits). A live drag needs one thing this build did not: a
+`TypedNumber` that has been typed in takes no server value until it is
+left, so a field that must follow a drag while it still has the focus
+needs a way to accept one (the component's own note: a revision prop it
+watches).
+
+**What it reverses.** D135 item 1's "a rect still takes a drag: only a
+handle's is staged": in the page, a shape no editor moves now takes no
+pointer at all (the server still answers such a drag with nothing, for one
+that crosses a redraw). And a ring pressed off its centre moves; it no
+longer resizes.
+
+**Consequences.** `test_spec.json` and the reference JSON gain a shape,
+additive: a file holding only numbers reads and scores as it did, and the
+tool writes a pair only where a person unlinked one. What does break is
+loose input: a string or a bool where a tolerance belongs is a config
+error, and a base tolerance that is not one finite number refuses its
+test — a coordinated change for whoever holds such a file; the scan in
+item 1 found none in the owner's. `export-schema`'s output changes for the
+fields of item 2. The report's scalar figure gains two lines; no other
+report figure changes.
+
+## D148 — Themes: a bundled default and dark, tokens to every surface (2026-10-08)
+
+**Context.** Every page already took its neutrals and its accent from one
+token table (`reporting/theme.py`, roadmap §1), and the redesign's brief
+(§3.9 / §3.10) ruled a theme is a NAME from a bundled set, switchable for
+the session in the tool. Step 7 of the roadmap built the second table. It
+had no plan: a prototype (a diff, measurements in Chromium and five sheets
+of screenshots) was put before the owner, who chose from the pictures;
+items 1-7 are those rulings, 8-14 the builder's calls, reversible. This
+entry is the contract as built.
+
+**Decision.**
+
+1. *The dark tokens (the owner's ruling).* Neutral grey, not blue-tinted:
+   page `#121212`, surface `#1e1e1e`, surface-hover `#2a2a2a`,
+   surface-active `#353535`, border `#484848`, border-hairline `#303030`,
+   text `#e4e4e4`, text-secondary `#b8b8b8`, text-muted `#9e9e9e`,
+   text-disabled `#7d7d7d`, accent `#64b5f6`, accent-hover `#90caf9`,
+   selection `#1d3a57`, shadow `rgba(0,0,0,0.5)`. The page is Quasar's own
+   dark page, so a Quasar piece nobody restyled sits on the same ground.
+2. *A 15th token in both themes: `on-accent`* — the text on a filled accent
+   button, `#ffffff` on `default` and `#0b1a2b` on `dark`. On a dark
+   surface no one blue both reads as link text and carries white text.
+3. *Status on dark is dimmed.* A filled badge is white on the status fill
+   in both themes. A row tint and a pill are the fill laid at 14 % and
+   24 % over the dark surface, and the text on them is the status's pastel
+   — the light table's pill border; warn's border is its fill, so its
+   pastel is `#ffd54f`. The pill's border is the fill at 60 %: that number
+   is the prototype's, shown in the pictures the owner chose from but not
+   ruled on by name. On `default` nothing about a status changes. Role
+   chips are the same in both themes.
+4. *Plot series are unchanged, except five that do not read on a dark
+   plot,* lightened on `dark` only: the soft-check overlay `#7B1FA2` →
+   `#ba68c8`, and four ramp stops of the array families — blue's darkest
+   `#0d47a1` → `#1264e2`, green's darkest `#1b5e20` → `#237b2a`, purple's
+   third `#7b1fa2` → `#a631d8` and darkest `#4a148c` → `#8a40e4`. The
+   shades are the builder's: each stop raised in lightness at its own hue
+   and saturation until it clears 3:1 on the dark plot and still stands
+   darker than the stop before it; the overlay is Material's Purple 300,
+   the light shade of the same family, since it sits in no ramp.
+5. *The figure's chrome follows the theme:* a reference event's line
+   (`#757575` → `#a8a8a8`), the ring and the handle markers (`#2e7d32` →
+   `#66bb6a`) with the ring's fill, a context series (the theme's
+   text-muted), and the layout template — paper and plot ground, grid,
+   zero line, axis line, ticks and titles, legend, hover label, toolbar.
+   Every other literal of the figure layer stays.
+6. *The report and the dashboard are themed at generation,* baked, with no
+   switch in those pages. The tool has a session switch per browser TAB:
+   the header's ⋮ holds an item named for the other theme; a reload of the
+   tab keeps its choice; the tab starts from `testing.json`'s `theme`.
+7. *`← Suite` wears the accent in both themes.* It was NiceGUI's own link
+   blue (`rgb(59 130 246)`), which is no token.
+8. *`theme` in `testing.json`* is `"default"` (the default) or `"dark"`.
+   Any other value — another name, a path, a non-string — is a
+   `ConfigError` naming the two. No CLI flag. `export-schema` is the
+   schema of `test_spec.json` and does not change.
+9. *The theme is an argument, never a process-wide setting.* The
+   dashboard's token block was set on its Jinja environment at import,
+   before any `Config` was read; it is rendered per page from a `theme`
+   argument now, and every renderer and figure builder takes one:
+   `render_live` / `render_final` / `render_final_to`, `ProgressReporter`,
+   `generate_comparison_plots`, `plot_page_keys`, `variable_figure`,
+   `plot_figure`, the Session's `figure` / `plot_figure`. Each defaults to
+   `"default"` so a direct caller is unchanged, and `tests/test_themes.py`
+   reads `src`: a call to any of them that leaves `theme=` out fails.
+10. *One named palette per theme in the figure layer*
+    (`figures/palette.py`): what a figure takes from a theme, read by
+    name — never a remap of literals after the figure is built. Its
+    colours are literals, as every figure colour is; a test pins the dark
+    ones to the dark tokens. `default` has NO template, and its figure is
+    the dict it always was.
+11. *The switch is live.* The `:root` token block is one `<style>`
+    rewritten in place, Quasar's palette variables and its dark mode
+    follow, and the Test page re-sends each DRAWN plot in the tab's theme
+    through `PlotCard.redraw` — a `Plotly.react` on the same node. The tab's
+    choice is in its `TabState`; the Session holds no theme, so two tabs in
+    two themes read one Session.
+12. *What Quasar draws itself:* a filled primary button's text is
+    `on-accent`, in a rule inside NiceGUI's `quasar_importants` layer —
+    Quasar's `.text-white` is `!important` there, and a layered important
+    beats any unlayered one. Cards, menus, dialogs, drawers, tooltips,
+    fields and separators take tokens under `body--dark`.
+13. *AG Grid under dark only.* NiceGUI turns the grid's colour scheme with
+    `body--dark`, and AG Grid's dark scheme is blue-tinted with white
+    text: under `body--dark` the Suite grid's ground, text and controls
+    are the theme's. Under `default` the grid keeps AG Grid's light scheme
+    as it was.
+14. *The window is the project's ground from its first HTML.* Which tab a
+    request belongs to is known only once the browser has connected, so a
+    page's first HTML carries `html { background: <the project's page> }`
+    and the tab's own tokens follow it in the cascade.
+
+**What was measured.** Contrast is WCAG 2's, computed in the tests from
+the tables, never copied in. On `dark`: text 13.1:1 on the surface,
+text-secondary 8.4, text-muted 6.2, the accent 7.5; `on-accent` on the
+accent 7.9, where white is 2.2. Each dimmed status's text on its tint is
+6.7 or more and on its pill 5.8 or more (fail is the lowest of both); the
+theme's own text on a tint 9.5 or more, text-muted 4.5 or more. Of every
+line colour the figure layer draws, five read under 2.2:1 on the dark plot
+and are the five of item 4, at 4.7, 3.1, 3.1, 3.2 and 3.1 after; a test
+scans a figure of every kind and finds exactly those five in the default
+figures and none under 3:1 in the dark ones. The lowest that stays is the
+purple ramp's second stop `#ab47bc`, 3.5; the accent blue `#1976D2` of an
+actual event's line, a sibling overlay and the blue ramp's third stop is
+3.6.
+
+Under `default`, the same fixture project rendered by the commit before
+this work and by this one: each per-test page differs by the one line
+`--dstf-on-accent: #ffffff;`, and the dashboard by that line and the one
+rule that uses it (its footer's primary button read `color: white`). The
+figure goldens are unchanged.
+
+In Chromium, on the tool's plotly.js 3.1.1 and the report's 2.35.0: a
+plot that is zoomed, has a criterion open and an edit staged from it comes
+through the switch as the SAME DOM node with its ranges, its
+`layout.meta.dstf`, its edit config and the staged edit; its arrows show
+under the pointer and a drag of one stages again; a reload keeps the
+tab's theme and a second tab does not get it. The prototype measured the
+alternative: `Plotly.relayout` with a template leaves the ring and the
+context series in the old colours, and the next server redraw paints the
+old ground again. The hover box is read under a real mouse on both tiers
+— ground, border and text as computed, with the trace's name in it.
+Before item 14 the window of a dark project was white for 0.2-1.1 s of
+every page load; after, it is the dark page from the first frame sampled.
+
+**What stays unthemed, and why.**
+
+- Status fills and badges, role chips, and every series colour but the
+  five (eight since 2026-10-11, below): they carry meaning (the brief's
+  ruling).
+- The figure's pass, fail, window and muted regions, the error red and the
+  grip's orange (4.4:1 on the dark plot):
+  the owner's item 5 names what follows, and these are not in it. (A
+  marker's white outline was in this list until 2026-10-11, below.)
+- The tree card's level bars: one table for both themes. The hovered
+  shade of level 2 reads just under 3:1 on the dark surface (2.96, the
+  prototype's measurement); a bar says where a row sits and is not text.
+- The Variables drawer's array glyph: the default accent ramp's four
+  blocks in both themes. It marks a row as an array and is tied to no
+  plot; its darkest block is 1.9:1 on the dark surface, dim but there.
+- AG Grid's light scheme on `default` (item 13), and what the browser
+  draws itself — a native tooltip, a
+  select's list — which follows `color-scheme: dark` and nothing of ours.
+- A figure a plug-in capability asks its `SessionView` for is the
+  default theme's unless the capability passes `theme`: nothing hands a
+  capability its tab's theme yet.
+- A tab that switched AWAY from the project's theme shows the project's
+  ground for the moment before it connects (item 14).
+
+**Five literals that followed no theme** (2026-10-11, found by a review of
+the release tree; `default` renders as it did — every figure of the
+fixture report and the theme tests' figure cases compared equal before
+and after, and the pages differ by one new variable line). On `dark`:
+the actual's event line and the sibling-backend overlay `#1976D2`
+(3.6:1 on the dark plot) → `#64b5f6` (7.5), the companion overlay
+`#388E3C` (4.0) → `#81c784` (8.3) — series read against each other, so
+held to 4.5:1; a marker's outline `white`, a 16:1 halo about every
+checkpoint on a dark plot, → the plot's ground `#1e1e1e` (it parts a
+marker from the line under it, and is the ground's colour in both
+themes); the tint of a region drawn over the plot's whole height, grey
+at 9 %, → the dark muted text at 9 %. They are the palette's
+`actual_event`, `sibling`, `companion`, `marker_outline` and
+`span_fill`. And a 16th token, `shadow-menu` (`rgba(0,0,0,0.15)` /
+`rgba(0,0,0,0.6)`): the Suite table's column chooser drew its shadow in
+a literal a step darker than `shadow`.
+
+**What was not run.** TRANSFORM: the gate was a fixture project with a
+Python backend. Any browser but Chromium. The Playwright tests are not
+run in CI.
+
+**What it reverses.** The roadmap's §7 and DESIGN.md said status fills
+and darks and the plot series keep their values in every theme; items 3
+and 4 make the two exceptions above, on `dark` only. `figures/plotly.py`
+said its traces follow no page theme: the context grey, the ring and the
+reference event line do now, through the palette.
+
+**Consequences.** `testing.json` gains an optional key; a file without it
+reads as it did. A project that sets `"theme": "dark"` gets dark pages on
+its next `run` or `compare` — the pages on disk are not rewritten until
+then. `render_*`, `ProgressReporter` and the figure builders gain an
+optional `theme` argument; `css_variables` and `quasar_palette` take a
+theme's NAME where they took a table; `HANDLE_RING`, `HANDLE_RING_FILL`
+and `CONTEXT_COLOR` are the palette's `ring`, `ring_fill` and `context`.
+A third bundled theme is one more table in `reporting/theme.py`, one more
+palette in `figures/palette.py` and, if it is dark, its name in
+`DARK_THEMES`; the switch goes around the names in order.
+
+## D149 — On-plot editing: a click places, a drag previews, written values are snapped (2026-10-08)
+
+**Context.** D147 left the second half of step E unbuilt: a handle
+committed only on release, with the fields a screen below showing the old
+value until then; a row could be added only by `Add row`, which puts it in
+the largest gap and leaves the author to move it; a field could be set from
+the plot only where it had a handle to drag; and a drag wrote where the
+pointer happened to stop, to 12 significant digits (`0.373778382112`). The
+owner ruled on the five behaviours below; the controller made the calls
+numbered after them, said to the owner and reversible. A spike on NiceGUI
+3.16 / plotly.js 3.1.1 with a real mouse came first, and two checks it had
+not made were made before anything was built (see What was measured).
+
+**Decision.**
+
+1. *Ctrl+click adds a row (the owner's ruling).* Ctrl+click on a plot adds
+   one row to the OPEN criterion drawn on it; ⌘+click is the same gesture
+   where Ctrl+click is the context menu. It does nothing on a metric with
+   no rows: `nrmse`, `range`, `scalar`, a tube of constant width. The
+   2026-09-15 design brief (§3.5) and its artboards said Shift+click; this
+   ruling replaces that, and those sentences are corrected. Shift is
+   Plotly's own modifier on a drag, and a Shift+click on a text field of
+   the same page extends a selection.
+2. *The row settles on the data (the owner's ruling).* A click names a
+   place by what is there, not by its pixel. A checkpoint takes the clicked
+   TIME and no value of its own, so it follows the reference at that time;
+   where the criterion has no reference to follow it takes the run's value
+   there as its `value`. A declared event takes the time of the run's
+   nearest event. A declared peak — a click on the spectrum panel — takes
+   the frequency of the nearest peak of the run's spectrum, a local maximum
+   over the noise floor the scorer matches peaks over. A tube control point
+   takes the clicked time and the tube's CURRENT widths there, interpolated
+   as the scorer interpolates them, so adding it changes nothing until it
+   is dragged. Every other field of the row is what `Add row` gives. A
+   tube of constant width has no control point, and a click adds none;
+   its FIRST one, by `Add row`, takes the same rule: the width in effect —
+   the constant its mode reads, `tube_abs` on `band` and `tube_rel` on
+   `rel`, a number or a lower/upper pair — where it took 0 and 0, and a
+   passing tube read "0.0% inside → FAIL" at one click (2026-10-11). On
+   `abs` there is no constant to take (literal bounds, unscorable with no
+   point): its first row is still 0 / 0. It is
+   the metric's own function, `MetricDescriptor.place_row` over a
+   `handles.RowPlace`, beside `edit_handle`; `row_noun` says what the row
+   is called, or that a click adds none to that leaf. A row placed ON
+   one that stands there is refused, naming it ("a checkpoint already
+   stands at t=0.6 (row 2)"): within ONE snap step of a row's time —
+   after any clamp — or, for a peak, inside a declared peak's own
+   window. Two Ctrl+clicks on one spot left two rows.
+3. *Arm a field, then click (the owner's ruling).* What a click can
+   place has a ⌖. Pressing it arms it — one per tab, which one editor per
+   page makes true — fills its ⌖, and says so twice: the editor's hint
+   becomes "Click the plot to set <its label> — Esc cancels.", and the
+   PLOT's own card says the same on a line under the plot, in the accent,
+   with an accent outline about the plot (an attribute of the card the
+   stylesheet reads) — the ⌖ can be a screen below the plot the click is
+   made on. The next plain click on the panel it belongs to sets it and
+   disarms. Disarmed besides by: Esc; the ⌖ again; closing the editor;
+   opening another criterion; a row added to or removed from a table; a
+   change of mode; and ANY edit of the test — a Discard, a Save, another
+   tab's, a Ctrl+click, a typed value — since a ⌖ names a row by its index
+   and a field by its keys, and an edit can put another under the name.
+   The ⌖ is out of the Tab order (the controller's): it is the first half
+   of a gesture whose second is a click on the plot.
+4. *The fields follow a held handle (the owner's ruling).* While a ring, an
+   arrow or a bound line is held and moved, the fields its release would
+   change show what it would write. Nothing is staged before the release.
+5. *Placed values are snapped (the owner's ruling).* A dragged or clicked
+   value is rounded to a readable step: the power of ten nearest to a
+   thousandth of the visible axis span. A typed value is never snapped.
+6. *One click channel, in the page (the controller's).* `grips.js`, which
+   already holds the press, the travel and the ranges, hears a capture-
+   phase DOM `click` on the graph div and sends `dstf_plot_click`: the
+   panel under the pointer, the position in its axes by their `p2d`, what
+   both axes show, and the four modifier keys. Plotly's own click event
+   reaches NiceGUI with neither a position nor a key. It sends nothing for
+   a click whose `detail` is 2 or more (a double-click resets the axes), a
+   click more than 4 px from its press (a Ctrl+drag ends in a real click
+   where it is let go), a click on a shape an editor moves (a press there
+   is a drag's), or outside every panel's
+   plot area, where the toolbar and the legend are. A panel is a pair of axes that overlays no other: the time
+   plot's, the spectrum's. What a click MEANS is the server's: the page
+   never knows what is armed or which metric is open.
+7. *A click that sets a field is a drag of its handle released at the
+   click (the controller's; which fields carry a ⌖ is the review's).* ONE
+   rule, `edit_on_plot._target`, says how a click sets a thing in the
+   criterion's CURRENT state — the ⌖ is drawn by it (`placeable`) and the
+   click acts by it (`placed`), so no ⌖ stands where a click would be
+   refused as setting nothing.
+   - A TABLE ROW has one ⌖, in its first cell ("row 2"): the click is its
+     ring let go there, through the ring's own editor — its time, a peak's
+     frequency, from the click's x; its value from the click's y only
+     where the row HOLDS one, so a checkpoint that follows the baseline
+     goes on following it. A declared event has no ring: its time is the
+     click's x. A row's tolerance sides have their arrows, or are typed.
+   - A criterion's own field has a ⌖ where a handle of the leaf writes it
+     (`handles.handle_fields`): a bound, a side of a tolerance the plot
+     draws. Of several handles that write one field (a tolerance its rows
+     defer to) the one nearest the click is used, and the side's EDGE
+     lands on the click. So there is none on the width of a tube's
+     inactive mode, on a scalar's bounds while it is scored by its
+     tolerance (or the reverse), on a time tolerance nothing defers to.
+   - Two fields with no handle are set from the click itself: a window's
+     start and end (its x), and a BLANK bound of a leaf that draws its
+     other one (its y, then the bounds' own refusal).
+   Every one of these belongs to ONE panel — the axes its handle or its
+   meaning lives on — and a click on the other is refused in words that
+   name where to click ("row 1 is set on the time plot"), stages nothing
+   and leaves it armed: a click on the spectrum wrote its magnitude as a
+   value. A refused click says why on the line under the plot and stays
+   armed. A refusal is a person's own (`unscorable.Refused`): shown, never logged.
+8. *A live drag is fields only (the controller's).* Plotly says nothing
+   during a shape drag and its cover takes every move from the plot, so
+   the page listens on the document in the capture phase and sends the
+   held handle's would-be position (`dstf_grip_move`) — the figure's
+   position at the press plus the pointer's travel, under 8 px on an axis
+   not moved — once a frame at the most and 66 ms apart, and once more
+   where it is let go, shaped as the relayout its release will be. The
+   server reads it with the SAME pure
+   function the release uses (`edit_on_plot.dragged`) and hands the leaf to
+   every panel of the editor (`Panel.preview` / `on_preview`), which shows
+   it without staging or rescoring. The box or band a handle belongs to
+   still follows on release: a figure changed under a held shape loses the
+   drag. A refused, unmoved or abandoned drag puts the fields back.
+9. *A preview is not a value, and not a prop.* `TypedNumber.preview(
+   value, revision)` calls a METHOD of the field's component in the page:
+   what to show instead of what it holds, and the number of the drag it is
+   of. The value is untouched, so nothing reaches `on_change` and nothing
+   can be staged by showing it. It was a prop first: a prop write resends
+   the element, and NiceGUI 3.16 then renders the page's whole tree again
+   — a 50 to 77 ms task in the browser for every move of a held handle
+   with thirty rows open. A method call redraws that field alone. The
+   component shows a preview whatever its typing state, except in a field
+   typed in since that drag began: what a person types is never painted
+   over. (D147 expected a field to keep the focus through a drag; in
+   Chromium the press on a shape takes it — see What was measured — and
+   the rule holds either way.)
+10. *Every move and release is numbered (the controller's).* The page
+    numbers them, rising; the release carries a number past every move of
+    its drag, and `FigureHook` drops a move numbered at or under the last
+    release (or drag end) it heard. The page also stops sending at the
+    release. A websocket delivers in order, so only a move sent late can
+    arrive late — the guard is for that one, and is the server's.
+11. *Snapping is one function (the controller's).*
+    `comparison.snap.snapped(value, span, fraction=False)`: the step is
+    `10 ** round(log10(span / 1000))` — nearest in the exponent; a
+    coordinate, and a tolerance side in the axis' units, is rounded to a
+    multiple of it as a decimal (so the result is the float a person would
+    type; an exact half goes to the even multiple); a RELATIVE side, a
+    fraction on no axis, to 3 significant digits; never `-0.0`; with no
+    span, nothing. The span is the page's — the ranges held at the press,
+    or at the click (`HandleEdit.visible`, new: `HandleEdit.span` is the
+    run's time span, another thing). The editors snap FIRST and then clamp
+    and refuse, so what is judged is what would be written. An axis the
+    pointer went under 8 px along sends no position, so its value is not
+    re-snapped: a hand-written `0.123456` stays until that axis is really
+    dragged. What a row SETTLES on — an event's time, a peak's frequency, a
+    tube's widths, the run's value — is read off the data and not snapped.
+    `_written`'s 12 digits stay under everything.
+12. *The hint.* The editor's hint line adds "Ctrl+click adds a point." (an
+    event, a peak, a control point) for a criterion a click adds a row to.
+
+**Rejected, and why.**
+
+- *Plotly's `plotly_click`.* Through NiceGUI it carries no click position
+  and no modifier key; under x-unified hover it lists every trace at that
+  x. A DOM listener and the axis' `p2d` gives the position within a pixel,
+  on the spectrum panel and after a zoom too.
+- *Redrawing the plot's dependent shapes during a drag.* A figure changed
+  mid-drag loses the held shape (it is named by index), and plotly.js
+  rejects a call made while it is dragging.
+- *Setting the field's value for a preview.* A value set from the server
+  fires the field's change handler, which stages; guarded, the value would
+  still be the field's when the drag was refused.
+- *A mapping from field to handle written per metric.* `handle_fields` is
+  the editors' own choice of holder said once, and a test moves every
+  handle and checks that what changed is what it names.
+- *Snapping the EDGE of a tolerance instead of the side.* The field shows
+  the side; a round edge over a target of 0.3141 is a side of 0.0537.
+- *Deleting a row from the plot, a brush for windows, touch gestures.* Not
+  in this step: rows are removed in the table.
+
+**What was measured.** Before the build, on the tool as it was: a DOM click
+on the SPECTRUM panel read by `xaxis2` / `yaxis2` lands within 0.64 px of
+an independent reading (the drag layer's box and the axis range), plain and
+with Ctrl, before and after a zoom of that axis; five element updates sent
+to a field while its arrow was held did not disturb the drag (the release
+staged the travelled value to the pixel), an update addressed to a field
+the release had already rebuilt away raised nothing, and one addressed to
+the NEW field landed — which is why the late-move guard is the server's.
+After: a row added by Ctrl+click stands 1.0 px from the click along x (a
+mouse event lands on a whole pixel) and on the baseline to 1e-9; a field
+shows a held arrow's value 57 to 109 ms after the pointer moved (two
+runs); a held drag sent 30 moves in 2.05 s, 14.6 a second; the same 37 px drag wrote
+`0.28` on an axis showing 6 (step 0.01) and `0.108` on one showing 0.6
+(step 0.001); eight moves of a finished drag sent again under a server
+slowed by 250 ms a stage changed neither the fields nor the leaf. A press
+on a ring or an arrow takes the focus off a field in Chromium
+(`document.activeElement` is the body). plotly.js rejects a promise where a
+Ctrl+drag is let go — on the tool before this step too; nothing is shown
+for it. The cost of an editor of thirty checkpoints, before this step /
+with a ⌖ in every cell and the preview as a prop / as built (one machine,
+medians of three): open 431–450 / 579 / 469 ms; the rebuild after a
+release 531–608 / 696 / 557 ms; DOM nodes of the editor 1921 / 2841 /
+2081; browser tasks over 50 ms during a two-second drag 0 / 21 (60 ms the
+median) / 0; pointer moves the page took in those two seconds 56–60 / 21
+/ 46. A points row is one line at 1280 px and two at 1024 px, as before.
+
+**Known limits, left.**
+
+- A plain double-click with a field ARMED sets the field with its first
+  click before the second resets the axes: a click is acted on when it
+  arrives, not after a double-click's wait.
+- A Ctrl+double-click adds one row, by its first click.
+- While a handle is held the box, band, window and arrows that depend on
+  it stay where they were; they are redrawn on release.
+- A redraw under a held handle — a value typed in another field with the
+  keyboard while the mouse holds one — can make the preview differ from
+  what the release stages (0.46 shown, 0.53 staged in the review's probe).
+- A tolerance side dragged less than half a step past its target is
+  written 0, not refused: it is snapped first.
+- The window losing the focus mid-drag stops the previews for that drag.
+- A key typed in a field during a drag that leaves a valid value stages it
+  — a typed value always does — and the plot is redrawn under the held
+  shape.
+- A ⌖ costs a little: an editor of thirty checkpoints has 32 (one a row,
+  two on its window) — see the cost measured below.
+- Only Chromium was run; the Playwright browser tests are not run in CI.
+
+**What it reverses.** D147's "a handle still commits on release, the fields
+unchanged until then", and its expectation that `TypedNumber` take a server
+value by a revision prop "whatever its typing state": the prop is there,
+and a field typed in since the drag began is the exception. The 2026-09-15
+brief's Shift+click.
+
+**Consequences.** `test_spec.json` gains nothing: every gesture stages the
+one `replace` of a leaf that a drag and a form edit stage. What a drag
+WRITES changes: a value on a readable grid in place of twelve digits — a
+spec edited by drags before this holds the long numbers until they are
+dragged again. `MetricDescriptor` gains `place_row` and `row_noun`,
+`HandleEdit` `visible`, the `Panel` contract `place_button`, `on_place`,
+`preview` and `on_preview`, the figure hook two kinds (`dstf_click`,
+`dstf_move`); the pointer map (`layout.meta.dstf`) and every figure are
+unchanged.
+
+## D150 — The simulation queue: one FIFO per tool process over a live worker pool (2026-10-08)
+
+**Context.** `dstf author` ran one job at a time: a Rerun locked its tests
+against every edit, refused Save, Discard and Reload until it ended, could
+not be cancelled, started its backend's workers for that run and closed
+them after it, and then re-read and rescored every test of the project. A
+rerun-edit-rerun loop paid a library load each time, and a second test
+could not be added while the first ran. The redesign brief (§3.6) asks for
+a queue; this is it, in two tiers — the pool in `backends/`, the queue in
+the tool.
+
+**Decision.**
+
+1. *One queue per tool process, in the Session.* `Session.enqueue` /
+   `remove` / `cancel`, the items in run order (`Session.queue`), first in,
+   first out, a test never in it twice (the pool's refusal, said as its
+   sentence). The pool (`backends/pool.py`, `pipeline.open_pool`) is opened
+   at the first enqueue and lives, its workers with it, until the tool
+   stops, the project is reopened, or Stop workers in the panel's ⋮ — which
+   frees the licence seats and is refused while a test runs. A stopped pool
+   takes nothing more, so the next enqueue after one replaces it.
+2. *Each result is read back and rescored as its test ends — that test
+   only.* The pool hands the item its result; the Session stores it and
+   scores that one model. No reload per item: it read every result of the
+   project for each. The pool's callbacks arrive on its threads and do
+   nothing there but post to the UI loop, where every Session mutation
+   happens.
+3. *A queued or running test is not locked.* A queued test takes every
+   edit and runs with the spec as it stands when it STARTS
+   (`SimulationPool.update` hands a waiting item its test again after each
+   re-merge). A running test takes its criteria's edits, scored when its
+   result arrives with the criteria as they are then; its simulation
+   settings are refused with a sentence, in `Session.stage`. Save, Discard
+   and Reload are not refused. What a test's run started with is gone from
+   memory when the run starts — the run cleared it on disk — so a running
+   test reads NOT RUN, and a per-leaf edit of a flat entry is refused there
+   as on any test with nothing scored.
+4. *Rerun is Queue.* The capability (`EnqueueTests`, name `enqueue` — the
+   shell names no capability, and "queue" is its word for the queue) returns
+   an `Enqueue` outcome; its caption counts what it adds and what the queue
+   already holds ("Queue 3 (2 already queued)") and says the unsaved edits
+   are taken when each test starts. The `Job` outcome, `JobContext`,
+   `RunningJob`, `LockedError`, `JobRunningError`, `Session.running` /
+   `last_job` and the `job` event are deleted. Accept refuses a queued or
+   running test with a sentence; a reopen refuses while the queue holds one.
+5. *The queue panel, beside the Suite table.* One row per item in run
+   order: its number, status badge, test (a link to its page), its state in
+   words — `waiting · 3 ahead`, `running · 42 s · worker 2`, `finished · 9 s`,
+   `failed: <message, one line; the whole on hover>`, `cancelled` — and
+   Remove (waiting), Cancel (running, where the backend can), Open test and
+   the Suite's actions for that test (ended). Its header: counts, a Workers
+   field (1 to the machine's cores, from `Config.parallel` — 1 in the tool:
+   `testing.json` has no key for it and `dstf author` no flag; applies to
+   workers started after the change), Clear finished, and ⋮ → Stop workers. Above
+   the table under 1200 px, and one line while empty. The rows are data
+   (`authoring/queue_rows.py`); the shell draws them.
+6. *The header's indicator, on every page.* `3 running · 5 queued` or
+   `idle`; red, with the first words of the pool's message, when no worker
+   could start, until Clear finished or the next test that starts. A click
+   opens the Suite page at the panel.
+7. *The Test page of a test the queue holds.* The strip says "Queued —
+   waiting · 3 ahead" with Remove, "Running on worker 2 — 42 s" with Cancel,
+   "Cancelled — no result (its earlier result was replaced when the run
+   started)." or the backend's message with Queue again.
+8. *No worker can start.* The pool fails the waiting items with the
+   backend's own message and stops; nothing stays queued. The bound is the
+   existing `worker_startup_timeout`.
+9. *`status.json` and the dashboard are written when the queue drains* —
+   nothing waiting, nothing running — for the items that ran since the last
+   write, off the UI loop, with the Session's verdicts for every test. Not
+   per item: both are one run's snapshot. The runs card and its one-second
+   `status.json` read are deleted; the shell's one-second `poll` event
+   remains only as the clock a running row's seconds move by, and reads no
+   file. The snapshot's `elapsed` and `start_wall` are its items' — first
+   start to last end; made after the run, the reporter counted its own
+   0.0 s. A row of the page links to a report page only where the page's
+   writer read that page's sidecar, fresh (`TestRow.report_page`): a run
+   wipes its test's report dir, so a test the queue ran has no page until
+   a `--report` writes one, and its name linked to nothing — as every
+   row's did after a plain `dstf run` or `compare`. The sidecar is looked
+   for where the suite writes it (the baseline compared against, else
+   the test key), not only under the name the run guessed. Such a row's
+   Reference is its id as text: the link's target comes from the sidecar,
+   and the page's writer is handed no reference directory. A sidecar
+   names its test's baseline wherever the store holds one, and a null in
+   a sidecar replaces nothing its row knows: a failed simulation's, whose
+   comparison names no baseline, said null beside the baseline's file,
+   and once found took the Reference id off its row.
+10. *Stop server asks while the queue holds a test* ("3 tests are queued
+    or running — stop anyway?"), then removes the waiting ones, stops the
+    running ones and closes the pool; NiceGUI's shutdown hook closes it too
+    (a real Ctrl-C was not run).
+11. *Every backend with a single-test path can be queued.* One that runs
+    whole batches only, or cannot be built on the machine, refuses the
+    first Queue with its sentence, and the button carries it from then on.
+12. *A cancelled run has a word.* It is recorded `cancelled` and read back
+    as no result, so the classifier's verdict stays NOT RUN (D145: nothing
+    failed, the exit code is unchanged). `CANCELLED` is what a live row
+    says for why, on NOT RUN's class, so its pill, tint and filter count
+    it; a cancelled row keeps the word when the compare phase scores it
+    NOT RUN. One rule decides that, `reporting.status.scored_status`, and
+    every surface that puts a verdict on a row asks it: the Suite's row,
+    the sidecar's enrichment and the dashboard's comparison in hand — the
+    last had none, so every dashboard a command wrote (the queue's drain,
+    `dstf compare`, each of which hands the page its comparisons) said NOT
+    RUN where the Suite said CANCELLED (found by an executing review,
+    2026-10-08). A row keeps the word only while its `status.json` row
+    says `cancelled` and its verdict is NOT RUN; any other verdict means
+    the test ran since. The console and JUnit have no row to read why
+    from: they print the verdict — `NOT RUN`, `<skipped message="not
+    run"/>` — and count the test there, as the pill does.
+
+**From the backend tier** (measured there, not again here): cancel is per
+backend — Dymola's `stop` file ended a simulating test in 1.7 s with the
+worker reused, and a test still translating is stopped by killing Dymola
+and restarting the worker; OpenModelica kills omc's children, 0.02 s; the
+JSON-driver backends kill the test's subprocess; FMPy simulates in-process
+and cannot. A worker's start is bounded, and its failure is the backend's
+own words. A tool that dies takes its children with it. One that died
+while its worker sat idle fails no test: the dispatch step asks whether
+the tool's process is still there before every test, and restarts the
+worker first (found by an executing review, 2026-10-08, where it failed
+the next test queued with "Worker process exited during the test … during
+simulateModel(<the test before>)"; after the fix, with the idle tool
+killed by PID, the next item FINISHED 12.1 s after it was queued on
+Dymola 2026x and 2.6 s on OpenModelica, bit for bit a plain run's).
+
+**What the gate measured** (2026-10-08, the example library copied to a
+scratch directory with one stiff model added, driven through the Session —
+not clicked in a browser): Dymola, three queued — the third removed while
+waiting, the stiff one cancelled 8 s into its simulation and ended 0.46 s
+later, the next ran on the same worker and was rescored PASS 3 s after;
+`status.json` listed the cancelled and the passed test; closing the pool
+took 1.2 s and left no process. OpenModelica — a run completed and was
+rescored PASS; with omc killed during its start both waiting tests failed
+1.3 s later with "No OpenModelica worker could start — worker 0: omc exited
+(code -9) during setCommandLineOptions(…)", the indicator red, nothing left
+running.
+
+**Not built.** The growing trace of a running test (the next step, on this
+queue — built since, as D151); a log viewer for a failed row; cross-backend chains through the
+queue; an idle timeout for workers; a simulation-settings editor — `/simulation`
+is not stageable for any test (`patch_apply`'s whitelist, the `spec-update`
+seam), so item 3's lock has no field to grey yet, and a queued test's
+settings cannot be edited in the tool either.
+
+**Known limits.** The page of a running test draws no criterion (it has no
+result), so criteria are edited mid-run only where the tool offers an edit
+without one (reversed by D151). A cancel is a request, and Dymola's is a `stop` file dymosim
+reads between steps: a model blocked in an external call
+(`Modelica.Utilities.System.command`) never reads it, so the cancel takes
+the worker's whole grace (`Worker.cancel_grace`, 10 s) and then the
+worker itself, which is restarted — 11.6 to 11.7 s from the click, 4 of
+4, where a CPU-bound model stopped in 0.16 to 0.38 s and kept its worker
+(measured 2026-10-11 by the release gate, on a real Dymola). Meanwhile the item is still
+running: its row reads `cancelling…` with no second Cancel and its strip
+`Cancelling on worker 1…` (`QueueItem.stopping`; the Session says a
+`queue` event, state `cancelling`) — they read `running · 42 s` beside a
+Cancel button until the end. Stop workers and Stop server close the pool on the UI loop
+(1.2 s with one Dymola worker). The pool starts one worker per item as items are submitted: with
+several workers asked for, one whose start fails at once can stop the pool
+before a second was started. Every load of a Test page logs NiceGUI's
+"Event listeners changed after initial definition" in the browser console
+— two listeners the page adds to the layout after the handshake — with or
+without a queue. A tool process killed with SIGKILL leaves its simulators
+running: the pool's close is what ends them (Stop server calls it, and
+NiceGUI's shutdown hook), and after a SIGKILL nothing is left to. A row
+in the panel follows its test's CURRENT state, not its own run's: an old
+`cancelled` row offers Accept once a later run of that test has finished.
+
+**QUEUED means the queue** (2026-10-11). A Suite row the Session had not
+scored yet — every row while a project opens — read `…` and wore the
+`queued` class, so the pills said `QUEUED 331`, counting down, beside a
+header reading `idle` and a panel reading `queue empty`. Such a row reads
+`SCORING` (`reporting.status.SCORING`, class `scoring`: the neutral grey
+under a third name) and has a pill of that word, drawn only while a row
+counts under it, as QUEUED's and RUNNING's are — which the table's
+`PILLS` now says, not the script. The Tests drawer has no pill for it and
+its badge still reads `…`. On the dashboard of a CLI run QUEUED stays: a
+waiting test there IS queued for simulation.
+
+**A Queue click runs the library as it is on disk** (2026-10-12). The
+workers stay alive, and a live worker loaded the library once: queue a
+test, edit its `.mo` — break it, even — queue it again, and the worker ran
+the OLD model and the row said PASS (reproduced on Dymola and on
+OpenModelica). And the Session's tests were the scan at open: an
+`experiment(StopTime=10)` edited to 4 still ran to 10. Now each click
+(`Session.enqueue`):
+
+1. **Sweeps the source files once** (`discovery/library_state.py`): the
+   modification time and size of every `*.mo` and `package.order` under
+   `source_path` and under each dependency given as a PATH; a Julia
+   project's `*.jl` and `*.toml`; nothing for an FMU or Python project,
+   whose tests each start a process. A sub-directory that is a symbolic
+   link is walked as the directory it points at (a sub-package kept
+   elsewhere is part of what the simulator loads; until 2026-10-12 it was
+   skipped, and an edit behind the link ran the old text on both
+   simulators): each real directory is entered through a link once and
+   the root never, so a link that leads back ends the walk; a dangling
+   link is nothing. A sweep that finds nothing changed is
+   the last click's own `LibraryState` object, else the next serial. Every
+   item of the click carries it (`QueueItem.library`).
+2. **Reads the queued tests' changed files again**: only the files of the
+   tests it queues, and only those whose stamp is not the one the test was
+   last read at — into the project's scan and the scan cache, by the
+   re-merge the rescan uses, so the `spec` event redraws the test's row
+   and page and every later re-merge (`_update_waiting`) hands a waiting
+   item that test. A test that only the spec declares has its model looked
+   for again (`mo_parser.find_class`). A test whose file is gone, or no
+   longer holds it, is refused with one sentence — `<model>: its file
+   <path> is gone` / `… no longer holds it` — and the click's other tests
+   are queued. A test that is already waiting when a later click names it
+   is handed what that click read, and that click's state.
+3. **Is read off the UI loop**: with a loop, `Session.apply(Enqueue)`
+   returns at once, the sweep and the file reads run on the Session's
+   background thread (the one that writes `status.json` and the
+   dashboard), and the tests are queued by a call posted to the loop; a
+   refusal found by the read is a notice. `Session.enqueue` itself stays
+   synchronous for a Session without a loop. **The tests a click names
+   show as taken at once** (`Session.checking`, since 2026-10-12): from
+   the click until the read is back — 0.1 to 3.6 s measured, during which
+   nothing on the page moved — each reads QUEUED in the Suite table, has a
+   row in the panel that says `waiting · checking the library`
+   (`queue_rows.CHECKING`, the one phrase) with no button, and is counted
+   by the header (`2 queued`); a test the read then refuses loses that row
+   by a `queue` event of state `refused`, and its sentence is the notice
+   it always was. The queue holds no item of such a test yet, so the Queue
+   button still offers it, and a second click says `<model> is already
+   being queued` in the dialog.
+
+Before a worker runs an item whose state is newer than the one it read,
+it reads the library again — once per state, not per item; a worker
+started or brought back after the sweep read the files as they are
+(`Worker.reload(changes)`, `backends/persistent.py`). The default restarts
+the worker, on the dispatch thread and uncharged, as Julia does. A restart
+that fails — for a reload or after a death — retires the worker with the
+backend's own reason in the sentence: `Worker dead; restart exhausted — no
+licence: FlexNet error -15` on the item, and `No <Backend> worker could
+start — worker 0: Worker dead; restart exhausted — no licence: …` on every
+item still waiting (until 2026-10-12 the reason reached stderr only, which
+the tool does not have). A restart given up at its bound says the bound
+(`… — did not start within 600 s (raise "worker_startup_timeout" …)`) and
+is not tried a second time. **A Cancel while the worker is being brought
+back ends the item at once**: the request, on record from the moment the
+item is armed, gives up the start in flight (`Worker._start_bounded` looks
+for it at each poll), the item ends CANCELLED — 0.26 s on real omc, where
+it had waited out the start's bound, 600 s by default — and the worker is
+not retired: a `Worker` whose start was given up is never started again
+(its `start()` may still be parked on a thread), so the runner takes a new
+one for its slot, and the old one closes whatever its start still brings
+up. Dymola
+and OpenModelica read in place, on the test's exec thread under its
+watchdog — a reload that hangs is the test's timeout, a cancel during it
+the test's: Dymola by `openModel(<package.mo>, changeDirectory=False)` for
+the library and for each path dependency holding a changed file;
+OpenModelica by `loadFile`. Which dependency a changed file belongs to is
+asked in the sweep's own spelling, by one function for the sweep and both
+backends (`library_state.dependency_root` and `under`): Dymola compared
+the RESOLVED path until 2026-10-12, so a dependency reached through a
+symbolic link, or given as an absolute path holding `..`, was never
+reopened. omc KEEPS the classes it holds when a load
+fails, so **a failed reload fails the item** with omc's message
+(`MyLib does not load: Examples/Pipe.mo:12: [syntax:error:2] …`: the
+file under the library and the line, whether one file was read or the
+whole library — the whole load's message named no file until 2026-10-12,
+because OMPython's own check of omc's messages keeps what each says and
+drops where it points; the load and the read of the messages are sent on
+the session's socket, `_raw_located`), and the
+next item asks again. **After a failed reload what the worker holds is
+unknown, and its next reload reads everything** — the whole library and
+each path dependency, whatever has changed by then
+(`WorkerRunner._reload` leaves the runner's state at None until a reload
+comes back whole; said once, for every backend that reads in place). The
+first build held the worker to the state it had read before the failure
+and handed the next reload the files that differed from THAT: one click
+that edited `Enc.mo` validly and broke `K.mo` loaded the new `Enc`,
+failed on `K`, and after both files were put back exactly (bytes and
+modification time) nothing differed — the worker ran the `Enc` of the
+failed reload for good, where a fresh worker ran the file on disk
+(executed on omc; the OpenModelica worker's own list of files a failed
+load had left without a class never came to be consulted, and is gone).
+The price: the click after a failure costs a whole load, which on a slow
+mount is the library's first load over again. omc loads the whole
+library again when a file was added or removed, a `package.mo` or
+`package.order` changed, one file at a time would cost more, or a changed
+file's path does not say its class; else each changed file by itself:
+`parseFile` must name exactly the class the file's path implies, that
+class is deleted, the file loaded, and the class must then exist.
+(Executed on a model file, a component's and a base class's — the model
+ran the new text each time — and on a syntax error, a renamed class, a
+wrong `within`, a second class in the file and an empty file: refused
+wherever the whole load refuses. That was first written "as strictly as
+the whole load", and it was STRICTER in two places where a fresh worker
+runs: a `.mo` file in a directory with no `package.mo` — no part of the
+library omc loads; the 3,270-file library has twelve — failed its load
+with `Failed to insert class easeIn within …`, and a file in a directory
+two symbolic links reach, which the sweep spells through one of them, was
+refused with `it holds X, not Y`. So a file is loaded by itself only when
+every directory from the library down to it holds a `package.mo` and none
+of them below the library's own is a link
+(`OpenModelicaWorker._path_is_its_class`); any other changed file makes
+the reload the whole load. A dependency given as a path is always loaded whole, and the
+classes that must exist after it are the ones `parseFile` of its file
+names: its directory need not carry its package's name — `DepLib 1.0.0`,
+a symbolic link called anything. Until 2026-10-12 the directory's name
+was looked for, and every item after an edit in such a dependency failed
+with `DepLib 1.0 does not load: loadFile left no class DepLib 1.0`.) While a worker reads, its
+item's row says `running · reading the library`, the strip `Running on
+worker 1 — reading the library`, and the panel `worker 1 reading the
+library — loadFile("…/package.mo") · 12 s` — on Dymola `openModel("…/
+package.mo")`, quoted too, so the panel cuts both to the path's last part
+(`queue_rows.READING`,
+`StartingWorker.reload`).
+
+*Costs, measured over a library of 3,270 `.mo` files (4,117 swept files,
+331 tests).* The sweep: 0.06 s on a native file system on one thread; on
+/mnt/d 6.9 s on one thread and 1.3 s on eight, so a root whose own listing
+is slow is walked on threads. A click, native: the tests are queued 0.09
+to 0.17 s after it, 0.71 s when all 331 are queued for the first time
+(each file read once); on /mnt/d 1.2 s, and 3.6 s the first time. On the
+loop: `apply` 0.2 to 2.4 ms, the posted call that queues 0.3 to 5 ms, the
+longest stall of a 5 ms heartbeat during a click 18 ms. Reading again,
+native: Dymola 0.01 to 0.02 s on the build's own runs and 0.07 s in the
+review's, over the same library; OpenModelica 0.33 s for one file, 1.1 to
+1.3 s for the whole library. On /mnt/d: Dymola 8 to 9.5 s (the spike's
+figure, not re-measured), OpenModelica 0.39 s for one file and 107 to
+110 s for the whole library — what its first load took (92 s with the
+mount idle).
+
+**Known limits of it.** A dependency given by NAME (`"Modelica"`) is found
+by the simulator and not swept. `testing.json` itself — `backend_setup`,
+`dependencies` — is read when the tool opens. An edit made after a click
+is seen by the next click; the test queued before it runs what the worker
+holds when its turn comes. A file rewritten with the same modification
+time and size is not seen (a rewrite of the same length within one tick of
+the file system's clock, or one whose time is put back). A REAL file an
+editor leaves beside a source file under a name that ends in `.mo` is a
+source file to the sweep: an added file, so a reload — the whole library on
+OpenModelica — and no error. Emacs's lock `.#A.mo` is not one: it is a
+dangling symbolic link, and a dangling link is nothing to the sweep
+(written here, until 2026-10-12, as a file it saw). A rescan that lands after a click does not
+take back what the click read of a test: a file edited again between the
+two shows the click's values until that test's next click. A test that did
+not exist when the tool opened
+is listed by the next open. Dymola's message for a model that no longer
+parses is its generic "Translation failed", the parser's words in the
+translation log; an emptied or garbage BASE-CLASS file reads the same on
+Dymola (the model misses what it declared), and on OpenModelica, with the
+file named: `MyLib does not load: Parts/K.mo: [grammar:error:234] Modelica
+library files should contain exactly one package, …` for an emptied one
+(`Parts/K.mo: it holds no class, not MyLib.Parts.K` when that file is
+loaded by itself) and `Parts/K.mo:1: [syntax:error:2] Parser error: …`
+for garbage, either way. A test's OWN file emptied or
+turned to garbage never reaches the simulator: the click refuses it — a
+file that cannot be opened with `cannot be read: Permission denied`, the
+system's words — and a refusal's note leaves the panel when that test is
+next queued (`no
+longer holds it`). A test only the spec declares whose model was replaced
+by an EMPTY class of the same name still runs on both simulators, and its
+result holds none of the variables it tracks. The comparator read that as
+PASS — the AND of no criteria — until 2026-10-12; it is now FAIL with the
+reason where a failing criterion would be named, `the result
+holds none of the variables this test tracks (x) — nothing was scored`, on every surface
+and with or without a baseline, and no accept stores a baseline for it
+(`comparator.nothing_scored`, the one decision). A test with a `metrics`
+tree is not asked — each leaf fails by itself for a variable the result
+does not hold — and a simulate-only test passes by having run. A result
+that holds SOME of a flat test's tracked variables was at first scored on
+those alone, the backend's log line all that said one was missing: `x` of
+{x, y} read PASS, Criteria 1/1, and a following `--accept` rewrote the
+baseline with `x` only, in silence — where a `metrics` tree fails the same
+loss. The flat path now does what the tree does
+(`comparator._lost_variable_comparisons`): a variable the test tracks
+(`result_variables.tracks`, the one rule `tracked_results` asks too) that
+the BASELINE holds and the result does not is a criterion not scored, with
+the tree's sentence — `Not scored: variable 'y' not found in the result`
+— under its override's metric, and the test fails. What only the spec
+names stays the log line: a pattern that matches nothing on either side
+has no baseline to say it was ever there. An accept over such a run is not
+refused, since accepting is how a variable is dropped on purpose; every
+accept path says `ref_0042.json (MyLib.M) no longer holds y — the accepted
+result does not hold it.` beside the large-file warning
+(`storage.accept.lost_variables_warnings`; a variable the test no longer
+tracks is said as that — `… the test no longer tracks it.` — since
+2026-10-13: the first sentence was printed of it too, while the run still
+wrote it). Over a copy of the 331-test
+library's stored results the change flipped no verdict and changed no
+entry of `verdicts.json`; with a tracked variable added to three baselines
+there, those three tests and no other went PASS → FAIL.
+
+That decision first failed one test too many: an entry that tracks
+nothing and has no criteria — what `dstf add <model>` writes, `"variables":
+[]` — read FAIL `this test tracks no variable and has no criteria` on every
+run. A test that DECLARES nothing to score is a simulate-only test
+(`TestModel.is_simulate_only`, the one rule: a recognizer's mark, or no
+UnitTests variable, no `variables` pattern and no `metrics` tree): it
+passes iff its simulation completes, no accept stores or skips it, and the
+sentence is gone. The FAIL is for the test that declares variables and
+whose result holds none of them. `TestModel.simulate_only` stays the
+recognizer's mark alone — the tool's add form is grey on a marked test,
+where a staged criterion would never be scored, and open on one that only
+declares nothing, where the criterion is what makes it a scored test.
+Its Test page says so on both lines: the strip's `Simulate-only: it runs,
+and nothing is compared.` and the tree's `nothing scored: this test is
+simulate-only`, which read `this test has no baseline` under that strip
+for a test that had one.
+
+That rule in turn passed one test too many (2026-10-13): `"variables":
+[]` with a `comparison.variable_overrides` entry — `{"x": {"mode":
+"range", "min_value": 100, "max_value": 200}}`, `x` in [0, 10] — read
+PASS, simulate-only, with no message and no warning, where it had read
+FAIL before. An override is a declaration: whoever wrote it asked for `x`
+to be checked. The one rule gains the clause — no UnitTests variable, no
+`variables` pattern, no `metrics` tree **and no `variable_overrides`
+entry** — so such a test takes the nothing-scored refusal, with a sentence
+of its own, since no tracked variable is missing from its result:
+`variable_overrides key(s) name no variable this test tracks (x) — an
+override changes how a tracked variable is scored, and "variables" (or a
+"metrics" leaf) is what tracks one; nothing was scored`. It is the scored
+path's log line for an override key that names nothing (`… name no
+variable of this result and are ignored`), said as the test's reason where
+nothing else is scored beside it. An accept skips the test with it; a test
+a recognizer marked stays simulate-only whatever it overrides.
+
+**A worker that cannot start says why** (2026-10-12). On OpenModelica a
+library that did not parse when a worker STARTED — the first click, or
+the click after a kill — failed the waiting items with `No OpenModelica
+worker could start — worker 0: failed to load library …/package.mo — `
+and nothing after the dash: the start asked `loadFile` for a bool and
+then `getErrorString()`, which OMPython had emptied to decide the call
+failed. A refused load is read in ONE place, for the start and for the
+reload (`_load_refused`: the error with the file and line it points at,
+under the directory loaded): `… failed to load library
+/work/MyLib/package.mo — Parts/K.mo:3: [syntax:error:2] No viable
+alternative near token: ;`, and the same after `failed to load
+dependency '…' — ` for a dependency.
+
+**An earlier run's row is a run's record** (2026-10-12). A test queued
+twice has two rows, and both read the test's verdict as it stands — the
+later run's — beside the words of a run that had ended otherwise, and
+both offered Accept, which stores the test's LATEST results: under the
+earlier row's name that read as accepting that run's. Only the latest
+item of a test carries the verdict and what acts on the test
+(`QueueRow.latest`, `QueueRow.status` None): an earlier finished row says
+`finished · 3 s`, wears no badge and no tint, and offers Open test alone.
+An earlier CANCELLED or failed row keeps its word — it is how that run
+ended, no verdict of the test.
+
+**What it reverses.** D137 item 6: the `Job`, its `after_reload` and the
+refusal of Save, Discard and Reload while one runs. D129's capability
+contract loses the `Job` outcome and gains `Enqueue`.
+
+**Consequences.** A plug-in capability that returned a `Job` has no
+outcome to return: the tool pre-dates any outside plug-in. `status.json`
+may now carry a row with `status: "cancelled"`. The `queue` event has a
+state `cancelling`. The CLI is unchanged.
+
+## D151 — Live results: the running test's page reads its growing result file (2026-10-08)
+
+**Context.** A test the queue ran showed nothing until it ended: its run
+cleared its last result (D150), so its page read "nothing scored" with no
+plot, and its strip counted seconds. A real library's tests run for minutes;
+whether one was converging, oscillating or stuck was visible only in the
+simulator's own files. A run that was cancelled or hit its timeout left a
+result file with everything it had computed, and the page said "no result".
+The redesign brief (§3.7) asks for the growing trace on the test's own
+page. It was built in two tiers: the reader in `backends/` (the `.mat`
+reader's row count taken from the file's size, `LiveMatReader`,
+`Capability.LIVE_RESULTS`), and — this entry — the tool.
+
+**Decision.**
+
+1. *The running test's page keeps its layout and draws the trace so far.*
+   When a run starts, the Session keeps the comparison and the result it
+   replaces for the LAYOUT alone (`authoring/live_runs.py`): the plots stay
+   the ones the test had, in the order the tree names them, and a test that
+   never had a result is laid out by the variables its model and spec name
+   (its UnitTests variables, each `variables` entry that names one). No
+   verdict and no sample of the replaced result is shown. On a backend
+   whose result file grows, each plot's Actual trace is the rows read so
+   far, the Reference the baseline's as always, and the time axis spans 0
+   to the test's stop time from the first second, so the trace grows into
+   the plot. One reader per running test, in the Session, polled once a
+   second from the UI loop for the union of what the open pages asked for:
+   two tabs on one test share it, and the queue panel's row needs the time
+   with no page open. A page asks only for the variables of plots that are
+   DRAWN (a card draws when it scrolls into view) and not hidden by Focus.
+   A plot is re-sent only when the poll brought it a sample, as a
+   `Plotly.react`; each run's figures carry that run's own `uirevision`
+   (`live_rows.run_revision`, its partial result's too), so a zoom and the
+   legend's choices survive every update, and the plot starts over whole
+   at the run's first figure — whether the last result's or another run's
+   partial one stood there — and at the result's (pinning the time axis
+   under the figure's one revision reset x and kept a zoom's y; one
+   revision for every run carried a zoom made on a partial result into
+   the next run's plot).
+   Samples are kept per name, dropped when the reader starts over on
+   another file, held to 200,000 a name (thinned evenly past that) and
+   drawn under the figure layer's cap with its own LTTB — once past the
+   cap and then again each time a quarter of it is new, not on every poll:
+   one decimation is 12 ms whatever it is given.
+2. *The words while it runs.* The strip reads `Running on worker 2 — t =
+   42 / 100 s`: the last whole row's time over the stop time (`t = 42 s`
+   where the stop time is not known, `starting` until the file holds a
+   row). The queue panel's row reads `running · t = 42 / 100 s`. Every
+   criteria row, the tree card's line and a folded family's row read
+   `waiting for result`, and no pill is drawn anywhere on the page: the
+   page's tree view is the criteria as authored with that word in place of
+   every verdict (`live_rows.unscored_view`), so the rows are the ones a
+   scored test has, and an edit made while it runs shows in them.
+3. *A backend without a growing file says so once.* Python, Julia and FMPy
+   write their result at the end. Their running test keeps its plots, with
+   the baseline and no Actual, the strip counts seconds, and one line under
+   it reads `live view not available for this backend`. Nothing is polled.
+4. *The end is the queue's word.* A finished file reads `running` to the
+   reader too, so "in progress" is never asked of it: when the Session
+   takes an item's end, the live entry goes, no sample of it is kept, and
+   the page shows the result scored as D150 has it. A page opened on a
+   test already running is served the file from its start, thinned.
+5. *A run that did not finish shows what it wrote.* Cancelled, timed out
+   or failed with rows in its file: the page draws the file to where it
+   stops — read by the size-based reader's partial read, not the live
+   reader — with a dashed marker `stopped at t = 5.85 s` in the theme's
+   muted text; the strip reads `Cancelled at t = 19.2 of 200 s — not
+   scored` (`Timed out at …`, `Failed at …`), every criterion `not scored`.
+   It is shown and nothing else: nothing hands it to the comparator, the
+   test's result stays none (or the failed one), its Suite row keeps
+   CANCELLED or SIM_FAIL, and Accept refuses it with its own sentence ("a
+   partial result is never a baseline: queue it again") before the shared
+   function's refusal is reached. Its file's header is parsed once
+   (`mat_reader.ResultMatFile`, kept with the run's entry) for every
+   series and the pickers' listing, and its series share one time array:
+   the page asks a name at a time, and each ask parsed the header again.
+   It is kept until the test's next run or
+   the project's reopen, and is the process's: a tool started later reads
+   the test as it did before this entry.
+6. *The pickers list the growing file.* Once the file's header is whole,
+   the Variables drawer and the add form offer its variables (the live
+   reader's own `names`, from the header it reads the rows through — the
+   backend's `result_names` parsed that header a second time on the loop;
+   the Session says a `queue` event, state `live`, so the open page lists
+   them), and a watch plot added while the test runs draws live.
+7. *The directory wipe.* A rerun's directory is cleared before its key is
+   handed back, and the reader is built only once the item has its key —
+   so there is no old file under it. Until the new file exists the page
+   says `starting`; a file that goes away under a poller is another run
+   (the reader's `run` counts up) and every sample is dropped. Until a
+   file's first row is served its header is read again at each poll, and
+   another STRUCTURE (names, columns, row shape) is another run: a file
+   put in place of a header-only one, no smaller, was read through the
+   first one's columns. Parameter values written again under the same
+   structure count no run.
+8. *Starting workers are listed.* The queue panel shows each worker being
+   brought up — `starting worker 1 — loadModel(Modelica) · 85 s`, the phase
+   in the backend's own words, a path cut to its last part — and the next
+   waiting row reads `waiting · worker starting` instead of `waiting ·
+   next`. A worker brought back after a death is restarted under the test
+   it is to run: its line reads `restarting worker 1 — …` (the pool's
+   `StartingWorker.restart`), and that test's row `running · worker
+   restarting` — it read `running · N s` for the whole load. The shell's
+   once-a-second `poll` now also runs while a worker starts. A real library
+   took 143 s to load; "queued" for that long read as a hang.
+9. *`compare` says a timed-out run timed out.* A run killed by its timeout
+   leaves a partial file, whose reader fails the result with "Partial
+   result: …"; the recorded verdict then found it already failed and added
+   nothing. The stored message is now both: `Run recorded timed_out —
+   Partial result: …`. Whether or not the file holds a row: a run killed
+   before its first one reads back `Run recorded timed_out — Empty result:
+   …`, one that left no file `… — Result file not found: …` or `… — No
+   Python result at …` — the reader's sentence alone said nothing of the
+   run. A failure in the run's own words is not led by the verdict
+   (`TestResult.run_reason`: the run result's message, or a reason a
+   driver wrote into its result file).
+10. *A failed run's reason is on its page.* The strip of a failed or
+    timed-out test said "The simulation failed. Fix the model or its
+    settings, then queue it again."; the backend's reason was on the
+    queue's row alone, which Clear finished removes. The strip says it —
+    one line, the whole on hover — and then the next action: `Timed out
+    after 12s (…) — fix the model or its settings, then queue it again.`
+    After a partial result's `Timed out at t = … — not scored.` where there
+    is one. It is the comparison's message, read from the run's stored
+    result (what the Suite table's Message column shows), so it survives
+    the cleared row. After a restart of the tool it is what is read back
+    from disk: the same line where the run wrote its reason into its
+    result file (a JSON driver's `simulate` that raised), and otherwise
+    the verdict the run recorded with what its file is (item 9: `Run
+    recorded timed_out — No Python result at …`) — the run's own sentence
+    for a timeout or a driver that died is kept in no file. A test no
+    worker could start says one line of the pool's message; a run that
+    recorded no reason keeps the plain sentence.
+
+OpenModelica writes its rows a 4 KB block at a time unless asked; the pool
+the tool opens sets `Config.live_results`, which adds `-mat_sync=1` to its
+simulate call. No CLI run sets it.
+
+**From the reader tier** (measured there, not again here): the row count
+taken from the file's size reads every stored result checked exactly as its
+header describes it — 997 files of this repository and 330 TRANSFORM
+result files, 660,154 variables. A poll opens, reads and closes the file:
+a memory map over a file that is then truncated kills the process, and a
+handle held open blocks the directory's removal on Windows. Polls took 2 to
+14 ms on the Windows mount. `-mat_sync=1` cost +3 % run time on a local
+disk and +59 % on one output-heavy run on the Windows mount.
+
+**What the gate measured** (2026-10-08; the example library copied to a
+scratch directory with a model that pauses 0.1 s at each of 300 samples,
+30 s of simulated time; a real Chromium). *Dymola 2026x, work dir on the
+Windows mount:* the worker's start listed (`starting worker 1 — its launch
+· 0 s` to `2 s`, the row `waiting · worker starting`); the first run's
+trace grew in 33 of 35 one-second reads, 32 distinct `t =` values, 0 to
+901 points on an axis of 0 to 30. A rerun of the same test read `starting`
+with no point for three seconds and then the new run from `t = 0`; no read
+showed a sample of the run before, and the server logged no exception; the
+finished trace equalled the result file's series, 901 rows, for both
+variables. Against an accepted baseline, mid-run: two rows `waiting for
+result`, no pill visible, 370 Actual points beside the baseline's 901; at
+the end PASS and the pills back. Cancelled at `t = 8.05`: `Cancelled at t =
+18 of 30 s — not scored` 12.1 s later (this model spends its time in a
+system call; D150 measured 0.46 s on one that computes), the marker at 18,
+the Suite row CANCELLED. A 25 s timeout: the partial trace to `t = 24.2`,
+the badge and the Suite row SIM_FAIL; read again on 2026-10-11 with item
+10 built, the strip said `Timed out at t = 25.1 of 30 s — not scored.
+Timed out after 25s (raise it per test with simulation.timeout in
+test_spec.json, or globally with --timeout) — fix the model or its
+settings, then queue it again.` Nothing left running.
+*OpenModelica:* the trace grew in 28 of 30 reads, 30 to 40 rows a second;
+the tool's simulate call carried `simflags="-mat_sync=1"` and the same
+library run by `dstf run` did not; a cancel took 0.17 s. *The example
+Python library:* `Running on worker 1 — 2 s` over the line `live view not
+available for this backend`, gone at the end.
+
+*Cost* (six plots drawn, a file growing to 100,000 rows of 500 variables,
+401 MB at 2,000 rows a second, on a local disk): the tick that reads the
+file and re-sends six plots took 35 ms at the median, 46 ms at the 95th
+percentile and 82 ms at most on the UI loop, the read itself 1.6 ms (4.9
+at most); the browser's one long task per update was 72 ms at the median
+and 125 ms at most, a `Plotly.react` 9.6 ms a plot. Under the 100 ms set
+for the loop, so the read stays on it.
+
+*A header's parse* (2026-10-11, a loaded machine; synthetic files of
+2,000 / 20,000 / 60,000 variables with 60- to 100-character names): a
+partial result's 20-member family, asked a name at a time, cost 508 ms /
+3.75 s / 12.0 s on the loop — every ask parsed the header. One parse per
+file: 16 / 184 / 651 ms. With the name matrix decoded a row at a time
+(it was a character at a time; the same names over all 703 result files
+in this checkout's fixtures and work dirs, 1,338,159 of them): 4 / 20 /
+64 ms, and a run's first poll 2 / 18 / 64 ms where it was 27 / 371 /
+609 ms. Listing the file for the pickers costs no parse of its own.
+
+**Not built.** Verdicts before a run ends (a tube already left, a range
+already broken); a progress bar; live reads for `dstf run`; a page watching
+many runs at once; a partial result found on disk by a tool started later;
+a live source that is not a DSresult file.
+
+A worker's restart was not produced on a real simulator: its words are
+tested against a pool that says it is restarting.
+
+**Known limits.** A test with no result whose spec names its variables only
+by pattern has no plot until its first result (a watch plot can be added
+from the Variables drawer while it runs). The live trace is a preview: a
+backlog longer than the cap is thinned by the reader and not read again.
+A plot's zoom does not carry across a run's start or end — on a backend
+with a live view; without one (Python, Julia, FMPy) a run's figures keep
+the figure layer's own `uirevision` (`LiveRuns.dress` leaves them as they
+are), so nothing there resets a zoom. Under a partial
+result of a test with no baseline the tree card says "nothing scored: this
+test has no result". A flat entry's criteria still cannot be edited one by
+one while its test runs (D150): their rows say so. The file is read on the
+UI loop; a mount slow enough to make that matter would move it off.
+
+**What it reverses.** D150's known limit "the page of a running test draws
+no criterion", and its item 9's "the shell's one-second `poll` … reads no
+file": it now reads the running tests' result files.
+
+**Consequences.** `SessionView` gains `partial(model_id)`. The `queue`
+event has a state `live`. The pool's `StartingWorker` gains `restart`.
+A failure a JSON-driver backend's driver WROTE into its result file reads
+back in the words its run result said it in (`JsonDriverBackend._failure`:
+"Python execution failed: …"; "… the driver gave no reason" on both sides
+for a failure file that gives none), so the strip's line of that failure
+is the same before and after a restart of the tool; it read back bare
+when this entry was written. A run that left no such file — killed by its
+timeout, a driver that died — reads back led by its recorded verdict
+(item 9), which is not the sentence its run said. `status.json`'s `detail`
+for a JSON driver's failure is the result's message, not the driver's bare
+reason. The Session sets `live_results` on the open project's
+`Config` when it opens its pool. A plug-in backend that declares
+`LIVE_RESULTS` must write a DSresult file at its `live_result_path` for the
+tool to show it live; its `result_names` is asked of a finished result
+only. The CLI's runs are unchanged;
+`compare`'s stored message for a failed or timed-out run whose file does
+not say why is longer; nothing reads that text but a person
+(classification, `--rerun sim-failed`, JUnit and the dashboard go by the
+result's flags).
+
+## D152 — A criterion over an array family: chosen by indices, shown folded, edited as one (2026-10-08)
+
+**Context.** A criterion on twenty elements of one array was twenty
+criteria: added one at a time in the add form, listed as twenty rows under
+the family's plot, and loosened one editor at a time. The redesign's 3c
+folded a family's plot and its Variables-drawer row and left "the slice
+field, save-time expansion and the folded criteria row" to 3d (D134; the
+brief's ruling §3.10: leaves stay literal, the tool shows them folded). The
+owner ruled the two questions that were his on mock-ups on 2026-10-08 (R1,
+R2 below); the controller made the calls numbered D1-D8, said to the owner
+and reversible. Built on its own branch from those rulings, with no written
+plan, and then corrected by the fix batch of an executing review, whose
+decisions are folded in below; what follows is the contract as built.
+
+**Decision.**
+
+1. *The slice is chosen in the add form (R1).* When the variable picked in
+   the add form is an element of an array the last result holds more of
+   (`pipe.T[12]` of `pipe.T[1]` … `pipe.T[20]`), an **Indices** field shows
+   under the picker, filled with every element it has (`1:20`). It takes an
+   index (`3`), a range with its end INCLUDED (`1:5`), a stepped range
+   written start:step:end as Modelica writes it (`1:5:20` is 1, 6, 11, 16),
+   and a comma list of those in any order (`1:3,7,10:2:20`)
+   (`figures.families.parse_slice`). The indices are the result file's:
+   any whole number from 0, in ASCII digits, and what is checked is that
+   the family HAS each one — a zero-based array (`y[0]` … `y[4]`) is
+   filled `0:4` and takes it; a floor of 1 refused the field's own text.
+   Add — or Enter in the field — writes ONE criterion per chosen element,
+   literal leaves, siblings where a single criterion would have landed: at
+   the end of a combinator, right after the criterion whose `+` was
+   clicked, or beside a root leaf as an `and` of them all. This REPLACES
+   the brief's and DESIGN.md's field on the Variables drawer's folded row:
+   a drawer row adds series to a plot, and a field there chose elements
+   for nothing that scores them. The leaves are seeded ONCE, from the
+   first chosen element: a `range`'s bounds or a `tube`'s width seeded per
+   element would be twenty different criteria, and nothing would fold.
+2. *What the field starts at, and what it says.* Opened from the plot's
+   `+` or a group's, the field holds every element — the picker lists
+   elements, not families, and a family has no row to pick. Opened from
+   the `+` on the row of ONE element (a criterion's, under a plot or in
+   the tree), it holds that element's own index: that `+` is asked for a
+   second criterion there, and "all twenty" added nineteen nobody meant.
+   Beside the field a count of what it names, as it is typed (`20
+   elements`), and Add reads the same (`Add 20 criteria`): `1:20:5` is
+   start:step:end — ONE element — and reads as five. A text that names
+   nothing yet says why in the count's place. The form row opened from a
+   plot's `+` is titled by what is being added to, following the pick and
+   the Indices (`Add a criterion for pipe.T[1:5:16]`, `Panel.retitle`),
+   not by the plot it was opened from.
+3. *One folded row that edits all (R2).* Under a family's plot, the
+   elements whose criterion is IDENTICAL fold into one row: a chevron, the
+   worst of their verdicts as its pill, `metric · <the family with the
+   folded indices>` (`tube · pipe.T[1:20]`) and a count by verdict (`18
+   pass · 2 fail`, with an advisory and an unscored count when either is
+   non-zero). An element whose criterion differs from the rest is its own
+   row, as before.
+4. *"Identical" (D1).* Leaves fold when they are elements of ONE family by
+   result-file name (`families.family_of`, D140's rule), children of ONE
+   node, and ONE criterion: the same metric, parameters, window and
+   baseline — everything but `variable` — compared as JSON
+   (`spec_document.json_equal`: `1` is `1.0`, `true` is no number). Read
+   off the tree view, so a leaf that names `"against": "primary"` and one
+   that leaves it out are the same criterion. Two or more fold; a group of
+   one is a row. Two groups of one family are two folds (`pipe.T[1:10]`,
+   `pipe.T[11:20]`), each standing where its first member's row was. A
+   second identical leaf on an element the fold already holds stays its
+   own row: a fold names each element once. A `UnitTests` element never
+   folds and gets no Indices field: each is a test quantity and a plot of
+   its own (D140), so no plot's rows hold two of them — the add form asks
+   the test, and the fold needs no rule of its own. Why the same parent:
+   "edit all" under an `and` must not reach into an `or` beside it.
+5. *The label.* The index text is `families.slice_text`'s, the one place
+   that prints a slice: an arithmetic run as before (`1:20`, `1:5:16`),
+   and — new — a list with an unbroken run of three or more prints that
+   run as a range, so a family with one element taken out reads
+   `pipe.T[1,2,4:20]` and one with a gap `1:6,8:20`.
+6. *The fold is derived every time (D2).* Nothing remembers it: not the
+   spec, not the Session, not the page. A member edited on its own is its
+   own row at the next paint and, edited back, folds again. The chevron
+   unfolds a fold to its members' rows — each exactly the row it was, with
+   its own swatch, editor, handles and node controls, indented under the
+   fold. Which folds are open is the browser tab's
+   (`TabState.family_unfolded`), kept by MEMBER path so a fold whose first
+   member left it is still the one that was opened; an edit that is not
+   the tab's folds them again, as it unfolds the tree card's groups — each
+   back to its default. A criterion asked for by name — the tree line's
+   jump, an add's reveal, the tree's ⤓, "Edit on its plot" — unfolds its
+   fold and shows its own row; so does a criterion typed to a SHUT fold's
+   value, which joins it with its editor open.
+7. *Rows are repainted, never rebuilt or moved, when the fold moves.* The
+   criteria's rows stand flat, in tree order, where the card drew them; a
+   fold's row is put in before its first member's row, and a member is its
+   own row with two attributes — `data-member` (the indent) and `hidden`
+   (under a closed fold). Attributes, not classes: a server repaint of a
+   row's classes writes its whole class attribute. Where a row is SHOWN is
+   its CSS `order`: a fold's row, its members as ONE block under it, and
+   then — a sibling of the fold, flush with it, never between two of its
+   members — the row of an element with its own criterion. So a field
+   being typed in is the same field, with the focus, after the keystroke
+   that takes its row out of a fold; rebuilt or moved in the document, it
+   lost the focus on the first key. The cost: Tab goes through the rows in
+   tree order, not in the order shown.
+8. *The folded row's editor is fields only (D3).* The same form as one
+   member's criterion (Edit criteria at a new placement, FAMILY_CRITERION,
+   with the members in `Selection.leaf_paths`), showing the value they
+   share; each change replaces EVERY member's leaf, its own variable kept.
+   No handle is drawn for it — its hint says "These fields change all 20
+   criteria. Unfold to drag one on the plot." — and Edit on plot is not
+   placed there: a handle belongs to one criterion's drawing, and twenty
+   at one place cannot be told apart or dragged as one. A Ctrl+click (or
+   Cmd+click) on the plot while it is open adds nothing and says so on
+   the line under the plot ("Ctrl+click adds a control point to one
+   criterion: unfold this row and open the one to add to."); a plain
+   click says nothing, and the line goes when that row unfolds. A refusal — a
+   value that can never score, a window that ends before it starts — is
+   one refusal, and stages nothing for any member. A mode switched there
+   is seeded from the first member, as an add is. The act is handed each
+   member by path AND by name, and refuses the whole edit when a path no
+   longer holds that member: an edit staged elsewhere moves the tree under
+   an open row's paths, and "every member" then overwrote whatever
+   criterion stood there.
+9. *One gesture, one op (D4).* An add over several elements, a folded
+   field's change and an Indices edit each stage ONE op: the whole tree
+   their per-leaf ops give (`family_rows.as_one` — `add /metrics`, as a
+   move stages, D144), applied by the spec's own patch applier, every
+   node the gesture does not name as it was. A second such op in a row
+   replaces the first, so a value typed into a folded field is one edit
+   and not a keystroke log; and a tree put back as the saved entry scores
+   is no edit and leaves nothing pending. On a test with a saved tree the
+   header counts 1. On a FLAT test it counted 2 when this was written, as
+   it did for one criterion's edit there, and counts 1 since D155 (one act
+   is one pending edit, however many ops); the two ops are still staged:
+   the op is marked as an edit of the tree
+   (`PatchOp.edits_tree`), so `Session.stage` writes the implicit tree out
+   first, marked, and the preview diffs the gesture against that tree and
+   says "Save also writes this test's criteria out as a tree". Unmarked —
+   as first built — the preview showed every line of the tree as added,
+   with no note, and an Indices removal showed nothing deleted. N per-leaf
+   ops were the other honest shape, and a batch is never collapsed
+   (`Session.stage`): twenty ops per keystroke.
+10. *What a gesture did, in words.* Its op carries one sentence per thing
+    it did (`PatchOp.notes`), which the preview lists above the entry's
+    diff: `tolerance → 0.05 on 20 criteria of pipe.T[1:20]`, `Indices:
+    removed pipe.T[20]`, `added 4 criteria: pipe.T[1:5:16]`. Where an op
+    replaces the one before, a sentence about the same field replaces its
+    sentence and any other is kept: a value typed over is one line, two
+    gestures are two.
+11. *Indices in the folded editor (D5).* The field holds the elements the
+    criterion is on, with a count of what Enter would do beside it as it
+    is typed (`→ 5 elements (removes 15)`, `(adds 2)`, `(no change)`).
+    Enter or Apply removes the leaf of each element left out and adds one,
+    with the fold's parameters, for each new element; Esc puts back the
+    text applied last. The group's leaves stay in INDEX order — a new
+    element goes right after the member with the next smaller index,
+    before the first when it is smaller than all — so `1:20`, `1:5:20`,
+    `1:20` leaves the tree as it was, and nothing pending; added after the
+    last member, the leaves came back 1, 6, 11, 16, 2, 3, … and Save
+    rewrote a tree nobody had changed. (This replaces the controller's
+    "right after the group's last member".) An index the family does not
+    have — the family being every element the last result's file holds
+    and every name the test scores — is refused in a sentence naming its
+    size ("pipe.T[1:20] has 20 elements; 21 is not one of them."). An
+    element that already has a criterion of the fold's metric under that
+    node — its own tolerance, or a `warn` of its own — is not given a
+    second one beside it: "pipe.T[3] already has its own nrmse criterion
+    under this group — edit or remove that one, or leave 3 out". An
+    element that already has the fold's very criterion there is a member,
+    and never gets a second leaf. A change that would remove more than
+    half of the fold's criteria asks once, inline ("Removes 19 of 20
+    criteria — Apply again to confirm"). An empty field is refused:
+    "Indices is empty. To remove the criterion, unfold this row and remove
+    its criteria instead." The elements it already holds stage nothing.
+    Afterwards the rows are redrawn (leaves came or went) and the fold's
+    editor is open again on what it holds; down to one element, that
+    criterion's own editor is. An element the last run did not record is a
+    criterion all the same (D142): the strip asks for a rerun.
+12. *An open fold's members are held together — until its editor
+    closes.* While a fold's editor is open, its members stay one fold and
+    apart from every other leaf, whatever they equal. A value typed there
+    passes through others on its way (`0.05` is `0.0` first); one equal to
+    another group's would merge the two, and the next key would carry
+    that group along. Closing the editor — Done, another criterion or
+    form opened, the card rebuilt — releases the hold and repaints the
+    rows from the tree AT ONCE: no event follows a close, and left as
+    painted a fold typed to its neighbour's value read as two rows of one
+    criterion, whose Indices then offered the neighbour as a gap. If an
+    edit from elsewhere takes the members apart, the editor closes. This
+    is the one thing the derivation is told beside the tree.
+
+**What the spec holds.** Nothing new. `test_spec.json` holds one literal
+leaf per element, in the tree, exactly as twenty criteria added by hand
+would be; no slice, no glob and no family key is written, and a spec
+written before this folds the same way when its leaves are identical. The
+leaves are literal from the moment they are staged — the preview shows
+them — so nothing is expanded at Save.
+
+**What is unchanged (D6, D7).** Scoring, the spec format and the patch
+envelope. The report's criteria: `reporting.tree_rows.criteria_rows` is
+one row per leaf, the report's page lists every leaf of a family's plot,
+and its page for a fixture with a six-element family is byte-identical
+before and after this change. The tree card keeps one line per leaf. The
+Variables drawer's folded row is as D134 left it, with no field.
+
+**One report string changes.** A family whose elements are neither all of
+a run nor evenly stepped — `pipe.T[1]`, `[2]`, `[4]`, `[5]`, `[6]` on one
+plot — printed every index in its plot title and legend
+(`pipe.T[1,2,4,5,6]`) and now prints its runs (`pipe.T[1,2,4:6]`), on the
+report as in the tool: item 5's `slice_text` is the one place a slice is
+printed. A whole or evenly stepped family prints as it did.
+
+**A multi-dimensional family (D8).** The fold rule is `families.py`'s,
+not extended: a name folds on its LAST single-integer index. So Indices
+means that last index — for `port[2, 1].C[3]` the 3, within the family
+`port[2, 1].C[]` — and a two-dimensional position (`x[2,3]`) is no family,
+folds with nothing and gets no field.
+
+**Known limits.** Under a `weighted` node an Indices change or an add over
+a slice is refused: the node carries one weight per child, and neither
+writes weights (a single add there is refused the same way). With about
+200 elements in one fold, a key in a folded field holds the page for
+about half a second and an Indices change for about 1.3 s (measured by
+the executing review): each rescores the test once and repaints two
+hundred rows. Tab follows the tree's order of rows, not the order shown
+(item 7).
+
+**What is not built.** A remove-all on the folded row: an empty Indices
+says to unfold and remove the rows. Handles for a fold on the plot. A glob
+leaf (`pipe.T[*]`) scoring every element under one leaf, deferred by the
+brief (§5): an array resized by a later run is not picked up by itself —
+its fold's Indices adds the new elements. Indices over more than one
+dimension. The profile plot kind (`docs/ideas.md`). A folded row in the
+report or in the tree card. The page's own keyboard access to a folded
+row's editor: its chevron is a button, its row — like a criterion's — is
+opened by a click. Esc closes no editor.
+
+**Consequences.** Only the tool changes, and the one printed text above.
+A capability placed at CRITERION is not offered for a fold unless it also
+names FAMILY_CRITERION and handles `leaf_paths`. `Panel` gains `retitle`;
+`PatchOp` gains two fields that are no part of the op (`edits_tree`,
+`notes`). The TRANSFORM gate is the controller's; nothing of it is
+recorded here.
+
+## D153 — A baseline keeps every point its run wrote, unless a number is given (2026-10-11)
+
+**Context.** `ReferenceStore.store_reference` thinned every baseline it
+wrote to at most 2000 points: `_downsample(time, values, max_points=2000)`,
+a default argument that no decision set and no key could change. `nrmse`
+reads the run AT the baseline's time points and averages the squared error
+over them, so the cap was also the resolution at which a regression could
+be seen — and nobody had chosen it. The owner ruled on 2026-10-11: a stored
+baseline keeps every point the simulator wrote, unless a number is given.
+
+**Decision.**
+
+1. *`baseline_points` in `testing.json`* is the project's value: the string
+   `"all"` — the default, and what an absent key means — or a whole number
+   of 2 or more (a thinned baseline keeps both ends of its run). Anything
+   else — `true`, `2000.0`, `0`, `1`, a negative, another string, `null` —
+   is a config error in one sentence that names the key, the value given
+   and the two forms: `testing.json baseline_points is 1: the points a
+   baseline keeps are "all" or a whole number of 2 or more`
+   (`config.baseline_points_refused`). There is no CLI flag.
+2. *`baseline_points` on a `test_spec.json` entry* — at the entry's top
+   level, beside `simulation` and `comparison` — is that test's own value,
+   in the same two forms. The order is the test's, then `testing.json`'s,
+   then `"all"`: one long run can be thinned in a project that keeps
+   everything, and one test can say `"all"` in a project that gives a
+   number. A value that is neither form is refused as `plots` is — a
+   config error at discovery that names the file and the entry
+   (`<test_spec.json>: tests[<model>].baseline_points is 1: …`), `null`
+   included: dropped with a warning, the test would be stored at the
+   project's setting and nobody told. `TestModel.baseline_points` carries
+   it (`None` for an entry without the key); `export-schema` lists it. It
+   is written by hand: it is outside the subtrees a patch may touch, so
+   `spec-update` and the tool do not edit it, and the tool's Save keeps it
+   on an entry it rewrites.
+3. *Where a baseline is written.* `store_reference` is the one place a
+   primary baseline is written, and the only caller of `_downsample`.
+   `"all"` stores every sample the run has, in order, the two samples of
+   each event included. A number N calls the thinning that was already
+   there with `max_points=N`: the first and the last row, and both rows of
+   every event, are kept (events are thinned evenly only when they alone
+   are more than N), and the rest are spread evenly by row number. N at or
+   over the run's rows stores them all — a point is never invented.
+   `_downsample` has no default argument: every call says its number. With
+   `baseline_points: 2000` the stored arrays are exactly what the code
+   before this stored — a test pins the kept rows against that function's
+   output, over runs with and without events, with more events than
+   points, and shorter and longer than the number.
+4. *The reference JSON records what was done*, under a top-level key that
+   is always written: `"sampling": {"setting": "all" | N, "source_points":
+   <rows the run had>, "stored_points": <points stored>}`. A reference
+   without it — every one stored before this — loads and scores exactly as
+   before: old data is read as it is, and nothing is migrated.
+5. *A large baseline is said at accept.* When a baseline file just
+   written is larger than 5 MB (`storage.accept.LARGE_BASELINE_BYTES`, a
+   constant and not a key), the accept says so once per file:
+   `ref_0123.json (<model>) is 5.3 MB (74,167 points × 3 variables) — set
+   "baseline_points" for this test to store fewer.` It is a warning: the
+   baseline IS stored and the exit code is unchanged. The sentence is made
+   in the one accept path (`accept_run_results`, which now returns
+   `(stored, skipped, warnings)`), so `run --accept`, `compare --accept`
+   and the interactive review print it and the tool's Accept carries it in
+   its notice. It names the model beside the file: the remedy is that
+   test's key, and a file name alone does not say whose. The size is the
+   file's on disk and the counts are read back from it, only for a file
+   that is over. To tell the accept path which files it wrote,
+   `ReferenceStore.accept_results` returns the stored model ids, where it
+   returned their count.
+
+**What was measured.** On a real library of 330 tests: 11 of the 330
+baselines had been thinned by the cap; the median run has 502 rows; keeping
+every point takes the baselines from 10.7 MB to about 24.6 MB, two runs of
+about 74,000 rows being about 5 MB each.
+
+**Known limits.** A number thins evenly by row number — not by time, and
+not by what the signal does — so it can drop a spike that lies between two
+kept points. A baseline has ONE time vector for all its variables: the
+points are chosen per test, not per variable. An existing baseline keeps
+the points it has until its test is accepted again, whatever the key says
+now; its `sampling` record, or the lack of one, says how it was stored.
+"Every point" is every row. The values of a double-precision run were
+written at 15 significant digits, as they always were, and are at 17
+since the second 2026-10-12 addendum below; a single-precision
+run's (every Dymola result file measured here) are written at 9 and read
+back through single precision — see the first 2026-10-12 addendum below. This
+entry first said 7, "as they always were": at 7 digits a stored value is a
+different float32 than the run's more often than not (56–67 % of random
+values, measured; 0.7–1.2 % at 8; none at 9), and a baseline accepted from
+a run did not score 0 against it.
+
+**What is not built.** Sampling by region — segments, chosen times, a
+different density in different parts of a run — is deferred
+(`docs/ideas.md`). Uniform resampling, or any interpolation: a stored point
+is always a row the simulator wrote. A CLI flag. A notice at compare for a
+baseline stored under another setting than the one now in effect. A check
+for a baseline that ends before its stop time. Any change to a scoring
+function.
+
+**Every path that stores a primary baseline** goes through
+`accept_run_results` and from there `ReferenceStore.accept_results` and
+`store_reference`: `run --accept`, `compare --accept`, the interactive
+review's `[a]`, and the tool's Accept (the Suite page's, the Test page's
+and the queue panel's are one capability). Soft-checks and companions are
+written by their own commands and are not thinned, as before.
+
+**Consequences.** `Config` and `TestModel` gain `baseline_points`; a
+primary reference JSON gains `sampling`. A long run's baseline is larger
+the next time it is accepted, and its `nrmse` is then an average over more
+points — the score of such a test can differ from the one its thinned
+baseline gave. A project that wants its baselines stored as before sets
+`"baseline_points": 2000`.
+
+**Addendum, 2026-10-12 — a baseline holds its run's own numbers.** A
+baseline accepted from a run must score exactly 0 against that run, and
+did not: `_to_json_list` wrote a float32 array at 7 significant digits,
+and a JSON reader makes a double of what it reads. On the 330 real runs —
+all single precision — 665 of the 873 scored criteria were non-zero
+against their own run: median 4.8e-8, 74 above 1e-6, the largest 6.28e-2
+(a signal of range 0.4 at a level of 130450, where the seventh digit is
+the signal). Three changes, in one place each:
+
+- a float32 array is written at **9** significant digits
+  (`reference_store.SINGLE_DIGITS`), the fewest that identify a float32;
+  float64 stays at 15;
+- `sampling` gains **`precision`**, always written: `"single"` when the
+  time vector and EVERY stored value array were float32, else `"double"`;
+- `reference_store.read_reference_file`, the one reader of a
+  reference-shape file (the store, the sibling-partition overlays,
+  `import-baseline`), takes each stored number of a `"single"` file back
+  through float32. The arrays stay lists of Python floats: each is the
+  run's own single-precision number, widened.
+
+A file without the field reads exactly as before — the same 873 scores,
+bit for bit, against the baselines stored before this. Measured after an
+accept of the 330: every one of the 873 criteria is exactly 0.0; verdicts
+unchanged (330 PASS, 1 SIM_FAIL); the reference directory goes from 24.7
+MB (every point, 7 digits) to 27.2 MB, its two largest files from 5.4 and
+5.2 MB to 5.8 and 5.5 MB — the same two files the 5 MB warning named; and
+`"baseline_points": 2000` keeps the same rows as before for all 330 (11
+of them thinned). Known limit: a run of mixed precision is `"double"`,
+and its single-precision arrays are then the doubles their 9 digits
+spell — within 1e-9 of the run, not equal to it. And a result with NO
+rows is refused at accept (`no rows to store`): it was stored as a
+baseline of no points.
+
+**Addendum, 2026-10-12 — a double-precision run's numbers too.** The
+addendum above left float64 "at 15", under a heading that said a
+baseline holds its run's own numbers: 15 digits do not identify a
+double, and a baseline of a float64 run (OpenModelica, FMPy, Julia,
+Python) scored 6.7e-10 against that run on the same kind of signal
+(range 0.4 at 130450). `DOUBLE_DIGITS` is 17, the fewest that
+round-trip every binary64; JSON writes each value at its shortest
+spelling, so a round number costs nothing. Measured on a scratch copy
+of each example, one simulation and two accepts: the OpenModelica
+partition of the Modelica example goes from 271,202 to 284,877 bytes
+(+5.0 %; eleven of its twelve stored tests by 0–4.6 %, `NoUnitTest`
++47 %), the Python example from 24,698 to 27,504 (+11.4 %; `SimpleRamp`
++43 %, its time grid being sums like `0.30000000000000004`). A
+`"double"` file stored before this holds 15 digits and reads as it did.
+The shipped example baselines were not accepted again for this (the
+Modelica example's `OpenModelica/linux` ones were, later that day, for
+their state count: D138's addendum).
+
+**Addendum, 2026-10-12 — the tool's Accept refuses over a spec changed on
+disk.** `baseline_points` is the entry's, and the tool's Accept wrote the
+baseline with the entry as the Session had LOADED it: an entry edited by
+hand from 50 to 77 while the tool was open was accepted at 50, with no
+word, where Save in the same state refused (`StaleSpecError`). Every
+store write a capability returns is now refused by the Session when the
+spec's hash is not the loaded one (`Session.apply`, the check Save makes):
+`<path> changed on disk since it was loaded; reload before accepting`,
+said in the dialog Save's refusal uses, with its Reload — from the
+Suite's bar, the Test page's strip and a queue row alike
+(`Header.stale`). The CLI's accepts read the file as they start and are
+not concerned.
+
+That dialog said the file had changed and offered `Reload` / `Keep my
+edits`: not that the Accept had NOT been done (its own dialog closes for
+this one), `Keep my edits` with no edit to keep, and nothing of the edits
+a Reload drops. It now reads the path's line, then `Nothing was
+accepted.` (`Nothing was saved.` for a Save); its Reload button is
+`Reload and discard 2 pending edits` while edits are pending — the
+header's count — and `Reload` beside `Close` when none are. And a Reload
+that cannot be done leaves the Session as it was (`Session.reload`): over
+a spec file DELETED under the tool it read the empty document and the
+Suite went empty; it now says `<path> is gone: nothing was reloaded — put
+the file back, then Reload`, the rows and the pending edits stay, and the
+same Reload goes through once the file is back. A file that is read and
+is no spec is refused with its own sentence, the same way.
+
+## D154 — What nothing reads is an error; an unscorable criterion is refused by the write that makes it (2026-10-12)
+
+**Context.** `test_spec.json` is written by hand as well as by the tool,
+and a key the scorer does not read was kept and ignored. A `range` leaf
+written `"max_val": 0.5` was accepted by `spec-update`, written to the
+file and scored as a range with no upper bound: PASS. The same hole took
+a point row's `tolerence`, a window's `strt`, a leaf's `agianst` (scored
+against the primary baseline), an entry's `simulaton` (a run on
+defaults), and — one level out — `{"Tests": [...]}` (a spec of no tests,
+exit 0), `"simulation": "stop_time=5"`, a `quantity` of `{"reduce":
+"max", "over": "x"}`, and a stored baseline's own override. The posture
+until then was the opposite one, on purpose: the exported schema left
+its objects open (the 2026-07-06 review's finding 72 wired the mode
+`$defs` in "with a lenient posture"), `docs/vision.md` said `spec-update`
+preserved unknown keys, and this log's Phase 6 notes count tests of
+"unknown-key preservation at every nesting level". This entry reverses
+it.
+
+**Decision.**
+
+1. *A key nothing reads is an error that names it* — `unknown field
+   "max_val" — did you mean "max_value"?`. ONE check
+   (`comparison/strict_keys.py`), and what is known is never listed in
+   it: it is read from what already says it — a metric's config dataclass
+   (its fields, and the `columns` of its row tables), the tree parser's
+   key tables, and `discovery/spec_shape.py`, the table `export-schema`
+   publishes. Checked: the file's root (`tests`, and `$schema` for an
+   editor); an entry's keys and its `simulation` / `comparison` blocks';
+   a flat override's and a leaf's; a table row's; a window's and a
+   combinator's; the keys inside a tolerance pair (`lower`, `upper`) and
+   inside the `quantity` object of a metric that declares one
+   (`reduce`); a `plots` entry's. A block that is no object where one is
+   read (`"simulation": "stop_time=5"`, `null`, `"variable_overrides":
+   [1]`, an override written `"x": "tube"`) is the same error — `metrics`
+   and a leaf's `window` among them: `"metrics": null` was a test scored
+   by the flat path and `"window": null` a leaf with no window, both
+   refused by the exported schema, and `spec-update` wrote the first. A
+   window's `start` / `end` is a number or is left out (`null` there was
+   a `TypeError` out of the parser). `tolerance`
+   is a key of every leaf and override; `quantity` on a metric that does
+   not declare it stays the one documented inert param.
+   `description` / `info` / `metadata` on an entry and on its
+   `comparison` block are the place for notes, so no other unread key has
+   to be tolerated to leave room for one.
+2. *A hint is offered only for a near miss of one field*
+   (`strict_keys.near_miss`): the same name in another case; else at most
+   two edits and at most one per three letters typed, with no other name
+   as near; else the start, three letters or more, of exactly one name
+   that is ONE word (`tol` → `tolerance`, `childs` → `children`).
+   Anything else lists the fields. A wrong hint sends the reader to the
+   wrong field: `start_time` was offered `stop_time`, and the first build
+   of the last rule — the start of any one name — offered `time_tolerance`
+   for `time`, `tube_width_mode` for `tube_width` and `baseline_points`
+   for `baseline`, three in about a hundred typos a review tried. A whole
+   word that begins a longer name is another thing's name, not a slip of
+   the longer one; `min` is no longer offered `min_value` either, since
+   nothing tells it from `time`.
+3. *Where it is refused.*
+   - **At parse** — `run`, `compare`, `discover` and `dstf author` (before
+     it serves): one `Config error: <file>: <place>: …` line, exit 2, the
+     path a malformed `metrics` tree already took. The same line for what
+     cannot be a test or a value: an entry of `tests` that is no object or
+     has no `model`, `variables` that is no list of strings, a `source`
+     that is no string, a `simulation` value of another type than
+     `spec_shape.SIMULATION` gives its key (`null` stays "not set") — each
+     was a warning and a test skipped or run on defaults, and
+     `"variables": [1]` a traceback at the compare.
+   - **At the file** — a `test_spec.json` that is no UTF-8 text, no JSON,
+     empty, or whose root cannot hold a `tests` list has ONE decoder
+     (`spec_parser.spec_document_from_bytes`) that every reader comes
+     through: discovery, `spec-update`, the `add` helpers,
+     `migrate-variable-names` and the tool's Session. `Config error:
+     <file>: not JSON (…)`, exit 2, from each of them; `discover` / `run`
+     / `compare` used to log `Failed to read test spec` and go on with a
+     spec of no tests, and a UTF-16 or binary file was a traceback out of
+     every command but `dstf author`. A missing file, `{}` and `{"tests":
+     []}` are a spec of no tests.
+   - **For a stored baseline** — the `variable_overrides` a reference
+     JSON keeps are merged under the spec's, so each goes through the
+     override check: one decision (`comparator.stored_override_problem`),
+     a sentence naming the reference file, with two readers. A command
+     that scores stops on it before it does anything else — the same
+     `Config error`, exit 2, from `run` BEFORE it simulates (the
+     reference files are there at discovery; the first build found it at
+     the compare, after every simulation, and left no verdict) and from
+     `compare` before it wipes or stamps; each for the baselines it will
+     compare against (a `--filter`'s tests, every discovered test under
+     `--merge` / `--rerun`), and an `--accept`, which compares nothing,
+     is not stopped. A comparison of ONE test (`compare_one`) refuses
+     that test with the sentence: `dstf author` opens, shows that test
+     FAIL with `Not scored: <reference file>: comparison.
+     variable_overrides[x]: range · x: unknown field "max_val" — did you
+     mean "max_value"?` where it would name a failing criterion, and
+     scores every other test.
+   - **At a file write** — `spec-update` (`Patch failed: …`, exit 1, the
+     file untouched) and the tool's Save, both through
+     `spec_update.apply_validated_patches`.
+   - **At a stage** — the tool's in-memory `Session.stage` refuses an
+     unknown key at once, with the sentence alone.
+4. *A criterion that can never be scored* — a `range` with neither bound,
+   a `scalar` with no `quantity`, a tolerance that is no number or pair —
+   has every key right and fails at every compare. The rule for it is the
+   DELTA rule, in one place (`spec_update.refuse_newly_unscorable`),
+   applied where a file is written: **a write is refused only for a
+   criterion that is unscorable after the patch and was not already
+   there, with the same content, before it.** "Already there" is said of
+   the criterion, followed through the patch (the ops are replayed over a
+   marked copy of the entry): one that is still the object it was, with
+   the content it had — the metric, variable, baseline, window and params
+   — is the one that was there, wherever a sibling's removal has shifted
+   it. Any other unscorable criterion — one the patch added or wrote over
+   — is the one that was there only if an equal one of the entry is GONE
+   from the criteria that score: a move (a remove and an add), a leaf
+   wrapped in a group, a flat entry's implicit tree written out over its
+   override. So an entry that already holds one takes every
+   other edit, the edit that fills it and the edit that removes it; two of
+   them do not block each other; a patch that adds one, or edits one and
+   leaves it unscorable, is refused. The second build COUNTED by content
+   and nothing else: a patch that filled the bare `range` an entry held
+   and added an equal bare one beside it was written — one before, one
+   after. The first build refused EVERY
+   unscorable criterion of the patched entry, at every patch and every
+   stage: an entry holding one took no edit at all — not the fix — and the
+   tool could no longer add a bare `range` for its editor to fill.
+5. *The tool stages an unscorable criterion and Save refuses it.* A stage
+   is not a write: the leaf is staged, its row says why it is not scored
+   (`metric 'range' misconfigured: needs at least one of min_value /
+   max_value`), and Save refuses in the dialog its stale-file refusal
+   uses, with one sentence — `range · pipe.T[1]: needs at least one of
+   min_value / max_value — fill it or remove it before saving`
+   (`Session.save` → `UnscorableSaveError`); nothing is written and every
+   edit stays pending.
+
+**What is deliberately NOT checked.**
+
+- A flat `comparison.variable_overrides` entry under a `metrics` tree is
+  not checked for scorability: the tree replaces the overrides there, they
+  score nothing, and the tool itself leaves them beside the tree it
+  writes out. Its keys are still checked. Remove the tree and such an
+  override scores again — that patch is then the write that makes it.
+- A metric whose `config_cls` is not a dataclass, and a `metric` / `mode`
+  name nothing is registered under: nothing says what such a metric
+  reads, so nothing is refused for it here (the parser and the flat path
+  each say an unknown name themselves).
+- `quantity` on a metric that does not declare it: of any shape, read by
+  nothing, by the documented contract (`docs/extensibility.md`).
+- An unscorable criterion already in a file is not refused at parse: the
+  test is compared, and that criterion fails with its reason, as before.
+- A value an editor of the tool refuses to stage (a negative tolerance,
+  bounds out of order: `authoring/unscorable.py`) is the editor's rule and
+  not the parser's: a spec written by hand that holds one is read and
+  scored as it always was.
+- `testing.json`'s own keys are not part of this entry.
+
+**Known limits.** The exported schema closes the root, the entry, its
+blocks, every mode and override def, a table's rows, a pair and a
+scalar's `quantity`; a pair written inside a table ROW's cell is refused
+by the parser and not by the schema (a row's cells are untyped there).
+The delta rule compares content: a patch that rewrites an unscorable
+criterion into a different unscorable one is refused, and one that
+reorders the keys of an untouched one is not. A criterion taken out
+stands for an equal one put in, anywhere in the entry: a patch that
+removes one bare `range` and adds an equal one on the same variable
+elsewhere is a move, whatever its author meant. A reference JSON's stored
+override with an unknown key stops a whole `run` or `compare`, not that
+test alone — it is a file to repair, and no accept repairs it (an accept
+keeps the stored overrides it does not replace); the tool, which has no
+exit code to give, refuses that test alone. `spec-update` checks
+the file and the entry it patches, not the other entries: a patch of one
+test is written into a file whose other entry is no object.
+
+**Consequences.** A `test_spec.json` or a reference JSON holding a key
+nothing reads no longer loads: it is named, and the command exits 2.
+The low-level patch applier (`discovery/patch_apply.py`) still carries
+whatever an entry holds through a patch — it is `apply_validated_patches`
+above it that refuses the result. `export-schema` is as strict as the
+parser wherever it types a value, so a file that validates there is not
+stopped for a key.
+
+## D155 — One act is one pending edit (2026-10-12)
+
+**Context.** The tool counted pending OPS: the header's "N pending edits",
+Save's caption, Discard's, the Suite's Edits cell, the Tests drawer's mark,
+the strip's "N unsaved edits", the preview's "N edits", the Queue caption's
+"with N unsaved edits" and the refusal to close a project. A test with no
+`metrics` tree has that tree written out under its first per-criterion
+edit, so ONE Ctrl+click on a `points` criterion's plot of the shipped
+example read `2 pending edits` and `2 unsaved edits · verdict stays PASS`
+(a first-time user's finding, reproduced in a browser). D139's controller
+call had said so on purpose ("N unsaved edits" counts ops, so the first
+criterion edit on a flat test reads 2), and D152 §9 kept it for a fold's
+gesture ("On a FLAT test it counts 2").
+
+**Decision.** What is counted is what the user did. `Session.stage`
+numbers its calls, and every op of one call carries the number
+(`PatchOp.gesture`: no part of the op — not in `raw()`, not in its
+equality — like `materializes` and `notes`). `spec_document.edit_counts`
+is the ONE count, by entry: the distinct numbers among its pending ops;
+every surface named above reads it. An op that supersedes the last one
+(the collapse rules of D134's `Session.stage`) keeps the number of the op
+it replaces: a value typed over is the edit it was. An op nothing staged
+counts as itself.
+
+What the header reads, each on a test with no `metrics` in the file, where
+the act takes two ops or more (executed: `test_each_act_on_a_flat_tests_
+tree_is_one_pending_edit`, `TestOneStageIsOneEdit`, the family pages, and
+a real Ctrl+click in Chromium):
+
+| act | ops | header |
+|---|---|---|
+| a tolerance typed; a handle dragged; a Ctrl+click that adds a row | 2 | 1 pending edit |
+| the same field typed over, a second row clicked into the same table | 2 | 1 (it replaces the last op) |
+| a criterion added | 2 | 1 |
+| Add over twenty Indices | 2 (the tree, given whole) | 1 |
+| a folded row's field changed; its Indices edited | 2 | 1 |
+| a criterion wrapped, then unwrapped in place | 3 | 1 for the wrap; the unwrap rewrites the same node and stays that edit |
+| a move | +1 (the tree, given whole) | +1; a second move right after replaces it |
+| the edit put back | 0 | 0 pending edits |
+| one act over two tests | n | 1 of each test |
+
+**What it reverses.** D139's "counts ops" and D152 §9's "On a FLAT test
+it counts 2": both read 1 now. The preview's note "Save also writes this
+test's N criteria out as a tree" is unchanged and is what says the second
+op is there.
+
+**Consequences.** `Export N edits to spec_patch.json` counts edits; the
+envelope it writes holds the ops, which can be more. `PendingEditsError.
+count` is edits. A plug-in capability's `Patch(ops=[...])` is one edit,
+however many ops it returns. Two Ctrl+clicks that add two rows to one
+table are ONE pending edit — the table's — because the second lands on
+the path of the first; that is the collapse rule's reading of "the same
+field", not this entry's.
+
+**Addendum, 2026-10-12 — what the collapse rule makes of two acts, and a
+rescore that is none.** The count is of acts only up to the collapse
+rule, which folds an op into the LAST pending one when it lands on its
+path — and an editor writes its criterion whole, at the criterion's path.
+Two readings follow, each executed
+(`TestOneStageIsOneEdit`):
+
+- *Two acts on one criterion in a row read 1.* A tolerance typed, then a
+  window set on the same criterion: the second op replaces the first, and
+  the header reads `1 pending edit` — the criterion's.
+- *A criterion revisited after another is its own edit.* Criterion 0,
+  criterion 1, criterion 0 again read 3, since only the last op is
+  superseded; criterion 0 put back as saved lands on the third and the
+  count stays 3 while only criterion 1 differs from the file. Put that
+  back too and the entry is as saved: 0.
+
+Both are the rule's and stay: the preview's diff is what says what Save
+writes, whatever the number. One count was wrong: `Session.rescore` —
+`SessionView.rescore`, a capability's call — stages a flat test's tree,
+and that op STAYS where a pending op edited the overrides the tree is
+built from. It was staged as a call of its own, so one override staged
+and a rescore read `2 pending edits`. The tree is part of the edit that
+made it necessary (`Session.stage(part_of=…)`: the number of the test's
+last pending op): 1.
+

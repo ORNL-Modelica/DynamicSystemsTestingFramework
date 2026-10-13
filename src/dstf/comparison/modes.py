@@ -9,6 +9,7 @@ Modes:
     TubeMode   — tolerance tube envelope around reference trajectory
     PointsMode — compare values at declared time points (or the final value
                  when no points are declared)
+    ScalarMode — score one number: a series reduction or a stored statistic
 """
 
 from __future__ import annotations
@@ -19,15 +20,26 @@ from typing import Literal
 
 import numpy as np
 
+from .algorithms import (
+    SCALAR_REDUCTIONS,
+    _event_tolerances,
+    _peak_tolerance,
+    _point_tolerances,
+)
 from .comparator import (
     VariableComparison,
     _compare_dominant_frequency,
     _compare_event_timing,
     _compare_points,
     _compare_range,
+    _compare_scalar,
     _compare_trajectories,
     _compare_tube,
 )
+from .registry import DEFAULT_METRIC, DEFAULT_POINTS_METRIC
+from .registry import metric as registry_metric
+from .registry import metrics as registered_metrics
+from .sides import Sides, parse_sides
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -97,8 +109,8 @@ class TubeConfig:
 
     Mirrors the fields previously scattered as arbitrary keys in the
     variable_overrides dict, but with types enforced. The tightened
-    `Literal[...]` choices feed the reporter's auto-derived UI
-    (reporting/ui/mode_controls.py).
+    `Literal[...]` choices feed the auto-derived UI schema
+    (comparison/mode_schema.py).
     """
 
     tube_width_mode: Literal["band", "rel", "abs"] | None = field(
@@ -114,15 +126,15 @@ class TubeConfig:
             ),
         },
     )
-    tube_abs: float = field(
-        default=0.0,
+    tube_abs: Sides = field(
+        default=Sides(0.0, 0.0),
         metadata={
             "label": "Tube abs",
             "help": "Absolute offset from reference (used when width_mode='band').",
         },
     )
-    tube_rel: float = field(
-        default=0.0,
+    tube_rel: Sides = field(
+        default=Sides(0.0, 0.0),
         metadata={
             "label": "Tube rel",
             "help": "Fractional offset from |reference| (e.g. 0.02 = 2%).",
@@ -140,9 +152,15 @@ class TubeConfig:
         metadata={
             "label": "Control points",
             "help": (
-                "Time-varying tube defined by control points. Edit via the "
-                "rich tube editor below the plot."
+                "Time-varying tube defined by control points. Edit on the "
+                "authoring tool's Edit on plot tab: drag a handle, or edit "
+                "the table."
             ),
+            # Row keys as ``_interpolate_tube_widths`` reads them: ``time``
+            # indexed, each width ``.get`` with a 0 default. A row with
+            # neither reads 0/0 and pinches the tube there; the reader
+            # refuses only a list in which NO row has a width.
+            "columns": (("time", "float"), ("upper", "float?"), ("lower", "float?")),
         },
     )
     tube_interpolation: Literal["linear", "constant"] = field(
@@ -158,10 +176,13 @@ class TubeConfig:
         d: dict = {}
         if self.tube_width_mode is not None:
             d["tube_width_mode"] = self.tube_width_mode
-        if self.tube_abs:
-            d["tube_abs"] = self.tube_abs
-        if self.tube_rel:
-            d["tube_rel"] = self.tube_rel
+        for key in ("tube_abs", "tube_rel"):
+            # A config built with a number holds the number: both sides. A
+            # dataclass is always truthy, so "no width" is said: zero on
+            # both sides — one zero side is a width.
+            sides = parse_sides(getattr(self, key), key)
+            if sides != Sides(0.0, 0.0):
+                d[key] = sides
         if self.tube_min_width:
             d["tube_min_width"] = self.tube_min_width
         if self.tube_points is not None:
@@ -190,13 +211,25 @@ class PointsConfig:
                 "Optional list of (time, value, tolerance, "
                 "tolerance_mode, time_tolerance) checkpoints. When None "
                 "or empty, the mode falls back to final-value comparison "
-                "with the global ``tolerance``. Authored via the table "
-                "editor in the interactive HTML reporter."
+                "with the global ``tolerance``. Edit on the authoring "
+                "tool's Edit on plot tab: drag a handle, or edit the table."
+            ),
+            # As ``_compare_points`` reads them, all with ``.get``: a blank
+            # ``time`` is the documented trace-end sentinel (``time: null``),
+            # a blank ``value`` follows the baseline. A ``sides?`` cell is a
+            # number or a lower/upper pair; a time tolerance's two sides are
+            # how much earlier and how much later.
+            "columns": (
+                ("time", "float?"),
+                ("value", "float?"),
+                ("tolerance", "sides?"),
+                ("tolerance_mode", ("abs", "rel")),
+                ("time_tolerance", "sides?", ("before", "after")),
             ),
         },
     )
-    tolerance: float = field(
-        default=1e-4,
+    tolerance: Sides = field(
+        default=Sides(1e-4, 1e-4),
         metadata={
             "label": "Default tolerance",
             "help": (
@@ -246,13 +279,15 @@ class EventTimingConfig:
     instants are auto-detected from duplicate-time samples (Modelica
     convention) and paired by index. When ``events`` is provided, the
     declared list becomes the authoritative reference-side event set —
-    the actual signal is still auto-detected, but each declared event
-    must find a nearest actual event within its own tolerance window.
-    Mirrors the dominant-frequency declared-peaks semantics (D75).
+    the actual signal is still auto-detected, and declared events claim
+    distinct actual events by optimal interval matching (windows sorted
+    by right endpoint, smallest unclaimed actual wins — see
+    ``algorithms._compare_event_timing``); an unclaimed declared event
+    fails. Mirrors the dominant-frequency declared-peaks semantics (D75).
     """
 
-    time_tolerance: float = field(
-        default=1e-3,
+    time_tolerance: Sides = field(
+        default=Sides(1e-3, 1e-3),
         metadata={
             "label": "Time tolerance (s)",
             "help": (
@@ -260,6 +295,7 @@ class EventTimingConfig:
                 "events. Per-event overrides in the declared ``events`` "
                 "list take precedence when present."
             ),
+            "side_labels": ("early", "late"),
         },
     )
     count_must_match: bool = field(
@@ -282,8 +318,12 @@ class EventTimingConfig:
                 "(seconds) and an optional ``tolerance`` (seconds; falls "
                 "back to the leaf's ``time_tolerance`` if omitted). When "
                 "None, events are auto-detected from duplicate-time samples "
-                "in ``ref_time``. Authored via the table editor in the "
-                "interactive HTML reporter."
+                "in ``ref_time``. Edit the table on the authoring tool's "
+                "Edit on plot tab."
+            ),
+            "columns": (
+                ("time", "float"),
+                ("tolerance", "sides?", ("early", "late")),
             ),
         },
     )
@@ -294,13 +334,15 @@ class DominantFrequencyConfig:
     """Configuration for dominant-frequency declared-peaks comparison (D75).
 
     Each entry in ``peaks`` is a dict:
-        {"freq": float, "tolerance": float, "tolerance_mode": "rel"|"abs"}
+        {"freq": float, "tolerance": float | {"lower": float, "upper": float},
+         "tolerance_mode": "rel"|"abs"}
 
     The algorithm finds the strongest local maximum in the *actual*
     spectrum within each declared peak's tolerance window; the leaf
-    passes iff every declared peak has such a match. The reporter
-    surfaces a table editor + a "Detect peaks from reference" button
-    that bootstraps the list from the reference spectrum's top-N peaks.
+    passes iff every declared peak has such a match. A leaf with no
+    declared peaks fails and reports the reference spectrum's top-N
+    peaks as the ``detected_reference_peaks_hz`` diagnostic, which is
+    what an author declares the list from.
     """
 
     peaks: list[dict] | None = field(
@@ -310,9 +352,109 @@ class DominantFrequencyConfig:
             "help": (
                 "Declared peaks to track. Each entry has a frequency, a "
                 "tolerance, and a tolerance mode ('rel' = fractional, "
-                "'abs' = Hz). Authored via the table editor; use 'Detect "
-                "peaks from reference' on a fresh test to seed values from "
-                "the reference spectrum's top peaks."
+                "'abs' = Hz). Edit on the authoring tool's Edit on plot "
+                "tab: drag a handle, or edit the table."
+            ),
+            # ``freq`` stays required although ``_compare_dominant_frequency``
+            # reads it with ``.get``: a peak without a frequency is
+            # meaningless. The reader defaults ``tolerance_mode`` to "rel".
+            "columns": (
+                ("freq", "float"),
+                ("tolerance", "sides?"),
+                ("tolerance_mode", ("rel", "abs")),
+            ),
+        },
+    )
+
+
+#: The keys a ``quantity`` OBJECT may hold — one of them — on a metric whose
+#: config declares the field (``ScalarConfig``). ``expr`` is reserved: named
+#: here so it is refused as "not implemented", not as a misspelling.
+QUANTITY_KEYS = ("reduce", "expr")
+
+
+@dataclass(frozen=True)
+class ScalarConfig:
+    """Configuration for scalar comparison — one number, not a trajectory.
+
+    ``quantity`` says *which* number, in one of two v1 shapes:
+
+    * ``{"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|"integral"}`` —
+      reduce the leaf's tracked ``variable`` (after the leaf window) on both
+      sides. ``integral`` is the trapezoid rule over the windowed series and
+      ``mean`` is that integral over the time span — time-weighted, so a
+      finer output grid doesn't move the score; ``sample_mean`` is the plain
+      arithmetic mean of the samples, which does move with the grid.
+    * ``"<dotted.path>"`` — a stored scalar: a dotted lookup into the run's
+      ``statistics``, falling back to a diagnostics summary field
+      (``"CPUtime.final"``). Resolved by
+      :func:`~.tree_eval.resolve_scalar_path`; the leaf window does not
+      apply because a stored scalar is not a time series.
+
+    The object shape is what keeps the field extensible: a later
+    ``{"expr": ...}`` quantity slots in as a third shape without breaking
+    either of the above. It is deliberately NOT implemented in v1 — there
+    is no expression evaluator here.
+
+    Declaring ``min_value`` and/or ``max_value`` switches the leaf to the
+    baseline-free bounds form; otherwise the scalar is compared against the
+    same quantity taken from the baseline.
+    """
+
+    quantity: str | dict | None = field(
+        default=None,
+        metadata={
+            "label": "Quantity",
+            "help": (
+                "Which number to score: a reduction of the leaf's variable "
+                '({"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|'
+                "\"integral\"} — 'mean' is time-weighted, i.e. the integral "
+                "over the time span, so it doesn't move with the output grid, "
+                "while 'sample_mean' is the arithmetic mean of the samples), "
+                'or a dotted statistics / diagnostics path ("CPUtime.final", '
+                '"translation.scalar_unknowns"). Edited as raw JSON.'
+            ),
+        },
+    )
+    tolerance: Sides = field(
+        default=Sides(1e-4, 1e-4),
+        metadata={
+            "label": "Tolerance",
+            "help": (
+                "Pass iff the deviation from the baseline scalar stays below "
+                "this value (absolute or relative — see tolerance mode). "
+                "Ignored when bounds are declared."
+            ),
+        },
+    )
+    tolerance_mode: Literal["abs", "rel"] = field(
+        default="abs",
+        metadata={
+            "label": "Tolerance mode",
+            "help": (
+                "'abs' = |actual - reference| <= tolerance; 'rel' = "
+                "|actual - reference| <= tolerance * |reference|, falling "
+                "back to the absolute test when the reference is 0."
+            ),
+        },
+    )
+    min_value: float | None = field(
+        default=None,
+        metadata={
+            "label": "Lower bound (optional)",
+            "help": (
+                "Declaring a bound switches the leaf to a baseline-free "
+                "check: the scalar must not fall below this value."
+            ),
+        },
+    )
+    max_value: float | None = field(
+        default=None,
+        metadata={
+            "label": "Upper bound (optional)",
+            "help": (
+                "Declaring a bound switches the leaf to a baseline-free "
+                "check: the scalar must not exceed this value."
             ),
         },
     )
@@ -372,6 +514,12 @@ class PointsMode(ComparisonMode):
 
     def __init__(self, config: PointsConfig):
         self.config = config
+        # A config built with a number (a seed's, a test's) is both sides.
+        self.tolerance = parse_sides(config.tolerance, "tolerance")
+        # The rows' tolerances are read here as well as in ``compare``: a
+        # malformed one must be a ``ValueError`` where ``resolve_mode``'s
+        # callers catch it — out of ``compare`` the flat path catches nothing.
+        _point_tolerances(config.points, self.tolerance)
 
     @property
     def name(self) -> str:
@@ -384,7 +532,7 @@ class PointsMode(ComparisonMode):
             act_time,
             act_values,
             points=self.config.points,
-            tolerance=self.config.tolerance,
+            tolerance=self.tolerance,
         )
 
     def is_baseline_free(self) -> bool:
@@ -404,6 +552,10 @@ class EventTimingMode(ComparisonMode):
 
     def __init__(self, config: EventTimingConfig):
         self.config = config
+        self.time_tolerance = parse_sides(config.time_tolerance, "time_tolerance")
+        # As ``PointsMode`` reads its rows: here, where a ``ValueError`` is
+        # the leaf's config error on both scoring paths.
+        _event_tolerances(config.events, self.time_tolerance)
 
     @property
     def name(self) -> str:
@@ -413,7 +565,7 @@ class EventTimingMode(ComparisonMode):
         return _compare_event_timing(
             ref_time,
             act_time,
-            time_tolerance=self.config.time_tolerance,
+            time_tolerance=self.time_tolerance,
             count_must_match=self.config.count_must_match,
             declared_events=self.config.events,
         )
@@ -430,6 +582,10 @@ class DominantFrequencyMode(ComparisonMode):
 
     def __init__(self, config: DominantFrequencyConfig):
         self.config = config
+        # As ``PointsMode`` reads its rows: here, where a ``ValueError`` is
+        # the leaf's config error on both scoring paths.
+        for i, declared in enumerate(config.peaks or []):
+            _peak_tolerance(declared, i)
 
     @property
     def name(self) -> str:
@@ -462,9 +618,7 @@ class RangeMode(ComparisonMode):
 
     def __init__(self, config: RangeConfig):
         if config.min_value is None and config.max_value is None:
-            raise ValueError(
-                "RangeConfig requires at least one of min_value / max_value"
-            )
+            raise ValueError("needs at least one of min_value / max_value")
         self.config = config
 
     @property
@@ -485,10 +639,102 @@ class RangeMode(ComparisonMode):
         return True
 
 
+class ScalarMode(ComparisonMode):
+    """Score a single number against a baseline scalar or declared bounds.
+
+    The reduction applies to whatever arrays the evaluator supplies: a
+    windowed trajectory for the ``{"reduce": ...}`` quantity, or the
+    1-sample arrays it builds for a stats-path quantity (which is why the
+    reduction defaults to ``"final"``).
+    """
+
+    def __init__(self, config: ScalarConfig):
+        _validate_scalar_config(config)
+        self.config = config
+        self.tolerance = parse_sides(config.tolerance, "tolerance")
+        quantity = config.quantity
+        self.reduction = quantity["reduce"] if isinstance(quantity, dict) else "final"
+
+    @property
+    def name(self) -> str:
+        return "scalar"
+
+    def compare(self, ref_time, ref_values, act_time, act_values):
+        return _compare_scalar(
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
+            reduction=self.reduction,
+            tolerance=self.tolerance,
+            tolerance_mode=self.config.tolerance_mode,
+            min_value=self.config.min_value,
+            max_value=self.config.max_value,
+        )
+
+    def is_baseline_free(self) -> bool:
+        # Declared bounds are scored against the actual scalar alone; the
+        # baseline form needs the same quantity from a reference.
+        return self.config.min_value is not None or self.config.max_value is not None
+
+
+def _validate_scalar_config(config: ScalarConfig) -> None:
+    """Reject a scalar leaf that can't be scored, loudly and at build time.
+
+    Same error type the other modes raise (``ValueError`` from
+    ``RangeMode.__init__``), so ``resolve_mode``'s callers keep one
+    failure path.
+    """
+    quantity = config.quantity
+    if quantity is None or quantity == "":
+        raise ValueError(
+            "needs a 'quantity': a dotted statistics path or "
+            '{"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|"integral"}'
+        )
+    if not isinstance(quantity, str):
+        if not isinstance(quantity, dict):
+            raise ValueError(
+                f"ScalarConfig quantity must be a string path or an object, "
+                f"got {type(quantity).__name__}"
+            )
+        shapes = [k for k in QUANTITY_KEYS if k in quantity]
+        if len(shapes) != 1:
+            raise ValueError(
+                f"ScalarConfig quantity object must declare exactly one of "
+                f"'reduce' / 'expr'; got {sorted(quantity)}"
+            )
+        if "expr" in quantity:
+            raise ValueError(
+                "ScalarConfig quantity {'expr': ...} is not implemented — v1 "
+                "takes a reduction or a statistics path"
+            )
+        if quantity["reduce"] not in SCALAR_REDUCTIONS:
+            raise ValueError(
+                f"ScalarConfig quantity reduce must be one of "
+                f"{list(SCALAR_REDUCTIONS)}; got {quantity['reduce']!r}"
+            )
+    if config.tolerance_mode not in ("abs", "rel"):
+        raise ValueError(
+            f"ScalarConfig tolerance_mode must be 'abs' or 'rel', "
+            f"got {config.tolerance_mode!r}"
+        )
+    if (
+        config.min_value is not None
+        and config.max_value is not None
+        and config.min_value >= config.max_value
+    ):
+        raise ValueError(
+            f"ScalarConfig min_value ({config.min_value}) must be below "
+            f"max_value ({config.max_value})"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Factory: resolve override dict → ComparisonMode
 # ---------------------------------------------------------------------------
 
+#: Keys :func:`registry` builders lift out of a flat override dict into
+#: :class:`TubeConfig`. Lives here next to the dataclass it mirrors.
 _TUBE_KEYS = frozenset(
     {
         "tube_width_mode",
@@ -501,9 +747,19 @@ _TUBE_KEYS = frozenset(
 )
 
 
+def override_metric(var_override: dict, default_points: bool = False) -> str:
+    """The name of the metric a flat override is scored by: its ``mode``,
+    else the default — ``points`` under ``default_points``, ``nrmse``
+    otherwise. Whatever was written, registered or not: :func:`resolve_mode`
+    refuses a name nothing is registered under."""
+    return var_override.get("mode", "") or (
+        DEFAULT_POINTS_METRIC if default_points else DEFAULT_METRIC
+    )
+
+
 def resolve_mode(
     var_override: dict,
-    tolerance: float,
+    tolerance: Sides | float,
     default_points: bool = False,
 ) -> ComparisonMode:
     """Build the appropriate ComparisonMode from a per-variable override dict.
@@ -514,64 +770,19 @@ def resolve_mode(
        with points=None (implicit final-value check).
     3. Otherwise → NrmseMode (legacy default).
 
-    Recognized mode strings:
-      "points"             → PointsMode (canonical)
-      "tube"               → TubeMode
-      "range"              → RangeMode
-      "event-timing"       → EventTimingMode
-      "dominant-frequency" → DominantFrequencyMode
+    The mode names and their construction come from
+    :mod:`dstf.comparison.registry`, so a third-party metric registered via
+    ``register_metric`` resolves here without touching this function.
     """
-    mode_name = var_override.get("mode", "")
-
-    if mode_name == "tube":
-        tube_kwargs = {k: var_override[k] for k in _TUBE_KEYS if k in var_override}
-        return TubeMode(TubeConfig(**tube_kwargs))
-
-    if mode_name == "range":
-        # Accept both the canonical ``min_value`` / ``max_value`` (matches
-        # the ``RangeConfig`` dataclass field, the auto-derive UI, and
-        # MetricTree leaf params) and the shorthand ``min`` / ``max`` kept
-        # for compatibility with early-phase specs. The canonical form wins
-        # if both are present.
-        return RangeMode(
-            RangeConfig(
-                min_value=var_override.get("min_value", var_override.get("min")),
-                max_value=var_override.get("max_value", var_override.get("max")),
-            )
-        )
-
-    if mode_name == "event-timing":
-        return EventTimingMode(
-            EventTimingConfig(
-                time_tolerance=var_override.get("time_tolerance", 1e-3),
-                count_must_match=var_override.get("count_must_match", True),
-                events=var_override.get("events"),
-            )
-        )
-
-    if mode_name == "dominant-frequency":
-        return DominantFrequencyMode(
-            DominantFrequencyConfig(
-                peaks=var_override.get("peaks"),
-            )
-        )
-
-    if mode_name == "points" or (not mode_name and default_points):
-        return PointsMode(
-            PointsConfig(
-                points=var_override.get("points"),
-                tolerance=tolerance,
-            )
-        )
-
-    if mode_name and mode_name != "nrmse":
+    mode_name = override_metric(var_override, default_points)
+    desc = registry_metric(mode_name)
+    if desc is None:
         # An unrecognized mode must be loud. Silently defaulting to NRMSE
         # changed the scoring algorithm on a typo ("Tube" vs "tube") with
         # no diagnostic (review 2026-07-06).
-        raise ValueError(
-            f"unknown comparison mode {mode_name!r}; valid: "
-            "nrmse, tube, points, range, event-timing, dominant-frequency"
-        )
+        valid = ", ".join(d.name for d in registered_metrics())
+        raise ValueError(f"unknown comparison mode {mode_name!r}; valid: {valid}")
 
-    # Default: NRMSE
-    return NrmseMode(NrmseConfig(tolerance=tolerance))
+    # A number (a caller with the base in hand) is both sides.
+    tolerance = parse_sides(tolerance, "tolerance")
+    return desc.build(var_override, tolerance)

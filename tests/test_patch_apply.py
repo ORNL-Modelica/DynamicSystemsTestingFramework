@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from dstf.config import ConfigError
 from dstf.discovery.patch_apply import PatchError, apply_patch
 
 
@@ -367,7 +368,7 @@ class TestWholesaleMetricsReplace:
             "combinator": "and",
             "children": [
                 {"metric": "nrmse", "variable": "y"},
-                {"metric": "range", "variable": "y", "min": -1, "max": 1},
+                {"metric": "range", "variable": "y", "min_value": -1, "max_value": 1},
             ],
         }
         apply_patch(
@@ -563,19 +564,20 @@ class TestRejectionEdges:
     def test_corrupt_json_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text("{not json", encoding="utf-8")
-        with pytest.raises(PatchError, match="cannot read"):
+        with pytest.raises(ConfigError, match=r"spec\.json: not JSON \("):
             apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+        assert spec.read_text(encoding="utf-8") == "{not json"
 
     def test_root_not_object_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text("[1, 2, 3]", encoding="utf-8")
-        with pytest.raises(PatchError, match="root must be an object"):
+        with pytest.raises(ConfigError, match=r"spec\.json: must be an object, got"):
             apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
 
     def test_tests_not_list_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text('{"tests": {}}', encoding="utf-8")
-        with pytest.raises(PatchError, match="'tests' must be a list"):
+        with pytest.raises(ConfigError, match=r"spec\.json: tests: must be a list"):
             apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
 
     def test_pointer_must_start_with_slash(self, tmp_path):
@@ -631,3 +633,222 @@ class TestRejectionEdges:
                 "M",
                 [{"op": "replace", "path": "/comparison/a/-", "value": 0}],
             )
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_discovery.py — regression tests for
+# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+#
+# Finding 49: RFC 6902 `add` at an existing array index INSERTS; index == len
+# appends; index > len raises PatchError; auto-creating a dict parent where
+# the next token is an array index raises PatchError (no silent corruption).
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 49 — RFC 6902 array `add` semantics
+# ---------------------------------------------------------------------------
+
+
+class TestFinding49ArrayAdd:
+    def _spec(self, tmp_path) -> Path:
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {
+                            "model": "M",
+                            "metrics": {
+                                "combinator": "and",
+                                "children": [
+                                    {"metric": "nrmse", "variable": "x"},
+                                    {"metric": "nrmse", "variable": "y"},
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return spec_path
+
+    def test_add_at_existing_index_inserts(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        new_leaf = {"metric": "range", "variable": "z"}
+        apply_patch(
+            spec_path,
+            "M",
+            [{"op": "add", "path": "/metrics/children/1", "value": new_leaf}],
+        )
+        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
+            "metrics"
+        ]["children"]
+        assert [c["variable"] for c in children] == ["x", "z", "y"]
+
+    def test_add_dash_appends(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        apply_patch(
+            spec_path,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/children/-",
+                    "value": {"metric": "nrmse", "variable": "z"},
+                }
+            ],
+        )
+        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
+            "metrics"
+        ]["children"]
+        assert [c["variable"] for c in children] == ["x", "y", "z"]
+
+    def test_add_at_len_appends(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        apply_patch(
+            spec_path,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/children/2",
+                    "value": {"metric": "nrmse", "variable": "z"},
+                }
+            ],
+        )
+        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
+            "metrics"
+        ]["children"]
+        assert [c["variable"] for c in children] == ["x", "y", "z"]
+
+    def test_add_beyond_len_raises_patch_error(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        with pytest.raises(PatchError, match="out of range"):
+            apply_patch(
+                spec_path,
+                "M",
+                [
+                    {
+                        "op": "add",
+                        "path": "/metrics/children/9",
+                        "value": {"metric": "nrmse", "variable": "z"},
+                    }
+                ],
+            )
+
+    def test_add_refuses_dict_autocreate_for_array_index(self, tmp_path):
+        """A per-leaf patch against a test with no metrics tree must fail
+        loudly instead of silently creating {"children": {"0": ...}}."""
+        spec_path = tmp_path / "spec.json"
+        original = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
+        spec_path.write_text(json.dumps(original), encoding="utf-8")
+        with pytest.raises(PatchError, match="array index"):
+            apply_patch(
+                spec_path,
+                "M",
+                [
+                    {
+                        "op": "add",
+                        "path": "/metrics/children/0/tolerance",
+                        "value": 0.01,
+                    }
+                ],
+            )
+        # Nothing was written — the spec is not corrupted.
+        assert json.loads(spec_path.read_text(encoding="utf-8")) == original
+
+
+def test_plots_is_a_whitelisted_subtree():
+    from dstf.discovery.patch_apply import apply_patch_to_document
+
+    data = {"tests": [{"model": "M", "variables": ["x"]}]}
+    extras = [{"var": "x", "context": []}]
+    apply_patch_to_document(
+        data, "M", [{"op": "add", "path": "/plots", "value": extras}]
+    )
+    apply_patch_to_document(
+        data, "M", [{"op": "add", "path": "/plots/0/context/-", "value": "y"}]
+    )
+    assert data["tests"][0]["plots"] == [{"var": "x", "context": ["y"]}]
+
+
+def test_variables_is_still_outside_the_whitelist(tmp_path):
+    """A guard (passes before the change): through BOTH entry points."""
+    from dstf.discovery.patch_apply import (
+        DEFAULT_WHITELIST,
+        PatchError,
+        apply_patch,
+        apply_patch_to_document,
+    )
+
+    assert DEFAULT_WHITELIST == ("/comparison", "/metrics", "/plots")
+    op = [{"op": "add", "path": "/variables/-", "value": "y"}]
+    data = {"tests": [{"model": "M", "variables": ["x"]}]}
+    with pytest.raises(PatchError, match="whitelist"):
+        apply_patch_to_document(data, "M", op)
+    spec = tmp_path / "test_spec.json"
+    spec.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(PatchError, match="whitelist"):
+        apply_patch(spec, "M", op)
+
+
+def _containers(value) -> set[int]:
+    """The id of every dict and list in ``value``."""
+    found: set[int] = set()
+    if isinstance(value, dict | list):
+        found.add(id(value))
+        for inner in value.values() if isinstance(value, dict) else value:
+            found |= _containers(inner)
+    return found
+
+
+class TestADocumentSharesNothingWithThePatchThatWroteIt:
+    """An op's value is written into the document as a copy. Written in by
+    reference, a later op of the same patch edited the earlier op's own
+    value: the list the caller held was then another patch, and applied
+    again — `spec_update`'s replay over a marked copy, on the way to the
+    file — it did its later ops twice."""
+
+    @staticmethod
+    def _ops() -> list[dict]:
+        return [
+            {"op": "add", "path": "/metrics", "value": {"children": [{"k": [1]}]}},
+            {"op": "add", "path": "/metrics/b", "value": 1},
+            {"op": "add", "path": "/metrics/children/-", "value": {"k": [2]}},
+            {"op": "replace", "path": "/metrics/children/0", "value": {"k": [3]}},
+            {"op": "add", "path": "/metrics/children/0/k/-", "value": 4},
+            {"op": "remove", "path": "/metrics/children/1/k"},
+        ]
+
+    def test_applying_a_patch_leaves_its_ops_as_they_were(self):
+        import copy
+
+        from dstf.discovery.patch_apply import apply_patch_to_document
+
+        ops = self._ops()
+        given = copy.deepcopy(ops)
+        data = {"tests": [{"model": "M"}]}
+        apply_patch_to_document(data, "M", ops)
+        assert ops == given
+        assert data["tests"][0]["metrics"] == {
+            "children": [{"k": [3, 4]}, {}],
+            "b": 1,
+        }
+
+    def test_the_same_ops_give_two_documents_that_share_no_object(self):
+        from dstf.discovery.patch_apply import apply_patch_to_document
+
+        ops = self._ops()
+        first = {"tests": [{"model": "M"}]}
+        second = {"tests": [{"model": "M"}]}
+        apply_patch_to_document(first, "M", ops)
+        apply_patch_to_document(second, "M", ops)
+        assert first == second
+        assert not _containers(first) & _containers(second)
+        assert not _containers(first) & _containers(ops)
+        # and an edit of one is no edit of the other, nor of the patch
+        first["tests"][0]["metrics"]["children"][0]["k"].append(5)
+        assert second["tests"][0]["metrics"]["children"][0]["k"] == [3, 4]
+        assert ops == self._ops()

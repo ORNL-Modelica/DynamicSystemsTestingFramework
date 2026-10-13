@@ -1,10 +1,53 @@
 """JUnit XML report generation for CI integration."""
 
+import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
 from ..comparison.comparator import TestComparison
+from .status import (
+    FAIL,
+    NO_REF,
+    NOT_RUN,
+    SIM_FAIL,
+    advisory_failures,
+    advisory_text,
+    classify,
+    count_by_status,
+    failed_criteria,
+    group_failures,
+    refusal,
+)
+
+#: Every character XML 1.0 cannot carry (its ``Char`` production): a control
+#: character below U+0020 but tab, LF and CR, a surrogate — in a ``str``
+#: every one is a lone one — U+FFFE and U+FFFF.
+_NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def _xml_text(text: str) -> str:
+    """``text`` as an XML 1.0 file can hold it: each character it cannot —
+    the ESC of an ANSI colour code in a simulator's message, a NUL, a lone
+    surrogate — as U+FFFD. There is no escape to write instead: ``&#27;``
+    is as ill-formed as the character, and no parser reads a file that
+    holds either."""
+    return _NOT_XML.sub("\ufffd", text)
+
+
+def _failure_message(failed: list[str], groups: list[str], advisory: list[str]) -> str:
+    """`1 criterion failed`, and `, with 1 advisory failure` when some
+    comparison under a `warn` failed beside it. With no failing criterion
+    the test failed at a group, and the message is that group's line (`2
+    groups failed` for more than one; the body has each)."""
+    n = len(failed)
+    if n == 0 and groups:
+        text = groups[0] if len(groups) == 1 else f"{len(groups)} groups failed"
+    else:
+        text = f"{n} {'criterion' if n == 1 else 'criteria'} failed"
+    if advisory:
+        text += f", with {advisory_text(len(advisory))}"
+    return text
 
 
 def generate_junit_report(
@@ -26,16 +69,14 @@ def generate_junit_report(
     for suite_name in sorted(suites.keys()):
         suite_comps = suites[suite_name]
         n_tests = len(suite_comps)
-        # Failing tests count as failures even without a baseline
-        # (baseline-free modes carry a real verdict) — review 2026-07-06,
-        # finding 5: they were emitted as <skipped> with failures="0".
-        n_failures = sum(1 for c in suite_comps if not c.passed and c.sim_success)
-        n_errors = sum(1 for c in suite_comps if not c.sim_success)
-        n_skipped = sum(
-            1
-            for c in suite_comps
-            if c.sim_success and c.passed and not c.has_reference and not c.evaluated
-        )
+        # Buckets are the shared ones from reporting.status, so the JUnit
+        # counters can't drift from the console's — review 2026-07-06,
+        # finding 5: failing baseline-free tests were emitted as <skipped>
+        # with failures="0".
+        counts = count_by_status(suite_comps)
+        n_failures = counts[FAIL]
+        n_errors = counts[SIM_FAIL]
+        n_skipped = counts[NO_REF] + counts[NOT_RUN]
 
         suite_elem = ET.SubElement(
             root,
@@ -59,7 +100,12 @@ def generate_junit_report(
                 },
             )
 
-            if not comp.sim_success:
+            state = classify(comp)
+            if state == NOT_RUN:
+                # No result: the test was never run, or its run never
+                # finished it. Not a failure and not an error (D145).
+                ET.SubElement(tc, "skipped", {"message": "not run"})
+            elif state == SIM_FAIL:
                 ET.SubElement(
                     tc,
                     "error",
@@ -68,10 +114,10 @@ def generate_junit_report(
                         "type": "SimulationError",
                     },
                 )
-            elif comp.passed and not comp.has_reference and not comp.evaluated:
+            elif state == NO_REF:
                 # No baseline AND nothing evaluated — a genuinely skipped
-                # test. Failing baseline-free tests fall through to the
-                # <failure> branch below.
+                # test. Failing baseline-free tests classify as FAIL and
+                # land in the <failure> branch below.
                 ET.SubElement(
                     tc,
                     "skipped",
@@ -79,27 +125,49 @@ def generate_junit_report(
                         "message": "No reference baseline stored",
                     },
                 )
-            elif not comp.passed:
-                msgs = []
-                for var in comp.variables:
-                    if not var.passed:
-                        name = var.name or f"x[{var.index}]"
-                        msgs.append(
-                            f"{name}: "
-                            f"NRMSE={var.nrmse:.6e}, "
-                            f"max_abs={var.max_abs_error:.6e} at t={var.max_abs_error_time:g}, "
-                            f"ref_final={var.reference_final:.6e}, "
-                            f"act_final={var.actual_final:.6e}"
-                        )
+            elif state == FAIL:
+                # One line per criterion that did not pass, in the words
+                # of the console's block (`failed_criteria`): which
+                # criterion it is — two on one variable are two of them —
+                # and the measured value against what it is held to, or
+                # why it was not scored. A failure under `warn` cannot
+                # fail the test: it is not counted with the ones that do,
+                # and its line says so.
+                criteria = failed_criteria(comp)
+                failed = [c.line for c in criteria if not c.advisory]
+                advisory = [c.line for c in criteria if c.advisory]
+                # A test the comparison refused has no failing criterion to
+                # count: its reason is the message and the body.
+                refused = refusal(comp)
+                # A group that fails on its own — a weighted sum over its
+                # threshold — fails the test with no criterion to list.
+                groups = group_failures(comp)
                 fail = ET.SubElement(
                     tc,
                     "failure",
                     {
-                        "message": f"{len(msgs)} variable(s) exceeded tolerance",
+                        "message": refused
+                        or _failure_message(failed, groups, advisory),
                         "type": "RegressionFailure",
                     },
                 )
-                fail.text = "\n".join(msgs)
+                fail.text = refused or "\n".join(failed + groups + advisory)
+            else:
+                # PASS — and it may have passed with a failure under `warn`:
+                # no <failure>, counted in nothing, and said, where it used
+                # to say nothing at all.
+                passed_with = advisory_failures(comp)
+                if passed_with:
+                    n = len(passed_with)
+                    they = "it" if n == 1 else "they"
+                    said = ET.SubElement(tc, "system-out")
+                    said.text = "\n".join(
+                        [
+                            f"{advisory_text(n)} (under `warn`: {they} cannot "
+                            "fail the test)"
+                        ]
+                        + [c.line for c in passed_with]
+                    )
 
         total_tests += n_tests
         total_failures += n_failures
@@ -108,6 +176,15 @@ def generate_junit_report(
     root.set("tests", str(total_tests))
     root.set("failures", str(total_failures))
     root.set("errors", str(total_errors))
+
+    # THE place text enters the file: every attribute value and every
+    # element's text, whichever branch above wrote it — a model's name, a
+    # simulator's message, a criterion's line with its variable's.
+    for element in root.iter():
+        for key, value in list(element.attrib.items()):
+            element.set(key, _xml_text(value))
+        if element.text:
+            element.text = _xml_text(element.text)
 
     tree = ET.ElementTree(root)
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -2,28 +2,28 @@
 
 See docs/vision.md "Metric composition" and docs/extensibility.md §6.
 
-This module introduces the abstraction. In Phase 1 it is wired as a degenerate
-flat-AND over per-variable ``VariableComparison`` results — matching the
-existing implicit semantics exactly. Phase 3 exposes OR / weighted / K-of-N /
-warn via ``test_spec.json`` to users and grows the leaf types beyond the
-current per-variable NRMSE/tube.
+A spec with no ``metrics`` tree collapses to a degenerate flat-AND over
+per-variable ``VariableComparison`` results (``implicit_and_tree``), which is
+exactly the implicit semantics. An explicit ``metrics`` tree in
+``test_spec.json`` reaches the and / or / k-of-n / warn / weighted
+combinators below.
 
 Design contract:
 
 * Combinators are pure functions of child ``MetricResult``s. No I/O, no mutation.
 * A combinator's output ``diagnostics`` must preserve enough of its children's
   diagnostics that a report can show which branch failed and why.
-* Leaves wrap an existing ``VariableComparison`` today; future leaves will wrap
-  other metric-result types (test-level scores, cross-baseline comparisons).
+* Leaves wrap a ``VariableComparison``.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from .comparator import VariableComparison
+from .sides import as_written
 
 # ---------------------------------------------------------------------------
 # Uniform metric result (combinator output shape)
@@ -74,10 +74,16 @@ class Combinator(ABC):
 
 
 class AndCombinator(Combinator):
-    """All children must pass. Score is the worst (min) child score.
+    """All children must pass. Score is ``min`` over the children's scores.
 
-    Matches the current implicit behavior: a test passes iff every variable's
-    metric passes.
+    Matches the implicit behavior of a spec with no ``metrics`` tree: a test
+    passes iff every variable's metric passes.
+
+    ``min`` is only "the worst child" for lower-is-better metrics. Children
+    can mix directions (the registry's ``score_direction`` is ``"lower"``
+    for NRMSE-like scores, ``"higher"`` for tube coverage), and this node
+    does not consult it — ``passed`` is a pure Boolean AND and is always
+    right; the reported score is a summary number, not a ranking.
     """
 
     name = "and"
@@ -99,7 +105,12 @@ class AndCombinator(Combinator):
 
 
 class OrCombinator(Combinator):
-    """At least one child must pass. Score is the best (max) child score."""
+    """At least one child must pass. Score is ``max`` over the children's scores.
+
+    Same caveat as :class:`AndCombinator`: ``max`` is only "the best child"
+    for higher-is-better metrics, and this node does not consult the
+    registry's ``score_direction``. ``passed`` (a Boolean OR) is unaffected.
+    """
 
     name = "or"
 
@@ -196,10 +207,9 @@ class WeightedCombinator(Combinator):
                 },
                 children=list(children),
             )
-        # Weighted children are numeric leaves; a missing score contributes 0.
+        # Every child has a numeric score — the guard above returned otherwise.
         weighted_sum = sum(
-            w * (c.score if c.score is not None else 0.0)
-            for w, c in zip(self.weights, children)
+            w * cast(float, c.score) for w, c in zip(self.weights, children)
         )
         passed = (
             weighted_sum < self.threshold
@@ -272,26 +282,51 @@ def leaf_from_variable(vc: VariableComparison) -> MetricResult:
         score = vc.tube_points_inside
     else:
         score = vc.nrmse
+    diagnostics = {
+        "mode": vc.mode,
+        "tolerance": as_written(vc.tolerance_used),
+        "max_abs_error": vc.max_abs_error,
+        "variable": vc,
+    }
+    if vc.against is not None:
+        # The baseline the criterion read; none where it reads none.
+        diagnostics["against"] = vc.against
     return MetricResult(
         passed=vc.passed,
         score=score,
         label=vc.name,
-        diagnostics={
-            "mode": vc.mode,
-            "tolerance": vc.tolerance_used,
-            "max_abs_error": vc.max_abs_error,
-            "variable": vc,
-        },
+        diagnostics=diagnostics,
         children=[],
     )
+
+
+def stamp_leaf_path(leaf: MetricResult, path: str) -> None:
+    """Address a leaf result by its RFC 6902 path — the same path a patch op uses.
+
+    Prefixes the stashed ``VariableComparison``'s geometry ids with the path
+    so a figure handle and a spec edit share one name. Idempotent: a mode
+    emits local ids, and a stamped id starts with ``/``.
+    """
+    leaf.diagnostics["leaf_path"] = path
+    vc = leaf.diagnostics.get("variable")
+    if vc is not None:
+        vc.geometry = tuple(
+            p if p.id.startswith("/") else p.prefixed(path) for p in vc.geometry
+        )
 
 
 def implicit_and_tree(variables: list[VariableComparison]) -> MetricResult:
     """Build the implicit flat-AND tree from a list of per-variable comparisons.
 
     This is the degenerate MetricTree that matches the current pass/fail
-    semantics exactly: a test passes iff every variable passes. Phase 3+
-    replaces this with user-authored trees from ``test_spec.json``.
+    semantics exactly: a test passes iff every variable passes. Leaves are
+    stamped ``/metrics/children/<i>`` — the paths
+    :func:`~.tree_spec.synthesize_implicit_tree` produces for the same list,
+    so the report can look leaves up by path on both evaluation routes.
     """
-    leaves = [leaf_from_variable(vc) for vc in variables]
+    leaves = []
+    for i, vc in enumerate(variables):
+        leaf = leaf_from_variable(vc)
+        stamp_leaf_path(leaf, f"/metrics/children/{i}")
+        leaves.append(leaf)
     return AndCombinator().combine(leaves)
