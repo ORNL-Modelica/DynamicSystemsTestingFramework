@@ -8864,3 +8864,21 @@ and a rescore read `2 pending edits`. The tree is part of the edit that
 made it necessary (`Session.stage(part_of=…)`: the number of the test's
 last pending op): 1.
 
+## D156 — Published by a tag, through trusted publishing; the first version on PyPI is 1.0.1 (2026-10-13)
+
+`v1.0.0` was tagged with a `pyproject.toml` that built and installed but
+described nothing: no README as the project page, no license field, no
+links. An index takes a version once, so the metadata could not be added to
+1.0.0 after an upload; 1.0.0 stays a tag of the repository and the first
+published version is 1.0.1 — the same code.
+
+`.github/workflows/publish.yml` builds on a pushed `vX.Y.Z` tag and publishes
+to PyPI; a manual run publishes to TestPyPI or only builds. It refuses a tag
+that does not name the built version, runs `twine check --strict`, and
+installs the wheel alone in a clean environment before anything is uploaded.
+No token is stored: each index trusts this repository's workflow by name
+(`docs/releasing.md` has the values its form asks for).
+
+The source archive holds what the wheel is built from and no more. It had
+carried the tests, the docs and the examples (4.5 MB); they are in the
+repository.

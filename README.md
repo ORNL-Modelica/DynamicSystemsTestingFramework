@@ -8,7 +8,7 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
 
 Criteria are written in **`dstf author`**, a local browser tool over the same figures the report draws: edit a criterion beside the plot it scores — drag a handle, or Ctrl+click to add a row that settles on the data — give a tolerance a lower and an upper side, put one criterion on many elements of an array, queue tests on simulator workers that stay alive, and watch a running test's trace as Dymola or OpenModelica writes it. A default and a dark theme cover the tool, the dashboard and the report pages.
 
-![DSTF dashboard](docs/img/dashboard.png)
+![DSTF dashboard](https://raw.githubusercontent.com/ORNL-Modelica/DynamicSystemsTestingFramework/main/docs/img/dashboard.png)
 
 *The unified dashboard — live progress during a run, a static report after. Each report is stamped with the backend, tool + MSL version, and OS that produced it; the table gives per-test verdicts, worst-NRMSE, and phase timing.*
 
