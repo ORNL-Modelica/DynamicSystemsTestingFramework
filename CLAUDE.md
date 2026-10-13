@@ -27,7 +27,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/),
 │   │                             #      spec_shape.py (a spec entry's keys: the ONE table the parser refuses by and export-schema publishes),
 │   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation),
-│   │                             #      library_state.py (the source files' stamps at one Queue click: what a live worker compares before it reads the library again)
+│   │                             #      library_state.py (the source files' stamps at one Queue click: what a live worker compares before it reads the library again; and which file a path dependency is loaded by)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │                             #      (openmodelica/init_xml.py: the system size omc writes to <model>_init.xml, read into the
 │   │                             #      statistics key Dymola's translation log fills — translation.continuous_time_states)
@@ -84,7 +84,7 @@ DynamicSystemsTestingFramework/
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
 │   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
 │   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
-├── tests/                        # pytest suite (~7300 tests, ~360 of them the Playwright subset, gated by importorskip)
+├── tests/                        # pytest suite (~7400 tests, ~360 of them the Playwright subset, gated by importorskip)
 ├── docs/                         # decisions.md, vision.md, architecture.md, qa/reporter_checklist.md, ideas.md
 ├── scripts/                      # fetch_reference_fmus.py, smoke_test_dymola_export.py
 ├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [author], [fmpy], [om]
