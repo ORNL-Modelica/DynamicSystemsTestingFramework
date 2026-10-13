@@ -29,7 +29,12 @@ import time
 from pathlib import Path
 
 from ...config import Config
-from ...discovery.library_state import LibraryChanges, dependency_root, under
+from ...discovery.library_state import (
+    LibraryChanges,
+    dependency_file,
+    dependency_root,
+    under,
+)
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import read_mat_time_extents
 from ..common.proc_kill import live_children
@@ -258,7 +263,7 @@ class DymolaWorker(Worker):
 
         # Load dependencies
         for dep_path in self.config.dependencies or []:
-            dep_pkg = Path(dep_path).resolve() / "package.mo"
+            dep_pkg = dependency_file(dep_path)
             self._step = _open_model_step(dep_pkg)
             ok = self.dymola.openModel(str(dep_pkg))
             if not ok:
@@ -733,7 +738,8 @@ class DymolaWorker(Worker):
             if changes is None
             else (*changes.changed, *changes.added, *changes.removed)
         )
-        packages: list[Path] = []
+        #: (what the message calls it, the file it is opened by)
+        opened: list[tuple[str, Path]] = []
         for entry in self.config.dependencies or []:
             # Which files are the dependency's is asked as the sweep
             # spelled them; what is opened is what ``start`` opened.
@@ -741,13 +747,14 @@ class DymolaWorker(Worker):
             if root is None:
                 continue
             if touched is None or any(under(path, root) for path in touched):
-                packages.append(Path(entry).resolve())
-        for package in (*packages, self.config.library_dir):
-            main_pkg = package / "package.mo"
+                opened.append((root.name, dependency_file(entry)))
+        library_dir = self.config.library_dir
+        opened.append((library_dir.name, library_dir / "package.mo"))
+        for name, main_pkg in opened:
             self._step = _open_model_step(main_pkg)
             if not self.dymola.openModel(str(main_pkg), changeDirectory=False):
                 raise LibraryReloadError(
-                    f"{package.name} does not load: {self._last_error().strip()[:400]}"
+                    f"{name} does not load: {self._last_error().strip()[:400]}"
                 )
 
     def _last_error(self) -> str:

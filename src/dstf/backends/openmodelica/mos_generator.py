@@ -20,6 +20,7 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from ...discovery.library_state import dependency_file
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
 from ..common.result_variables import criterion_variables
@@ -50,12 +51,8 @@ def classify_dependency(entry: str) -> tuple[str, str]:
     if not looks_like_path:
         return ("loadModel", entry)
 
-    p = Path(entry)
-    if entry.endswith(".mo"):
-        return ("loadFile", str(p.resolve()).replace("\\", "/"))
-    # Directory form — append package.mo
-    resolved = p.resolve() / "package.mo"
-    return ("loadFile", str(resolved).replace("\\", "/"))
+    # The file it is loaded by: itself, or its directory's package.mo.
+    return ("loadFile", str(dependency_file(entry)).replace("\\", "/"))
 
 
 def build_variable_filter(

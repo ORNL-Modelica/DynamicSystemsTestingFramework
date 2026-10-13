@@ -592,6 +592,58 @@ class TestDymola:
             str(lib / "package.mo"),
         ]
 
+    @pytest.mark.parametrize(
+        "form", ["its directory", "its package.mo", "a one-file library"]
+    )
+    def test_a_dependency_is_opened_by_its_file_whichever_way_it_is_given(
+        self, lib, tmp_path, form
+    ):
+        """`dependencies` takes a library's directory, its `package.mo` or
+        a one-file library `Name.mo`. Dymola was handed
+        `<entry>/package.mo` for all three: `…/DepLib.mo/package.mo`, and
+        no worker could start."""
+        from dstf.discovery.library_state import dependency_file
+
+        directory = tmp_path / "deps" / "Other"
+        directory.mkdir(parents=True)
+        entry, opened = {
+            "its directory": (directory, directory / "package.mo"),
+            "its package.mo": (directory / "package.mo", directory / "package.mo"),
+            "a one-file library": (
+                tmp_path / "deps" / "One.mo",
+                tmp_path / "deps" / "One.mo",
+            ),
+        }[form]
+        assert dependency_file(str(entry)) == opened
+        dymola = _Dymola()
+        worker = _dymola_worker(lib, dymola, [str(entry)])
+        worker.reload(None)
+        assert [path for path, _ in dymola.opened] == [
+            str(opened),
+            str(lib / "package.mo"),
+        ]
+        # The batch path's startup script opens the same file.
+        from dstf.backends.dymola.backend import DymolaConfig, _generate_startup_mos
+
+        config = SimpleNamespace(
+            work_dir=tmp_path,
+            dependencies=[str(entry)],
+            library_dir=lib,
+            backend_setup=[],
+        )
+        script = _generate_startup_mos(config, DymolaConfig()).read_text("utf-8")
+        assert f'openModel("{opened.as_posix()}");' in script
+        assert ".mo/package.mo" not in script
+
+    def test_a_dependency_that_does_not_open_is_named_as_it_is_written(
+        self, lib, tmp_path
+    ):
+        one = tmp_path / "deps" / "One.mo"
+        worker = _dymola_worker(lib, _Dymola(fails=str(one)), [str(one)])
+        with pytest.raises(LibraryReloadError) as raised:
+            worker.reload(None)
+        assert str(raised.value).startswith("One.mo does not load: ")
+
     def test_a_library_dymola_does_not_open_fails_with_its_message(self, lib):
         worker = _dymola_worker(lib, _Dymola(fails=str(lib)))
         with pytest.raises(LibraryReloadError) as raised:

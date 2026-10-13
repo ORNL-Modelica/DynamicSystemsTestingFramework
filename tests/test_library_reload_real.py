@@ -429,6 +429,34 @@ def test_a_dependency_whose_path_is_not_its_resolved_one_is_read_again(
         _closed(tool)
 
 
+@pytest.mark.parametrize("backend", _SIMULATORS)
+def test_a_dependency_given_as_one_file_starts_a_worker_and_is_read_again(
+    tmp_path, backend
+):
+    """`dependencies: ["…/DepLib.mo"]` — a library that is one file. On
+    Dymola no worker could start: it was opened as `…/DepLib.mo/package.mo`."""
+    one = tmp_path / "deps" / "DepLib.mo"
+
+    def arrange(parts: Parts) -> str:
+        shutil.rmtree(parts.dep)
+        one.write_text(
+            "package DepLib\n  package C\n    constant Real c=1;\n  end C;\nend DepLib;\n",
+            encoding="utf-8",
+        )
+        return str(one)
+
+    tool = Parts(tmp_path, backend, arrange=arrange)
+    try:
+        assert tool.x() == 1111.0
+        pids = set(tool.worker().pids)
+        _sub(one, "c=1", "c=2")
+        assert tool.x() == 2111.0, "the live simulator ran the old dependency"
+        assert set(tool.worker().pids) == pids
+        assert tool.fresh() == 2111.0
+    finally:
+        _closed(tool)
+
+
 @pytest.mark.ompython
 @pytest.mark.skipif(not _ompython_available(), reason="needs omc + OMPython")
 def test_openmodelica_reads_everything_after_a_reload_that_failed_part_way(

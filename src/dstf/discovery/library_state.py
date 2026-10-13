@@ -154,6 +154,18 @@ def dependency_root(entry: str) -> Path | None:
     return path.parent if path.name == "package.mo" else path
 
 
+def dependency_file(entry: str) -> Path:
+    """The file a ``dependencies`` entry given as a path is LOADED by,
+    resolved: the entry itself when it is a ``.mo`` file — a one-file
+    library ``Name.mo``, or a library's own ``package.mo`` — else the
+    ``package.mo`` of its directory. The ONE place that says it, for every
+    simulator's start, reload and batch script: Dymola was handed
+    ``<entry>/package.mo`` whatever the entry, and a one-file dependency
+    (``…/DepLib.mo/package.mo``) started no worker."""
+    path = Path(entry).resolve()
+    return path if path.suffix == ".mo" else path / "package.mo"
+
+
 def under(path: Path, root: Path) -> bool:
     """Whether a swept *path* is *root* or a file below it — both as the
     sweep spells them: *root* is the library's directory or a
@@ -226,6 +238,7 @@ __all__ = [
     "LibraryChanges",
     "LibraryState",
     "Stamp",
+    "dependency_file",
     "dependency_root",
     "following",
     "source_stamps",

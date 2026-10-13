@@ -280,7 +280,7 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `backend` — named entry like `"Dymola"` or `"OpenModelica"`; omit to auto-detect from the `backends` map
 - `backends` — map of backend names to candidate executable paths
 - `backend_setup` — list of Modelica commands run after library loading (user-specific settings)
-- `dependencies` — library names (e.g. `"Modelica"`) or paths to dependency roots loaded before simulation
+- `dependencies` — library names (e.g. `"Modelica"`) or paths loaded before simulation: a library's directory, its `package.mo`, or a one-file library `Name.mo` (`library_state.dependency_file` says which file each is opened by)
 - `reference_root` — where reference results live (default: `<repo>/Resources/ReferenceResults`)
 - `test_spec` — path to external test definitions file
 - `recognizers` — custom JSON recognizers appended to the bundled list (see `discovery/json_recognizer.py`)

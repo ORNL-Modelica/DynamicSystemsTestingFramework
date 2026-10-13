@@ -36,7 +36,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `library_name` | No | The library's name for a non-Modelica source (default: the name of the directory holding `testing.json`); a Modelica library's is read from its `package.mo`. |
 | `backend` | No | Backend name. Use named entries like `"Dymola 2025"` to target specific versions. Omitted: the first `backends` entry whose executable exists on this machine, else `"Dymola"`. |
 | `backends` | No | Map of backend names to candidate executable paths (first existing path wins). Falls back to system PATH. |
-| `dependencies` | No | Paths to dependency library roots loaded before simulation, relative to `testing.json` location — or a bare library name (`"Modelica"`), which OpenModelica loads by name. |
+| `dependencies` | No | Paths to dependency libraries loaded before simulation, relative to `testing.json` location — a library's directory, its `package.mo`, or a one-file library `Name.mo`: each is opened by its file (`<dir>/package.mo`, or the `.mo` file given) on Dymola and OpenModelica alike — or a bare library name (`"Modelica"`), which OpenModelica loads by name. |
 | `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
 | `recognizers` | No | Declarative recognizers for your library's own test convention, added to the bundled one (see "Test definitions"). |

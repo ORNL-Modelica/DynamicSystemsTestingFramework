@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...config import Config
+from ...discovery.library_state import dependency_file
 from ...discovery.test_registry import TestModel
 from ...storage.batch_manifest import BatchManifest
 from .. import register
@@ -630,7 +631,7 @@ def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
 
     # Load dependencies first
     for dep_path in config.dependencies:
-        dep_pkg = Path(dep_path).resolve() / "package.mo"
+        dep_pkg = dependency_file(dep_path)
         lines.append(f'openModel("{dep_pkg.as_posix()}");')
 
     # Load main library
