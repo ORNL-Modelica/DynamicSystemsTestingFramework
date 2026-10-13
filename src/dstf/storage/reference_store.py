@@ -418,19 +418,22 @@ class ReferenceStore(_RolesMixin):
         self,
         tests: list[TestModel],
         results: dict[str, TestResult],
-    ) -> tuple[list[str], list[tuple[str, str]]]:
+    ) -> tuple[list[str], list[tuple[str, str]], list[str]]:
         """Accept simulation results as new baselines.
 
-        Returns ``(stored, skipped)``: the model ids whose baseline was
-        written, in the order given, and ``(model_id, reason)`` for tests
-        that should have produced a baseline but didn't — review 2026-07-06
-        finding 30: the CLI exits nonzero (and says why) when an --accept
-        run stores fewer baselines than it attempted. Simulate-only tests
-        never store a baseline by design, so a successful simulate-only run
-        is neither stored nor skipped.
+        Returns ``(stored, skipped, simulate_only)``: the model ids whose
+        baseline was written, in the order given; ``(model_id, reason)`` for
+        tests that should have produced a baseline but didn't — review
+        2026-07-06 finding 30: the CLI exits nonzero (and says why) when an
+        --accept run stores fewer baselines than it attempted; and the model
+        ids of the simulate-only tests passed over, in the order given.
+        Simulate-only tests never store a baseline by design, so a
+        successful simulate-only run is neither stored nor skipped — and is
+        named, so that an accept can say why it stored nothing for it.
         """
         stored: list[str] = []
         skipped: list[tuple[str, str]] = []
+        simulate_only: list[str] = []
         for test in tests:
             result = results.get(test.model_id)
             if result is None:
@@ -440,6 +443,7 @@ class ReferenceStore(_RolesMixin):
                 skipped.append((test.model_id, "simulation failed"))
                 continue
             if test.is_simulate_only:
+                simulate_only.append(test.model_id)
                 continue
             try:
                 ok = self.store_reference(test, result)
@@ -453,7 +457,7 @@ class ReferenceStore(_RolesMixin):
                 stored.append(test.model_id)
             else:
                 skipped.append((test.model_id, "no tracked variables in result"))
-        return stored, skipped
+        return stored, skipped, simulate_only
 
     def set_status(self, model_id: str, status: str) -> bool:
         """Update the status field of a reference file.

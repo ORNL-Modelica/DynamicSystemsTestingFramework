@@ -101,14 +101,17 @@ def _report(
     stored: int,
     skipped: list[tuple[str, str]],
     warnings: list[str],
+    notes: list[str],
     *,
     reference_dir: Path,
 ) -> str:
     """The one line the queue panel shows. A partial accept has no other way
     to say which tests it refused and why — or that a baseline file it
-    wrote is large, in the sentence the CLI prints."""
+    wrote is large, or which tests it passed over as simulate-only, in the
+    sentences the CLI prints."""
     parts = [f"Accept: stored {stored} baseline(s) to {reference_dir}"]
     parts += [f"; skipped {model_id}: {reason}" for model_id, reason in skipped]
+    parts += [f"; {line}" for line in notes]
     parts += [f"; {line}" for line in warnings]
     return "".join(parts)
 

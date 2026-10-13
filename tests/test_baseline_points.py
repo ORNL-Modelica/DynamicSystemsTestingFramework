@@ -642,7 +642,7 @@ def test_a_result_with_no_rows_is_not_stored_and_the_accept_says_so(tmp_path):
     store = ReferenceStore(config)
     with pytest.raises(ValueError, match="no rows to store"):
         store.store_reference(test, result)
-    stored, skipped = store.accept_results([test], {M: result})
+    stored, skipped, _ = store.accept_results([test], {M: result})
     assert stored == []
     assert skipped == [
         (M, f"refusing to store baseline for {M}: the result has no rows to store")
@@ -872,7 +872,7 @@ def test_a_baseline_file_over_five_megabytes_is_said_and_is_stored(tmp_path):
     results = {"Lib.Big": big, M: _run(5000, EVENTS)}
     store = ReferenceStore(config)
 
-    stored, skipped, warnings = accept_run_results(
+    stored, skipped, warnings, _ = accept_run_results(
         store, tests, results, config.work_dir
     )
 
@@ -916,7 +916,7 @@ def test_the_warning_is_one_per_file_over_the_threshold(tmp_path, monkeypatch):
     }
     monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 5_000)
 
-    stored, skipped, warnings = accept_run_results(
+    stored, skipped, warnings, _ = accept_run_results(
         ReferenceStore(config), tests, results, config.work_dir
     )
 
@@ -1105,7 +1105,7 @@ def test_an_accept_says_which_variables_its_baseline_no_longer_holds(
     store, test = ReferenceStore(config), _tracking_all(M)
 
     def accept(*names: str) -> list[str]:
-        stored, skipped, warnings = accept_run_results(
+        stored, skipped, warnings, _ = accept_run_results(
             store, [test], {M: _of(*names)}, config.work_dir
         )
         assert (stored, skipped) == (1, [])

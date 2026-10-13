@@ -179,13 +179,14 @@ def _interactive_review(
                 # exactly what `compare --accept` refuses — a poisoned
                 # trajectory (leftover B: it must not crash the loop) and a
                 # test the last run left pending — and stores no baseline for
-                # a simulate-only test, which it reports as neither.
+                # a simulate-only test, which it names in a note: neither
+                # stored nor refused.
                 # `test` is never missing on the `[a]` path: `cmd_run` hands the
                 # same `scope_tests` to `compare_all` (one comparison per test)
                 # and to this function, and `RunOutcome.results` is keyed by
                 # exactly those models — so a model with a comparison and a
                 # result has an entry in `test_lookup`.
-                stored, skipped, warnings = accept_run_results(
+                stored, skipped, warnings, notes = accept_run_results(
                     store, [test], {test.model_id: result}, config.work_dir
                 )
                 if stored:
@@ -197,12 +198,15 @@ def _interactive_review(
                     print()
                     n_accepted += 1
                 else:
-                    reason = (
-                        skipped[0][1]
-                        if skipped
-                        else "simulate-only test: no baseline stored"
-                    )
-                    print(f"  {RED}Not accepted: {reason}{RESET}\n")
+                    if skipped:
+                        print(f"  {RED}Not accepted: {skipped[0][1]}{RESET}\n")
+                    else:
+                        # A simulate-only test: nothing was refused, and
+                        # there is no baseline to store — the accept's own
+                        # line, as `--accept` prints it.
+                        for line in notes:
+                            print(f"  {line}")
+                        print()
                     n_skipped += 1
                     if _still_failing(comp):
                         n_unresolved += 1

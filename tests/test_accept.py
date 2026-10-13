@@ -57,11 +57,11 @@ def test_a_pending_test_is_refused_with_the_reason_and_the_rest_are_stored(tmp_p
     ]
     results = {t.model_id: _result(t.model_id) for t in tests}
 
-    stored, skipped, warnings = accept_run_results(
+    stored, skipped, warnings, notes = accept_run_results(
         store, tests, results, config.work_dir
     )
 
-    assert stored == 1 and warnings == []
+    assert stored == 1 and warnings == [] and notes == []
     assert [m for m, _ in skipped] == ["FakeLib.InFlight"]
     assert "re-run before accepting" in skipped[0][1]
     assert str(config.work_dir) in skipped[0][1]
@@ -90,7 +90,7 @@ def test_a_pending_test_outside_the_scope_is_not_refused(tmp_path):
     tests = [make_test_model("FakeLib.Done", variable_patterns=["x"])]
     assert accept_run_results(
         store, tests, {"FakeLib.Done": _result("FakeLib.Done")}, config.work_dir
-    ) == (1, [], [])
+    ) == (1, [], [], [])
 
 
 def test_no_manifest_means_no_refusal(tmp_path):
@@ -99,7 +99,85 @@ def test_no_manifest_means_no_refusal(tmp_path):
     tests = [make_test_model("FakeLib.A", variable_patterns=["x"])]
     assert accept_run_results(
         store, tests, {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
-    ) == (1, [], [])
+    ) == (1, [], [], [])
+
+
+def test_a_simulate_only_test_is_named_and_is_neither_stored_nor_skipped(tmp_path):
+    """`Accepted 0 test baselines` with no word of the test: a test that
+    declares nothing to score — what `dstf add <model>` writes — has no
+    baseline to store, and the accept says that in one line."""
+    config, store = _env(tmp_path, {})
+    tests = [
+        make_test_model("FakeLib.Tank"),
+        make_test_model("FakeLib.A", variable_patterns=["x"]),
+        make_test_model("FakeLib.Marked", variable_patterns=["x"], simulate_only=True),
+    ]
+    assert [t.is_simulate_only for t in tests] == [True, False, True]
+    results = {t.model_id: _result(t.model_id) for t in tests}
+
+    assert accept_run_results(store, tests, results, config.work_dir) == (
+        1,
+        [],
+        [],
+        ["Simulate-only, nothing to store: FakeLib.Tank, FakeLib.Marked"],
+    )
+    assert store.index.get_id("FakeLib.Tank") is None
+    assert store.index.get_id("FakeLib.Marked") is None
+    # Alone: nothing stored, nothing skipped, and said.
+    assert accept_run_results(store, tests[:1], results, config.work_dir) == (
+        0,
+        [],
+        [],
+        ["Simulate-only, nothing to store: FakeLib.Tank"],
+    )
+
+
+def test_a_simulate_only_test_with_its_own_reason_is_not_named_twice(tmp_path):
+    """One whose run failed, or did not finish, is skipped with that
+    reason: the note names the tests passed over for having no baseline to
+    store, and no other."""
+    config, store = _env(
+        tmp_path,
+        {
+            "test_0001": {
+                "model_id": "FakeLib.InFlight",
+                "ref_id": None,
+                "last_run_status": "pending",
+            }
+        },
+    )
+    tests = [make_test_model(f"FakeLib.{name}") for name in ("Failed", "InFlight")]
+    results = {
+        "FakeLib.Failed": TestResult(model_id="FakeLib.Failed", success=False),
+        "FakeLib.InFlight": _result("FakeLib.InFlight"),
+    }
+
+    stored, skipped, warnings, notes = accept_run_results(
+        store, tests, results, config.work_dir
+    )
+
+    assert (stored, warnings, notes) == (0, [], [])
+    assert [model_id for model_id, _ in skipped] == [
+        "FakeLib.Failed",
+        "FakeLib.InFlight",
+    ]
+
+
+def test_the_note_names_six_tests_and_counts_the_rest():
+    """The list a lost-variable warning writes: six names, then `and N
+    more`."""
+    from dstf.storage.accept import simulate_only_note
+
+    names = [f"Lib.T{i}" for i in range(1, 9)]
+    assert simulate_only_note([]) is None
+    assert simulate_only_note(names[:6]) == (
+        "Simulate-only, nothing to store: "
+        "Lib.T1, Lib.T2, Lib.T3, Lib.T4, Lib.T5, Lib.T6"
+    )
+    assert simulate_only_note(names) == (
+        "Simulate-only, nothing to store: "
+        "Lib.T1, Lib.T2, Lib.T3, Lib.T4, Lib.T5, Lib.T6 and 2 more"
+    )
 
 
 def test_store_skips_still_come_through(tmp_path):
@@ -108,6 +186,7 @@ def test_store_skips_still_come_through(tmp_path):
     assert accept_run_results(store, tests, {}, config.work_dir) == (
         0,
         [("FakeLib.A", "no simulation result")],
+        [],
         [],
     )
 
@@ -142,10 +221,12 @@ def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
         0,
         [("FakeLib.A", "simulation failed")],
         [],
+        [],
     )
     assert accept_run_results(store, [test], {}, config.work_dir) == (
         0,
         [("FakeLib.A", "no simulation result")],
+        [],
         [],
     )
     assert store.get_reference("FakeLib.A") is None
@@ -154,7 +235,7 @@ def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
     test.comparison_tolerance = None
     assert accept_run_results(
         store, [test], {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
-    ) == (1, [], [])
+    ) == (1, [], [], [])
     path = _reference_file(config)
     data = json.loads(path.read_text(encoding="utf-8"))
     data["comparison"] = {"tolerance": PAIR}
@@ -166,6 +247,7 @@ def test_a_failed_simulation_with_a_bad_base_is_skipped_as_a_failed_simulation(
     ) == (
         0,
         [("FakeLib.A", "simulation failed")],
+        [],
         [],
     )
     assert path.read_bytes() == before
@@ -188,7 +270,7 @@ def test_an_unfinished_test_with_a_bad_base_is_listed_once(tmp_path):
     test.comparison_tolerance = PAIR
     results = {"FakeLib.InFlight": _result("FakeLib.InFlight")}
 
-    stored, skipped, _ = accept_run_results(store, [test], results, config.work_dir)
+    stored, skipped, *_ = accept_run_results(store, [test], results, config.work_dir)
 
     assert stored == 0
     assert [model_id for model_id, _ in skipped] == ["FakeLib.InFlight"]

@@ -2451,6 +2451,21 @@ async def test_accept_excludes_a_simulate_only_test_from_the_count(session):
     assert Accept().available(view) == SIMULATE_ONLY
 
 
+def test_accept_names_the_simulate_only_test_it_stored_nothing_for(session):
+    """The write's line said what it stored and what it refused, and
+    nothing of a simulate-only test in the selection: it says the accept's
+    own sentence for it, the one the CLI prints. (Alone, such a test greys
+    the button with its row's reason, as above: there is no write.)"""
+    session.project.test(B).simulate_only = True
+    view = SessionView(session, Selection(tests=frozenset({A, B})))
+    line = Accept().act(view).run(session.project.store)
+    assert line == (
+        f"Accept: stored 1 baseline(s) to {session.project.config.reference_dir}"
+        f"; Simulate-only, nothing to store: {B}"
+    )
+    assert session.project.store.index.get_id(B) is None
+
+
 async def test_accept_excludes_a_test_that_declares_nothing_to_score(session):
     """No pattern, no UnitTests variable, no tree — what `dstf add <model>`
     writes: simulate-only without a recognizer's mark, and the forecast

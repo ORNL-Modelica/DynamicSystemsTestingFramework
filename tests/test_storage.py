@@ -1311,7 +1311,7 @@ class TestStoreReferenceRejectsNonFinite:
             "Lib.Bad": _mk_valued_result("Lib.Bad", [float("nan")] * 11),
         }
         with caplog.at_level(logging.WARNING):
-            stored, skipped = store.accept_results([bad, good], results)
+            stored, skipped, _ = store.accept_results([bad, good], results)
         assert stored == ["Lib.Good"]
         assert [m for m, _ in skipped] == ["Lib.Bad"]
         assert "non-finite" in skipped[0][1]
@@ -1324,19 +1324,38 @@ class TestStoreReferenceRejectsNonFinite:
             "Lib.T1": _mk_valued_result("Lib.T1"),
             "Lib.T2": _mk_valued_result("Lib.T2", success=False),
         }
-        stored, skipped = store.accept_results([t1, t2], results)
+        stored, skipped, _ = store.accept_results([t1, t2], results)
         assert stored == ["Lib.T1"]
         assert skipped == [("Lib.T2", "simulation failed")]
 
     def test_accept_results_simulate_only_not_counted_as_skip(
         self, sample_models_dir, tmp_path
     ):
+        """Neither stored nor skipped — and named, so that an accept can
+        say why it stored nothing for it."""
         store = _mk_store(sample_models_dir, tmp_path)
         sim_only = _mk_test("Lib.SimOnly", simulate_only=True)
         result = TestResult(model_id="Lib.SimOnly", success=True)
-        stored, skipped = store.accept_results([sim_only], {"Lib.SimOnly": result})
+        stored, skipped, simulate_only = store.accept_results(
+            [sim_only], {"Lib.SimOnly": result}
+        )
         assert stored == []
         assert skipped == []
+        assert simulate_only == ["Lib.SimOnly"]
+
+    def test_a_simulate_only_test_that_failed_to_simulate_is_a_skip(
+        self, sample_models_dir, tmp_path
+    ):
+        """Its run did not complete: that is its reason, not that it has
+        no baseline to store."""
+        store = _mk_store(sample_models_dir, tmp_path)
+        sim_only = _mk_test("Lib.SimOnly", simulate_only=True)
+        failed = TestResult(model_id="Lib.SimOnly", success=False)
+        assert store.accept_results([sim_only], {"Lib.SimOnly": failed}) == (
+            [],
+            [("Lib.SimOnly", "simulation failed")],
+            [],
+        )
 
 
 def test_no_shipped_example_partition_carries_a_high_water_mark():

@@ -558,6 +558,50 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
             proc.wait(10)
 
 
+def _d_is_simulate_only(cfg: Path) -> None:
+    """D's entry as `dstf add` writes one: it declares nothing to score."""
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == D]
+    entry["variables"] = []
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+
+
+def test_accept_says_which_selected_test_was_simulate_only(
+    tmp_path, playwright_browser
+):
+    """A simulate-only row selected beside one with a result to store: the
+    confirm list says what Accept will do with each, and the line the write
+    leaves names the test it stored nothing for — it said `stored 1
+    baseline(s)` of two selected tests, and nothing of the other."""
+    from test_session import B
+
+    proc, url, page, context, errors, cfg = _served(
+        tmp_path, playwright_browser, setup=_d_is_simulate_only
+    )
+    try:
+        _box(page, B).click()
+        _box(page, D).click()
+        accept = "Accept 1 result as baselines"
+        page.get_by_role("button", name=accept, exact=True).click()
+        dialog = page.locator(".q-dialog")
+        expect(dialog).to_contain_text(
+            f"{D} · PASS · simulate-only: no baseline", timeout=EXPECT_TIMEOUT
+        )
+        dialog.get_by_role("button", name=accept, exact=True).click()
+        note = page.locator(".dstf-queue-notes")
+        expect(note).to_contain_text(
+            "Accept: stored 1 baseline(s) to ", timeout=EXPECT_TIMEOUT
+        )
+        expect(note).to_contain_text(f"; Simulate-only, nothing to store: {D}")
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
     """The view is the viewer's, kept in localStorage under a key per
     project (its config file): a filter, a pill, a collapsed group,

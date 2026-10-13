@@ -43,8 +43,29 @@ def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
     )
 
 
-#: How many lost names :func:`lost_variables_warning` spells out.
-_NAMED_LOST = 6
+#: How many names a sentence that lists them spells out
+#: (:func:`lost_variables_warning`, :func:`simulate_only_note`).
+_NAMED = 6
+
+
+def _named(names: list[str]) -> str:
+    """Up to `_NAMED` of ``names``, then ``and N more``."""
+    named = ", ".join(names[:_NAMED])
+    if len(names) > _NAMED:
+        named += f" and {len(names) - _NAMED} more"
+    return named
+
+
+def simulate_only_note(model_ids: list[str]) -> str | None:
+    """``Simulate-only, nothing to store: MyLib.Tank`` for the tests an
+    accept passed over because they declare nothing to score
+    (``TestModel.is_simulate_only``), else ``None``. Neither a warning nor a
+    skip: such a test has no baseline to store, and its accept did not fail
+    — but `Accepted 0 test baselines` with no word of the test read as an
+    accept that did nothing, for no reason."""
+    if not model_ids:
+        return None
+    return f"Simulate-only, nothing to store: {_named(model_ids)}"
 
 
 def _variable_names(reference: dict | None) -> list[str]:
@@ -66,11 +87,9 @@ def lost_variables_warning(
     lost = [name for name in held_before if name and name not in holds]
     if not lost:
         return None
-    named = ", ".join(lost[:_NAMED_LOST])
-    if len(lost) > _NAMED_LOST:
-        named += f" and {len(lost) - _NAMED_LOST} more"
     return (
-        f"{RefIndex.ref_filename(test_id)} ({model_id}) no longer holds {named} — "
+        f"{RefIndex.ref_filename(test_id)} ({model_id}) no longer holds "
+        f"{_named(lost)} — "
         f"the accepted result does not hold {'it' if len(lost) == 1 else 'them'}."
     )
 
@@ -99,8 +118,9 @@ def accept_run_results(
     tests: list[TestModel],
     results: dict[str, TestResult],
     work_dir: Path,
-) -> tuple[int, list[tuple[str, str]], list[str]]:
-    """:meth:`ReferenceStore.accept_results` plus two refusals and two warnings.
+) -> tuple[int, list[tuple[str, str]], list[str], list[str]]:
+    """:meth:`ReferenceStore.accept_results` plus two refusals, two warnings
+    and a note.
 
     A test the batch manifest in ``work_dir`` still records as pending was
     in flight when a run was aborted: it has no recorded verdict, and its
@@ -121,11 +141,15 @@ def accept_run_results(
     tool say the same sentence. So is a baseline that no longer holds a
     variable the one it replaced held (`lost_variables_warning`).
 
-    Returns ``(stored, skipped, warnings)``: how many baselines were written;
-    ``accept_results``'s skips with the refusals appended — the refused
-    tests in the order given, then the unfinished ones in model order; and
-    the warnings in the order written: per test, what it lost, then its
-    size.
+    A simulate-only test whose run completed is neither stored nor skipped:
+    it has no baseline to store. The tests passed over for that are named
+    in one line (`simulate_only_note`), which every accept path prints too.
+
+    Returns ``(stored, skipped, warnings, notes)``: how many baselines were
+    written; ``accept_results``'s skips with the refusals appended — the
+    refused tests in the order given, then the unfinished ones in model
+    order; the warnings in the order written: per test, what it lost, then
+    its size; and the lines that are neither — the simulate-only tests'.
     """
     unfinished = unfinished_run_models(work_dir) & {t.model_id for t in tests}
     refused = {
@@ -141,7 +165,8 @@ def accept_run_results(
     held_before = {
         t.model_id: _variable_names(store.get_reference(t.model_id)) for t in accepted
     }
-    stored, skipped = store.accept_results(accepted, results)
+    stored, skipped, simulate_only = store.accept_results(accepted, results)
+    note = simulate_only_note(simulate_only)
     return (
         len(stored),
         [
@@ -166,4 +191,5 @@ def accept_run_results(
             )
             if warning is not None
         ],
+        [note] if note is not None else [],
     )

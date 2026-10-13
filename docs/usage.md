@@ -568,7 +568,19 @@ Warning: ref_0042.json (MyLib.Examples.Pipe) no longer holds y — the accepted 
 
 A **simulate-only** test passes iff its simulation completes: nothing is
 compared, no baseline is stored for it, and its report page reads
-`Simulate-only: simulation succeeded`. A test is one when a recognizer marks
+`Simulate-only: simulation succeeded`. An accept names the ones it passed
+over, under its `Accepted N test baselines` line — up to six, then `and N
+more`:
+
+```
+Accepted 0 test baselines to …/ReferenceResults/Dymola/linux
+Simulate-only, nothing to store: MyLib.Tank
+```
+
+That is neither a warning nor a skip, and the exit code is what it would have
+been; the interactive review prints the same sentence for `a` on such a test,
+and `dstf author`'s Accept carries it in its notice. A test is
+simulate-only when a recognizer marks
 it (`simulate_only`), or when it DECLARES nothing to score — no `UnitTests`
 variable, no `variables` pattern and no `metrics` tree. `"variables": []`
 on a model without the component is that entry, and it is what `dstf add
@@ -928,7 +940,8 @@ flight — is refused with
 `re-run before accepting`; a result the store declines (a trajectory carrying
 `NaN`, say) is refused with that reason and the review moves on to the next
 test; and a simulate-only test stores no baseline at all
-(`simulate-only test: no baseline stored`), since there is nothing to compare
+(`Simulate-only, nothing to store: MyLib.Tank`, the line `--accept` prints
+for it), since there is nothing to compare
 it against. A test the comparison refused — a base tolerance that is not one
 number — prints its reason as `Error: …` and is not offered `a`.
 
@@ -1910,7 +1923,9 @@ skipped — it has nothing to compare) or `no tracked variables in result`. The
 button itself is greyed when no row will be stored, carrying that first row's
 own reason — and with nothing checked it reads `Accept needs a selection`. The
 write reports one line in the queue panel — how
-many baselines it stored, where, and every test it skipped with its reason —
+many baselines it stored, where, every test it skipped with its reason, and
+the simulate-only tests of the selection (`Simulate-only, nothing to store:
+…`) —
 and the results reload, so a re-baselined test's verdict flips in place.
 Accept is refused for a test the queue holds — "… is queued: accept it when
 its run has ended" — since the result in memory is about to be replaced, and

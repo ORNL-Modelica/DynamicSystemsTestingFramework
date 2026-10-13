@@ -1181,6 +1181,52 @@ class TestAcceptExitCodeAndScope:
         assert rc == 0
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
+    @pytest.mark.parametrize("command", ["run", "compare"])
+    def test_an_accept_names_the_simulate_only_tests_it_stored_nothing_for(
+        self, run_env, capsys, command
+    ):
+        """`Accepted 0 test baselines to …`, exit 0, and no word of the
+        test: what `dstf add <model>` then `run --accept` printed, and
+        `compare --accept` after it. Not a warning and not a skip — the
+        exit code is what it was."""
+        tank = _mk_test("Lib.Tank")
+        tank.variable_patterns = []  # the entry `dstf add` writes
+        assert tank.is_simulate_only and not tank.simulate_only
+        results = {"Lib.Tank": _mk_result("Lib.Tank")}
+        run_env.make([tank], results=results, prior_results=results)
+        args = build_arg_parser().parse_args(
+            ["--config", str(run_env.config_dir), command]
+            + ["--work-dir", str(run_env.work_dir), "--accept"]
+        )
+        rc = (cmd_run if command == "run" else cmd_compare)(args)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert re.search(
+            r"^Accepted 0 test baselines to .*\n"
+            r"Simulate-only, nothing to store: Lib\.Tank\n",
+            out,
+            flags=re.M,
+        ), out
+        assert "Warning" not in out and "Skipped" not in out
+        assert _stored_model_ids(run_env) == set()
+
+    def test_an_accept_of_a_mixed_run_names_them_beside_what_it_stored(
+        self, run_env, capsys
+    ):
+        tests = [_mk_test("Lib.T1")] + [
+            _mk_test(f"Lib.S{i}", simulate_only=True) for i in range(1, 9)
+        ]
+        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
+        rc = cmd_run(_run_args(run_env, "--accept"))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert re.search(r"^Accepted 1 test baselines to ", out, flags=re.M)
+        assert (
+            "\nSimulate-only, nothing to store: "
+            "Lib.S1, Lib.S2, Lib.S3, Lib.S4, Lib.S5, Lib.S6 and 2 more\n"
+        ) in out
+        assert _stored_model_ids(run_env) == {"Lib.T1"}
+
     def test_run_accept_refuses_a_test_the_manifest_records_as_pending(
         self, run_env, capsys
     ):
@@ -1559,9 +1605,11 @@ class TestInteractiveReviewExitCode:
         self, monkeypatch, tmp_path, capsys
     ):
         """A simulate-only test is neither stored nor skipped by the accept
-        function; the loop reports that outcome and counts it as skipped.
-        The exit code stays 0 — the comparison passed, so nothing the loop
-        passed over is still failing."""
+        function; the loop prints the accept's own line for it — the one
+        `--accept` prints, where it read `Not accepted: …` in red, as a
+        refusal — and counts the test as passed over. The exit code stays
+        0 — the comparison passed, so nothing the loop passed over is still
+        failing."""
         config, store = _review_env(tmp_path, {"Lib.S": "passed"})
         test = _mk_test("Lib.S", simulate_only=True)
         _feed_inputs(monkeypatch, ["a"])
@@ -1572,8 +1620,9 @@ class TestInteractiveReviewExitCode:
             store,
             config,
         )
-        out = capsys.readouterr().out
-        assert "simulate-only test: no baseline stored" in out
+        out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+        assert "  Simulate-only, nothing to store: Lib.S\n" in out
+        assert "Not accepted" not in out
         assert "Done. Accepted 0, skipped 1." in out
         assert store.index.get_id("Lib.S") is None
         assert rc == 0

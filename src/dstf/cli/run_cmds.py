@@ -55,12 +55,21 @@ def _get_backend(config, persistent: bool = False):
 
 
 def _report_accept(
-    config, stored: int, skipped: list[tuple[str, str]], warnings: list[str]
+    config,
+    stored: int,
+    skipped: list[tuple[str, str]],
+    warnings: list[str],
+    notes: list[str],
 ) -> int:
     """Print the accept outcome; nonzero when anything was skipped (review
     2026-07-06 finding 30: a partial accept is a failure CI must see). A
-    warning — a large baseline file, which IS stored — changes no exit code."""
+    warning — a large baseline file, which IS stored — changes no exit code,
+    and neither does a note: the simulate-only tests, which have no baseline
+    to store, are named, where `Accepted 0 test baselines` said nothing of
+    them."""
     print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
+    for line in notes:
+        print(line)
     for line in warnings:
         print(f"Warning: {line}")
     if skipped:
