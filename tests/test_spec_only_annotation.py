@@ -311,6 +311,129 @@ class TestFindClass:
         }
         assert stop == {"": 13, ".M": 7, ".N": 8}
 
+    @pytest.mark.parametrize(
+        ("path", "source", "stop_times"),
+        [
+            (
+                "Examples/package.mo",
+                "within RodLib;\npackage Examples\n"
+                "  model UsesRod = Base(redeclare model Rod = RodLib.Rod2)"
+                " annotation(experiment(StopTime=3));\n"
+                "  model Rod\n    Real x;\n    annotation(experiment(StopTime=50));\n"
+                "  end Rod;\nend Examples;\n",
+                {"Examples.Rod": 50, "Examples.UsesRod": 3},
+            ),
+            (
+                "A.mo",
+                "within RodLib;\nmodel A\n  Pipe p(redeclare model HT = Ideal);\n"
+                "  model HT\n    Real x;\n    annotation(experiment(StopTime=7));\n"
+                "  end HT;\n  annotation(experiment(StopTime=9));\nend A;\n",
+                {"A.HT": 7, "A": 9},
+            ),
+            (
+                "B.mo",
+                "within RodLib;\nmodel B\n"
+                "  extends Base(redeclare package Medium = Water,"
+                " redeclare model T = Foo);\n"
+                "  model T\n    Real x;\n    annotation(experiment(StopTime=11));\n"
+                "  end T;\n  annotation(experiment(StopTime=12));\nend B;\n",
+                {"B.T": 11, "B": 12},
+            ),
+            (
+                "C.mo",
+                "within RodLib;\nmodel C\n"
+                "  model T\n    Real x;\n    annotation(experiment(StopTime=11));\n"
+                "  end T;\n  Pipe p(redeclare model T = Foo);\n"
+                "  annotation(experiment(StopTime=12));\nend C;\n",
+                {"C.T": 11, "C": 12},
+            ),
+            (
+                "ShortOne.mo",
+                "within RodLib;\nmodel ShortOne = L.Rod(a=1)"
+                " annotation(experiment(StopTime=13));\n",
+                {"ShortOne": 13},
+            ),
+            (
+                "D.mo",
+                "within RodLib;\nmodel D\n"
+                "  Pipe p(redeclare model M = Foo) annotation(Placement(x=1));\n"
+                "  annotation(experiment(StopTime=21));\nend D;\n",
+                {"D": 21, "D.M": None},
+            ),
+            (
+                "Q.mo",
+                "within RodLib;\nmodel Q\n"
+                "  model 'a\"b'\n    Real x; annotation(experiment(StopTime=1.5));\n"
+                "  end 'a\"b';\n"
+                "  model N Real x; annotation(experiment(StopTime=2.5)); end N;\n"
+                "  annotation(experiment(StopTime=31));\nend Q;\n",
+                {"Q": 31, "Q.N": 2.5, "Q.'a\"b'": 1.5},
+            ),
+        ],
+        ids=[
+            "sibling-short-class",
+            "component",
+            "extends",
+            "declared-first",
+            "short-class",
+            "no-such-class",
+            "quoted-name",
+        ],
+    )
+    def test_a_class_redeclared_in_a_modification_is_no_class_of_the_body(
+        self, rodlib, path, source, stop_times
+    ):
+        """`Pipe p(redeclare model HT = Ideal);` declares no class `HT` of
+        the model it stands in — nor does one in an `extends` clause, or in
+        the modification of a short class beside it. Each was taken for the
+        class of that name, so the model `HT` declared AFTER it was found
+        with no annotation: its test ran for the framework's 1 s."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / path).parent.mkdir(exist_ok=True)
+        (lib / path).write_text(source, encoding="utf-8")
+        found = {name: self._find(rodlib, f"RodLib.{name}") for name in stop_times}
+        assert {
+            name: located and located.experiment.stop_time
+            for name, located in found.items()
+        } == stop_times
+
+    def test_a_redeclare_that_is_an_element_of_the_body_is_a_class(self, rodlib):
+        """Outside every bracket it is a declaration like any short class."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Holder.mo").write_text(
+            "within RodLib;\nmodel Holder\n  extends Base(p(q={1, 2}), r=f(3));\n"
+            "  redeclare model M = RodLib.Rod annotation(experiment(StopTime=12));\n"
+            "end Holder;\n",
+            encoding="utf-8",
+        )
+        assert self._find(rodlib, "RodLib.Holder.M").experiment.stop_time == 12
+
+    def test_an_annotation_inside_a_modification_is_not_the_enclosing_classes(
+        self, rodlib
+    ):
+        """The class redeclared there is none of the body's, and its text is
+        still not the body's own."""
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Holder.mo").write_text(
+            "within RodLib;\nmodel Holder\n"
+            "  Pipe p(redeclare model M = Foo annotation(experiment(StopTime=5)));\n"
+            "  annotation(experiment(StopTime=21));\nend Holder;\n",
+            encoding="utf-8",
+        )
+        assert self._find(rodlib, "RodLib.Holder").experiment.stop_time == 21
+        assert self._find(rodlib, "RodLib.Holder.M") is None
+
+    @pytest.mark.parametrize("name", ["'a(b'", "'a)b'", "'a\\'[b'"])
+    def test_a_bracket_in_a_quoted_name_opens_and_closes_nothing(self, rodlib, name):
+        lib = rodlib.parent.parent / "RodLib"
+        (lib / "Holder.mo").write_text(
+            f"within RodLib;\nmodel Holder\n  Real {name} = 1;\n"
+            "  model S = RodLib.Rod annotation(experiment(StopTime=12));\n"
+            "end Holder;\n",
+            encoding="utf-8",
+        )
+        assert self._find(rodlib, "RodLib.Holder.S").experiment.stop_time == 12
+
     def test_a_short_class_in_package_mo_is_found(self, rodlib):
         found = self._find(rodlib, "RodLib.Short")
         assert found.mo_file.name == "package.mo" and found.experiment is None

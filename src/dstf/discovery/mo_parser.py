@@ -562,6 +562,11 @@ class _ClassSpan:
     body: int
     end: int
     short: bool = False
+    #: How many brackets of the scanned text are open around a short class.
+    #: 0 is a declaration of that text; one written inside a modification
+    #: (``Pipe p(redeclare model HT = Ideal);``) is no class of the body the
+    #: statement stands in (:func:`_named`).
+    depth: int = 0
 
 
 #: A Modelica name: an identifier, or a quoted one (``'in ner'``).
@@ -577,6 +582,10 @@ _CLASS_TOKEN_RE = re.compile(
 )
 
 _OPENERS, _CLOSERS = "([{", ")]}"
+#: A bracket of stripped source (group 1) — or a quoted name, which is code
+#: there and whose brackets open and close nothing (``Real 'a(b' = 1;``). It
+#: ends as the lexer ends it: at its closing ``'`` or at the end of its line.
+_BRACKET_RE = re.compile(r"'(?:\\[^\n]|[^'\n])*'?|([()\[\]{}])")
 
 
 def _statement_end(stripped: str, start: int, end: int) -> int:
@@ -610,21 +619,33 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
     short class opens nothing: it is one statement, and its span runs to
     that statement's ``;`` — it carries an ``annotation(...)`` of its own,
     which is not the enclosing class's.
+
+    A short class written inside a bracket — a modification's ``redeclare
+    model HT = Ideal`` — is in the list with the ``depth`` it stands at: its
+    text is not the enclosing class's own (its annotation neither), and it
+    is no class of this text by name. Taken for one, it hid the class ``HT``
+    declared after it, which was then found with no annotation — so did a
+    class redeclared in a sibling short class's modification.
     """
     out: list[_ClassSpan] = []
     stack: list[tuple[str, int, int]] = []
+    depth, at = 0, start
     for m in _CLASS_TOKEN_RE.finditer(stripped, start, end):
+        for found in _BRACKET_RE.finditer(stripped, at, m.start()):
+            if found.group(1):
+                depth += 1 if found.group(1) in _OPENERS else -1
+        at = m.end()
         closed = m.group(3)
         if closed is not None:
             if stack and stack[-1][0] == closed:
-                name, at, body = stack.pop()
+                name, opened, body = stack.pop()
                 if not stack:
-                    out.append(_ClassSpan(name, at, body, m.end()))
+                    out.append(_ClassSpan(name, opened, body, m.end()))
         elif m.group(2) is None:
             stack.append((m.group(1), m.start(), m.end()))
         elif not stack:
             after = _statement_end(stripped, m.end(), end)
-            out.append(_ClassSpan(m.group(1), m.start(), m.end(), after, short=True))
+            out.append(_ClassSpan(m.group(1), m.start(), m.end(), after, True, depth))
     return out
 
 
@@ -689,7 +710,10 @@ def _class_in_file(
     for name in nested:
         if span is None:
             return None
-        span = _named(_direct_classes(stripped, span.body, span.end), name)
+        # A short class has no body: the classes of its own are the ones
+        # its modification redeclares, one bracket into its statement.
+        inside = _direct_classes(stripped, span.body, span.end)
+        span = _named(inside, name, depth=1 if span.short else 0)
     if span is None:
         return None
     # Blanked 1:1, so `_parse_experiment`'s offsets into the original text
@@ -704,13 +728,18 @@ def _class_in_file(
     )
 
 
-def _named(spans: list[_ClassSpan], name: str) -> _ClassSpan | None:
-    """The class of that name — a short class too: ``model S = L.Rod
-    annotation(experiment(StopTime=13));`` is a class of the library with an
-    annotation of its own, in its one statement. (It was passed over, and a
-    run said of ``Examples/ShortOne.mo`` that the model was "not found
-    under source_path".) It has no body: nothing is found inside it."""
-    return next((s for s in spans if s.name == name), None)
+def _named(spans: list[_ClassSpan], name: str, depth: int = 0) -> _ClassSpan | None:
+    """The class of that name declared at ``depth`` — a short class too:
+    ``model S = L.Rod annotation(experiment(StopTime=13));`` is a class of
+    the library with an annotation of its own, in its one statement. (It
+    was passed over, and a run said of ``Examples/ShortOne.mo`` that the
+    model was "not found under source_path".) It has no body: nothing is
+    found inside it but the classes its own modification redeclares.
+
+    ``depth`` is 0 in a file and in a class's body: a ``redeclare model X
+    = …`` inside a component's or an ``extends`` clause's modification
+    there is no class ``X`` of that body."""
+    return next((s for s in spans if s.name == name and s.depth == depth), None)
 
 
 # ---------------------------------------------------------------------------
