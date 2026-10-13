@@ -781,8 +781,10 @@ example's `Frequency`, `RangeCheck` and `MultiFrequency` carry the
 OpenModelica baseline the other way round (`modelica-om-…`). The tests of
 the two libraries that share a name and not a model (`Constant`,
 `SimpleRamp` / `SimpleTest`, `TubeTolerance`, `MetricTree`) carry no such
-companion: it would draw another model's curve. `MetricTreeTest` carries
-`analytic`: the closed-form solution of the variable its criteria compare
+companion: it would draw another model's curve. Neither Dymola partition
+carries a Julia companion. `MetricTreeTest` carries
+`analytic`, in `Dymola/linux` and `OpenModelica/linux` (`Dymola/windows`
+ships no companion): the closed-form solution of the variable its criteria compare
 with a baseline (`x = 1 − e^(−2t)`) written to a CSV on a fine grid, registered with
 `--map "unitTests.x[1]=x"` and then frozen, so the
 data sits beside the baseline it is drawn on (`companions/ref_NNNN/
