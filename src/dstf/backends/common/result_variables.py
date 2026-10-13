@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 def criterion_variables(test: TestModel, diagnostic_vars: Iterable[str]) -> list[str]:
     """The variables ``test``'s criteria name (`tree_variables`): what every
     backend records and extracts AFTER the UnitTests variables and the
-    ``variables`` patterns, so the indices of those two stay what a stored
-    baseline reads. Imported here, not at module level: importing
+    ``variables`` patterns, so a criterion added later renumbers neither
+    (a stored baseline records each variable's index). Imported here, not at module level: importing
     ``dstf.comparison`` runs its package init, which imports the comparator,
     which imports ``dstf.backends`` — a cycle from any backend module."""
     from ...comparison.tree_spec import tree_variables
@@ -186,8 +186,9 @@ def extract_variables(
                 seen.add(var_name)
                 idx += 1
 
-    # 3. Variables a criterion names, APPENDED: the indices of the first two
-    # groups stay what a stored baseline reads.
+    # 3. Variables a criterion names, APPENDED: a criterion added later
+    # renumbers neither of the first two groups (a stored baseline records
+    # each variable's index).
     for var_name in criterion_variables(test, diagnostic_vars):
         if var_name in seen:
             continue

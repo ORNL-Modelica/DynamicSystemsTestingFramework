@@ -2050,3 +2050,9 @@ planning.
     the stop is near t = 0.
   - Nothing here was run on Windows in this round: no Windows baselines
     ship for the OpenModelica, Python or Julia examples.
+  - The hint for a baseline entry stored under expression text quotes the
+    expression as scoring normalizes it, not the text the file holds (a
+    stored `alphas[\n 1, 1]` is quoted as `alphas[1, 1]`), and does not give
+    the entry's `index`; the helper is still called `migration_hint` though
+    no command migrates anything. No shipped or known baseline is stored
+    that way.

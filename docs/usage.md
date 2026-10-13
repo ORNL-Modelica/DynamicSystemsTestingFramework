@@ -312,8 +312,8 @@ sibling-backend overlay is DSTF's own data under the test's own names, and
 is matched by name alone.
 
 A key or a stored name written as the expression text names nothing; it has
-to be the result-file name. Scoring says so in the two places it can tell,
-and names the name to write:
+to be the result-file name. Scoring says so in two places, and names the
+name to write:
 
 - a `variable_overrides` key that is a variable's expression is ignored, and
   the run logs one line per test naming the key, the file that holds it
@@ -324,7 +324,14 @@ and names the name to write:
   for that variable. The log line — and, for a test with a `metrics` tree,
   the criterion's own reason — says the baseline stores it under its
   expression and gives the result-file name the entry's `name` must be.
-  Rename the entry, or accept the test again.
+  Rename the entry, or accept the test again (accept it again where the test
+  tracks the same quantity twice — a `variables` pattern and a UnitTests
+  element — and the baseline holds it once).
+
+A `metrics` leaf's `variable`, or a `plots` entry, written as the expression
+gets no such hint: the leaf reads `variable '…' not found in the result`.
+With a `metrics` tree the flat `variable_overrides` score nothing, and their
+keys are not looked at.
 
 ### Scalar leaves — comparing one number
 
