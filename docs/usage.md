@@ -596,7 +596,11 @@ variable, no `variables` pattern, no `metrics` tree and no
 `comparison.variable_overrides` entry. `"variables": []`
 on a model without the component is that entry, and it is what `dstf add
 <model>` writes; give it a pattern or a criterion and it is scored like any
-other test.
+other test. In the spec file, that is: `dstf author` adds a criterion to a
+test that tracks at least one variable, so a test meant to be given its
+criteria there is added with `dstf add <model> --variables <pattern>` — on a
+test that tracks none, its page says "nothing is scored" and has no `+`
+(a known limit, `docs/ideas.md`).
 
 An override alone does not make it one. `comparison.variable_overrides`
 changes how a TRACKED variable is scored, so on an entry that tracks nothing

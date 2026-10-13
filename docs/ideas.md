@@ -2014,8 +2014,39 @@ planning.
     modification at its bracket depth and passes it over as a class of the
     body; the scan of a file is about three times slower for it (18 ms on a
     650 kB file).
-  - A reference JSON's lost-variable line on accept names every variable the
-    old baseline held and the new one does not — one removed from the spec
-    on purpose too.
-  - A watch plot draws the run only: no baseline and no companion overlay
-    (the example's `analytic` companion maps `x` alone for that reason).
+  - A watch plot draws the run only: no baseline and no companion overlay.
+    The example's `analytic` companion holds `x` only.
+  - **`dstf author` cannot give a test its FIRST criterion** when the test
+    tracks no variable (what plain `dstf add <model>` writes): the page says
+    "nothing is scored" and offers no `+`. The add form builds on a tree or
+    on what the flat path scored, and there is neither. The way round is
+    `dstf add <model> --variables <pattern>`, `spec-update`, or a hand edit.
+    Building it means a tree made from nothing in the Session (a `metrics`
+    of one leaf, which then tracks its variable) and a `+` on a page with no
+    criteria — a new path through the authoring core, to be gated in a real
+    browser. First candidate after v1.0.
+  - A test that lost a tracked variable is locked in the tool until it is
+    queued again: every row says "its last run no longer holds what it
+    scored — queue it again" and has no +/wrap/−.
+  - A Suite view stored in the browser with values of the wrong TYPE (a
+    number where a list is read) still empties the table; no page version
+    writes one. Clearing the site data restores it.
+  - `dstf add` on a Python-source library writes no `source`, and the test
+    then fails to load; the entry needs its `source` by hand.
+  - OpenModelica refuses a library whose root directory is a link of
+    ANOTHER name (`Expected the package to have name …`); a link of the
+    same name works.
+  - A Save in the tool on a flat test writes the `metrics` tree and leaves
+    the old `comparison.variable_overrides` beside it, where it scores
+    nothing; the preview shows neither that the tree is new nor that the
+    override stays.
+  - The report page says "leaves" in four places (`3 / 3 leaves passed`, a
+    tooltip, the tree's heading, the Worst NRMSE note) where the tool and
+    the console say criteria.
+  - `run -i` prints `N/N passed, 0 failed` for a test that FAILS with no
+    failing criterion (a `weighted` group under its threshold), and
+    `1/2 passed` for a PASS through one branch of an `or`.
+  - The cancelled-run marker's label is cut at the plot's left edge when
+    the stop is near t = 0.
+  - Nothing here was run on Windows in this round: no Windows baselines
+    ship for the OpenModelica, Python or Julia examples.

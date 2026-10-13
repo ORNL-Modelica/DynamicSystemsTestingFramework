@@ -3032,6 +3032,11 @@ renamed to import_source (metavar keeps the CLI face); regression test
 pins that the global stays None. The raw-traceback UX for such errors is
 the known Phase C item.
 
+2026-10-13: the tree has a fourth leaf, `range(unitTests.x[2], max 1.0)` —
+"the lag never overshoots" — last under the root `and`. The model tracks `y`
+through its UnitTests component and no criterion scored it, so every green
+run of the shipped example ended with a "Tracked but not scored" warning.
+
 ## D104 — Authored windows now pre-fill the reporter's window inputs (2026-08-31)
 
 Eyeballing the D103 demo report showed the window inputs empty on leaves
