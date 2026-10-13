@@ -300,8 +300,10 @@ class TestPage:
         """Why this test has no tree, as a clause the line it is read into
         completes ("nothing scored: this test has no baseline"): its run
         failed or it has no result (`run_state`, first), its scoring
-        raised, the comparison refused it (its reason, as written), or it
-        has no baseline to be scored against. A model whose
+        raised, the comparison refused it (its reason, as written), it is
+        simulate-only — which a test with a stored baseline can be, once
+        its entry tracks nothing — or it has no baseline to be scored
+        against. A model whose
         scoring raised keeps its result and has no comparison at all — the
         Suite row says `scoring failed` for the same state — so "no
         baseline" would name the wrong cause."""
@@ -311,6 +313,8 @@ class TestPage:
         comp = self.shell.session.comparisons.get(self.model_id)
         if comp is None:
             return SCORING_FAILED
+        if comp.simulate_only:
+            return "this test is simulate-only"
         # A test the comparison refused has a baseline, and a reason.
         return refusal(comp) or "this test has no baseline"
 

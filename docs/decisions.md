@@ -7857,6 +7857,10 @@ whose result holds none of them. `TestModel.simulate_only` stays the
 recognizer's mark alone — the tool's add form is grey on a marked test,
 where a staged criterion would never be scored, and open on one that only
 declares nothing, where the criterion is what makes it a scored test.
+Its Test page says so on both lines: the strip's `Simulate-only: it runs,
+and nothing is compared.` and the tree's `nothing scored: this test is
+simulate-only`, which read `this test has no baseline` under that strip
+for a test that had one.
 
 **A worker that cannot start says why** (2026-10-12). On OpenModelica a
 library that did not parse when a worker STARTED — the first click, or

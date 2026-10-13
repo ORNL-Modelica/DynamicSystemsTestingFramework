@@ -1838,6 +1838,31 @@ async def test_a_test_with_nothing_scored_says_so(shell):
             assert _none(user, "tree:toggle")
 
 
+async def test_a_simulate_only_test_says_that_and_not_no_baseline(shell):
+    """D has a baseline and — its entry tracking nothing — is simulate-only:
+    the tree's line read "nothing scored: this test has no baseline" under
+    a strip saying "Simulate-only"."""
+    import json
+
+    session = shell.session
+    spec_path = session.spec.path
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == D]
+    entry["variables"] = []
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    session.reload()
+    assert session.project.store.index.get_id(D) is not None  # it HAS one
+    assert session.comparisons[D].simulate_only
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        assert _one(user, "strip-text").text == (
+            "Simulate-only: it runs, and nothing is compared."
+        )
+        assert _one(user, "tree:summary").text == (
+            "nothing scored: this test is simulate-only"
+        )
+
+
 async def test_a_test_whose_scoring_raised_does_not_say_no_baseline(shell, monkeypatch):
     """A model whose scoring raised keeps its result and has no comparison
     at all (the Suite row says `scoring failed` for the same state); D has
