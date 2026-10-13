@@ -2,7 +2,7 @@
 
 [![quality](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/actions/workflows/quality.yml/badge.svg)](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/actions/workflows/quality.yml)
 
-Regression and unit testing for time-dependent system behavior. Discovers tests, runs simulations, compares against versioned baselines, and reports — across **Modelica (Dymola, OpenModelica), FMU (FMPy), Julia/ModelingToolkit, and arbitrary Python**.
+Regression and unit testing for time-dependent system behavior. Discovers tests, runs simulations, compares against versioned baselines, and reports. A simulator is a plug-in backend; the starting set covers **Modelica (Dymola, OpenModelica), FMU (FMPy), Julia/ModelingToolkit, and arbitrary Python**, and more are intended.
 
 Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across backends without ref drift.
 
@@ -14,7 +14,7 @@ Criteria are written in **`dstf author`**, a local browser tool over the same fi
 
 ## What's in the box
 
-- **5 backends**, each with persistent-worker support where it pays off:
+- **Backends are plug-ins.** Five ship today — a start, not the full list — each with persistent-worker support where it pays off; `docs/extensibility.md` has the contract for adding one:
 
   | Backend | Source kind | Persistent | Notes |
   |---|---|---|---|
@@ -58,7 +58,6 @@ Criteria are written in **`dstf author`**, a local browser tool over the same fi
 End users:
 
 ```bash
-# Not on PyPI yet — these work from the first published release.
 uv tool install dynamic-systems-testing-framework   # then run plain: dstf ...
 # or: pipx install dynamic-systems-testing-framework
 ```
@@ -223,4 +222,4 @@ For HTML reports as build artifacts, also pass `--report` and upload `dashboard.
 
 ## Status
 
-v1.0. 5 backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset drives the report pages and the authoring tool in a real browser). The report is read-only and mutates nothing: every number it draws comes from a figure Python built or a string the server rendered. Criteria are authored in `dstf author`, driven by the same figures and the same scorer as the CLI. Nothing is published to PyPI yet.
+v1.0. Five backends so far, with more intended; 4 demo libraries, and a comprehensive pytest suite (a Playwright subset drives the report pages and the authoring tool in a real browser). The report is read-only and mutates nothing: every number it draws comes from a figure Python built or a string the server rendered. Criteria are authored in `dstf author`, driven by the same figures and the same scorer as the CLI. Published on PyPI as `dynamic-systems-testing-framework`.
