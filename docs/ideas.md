@@ -2056,3 +2056,19 @@ planning.
     the entry's `index`; the helper is still called `migration_hint` though
     no command migrates anything. No shipped or known baseline is stored
     that way.
+
+- **Review and revisit everything a user reads (owner, 2026-10-13, after
+  the 1.0 release)**: the CLI — its commands, flags and help text — the
+  usage documentation, and Sphinx documentation, carefully and as a whole,
+  as a user meets them. The owner's example: `--dymola-interface` exists in
+  the CLI. As the tree stands, that flag is a global one, offered on every
+  command of a tool that is meant to be backend-agnostic (`cli/main.py`),
+  and there is no Sphinx tree: the documentation is the Markdown files under
+  `docs/` and the README. Whether Sphinx is to be built, and what the review
+  should conclude about backend-specific flags at the top level, are open —
+  grill before planning.
+
+- **Evaluate when, and whether, parts or all of this project should move to
+  Rust (owner, 2026-10-13)**: an evaluation, not a decision. Nothing has
+  been measured for it yet; which parts, on what evidence and at what cost
+  to the plug-in contracts are the questions. Grill before planning.
