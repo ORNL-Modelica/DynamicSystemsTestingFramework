@@ -247,6 +247,24 @@ def test_the_review_says_the_classifiers_status(shape, monkeypatch, tmp_path, ca
     assert f"  Status: {_REVIEWED_AS[shape][2]}\n" in out
 
 
+def _criterion(ok: bool):
+    """One criterion of the variable `x`, passed or not."""
+    from dstf.comparison.types import VariableComparison
+
+    return VariableComparison(
+        index=1,
+        name="x",
+        passed=ok,
+        nrmse=0.0,
+        rmse=0.0,
+        signal_range=1.0,
+        max_abs_error=0.0,
+        max_abs_error_time=0.0,
+        reference_final=1.0,
+        actual_final=1.0,
+    )
+
+
 @pytest.mark.parametrize(
     ("passed", "line"),
     [
@@ -260,30 +278,36 @@ def test_the_review_counts_criteria_and_calls_them_that(
     """`Variables: 2/3 passed` counted the test's CRITERIA: two of them on
     one variable are two, and the Suite's and the dashboard's column for
     the same number is Criteria."""
-    from dstf.comparison.types import VariableComparison
-
-    def criterion(ok: bool) -> VariableComparison:
-        return VariableComparison(
-            index=1,
-            name="x",  # three criteria, ONE variable
-            passed=ok,
-            nrmse=0.0,
-            rmse=0.0,
-            signal_range=1.0,
-            max_abs_error=0.0,
-            max_abs_error_time=0.0,
-            reference_final=1.0,
-            actual_final=1.0,
-        )
-
     comp = TestComparison(
-        "L.T", passed=all(passed), variables=[criterion(ok) for ok in passed]
+        # three criteria, ONE variable
+        "L.T",
+        passed=all(passed),
+        variables=[_criterion(ok) for ok in passed],
     )
     config, store = _review_env(tmp_path)
     monkeypatch.setattr("builtins.input", lambda prompt="": "s")
     _interactive_review([], {}, [comp], store, config)
     out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
     assert line in out and "Variables:" not in out, out
+
+
+def test_every_header_counts_the_tests_under_review(monkeypatch, tmp_path, capsys):
+    """`[2/2]`, `[3/5]`: from the second test on the header's total was the
+    PREVIOUS test's number of criteria — the two counts shared one name."""
+    comps = [
+        TestComparison("L.A", passed=True, variables=[_criterion(True)] * 2),
+        TestComparison("L.B", passed=True, variables=[_criterion(True)] * 5),
+        TestComparison("L.C", passed=True),
+    ]
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    _interactive_review([], {}, comps, store, config)
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert re.findall(r"^\[\d+/\d+\] .*$", out, flags=re.M) == [
+        "[1/3] L.A",
+        "[2/3] L.B",
+        "[3/3] L.C",
+    ]
 
 
 # ---------------------------------------------------------------------------

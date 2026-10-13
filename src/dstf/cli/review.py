@@ -116,12 +116,15 @@ def _interactive_review(
         # count, under its name.
         if comp.variables:
             n_pass = sum(1 for v in comp.variables if v.passed)
-            n_total = len(comp.variables)
+            # Its own name: as `n_total` it replaced the number of TESTS,
+            # and every later header read `[2/<the last test's criteria>]`.
+            n_criteria = len(comp.variables)
             if comp.passed:
-                print(f"  Criteria: {n_pass}/{n_total} passed")
+                print(f"  Criteria: {n_pass}/{n_criteria} passed")
             else:
                 print(
-                    f"  Criteria: {n_pass}/{n_total} passed, {n_total - n_pass} failed"
+                    f"  Criteria: {n_pass}/{n_criteria} passed, "
+                    f"{n_criteria - n_pass} failed"
                 )
 
         # Can't accept if simulation failed, or never ran
