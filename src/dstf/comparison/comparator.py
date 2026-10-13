@@ -300,30 +300,34 @@ def _check_structural_changes(
     return warnings
 
 
-def migration_hint(baseline_entries: Mapping[str, dict], expression: str) -> str:
-    """The clause that names the migration command, or ``""``.
+def migration_hint(
+    baseline_entries: Mapping[str, dict], name: str, expression: str
+) -> str:
+    """The clause that says which name a baseline entry must be stored
+    under, or ``""``.
 
     A variable whose baseline entry is missing is un-migrated exactly when
     the baseline holds an UN-MIGRATED entry under the text the variable's
     EXPRESSION spells — the name every UnitTests baseline was stored under
-    before the identity change. Both scoring paths say it, from here: a
-    hint on every missing baseline would point a whole suite of brand-new
-    variables at a command that would rewrite nothing (the Task 3 review).
+    before the identity change. Both scoring paths say it, from here, with
+    ``name``: the variable's result-file name, which is what that entry
+    has to be stored under. A hint on every missing baseline would tell a
+    whole suite of brand-new variables to rename an entry no baseline
+    holds (the Task 3 review).
 
     Two things the raw texts do not decide, so this reads the ENTRIES:
 
     * The stored name is compared NORMALIZED
-      (:func:`~dstf.discovery.mo_parser.normalize_expression`) — the same
-      rule the migration command matches by. A baseline written from a
-      ``.mo`` source that wrapped the line holds
+      (:func:`~dstf.discovery.mo_parser.normalize_expression`). A baseline
+      written from a ``.mo`` source that wrapped the line holds
       ``heatTransfer.alphas[\\n        1, 1]``, and the expression beside
       the result variable is normalized; compared raw, the most common
       un-migrated shape in a real library got no hint at all.
     * An entry that already carries ``"expression"`` was written after the
       identity change and is not un-migrated. A migrated baseline may hold
       a spec-tracked ``pipe.T[1]`` beside a NEW ``unitTests.x[1]`` whose
-      expression happens to be ``pipe.T[1]``; pointing that at the command
-      would name a rewrite that must not happen.
+      expression happens to be ``pipe.T[1]``; a hint there would name a
+      rename that must not happen.
     """
     from ..discovery.mo_parser import normalize_expression
 
@@ -336,7 +340,7 @@ def migration_hint(baseline_entries: Mapping[str, dict], expression: str) -> str
         return ""
     return (
         f" — the baseline stores it under its expression {expression!r}; "
-        "`dstf migrate-variable-names` renames it"
+        f"the stored name must be the result-file name {name!r}"
     )
 
 
@@ -436,8 +440,8 @@ def _warn_about_overrides_that_name_nothing(
     keys up by the result variable's name — but it was silent about it. A key
     that names a variable's EXPRESSION is the shape a spec written before the
     identity change has (``pipe.T[1]`` where the result file says
-    ``unitTests.x[1]``): the message says which name it meant and names the
-    command that rewrites it. One line per test; no status changes.
+    ``unitTests.x[1]``): the message says which name it meant, and that the
+    key must be that name. One line per test; no status changes.
 
     It also says WHICH FILE holds each key. Overrides come from two tiers —
     the test's entry in ``test_spec.json`` and the ``comparison`` section of
@@ -473,8 +477,8 @@ def _warn_about_overrides_that_name_nothing(
         )
         parts.append(f"{key!r}{where}{of}")
     hint = (
-        " — a key that names an expression is rewritten by "
-        "`dstf migrate-variable-names`"
+        " — a key that names an expression must be the result-file name of "
+        "the variable it means, named beside it"
         if any(key in by_expression for key in unknown)
         else ""
     )
@@ -695,8 +699,8 @@ def compare_test(
         # its result file gives it (a nameless one is a backend bug), and an
         # entry that merely sits at the same index is a different quantity
         # after any reorder. A baseline that has none says so once per
-        # variable, with the migration clause when it is the un-migrated
-        # shape rather than a variable the baseline never held.
+        # variable, with the name to store it under when it is the
+        # un-migrated shape rather than a variable the baseline never held.
         ref_var = ref_vars_by_name.get(var_result.name)
         if ref_var is None and reference.get("variables"):
             logger.warning(
@@ -704,7 +708,9 @@ def compare_test(
                 "missing baseline (re-accept to refresh)%s",
                 test.model_id,
                 var_result.name,
-                migration_hint(ref_vars_by_name, var_result.expression),
+                migration_hint(
+                    ref_vars_by_name, var_result.name, var_result.expression
+                ),
             )
 
         # A variable is scored and overridden under the name its result file

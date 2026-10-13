@@ -413,11 +413,11 @@ def _tracked(
     """The tracked names, in Dymola's and OpenModelica's order
     (`extract_variables`): the UnitTests variables ``available`` has,
     then ``requested`` (the resolved patterns), then the variables a
-    criterion names that ``available`` has — so a stored baseline and
-    `migrate_names` read indices 1..N as the UnitTests variables. The
-    simulate side (``available``: the model description's variables) and
-    the read side (the saved columns) both go through it, so what is
-    tracked is what is read."""
+    criterion names that ``available`` has — so a stored baseline reads
+    indices 1..N as the UnitTests variables. The simulate side
+    (``available``: the model description's variables) and the read side
+    (the saved columns) both go through it, so what is tracked is what is
+    read."""
     have = set(available)
     out = [v.name for v in unit_test_variables(test) if v.name in have]
     out += [name for name in requested if name not in out]

@@ -112,7 +112,7 @@ def evaluate_spec(
 
     ``model_id`` only names the test in the migrate-hint log line: a suite
     of tests printing the same nameless sentence says how many baselines
-    are un-migrated and not one of the models to run the command over.
+    are un-migrated and not one of the models whose baseline to open.
     """
     sources = scalars if scalars is not None else ScalarSources()
     # The migrate hint is a fact about a VARIABLE's baseline entry, not
@@ -465,7 +465,9 @@ def _evaluate_leaf(
                 # REASON rides on every leaf; the LOG LINE is said once per
                 # (variable, baseline) — `warned` is the test's set.
                 hint = migration_hint(
-                    baseline.ref_vars_by_name if baseline else {}, expression
+                    baseline.ref_vars_by_name if baseline else {},
+                    leaf.variable,
+                    expression,
                 )
                 key = (leaf.against, leaf.variable)
                 if hint and key not in warned:

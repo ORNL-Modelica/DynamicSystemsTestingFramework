@@ -2105,6 +2105,12 @@ _VI_T = np.linspace(0.0, 1.0, 11)
 #: One UnitTests variable: the name its result file gives it, and the text the
 #: model wrote for it in ``x={...}`` — a label, never a key.
 VI_NAME, VI_EXPR = "unitTests.x[1]", "cat(1, a, b)[1]"
+#: What a name written as expression text is told. ``HINT`` is the words the
+#: two hints share and no other message has — what "no hint" is read by;
+#: ``STORED_HINT`` is a baseline entry's and ``KEY_HINT`` an override key's.
+HINT = "result-file name"
+STORED_HINT = f"the stored name must be the result-file name {VI_NAME!r}"
+KEY_HINT = "a key that names an expression must be the result-file name"
 
 
 def _vi_test(**kw) -> TestModel:
@@ -2186,7 +2192,7 @@ class TestVariableIdentity:
     def test_an_override_keyed_by_a_plain_expression_does_not_apply(self):
         """The shape a real spec has today: a key that WAS the stored name
         (`pipe.p`) and is now the expression beside `unitTests.x[1]`. It stops
-        applying — which is what `dstf migrate-variable-names` rewrites."""
+        applying — the key has to be `unitTests.x[1]`."""
         comp = compare_test(
             _vi_test(
                 x_expressions=["pipe.p"],
@@ -2242,7 +2248,7 @@ class TestVariableIdentity:
         )
         assert comp.passed and comp.warnings == []
 
-    def test_a_baseline_stored_under_the_expression_is_missing_and_names_the_command(
+    def test_a_baseline_stored_under_the_expression_is_missing_and_says_its_name(
         self, caplog
     ):
         with caplog.at_level(logging.WARNING):
@@ -2252,10 +2258,7 @@ class TestVariableIdentity:
                 _vi_reference(name="pipe.T[1]", with_expression=False),
             )
         assert not comp.passed
-        assert any(
-            "dstf migrate-variable-names" in record.getMessage()
-            for record in caplog.records
-        )
+        assert any(STORED_HINT in record.getMessage() for record in caplog.records)
 
     def test_an_override_that_names_no_variable_warns(self, caplog):
         """A key matching nothing has always been ignored in silence. It is
@@ -2271,14 +2274,14 @@ class TestVariableIdentity:
             r for r in caplog.records if "variable_overrides" in r.getMessage()
         ]
         assert "nowhere.near" in record.getMessage()
-        assert "migrate-variable-names" not in record.getMessage()
+        assert HINT not in record.getMessage()
 
-    def test_an_override_keyed_by_an_expression_warns_and_names_the_command(
+    def test_an_override_keyed_by_an_expression_warns_and_says_the_name_to_write(
         self, caplog
     ):
         """The shape an un-migrated spec has: the key IS the expression the
-        variable now carries beside its name. Say which name it meant and how
-        to rewrite it."""
+        variable now carries beside its name. Say which name it meant and
+        that the key must be that name."""
         with caplog.at_level(logging.WARNING):
             compare_test(
                 _vi_test(variable_overrides={VI_EXPR: {"tolerance": 0.5}}),
@@ -2290,7 +2293,7 @@ class TestVariableIdentity:
         ]
         message = record.getMessage()
         assert VI_EXPR in message and VI_NAME in message
-        assert "dstf migrate-variable-names" in message
+        assert KEY_HINT in message
 
     def test_the_warning_says_which_file_holds_each_key(self, caplog):
         """The two override tiers are merged before anything is scored. Told
@@ -2352,7 +2355,7 @@ class TestVariableIdentity:
         ]
         message = record.getMessage()
         assert "'unitTests.x[1]', 'unitTests.x[2]'" in message
-        assert "dstf migrate-variable-names" in message
+        assert KEY_HINT in message
 
     def test_an_override_that_names_a_variable_is_silent(self, caplog):
         with caplog.at_level(logging.WARNING):
@@ -2407,7 +2410,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
     """`migration_hint` matches a STORED name against an expression, and the
     two are written by different hands: the store keeps the ``.mo`` file's
     layout, the expression is normalized. Compared raw, the shape that needs
-    the command most got no hint at all — on either scoring path."""
+    the hint most got none at all — on either scoring path."""
 
     def _wrapped_reference(self, stored=WRAPPED_STORED) -> dict:
         """A baseline as it was written BEFORE the identity change: the
@@ -2435,9 +2438,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
                 self._wrapped_reference(stored),
             )
         assert not comp.passed
-        assert any(
-            "dstf migrate-variable-names" in r.getMessage() for r in caplog.records
-        )
+        assert any(STORED_HINT in r.getMessage() for r in caplog.records)
 
     @pytest.mark.parametrize("tree", [False, True])
     def test_a_migrated_baseline_holding_the_expression_as_a_real_name_is_not_hinted(
@@ -2493,14 +2494,12 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
                 result,
                 reference,
             )
-        assert not any(
-            "migrate-variable-names" in r.getMessage() for r in caplog.records
-        )
+        assert not any(HINT in r.getMessage() for r in caplog.records)
 
     def test_the_hint_is_said_once_per_variable_and_baseline_pair(self, caplog):
         """The dedupe key is (baseline, variable), not the variable alone:
         the same variable missing from the PRIMARY and from a soft_check is
-        two baselines to migrate, and one line naming only one of them
+        two baselines to rename it in, and one line naming only one of them
         leaves the other un-migrated with nothing said about it."""
         from dstf.storage.baseline import Baseline
 
@@ -2545,11 +2544,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
                 self._wrapped_reference(),
                 store=_Store(),
             )
-        hinted = [
-            r.getMessage()
-            for r in caplog.records
-            if "migrate-variable-names" in r.getMessage()
-        ]
+        hinted = [r.getMessage() for r in caplog.records if HINT in r.getMessage()]
         assert len(hinted) == 2
         assert sum("'primary'" in m for m in hinted) == 1
         assert sum("'fmpy'" in m for m in hinted) == 1
@@ -2557,7 +2552,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
     def test_the_tree_paths_hint_names_the_model(self, caplog):
         """N tests of one suite printed the identical nameless sentence:
         the reader learned how many baselines are un-migrated and not one
-        of the models to run the command over. The flat path always said
+        of the models whose baseline to open. The flat path always said
         it."""
         spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
         with caplog.at_level(logging.WARNING):
@@ -2566,11 +2561,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
                 _vi_result(expression=WRAPPED_EXPR),
                 self._wrapped_reference(),
             )
-        (hinted,) = [
-            r.getMessage()
-            for r in caplog.records
-            if "migrate-variable-names" in r.getMessage()
-        ]
+        (hinted,) = [r.getMessage() for r in caplog.records if HINT in r.getMessage()]
         assert hinted.startswith("MyLib.Test: ")
 
     def test_the_tree_path_says_it_once_per_variable_not_once_per_leaf(self, caplog):
@@ -2592,15 +2583,10 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
                 _vi_result(expression=WRAPPED_EXPR),
                 self._wrapped_reference(),
             )
-        hinted = [
-            r for r in caplog.records if "migrate-variable-names" in r.getMessage()
-        ]
+        hinted = [r for r in caplog.records if HINT in r.getMessage()]
         assert len(hinted) == 1
         assert len(comp.variables) == 5
-        assert all(
-            "migrate-variable-names" in (vc.diagnostics.get("error") or "")
-            for vc in comp.variables
-        )
+        assert all(HINT in (vc.diagnostics.get("error") or "") for vc in comp.variables)
 
 
 #: A second UnitTests variable of the same test, with its own expression.
@@ -2959,23 +2945,20 @@ class TestTheMigrationHintIsSharedByBothPaths:
             _vi_reference(name="pipe.T[1]", with_expression=False),
         )
 
-    def test_the_tree_path_names_the_command(self, caplog):
+    def test_the_tree_path_says_the_name_to_store(self, caplog):
         spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
         with caplog.at_level(logging.WARNING):
             comp = self._un_migrated(metric_tree_spec=spec)
         assert not comp.passed
         (vc,) = comp.variables
-        assert "dstf migrate-variable-names" in vc.diagnostics["error"]
-        assert any(
-            "dstf migrate-variable-names" in record.getMessage()
-            for record in caplog.records
-        )
+        assert STORED_HINT in vc.diagnostics["error"]
+        assert any(STORED_HINT in record.getMessage() for record in caplog.records)
 
     @pytest.mark.parametrize("tree", [False, True])
     def test_a_baseline_that_never_held_the_variable_gets_no_hint(self, tree, caplog):
         """The hint is for a baseline stored under the expression, not for
         every missing one: a variable new to the baseline is re-accepted,
-        not migrated."""
+        not renamed."""
         spec = (
             parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
             if tree
@@ -2991,7 +2974,7 @@ class TestTheMigrationHintIsSharedByBothPaths:
         messages = [record.getMessage() for record in caplog.records] + [
             comp.variables[0].diagnostics.get("error", "")
         ]
-        assert not any("migrate-variable-names" in message for message in messages)
+        assert not any(HINT in message for message in messages)
 
 
 # ---------------------------------------------------------------------------

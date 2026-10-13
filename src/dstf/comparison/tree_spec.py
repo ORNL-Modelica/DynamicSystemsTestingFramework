@@ -206,7 +206,7 @@ def tree_variables(spec: SpecNode | None, diagnostics: Iterable[str] = ()) -> li
     without the ``diagnostics`` — a diagnostic is scored through a quantity
     path over its stored summary, never extracted as a trajectory. A backend
     APPENDS these after the UnitTests variables and the ``variables``
-    patterns, so the indices of those two stay what `migrate_names` reads.
+    patterns, so the indices of those two stay what a stored baseline reads.
     ``[]`` for no tree (the implicit tree scores only what is tracked)."""
     if spec is None:
         return []

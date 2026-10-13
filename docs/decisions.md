@@ -4530,6 +4530,8 @@ un-migrated baseline by falling back to the expression: a compatibility read
 that hides the very drift the soft check exists to report, and one the v1.0
 tag could never remove.
 
+**Addendum, 2026-10-13 — the command is gone.** `dstf migrate-variable-names` and its module `storage/migrate_names.py` were removed at the v1.0 release, as this entry planned; a spec key or a baseline entry that still names expression text is reported with the result-file name to write instead.
+
 ## D133 — A node's forms open as a row under it; a plot's legend holds its signals (2026-09-24)
 
 **Context.** The owner's board of 2026-09-21 ruled two things about the Test

@@ -17,8 +17,7 @@ DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package: run, compare, discover, author, export, add, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, export-schema,
-│   │                             #      check-dymola / check-openmodelica / check-julia,
-│   │                             #      migrate-variable-names (one-shot; deleted at the v1.0 tag)
+│   │                             #      check-dymola / check-openmodelica / check-julia
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse (spec_parser: the ONE decoder of the spec file, which every command and the tool read it through), plots (a test's plots, derived from its criteria, + the `plots` extras key), RFC 6902 patch_apply,
@@ -41,8 +40,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      sides.py (Sides — the ONE place a tolerance's number-or-pair is read or written),
 │   │                             #      snap.py (the one snap rule: a value the pointer placed is written at a readable step, D149),
 │   │                             #      strict_keys.py (a key nothing reads is an error that names it — the ONE check, from each metric's config)
-│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
-│   │                             #      migrate_names.py (the `migrate-variable-names` rewrite; deleted at the v1.0 tag)
+│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
 │   ├── authoring/                # Session, capability contract, spec document (its pending ops, counted by act: edit_counts, D155) — the tool's core;
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
@@ -215,12 +213,6 @@ uv run dstf --config testing.json companion add <model> <name> <path> [--map TES
 uv run dstf --config testing.json soft-check list <model>
 uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only; companions via companion add
 
-# One-shot migration (D132): stored baselines and test_spec.json keys move from a
-# UnitTests variable's expression text to its result-file name (`unitTests.x[i]`).
-# Dry-run by default; DELETED AT THE v1.0 TAG.
-uv run dstf --config testing.json migrate-variable-names            # report only
-uv run dstf --config testing.json migrate-variable-names --apply
-
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
 uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
@@ -301,7 +293,7 @@ Simulation parameters live under `simulation`, comparison settings under `compar
 
 **A key nothing reads is an error that names it** (`comparison/strict_keys.py`): an entry's own keys and its `simulation` / `comparison` blocks' (`discovery/spec_shape.py`, the table `export-schema` publishes), a flat override's and a leaf's (its metric's config dataclass fields, plus `tolerance` and `quantity`), a table row's (the field's `columns`), a window's and a combinator's, the keys inside a tolerance pair and a `scalar`'s `quantity` object, and the file's root (`tests`, `$schema`). A block that is no object where one is read (`"simulation": "stop_time=5"`, `null` — `"metrics": null` and a leaf's `"window": null` too) is the same error, so is an entry that cannot be a test or a value of the wrong type where one is read (a `tests` entry that is no object or has no `model`, `variables` that is no list of strings, `"stop_time": "abc"`), so is a spec file that is no UTF-8 JSON object (one decoder, `spec_parser.spec_document_from_bytes`: `Config error: <file>: not JSON (…)` from every command that reads it), and so is a reference JSON's stored override with a key nothing reads, naming that file: `run` stops on it before it simulates and `compare` before it scores, and the tool shows that one test as not scored, with the sentence. `run` / `compare` / `discover` stop with `Config error: … unknown field "max_val" — did you mean "max_value"?` (exit 2); `spec-update` and the tool refuse to write one. A criterion that could never be scored (a `range` with neither bound) is refused where the file is written — `spec-update`, the tool's Save — and only by the write that makes it (`spec_update.refuse_newly_unscorable`); the tool stages one for its editor to fill. `description` / `info` / `metadata` on an entry or its `comparison` block are for notes.
 
-**A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
+**A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec key or a baseline entry's stored name written as that expression text names nothing — it must be the result-file name, which scoring names for an override key and for a baseline entry it finds written that way.
 
 ```json
 {

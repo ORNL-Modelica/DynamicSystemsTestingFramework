@@ -37,10 +37,9 @@ def criterion_variables(test: TestModel, diagnostic_vars: Iterable[str]) -> list
     """The variables ``test``'s criteria name (`tree_variables`): what every
     backend records and extracts AFTER the UnitTests variables and the
     ``variables`` patterns, so the indices of those two stay what a stored
-    baseline and `migrate_names` read. Imported here, not at module level:
-    importing ``dstf.comparison`` runs its package init, which imports the
-    comparator, which imports ``dstf.backends`` — a cycle from any backend
-    module."""
+    baseline reads. Imported here, not at module level: importing
+    ``dstf.comparison`` runs its package init, which imports the comparator,
+    which imports ``dstf.backends`` — a cycle from any backend module."""
     from ...comparison.tree_spec import tree_variables
 
     return tree_variables(test.metric_tree_spec, diagnostic_vars)
@@ -188,7 +187,7 @@ def extract_variables(
                 idx += 1
 
     # 3. Variables a criterion names, APPENDED: the indices of the first two
-    # groups stay what a stored baseline and `migrate_names` read.
+    # groups stay what a stored baseline reads.
     for var_name in criterion_variables(test, diagnostic_vars):
         if var_name in seen:
             continue

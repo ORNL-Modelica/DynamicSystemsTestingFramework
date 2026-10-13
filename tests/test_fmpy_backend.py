@@ -491,7 +491,7 @@ class TestFmpyTracksTheCriteriasVariables:
         self, tmp_path, monkeypatch
     ):
         """Dymola's and OpenModelica's order (`extract_variables`):
-        `migrate_names` reads indices 1..N as the UnitTests variables."""
+        a stored baseline reads indices 1..N as the UnitTests variables."""
         captured: dict = {}
         backend = self._backend(tmp_path, monkeypatch, captured)
         test = self._test(tmp_path, ["h"], unit_tests=True)

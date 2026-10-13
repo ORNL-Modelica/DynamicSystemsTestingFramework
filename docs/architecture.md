@@ -67,7 +67,7 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 ```
 src/dstf/
 ├── cli/                      # argparse CLI package: discover, run, compare, author, export, manifest, add, spec-update,
-│   │                         #   companion, soft-check, import-baseline, export-schema, migrate-variable-names,
+│   │                         #   companion, soft-check, import-baseline, export-schema,
 │   │                         #   check-dymola, check-openmodelica, check-julia
 │   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
 ├── config.py                 # Config dataclass, path resolution, testing.json loading, backend auto-detect
@@ -126,8 +126,6 @@ src/dstf/
 │   ├── ref_index.py          # RefIndex + atomic text writes
 │   ├── roles.py              # soft_check/companion CRUD mixin
 │   ├── accept.py             # accept_run_results — the one accept path, with the aborted-run refusal
-│   ├── migrate_names.py      # `dstf migrate-variable-names` — baselines and spec keys move from a
-│   │                         #   UnitTests expression to its result-file name (D132; deleted at the v1.0 tag)
 │   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
 ├── authoring/
 │   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply

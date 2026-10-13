@@ -170,7 +170,7 @@ A block that is not an object where one is read — `"simulation": "stop_time=5"
 
 So is an entry that cannot be a test, and a value that is not what is read there: an entry of `tests` that is no object (`tests[3]: must be an object, got "MyLib.A"`) or has no `model`; `variables` that is not a list of strings (`"variables": "x"`, `[1]`); a `source` that is no string; and a `simulation` value of another type than its field's — `"stop_time": "abc"`, a number written as text (`"100"`), `true`, a `number_of_intervals` of `2.5`: `tests[MyLib.A].simulation.stop_time: must be a number, got "abc"`. (`null` there still means "not set".) Each used to be a warning in the log and a test skipped, or run on defaults.
 
-And so is a spec file that is no spec at all — one line, exit 2, from every command that reads it (`discover`, `run`, `compare`, `spec-update`, `add`, `migrate-variable-names`, `dstf author`), and nothing is run or written:
+And so is a spec file that is no spec at all — one line, exit 2, from every command that reads it (`discover`, `run`, `compare`, `spec-update`, `add`, `dstf author`), and nothing is run or written:
 
 ```
 Config error: …/test_spec.json: not JSON (Expecting value: line 1 column 12 (char 11))
@@ -311,61 +311,20 @@ result file cannot be expected to spell a positional name. A soft-check or
 sibling-backend overlay is DSTF's own data under the test's own names, and
 is matched by name alone.
 
-A `test_spec.json` written before this change names expressions where it now
-needs names, and a baseline accepted before it is stored under the expression
-too. `dstf migrate-variable-names` rewrites both:
+A key or a stored name written as the expression text names nothing; it has
+to be the result-file name. Scoring says so in the two places it can tell,
+and names the name to write:
 
-```bash
-# Report what would change — nothing is written
-uv run dstf --config testing.json migrate-variable-names
-
-# Write it
-uv run dstf --config testing.json migrate-variable-names --apply
-```
-
-It walks every `<reference_root>/<Backend>/<os>/` partition (primary refs and
-`soft_checks/`), rewrites each UnitTests entry whose stored name matches that
-index's expression, gives every other entry the `expression` field, and
-renames the matching override keys — in the baseline's own `comparison`
-section as well as the spec's — plus the leaf variables and plot series in
-`test_spec.json`. A second `--apply` rewrites nothing.
-
-**Everything is read and decided before anything is written.** A baseline
-the command cannot read — truncated, empty, not UTF-8, not a JSON object, or
-shaped so the command cannot walk it (`variables` that is not a list of
-objects, a variable `name` or `expression` that is not text, a `comparison`
-or a `variable_overrides` that is not an object) — is reported by file and
-reason rather than raising, and left exactly as it was; the rest of the run
-is still decided and written around it, because no cross-file decision reads
-a baseline's content and one stray junk file must not stall a tree of 900.
-The exit code is 1, so fix the file and run it again. **The `test_spec.json`
-is the exception**: while IT cannot be read **nothing at all is written**,
-baselines included — its keys and the names the baselines are stored under
-are one coordinated change. (A UTF-8 BOM is a reason to refuse neither: a
-baseline — or a `test_spec.json` — a Windows editor saved is read and
-migrated like any other, and written back without it.)
-
-A **skip** leaves that one file exactly as it was, and there are five kinds:
-an entry whose stored name matches neither the expression nor the migrated
-name (reported by index, stored and expected text); an entry with no integer
-`index`, or two entries claiming one index; an override key that is the
-expression of *two* variables (`x={a, a}` — which one it meant is yours to
-say); an override map holding both the old key and the new one; and two
-*spellings* of one expression as override keys (`b[1, 1]` and `b[1,1]` name
-the same variable, so renaming both would drop one). The command exits 1
-when anything was skipped, when a file's model is not a discovered test, or
-when a spec key was left alone — each of those on its own. A skip stops that
-one file, not the run: the other partitions are still written.
-
-Also reported, without moving the exit code: files that held CRLF line
-endings and are written LF, as the store writes every baseline (each shows
-as a whole-file diff); `soft_checks/ref_NNNN/` directories with no primary
-beside them; spec entries whose model has no UnitTests variables here, so no
-key of theirs was considered; and variables that need a re-accept.
-
-It is a one-shot utility, **deleted at the v1.0 tag**. Until a baseline is
-migrated, its variables read as missing baselines, and the log line says so
-and names this command.
+- a `variable_overrides` key that is a variable's expression is ignored, and
+  the run logs one line per test naming the key, the file that holds it
+  (`test_spec.json` or the reference JSON's own `comparison` section) and the
+  variable — or variables, for `x={a, a}` — whose expression it is. Write that
+  name as the key.
+- a baseline entry stored under the expression reads as a missing baseline
+  for that variable. The log line — and, for a test with a `metrics` tree,
+  the criterion's own reason — says the baseline stores it under its
+  expression and gives the result-file name the entry's `name` must be.
+  Rename the entry, or accept the test again.
 
 ### Scalar leaves — comparing one number
 
@@ -1190,18 +1149,6 @@ uv run dstf --config testing.json manifest dump
 
 (The reference index is rebuilt automatically on every command — there's
 no separate "rebuild" subcommand because there's nothing to rebuild.)
-
-### `migrate-variable-names` — Move stored names off expression text
-
-One-shot (D132): rewrites reference-JSON variable names and `test_spec.json`
-keys from a UnitTests variable's expression text to its result-file name.
-Dry-run by default. Full description under "A variable's name, and its
-expression" above. **Deleted at the v1.0 tag.**
-
-```bash
-uv run dstf --config testing.json migrate-variable-names
-uv run dstf --config testing.json migrate-variable-names --apply
-```
 
 ### `add` — Add test to spec
 
@@ -2357,7 +2304,7 @@ ReferenceResults/
 
 References are partitioned by backend and OS because different solvers and platforms produce numerically different results. The bundled examples ship these partitions: `examples/modelica` — `Dymola/linux`, `Dymola/windows`, `OpenModelica/linux`; `examples/fmu` — `FMPy/linux`, `FMPy/windows`; `examples/julia` — `Julia/linux`; `examples/python` — `Python/linux`. A first run on an OS the backend has no partition for reports every test `NO_REF` until `run --accept` stores its baselines there. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
 
-Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. Its `sampling` record says how many of the run's points the file keeps and the precision they were written from (see "The points a baseline stores"); a file without one was stored before the record existed. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key was produced by a version older than that rule, which `dstf migrate-variable-names` brings forward.
+Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. Its `sampling` record says how many of the run's points the file keeps and the precision they were written from (see "The points a baseline stores"); a file without one was stored before the record existed. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key reads as one with no expression, and one whose `name` is the expression text itself as a missing baseline (see "A variable's name, and its expression").
 
 **Status field:** Each ref file has a `status` field:
 - `active` — normal, included in test runs
