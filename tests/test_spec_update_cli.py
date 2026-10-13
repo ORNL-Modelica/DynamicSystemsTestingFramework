@@ -37,7 +37,6 @@ def _run_spec_update(spec_path: Path, update_json_path: Path) -> int:
         source_path=None,
         reference_root=str(cfg_dir),
         test_spec=str(spec_path),
-        dymola_interface=None,
         json_file=str(update_json_path),
     )
     return cmd_spec_update(ns)

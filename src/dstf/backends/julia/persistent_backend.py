@@ -507,16 +507,14 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
 
     @classmethod
     def preflight(cls, config) -> None:
-        # Cheap probe: does `julia` resolve on PATH? Subsequent failures
-        # (toml errors, missing packages, MTK compile failures) still
-        # bubble up from worker.start() inside run_tests.
-        import shutil
-
-        if not shutil.which("julia"):
+        # Cheap probe: was `julia` found (`JuliaBackend.locate`)? Later
+        # failures (toml errors, missing packages, MTK compile failures)
+        # still bubble up from worker.start() inside run_tests.
+        if cls.executable_of(config) is None:
             raise RuntimeError(
-                "Julia binary not found on PATH. The persistent-worker Julia "
-                "backend spawns a long-lived `julia --project=...` subprocess "
-                "and needs `julia` available.\n"
+                f"Julia binary not found ({cls.why_not_found(config)}). The "
+                "persistent-worker Julia backend spawns a long-lived "
+                "`julia --project=...` subprocess and needs `julia` available.\n"
                 "\n"
                 "Install Julia from https://julialang.org/downloads/ "
                 "(or use a version manager like `juliaup`)."

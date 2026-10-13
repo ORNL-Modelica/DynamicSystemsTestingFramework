@@ -453,7 +453,7 @@ def test_author_refuses_the_global_flags_it_would_drop(tmp_path, capsys):
     # A Config build with --source-path writes its default testing.json in
     # the library's PARENT; the refusal must come before any build.
     assert not list(tmp_path.rglob("testing.json"))
-    for flag in ("--source-path", "--reference-root", "--dymola-interface"):
+    for flag in ("--source-path", "--reference-root"):
         rc = main(["--config", str(tmp_path / "t.json"), "author", flag, str(tmp_path)])
         assert rc == 2 and flag in capsys.readouterr().err
     rc = main(
@@ -1887,7 +1887,6 @@ _GLOBAL_FLAGS = [
     ("--config", "config"),
     ("--reference-root", "reference_root"),
     ("--test-spec", "test_spec"),
-    ("--dymola-interface", "dymola_interface"),
 ]
 
 
@@ -1937,9 +1936,7 @@ def test_global_flags_default_to_none_when_given_nowhere():
         "soft-check",
         "import-baseline",
         "export-schema",
-        "check-dymola",
-        "check-openmodelica",
-        "check-julia",
+        "check",
     ],
 )
 def test_every_subcommand_help_lists_the_global_flags(command, capsys):

@@ -694,7 +694,12 @@ def test_the_tool_fills_a_spec_only_test_and_reads_its_model_once(
     from dstf.discovery import mo_parser
 
     cfg = json.loads(rodlib.read_text(encoding="utf-8"))
-    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    cfg.update(
+        {
+            "backend": "Python",
+            "backends": {"Python": {"executables": ["python3", "python"]}},
+        }
+    )
     rodlib.write_text(json.dumps(cfg), encoding="utf-8")
     _write_spec(rodlib, {"model": "RodLib.Rod", "variables": ["T[1]"]})
 

@@ -1307,7 +1307,7 @@ def _with_alt_backend(cfg) -> None:
     observable — a new Config, the select's new value — without a second
     simulator on this machine."""
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    data["backends"]["Python (alt)"] = ["python3", "python"]
+    data["backends"]["Python (alt)"] = {"executables": ["python3", "python"]}
     cfg.write_text(json.dumps(data), encoding="utf-8")
 
 

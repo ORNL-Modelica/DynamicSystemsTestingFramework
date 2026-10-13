@@ -4,15 +4,18 @@ import logging
 import math
 import subprocess
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ...config import Config
+from ...config_shape import Setting
 from ...discovery.library_state import dependency_file
 from ...discovery.test_registry import TestModel
 from ...storage.batch_manifest import BatchManifest
 from .. import register
-from ..base import Backend, _print_run_header
+from ..base import Backend, Diagnosis, _print_run_header
 from ..common import result_files
 from ..common.mat_reader import read_result_mat
 from ..common.proc_kill import kill_process_tree
@@ -22,6 +25,7 @@ from ..common.result_variables import (
     fold_diagnostics_into_statistics,
     unfinished_result,
 )
+from ..locate import Found, Located, find_executable
 from ..types import (
     Capability,
     DatasetType,
@@ -29,6 +33,8 @@ from ..types import (
     TestRunResult,
     timeout_message,
 )
+from . import interface_loader
+from .interface_loader import INTERFACE, INTERFACE_VARIABLE
 from .log_parser import parse_test_logs
 
 logger = logging.getLogger(__name__)
@@ -39,6 +45,9 @@ class DymolaConfig:
     """Dymola-specific settings extracted from the universal Config."""
 
     show_ide: bool = False
+    #: Tests per Dymola session on the batch path; None: every test of a
+    #: worker in one session.
+    batch_size: int | None = None
     backend_setup: list[str] = field(default_factory=list)
     diagnostic_variables: list[str] = field(
         default_factory=lambda: ["CPUtime", "EventCounter"],
@@ -46,9 +55,13 @@ class DymolaConfig:
 
     @classmethod
     def from_config(cls, config: Config) -> "DymolaConfig":
-        """Extract Dymola-specific fields from the universal Config."""
+        """Extract Dymola-specific fields from the universal Config: its
+        block of ``testing.json`` (``DymolaBackend.settings``) and the keys
+        every backend shares."""
+        settings = DymolaBackend.settings_of(config)
         return cls(
-            show_ide=config.show_ide,
+            show_ide=settings["show_ide"],
+            batch_size=settings["batch_size"],
             backend_setup=list(config.backend_setup),
             diagnostic_variables=list(config.diagnostic_variables),
         )
@@ -79,6 +92,36 @@ class DymolaBackend(Backend):
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    settings = {
+        **Backend.settings,
+        "show_ide": Setting(
+            {"type": "boolean"},
+            False,
+            "Show Dymola's window while it runs, instead of running it "
+            "hidden. Default: false.",
+        ),
+        "batch_size": Setting(
+            {"type": "integer", "minimum": 1},
+            None,
+            "With `run --batch`: how many tests one Dymola session runs "
+            "before it is closed and the next is started. Small values (3 "
+            "to 5) spread the load across workers and lose fewer tests to "
+            "a crash, but load the library more often. Default: every test "
+            "of a worker in one session.",
+        ),
+        "interface": Setting(
+            {"type": "string"},
+            None,
+            "Dymola's Python interface: the archive (dymola-*.whl or "
+            "dymola.egg) or the folder that holds it, as a full path. "
+            "Default: the DYMOLA_INTERFACE_PATH environment variable, else "
+            "Modelica/Library/python_interface of the Dymola that "
+            "executables found, else that of the newest Dymola in the "
+            "standard install folders.",
+        ),
+    }
+    source_types = frozenset({"modelica"})
+    binaries = ("dymola",)
     artifact_files = (
         ("dslog.txt", "Simulation log"),
         ("translation_log.txt", "Translation log"),
@@ -97,6 +140,74 @@ class DymolaBackend(Backend):
         from .persistent_backend import PersistentDymolaBackend
 
         return PersistentDymolaBackend
+
+    @classmethod
+    def locate(cls, settings: Mapping[str, Any]) -> Located:
+        """The Dymola executable, then its Python interface — looked for
+        beside THAT executable before anywhere else, so a project that
+        names an older Dymola is not driven through a newer one's
+        interface (``interface_loader.find_interface``)."""
+        executable = find_executable(
+            settings,
+            cls.binaries,
+            folders=[
+                (base, interface_loader.executable_glob())
+                for base in interface_loader.platform_glob_bases()
+            ],
+            best_first=interface_loader.dymola_sort_key,
+        )
+        return Located(
+            (executable, interface_loader.find_interface(settings, executable.path))
+        )
+
+    @classmethod
+    def interface_of(cls, config: Config) -> Found:
+        """The Python interface a run of ``config`` loads: the one its
+        ``Config`` located, else — a config that located none — this
+        backend's own search."""
+        located = getattr(config, "located", None)
+        if located is None or located.part(INTERFACE) is None:
+            located = cls.locate(cls.settings_of(config))
+        found = located.part(INTERFACE)
+        assert found is not None  # `locate` always answers for it
+        return found
+
+    @classmethod
+    def diagnose(
+        cls, located: Located, *, entry: str = "", config: Config | None = None
+    ) -> Diagnosis:
+        """The located parts, then whether the interface that was found
+        imports: the persistent workers drive Dymola through it."""
+        found = located.part(INTERFACE) or Found(INTERFACE)
+        info = interface_loader.describe_dymola_interface(found)
+        lines = located.lines(entry)
+        if info["format"]:
+            lines.append(f"  interface format: .{info['format']}")
+        if info["sys_path_entry"]:
+            lines.append(f"  sys.path entry: {info['sys_path_entry']}")
+        lines.append(f"  import ok: {info['import_ok']}")
+        if info.get("dymola_interface_module"):
+            lines.append(f"  module: {info['dymola_interface_module']}")
+        if info["error"] and found.path is not None:
+            lines.append(f"  error: {info['error']}")
+        if info["discovered_dirs"]:
+            lines.append("  Dymola installs in the standard folders (newest first):")
+            lines.extend(f"    {d}" for d in info["discovered_dirs"])
+        fixes: list[str] = []
+        if not located.found:
+            fixes.append(
+                'Install Dymola, or set "executables" in the Dymola block of '
+                'testing.json\'s "backends" to where it is'
+            )
+        if not info["import_ok"]:
+            fixes.append(
+                'Set "interface" in the Dymola block of testing.json\'s "backends", '
+                f"or the environment variable {INTERFACE_VARIABLE}, to the "
+                "archive or its folder (run --batch needs no interface)"
+            )
+        return Diagnosis(
+            tuple(lines), located.found and bool(info["import_ok"]), tuple(fixes)
+        )
 
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         """Run tests in batches with parallelism."""
@@ -133,10 +244,7 @@ class DymolaBackend(Backend):
         # to workers — better load balancing, smaller crash blast radius).
         # Otherwise use one big batch per worker (original behavior, minimizes library reloads).
         n_workers = max(1, self.config.parallel)
-        if self.config.batch_size and self.config.batch_size > 0:
-            batch_size = self.config.batch_size
-        else:
-            batch_size = math.ceil(total / n_workers)
+        batch_size = self.dymola_config.batch_size or math.ceil(total / n_workers)
         batches = []
         for i in range(0, total, batch_size):
             batches.append(test_items[i : i + batch_size])
@@ -279,8 +387,11 @@ class DymolaBackend(Backend):
         # Run the batch
         start_time = time.monotonic()
 
+        executable = self.executable_of(self.config)
         try:
-            cmd = [self.config.backend_path]
+            if executable is None:
+                raise FileNotFoundError(self.why_not_found(self.config))
+            cmd = [executable]
             if not self.dymola_config.show_ide:
                 cmd.append("-nowindow")
             cmd.append(str(batch_script))
@@ -371,7 +482,7 @@ class DymolaBackend(Backend):
                     )
             return results
 
-        except FileNotFoundError:
+        except FileNotFoundError as missing:
             results = []
             for test, test_key in test_items:
                 results.append(
@@ -380,7 +491,7 @@ class DymolaBackend(Backend):
                         test_key=test_key,
                         success=False,
                         elapsed=0.0,
-                        error_message=f"Dymola not found: {self.config.backend_path}",
+                        error_message=f"Dymola not found: {executable or missing}",
                     )
                 )
                 if self.progress is not None:

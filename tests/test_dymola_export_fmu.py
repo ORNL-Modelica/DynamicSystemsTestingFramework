@@ -183,11 +183,9 @@ class TestExportFmuCleanup:
         )
 
         cfg = SimpleNamespace(
-            show_ide=False,
             backend_setup=[],
             diagnostic_variables=[],
             work_dir=tmp_path,
-            dymola_interface_path=None,
             backend_path=None,
             dependencies=[],
             library_dir=tmp_path,

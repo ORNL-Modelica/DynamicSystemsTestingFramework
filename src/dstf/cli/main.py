@@ -9,9 +9,7 @@ from .author_cmd import cmd_author
 from .baseline_cmds import cmd_companion, cmd_import_baseline, cmd_soft_check
 from .common import _parse_review_filter
 from .diag_cmds import (
-    cmd_check_dymola,
-    cmd_check_julia,
-    cmd_check_openmodelica,
+    cmd_check,
     cmd_discover,
     cmd_export,
     cmd_manifest,
@@ -29,6 +27,26 @@ def _review_filter_arg(value: str) -> str:
     """
     _parse_review_filter(value)  # raises argparse.ArgumentTypeError on typos
     return value
+
+
+class _BackendNames:
+    """``check``'s choices: the registered backends' names, asked for when
+    an argument is checked against them and not when the parser is built —
+    a plug-in registers its backend as the plug-ins load, which `--help`
+    and `--version` must not wait for (nor fail on)."""
+
+    def _names(self) -> list[str]:
+        from ..backends import backend_names
+        from ..plugins import load_plugins
+
+        load_plugins()
+        return backend_names()
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._names()
+
+    def __iter__(self):
+        return iter(self._names())
 
 
 def _add_global_flags(parser: argparse.ArgumentParser, *, subcommand: bool) -> None:
@@ -54,32 +72,27 @@ def _add_global_flags(parser: argparse.ArgumentParser, *, subcommand: bool) -> N
         "--source-path",
         type=str,
         default=default,
-        help="Path to the source for the library under test (Modelica package dir containing package.mo, FMU dir, ...). Default: auto-detect from cwd.",
+        help="Path to the source for the library under test (Modelica package dir containing package.mo, FMU dir, ...). Default: testing.json's source_path; without one, a Modelica package found from the cwd.",
     )
     parser.add_argument(
         "--config",
         type=str,
         default=default,
-        help="Path to testing.json config file (default: look near package directory)",
+        help="Path to testing.json (default: the one in the library's parent directory, the library, --reference-root or the cwd). "
+        "When none is found, `discover` and `check` read the project on defaults; every other command writes a default one beside the library (in --reference-root when given).",
     )
     parser.add_argument(
         "--reference-root",
         type=str,
         default=default,
-        help="Path to reference results root (default: <library>/Resources/ReferenceResults)",
+        help="Path to reference results root (default: testing.json's reference_root; without one, testing.json's own directory "
+        "when that is named ReferenceResults, else Resources/ReferenceResults beside the library)",
     )
     parser.add_argument(
         "--test-spec",
         type=str,
         default=default,
         help="Path to test_spec.json (external test definitions)",
-    )
-    parser.add_argument(
-        "--dymola-interface",
-        type=str,
-        default=default,
-        help="Path to Dymola's Python interface archive (dymola.egg or dymola-*.whl) "
-        "or the directory containing it. Overrides auto-discovery.",
     )
 
 
@@ -205,23 +218,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         help="Absolute path to the backend's executable (overrides config)",
     )
-    p_run.add_argument(
-        "--show-ide",
-        action="store_true",
-        help="Show Dymola GUI instead of running headless",
-    )
     p_run.add_argument("--work-dir", type=str, help="Working directory for output")
     p_run.add_argument(
         "--parallel",
         type=int,
         help="Number of concurrent SIMULATION workers (one simulator process each, where the backend drives one). "
         "Note: on `compare` the same flag means report-rendering threads.",
-    )
-    p_run.add_argument(
-        "--batch-size",
-        type=int,
-        dest="batch_size",
-        help="(--batch only) Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often.",
     )
     p_run.add_argument(
         "--batch",
@@ -270,7 +272,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--backend-path",
         type=str,
         help="Absolute path to the backend's executable (overrides config). "
-        "Mainly affects which backend identity is used for partition lookup.",
+        "`compare` starts no simulator: this matters only to a backend that "
+        "will not load without its executable (Julia, Python).",
     )
     p_compare.add_argument(
         "--work-dir", type=str, help="Working directory containing prior run outputs"
@@ -489,21 +492,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write schema to this file instead of stdout",
     )
 
-    # check-* — backend diagnostic commands (symmetric across Dymola / OM / Julia)
-    subparsers.add_parser(
-        "check-dymola",
+    # check — where each backend is on this machine, and whether the one
+    # the project runs with is ready
+    p_check = subparsers.add_parser(
+        "check",
         parents=[global_parent],
-        help="Locate and load Dymola's Python interface; report what was found",
+        help="Say which backends are installed, where each was found and by "
+        "which rule, and whether the one this project runs with is ready",
     )
-    subparsers.add_parser(
-        "check-openmodelica",
-        parents=[global_parent],
-        help="Probe OMPython + the `omc` binary; report whether the OM stack is ready",
-    )
-    subparsers.add_parser(
-        "check-julia",
-        parents=[global_parent],
-        help="Probe the `julia` binary on PATH; report version and readiness",
+    p_check.add_argument(
+        # Not "backend": that is `--backend`'s name, which names the backend
+        # a project RUNS with (`_build_config`).
+        "check_backend",
+        nargs="?",
+        default=None,
+        choices=_BackendNames(),
+        metavar="backend",
+        help="Diagnose this backend alone (a registered backend's name: "
+        "Dymola, OpenModelica, FMPy, Julia, Python, or a plug-in's). "
+        "Default: list every backend, then diagnose the one the project selects.",
     )
 
     return parser
@@ -526,19 +533,19 @@ _COMMANDS = {
     "soft-check": cmd_soft_check,
     "import-baseline": cmd_import_baseline,
     "export-schema": cmd_export_schema,
-    "check-dymola": cmd_check_dymola,
-    "check-openmodelica": cmd_check_openmodelica,
-    "check-julia": cmd_check_julia,
+    "check": cmd_check,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
-    args = parser.parse_args(argv)
-    if args.command is None:
-        parser.print_help()
-        return 1
     try:
+        # Inside the `try`: `check <backend>` loads the plug-ins to know the
+        # backends' names, and a broken plug-in is this config error too.
+        args = parser.parse_args(argv)
+        if args.command is None:
+            parser.print_help()
+            return 1
         # Before dispatch so every subcommand sees the same registries —
         # a plug-in backend must be resolvable by `discover`, `run` and
         # `export-schema` alike. A broken plug-in raises ConfigError and

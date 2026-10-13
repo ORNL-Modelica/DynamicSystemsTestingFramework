@@ -1,9 +1,9 @@
-"""Query and diagnostic commands: discover, export, manifest, check-*."""
+"""Query and diagnostic commands: discover, export, manifest, check."""
 
 import argparse
 from pathlib import Path
 
-from ..config import Config
+from ..config import Config, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
@@ -40,7 +40,9 @@ def _method_text(test: TestModel, config: Config) -> str:
 
 def cmd_discover(args: argparse.Namespace) -> int:
     """Discover and list all test models."""
-    config = _build_config(args)
+    # A listing writes nothing: a project with no testing.json is read on
+    # defaults, and none is created beside it.
+    config = _build_config(args, write_default=False)
     tests = discover_tests(config)
     tests = _filter_tests(tests, args.filter, args.package)
 
@@ -244,107 +246,114 @@ def _cleanup_orphans(config, apply: bool) -> int:
     return 0
 
 
-def cmd_check_dymola(args: argparse.Namespace) -> int:
-    """Diagnose discovery of Dymola's Python interface."""
-    from ..backends.dymola.interface_loader import describe_dymola_interface
+def _check_entries(config: Config | None) -> list[tuple[str, dict]]:
+    """What `dstf check` lists, each with its settings block: the entries
+    of the project's `backends` map, in the order written, then every
+    registered backend the project has no entry of (the search alone)."""
+    from ..backends import backend_family, backend_names
 
-    override = (
-        Path(args.dymola_interface) if getattr(args, "dymola_interface", None) else None
+    entries = (
+        [(name, dict(block)) for name, block in config.backends.items()]
+        if config
+        else []
     )
-    info = describe_dymola_interface(override)
-
-    print("Dymola Python interface diagnostic")
-    print("==================================")
-    print(f"  Archive found:   {info['archive'] or '(none)'}")
-    if info["format"]:
-        print(f"  Format:          .{info['format']}")
-    print(f"  sys.path entry:  {info['sys_path_entry'] or '(none)'}")
-    print(f"  import ok:       {info['import_ok']}")
-    if info.get("dymola_interface_module"):
-        print(f"  Module:          {info['dymola_interface_module']}")
-    if info["error"]:
-        print(f"  Error:           {info['error']}")
-    print()
-    print("Searched roots:")
-    for r in info["search_roots"]:
-        print(f"  - {r}")
-    if info["discovered_dirs"]:
-        print("Discovered install dirs (newest first):")
-        for d in info["discovered_dirs"]:
-            print(f"  - {d}")
-
-    if info["import_ok"]:
-        print("\nOK — ready to use the Dymola Python interface.")
-        return 0
-    print("\nFAIL — fix one of:")
-    print("  1. Pass --dymola-interface <path>")
-    print("  2. Set DYMOLA_INTERFACE_PATH env var")
-    return 1
+    selected = config.backend_name if config else None
+    if selected and selected not in dict(entries) and config is not None:
+        entries.append((selected, dict(config.backend_settings)))
+    listed = {backend_family(name) for name, _ in entries}
+    entries.extend((name, {}) for name in backend_names() if name not in listed)
+    return entries
 
 
-def cmd_check_openmodelica(args: argparse.Namespace) -> int:
-    """Diagnose OMPython availability + the `omc` binary."""
-    import shutil as _shutil
+def cmd_check(args: argparse.Namespace) -> int:
+    """Say where each backend is on this machine and by which rule it was
+    found, then diagnose one: the backend named, else the one the project
+    selects. Exit 0 iff that one is usable."""
+    from ..backends import backend_class, backend_family
+    from ..config import _pick_backend
+    from ..config_shape import default
 
-    from ..backends.openmodelica.session_loader import describe_om_session
-
-    info = describe_om_session()
-    omc_path = _shutil.which("omc")
-
-    print("OpenModelica diagnostic")
-    print("=======================")
-    print(f"  OMPython installed: {info['ompython_installed']}")
-    print(f"  OMPython version:   {info['version'] or '(unknown)'}")
-    print(f"  Import ok:          {info['import_ok']}")
-    if info["error"]:
-        print(f"  Error:              {info['error']}")
-    print(f"  omc binary:         {omc_path or '(not on PATH)'}")
-
-    ok = info["import_ok"] and bool(omc_path)
-    if ok:
-        print("\nOK — persistent-worker OpenModelica is ready.")
-        return 0
-    print("\nFAIL — fix one of:")
-    if not info["import_ok"]:
-        print("  - Install OMPython:   uv sync --extra om --locked --inexact")
-        print("                          (or reinstall dstf with the [om] extra)")
-    if not omc_path:
-        print("  - Install OpenModelica and ensure `omc` is on PATH")
-    print(
-        "Or run with --batch to use the omc-script fallback (still needs omc on PATH)."
-    )
-    return 1
-
-
-def cmd_check_julia(args: argparse.Namespace) -> int:
-    """Diagnose the `julia` binary on PATH."""
-    import shutil as _shutil
-    import subprocess as _subprocess
-
-    julia_path = _shutil.which("julia")
-    print("Julia diagnostic")
-    print("================")
-    print(f"  julia binary: {julia_path or '(not on PATH)'}")
-    if not julia_path:
-        print(
-            "\nFAIL — install Julia from https://julialang.org/downloads/ "
-            "(or via `juliaup`)."
-        )
-        return 1
     try:
-        out = _subprocess.run(
-            [julia_path, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+        config: Config | None = _build_config(args, write_default=False)
+    except NoProject:
+        # No testing.json and no library here: nothing to read. The
+        # backends are still where they are.
+        config = None
+
+    if config is None:
+        project = "no testing.json here: the search alone"
+        # As a project with an empty testing.json would be read.
+        selected = _pick_backend({}, default("source_type"))
+    else:
+        project = (
+            f"testing.json: {config.config_found}"
+            if config.config_found is not None
+            else f"no testing.json: {config.library_name} on defaults"
         )
-        print(f"  version:      {out.stdout.strip() or '(no output)'}")
-    except Exception as exc:  # noqa: BLE001
-        print(f"  version probe failed: {exc}")
+        assert config.backend_name is not None  # resolved in __post_init__
+        selected = config.backend_name
+    entries = _check_entries(config)
+    # An entry of the project's map says its settings; any other is searched for.
+    in_config = set(config.backends) if config is not None else set()
+    located = {
+        name: cls.locate(block) if cls is not None else None
+        for name, block in entries
+        for cls in [backend_class(backend_family(name))]
+    }
+
+    named = getattr(args, "check_backend", None)
+    if named is None:
+        print(f"Backends ({project})")
+        width = max(len(name) for name, _ in entries)
+        for name, _ in entries:
+            found = located[name]
+            if found is None:
+                state = "not found  no backend is registered under this name"
+            elif not found.found:
+                state = f"not found  {found.parts[0].detail}"
+            else:
+                first = found.parts[0]
+                assert first.rule is not None  # a found part names its rule
+                rule = first.rule.said(name if name in in_config else "")
+                state = f"found      {first.path}  ({rule})"
+            print(f"  {'*' if name == selected else ' '} {name:<{width}}  {state}")
+        print(
+            "  * the backend this project runs with"
+            if config is not None
+            else "  * the backend a Modelica project with no testing.json runs with"
+        )
+        print()
+        target = selected
+    else:
+        # The entry of that backend: the selected one if it is one, else
+        # the first written; a backend with no entry is searched for.
+        of_family = [name for name, _ in entries if backend_family(name) == named]
+        target = selected if selected in of_family else (of_family or [named])[0]
+
+    cls = backend_class(backend_family(target))
+    found = located.get(target)
+    if cls is None or found is None:
+        print(f"{target}: no backend is registered under this name.")
         return 1
-    print("\nOK — julia is invocable.")
-    print(
-        "Note: first run on a project pays a multi-minute MTK / OrdinaryDiffEq "
-        "JIT compile (subsequent runs hit the cache)."
+    diagnosis = cls.diagnose(
+        found, entry=target if target in in_config else "", config=config
     )
-    return 0
+    print(target)
+    for line in diagnosis.lines:
+        print(line)
+    if diagnosis.usable:
+        print(f"\nOK — {target} is ready.")
+        return 0
+    print(f"\nFAIL — {target} is not ready. Fix one of:")
+    for i, fix in enumerate(diagnosis.fixes or _default_fixes(target), start=1):
+        print(f"  {i}. {fix}")
+    return 1
+
+
+def _default_fixes(name: str) -> tuple[str, ...]:
+    """What to do about a backend that says no more than that a part of it
+    was not found."""
+    return (
+        f'Install {name}, or set "executables" in its block of testing.json\'s '
+        '"backends" to where it is',
+    )

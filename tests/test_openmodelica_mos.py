@@ -347,28 +347,26 @@ class TestMatSync:
         )
 
     def test_only_a_caller_turns_it_on(self, tmp_path):
-        """Not ``testing.json`` and not the command line: a ``dstf run``
-        builds a Config with it off, whatever the file says."""
+        """Not ``testing.json`` and not the command line: neither has a key
+        or a flag for it, and a ``dstf run`` builds a Config with it off."""
         import json
 
         from dstf.backends.openmodelica.backend import OpenModelicaConfig
         from dstf.cli.common import _build_config
         from dstf.cli.main import build_arg_parser
-        from dstf.config import Config
+        from dstf.config import Config, ConfigError
 
         lib = tmp_path / "Lib"
         lib.mkdir()
         (lib / "package.mo").write_text("package Lib end Lib;\n")
-        (lib / "testing.json").write_text(
-            json.dumps(
-                {
-                    "backend": "OpenModelica",
-                    "live_results": True,
-                    "mat_sync": True,
-                }
-            )
-        )
         argv = ["--config", str(lib / "testing.json"), "--source-path", str(lib)]
+        for key in ("live_results", "mat_sync"):
+            (lib / "testing.json").write_text(
+                json.dumps({"backend": "OpenModelica", key: True})
+            )
+            with pytest.raises(ConfigError, match=f'unknown field "{key}"'):
+                _build_config(build_arg_parser().parse_args([*argv, "run"]))
+        (lib / "testing.json").write_text(json.dumps({"backend": "OpenModelica"}))
         config = _build_config(build_arg_parser().parse_args([*argv, "run"]))
         assert config.live_results is False
         assert OpenModelicaConfig.from_config(config).mat_sync is False
@@ -392,12 +390,15 @@ class TestMatSync:
         from dstf.config import Config
 
         (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        omc = tmp_path / "omc"
+        omc.write_text("#!/bin/sh\n")
         calls = {}
         for live in (False, True):
             cfg = Config(
                 source_path=tmp_path,
                 reference_root=tmp_path / "refs",
                 backend_name="OpenModelica",
+                backend_path=str(omc),
                 work_dir=tmp_path / f"work_{live}",
                 live_results=live,
             )

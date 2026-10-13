@@ -66,7 +66,7 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
                 "test_spec": "./test_spec.json",
                 "reference_root": ".",
                 "backend": "Python",
-                "backends": {"Python": ["python3", "python"]},
+                "backends": {"Python": {"executables": ["python3", "python"]}},
                 "tolerance": 0.01,
             }
         ),
@@ -138,7 +138,12 @@ def _modelica_project(tmp_path: Path) -> Path:
     _write_lib(lib)
     cfg_path = lib / "testing.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    cfg.update(
+        {
+            "backend": "Python",
+            "backends": {"Python": {"executables": ["python3", "python"]}},
+        }
+    )
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     return cfg_path
 
@@ -544,7 +549,9 @@ class TestOpen:
 
         cfg, work = _project(tmp_path)
         testing = json.loads(cfg.read_text(encoding="utf-8"))
-        testing["backends"] = {"Python": [str(tmp_path / "no-such-python")]}
+        testing["backends"] = {
+            "Python": {"executables": [str(tmp_path / "no-such-python")]}
+        }
         cfg.write_text(json.dumps(testing), encoding="utf-8")
         # The map's one path does not exist; without this neither does the
         # PATH fallback, in the config and in the backend alike.

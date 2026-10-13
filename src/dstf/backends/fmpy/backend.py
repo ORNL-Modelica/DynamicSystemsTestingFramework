@@ -40,17 +40,21 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import time
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from ...config import Config
+from ...config_shape import Setting
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
 from ..base import Backend
 from ..common import result_files
 from ..common.result_variables import criterion_variables
+from ..locate import SEARCH, Found, Located, Rule
 from ..types import (
     Capability,
     DatasetType,
@@ -74,6 +78,10 @@ _SOLVER_MAP = {
 }
 
 
+#: What FMPy's one part is called in a ``Located``.
+PACKAGE = "fmpy package"
+
+
 @register("FMPy")
 class FmpyBackend(Backend):
     """Runs FMU simulations using the FMPy Python library.
@@ -92,6 +100,9 @@ class FmpyBackend(Backend):
     #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
     capabilities: frozenset[Capability] = frozenset()
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    #: None: FMPy is a Python library, with no program to name.
+    settings: Mapping[str, Setting] = {}
+    source_types = frozenset({"fmu"})
     artifact_files = (("result.npz", "Result file"),)
 
     #: Filename used for the on-disk structured-array cache per test.
@@ -114,6 +125,38 @@ class FmpyBackend(Backend):
                 "  source checkout:  uv sync --extra fmpy --locked --inexact\n"
                 "  installed tool:   reinstall with the [fmpy] extra"
             ) from exc
+
+    @classmethod
+    def locate(cls, settings: Mapping[str, Any]) -> Located:
+        """The ``fmpy`` package of the Python running this tool: FMPy has
+        no executable, and is found iff it can be imported."""
+        import importlib.metadata
+        import importlib.util
+
+        spec = importlib.util.find_spec("fmpy")
+        if spec is None or spec.origin is None:
+            return Located(
+                (
+                    Found(
+                        PACKAGE,
+                        detail="this Python has no fmpy; install the [fmpy] extra",
+                    ),
+                )
+            )
+        try:
+            version = f"version {importlib.metadata.version('fmpy')}"
+        except importlib.metadata.PackageNotFoundError:
+            version = ""
+        return Located(
+            (
+                Found(
+                    PACKAGE,
+                    str(Path(spec.origin).parent),
+                    Rule(SEARCH, "this Python's packages"),
+                    version,
+                ),
+            )
+        )
 
     def describe_tool_version(self) -> str | None:
         """The fmpy library version drives simulation, so it's the run's

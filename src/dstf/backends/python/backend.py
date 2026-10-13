@@ -18,14 +18,25 @@ dispatch) is a future enhancement if per-test overhead becomes an issue
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ...config import Config
 from .. import register
 from ..common.json_driver import JsonDriverBackend
+from ..locate import (
+    EXECUTABLE,
+    SEARCH,
+    Found,
+    Located,
+    Rule,
+    find_executable,
+    looks_like_path,
+)
 from ..types import Capability, DatasetType
 
 logger = logging.getLogger(__name__)
@@ -49,22 +60,21 @@ class PythonConfig:
 
     @classmethod
     def from_config(cls, config: Config) -> PythonConfig:
-        resolved: Path | None = None
-        if config.backend_path:
-            p = Path(config.backend_path).expanduser()
-            if p.exists():
-                resolved = p
-        if resolved is None:
-            for name in ("python", "python3"):
-                on_path = shutil.which(name)
-                if on_path:
-                    resolved = Path(on_path)
-                    break
-        if resolved is None:
+        # `Config` resolved the interpreter through `PythonBackend.locate`; a
+        # path that has since gone is as missing as one never found.
+        found = PythonBackend.executable_of(config)
+        resolved = Path(found).expanduser() if found else None
+        if resolved is None or not resolved.exists():
             raise RuntimeError(
-                "Python binary not found. Ensure 'python' or 'python3' is on "
-                "PATH, or set an explicit path under testing.json's "
-                '\'backends\' map, e.g. {"Python": ["/path/to/venv/bin/python"]}.'
+                "Python binary not found"
+                + (
+                    f" ({PythonBackend.why_not_found(config)})"
+                    if not found
+                    else f": {found}"
+                )
+                + '. Set "executables" in the Python block of testing.json\'s '
+                '"backends", e.g. {"Python": {"executables": '
+                '["/path/to/venv/bin/python"]}}.'
             )
         return cls(python_binary=resolved)
 
@@ -84,6 +94,7 @@ class PythonBackend(JsonDriverBackend):
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    source_types = frozenset({"python"})
     artifact_files = (
         ("result.json", "Simulation result (time + variables)"),
         ("python_stdout.txt", "Python stdout"),
@@ -99,6 +110,20 @@ class PythonBackend(JsonDriverBackend):
     def __init__(self, config: Config):
         super().__init__(config)
         self.python_config = PythonConfig.from_config(config)
+
+    @classmethod
+    def locate(cls, settings: Mapping[str, Any]) -> Located:
+        """The interpreter that runs the tests: the block's ``executables``
+        — it must have what the tests import — else the one running this
+        tool. ``PATH`` is not searched for some other ``python``: with no
+        interpreter named, this one is the only one known to work."""
+        found = find_executable(settings, ())
+        pinned = any(looks_like_path(str(e)) for e in settings.get("executables") or [])
+        if found.path is None and not pinned and sys.executable:
+            found = Found(
+                EXECUTABLE, sys.executable, Rule(SEARCH, "the running interpreter")
+            )
+        return Located((found,))
 
     @property
     def tool_binary(self) -> Path:

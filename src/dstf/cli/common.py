@@ -22,9 +22,11 @@ from ..reporting.status import (
 )
 
 
-def _build_config(args: argparse.Namespace) -> Config:
-    """Build Config from parsed CLI arguments."""
-    kwargs = {}
+def _build_config(args: argparse.Namespace, *, write_default: bool = True) -> Config:
+    """Build Config from parsed CLI arguments. ``write_default=False`` is
+    for a command that only reads: a project with no testing.json is then
+    read on defaults, and none is written beside it."""
+    kwargs: dict = {"write_default": write_default}
     if args.source_path:
         kwargs["source_path"] = Path(args.source_path)
     if hasattr(args, "config") and args.config:
@@ -35,16 +37,10 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["backend_name"] = args.backend
     if hasattr(args, "backend_path") and args.backend_path:
         kwargs["backend_path"] = args.backend_path
-    if hasattr(args, "show_ide") and args.show_ide:
-        kwargs["show_ide"] = True
     if hasattr(args, "work_dir") and args.work_dir:
         kwargs["work_dir"] = Path(args.work_dir)
     if hasattr(args, "parallel") and args.parallel:
         kwargs["parallel"] = args.parallel
-    if hasattr(args, "batch_size") and args.batch_size is not None:
-        kwargs["batch_size"] = args.batch_size
-    if hasattr(args, "dymola_interface") and args.dymola_interface:
-        kwargs["dymola_interface_path"] = Path(args.dymola_interface)
     # `is not None`, NOT truthiness — `--tolerance 0` is the strictest
     # possible setting and Config/comparator honor an explicit 0.0
     # (comparator.py resolve chain, config.py file-tolerance precedence).

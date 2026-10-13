@@ -5,7 +5,7 @@
   "test_spec": "./test_spec.json",
   "reference_root": "./",
   "backends": {
-    "Python": ["python", "python3"]
+    "Python": {"executables": ["python", "python3"]}
   },
   "backend": "Python",
   "tolerance": 0.01

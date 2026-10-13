@@ -109,7 +109,7 @@ class Lib:
                 {
                     "source_path": "../Lib",
                     "backend": "Python",
-                    "backends": {"Python": ["python3", "python"]},
+                    "backends": {"Python": {"executables": ["python3", "python"]}},
                     "test_spec": "test_spec.json",
                     "reference_root": ".",
                 }

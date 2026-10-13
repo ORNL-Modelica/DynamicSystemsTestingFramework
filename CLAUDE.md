@@ -17,8 +17,12 @@ DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package: run, compare, discover, author, export, add, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, export-schema,
-│   │                             #      check-dymola / check-openmodelica / check-julia
-│   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
+│   │                             #      check (where each backend is on this machine, and whether the project's is ready)
+│   ├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
+│   ├── config_shape.py           # testing.json's keys — type, default, description: the ONE table Config refuses an unknown key by,
+│   │                             #      and takes its defaults from; a backend's settings
+│   │                             #      block is declared in the same shape (Setting) and checked by the same check
+│   ├── json_types.py             # whether a JSON value is of the type its key takes, and how a refusal says it (both strict files)
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse (spec_parser: the ONE decoder of the spec file, which every command and the tool read it through), plots (a test's plots, derived from its criteria, + the `plots` extras key), RFC 6902 patch_apply,
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
@@ -28,6 +32,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation),
 │   │                             #      library_state.py (the source files' stamps at one Queue click: what a live worker compares before it reads the library again; and which file a path dependency is loaded by)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
+│   │                             #      (locate.py: where a backend's install is and by which rule it was found — `Backend.locate`,
+│   │                             #      the ONE place an install is looked for; each backend declares its `settings` table)
 │   │                             #      (openmodelica/init_xml.py: the system size omc writes to <model>_init.xml, read into the
 │   │                             #      statistics key Dymola's translation log fills — translation.continuous_time_states)
 │   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
@@ -115,9 +121,9 @@ uv run dstf --config testing.json run --report
 # `run` opens dashboard.html in a browser tab as it starts, and --report (on run and compare) opens it again once the pages are written; --no-browser prints the page's link and opens nothing
 uv run dstf --config testing.json run --report --no-browser
 
-# Parallel run (--parallel on compare = render threads). --batch-size is read by Dymola's --batch path only: small batches, queue-dispatched
+# Parallel run (--parallel on compare = render threads). `batch_size` in testing.json's Dymola block is read by Dymola's --batch path only: small batches, queue-dispatched
 uv run dstf --config testing.json run --parallel 4
-uv run dstf --config testing.json run --batch --parallel 4 --batch-size 3
+uv run dstf --config testing.json run --batch --parallel 4
 # Live progress + final report: work_dir/dashboard.html (one page; re-rendered on every state change and meta-refreshed by the browser every 5s during the run, becomes the static report after compare)
 
 # Filter accepts: glob, comma-separated list, or @file (one pattern per line, # comments)
@@ -222,8 +228,11 @@ uv run dstf --config testing.json export-schema --output schema.json
 # Force the legacy batched backend (.mos / omc -s / per-test julia subprocess)
 uv run dstf --config testing.json run --batch --parallel 4 --report
 
-# Diagnose Dymola Python interface discovery
-uv run dstf check-dymola
+# Where each backend is on this machine and by which rule it was found (the config's setting, an
+# environment variable, the search), the one this project runs with marked and diagnosed in full;
+# exit 0 iff that one is usable. Works with no testing.json (the search alone) and writes none.
+uv run dstf --config testing.json check
+uv run dstf check Dymola           # one backend's full diagnosis
 ```
 
 ## Running Tests
@@ -265,17 +274,21 @@ and `.pre-commit-config.yaml` both invoke it bare.
 
 ## Configuration
 
-The tool looks for `testing.json` near the library root or reference root. Key fields:
+The tool looks for `testing.json` near the library root or reference root. Its keys are ONE table (`config_shape.TESTING_JSON`: type, default, description): a key that is not in it is `Config error: <file>: unknown field "tolerence" — did you mean "tolerance"?` (exit 2) from every command that reads the file, and so is a value of another type than its key takes. `description` / `info` / `metadata` are for notes; `$schema` is for an editor. The keys:
 
 - `source_path` — path to the library's source location (Modelica package.mo directory, FMU directory, Julia project, ...; relative to testing.json)
 - `source_type` — `"modelica"` (default) / `"fmu"` / `"julia"` / `"python"`; only `"modelica"` changes framework behavior (package.mo lookup + `.mo` recognizer scan), the others skip it and select recognizers by name
-- `backend` — named entry like `"Dymola"` or `"OpenModelica"`; omit to auto-detect from the `backends` map
-- `backends` — map of backend names to candidate executable paths
+- `library_name` — the library's name for a non-Modelica source (default: the name of testing.json's directory); a Modelica library's is read from its `package.mo`
+- `backend` — named entry like `"Dymola"` or `"OpenModelica"` (an entry is the backend its name starts with: `"Dymola 2025"`); omitted: the first `backends` entry that is found on this machine, else the first entry; with no `backends`, the first installed backend that runs this `source_type` (Modelica: Dymola, then OpenModelica)
+- `backends` — map of backend names to a settings block each: `{"executables": [...]}` (candidate paths or program names, first that exists wins) plus the settings that backend declares (`Backend.settings`; Dymola: `show_ide`, `batch_size` — tests per session under `--batch` —, `interface` — its Python interface archive or folder). An unknown key in a block is `backends.Dymola: unknown field …`; an empty block `{}` means the backend is searched for; a block that pins full paths, none of which exists, is NOT found (no other install is taken). A list of paths, the former shape, is a config error that names the new one
 - `backend_setup` — list of Modelica commands run after library loading (user-specific settings)
 - `dependencies` — library names (e.g. `"Modelica"`) or paths loaded before simulation: a library's directory, its `package.mo`, or a one-file library `Name.mo` (`library_state.dependency_file` says which file each is opened by)
-- `reference_root` — where reference results live (default: `<repo>/Resources/ReferenceResults`)
-- `test_spec` — path to external test definitions file
+- `reference_root` — where reference results live (default: testing.json's own directory when that is named `ReferenceResults`, else `<repo>/Resources/ReferenceResults`)
+- `test_spec` — path to external test definitions file (default: `<reference_root>/test_spec.json`)
+- `work_dir` — where runs write their output, relative to testing.json (default: `testing_output/<library>/<backend>/<os>/` under the current directory)
+- `os` — the OS partition of the references (default: detected — `linux`, `windows` or `macos`)
 - `recognizers` — custom JSON recognizers appended to the bundled list (see `discovery/json_recognizer.py`)
+- `disable_bundled` — names of bundled recognizers to turn off
 - `tolerance` — global NRMSE comparison tolerance (default: `1e-4`)
 - `baseline_points` — the points a stored baseline keeps of its run: `"all"` (the default, every point the simulator wrote) or a whole number ≥ 2, which thins a longer run to at most that many; anything else is a config error. The project's value: a `test_spec.json` entry's own `baseline_points` wins for that test. Scoring reads the run at the baseline's time points, so this is also the resolution of the comparison; the reference JSON records it under `sampling`, with the run's `precision`: a single-precision run (Dymola's result files) is written with 9 significant digits and read back through float32, a double-precision one with 17, so a baseline scores exactly 0 against its own run; and every accept path warns — the baseline is stored, the exit code unchanged — when a baseline file it wrote is larger than 5 MB (D153), or no longer holds a variable the one it replaced held
 - `worker_startup_timeout` — seconds a persistent worker may take to start before the run fails with the backend's message, which names this key (default: 600 on every backend — the bound is for a tool that hangs; one that died fails at once)
@@ -284,6 +297,8 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `theme` — the bundled theme the dashboard and the report pages are generated in and `dstf author` opens in: `"default"` (the default) or `"dark"`; a name only, anything else is a config error (D148)
 
 Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola backend.
+
+Each backend finds itself: `Backend.locate(settings)` is the one place its install is looked for, by these rules in order — the backend's block (`executables`), an environment variable where it has one (`DYMOLA_INTERFACE_PATH` for Dymola's Python interface, `OPENMODELICAHOME` for omc), then the search (`PATH`, then the backend's standard install folders; Python: the running interpreter; FMPy: found iff `fmpy` imports). Dymola's Python interface is looked for BESIDE the executable that was found before the standard folders, so a project that names an older Dymola is not driven through a newer one's interface.
 
 Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-checks live under `.../soft_checks/ref_NNNN/<name>.json`, companions under `.../companions/ref_NNNN/<name>.{json,csv}` — a companion's metadata carries a `variables` mapping saying which of its variables draw on which of the test's.
 
@@ -339,7 +354,7 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`Recognizer`** (`discovery/recognizer.py`) — registry of source-scan rules; bundled + user-declared JSON recognizers merged by `model_id`.
 - **`unit_test_variables`** (`discovery/unit_tests.py`) — the ONE place a `UnitTests` variable is named: `<instance>.x[i]` (`TestModel.unit_tests_instance`, default `unitTests`) with the expression from `x_expressions` beside it. Every backend and the OpenModelica variable filter ask it; nothing spells `unitTests.x[` itself (D132).
 - **`display_label`** / **`variable_texts`** (`backends/types.py`) — the one label rule and the one scope rule above it: what a person reads for a variable is `expression or name`, with the name beside it (`a.Q (unitTests.x[1])`) when another name in the TEST's scope — its tracked variables, its scored comparisons and every series of its plots — carries the same label. `reporting/context_builder.py::test_texts` builds that scope; both tiers call it (`Session.labels` is its text half). A surface that shows the muted name beside its title reads the plain label there; the console / JUnit / review keep `label_with_name` (no page, no scope). `VariableResult.expression` and `VariableComparison.expression` carry it; nothing is keyed by it.
-- **`Backend`** (`backends/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`, `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`). Concrete backends: `DymolaBackend` / `PersistentDymolaBackend`, `FmpyBackend`, `OpenModelicaBackend` / `PersistentOpenModelicaBackend`, `JuliaBackend` / `PersistentJuliaBackend`, `PythonBackend`.
+- **`Backend`** (`backends/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`, `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`). Concrete backends: `DymolaBackend` / `PersistentDymolaBackend`, `FmpyBackend`, `OpenModelicaBackend` / `PersistentOpenModelicaBackend`, `JuliaBackend` / `PersistentJuliaBackend`, `PythonBackend`. Each also declares what it is configured by and where it is: `settings` (its block of `testing.json`'s `backends`, in `config_shape.Setting`s), `source_types`, `binaries`, `locate(settings)` (a `Located`: each part's path and the rule that found it) and `diagnose` (what `dstf check` prints) — `config.py` knows no backend, and a plug-in brings its own.
 - **`Worker`** + **`PersistentBackendBase`** (`backends/persistent.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy. It is itself a template-method class: `run_test_with_timeout` / `close` / `_kill_tracked_pids` (watchdog thread, timeout kill, process-tree kill incl. orphan snapshot, disk rescue, restart-accounting flags) are implemented once in the base. A backend supplies abstract `start` / `is_alive`, the `run_test` hook, and optionally `_evaluate_from_disk` / `_detach_interface` + `_shutdown_interface` / `_quiet` / the `kill_name_hint`, `timeout_kill_grace`, `exec_thread_prefix` class attrs. `PersistentBackendBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
 - **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.
 - **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `comparison/mode_schema.py`.

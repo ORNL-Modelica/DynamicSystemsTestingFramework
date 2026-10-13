@@ -27,7 +27,6 @@ def cmd_author(args: argparse.Namespace) -> int:
             ("source_path", "--source-path"),
             ("reference_root", "--reference-root"),
             ("test_spec", "--test-spec"),
-            ("dymola_interface", "--dymola-interface"),
         )
         if getattr(args, attr, None)
     ]

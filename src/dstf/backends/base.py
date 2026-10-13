@@ -13,16 +13,17 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..config import Config
+from ..config_shape import EXECUTABLES, Setting, defaults
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import (
     CANCELLED_RUN_STATUS,
@@ -32,6 +33,7 @@ from ..storage.batch_manifest import (
 )
 from ..storage.run_stats import read_run_stats
 from .common.result_variables import merge_timing_stats, run_timing
+from .locate import Located, find_executable
 from .types import Capability, DatasetType, TestResult, TestRunResult
 
 if TYPE_CHECKING:
@@ -508,6 +510,17 @@ class ItemRunner:
             time.sleep(0.01)
 
 
+@dataclass(frozen=True)
+class Diagnosis:
+    """What ``dstf check`` says of one backend: the ``lines`` it prints,
+    whether the backend is ``usable`` as found, and — when it is not — the
+    ``fixes`` to choose from."""
+
+    lines: tuple[str, ...]
+    usable: bool
+    fixes: tuple[str, ...] = ()
+
+
 class Backend(ABC):
     """Abstract interface for running simulations across backends.
 
@@ -540,6 +553,20 @@ class Backend(ABC):
     #: Declared on the class as well as set in ``__init__`` so a test double
     #: that never calls ``__init__`` still reads a value.
     quiet: bool = False
+    #: The keys of this backend's block in ``testing.json``'s ``backends``
+    #: map: name → type, default and description, as ``testing.json``'s own
+    #: keys are declared (:mod:`dstf.config_shape`). ``Config`` checks a
+    #: block against the table of the backend its entry names — a key that
+    #: is not here is a config error that names it. A backend adds its own
+    #: settings to ``executables`` (``{**Backend.settings, ...}``).
+    settings: Mapping[str, Setting] = {"executables": EXECUTABLES}
+    #: The ``source_type`` values this backend runs. Read where NO backend
+    #: is named and ``backends`` is empty: the installed backends that run
+    #: the project's source type are then searched in registration order.
+    #: Empty — a backend that declares none — is never picked that way.
+    source_types: frozenset[str] = frozenset()
+    #: The names this backend's program goes by on ``PATH``.
+    binaries: tuple[str, ...] = ()
 
     def __init__(self, config: Config):
         self.config = config
@@ -548,6 +575,66 @@ class Backend(ABC):
         # Optional model_id → "ref_NNNN" map for dashboard report links
         # (set by CLI before run_tests if reference IDs are known)
         self.ref_id_map: dict[str, str | None] = {}
+
+    @classmethod
+    def locate(cls, settings: Mapping[str, Any]) -> Located:
+        """Where this backend's install is, and by which rule each part of
+        it was found — the ONLY place it is looked for. ``settings`` is the
+        backend's block of ``testing.json`` (empty: the search alone).
+
+        The default finds one executable by the rules of
+        :func:`~.locate.find_executable`: ``settings["executables"]``, then
+        :attr:`binaries` on ``PATH``. A backend with standard install
+        folders, an environment variable or a second part overrides this.
+        """
+        return Located((find_executable(settings, cls.binaries),))
+
+    @classmethod
+    def settings_of(cls, config: Config) -> dict[str, Any]:
+        """This backend's settings for a run of ``config``: its block of
+        ``testing.json`` over the defaults of :attr:`settings`."""
+        return {**defaults(cls.settings), **getattr(config, "backend_settings", {})}
+
+    @classmethod
+    def executable_of(cls, config: Config) -> str | None:
+        """The executable a run of ``config`` drives, or None: not found.
+        ``Config`` resolved it through :meth:`locate`; a config that never
+        went through that (a test's stand-in) gets the search."""
+        if getattr(config, "located", None) is not None:
+            return config.backend_path
+        return getattr(config, "backend_path", None) or cls.locate({}).executable
+
+    @classmethod
+    def why_not_found(cls, config: Config) -> str:
+        """Which part of this backend a run of ``config`` is missing, and
+        where it was looked for."""
+        located = getattr(config, "located", None) or cls.locate({})
+        return located.missing()
+
+    @classmethod
+    def require_found(cls, config: Config) -> None:
+        """Raise ``RuntimeError`` when ``config`` looked for this backend
+        and did not find it — for a run's start, so a backend whose
+        configured path is gone is not driven through whatever else the
+        simulator's own tooling would pick up."""
+        if getattr(config, "located", None) is not None and config.backend_path is None:
+            raise RuntimeError(
+                f"{config.backend_name} not found: {cls.why_not_found(config)}"
+            )
+
+    @classmethod
+    def diagnose(
+        cls, located: Located, *, entry: str = "", config: Config | None = None
+    ) -> Diagnosis:
+        """What ``dstf check`` prints of this backend, found as ``located``
+        (``entry`` is the ``backends`` entry its settings came from;
+        ``config`` the project's, or None where there is none).
+
+        The default is the :meth:`locate` lines, usable when every part was
+        found. A backend that can say more of its install — a version, an
+        import that must work — overrides this and adds to them.
+        """
+        return Diagnosis(tuple(located.lines(entry)), located.complete)
 
     @classmethod
     def persistent_backend_cls(cls) -> type["Backend"] | None:

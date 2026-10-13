@@ -107,8 +107,8 @@ def _project(tmp_path: Path, backend_name: str, work: str):
                     "reference_root": "refs",
                     "test_spec": "test_spec.json",
                     "backends": {
-                        "Dymola": [shutil.which("dymola") or "dymola"],
-                        "OpenModelica": [shutil.which("omc") or "omc"],
+                        "Dymola": {"executables": [shutil.which("dymola") or "dymola"]},
+                        "OpenModelica": {"executables": [shutil.which("omc") or "omc"]},
                     },
                     "dependencies": [],
                 }

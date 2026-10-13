@@ -277,7 +277,7 @@ class TestPythonBackendVersion:
         cfg_path = ref_root / "testing.json"
         cfg_path.write_text(
             '{"source_type": "python", "source_path": "../..", '
-            '"library_name": "MyPyLib", "backends": {"Python": ["python"]}, '
+            '"library_name": "MyPyLib", "backends": {"Python": {"executables": ["python"]}}, '
             '"backend": "Python"}'
         )
         cfg = Config(config_file=cfg_path)
@@ -299,7 +299,7 @@ class TestFmpyBackendVersion:
         cfg_path = ref_root / "testing.json"
         cfg_path.write_text(
             '{"source_type": "fmu", "source_path": "../..", '
-            '"library_name": "fmus", "backends": {"FMPy": ["fmpy"]}, '
+            '"library_name": "fmus", "backends": {"FMPy": {}}, '
             '"backend": "FMPy"}'
         )
         cfg = Config(config_file=cfg_path)

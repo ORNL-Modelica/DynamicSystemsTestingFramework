@@ -333,8 +333,8 @@ class Parts(_Live):
                 {
                     "source_path": str(self.lib),
                     "backends": {
-                        "OpenModelica": ["/usr/bin/omc", "omc"],
-                        "Dymola": ["/usr/local/bin/dymola"],
+                        "OpenModelica": {"executables": ["/usr/bin/omc", "omc"]},
+                        "Dymola": {"executables": ["/usr/local/bin/dymola"]},
                     },
                     "dependencies": [entry or str(self.dep)],
                     "test_spec": "test_spec.json",

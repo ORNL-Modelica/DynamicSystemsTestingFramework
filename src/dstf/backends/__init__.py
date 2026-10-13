@@ -27,6 +27,9 @@ __all__ = [
     "resolve_variable_patterns",
     "get_backend",
     "get_backend_class",
+    "backend_class",
+    "backend_family",
+    "backend_names",
     "select_backend",
     "dataset_kind_for",
 ]
@@ -150,17 +153,41 @@ def get_backend_class(config: Config) -> type[Backend]:
     unavailable-backend ``RuntimeError`` an optional dependency's absence
     signals (FmpyBackend.__init__ imports fmpy).
     """
-    backend = config.backend
-    if backend not in _REGISTRY:
-        _import_builtin_backend(backend)
-    cls = _REGISTRY.get(backend)
+    cls = backend_class(config.backend)
     if cls is None:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
         raise ValueError(
-            f"Unsupported backend: {backend} "
+            f"Unsupported backend: {config.backend} "
             f"(from '{config.backend_name}'). Available: {available}"
         )
     return cls
+
+
+def backend_class(name: str) -> type[Backend] | None:
+    """The backend registered under ``name`` — a built-in is imported on
+    first use — or None."""
+    if name not in _REGISTRY:
+        _import_builtin_backend(name)
+    return _REGISTRY.get(name)
+
+
+def backend_names() -> list[str]:
+    """Every backend there is a class for: the built-ins, then what a
+    plug-in or a caller registered, in registration order. The order
+    ``dstf check`` lists them in, and the one a project that names no
+    backend is searched in (``Backend.source_types``)."""
+    return [*_BUILTINS, *(name for name in _REGISTRY if name not in _BUILTINS)]
+
+
+def backend_family(backend_name: str) -> str:
+    """The backend a named entry is of: ``"Dymola 2025"`` is a ``"Dymola"``,
+    ``"OpenModelica 1.23"`` an ``"OpenModelica"`` — the registered name it
+    starts with, the longest where two do. A name that starts with none is
+    its own (and no backend, as :func:`get_backend_class` then says)."""
+    for name in sorted(backend_names(), key=len, reverse=True):
+        if backend_name.startswith(name):
+            return name
+    return backend_name
 
 
 class BackendUnavailableError(RuntimeError):
@@ -245,16 +272,20 @@ def _instantiate(cls: type[Backend], config) -> Backend:
         raise BackendUnavailableError(str(exc)) from exc
 
 
+#: The built-in backends and the module each registers itself from. Their
+#: order is the order :func:`backend_names` lists them in.
+_BUILTINS = {
+    "Dymola": ".dymola",
+    "OpenModelica": ".openmodelica",
+    "FMPy": ".fmpy",
+    "Julia": ".julia",
+    "Python": ".python",
+}
+
+
 def _import_builtin_backend(name: str) -> None:
     """Import a built-in backend module so it registers itself."""
-    builtins = {
-        "Dymola": ".dymola",
-        "FMPy": ".fmpy",
-        "OpenModelica": ".openmodelica",
-        "Julia": ".julia",
-        "Python": ".python",
-    }
-    module = builtins.get(name)
+    module = _BUILTINS.get(name)
     if module:
         import importlib
 

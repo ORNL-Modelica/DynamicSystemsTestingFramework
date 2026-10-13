@@ -11,16 +11,19 @@ Create a `testing.json` in your reference results directory. This is the single 
   "source_path": "../../MyLibrary/MyLib",
   "backend": "Dymola",
   "backends": {
-    "Dymola": [
-      "C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe",
-      "C:\\Program Files\\Dymola 2025x Refresh 1\\bin64\\Dymola.exe"
-    ],
-    "Dymola 2025": [
-      "C:\\Program Files\\Dymola 2025x Refresh 1\\bin64\\Dymola.exe"
-    ],
-    "Dymola 2026": [
-      "C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe"
-    ]
+    "Dymola": {
+      "executables": [
+        "C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe",
+        "C:\\Program Files\\Dymola 2025x Refresh 1\\bin64\\Dymola.exe"
+      ]
+    },
+    "Dymola 2025": {
+      "executables": ["C:\\Program Files\\Dymola 2025x Refresh 1\\bin64\\Dymola.exe"]
+    },
+    "Dymola 2026": {
+      "executables": ["C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe"],
+      "show_ide": false
+    }
   },
   "dependencies": [],
   "test_spec": "test_spec.json"
@@ -34,8 +37,8 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `source_path` | No | Path to library source location (Modelica package.mo directory, FMU directory, etc.). Relative to `testing.json` location. Can be provided via `--source-path` instead. |
 | `source_type` | No | `"modelica"` (the default: `source_path` holds a `package.mo` and its `.mo` files are scanned for tests), or `"fmu"` / `"julia"` / `"python"`, whose tests come from `test_spec.json` alone. |
 | `library_name` | No | The library's name for a non-Modelica source (default: the name of the directory holding `testing.json`); a Modelica library's is read from its `package.mo`. |
-| `backend` | No | Backend name. Use named entries like `"Dymola 2025"` to target specific versions. Omitted: the first `backends` entry whose executable exists on this machine, else `"Dymola"`. |
-| `backends` | No | Map of backend names to candidate executable paths (first existing path wins). Falls back to system PATH. |
+| `backend` | No | Backend name. Use named entries like `"Dymola 2025"` to target specific versions (an entry is the backend its name starts with). Omitted: the first `backends` entry that is found on this machine, else the first entry; with no `backends`, the first installed backend that runs this `source_type` (for a Modelica library: Dymola, then OpenModelica). |
+| `backends` | No | Map of backend names to a settings block each: `{"executables": [...]}` plus that backend's own settings (see "Backend settings" below). `executables` lists candidate paths or program names (first that exists wins). An empty block `{}` — or no block — means the backend is searched for: `PATH`, then its standard install folders. A block whose `executables` holds a full path, none of which exists, is NOT found: no other install is taken in its place. |
 | `dependencies` | No | Paths to dependency libraries loaded before simulation, relative to `testing.json` location — a library's directory, its `package.mo`, or a one-file library `Name.mo`: each is opened by its file (`<dir>/package.mo`, or the `.mo` file given) on Dymola and OpenModelica alike — or a bare library name (`"Modelica"`), which OpenModelica loads by name. |
 | `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
@@ -49,16 +52,35 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 | `work_dir` | No | Where runs write their output, relative to `testing.json` location (default: `testing_output/<library>/<backend>/<os>/` under the current directory). `--work-dir` overrides it. |
 | `os` | No | The OS partition of the references (default: detected — `windows`, `linux` or `macos`). |
-| `show_ide` | No | `true` shows the Dymola GUI instead of running headless, as `--show-ide` does. |
 | `theme` | No | The bundled theme the pages are drawn in: `"default"` (the default) or `"dark"`. The dashboard and the per-test report pages are generated in it — set it and re-run or `compare` to regenerate them — and `dstf author` opens in it. A name only: any other value, a path included, is a config error that lists the two. There is no flag for it. |
 
 All relative paths resolve from where `testing.json` is located.
 
-The former spellings `simulator`, `simulators` and `simulator_setup` are no
-longer read. A `testing.json` still containing one is rejected at load with a
-`ConfigError` naming the replacement, rather than parsing on while every
-setting under that key silently does nothing. There is no alias and no
-migration path: the old key never works again, it just says so.
+**Backend settings.** Every block of `backends` takes `executables`; the
+rest are the backend's own:
+
+| Backend | Setting | Description |
+|---------|---------|-------------|
+| Dymola | `show_ide` | `true` shows the Dymola GUI instead of running headless (default: `false`). |
+| Dymola | `batch_size` | With `run --batch`: tests per Dymola session (default: every test of a worker in one session). Small values (3-5) give better load balancing and crash isolation but reload the library more often. |
+| Dymola | `interface` | Dymola's Python interface: the archive (`dymola-*.whl` / `dymola.egg`) or its directory. Default: the `DYMOLA_INTERFACE_PATH` environment variable, else `Modelica/Library/python_interface` of the Dymola that `executables` found, else the newest Dymola's in the standard install folders. |
+
+OpenModelica, Julia and Python take `executables` alone; FMPy, a Python
+library, takes no setting. `dstf check` prints what each backend's block
+resolves to on this machine, and by which rule.
+
+**A key nothing reads is an error that names it**, here as in
+`test_spec.json`: `Config error: <file>: unknown field "tolerence" — did you
+mean "tolerance"?` (exit 2) from every command that reads the file, and
+`backends.Dymola: unknown field …` for a key of a block. A value of another
+type than its key takes is the same error (`max_embedded_samples: must be a
+whole number, got "abc"`). `description` / `info` / `metadata` are for notes.
+
+So the former spellings `simulator`, `simulators` and `simulator_setup` are
+refused, as is a `backends` entry written as a list of paths (`backends.Dymola
+must be an object — {"executables": [...]} (was a list of paths)`) and the
+top-level `show_ide`. There is no alias and no migration path: an old key
+never works again, it just says so.
 
 ### Test definitions
 
@@ -806,7 +828,6 @@ All commands accept these global options:
 --source-path PATH     Path to library source location (Modelica package dir, FMU dir, ...)
 --reference-root PATH  Path to reference results root
 --test-spec PATH       Path to test_spec.json
---dymola-interface PATH  Path to Dymola's Python interface archive or its directory
 ```
 
 They work on **either side of the subcommand** — `dstf --config x run` and
@@ -861,7 +882,6 @@ uv run dstf --config testing.json run -i
 | `--parallel N` | Number of concurrent **simulation workers** (any backend, not just Dymola). Note: the same flag on `compare` means report-**rendering** threads — see below. |
 | `--backend NAME` | Override the backend (e.g., `"Dymola 2025"`) |
 | `--backend-path PATH` | Override the backend executable path |
-| `--show-ide` | Show Dymola GUI instead of headless |
 | `--tolerance FLOAT` | Override the project's comparison tolerance (`testing.json`'s `tolerance`); one finite number |
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
 | `--timeout SECS` | Per-test timeout in seconds (default: 60) |
@@ -1189,7 +1209,7 @@ uv run dstf --config testing.json author
 ```
 
 `--config` is required. The tool edits and saves the spec that file names, so
-`--source-path`, `--reference-root`, `--test-spec` and `--dymola-interface` are
+`--source-path`, `--reference-root` and `--test-spec` are
 refused rather than pointing it at a different spec than it shows. `--filter`
 and `--package` narrow the test list; `--work-dir` and `--backend` choose the
 run outputs and the reference partition to read; `--port` moves the server off

@@ -9,13 +9,16 @@ appending to `sys.path`. `.whl` is not — Python only imports `.whl` content
 after `pip install` extracts it. To avoid a per-Dymola-version install step,
 we extract the wheel once to a user cache dir and add that dir to `sys.path`.
 
-Discovery order:
-  1. Explicit path (CLI flag / config `dymola_interface_path`)
-  2. `DYMOLA_INTERFACE_PATH` env var
-  3. Standard locations per platform (globs all Dymola versions)
+Where the archive is looked for (:func:`find_interface`, a part of
+``DymolaBackend.locate``), the first that names a place winning:
+  1. the Dymola block's `interface` setting in testing.json
+  2. the `DYMOLA_INTERFACE_PATH` environment variable
+  3. beside the Dymola executable that was found
+  4. the standard install folders, the newest Dymola first
 
-The explicit path may be either the archive itself or the directory containing
-it (we look inside).
+A setting or a variable may name either the archive itself or the directory
+containing it (we look inside). One that holds no archive is NOT FOUND:
+another Dymola's interface is not taken in its place.
 """
 
 from __future__ import annotations
@@ -25,18 +28,28 @@ import re
 import shutil
 import sys
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
+
+from ..locate import ENVIRONMENT, SEARCH, SETTING, Found, Rule
+
+#: What the archive is called in a ``Located``.
+INTERFACE = "Python interface"
+
+#: The machine-level override of where the archive is.
+INTERFACE_VARIABLE = "DYMOLA_INTERFACE_PATH"
 
 
-def _dymola_sort_key(path: Path) -> tuple:
+def dymola_sort_key(path: Path) -> tuple:
     """Sort Dymola install paths so newer versions come first.
 
-    Extracts the year/refresh from names like 'Dymola 2026x' or
-    'Dymola 2024x Refresh 1' and sorts descending.
+    Extracts the year/refresh from names like 'Dymola 2026x',
+    'Dymola 2024x Refresh 1' or 'dymola-2026x-x86_64' and sorts descending.
     """
     name = str(path)
     m = re.search(
-        r"Dymola[\s_]?(\d{4})x(?:[\s_]+Refresh[\s_]*(\d+))?", name, re.IGNORECASE
+        r"Dymola[\s_-]?(\d{4})x(?:[\s_]+Refresh[\s_]*(\d+))?", name, re.IGNORECASE
     )
     if not m:
         return (0, 0, name)
@@ -46,7 +59,7 @@ def _dymola_sort_key(path: Path) -> tuple:
     return (-year, -refresh, name)
 
 
-def _platform_glob_bases() -> list[Path]:
+def platform_glob_bases() -> list[Path]:
     """Base directories to glob for installed Dymola versions."""
     if sys.platform.startswith("win"):
         candidates = [
@@ -60,18 +73,22 @@ def _platform_glob_bases() -> list[Path]:
     return [p for p in candidates if p.exists()]
 
 
+def executable_glob() -> str:
+    """Below a base directory, the program a Dymola install is started by.
+    On Linux that is the install's wrapper script, which sets the library
+    path its bare `bin64/dymola` needs."""
+    name = "Dymola.exe" if sys.platform.startswith("win") else "dymola.sh"
+    return f"[Dd]ymola*/bin64/{name}"
+
+
 def _find_python_interface_dirs() -> list[Path]:
     """Return all known python_interface directories, newest-first."""
     found: list[Path] = []
-    for base in _platform_glob_bases():
-        for p in base.glob("Dymola*/Modelica/Library/python_interface"):
+    for base in platform_glob_bases():
+        for p in base.glob("[Dd]ymola*/Modelica/Library/python_interface"):
             if p.is_dir():
                 found.append(p)
-        # Linux convention
-        for p in base.glob("dymola*/Modelica/Library/python_interface"):
-            if p.is_dir():
-                found.append(p)
-    found.sort(key=_dymola_sort_key)
+    found.sort(key=dymola_sort_key)
     return found
 
 
@@ -89,34 +106,98 @@ def _archive_in_dir(d: Path) -> Path | None:
     return None
 
 
-def find_dymola_interface_archive(
-    override: Path | None = None,
-) -> Path | None:
-    """Find the Dymola Python interface archive. Returns the Path or None.
-
-    Accepts either a direct archive path or a directory containing one.
-    """
-    explicit_candidates: list[Path] = []
-    if override:
-        explicit_candidates.append(Path(override))
-    env = os.environ.get("DYMOLA_INTERFACE_PATH")
-    if env:
-        explicit_candidates.append(Path(env))
-
-    for cand in explicit_candidates:
-        if cand.is_file() and cand.suffix in (".whl", ".egg"):
-            return cand
-        if cand.is_dir():
-            a = _archive_in_dir(cand)
-            if a:
-                return a
-
-    # Auto-discovery
-    for d in _find_python_interface_dirs():
-        a = _archive_in_dir(d)
-        if a:
-            return a
+def _archive_at(named: Path) -> Path | None:
+    """The archive a setting or a variable names: the file itself, or the
+    one in the directory it names."""
+    if named.is_file() and named.suffix in (".whl", ".egg"):
+        return named
+    if named.is_dir():
+        return _archive_in_dir(named)
     return None
+
+
+#: The line of a launcher script that says where its Dymola is installed.
+_LAUNCHER_INSTALL_RE = re.compile(
+    r"""^\s*(?:export\s+)?DYMOLA=(?:"([^"]+)"|'([^']+)'|(\S+))\s*$""", re.MULTILINE
+)
+
+
+def install_of(executable: Path) -> Path | None:
+    """The Dymola install an executable belongs to, or None.
+
+    Two shapes are known. The program inside the install
+    (`<install>/bin64/Dymola.exe`, `<install>/bin64/dymola.sh`), reached
+    through any symlinks: the install is the directory above that holds
+    `Modelica/Library`. And Linux's launcher outside it
+    (`/usr/local/bin/dymola` → `dymola-<version>`): a few lines of shell
+    that say `export DYMOLA=<install>` before they start the program.
+    """
+    try:
+        real = executable.resolve()
+    except OSError:
+        return None
+    for parent in list(real.parents)[:3]:
+        if (parent / "Modelica" / "Library").is_dir():
+            return parent
+    try:
+        if not real.is_file() or real.stat().st_size > 4096:
+            return None
+        text = real.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = _LAUNCHER_INSTALL_RE.search(text)
+    if m is None:
+        return None
+    install = Path(next(group for group in m.groups() if group is not None))
+    return install if (install / "Modelica" / "Library").is_dir() else None
+
+
+def find_interface(settings: Mapping[str, Any], executable: str | None) -> Found:
+    """Dymola's Python interface archive, by the rules in this module's
+    docstring. ``executable`` is the Dymola that was found, or None."""
+    named = settings.get("interface")
+    if named:
+        archive = _archive_at(Path(named).expanduser())
+        if archive is None:
+            return Found(
+                INTERFACE,
+                detail=f"the configured interface holds no dymola-*.whl or dymola.egg: {named}",
+            )
+        return Found(INTERFACE, str(archive), Rule(SETTING, "interface"))
+    named = os.environ.get(INTERFACE_VARIABLE)
+    if named:
+        archive = _archive_at(Path(named).expanduser())
+        if archive is None:
+            return Found(
+                INTERFACE,
+                detail=f"{INTERFACE_VARIABLE} holds no dymola-*.whl or dymola.egg: {named}",
+            )
+        return Found(INTERFACE, str(archive), Rule(ENVIRONMENT, INTERFACE_VARIABLE))
+    if executable:
+        install = install_of(Path(executable))
+        if install is not None:
+            archive = _archive_in_dir(
+                install / "Modelica" / "Library" / "python_interface"
+            )
+            if archive is not None:
+                return Found(
+                    INTERFACE, str(archive), Rule(SEARCH, "beside the executable")
+                )
+    for d in _find_python_interface_dirs():
+        archive = _archive_in_dir(d)
+        if archive is not None:
+            base = next(b for b in platform_glob_bases() if b in d.parents)
+            return Found(
+                INTERFACE, str(archive), Rule(SEARCH, f"the standard folder {base}")
+            )
+    bases = ", ".join(str(b) for b in platform_glob_bases()) or "(none)"
+    return Found(
+        INTERFACE,
+        detail=(
+            "no Modelica/Library/python_interface beside the executable or under "
+            f"the standard folders ({bases})"
+        ),
+    )
 
 
 def _cache_root() -> Path:
@@ -168,20 +249,14 @@ def _prepare_sys_path(archive: Path) -> Path:
 
 
 _NOT_FOUND_MESSAGE = """\
-Could not find Dymola's Python interface (dymola.egg or dymola-*.whl).
-
-Searched:
-  - Explicit --dymola-interface / dymola_interface_path
-  - DYMOLA_INTERFACE_PATH env var
-  - Auto-discovery under platform install roots:
-    {bases}
+Could not find Dymola's Python interface (dymola-*.whl or dymola.egg): {why}
 
 Typical location (Windows):
   C:\\Program Files\\Dymola 2026x\\Modelica\\Library\\python_interface\\dymola-2026.0-py3-none-any.whl
 
 Fix one of:
-  1. Pass --dymola-interface <path-to-archive-or-dir>
-  2. Set environment variable DYMOLA_INTERFACE_PATH
+  1. Set "interface" in the Dymola block of testing.json's "backends"
+  2. Set the environment variable DYMOLA_INTERFACE_PATH
 """
 
 
@@ -189,15 +264,15 @@ _cached_class = None
 _cached_path: Path | None = None
 
 
-def load_dymola_interface(override_path: Path | None = None):
-    """Load and return the DymolaInterface class. Cached after first call."""
+def load_dymola_interface(found: Found):
+    """Load and return the DymolaInterface class from the archive
+    ``DymolaBackend.locate`` found. Cached after first call."""
     global _cached_class, _cached_path
     if _cached_class is not None:
         return _cached_class
-    archive = find_dymola_interface_archive(override_path)
-    if archive is None:
-        bases = "\n    ".join(str(b) for b in _platform_glob_bases())
-        raise RuntimeError(_NOT_FOUND_MESSAGE.format(bases=bases or "(none)"))
+    if found.path is None:
+        raise RuntimeError(_NOT_FOUND_MESSAGE.format(why=found.detail))
+    archive = Path(found.path)
     _cached_path = _prepare_sys_path(archive)
     try:
         from dymola.dymola_interface import (
@@ -213,13 +288,12 @@ def load_dymola_interface(override_path: Path | None = None):
     return DymolaInterface
 
 
-def describe_dymola_interface(override_path: Path | None = None) -> dict:
+def describe_dymola_interface(found: Found) -> dict:
     """Run the loader in a reporting mode — no raises. Useful for diagnostics."""
-    archive = find_dymola_interface_archive(override_path)
+    archive = Path(found.path) if found.path else None
     info: dict = {
         "archive": str(archive) if archive else None,
         "format": archive.suffix.lstrip(".") if archive else None,
-        "search_roots": [str(b) for b in _platform_glob_bases()],
         "discovered_dirs": [str(p) for p in _find_python_interface_dirs()],
         "sys_path_entry": None,
         "import_ok": False,

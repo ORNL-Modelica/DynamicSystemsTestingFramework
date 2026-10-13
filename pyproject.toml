@@ -90,7 +90,7 @@ markers = [
     "fmpy: requires fmpy package",
     "ompython: requires OMPython package (persistent-worker OpenModelica)",
     "reference_fmus: requires Reference-FMUs binaries at examples/fmu/reference-fmus-binaries",
-    "julia: requires Julia 1.10+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/JuliaMtkTestingLib",
+    "julia: requires Julia 1.11+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/JuliaMtkTestingLib",
     "playwright: browser-driven reporter tests (requires playwright + chromium); until D97 this marker did not exist and -m 'not playwright' was a no-op filter",
 ]
 filterwarnings = [
@@ -151,7 +151,9 @@ files = [
     "src/dstf/plugins.py",
     "src/dstf/storage",
     "src/dstf/config.py",
+    "src/dstf/config_shape.py",
     "src/dstf/json_types.py",
+    "src/dstf/backends/locate.py",
     "src/dstf/pipeline.py",
     "src/dstf/reporting/rows.py",
 ]

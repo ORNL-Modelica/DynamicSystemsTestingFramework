@@ -7,12 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from dstf.backends import backend_family, backend_names
 from dstf.backends.openmodelica.mos_generator import classify_dependency
 from dstf.config import (
-    BACKEND_FAMILIES,
     Config,
     ConfigError,
-    _detect_backend,
     detect_os,
     find_package_dir,
     load_config_file,
@@ -263,74 +262,80 @@ class TestConfig:
 
 
 class TestAutoDetectBackend:
-    """Unit tests for the `_auto_detect_backend` helper + integration
-    through Config.__post_init__ when testing.json omits the `backend` key."""
+    """Which backend a project that names none runs with (`_pick_backend`),
+    and its integration through Config.__post_init__ when testing.json omits
+    the `backend` key."""
 
     def test_looks_like_path_linux(self):
-        from dstf.config import _looks_like_path
+        from dstf.backends.locate import looks_like_path
 
-        assert _looks_like_path("/usr/bin/omc")
-        assert not _looks_like_path("omc")
-        assert not _looks_like_path("dymola.exe")
+        assert looks_like_path("/usr/bin/omc")
+        assert not looks_like_path("omc")
+        assert not looks_like_path("dymola.exe")
 
     def test_looks_like_path_windows(self):
-        from dstf.config import _looks_like_path
+        from dstf.backends.locate import looks_like_path
 
-        assert _looks_like_path("C:\\Program Files\\Dymola.exe")
-        assert _looks_like_path("D:/some/path")
-        assert not _looks_like_path("Dymola")
+        assert looks_like_path("C:\\Program Files\\Dymola.exe")
+        assert looks_like_path("D:/some/path")
+        assert not looks_like_path("Dymola")
 
     def test_auto_detect_picks_first_resolvable(self, tmp_path, monkeypatch):
         """First entry whose binary resolves wins. If an earlier entry has
         pinned absolute paths that don't exist, that entry is skipped (no
         fallback to a same-named binary on PATH)."""
-        from dstf.config import _auto_detect_backend
+        from dstf.config import _pick_backend
 
         # Create a fake "omc" binary on a temp PATH — simulate OM available.
         fake_omc = tmp_path / "omc"
         fake_omc.write_text("#!/bin/sh\n")
         fake_omc.chmod(0o755)
         monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
 
-        simulators = {
-            "Dymola": [
-                "C:\\nope\\dymola.exe",  # pinned path, doesn't exist
-            ],
-            "OpenModelica": ["omc"],  # bare name → PATH lookup
+        backends = {
+            # pinned path, doesn't exist
+            "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
+            "OpenModelica": {"executables": ["omc"]},  # bare name → PATH lookup
         }
-        name, path = _auto_detect_backend(simulators)
-        assert name == "OpenModelica"
-        assert path == str(fake_omc)
+        assert _pick_backend(backends, "modelica") == "OpenModelica"
 
     def test_auto_detect_pinned_paths_block_fallback(self, tmp_path, monkeypatch):
-        """If a simulator's list is entirely pinned absolute paths and NONE
-        exist, we must NOT fall back to a same-named binary on PATH — the
-        pinned list expresses intent to use *that* install."""
-        from dstf.config import _auto_detect_backend
+        """If a backend's list holds pinned absolute paths and NONE exist, we
+        must NOT fall back to a same-named binary on PATH — the pinned list
+        expresses intent to use *that* install."""
+        from dstf.backends.dymola.backend import DymolaBackend
 
         fake_dymola = tmp_path / "dymola"
         fake_dymola.write_text("#!/bin/sh\n")
         fake_dymola.chmod(0o755)
         monkeypatch.setenv("PATH", str(tmp_path))
 
-        simulators = {
-            "Dymola": [
-                "C:\\Program Files\\Dymola\\Dymola.exe",  # pinned, missing
-            ],
-        }
+        pinned = "C:\\Program Files\\Dymola\\Dymola.exe"  # pinned, missing
+        located = DymolaBackend.locate({"executables": [pinned]})
         # Fallback suppressed ⇒ nothing resolves despite `dymola` on PATH.
-        assert _auto_detect_backend(simulators) is None
+        assert not located.found
+        assert located.executable is None
+        assert located.parts[0].detail == (
+            f"the configured path(s) do not exist: {pinned}"
+        )
 
-    def test_auto_detect_none_if_nothing_resolves(self, tmp_path, monkeypatch):
-        from dstf.config import _auto_detect_backend
+    def test_where_nothing_resolves_the_first_entry_is_the_one_named(
+        self, tmp_path, monkeypatch
+    ):
+        """Nothing found is not a switch to a backend the project did not
+        list (it used to become "Dymola", whatever the map held): the first
+        entry is selected, and it is the one the run says is missing."""
+        from dstf.config import _pick_backend
 
         # Empty PATH and bogus paths — nothing resolves.
         monkeypatch.setenv("PATH", str(tmp_path))
-        simulators = {
-            "Dymola": ["C:\\nope\\dymola.exe"],
-            "OpenModelica": ["/nope/omc"],
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+        backends = {
+            "OpenModelica": {"executables": ["/nope/omc"]},
+            "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
         }
-        assert _auto_detect_backend(simulators) is None
+        assert _pick_backend(backends, "modelica") == "OpenModelica"
 
     def test_config_autopicks_when_backend_key_omitted(self, tmp_path, monkeypatch):
         """Config.__post_init__ auto-picks when testing.json omits the
@@ -351,8 +356,10 @@ class TestAutoDetectBackend:
                 {
                     "source_path": str(lib_dir),
                     "backends": {
-                        "Dymola": ["C:\\nope\\dymola.exe"],  # pinned, missing
-                        "OpenModelica": ["omc"],  # PATH lookup → hits fake
+                        # pinned, missing
+                        "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
+                        # PATH lookup → hits fake
+                        "OpenModelica": {"executables": ["omc"]},
                     },
                 }
             )
@@ -374,7 +381,7 @@ class TestAutoDetectBackend:
                 {
                     "source_path": str(lib_dir),
                     "backend": "Dymola",
-                    "backends": {"Dymola": ["C:\\nope\\dymola.exe"]},
+                    "backends": {"Dymola": {"executables": ["C:\\nope\\dymola.exe"]}},
                 }
             )
         )
@@ -429,29 +436,25 @@ class TestRenamedKeysAreRejected:
     Renaming `simulator`/`simulators`/`simulator_setup` with no alias is the
     decision. The hazard it creates is that an untouched testing.json keeps
     PARSING while every setting in it does nothing — which a user experiences
-    as "the tool ignores my config", with no diagnostic anywhere. Erroring is
-    not a compatibility path: the old key never works again, it just says so.
+    as "the tool ignores my config", with no diagnostic anywhere. They are
+    refused as any key nothing reads is (`config_shape.TESTING_JSON`), and
+    so is the top-level `show_ide` that moved into Dymola's block.
     Without this test nothing in the tree fails if a rebase or cherry-pick
     restores an old-key read.
     """
 
     @pytest.mark.parametrize(
-        "key,replacement",
-        [
-            ("simulator", "backend"),
-            ("simulators", "backends"),
-            ("simulator_setup", "backend_setup"),
-        ],
+        "key", ["simulator", "simulators", "simulator_setup", "show_ide"]
     )
-    def test_old_key_raises_and_names_its_replacement(self, tmp_path, key, replacement):
+    def test_old_key_is_an_unknown_field(self, tmp_path, key):
         cfg = tmp_path / "testing.json"
         value = {} if key == "simulators" else "x"
         cfg.write_text(json.dumps({key: value}), encoding="utf-8")
 
-        with pytest.raises(ConfigError, match="renamed key") as exc:
+        with pytest.raises(ConfigError) as exc:
             load_config_file(cfg)
 
-        assert replacement in str(exc.value)
+        assert str(exc.value).startswith(f'{cfg}: unknown field "{key}"')
 
     def test_new_keys_load_clean(self, tmp_path):
         cfg = tmp_path / "testing.json"
@@ -598,13 +601,21 @@ class TestFinding19AutoCreate:
     def test_existing_empty_config_not_overwritten(self, tmp_path, monkeypatch):
         """A found config that parses to {} counts as 'found' — auto-create
         must not fire and must not overwrite the user's file."""
+        from dstf.backends.dymola import interface_loader
+
         monkeypatch.chdir(tmp_path)
+        # A machine with no simulator on it, whatever this one has.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+        monkeypatch.setattr(interface_loader, "platform_glob_bases", lambda: [])
         lib = _make_lib(tmp_path)
         cfg = tmp_path / "testing.json"
         cfg.write_text("{}", encoding="utf-8")
         config = Config(source_path=lib)
         assert cfg.read_text(encoding="utf-8") == "{}"
-        assert config.backend_name == "Dymola"  # historical default still applies
+        # Nothing named, nothing found: the first backend that runs Modelica.
+        assert config.backend_name == "Dymola"
+        assert config.backend_path is None
 
 
 # ---------------------------------------------------------------------------
@@ -801,7 +812,7 @@ class TestFinding18BackendPath:
         _make_lib(cfg_dir)
         cfg = {
             "source_path": "Lib",
-            "backends": {"OpenModelica": ["omc"]},  # no "backend" key
+            "backends": {"OpenModelica": {"executables": ["omc"]}},  # no "backend" key
         }
         (cfg_dir / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
         return cfg_dir
@@ -836,9 +847,9 @@ class TestFinding18BackendPath:
 
 
 def test_python_backend_name_resolves():
-    assert "Python" in BACKEND_FAMILIES
-    assert _detect_backend("Python 3.12") == "Python"
-    assert _detect_backend("Python") == "Python"
+    assert "Python" in backend_names()
+    assert backend_family("Python 3.12") == "Python"
+    assert backend_family("Python") == "Python"
 
 
 # =========================================================================
@@ -920,8 +931,8 @@ def test_spec_path_is_the_configured_file_else_the_reference_root_fallback(tmp_p
 
 def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
     """The authoring shell offers testing.json's `backends` names as the
-    backends to switch to (brief §3.6); until now the map was read for the
-    executable path and dropped."""
+    backends to switch to (brief §3.6): the map is kept whole, a settings
+    block per entry."""
     (tmp_path / "testing.json").write_text(
         json.dumps(
             {
@@ -930,8 +941,13 @@ def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
                 "library_name": "L",
                 "backend": "Python",
                 "backends": {
-                    "Python": ["python3"],
-                    "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+                    "Python": {"executables": ["python3"]},
+                    "Dymola 2026x": {
+                        "executables": [
+                            "C:/Program Files/Dymola 2026x/bin64/Dymola.exe"
+                        ],
+                        "show_ide": True,
+                    },
                 },
             }
         ),
@@ -939,8 +955,11 @@ def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
     )
     config = Config(config_file=tmp_path / "testing.json")
     assert config.backends == {
-        "Python": ["python3"],
-        "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+        "Python": {"executables": ["python3"]},
+        "Dymola 2026x": {
+            "executables": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+            "show_ide": True,
+        },
     }
 
 

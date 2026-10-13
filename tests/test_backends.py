@@ -465,12 +465,13 @@ class TestDymolaConfig:
         from unittest.mock import MagicMock
 
         config = MagicMock()
-        config.show_ide = True
+        config.backend_settings = {"show_ide": True, "batch_size": 4}
         config.backend_setup = ["Foo := true;"]
         config.diagnostic_variables = ["CPUtime", "CustomVar"]
 
         dc = DymolaConfig.from_config(config)
         assert dc.show_ide is True
+        assert dc.batch_size == 4
         assert dc.backend_setup == ["Foo := true;"]
         assert dc.diagnostic_variables == ["CPUtime", "CustomVar"]
 
@@ -479,7 +480,7 @@ class TestDymolaConfig:
         from unittest.mock import MagicMock
 
         config = MagicMock()
-        config.show_ide = False
+        config.backend_settings = {}
         original_setup = ["Cmd1;"]
         config.backend_setup = original_setup
         config.diagnostic_variables = ["CPUtime"]
@@ -498,6 +499,7 @@ class TestDymolaConfig:
         """Default values match expected Dymola defaults."""
         dc = DymolaConfig()
         assert dc.show_ide is False
+        assert dc.batch_size is None
         assert dc.backend_setup == []
         assert "CPUtime" in dc.diagnostic_variables
         assert "EventCounter" in dc.diagnostic_variables
@@ -671,10 +673,13 @@ class TestTimeoutExpiredBytesHandling:
         from dstf.config import Config
 
         (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        omc = tmp_path / "omc"
+        omc.write_text("#!/bin/sh\n")
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
             backend_name="OpenModelica",
+            backend_path=str(omc),
             work_dir=tmp_path / "work",
         )
         backend = OpenModelicaBackend(cfg)
@@ -880,7 +885,6 @@ class TestDymolaBatchTimeout:
         wd = tmp_path / "work"
         wd.mkdir()
         cfg = SimpleNamespace(
-            show_ide=False,
             backend_setup=[],
             diagnostic_variables=["CPUtime"],
             work_dir=wd,
@@ -946,7 +950,6 @@ class TestDymolaBatchTimeout:
         wd = tmp_path / "work"
         wd.mkdir()
         cfg = SimpleNamespace(
-            show_ide=False,
             backend_setup=[],
             diagnostic_variables=["CPUtime"],
             work_dir=wd,
@@ -1051,7 +1054,6 @@ class TestDymolaStatisticsFromLogs:
         from dstf.backends.dymola import backend as dr
 
         cfg = SimpleNamespace(
-            show_ide=False,
             backend_setup=[],
             diagnostic_variables=["CPUtime"],
             work_dir=work_dir,

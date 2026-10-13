@@ -31,7 +31,8 @@ class TestOpenModelicaConfig:
             work_dir=tmp_path / "work",
         )
         om = OpenModelicaConfig.from_config(cfg)
-        assert om.omc_path  # resolved via BACKEND_BINARY_NAMES or shutil.which
+        # What `OpenModelicaBackend.locate` found — None on a machine without omc.
+        assert om.omc_path == cfg.backend_path
         assert om.std_version == "latest"
         assert "CPUtime" in om.diagnostic_variables
         assert "EventCounter" in om.diagnostic_variables
@@ -142,10 +143,15 @@ class TestOpenModelicaBackendUnit:
         )
 
         (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        # An omc that is there to run: a machine without one fails the test
+        # at "omc not found" before anything is written.
+        omc = tmp_path / "omc"
+        omc.write_text("#!/bin/sh\n")
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
             backend_name="OpenModelica",
+            backend_path=str(omc),
             work_dir=tmp_path / "work",
         )
         backend = OpenModelicaBackend(cfg)

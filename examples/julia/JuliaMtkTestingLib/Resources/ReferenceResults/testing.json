@@ -5,7 +5,7 @@
   "test_spec": "./test_spec.json",
   "reference_root": "./",
   "backends": {
-    "Julia": ["julia"]
+    "Julia": {"executables": ["julia"]}
   },
   "backend": "Julia",
   "tolerance": 0.15

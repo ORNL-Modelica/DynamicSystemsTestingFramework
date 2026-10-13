@@ -1015,6 +1015,7 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
         # already-imported reference.
         from .session_loader import load_omc_session as _load
 
+        cls.require_found(config)
         _load()
 
     def setup_before_workers(self) -> None:

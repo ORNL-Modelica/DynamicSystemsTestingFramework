@@ -4,9 +4,15 @@ import json
 import logging
 import platform
 import re
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from .config_shape import TESTING_JSON, refused
+from .config_shape import default as _default
+
+if TYPE_CHECKING:
+    from .backends.locate import Located
 
 logger = logging.getLogger(__name__)
 
@@ -16,51 +22,14 @@ DEFAULT_TOLERANCE = 1e-4
 DEFAULT_METHOD = "Dassl"
 DEFAULT_NUMBER_OF_INTERVALS = 500
 
-# Comparison defaults
-DEFAULT_COMPARISON_TOLERANCE = 1e-4
+# Comparison defaults: testing.json's `tolerance`, where it is not set.
+DEFAULT_COMPARISON_TOLERANCE = _default("tolerance")
 
 # `baseline_points` for every point the run wrote — the default (D153).
-ALL_POINTS = "all"
+ALL_POINTS = _default("baseline_points")
 
 # Config filename looked for near the package or in working directory
 CONFIG_FILENAME = "testing.json"
-
-# Maps a user-supplied backend name prefix to its canonical family:
-# "Dymola 2026x" -> "Dymola". NOT the set of registered backends.
-BACKEND_FAMILIES = {
-    "Dymola": "Dymola",
-    "OpenModelica": "OpenModelica",
-    "FMPy": "FMPy",
-    "Julia": "Julia",
-    # review 2026-07-06 finding 67: "Python" was missing, so the documented
-    # versioned-name convention ("Python 3.12") failed backend detection
-    # with "Unsupported backend".
-    "Python": "Python",
-}
-
-# Binary names by backend, used for PATH-lookup fallback when testing.json
-# doesn't list an explicit path. Backend-name lowercase happens to match for
-# Dymola; OpenModelica's binary is ``omc`` (not ``openmodelica``). An empty
-# string marks backends that don't ship a standalone binary (FMPy is a
-# Python library — backend_path is unused for it).
-BACKEND_BINARY_NAMES = {
-    "Dymola": "dymola",
-    "OpenModelica": "omc",
-    "FMPy": "",
-    "Julia": "julia",
-    "Python": "python",
-}
-
-
-def _detect_backend(backend_name: str) -> str:
-    """Determine the canonical backend family from a named entry.
-
-    E.g., "Dymola 2025" -> "Dymola", "OpenModelica 1.23" -> "OpenModelica"
-    """
-    for prefix, backend in BACKEND_FAMILIES.items():
-        if backend_name.startswith(prefix):
-            return backend
-    return backend_name
 
 
 def detect_os() -> str:
@@ -116,6 +85,12 @@ class ConfigError(ValueError):
     missing explicit --config path)."""
 
 
+class NoProject(ConfigError):
+    """There is no project here to configure: no testing.json was found and
+    no library either. A command that can do without one (``dstf check``)
+    catches this; to every other it is the config error it reads as."""
+
+
 def baseline_points_refused(named: str, value: object) -> str | None:
     """Why ``value`` is no ``baseline_points`` — in ``testing.json`` or on a
     ``test_spec.json`` entry, ``named`` saying which — or ``None``. It is
@@ -131,19 +106,6 @@ def baseline_points_refused(named: str, value: object) -> str | None:
     )
 
 
-#: testing.json keys renamed when the "simulator" vocabulary became Backend.
-#: Reading one fails loudly: an untouched config still using these would
-#: otherwise keep PARSING while every setting in it silently did nothing,
-#: which a user experiences as "the tool ignores my config" with no
-#: diagnostic. Naming the replacement is a diagnostic, not a deprecation
-#: path — the old key never works again, it just says so.
-_RENAMED_CONFIG_KEYS = {
-    "simulator": "backend",
-    "simulators": "backends",
-    "simulator_setup": "backend_setup",
-}
-
-
 def load_config_file(path: Path) -> dict:
     """Load a testing.json config file.
 
@@ -151,6 +113,12 @@ def load_config_file(path: Path) -> dict:
     cannot be read or parsed raises :class:`ConfigError` naming the file —
     review 2026-07-06 finding 11: silently returning ``{}`` let the
     auto-create branch overwrite the user's testing.json.
+
+    So does one that holds a key nothing reads, or a value of another type
+    than its key takes (``config_shape.TESTING_JSON``): ``"tolerence":
+    0.01`` used to be skipped, and the project ran on the default. The
+    ``backends`` blocks are checked where the backends are known
+    (:func:`_backend_blocks`).
     """
     if path.is_dir():
         path = path / CONFIG_FILENAME
@@ -164,21 +132,20 @@ def load_config_file(path: Path) -> dict:
         data = json.loads(text)
     except json.JSONDecodeError as e:
         raise ConfigError(f"Malformed JSON in config file {path}: {e}") from e
-    if isinstance(data, dict):
-        stale = [k for k in _RENAMED_CONFIG_KEYS if k in data]
-        if stale:
-            renames = ", ".join(f"{k!r} -> {_RENAMED_CONFIG_KEYS[k]!r}" for k in stale)
-            raise ConfigError(
-                f"{path} uses renamed key(s): {renames}. The old names are no "
-                f"longer read; rename them so the settings take effect."
-            )
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"{path}: must be an object, got {json.dumps(data, default=str)[:60]}"
+        )
+    problem = refused("", data, TESTING_JSON)
+    if problem is not None:
+        raise ConfigError(f"{path}: {problem}")
     return data
 
 
 def _create_default_config(config_dir: Path, library_name: str) -> dict:
-    """Create a default testing.json and return its contents."""
-    config = {
-        "backend": "Dymola",
+    """Create a default testing.json and return its contents: no backend
+    named and none listed, so each machine runs with the one it has."""
+    config: dict = {
         "backends": {},
         "dependencies": [],
     }
@@ -196,88 +163,77 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
     return config
 
 
-def _resolve_backend_path(
-    backends_config: dict[str, list[str]],
-    backend_name: str,
-) -> str | None:
-    """Resolve a backend's executable path from the backends config.
+def _backend_blocks(raw: object, label: str) -> dict[str, dict[str, Any]]:
+    """The ``backends`` map as ``Config`` keeps it: a settings block per
+    entry, each checked against the table of the backend its entry names
+    (``Backend.settings`` — an entry called ``"Dymola 2025"`` is a Dymola).
+    ``label`` says where the map is written, for the :class:`ConfigError`.
 
-    Looks up the named entry and returns the first path that exists on disk.
-    Falls back to checking if the name is on PATH.
+    The map held a list of executable paths per entry before a backend had
+    settings of its own; a list is refused with the new form in the
+    sentence."""
+    from .backends import backend_class, backend_family, backend_names
+    from .comparison.sides import _as_json
+
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{label}: backends: must be an object, got {_as_json(raw)}")
+    blocks: dict[str, dict[str, Any]] = {}
+    for name, block in raw.items():
+        where = f"backends.{name}"
+        if isinstance(block, list):
+            raise ConfigError(
+                f'{label}: {where} must be an object — {{"executables": [...]}} '
+                "(was a list of paths)"
+            )
+        if not isinstance(block, dict):
+            raise ConfigError(
+                f"{label}: {where}: must be an object, got {_as_json(block)}"
+            )
+        cls = backend_class(backend_family(name))
+        if cls is None:
+            raise ConfigError(
+                f"{label}: {where}: no backend is registered under that name; "
+                f"the backends are: {', '.join(backend_names())}"
+            )
+        problem = refused(where, block, cls.settings)
+        if problem is not None:
+            raise ConfigError(f"{label}: {problem}")
+        blocks[name] = dict(block)
+    return blocks
+
+
+def _pick_backend(backends: dict[str, dict[str, Any]], source_type: str) -> str:
+    """The backend of a project that names none.
+
+    With a ``backends`` map: its first entry, in the order written, that is
+    found on this machine (``Backend.locate``) — so one ``testing.json``
+    lists Dymola first for the Windows machine and OpenModelica for the
+    Linux one, and each runs what it has. Without one: the same over the
+    registered backends that run this ``source_type``
+    (``Backend.source_types``), in registration order.
+
+    Where none is found, the FIRST candidate: the run then says that this
+    one is missing, and where it was looked for. Never a backend the
+    project did not list.
     """
-    paths = backends_config.get(backend_name, [])
-    for p in paths:
-        path = Path(p)
-        if path.is_absolute() and path.exists():
-            return str(path)
-        found = shutil.which(p)
-        if found:
-            return found
-    return None
+    from .backends import backend_class, backend_family, backend_names
 
-
-def _auto_detect_backend(
-    backends_config: dict[str, list[str]],
-) -> tuple[str, str] | None:
-    """Pick the first backend in ``backends_config`` whose binary resolves.
-
-    Resolution order per candidate entry:
-      1. Any path in its ``backends`` list that exists on disk or resolves
-         on ``PATH`` (via :func:`_resolve_backend_path`).
-      2. If the list contains no absolute paths (empty or bare-binary names
-         only), fall back to the backend's canonical binary
-         (``BACKEND_BINARY_NAMES``) on ``PATH``.
-
-    The fallback is gated on "no absolute paths given" because a list of
-    OS-specific absolute paths (e.g. ``C:\\Program Files\\...Dymola.exe``)
-    is a strong signal that the user wants *that* install — if none of the
-    absolute paths resolve, treating some same-named binary on PATH as
-    equivalent would silently run the wrong simulator on a mixed-OS setup
-    (Linux WSL often has a ``dymola`` symlink that points at a binary that
-    isn't usable the same way).
-
-    Iteration follows dict insertion order so users can express preference
-    (list Dymola first on Windows; list OpenModelica first on Linux) —
-    "first available wins" across both Windows and Linux machines with the
-    same ``testing.json``. Returns ``(backend_name, resolved_path)`` or
-    ``None`` if no entry resolves.
-    """
-    for name, paths in backends_config.items():
-        path = _resolve_backend_path(backends_config, name)
-        if path:
-            return name, path
-        # No explicit entry resolved. Only fall back to a generic PATH
-        # lookup when the user hasn't pinned this backend to platform-
-        # specific paths. An entirely-pinned list is a no-fallback
-        # instruction. We detect "looks like a path" via a Windows-drive
-        # regex OR POSIX-absolute — pathlib's ``is_absolute`` alone returns
-        # False for ``C:\...`` on Linux (PosixPath doesn't recognize
-        # Windows drive letters).
-        has_pinned_path = any(_looks_like_path(p) for p in paths)
-        if has_pinned_path:
-            continue
-        backend = _detect_backend(name)
-        binary = BACKEND_BINARY_NAMES.get(backend, backend.lower())
-        if binary:
-            found = shutil.which(binary)
-            if found:
-                return name, found
-    return None
-
-
-_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
-
-
-def _looks_like_path(entry: str) -> bool:
-    """True if ``entry`` is an OS-specific path (not just a bare binary name).
-
-    POSIX-absolute (``/usr/bin/omc``) or Windows-drive-rooted
-    (``C:\\Program Files\\...``) count as pinned paths; bare names like
-    ``"omc"`` or ``"dymola.exe"`` do not.
-    """
-    if entry.startswith("/"):
-        return True
-    return bool(_WINDOWS_DRIVE_RE.match(entry))
+    candidates: list[tuple[str, dict[str, Any]]] = list(backends.items())
+    if not candidates:
+        for name in backend_names():
+            cls = backend_class(name)
+            if cls is not None and source_type in cls.source_types:
+                candidates.append((name, {}))
+    if not candidates:
+        raise ConfigError(
+            f'no backend runs source_type "{source_type}": name one with "backend" '
+            f"(the backends are: {', '.join(backend_names())})"
+        )
+    for name, block in candidates:
+        cls = backend_class(backend_family(name))
+        if cls is not None and cls.locate(block).found:
+            return name
+    return candidates[0][0]
 
 
 def dependency_is_path(entry: str) -> bool:
@@ -317,12 +273,16 @@ class Config:
     The primary input is source_path — for source_type == "modelica" this is
     the directory containing package.mo for the library being tested; for FMU
     / Julia / data-file sources it generalizes to that source location.
+
+    A field that mirrors a ``testing.json`` key takes its default from that
+    key's row of ``config_shape.TESTING_JSON`` — the one place a default is
+    written down, and the one a person reads it from.
     """
 
     # Source type: "modelica" (default, `source_path` points at a package.mo dir),
     # "fmu" (Phase 2), "julia" / "simulink" / "data-file" (future). See docs/vision.md.
     # Discovery + backend selection gate on this.
-    source_type: str = "modelica"
+    source_type: str = _default("source_type")
 
     # Path to the source location for the library being tested.
     # For source_type == "modelica": the directory containing package.mo.
@@ -339,23 +299,22 @@ class Config:
     # from a CLI ``--backend`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
     backend_name: str | None = None
+    # The backend's executable. Given (CLI ``--backend-path``) it is that
+    # one and no other; else what the backend's ``locate`` found, or None:
+    # not on this machine (``located`` says where it was looked for).
     backend_path: str | None = None
-    show_ide: bool = False
     backend_setup: list[str] = field(
-        default_factory=list
+        default_factory=lambda: _default("backend_setup")
     )  # Commands run after loading libraries
 
     # OS override (auto-detected if not set)
     os_name: str | None = None
 
     # Paths to dependency library roots
-    dependencies: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=lambda: _default("dependencies"))
 
     # Simulation / comparison
     parallel: int = 1
-    batch_size: int | None = (
-        None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
-    )
     # Global comparison tolerance. None means "not explicitly set" — resolved
     # in __post_init__ as CLI/constructor arg > testing.json `tolerance` key >
     # DEFAULT_COMPARISON_TOLERANCE, with is-not-None semantics so an explicit
@@ -381,16 +340,12 @@ class Config:
     # Output
     work_dir: Path | None = None
 
-    # Optional override for Dymola's Python interface archive (dymola.egg or dymola-*.whl).
-    # If unset, auto-discovers under platform install roots.
-    dymola_interface_path: Path | None = None
-
     # Test spec file (external test definitions)
     test_spec_file: Path | None = None
 
     # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
     diagnostic_variables: list[str] = field(
-        default_factory=lambda: ["CPUtime", "EventCounter"]
+        default_factory=lambda: _default("diagnostic_variables")
     )
 
     # Phase 6.0 — interactive.html payload budget. LTTB-decimates trajectories
@@ -400,7 +355,7 @@ class Config:
     # a 50-var × 5000-sample test under the ~5 MB budget given today's
     # per-variable time-array duplication; the follow-up dedup (idea #47)
     # will let this rise to 2000 at the same budget.
-    max_embedded_samples: int = 1000
+    max_embedded_samples: int = _default("max_embedded_samples")
 
     # The points a stored baseline keeps of its run (D153, testing.json
     # `baseline_points`): "all" — every row the simulator wrote — or a whole
@@ -409,12 +364,12 @@ class Config:
     # (`TestModel.baseline_points`).
     # Scoring reads the run AT the baseline's time points, so this is also
     # the resolution at which a regression can be seen.
-    baseline_points: int | str = ALL_POINTS
+    baseline_points: int | str = _default("baseline_points")
 
     # The bundled theme (D148) the dashboard and the report pages are
     # generated in and `dstf author` opens with: a NAME of
     # reporting.theme.THEMES — no path, no inline colours, no CLI flag.
-    theme: str = "default"
+    theme: str = _default("theme")
 
     # User-provided recognizers (PTA.3) — parsed from testing.json's
     # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
@@ -427,16 +382,33 @@ class Config:
     # tests and wants the bundled UnitTests recognizer off.
     disabled_bundled: list[str] = field(default_factory=list)
 
-    # testing.json's `backends` map, kept whole for the authoring shell's
-    # backend select (brief §3.6); the executable-path resolution below reads
-    # the same map.
-    backends: dict[str, list[str]] = field(default_factory=dict)
+    # testing.json's `backends` map: a settings block per entry, each
+    # checked against the table of the backend its entry names
+    # (`_backend_blocks`). The authoring shell's backend select lists its
+    # entries; the backend's install is located from the selected one.
+    backends: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Config file path
     config_file: Path | None = None
 
+    # Whether a project with no testing.json anywhere gets a default one
+    # written. `discover` and `check` read a project and write nothing.
+    write_default: bool = True
+
     # Resolved (set during __post_init__)
     library_name: str | None = None
+
+    # The testing.json that was read — the one given, or the one the search
+    # found — or None: there is none, and the project runs on defaults.
+    config_found: Path | None = field(init=False, default=None)
+
+    # The selected backend's block of `backends`, as written (empty: it has
+    # none). `Backend.settings_of` lays it over the backend's defaults.
+    backend_settings: dict[str, Any] = field(init=False, default_factory=dict)
+    # Where the selected backend's install is and by which rule each part
+    # was found (`Backend.locate`); None for a backend no class is
+    # registered for.
+    located: "Located | None" = field(init=False, default=None)
 
     def __post_init__(self):
         # Resolve reference root early — needed for config file search
@@ -446,6 +418,8 @@ class Config:
         # Load config file first — it may provide source_path
         file_config = {}
         config_found_dir = None
+        # The file that was read, for an error to name.
+        config_found: Path | None = None
         if self.config_file:
             config_path = Path(self.config_file).resolve()
             if config_path.is_dir():
@@ -456,6 +430,7 @@ class Config:
                 # to auto-detection (and a freshly written default config).
                 raise ConfigError(f"Config file not found: {config_path}")
             config_found_dir = config_path.parent
+            config_found = config_path
             file_config = load_config_file(config_path)
         else:
             # Build search dirs from what we know so far
@@ -474,6 +449,7 @@ class Config:
                 if (search_dir / CONFIG_FILENAME).is_file():
                     file_config = load_config_file(search_dir)
                     config_found_dir = search_dir.resolve()
+                    config_found = config_found_dir / CONFIG_FILENAME
                     break
 
         # Source type peek — controls whether we look for a Modelica package.
@@ -500,7 +476,9 @@ class Config:
                 else:
                     self.source_path = find_package_dir()
             except OSError as e:
-                raise ConfigError(
+                # Nothing was named and nothing was found: no project here.
+                nothing = config_found_dir is None and self.source_path is None
+                raise (NoProject if nothing else ConfigError)(
                     f"{e} Set 'source_path' in testing.json, pass --source-path, "
                     f"or set 'source_type' if this library isn't Modelica."
                 ) from e
@@ -540,11 +518,12 @@ class Config:
         if config_found_dir is None and (repo_root / CONFIG_FILENAME).is_file():
             file_config = load_config_file(repo_root)
             config_found_dir = repo_root.resolve()
+            config_found = config_found_dir / CONFIG_FILENAME
 
         # Auto-create testing.json ONLY if no config file was found anywhere
         # (review 2026-07-06 findings 11/19: a found config — even one that
         # parses to {} — must never be overwritten with defaults).
-        if config_found_dir is None:
+        if config_found_dir is None and self.write_default:
             config_dir = self.reference_root if self.reference_root else repo_root
             file_config = _create_default_config(config_dir, self.library_name)
 
@@ -557,31 +536,43 @@ class Config:
         if self.os_name is None:
             self.os_name = file_config.get("os", detect_os())
 
+        self.config_found = config_found
+
+        # The `backends` map, each block checked against its backend's own
+        # settings. A map given to the constructor stands for the file's.
+        from .backends import backend_class
+
+        self.backends = _backend_blocks(
+            self.backends or file_config.get("backends", {}),
+            str(config_found) if config_found and not self.backends else "Config",
+        )
+
         # Backend selection. Resolution order, first match wins:
         #   1. Explicit constructor / CLI value (self.backend_name is not None)
         #   2. testing.json explicit "backend" key
-        #   3. testing.json "backends" map auto-detect (first entry whose
-        #      binary resolves on the current machine / PATH)
-        #   4. Default "Dymola" (historical fallback)
+        #   3. The first entry of the "backends" map that is found on this
+        #      machine; with no map, the first registered backend that runs
+        #      this source_type and is found (`_pick_backend`)
         if self.backend_name is None:
             if "backend" in file_config:
                 self.backend_name = file_config["backend"]
             else:
-                backends_config = file_config.get("backends", {})
-                detected = _auto_detect_backend(backends_config)
-                if detected:
-                    self.backend_name = detected[0]
-                    # review 2026-07-06 finding 18: auto-detect may fill the
-                    # simulator NAME, but must never clobber an explicitly
-                    # supplied backend_path (CLI --backend-path).
-                    if self.backend_path is None:
-                        self.backend_path = detected[1]
-                else:
-                    self.backend_name = "Dymola"
+                self.backend_name = _pick_backend(self.backends, self.source_type)
 
-        # Show IDE
-        if not self.show_ide and "show_ide" in file_config:
-            self.show_ide = file_config["show_ide"]
+        # The selected backend's settings, and where its install is: the
+        # backend's own `locate` is the one place that is looked for.
+        self.backend_settings = dict(self.backends.get(self.backend_name, {}))
+        backend_cls = backend_class(self.backend)
+        if backend_cls is not None:
+            block = self.backend_settings
+            if self.backend_path is not None:
+                # review 2026-07-06 finding 18: an explicitly supplied
+                # backend_path (CLI --backend-path) is never clobbered — it
+                # is the one executable looked at.
+                block = {**block, "executables": [self.backend_path]}
+            self.located = backend_cls.locate(block)
+            if self.backend_path is None:
+                self.backend_path = self.located.executable
 
         # Backend setup commands
         if not self.backend_setup and "backend_setup" in file_config:
@@ -638,9 +629,9 @@ class Config:
             named = "testing.json baseline_points"
         else:
             named = "baseline_points"
-        refused = baseline_points_refused(named, self.baseline_points)
-        if refused is not None:
-            raise ConfigError(refused)
+        problem = baseline_points_refused(named, self.baseline_points)
+        if problem is not None:
+            raise ConfigError(problem)
 
         # The theme: one of the bundled names, wherever it was said.
         from .reporting.theme import THEMES
@@ -664,48 +655,18 @@ class Config:
                 parse_recognizer_spec,
             )
 
-            where = (
-                config_found_dir / CONFIG_FILENAME if config_found_dir else "the config"
-            )
-            specs = file_config["recognizers"]
-            if not isinstance(specs, list):
-                raise ConfigError(
-                    f"'recognizers' in {where} must be a list, "
-                    f"got {type(specs).__name__}"
-                )
             try:
-                self.recognizers = [parse_recognizer_spec(spec) for spec in specs]
+                self.recognizers = [
+                    parse_recognizer_spec(spec) for spec in file_config["recognizers"]
+                ]
             except RecognizerSpecError as e:
                 # A malformed recognizer is a testing.json problem the user
                 # must fix — one clean line and exit 2, not a traceback.
-                raise ConfigError(f"Invalid recognizer in {where}: {e}") from e
+                raise ConfigError(
+                    f"Invalid recognizer in {config_found or 'the config'}: {e}"
+                ) from e
         if not self.disabled_bundled and "disable_bundled" in file_config:
             self.disabled_bundled = list(file_config["disable_bundled"])
-
-        if not self.backends:
-            self.backends = {
-                name: list(paths)
-                for name, paths in (file_config.get("backends") or {}).items()
-            }
-
-        # Resolve backend executable path
-        if self.backend_path is None:
-            backends_config = file_config.get("backends", {})
-            if backends_config:
-                resolved = _resolve_backend_path(backends_config, self.backend_name)
-                if resolved:
-                    self.backend_path = resolved
-                else:
-                    logger.warning(
-                        "No working path found for backend '%s' in testing.json's 'backends' map. "
-                        "Falling back to PATH lookup.",
-                        self.backend_name,
-                    )
-            if self.backend_path is None:
-                backend = self.backend
-                binary = BACKEND_BINARY_NAMES.get(backend, backend.lower())
-                if binary:
-                    self.backend_path = shutil.which(binary) or binary
 
         # Reference root (may already be set from CLI arg)
         if self.reference_root is None:
@@ -782,9 +743,12 @@ class Config:
 
     @property
     def backend(self) -> str:
-        """The canonical backend family (e.g., 'Dymola' from 'Dymola 2025')."""
+        """The canonical backend family (e.g., 'Dymola' from 'Dymola 2025'):
+        the registered backend the name starts with."""
+        from .backends import backend_family
+
         assert self.backend_name is not None  # resolved in __post_init__
-        return _detect_backend(self.backend_name)
+        return backend_family(self.backend_name)
 
     @property
     def library_dir(self) -> Path:
