@@ -161,6 +161,12 @@ A Backend must:
    Implement `cancel_test(test_key) -> bool` iff a class WITHOUT persistent workers declares `Capability.CANCEL` (see "The simulation pool").
 5. Use `ProgressReporter` (backend-agnostic, already exists) for live-dashboard status.
 6. Put all tool-specific code under `backends/<name>/`. No tool-specific imports in framework core.
+7. Say what it is configured by and where it is installed — three class attributes and one classmethod, each with a working default, so `config.py` knows no backend:
+   - `settings` — the keys of its block in `testing.json`'s `backends` map, as `config_shape.Setting`s (JSON-Schema fragment, default, description). The default is `{"executables": ...}`; add to it with `{**Backend.settings, "my_key": Setting(...)}`. `Config` checks a block against the table of the backend its entry names (an entry called `"Acme 3"` is an `Acme`), and a key that is not in it is a config error that names it. `Backend.settings_of(config)` is the block over the table's defaults.
+   - `source_types` — the `source_type` values it runs. Read only where a project names no backend and lists none: the installed backends that run its source type are searched in registration order.
+   - `binaries` — the names its program goes by on `PATH`.
+   - `locate(settings) -> Located` — the ONLY place its install is looked for. The default finds one executable by `backends/locate.py`'s rules, in order: the block's `executables` (a block that pins full paths, none of which exists, is NOT found — nothing else is searched); an environment variable where the backend has one; `PATH`, then its standard install folders. Each part of the result (`Found`) says its path and the rule that found it. Override it for an environment variable, standard folders or a second part (Dymola's Python interface).
+   - `diagnose(located, *, entry, config) -> Diagnosis` — what `dstf check` prints of it and whether it is usable. The default is the `locate` lines.
 
 Optionally, two **classmethods** let both tiers plot a variable the test does
 not track (the `plots` key, `docs/usage.md`):

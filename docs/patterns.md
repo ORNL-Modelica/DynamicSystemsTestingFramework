@@ -80,6 +80,7 @@
 - `get_backend(config)` factory looks up the backend by `config.backend` and instantiates it
 - Built-in backends are lazy-imported on first use via `_import_builtin_backend()` — avoids loading all backends at startup
 - `DymolaBackend` extracts Dymola-specific settings into an immutable `DymolaConfig` dataclass at init
+- Each backend declares its `settings` table (its block of `testing.json`'s `backends`) and finds its own install: `Backend.locate(settings)` is the one place a backend is looked for (`backends/locate.py`), and says by which rule each part was found
 
 ### Variable naming from UnitTests expressions (D132)
 - A variable's NAME is the one its result file gives it. For the `UnitTests`
@@ -192,7 +193,7 @@
 - Lenient timeout: the watchdog kills but then checks disk; a sim that completed just past the deadline gets credit rather than being wasted
 
 ### Persistent Dymola workers via Python interface
-- `backends/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check-dymola`
+- `backends/dymola/interface_loader.py` finds the `dymola` archive (`.whl` for ≥2025, `.egg` for older) beside the Dymola executable that was found (`<install>/Modelica/Library/python_interface/`), and only then under platform install roots (`C:\Program Files\Dymola *\...`), newest first. Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via the Dymola block's `interface` in `testing.json` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check Dymola`
 - `PersistentDymolaBackend` subclasses `PersistentBackendBase` *and* `DymolaBackend` (in that MRO order, so the base's `run_tests` template wins). It overrides no `run_tests` of its own — only the template hooks `preflight` / `setup_before_workers` / `make_worker`, the `_probe_*` version probes, and `export_fmu`; `read_result` and config extraction come from `DymolaBackend`. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
 - Reliable per-worker PID tracking: pulled directly from `DymolaInterface._dymola_process.pid` (the internal `subprocess.Popen` handle), so we own the kill target without snapshot diffs
 - Parallel startup: monkey-patch Dymola's `dymola_interface_internal.dymola_lock` to a no-op (broad lock that holds for the whole `__init__` including `_check_dymola`'s ~7s ping wait), and add a narrow lock around `_find_available_port` so two workers can't pick the same random port. Without this patch, N workers serialize on Dymola's lock and startup is N×7s
@@ -221,7 +222,7 @@
 - `--rerun` always sets `args.merge = True` since rerunning failed tests in isolation defeats the goal (you want to see them in context of the whole suite)
 
 ### Configurable batch size with queue dispatch
-- `Config.batch_size` (CLI: `--batch-size N`), read by Dymola's `--batch` path only — a persistent worker takes one test at a time. Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
+- `batch_size` in the Dymola block of `testing.json`'s `backends` (`DymolaConfig.batch_size`), read by Dymola's `--batch` path only — a persistent worker takes one test at a time. Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
 - Crash/timeout blast radius is bounded by `batch_size` — a hung test only takes down its batch, not its worker's whole share
 - `worker_id` for the dashboard comes from the actual pool thread slot via `threading.current_thread().name` (regex-matched suffix), not the batch index — stable attribution across many batches per worker
 - Tradeoff: smaller batches reload Dymola's library more often. Sweet spot is ~3-10 depending on per-test runtime

@@ -8882,3 +8882,166 @@ No token is stored: each index trusts this repository's workflow by name
 The source archive holds what the wheel is built from and no more. It had
 carried the tests, the docs and the examples (4.5 MB); they are in the
 repository.
+
+## D157 — `testing.json` is read through one key table, and is strict (2026-10-13)
+
+**Context.** `Config.__post_init__` read twenty keys one by one. A key it
+did not read was skipped without a word: `"tolerence": 0.01` parsed, and
+the project ran on the default. Each default was written twice — on the
+dataclass field and in the page that documents it — and a key's
+description was a `#` comment. `test_spec.json` had already been given
+the other posture (D154): one table of keys (`discovery/spec_shape.py`),
+one check (`comparison/strict_keys.py`).
+
+**Decision.**
+
+1. *One table.* `config_shape.TESTING_JSON` lists every key of
+   `testing.json` as a `Setting`: the JSON-Schema fragment its value must
+   be, its default, and a description written for the person who sets it.
+   It is read three times. `Config` refuses a key that is not in it;
+   `Config`'s fields take their defaults FROM it
+   (`config_shape.default(key)` is the field's default, so a default is
+   written once); and `dstf export-schema --file testing.json` publishes
+   it, descriptions included (`reporting.schema_export.
+   build_config_schema`). `export-schema` with no `--file` writes the
+   `test_spec.json` schema, as it did.
+2. *A key nothing reads is an error that names it* — `Config error:
+   <file>: unknown field "tolerence" — did you mean "tolerance"?`, exit 2,
+   from every command that reads the file: the words, the exit code and
+   the one did-you-mean (`strict_keys.unknown_field`) a `test_spec.json`
+   key is refused with. A value of another type than its key takes is the
+   same error (`max_embedded_samples: must be a whole number, got "abc"`;
+   `json_types.py` is the one table of what holds a JSON type, read by
+   both files). Four keys have a rule of their own with a sentence of its
+   own — `tolerance`, `baseline_points`, `theme`,
+   `worker_startup_timeout` — and the type check leaves each to it.
+   `description` / `info` / `metadata` are for notes, as in the spec, and
+   `$schema` may point an editor at the exported schema.
+3. *No special cases.* The refusal of the renamed keys `simulator`,
+   `simulators`, `simulator_setup` is gone: they are unknown fields like
+   any other.
+4. *A command that only reads writes nothing.* A project with no
+   `testing.json` anywhere had a default one written beside it by every
+   command, `discover` among them. `discover` and `check` now read such a
+   project on defaults (`Config.write_default`); every other command
+   still writes the default file, which is `{"backends": {},
+   "dependencies": []}` — no backend named, so each machine runs with the
+   one it has (D158).
+
+**What it breaks, on purpose.** This is a deliberate break of the 1.0
+config format: a `testing.json` holding a key the tool never read — a
+misspelling, a stray comment key, a value of the wrong type that happened
+to be tolerated — loaded in 1.0 and is a config error now. There is no
+alias and no lenient mode; the error names the key and, where one is a
+slip away, its spelling.
+
+## D158 — A settings block per backend; each backend finds itself (2026-10-13)
+
+**Context.** `"backends"` mapped a name to a list of executable paths, and
+everything else a backend could be told lived somewhere else: `show_ide`
+at the top of `testing.json`, `--batch-size` and `--dymola-interface` on
+the command line. Where a backend's install was looked for was spread
+over `config.py` (`BACKEND_BINARY_NAMES`, `_resolve_backend_path`,
+`_auto_detect_backend`) and each backend's own `shutil.which`. And
+Dymola's Python interface was found by a glob of the standard install
+folders that took the NEWEST Dymola's package whatever executable the
+config named: a project pinned to Dymola 2025 on a machine that also had
+2026 was driven through 2026's interface.
+
+**Decision.**
+
+1. *A block per entry.* `"backends": {"Dymola": {"executables": [...],
+   "show_ide": false, "batch_size": 3, "interface": "..."}}`.
+   `executables` is what the list was; every other key is declared by the
+   backend, in a `settings` table of the same shape as D157's
+   (`Backend.settings`). `Config` checks a block against the table of the
+   backend its entry names — an entry called `"Dymola 2025"` is a Dymola —
+   and an unknown key is `backends.Dymola: unknown field …`. An empty
+   block `{}` is valid: everything is found. `Config.backend_settings`
+   is the selected entry's block; `Backend.settings_of(config)` lays it
+   over the table's defaults.
+2. *What moved.* Top-level `show_ide`, `--show-ide`, `--batch-size` and
+   `--dymola-interface` are deleted; they are `show_ide`, `batch_size` and
+   `interface` of Dymola's block. `DYMOLA_INTERFACE_PATH` stays, as the
+   machine's override. `--batch`, `--backend` and `--backend-path` stay.
+3. *`Backend.locate(settings) -> Located`* is the one place a backend's
+   install is looked for, and its result says for each part — the
+   executable; for Dymola also the Python interface — its path and the
+   RULE that found it. The rules, in order (`backends/locate.py`): the
+   backend's block; an environment variable where the backend has one
+   (`OPENMODELICAHOME` for omc, `DYMOLA_INTERFACE_PATH`); the search —
+   `PATH`, then the backend's standard install folders (Dymola's; Windows'
+   Program Files for OpenModelica; juliaup's folders under the home
+   directory). FMPy has no executable and is found iff `fmpy` is there to
+   import. Python is the interpreter the block names, else the one running
+   the tool — not some other `python` on `PATH`.
+4. *A pinned block never falls back.* A block whose `executables` holds a
+   full path, none of which exists, is NOT FOUND, and the search is not
+   tried (the rule `_auto_detect_backend` already had, now the only one).
+   The same holds for an `interface` setting or a
+   `DYMOLA_INTERFACE_PATH` that holds no archive. A run of a backend that
+   was looked for and not found fails with where it was looked for,
+   instead of starting whatever the simulator's own tooling would pick up.
+5. *Dymola's interface belongs to its executable.* It is looked for (a)
+   where the block's `interface` says, (b) where `DYMOLA_INTERFACE_PATH`
+   says, (c) BESIDE the Dymola executable that was found —
+   `<install>/Modelica/Library/python_interface`, through symlinks, and
+   through Linux's launcher script, which is a few lines of shell outside
+   the install that export `DYMOLA=<install>` — and only then (d) in the
+   standard folders, newest first.
+6. *Which backend runs, when none is named.* The first entry of
+   `backends`, in the order written, that is found; where none is found,
+   the FIRST entry — it used to become `"Dymola"`, whatever the map held.
+   With no `backends`: the same over the registered backends that run the
+   project's `source_type` (`Backend.source_types`), in registration order
+   — for a Modelica library Dymola, then OpenModelica. An empty
+   `testing.json` on a machine with only omc used to select Dymola and
+   end every run at "Dymola not found"; it runs OpenModelica.
+7. *`config.py` knows no backend.* The name → backend rule
+   (`backends.backend_family`), the binaries, the folders and the settings
+   are the backends'. A plug-in brings its own table and its own `locate`
+   and needs no edit outside its package.
+
+**What it breaks, on purpose.** This is a deliberate break of the 1.0
+config format, with no alias: a `backends` entry written as a list is
+`backends.Dymola must be an object — {"executables": [...]} (was a list of
+paths)`, top-level `show_ide` is an unknown field, the three flags are
+argparse errors, and an entry named after no registered backend is
+refused where it used to be carried along.
+
+## D159 — One `check` command (2026-10-13)
+
+**Context.** `check-dymola`, `check-openmodelica` and `check-julia` were
+three commands for three of five backends, each with its own search:
+`check-dymola` looked for the interface and not the executable,
+`check-openmodelica` and `check-julia` asked `PATH` and ignored the
+project's `testing.json`, and none said what a RUN of the project would
+use. `check-julia` printed a version and held it to nothing, while
+`README.md` said 1.11+ and `pyproject.toml`'s marker 1.10+.
+
+**Decision.** `dstf check [backend]`, over D158's `locate`.
+
+- `dstf check`: one line per backend — the project's `backends` entries,
+  then every registered backend it has no entry of — with found / not
+  found, the path and the rule that found it, the backend the project
+  runs with marked; then that one's full diagnosis. `dstf check
+  <backend>`: that backend's diagnosis alone; a name of no registered
+  backend is argparse's `invalid choice` over the registry's names.
+- Exit 0 iff the diagnosed backend is usable; otherwise 1, with what to
+  install or set.
+- The diagnosis is the backend's (`Backend.diagnose`; the default is the
+  `locate` lines, so FMPy, Python and a plug-in have one). Dymola's adds
+  whether the located interface imports; OpenModelica's whether OMPython
+  does; Julia's the version it reports and — for a Julia project with a
+  `Manifest.toml` — whether it is at least the version that manifest was
+  resolved with.
+- It reads `--config` as every command does, works with no `testing.json`
+  at all (the search alone, marking what an empty one would select), and
+  writes none (D157 §4).
+
+The Julia example's `Manifest.toml` was resolved with 1.11.9: 1.11 is the
+minimum the files state, and `pyproject.toml`'s marker text now says so,
+as `README.md` did.
+
+**What it breaks, on purpose.** The three `check-*` commands are gone, a
+deliberate break of the 1.0 command line with no alias.

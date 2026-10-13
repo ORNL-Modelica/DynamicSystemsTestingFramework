@@ -85,11 +85,12 @@ cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.ins
 
 The Python examples (`SimpleRamp`, `PointsCheck`) need scipy, which the `dev`
 extra installs. Reach them through `uv run dstf ...`: the Python backend takes
-the interpreter from `testing.json`'s `backends: {"Python": [...]}` entry and
-falls back to `PATH` — and the shipped example names `python`, so either route
-ends at the first `python` on `PATH`, which `uv run` points at `.venv`. Run the
-same examples from a tool-installed `dstf` and that is whatever comes first on
-your PATH — a conda env, often — which needs its own scipy.
+the interpreter from `testing.json`'s `backends: {"Python": {"executables":
+[...]}}` entry, and with none named uses the one running `dstf` — and the
+shipped example names `python`, which is the first `python` on `PATH`, which
+`uv run` points at `.venv`. Run the same examples from a tool-installed `dstf`
+and that is whatever comes first on your PATH — a conda env, often — which
+needs its own scipy.
 
 ## First 5 minutes
 
@@ -135,8 +136,8 @@ uv run dstf --config examples/fmu/testing.json run    # needs reference-fmus-bin
 {
   "source_path": "../../MyLib",
   "backends": {
-    "Dymola":       ["C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe"],
-    "OpenModelica": ["/usr/bin/omc"]
+    "Dymola":       {"executables": ["C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe"]},
+    "OpenModelica": {"executables": ["/usr/bin/omc"]}
   },
   "test_spec": "test_spec.json",
   "dependencies": ["/path/to/SomeDep"],
@@ -145,7 +146,7 @@ uv run dstf --config examples/fmu/testing.json run    # needs reference-fmus-bin
 }
 ```
 
-The first `backends` entry whose binary exists wins (no need for per-OS config files). `backend: "Dymola"` (or any named entry) forces a specific one.
+The first `backends` entry that is found on this machine wins (no need for per-OS config files). `backend: "Dymola"` (or any named entry) forces a specific one. Each entry is a settings block: `executables`, plus the backend's own settings (Dymola's `show_ide`, `batch_size`, `interface`); an empty block `{}` means the backend is searched for.
 
 ## Common commands
 
@@ -163,7 +164,7 @@ uv run dstf --config testing.json run -i failed
 uv run dstf --config testing.json run --filter "Foo.A,Foo.B"
 uv run dstf --config testing.json run --filter @rerun.txt
 
-# Parallel + interactive HTML report (--batch-size N splits a Dymola --batch run into small batches)
+# Parallel + interactive HTML report (the Dymola block's `batch_size` in testing.json splits a --batch run into small batches)
 uv run dstf --config testing.json run --parallel 4 --report
 
 # Rerun only previously-failed tests, merge with last full run, regen report
@@ -189,8 +190,9 @@ uv run dstf --config testing.json manifest dump
 uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
 uv run dstf --config testing.json export-schema --output schema.json
 
-# Diagnose Dymola Python interface discovery
-uv run dstf check-dymola
+# Which backends are installed, where each was found and by which rule, and whether this project's is ready
+uv run dstf --config testing.json check
+uv run dstf check Dymola        # one backend's full diagnosis (Dymola: the executable AND its Python interface)
 ```
 
 `uv run dstf <command> --help` for each subcommand's full flag set.

@@ -68,9 +68,10 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 src/dstf/
 ├── cli/                      # argparse CLI package: discover, run, compare, author, export, manifest, add, spec-update,
 │   │                         #   companion, soft-check, import-baseline, export-schema,
-│   │                         #   check-dymola, check-openmodelica, check-julia
+│   │                         #   check
 │   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
-├── config.py                 # Config dataclass, path resolution, testing.json loading, backend auto-detect
+├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
+├── config_shape.py           # testing.json's keys: type, default, description — the ONE table Config reads the file by
 ├── pipeline.py               # run_pipeline + RunOutcome — the run as a library callable (no printing, no exits)
 ├── discovery/
 │   ├── recognizer.py         # Recognizer registry (bundled + user-declared, merged by model_id)
@@ -263,7 +264,7 @@ backend.run_tests(tests)
     → generates startup.mos (loads libs, enables OutputCPUtime + TranslationInCommandLog)
     → generates per-test .mos (clearlog, simulateModel, savelog)
     → generates shutdown.mos, per-batch .mos scripts
-    → splits tests into batches: config.batch_size if set, else ceil(total/parallel)
+    → splits tests into batches: the Dymola block's batch_size if set, else ceil(total/parallel)
     → submits all batches to ThreadPoolExecutor (queue-dispatched; worker_id from thread slot)
     → emits progress.on_start when batch begins, progress.on_finish per test as results parsed
     → parses dslog.txt (runtime stats) + translation_log.txt (structural stats) per test
