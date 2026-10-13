@@ -8,7 +8,7 @@ description = "Dynamic Systems Testing Framework — regression & unit testing f
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "ORNL-Modelica" }]
+authors = [{ name = "Scott Greenwood" }]
 keywords = [
     "modelica", "dymola", "openmodelica", "fmu", "fmi", "julia",
     "modelingtoolkit", "simulation", "regression-testing", "testing",
