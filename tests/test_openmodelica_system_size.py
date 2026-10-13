@@ -226,6 +226,23 @@ def test_a_baseline_accepted_before_this_says_no_change():
     assert changed("translation.continuous_time_states", "count", 3, 2) is True
 
 
+def test_every_shipped_openmodelica_baseline_records_its_state_count():
+    """The README says a changed state count is a structural warning on
+    OpenModelica; against a baseline with no count it is none, and the
+    example's shipped ones had none. They were accepted again."""
+    refs = EXAMPLE / "Resources" / "ReferenceResults" / "OpenModelica" / "linux"
+    counts = {}
+    for path in sorted(refs.glob("ref_*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        translation = (data.get("statistics") or {}).get("translation") or {}
+        counts[data["model_id"].rsplit(".", 1)[-1]] = translation.get(
+            "continuous_time_states"
+        )
+    assert len(counts) == 12 and None not in counts.values(), counts
+    assert (counts["SimpleTest"], counts["HeatRodTest"]) == (2, 20)
+    assert counts["FrequencyTest"] == 0  # no state: a count all the same
+
+
 # ---------------------------------------------------------------------------
 # Real omc
 # ---------------------------------------------------------------------------
@@ -255,15 +272,20 @@ def test_real_omc_says_a_state_was_gained(tmp_path, capsys, how):
         argv = ["--config", str(cfg), "run", "--work-dir", str(work), "--no-browser"]
         return main([*argv, "--filter", SIMPLE, *batch, *extra])
 
-    def reference() -> dict:
-        (path,) = [
-            p
-            for p in (refs / "OpenModelica" / "linux").glob("ref_*.json")
-            if json.loads(p.read_text(encoding="utf-8"))["model_id"] == SIMPLE
-        ]
-        return json.loads(path.read_text(encoding="utf-8"))
+    (ref_path,) = [
+        p
+        for p in (refs / "OpenModelica" / "linux").glob("ref_*.json")
+        if json.loads(p.read_text(encoding="utf-8"))["model_id"] == SIMPLE
+    ]
 
-    # The shipped baseline is from before this: no state count, no line.
+    def reference() -> dict:
+        return json.loads(ref_path.read_text(encoding="utf-8"))
+
+    # A baseline from before this — as every shipped one was until they
+    # were accepted again — has no state count, and gives no line.
+    old = reference()
+    assert old["statistics"].pop("translation") == {"continuous_time_states": 2}
+    ref_path.write_text(json.dumps(old), encoding="utf-8")
     assert "translation" not in reference()["statistics"]
     capsys.readouterr()
     assert dstf() == 0

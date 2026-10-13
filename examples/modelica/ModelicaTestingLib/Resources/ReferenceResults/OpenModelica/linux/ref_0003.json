@@ -3,7 +3,7 @@
   "test_id": "0003",
   "status": "active",
   "date_added": "2026-04-22T14:39:43.223482+00:00",
-  "last_updated": "2026-04-22T18:58:16.978274+00:00",
+  "last_updated": "2026-10-13T00:17:11.163203+00:00",
   "simulation": {
     "stop_time": 10.0,
     "tolerance": 1e-06,
@@ -11,19 +11,28 @@
     "number_of_intervals": null,
     "output_interval": 0.5
   },
+  "sampling": {
+    "setting": "all",
+    "source_points": 22,
+    "stored_points": 22,
+    "precision": "double"
+  },
   "statistics": {
     "timing": {
-      "frontend": 0.10575570000000001,
-      "backend": 0.0028767000000000003,
-      "simcode": 0.0006537,
-      "templates": 0.0023148,
-      "compile": 1.4365904,
-      "simulation": 0.0175604,
-      "total": 1.5658553,
-      "translation_wall": 1.55,
-      "sim_wall": 0.02,
-      "other_wall": 0.02,
-      "total_wall": 1.58
+      "frontend": 0.0014211,
+      "backend": 0.0013362,
+      "simcode": 0.0004575,
+      "templates": 0.0018761000000000001,
+      "compile": 0.5182613,
+      "simulation": 0.014362000000000002,
+      "total": 0.5378037,
+      "translation_wall": 0.52,
+      "sim_wall": 0.01,
+      "other_wall": 0.05,
+      "total_wall": 0.59
+    },
+    "translation": {
+      "continuous_time_states": 1
     }
   },
   "n_vars": 1,

@@ -5320,6 +5320,11 @@ time, so nothing new is kept beside the result. *Old data:* an
 OpenModelica baseline accepted before this has no such statistic, and a
 statistic one side lacks is no change on either tier (no structural
 line, no "changed" row); the first accept after it records the number.
+The Modelica example's twelve `OpenModelica/linux` baselines were accepted
+again for it on 2026-10-12, with real omc on a scratch copy, so the
+shipped ones say what the README does: each now records its state count
+(and its `sampling`, at 17 digits — no value moved by more than 6e-14),
+and every example test passes on OpenModelica and on Dymola after it.
 *Not read:* omc's other counts there (event indicators, algebraic
 variables and parameters by type) have no twin among Dymola's keys —
 its `free_parameters` and `scalar_unknowns` count other things — and
@@ -8534,7 +8539,9 @@ partition of the Modelica example goes from 271,202 to 284,877 bytes
 +47 %), the Python example from 24,698 to 27,504 (+11.4 %; `SimpleRamp`
 +43 %, its time grid being sums like `0.30000000000000004`). A
 `"double"` file stored before this holds 15 digits and reads as it did.
-The shipped example baselines were not accepted again.
+The shipped example baselines were not accepted again for this (the
+Modelica example's `OpenModelica/linux` ones were, later that day, for
+their state count: D138's addendum).
 
 **Addendum, 2026-10-12 — the tool's Accept refuses over a spec changed on
 disk.** `baseline_points` is the entry's, and the tool's Accept wrote the
