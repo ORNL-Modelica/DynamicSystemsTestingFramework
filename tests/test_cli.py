@@ -310,6 +310,111 @@ def test_every_header_counts_the_tests_under_review(monkeypatch, tmp_path, capsy
     ]
 
 
+def _scored_by(tree: dict) -> TestComparison:
+    """A real comparison of one variable, `x`, off its baseline by 0.005
+    (nrmse 2.5e-3), scored by `tree`."""
+    from dstf.comparison.comparator import compare_test
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    t = np.array([0.0, 0.5, 1.0])
+    values = np.array([1.0, 2.0, 3.0])
+    test = _mk_test("L.T", metric_tree_spec=parse_metric_tree(tree))
+    result = TestResult(
+        model_id=test.model_id,
+        success=True,
+        variables=[VariableResult(index=1, name="x", time=t, values=values + 0.005)],
+    )
+    reference = {
+        "test_id": "0001",
+        "time": t.tolist(),
+        "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
+    }
+    return compare_test(test, result, reference, 1e-4)
+
+
+#: Leaves of `x` for `_scored_by`: one that passes, one that fails, each of
+#: them under a `warn`, and one whose variable the result does not hold.
+_PASSES = {"metric": "nrmse", "variable": "x", "tolerance": 10.0}
+_FAILS = {"metric": "nrmse", "variable": "x", "tolerance": 1e-9}
+_ADVISORY_PASS = {"combinator": "warn", "children": [_PASSES]}
+_ADVISORY_FAIL = {"combinator": "warn", "children": [_FAILS]}
+_NOT_SCORED = {"metric": "nrmse", "variable": "gone"}
+
+
+@pytest.mark.parametrize(
+    ("combinator", "children", "status", "line"),
+    [
+        ("and", [_PASSES, _PASSES, _PASSES], "PASS", "3/3 passed"),
+        ("and", [_FAILS, _PASSES, _FAILS], "FAIL", "1/3 passed, 2 failed"),
+        (
+            "and",
+            [_FAILS, _ADVISORY_FAIL, _PASSES],
+            "FAIL",
+            "1/3 passed, 1 failed, 1 advisory failure",
+        ),
+        (
+            "and",
+            [_PASSES, _ADVISORY_FAIL, _PASSES],
+            "PASS",
+            "2/3 passed, 1 advisory failure",
+        ),
+        (
+            "and",
+            [_ADVISORY_FAIL, _PASSES, _ADVISORY_FAIL],
+            "PASS",
+            "1/3 passed, 2 advisory failures",
+        ),
+        (
+            "and",
+            [_FAILS, _ADVISORY_FAIL, _ADVISORY_FAIL, _ADVISORY_PASS],
+            "FAIL",
+            "1/4 passed, 1 failed, 2 advisory failures",
+        ),
+        # A criterion that was not scored is one that did not pass: the
+        # console words it in its block and counts it with no other word.
+        ("and", [_PASSES, _NOT_SCORED], "FAIL", "1/2 passed, 1 failed"),
+        # A failed branch of an `or` that passes is no failure of the test
+        # and none under a `warn`: the count says it, and no clause.
+        ("or", [_FAILS, _PASSES], "PASS", "1/2 passed"),
+    ],
+    ids=[
+        "all pass",
+        "two fail",
+        "one fails, one advisory",
+        "passes with an advisory failure",
+        "passes with two advisory failures",
+        "one fails, two advisory",
+        "one not scored",
+        "a failed branch of a passing or",
+    ],
+)
+def test_the_review_does_not_count_an_advisory_failure_as_a_failure(
+    combinator, children, status, line, monkeypatch, tmp_path, capsys
+):
+    """`Criteria: 1/3 passed, 2 failed` of a test JUnit calls `1 criterion
+    failed, with 1 advisory failure` and the tool `Fails 1 of 3 criteria`:
+    the review counted every criterion that did not pass as one that fails
+    the test. It reads `failed_criteria`, as the console and JUnit do, and
+    its two counts are theirs."""
+    from dstf.reporting.status import classify, failed_criteria
+
+    comp = _scored_by({"combinator": combinator, "children": children})
+    assert classify(comp) == status
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    _interactive_review([], {}, [comp], store, config)
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert f"  Criteria: {line}\n" in out, out
+    # The two counts, against the one reading both other surfaces print.
+    not_passed = failed_criteria(comp)
+    n_advisory = sum(c.advisory for c in not_passed)
+    failed = re.search(r"(\d+) failed", line)
+    advisory = re.search(r"(\d+) advisory failure", line)
+    assert (int(advisory.group(1)) if advisory else 0) == n_advisory
+    if status == "FAIL":
+        assert int(failed.group(1)) == len(not_passed) - n_advisory
+
+
 # ---------------------------------------------------------------------------
 # Parser <-> dispatch-table parity
 # ---------------------------------------------------------------------------

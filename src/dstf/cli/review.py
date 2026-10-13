@@ -8,7 +8,9 @@ from ..reporting.status import (
     PASS,
     SIM_FAIL,
     STATUS_LABELS,
+    advisory_text,
     classify,
+    failed_criteria,
     nothing_ran,
     refusal,
 )
@@ -119,13 +121,19 @@ def _interactive_review(
             # Its own name: as `n_total` it replaced the number of TESTS,
             # and every later header read `[2/<the last test's criteria>]`.
             n_criteria = len(comp.variables)
-            if comp.passed:
-                print(f"  Criteria: {n_pass}/{n_criteria} passed")
-            else:
-                print(
-                    f"  Criteria: {n_pass}/{n_criteria} passed, "
-                    f"{n_criteria - n_pass} failed"
-                )
+            # What did not pass is read where the console's blocks and
+            # JUnit's lines read it: a failure under `warn` fails no test,
+            # and counted with the ones that do, this line said `2 failed`
+            # of a test JUnit called `1 criterion failed, with 1 advisory
+            # failure`.
+            not_passed = failed_criteria(comp)
+            n_advisory = sum(1 for c in not_passed if c.advisory)
+            said = [f"{n_pass}/{n_criteria} passed"]
+            if not comp.passed:
+                said.append(f"{len(not_passed) - n_advisory} failed")
+            if n_advisory:
+                said.append(advisory_text(n_advisory))
+            print(f"  Criteria: {', '.join(said)}")
 
         # Can't accept if simulation failed, or never ran
         if not comp.sim_success:

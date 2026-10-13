@@ -906,7 +906,11 @@ flags do the same on `compare`.
 
 **Interactive mode (`-i`)** prints each test's status and, where it was
 scored, `Criteria: 2/3 passed, 1 failed` — its criteria, the Criteria
-column's count (two criteria on one variable are two). Its actions:
+column's count (two criteria on one variable are two). A failure under a
+`warn` is not counted as one that fails the test: `Criteria: 1/3 passed, 1
+failed, 1 advisory failure`, and `Criteria: 2/3 passed, 1 advisory failure`
+for a test that passes with one — the counts the failure blocks above and
+JUnit's message are written from. Its actions:
 
 | Key | Action |
 |-----|--------|
