@@ -2,11 +2,11 @@
 
 import json
 import logging
-import math
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 
 from ..config import ConfigError, baseline_points_refused
+from ..json_types import HOLDS, SAID
 from ..storage.ref_index import _atomic_write_text
 from . import spec_shape
 from .test_registry import TestModel
@@ -98,10 +98,10 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
             if value is None:
                 continue
             kind = spec_shape.SIMULATION[key]["type"]
-            if not _HOLDS[kind](value):
+            if not HOLDS[kind](value):
                 raise EntryKeyError(
                     f"{here}.simulation.{key}",
-                    f"must be {_SAID[kind]}, got {_as_json(value)}",
+                    f"must be {SAID[kind]}, got {_as_json(value)}",
                 )
     comparison = block(here, entry, "comparison")
     if comparison is None:
@@ -118,29 +118,6 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
         if found is not None:
             mode, problem = found
             raise EntryKeyError(where, f"{mode} · {variable}: {problem}")
-
-
-def _is_number(value: object) -> bool:
-    """A JSON number that is one: no bool, no NaN, no infinity — and no
-    integer too large for a float (a 1 and 400 zeros), which no simulator
-    can be handed: ``math.isfinite`` raises on it."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-#: A JSON-Schema ``type`` of ``spec_shape.SIMULATION`` → whether a value is
-#: one, and how a refusal says it. An integral float is a whole number, as
-#: it is to JSON Schema.
-_HOLDS: dict[str, Callable[[object], bool]] = {
-    "number": _is_number,
-    "integer": lambda v: _is_number(v) and float(v).is_integer(),  # type: ignore[arg-type]
-    "string": lambda v: isinstance(v, str),
-}
-_SAID = {"number": "a number", "integer": "a whole number", "string": "a string"}
 
 
 def check_root_keys(data: object, label: str) -> list:

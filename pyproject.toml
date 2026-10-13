@@ -151,6 +151,7 @@ files = [
     "src/dstf/plugins.py",
     "src/dstf/storage",
     "src/dstf/config.py",
+    "src/dstf/json_types.py",
     "src/dstf/pipeline.py",
     "src/dstf/reporting/rows.py",
 ]
