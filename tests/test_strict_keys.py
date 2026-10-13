@@ -1447,6 +1447,58 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
         overrides = self._entry(spec, FLAT)["comparison"]["variable_overrides"]
         assert overrides["unitTests.x[1]"] == {"mode": "range", "min_value": 0.0}
 
+    def _other(self, key: str, value) -> dict:
+        path = f"/comparison/variable_overrides/unitTests.x[2]{key}"
+        return {"op": "add", "path": path, "value": value}
+
+    def test_a_held_override_does_not_block_an_edit_of_another(self, example, tmp_path):
+        """An override is its variable's: it is the one that was there by
+        where it stands, with no object to follow."""
+        spec = self._held(example, FLAT, self._override)
+        assert self._update(example, tmp_path, FLAT, self._other("", {})) == 0
+        assert (
+            self._update(example, tmp_path, FLAT, self._other("/tolerance", 0.5)) == 0
+        )
+        overrides = self._entry(spec, FLAT)["comparison"]["variable_overrides"]
+        assert overrides["unitTests.x[1]"] == {"mode": "range"}
+        assert overrides["unitTests.x[2]"] == {"tolerance": 0.5}
+
+    @pytest.mark.parametrize(
+        "ops",
+        [
+            # edited, and still with no bound
+            [("/comparison/variable_overrides/unitTests.x[1]/tolerance", 0.5)],
+            # written over with another that can never be scored
+            [("/comparison/variable_overrides/unitTests.x[1]", {"mode": "scalar"})],
+            # filled, and one like it was added on another variable
+            [
+                ("/comparison/variable_overrides/unitTests.x[1]/min_value", 0.0),
+                ("/comparison/variable_overrides/unitTests.x[2]", {"mode": "range"}),
+            ],
+        ],
+        ids=["edited", "written-over", "another-added"],
+    )
+    def test_a_held_override_the_patch_leaves_or_makes_unscorable_is_refused(
+        self, example, tmp_path, capsys, ops
+    ):
+        spec = self._held(example, FLAT, self._override)
+        before = spec.read_bytes()
+        patch = [{"op": "add", "path": path, "value": value} for path, value in ops]
+        assert self._update(example, tmp_path, FLAT, *patch) == 1
+        assert "comparison.variable_overrides[unitTests.x[" in capsys.readouterr().out
+        assert spec.read_bytes() == before
+
+    def test_a_held_override_written_over_with_itself_is_the_one_that_was_there(
+        self, example, tmp_path
+    ):
+        self._held(example, FLAT, self._override)
+        op = {
+            "op": "add",
+            "path": "/comparison/variable_overrides",
+            "value": {"unitTests.x[1]": {"mode": "range"}},
+        }
+        assert self._update(example, tmp_path, FLAT, op) == 0
+
     def test_writing_the_entrys_tree_out_makes_no_new_one(self, example, tmp_path):
         """A per-leaf op on a flat entry writes its implicit tree first: the
         held override is then a bare leaf of that tree — the same

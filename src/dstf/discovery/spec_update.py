@@ -288,34 +288,19 @@ def unscorable_criteria(entry: dict | None) -> list[Unscorable]:
     return out
 
 
-#: The key a criterion of the entry AS IT WAS is marked with, on a copy the
+#: The key a leaf of the entry AS IT WAS is marked with, on a copy the
 #: patch is replayed over (:func:`_places_after`): its value is the place it
 #: had. No spec key (a NUL), and never in a document that is kept.
 _WAS = "\0was"
 
-_OVERRIDES = "comparison.variable_overrides"
 
-
-def _criteria_dicts(entry: dict | None, *, flat: bool) -> dict[str, dict]:
-    """``{place: the raw dict}`` of the entry's criteria of one kind, places
-    spelled as :func:`unscorable_criteria` spells them: the leaves of its
-    ``metrics`` tree (``metrics.children[1]``), or with ``flat`` its
-    ``comparison.variable_overrides`` (``comparison.variable_overrides[x]``).
-    Whatever is no object is passed over: it is no criterion."""
+def _leaf_dicts(entry: dict | None) -> dict[str, dict]:
+    """``{place: the raw dict}`` of the leaves of the entry's ``metrics``
+    tree, places spelled as :func:`unscorable_criteria` spells them
+    (``metrics.children[1]``); none for an entry with no tree. Whatever is
+    no object is passed over: it is no criterion."""
     out: dict[str, dict] = {}
     if not isinstance(entry, dict):
-        return out
-    if flat:
-        comparison = entry.get("comparison")
-        overrides = (
-            comparison.get("variable_overrides")
-            if isinstance(comparison, dict)
-            else None
-        )
-        if isinstance(overrides, dict):
-            for variable, override in overrides.items():
-                if isinstance(override, dict):
-                    out[f"{_OVERRIDES}[{variable}]"] = override
         return out
 
     def walk(node: object, pointer: str) -> None:
@@ -335,30 +320,30 @@ def _criteria_dicts(entry: dict | None, *, flat: bool) -> dict[str, dict]:
 def _places_after(
     before: dict | None, ops: Sequence[dict], model_id: str
 ) -> dict[str, str]:
-    """``{place after the patch: the place it had before}`` for every
-    criterion of ``before`` — tree leaf or flat override — that is still in
-    the entry once ``ops`` are applied: the same object, wherever it is
-    now and whatever was added to it or taken from it. A criterion an op
-    removed, or wrote over whole, is in no place after; one the patch added
-    had no place before.
+    """``{place after the patch: the place it had before}`` for every leaf
+    of ``before``'s tree that is still a leaf of the entry's tree once
+    ``ops`` are applied: the same object, wherever it is now and whatever
+    was added to it or taken from it. A leaf an op removed, or wrote over
+    whole, is in no place after; one the patch added had no place before.
 
     Found by replaying the patch over a marked copy: an op names a path,
-    so a mark inside a criterion rides with it through every op that does
-    not replace that criterion."""
+    so a mark inside a leaf rides with it through every op that does not
+    replace that leaf.
+
+    A flat override is not followed. It cannot move: its place is its
+    variable, and its content names that variable, so an equal one can
+    only stand where it stood — kept or written over, the count in
+    :func:`refuse_newly_unscorable` says the same of it."""
     if before is None:
         return {}
     marked = copy.deepcopy(before)
-    for flat in (False, True):
-        for place, criterion in _criteria_dicts(marked, flat=flat).items():
-            criterion[_WAS] = place
+    for place, leaf in _leaf_dicts(marked).items():
+        leaf[_WAS] = place
     document = {"tests": [marked]}
     apply_patch_to_document(document, model_id, list(ops))
     after = spec_entry(document, model_id)
     return {
-        place: criterion[_WAS]
-        for flat in (False, True)
-        for place, criterion in _criteria_dicts(after, flat=flat).items()
-        if _WAS in criterion
+        place: leaf[_WAS] for place, leaf in _leaf_dicts(after).items() if _WAS in leaf
     }
 
 
@@ -397,10 +382,11 @@ def refuse_newly_unscorable(
         return
     was = {item.place: item.content for item in unscorable_criteria(before)}
     came_from = _places_after(before, ops, model_id)
-    # The criteria of `before` still among the ones that SCORE in `after`:
-    # its tree's leaves, or without a tree its overrides.
-    scoring = _criteria_dicts(after, flat=not has_metrics(after))
-    still_there = {came_from[place] for place in scoring if place in came_from}
+    # The leaves of `before` that are still leaves of `after`. Every other
+    # unscorable criterion of `before` stands for one equal one of `after`:
+    # a leaf that is gone, and each flat override — its content names its
+    # variable, so the equal one can only be the one in its place.
+    still_there = set(came_from.values())
     gone = Counter(
         content for place, content in was.items() if place not in still_there
     )
