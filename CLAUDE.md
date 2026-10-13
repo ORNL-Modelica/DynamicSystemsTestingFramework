@@ -8,19 +8,21 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family, D153 the baseline's points, D154 strict keys and the unscorable-criterion delta rule, D155 one act is one pending edit). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family, D153 the baseline's points, D154 strict keys and the unscorable-criterion delta rule, D155 one act is one pending edit, D160 the command line as a tree, flags only where they apply). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
 ```
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
-│   ├── cli/                      # CLI package: run, compare, discover, author, export, add, manifest, spec-update,
-│   │                             #      companion, soft-check, import-baseline, export-schema,
-│   │                             #      check (where each backend is on this machine, and whether the project's is ready)
+│   ├── cli/                      # CLI package. parser.py: the command tree (build_arg_parser) — every command, the flags each reads
+│   │                             #      and its help; main.py: the dispatch table. Commands: discover, run, compare, author,
+│   │                             #      check (where each backend is on this machine, and whether the project's is ready), and the
+│   │                             #      groups spec (add / update / schema), baseline (export), soft-check (add / list / remove),
+│   │                             #      companion (add / list / freeze / remove), manifest (show / dump / cleanup)
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
 │   ├── config_shape.py           # testing.json's keys — type, default, description: the ONE table Config refuses an unknown key by,
-│   │                             #      takes its defaults from and `export-schema --file testing.json` publishes; a backend's settings
+│   │                             #      takes its defaults from and `spec schema testing` publishes; a backend's settings
 │   │                             #      block is declared in the same shape (Setting) and checked by the same check
 │   ├── json_types.py             # whether a JSON value is of the type its key takes, and how a refusal says it (both strict files)
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
@@ -28,7 +30,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
 │   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/),
-│   │                             #      spec_shape.py (a spec entry's keys: the ONE table the parser refuses by and export-schema publishes),
+│   │                             #      spec_shape.py (a spec entry's keys: the ONE table the parser refuses by and spec schema publishes),
 │   │                             #      mo_parser.find_class (a class by name: a spec-only test's file and its experiment annotation),
 │   │                             #      library_state.py (the source files' stamps at one Queue click: what a live worker compares before it reads the library again; and which file a path dependency is loaded by)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
@@ -79,7 +81,7 @@ DynamicSystemsTestingFramework/
 │   └── reporting/                # status.py (the classifier + every status word and class, a refusal's reason, and failed_criteria — the one reading of a failing criterion the console's blocks and JUnit's lines are written from) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
-│       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`export-schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
+│       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`spec schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
@@ -103,7 +105,10 @@ The package ships a console script (`[project.scripts]` in `pyproject.toml`). Th
 # With testing.json containing source_path — single entry point
 uv run dstf --config path/to/testing.json run
 
-# Global flags work on either side of the subcommand (dstf run --config x == dstf --config x run)
+# The four flags that say where the project is (--config, --source-path, --reference-root, --test-spec)
+# work on either side of the command (dstf run --config x == dstf --config x run). A command offers
+# exactly the flags it reads; one that does not apply is an error on either side, never dropped (D160).
+# `dstf <command> --help` (`dstf manifest cleanup --help`) says what each does, with examples.
 
 # Or with explicit flags
 uv run dstf --source-path /path/to/MyLib --reference-root /path/to/refs run
@@ -147,7 +152,7 @@ uv run dstf --config testing.json compare --report-format html --output report.h
 
 # Apply an RFC 6902 JSON-Patch envelope against test_spec.json — single- or
 # multi-model form, from any source
-uv run dstf --config testing.json spec-update spec_patch.json
+uv run dstf --config testing.json spec update spec_patch.json
 
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
 # The Suite page is a table of the tests (count pills, typed column filters with .* / Aa, package
@@ -209,7 +214,7 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # and names menus. A drawer resizes by its right edge (drag, or ←/→ on the focused grip).
 # The tool opens in testing.json's `theme`; the header's ⋮ names the other one (Dark theme /
 # Default theme) and switches this browser tab, live — its plots keep their zoom and edits.
-uv run dstf --config testing.json author [--port N] [--no-browser]
+uv run dstf --config testing.json author [--port 8090] [--no-browser]
 
 # Baseline-role CLIs
 # --map (repeatable) records which of the companion's variables draws on which of the
@@ -217,15 +222,16 @@ uv run dstf --config testing.json author [--port N] [--no-browser]
 # for a mapped companion. Unmapped ones match by name, then by expression.
 uv run dstf --config testing.json companion add <model> <name> <path> [--map TEST_VAR=COMPANION_VAR]
 uv run dstf --config testing.json soft-check list <model>
-uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only; companions via companion add
+uv run dstf --config testing.json soft-check add <model> <name> <source>   # another system's ref_NNNN.json as a warn-only cross-check
 
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
 uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
-uv run dstf --config testing.json export-schema --output schema.json
+uv run dstf spec schema --output schema.json   # test_spec.json's; `spec schema testing` for testing.json's (no project is read)
 
 # Persistent workers are the DEFAULT for Dymola and OpenModelica and Julia.
-# Force the legacy batched backend (.mos / omc -s / per-test julia subprocess)
+# Force the script mode (.mos / omc -s / per-test julia subprocess); on FMPy and Python, which have
+# no such workers, --batch is a Config error (exit 2)
 uv run dstf --config testing.json run --batch --parallel 4 --report
 
 # Where each backend is on this machine and by which rule it was found (the config's setting, an
@@ -235,7 +241,7 @@ uv run dstf --config testing.json check
 uv run dstf check Dymola           # one backend's full diagnosis
 
 # The schema of testing.json itself: every key with its type, default and description
-uv run dstf export-schema --file testing.json --output testing.schema.json
+uv run dstf spec schema testing --output testing.schema.json
 ```
 
 ## Running Tests
@@ -309,7 +315,7 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 
 Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot extras under `plots` (`[{"var": ..., "context": [...]}]` — the plots themselves are derived from the criteria, one per scored variable or array (a UnitTests element never folds), D140; an entry on a scored variable adds grey same-axis context series to its plot, one on an unscored variable is a watch plot; read by the report and the tool, ignored by scoring; any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. An entry's optional top-level `baseline_points` (`"all"` or a whole number ≥ 2) is that test's own value over `testing.json`'s (D153). A criterion's tolerance is one number or a pair `{"lower": a, "upper": b}` (D147; `docs/usage.md` lists the fields that take one), while a base tolerance — `comparison.tolerance`, `testing.json`'s `tolerance`, `--tolerance` — is ONE finite number or its test is refused. A variable a `metrics` leaf names is tracked too: every backend records, stores and scores it after the `UnitTests` variables and the `variables` patterns (D142), with no change to `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. A test declared only in `test_spec.json` gets its model's annotation too: the model is looked up in the library by name. Full contract details in `docs/usage.md`.
 
-**A key nothing reads is an error that names it** (`comparison/strict_keys.py`): an entry's own keys and its `simulation` / `comparison` blocks' (`discovery/spec_shape.py`, the table `export-schema` publishes), a flat override's and a leaf's (its metric's config dataclass fields, plus `tolerance` and `quantity`), a table row's (the field's `columns`), a window's and a combinator's, the keys inside a tolerance pair and a `scalar`'s `quantity` object, and the file's root (`tests`, `$schema`). A block that is no object where one is read (`"simulation": "stop_time=5"`, `null` — `"metrics": null` and a leaf's `"window": null` too) is the same error, so is an entry that cannot be a test or a value of the wrong type where one is read (a `tests` entry that is no object or has no `model`, `variables` that is no list of strings, `"stop_time": "abc"`), so is a spec file that is no UTF-8 JSON object (one decoder, `spec_parser.spec_document_from_bytes`: `Config error: <file>: not JSON (…)` from every command that reads it), and so is a reference JSON's stored override with a key nothing reads, naming that file: `run` stops on it before it simulates and `compare` before it scores, and the tool shows that one test as not scored, with the sentence. `run` / `compare` / `discover` stop with `Config error: … unknown field "max_val" — did you mean "max_value"?` (exit 2); `spec-update` and the tool refuse to write one. A criterion that could never be scored (a `range` with neither bound) is refused where the file is written — `spec-update`, the tool's Save — and only by the write that makes it (`spec_update.refuse_newly_unscorable`); the tool stages one for its editor to fill. `description` / `info` / `metadata` on an entry or its `comparison` block are for notes.
+**A key nothing reads is an error that names it** (`comparison/strict_keys.py`): an entry's own keys and its `simulation` / `comparison` blocks' (`discovery/spec_shape.py`, the table `spec schema` publishes), a flat override's and a leaf's (its metric's config dataclass fields, plus `tolerance` and `quantity`), a table row's (the field's `columns`), a window's and a combinator's, the keys inside a tolerance pair and a `scalar`'s `quantity` object, and the file's root (`tests`, `$schema`). A block that is no object where one is read (`"simulation": "stop_time=5"`, `null` — `"metrics": null` and a leaf's `"window": null` too) is the same error, so is an entry that cannot be a test or a value of the wrong type where one is read (a `tests` entry that is no object or has no `model`, `variables` that is no list of strings, `"stop_time": "abc"`), so is a spec file that is no UTF-8 JSON object (one decoder, `spec_parser.spec_document_from_bytes`: `Config error: <file>: not JSON (…)` from every command that reads it), and so is a reference JSON's stored override with a key nothing reads, naming that file: `run` stops on it before it simulates and `compare` before it scores, and the tool shows that one test as not scored, with the sentence. `run` / `compare` / `discover` stop with `Config error: … unknown field "max_val" — did you mean "max_value"?` (exit 2); `spec update` and the tool refuse to write one. A criterion that could never be scored (a `range` with neither bound) is refused where the file is written — `spec update`, the tool's Save — and only by the write that makes it (`spec_update.refuse_newly_unscorable`); the tool stages one for its editor to fill. `description` / `info` / `metadata` on an entry or its `comparison` block are for notes.
 
 **A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` entry's `var` and `context` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec key or a baseline entry's stored name written as that expression text names nothing — it must be the result-file name, which scoring names for an override key and for a baseline entry it finds written that way.
 
@@ -362,7 +368,7 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.
 - **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `comparison/mode_schema.py`.
 - **`MetricTree`** (`comparison/tree_spec.py` + `tree_eval.py` + `metric_tree.py`) — `LeafSpec` / `CombinatorSpec` + evaluator; `implicit_and_tree()` (`metric_tree.py`) for specs without an explicit tree; `validator.py` enforces baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped; companions not targetable).
-- **`comparator`** (`comparison/comparator.py`) — orchestrates per-test comparison; threads primary + named baselines into the evaluator; derives `TestComparison.passed` from the tree root. `compare_one` is one test's comparison with its short-circuits (NOT RUN, SIM_FAIL, NO_REF) and its refusals — FAIL with a reason and no criterion (`reporting.status.refusal`): a base tolerance that is no number, a stored override nothing reads, and a test with no tree whose result holds none of the variables it tracks (`nothing_scored`: a test that scored nothing is not a PASS, and an accept skips it). A tracked variable the baseline holds and the run lost is a criterion not scored — `variable 'y' not found in the result` — on the flat path as under a tree, and the test fails; an accept over it stores the baseline and says which variables it `no longer holds`. A test that DECLARES nothing to score — no UnitTests variable, no `variables` pattern, no `metrics` tree and no `comparison.variable_overrides` entry; what `dstf add <model>` writes — is simulate-only (`TestModel.is_simulate_only`): it passes iff its simulation completes. An override on an entry that tracks nothing is a declaration that scores nothing: that test is refused too, with `variable_overrides key(s) name no variable this test tracks (x) — …`.
+- **`comparator`** (`comparison/comparator.py`) — orchestrates per-test comparison; threads primary + named baselines into the evaluator; derives `TestComparison.passed` from the tree root. `compare_one` is one test's comparison with its short-circuits (NOT RUN, SIM_FAIL, NO_REF) and its refusals — FAIL with a reason and no criterion (`reporting.status.refusal`): a base tolerance that is no number, a stored override nothing reads, and a test with no tree whose result holds none of the variables it tracks (`nothing_scored`: a test that scored nothing is not a PASS, and an accept skips it). A tracked variable the baseline holds and the run lost is a criterion not scored — `variable 'y' not found in the result` — on the flat path as under a tree, and the test fails; an accept over it stores the baseline and says which variables it `no longer holds`. A test that DECLARES nothing to score — no UnitTests variable, no `variables` pattern, no `metrics` tree and no `comparison.variable_overrides` entry; what `dstf spec add <model>` writes — is simulate-only (`TestModel.is_simulate_only`): it passes iff its simulation completes. An override on an entry that tracks nothing is a declaration that scores nothing: that test is refused too, with `variable_overrides key(s) name no variable this test tracks (x) — …`.
 
 ## Design Principles
 

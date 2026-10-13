@@ -146,7 +146,7 @@ left as you edited it.
       change and the count is 0. Edit the file in another editor, stage
       something and Save again: the tool refuses and offers to reload.
 - [ ] Export writes `<work_dir>/spec_patch.json`, and
-      `dstf --config ... spec-update <that file>` applies it.
+      `dstf --config ... spec update <that file>` applies it.
 - [ ] Select two tests: Edit tree is greyed with "select exactly one test",
       and Edit criteria is not listed at all — its scope is a leaf. Uncheck
       them all and the tab area says nothing applies to the selection; no v1
@@ -230,7 +230,7 @@ left as you edited it.
 
 ## Schema export (one-off sanity)
 
-- [ ] `uv run dstf export-schema` emits valid JSON-Schema
+- [ ] `uv run dstf spec schema` emits valid JSON-Schema
       2020-12 to stdout.
 - [ ] `$defs` contains entries for every registered mode.
 - [ ] Pass it to any JSON-Schema validator; parses without errors.

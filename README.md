@@ -178,24 +178,24 @@ uv run dstf --config testing.json author
 
 # Apply an RFC 6902 JSON-Patch envelope against test_spec.json — single- or
 # multi-model form, from any source
-uv run dstf --config testing.json spec-update spec_patch.json
+uv run dstf --config testing.json spec update spec_patch.json
 
 # Manage the other baseline roles
 uv run dstf --config testing.json companion add <model> <name> <path>
 uv run dstf --config testing.json soft-check list <model>
-uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only
+uv run dstf --config testing.json soft-check add <model> <name> <source>   # another system's baseline, as a warn-only cross-check
 
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
 uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
-uv run dstf --config testing.json export-schema --output schema.json
+uv run dstf spec schema --output schema.json   # test_spec.json's; `spec schema testing` for testing.json's (no project is read)
 
 # Which backends are installed, where each was found and by which rule, and whether this project's is ready
 uv run dstf --config testing.json check
 uv run dstf check Dymola        # one backend's full diagnosis (Dymola: the executable AND its Python interface)
 ```
 
-`uv run dstf <command> --help` for each subcommand's full flag set.
+`uv run dstf --help` lists every command; `uv run dstf <command> --help` (`dstf manifest cleanup --help`) says what one does and writes, and every flag it reads, with examples. A command offers exactly the flags it reads: one that does not apply is an error, never ignored.
 
 ## Where things live
 

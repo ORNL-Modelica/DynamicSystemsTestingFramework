@@ -9045,3 +9045,101 @@ as `README.md` did.
 
 **What it breaks, on purpose.** The three `check-*` commands are gone, a
 deliberate break of the 1.0 command line with no alias.
+
+## D160 — The command line is a tree, and a flag is offered only where it is read (2026-10-13)
+
+**Context.** Thirteen top-level commands had grown one at a time. Three of
+them — `manifest`, `companion`, `soft-check` — took a positional `action`
+with choices, so no action had a `--help` of its own, every action's
+positionals were declared optional and checked at run time, and a flag given
+with the wrong action (`manifest show --orphans`) was silently ignored; one
+such case, `--map` outside `companion add`, had its own runtime refusal. The
+four flags that locate a project were inherited by every command, including
+`author`, which raised on three of them after parsing, `export-schema`, which
+read none, and the rest, most of which never opened the spec `--test-spec`
+names. `--work-dir` and `--backend` existed on `run`, `compare` and `author`
+only, while `export`, `manifest`, `companion` and `soft-check` read the
+reference partition or the work directory with no way to name one.
+`--timeout 0` and `--parallel 0` were dropped by a truthiness test and the
+default used, `--port 0` served on 8080, `--batch` on FMPy or Python did
+nothing, and `--output` beside the console report format was documented as
+"ignored". The help was written for the people who wrote the code: reST
+backticks, decision ids, "legacy", and no example anywhere.
+
+**Decision.**
+
+1. *The tree.* `discover`, `run`, `compare`, `author` and `check` stay at
+   the top. Everything else is noun-verb, each action a real sub-parser
+   with its own positionals, flags and `--help`:
+
+   | Command | Was |
+   |---|---|
+   | `spec add <model> [--variables …]` | `add` |
+   | `spec update <patch.json>` | `spec-update` |
+   | `spec schema [test_spec\|testing]` | `export-schema [--file …]` |
+   | `baseline export [--format json\|csv] [-o FILE]` | `export` |
+   | `soft-check add <model> <name> <source>` | `import-baseline` |
+   | `soft-check list [model]` / `remove <model> <name>` | an action choice |
+   | `companion add` / `list` / `freeze` / `remove` | an action choice |
+   | `manifest show` / `dump` / `cleanup` | an action choice |
+
+   `import-baseline` only ever wrote a soft check, so it is `soft-check
+   add` and nothing keeps its name (it records `"origin": "soft-check
+   add"`). A group given no action prints its whole help and exits 2. The
+   dispatch table is keyed by the command as typed (`"spec add"`).
+2. *Applies, or is an error.* A command offers exactly the flags it reads,
+   and a flag that does not apply to the command or action it is given
+   with is an error, never dropped — the command line's version of D154's
+   "a key nothing reads is an error".
+   - The four project flags (`--config`, `--source-path`,
+     `--reference-root`, `--test-spec`) keep working on either side of the
+     command, for the commands that read them: the top-level parser takes
+     all four, each command's parser the ones it reads (with
+     `default=SUPPRESS`, so a value given before survives). A flag written
+     before a command that does not read it is seen by no sub-parser, so
+     the top-level parser checks it after parsing
+     (`cli.parser._Root.parse_known_args`) and ends in that command's
+     error: `dstf author: error: --test-spec does not apply: …`. What a
+     command does not recognise after its name is also reported as that
+     command's error, with its usage, and not the top level's — whose
+     usage would offer the very flag being refused.
+   - `author` reads `--config` alone of the four; `check`, `baseline
+     export`, `soft-check …`, `companion …` and `manifest show` / `dump`
+     no `--test-spec`; `spec schema` none.
+   - `--backend` is on every command that runs a simulator or reads a
+     reference partition, `--work-dir` on every command that reads or
+     writes the work directory, and neither on any other. `discover` reads
+     neither. Both stay after the command.
+   - `--orphans` / `--apply` are `manifest cleanup`'s, `--show-obsolete`
+     `manifest show`'s, `--map` and `--format` `companion add`'s;
+     positionals are required by each action's parser. The runtime checks
+     these replace are deleted.
+   - `--timeout`, `--parallel` and `--port` take a whole number in range
+     and say what is allowed otherwise. `--batch` on a backend with no
+     persistent workers is a `Config error` naming it, before anything
+     runs. `--output` beside the console report format is an error.
+   - One definition per flag (`cli.parser._FLAGS`): `-o` wherever
+     `--output` is, `--format`'s choices in one order, one `--no-browser`.
+     The three conventions for a list value (`--filter` one comma-separated
+     argument or `@file`; `--variables` space-separated; `--map` repeated)
+     are NOT unified; each flag's help says which is its.
+3. *Help that explains itself.* Every node has a description — what it
+   does, what it writes — and examples that parse; every option and
+   positional has help, with its default taken from the code where one
+   exists; the top-level help lists every command under what it is for.
+   `dstf.cli.build_arg_parser` is public and builds without loading a
+   plug-in or reading a file (`dstf check --help` used to load the
+   plug-ins: argparse iterates an action's choices to print its help).
+4. *Held by tests.* `tests/test_cli_tree.py` walks the tree for (1)–(3),
+   with its own table of what each command reads;
+   `tests/test_docs_commands.py` parses every `dstf …` line in a code block
+   of `README.md`, `docs/usage.md`, `CLAUDE.md`, `docs/releasing.md` and
+   the examples' READMEs through the real tree.
+
+**What it breaks, on purpose.** This is a deliberate break of the 1.0
+command line, with no alias, no hidden spelling and no "renamed" hint: an
+old command name is argparse's `invalid choice`, a flag in a place it no
+longer applies is `unrecognized arguments` or `does not apply`, and
+`export-schema --file testing.json` is `spec schema testing`. A script that
+drives `dstf run`, `dstf compare` or `dstf discover` with flags those
+commands read is unaffected.

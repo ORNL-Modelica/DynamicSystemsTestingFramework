@@ -66,9 +66,11 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 
 ```
 src/dstf/
-├── cli/                      # argparse CLI package: discover, run, compare, author, export, manifest, add, spec-update,
-│   │                         #   companion, soft-check, import-baseline, export-schema,
-│   │                         #   check
+├── cli/                      # argparse CLI package: discover, run, compare, author, check, and the groups
+│   │                         #   spec (add / update / schema), baseline (export), soft-check (add / list / remove),
+│   │                         #   companion (add / list / freeze / remove), manifest (show / dump / cleanup)
+│   ├── parser.py             # build_arg_parser — the command tree: every command, the flags each reads, its help
+│   ├── main.py               # the dispatch table (command path → handler) and the entry points
 │   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
 ├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
 ├── config_shape.py           # testing.json's keys: type, default, description — the ONE table Config reads the file by
@@ -82,7 +84,7 @@ src/dstf/
 │   │                         #   function both tiers call — runs derive_plots over plot_leaves (the
 │   │                         #   tree's leaves, in order) and the `plots` extras (context series,
 │   │                         #   watch plots); tracked_names, the plots of a test with no tree
-│   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
+│   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec update`)
 │   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
 │   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
 │   │                         #   materialization, tree validation, apply_validated_patches
@@ -180,7 +182,7 @@ src/dstf/
     ├── tree_rows.py          # A plot's criteria rows off a tree view (leaves, crumbs): the one walk
                               #   the report's sections and the tool's plot cards list criteria by
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
-    ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
+    ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf spec schema`)
     ├── theme.py              # The token tables, one per bundled theme (`default`, `dark`; D148) —
                               #   rendered to :root { --dstf-...: ... } for both pages and the tool,
                               #   and to the tool's Quasar palette; a dark theme's dimmed status parts
@@ -217,7 +219,7 @@ UI framework (`tests/test_authoring_imports.py` holds the line); the Session,
 the capability contract and the spec document stay pure, so the rest of `dstf`
 runs without the `[author]` extra. It shares the
 CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
-read-modify-write both `dstf spec-update` and `Session.save` call, and
+read-modify-write both `dstf spec update` and `Session.save` call, and
 `storage/accept.py` is the one accept path `run --accept`, `compare --accept`,
 `run -i`'s `[a]` and the tool's Accept capability all call, and `pipeline.py` is
 the run itself: `cmd_run` drives `run_pipeline`, and the tool's queue drives the

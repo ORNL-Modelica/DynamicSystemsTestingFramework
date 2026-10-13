@@ -34,7 +34,7 @@ An entry point resolving to a **module** is merely imported (its `@register` / `
 
 One group, not one per layer: a plug-in package routinely ships a backend *and* the metrics that score it, and splitting the declaration by layer only makes the author guess which group a given registration belongs in.
 
-`dstf.cli.main` calls `load_plugins()` before dispatching any subcommand, so every command sees the same registries. Library users call `dstf.load_plugins()` themselves. Loading is idempotent. **A plug-in that fails to import or call is a hard error** (`ConfigError`, exit 2, naming the entry point) — a metric that quietly failed to register does not fail quietly downstream, it changes scoring semantics.
+`dstf.cli.main` calls `load_plugins()` before dispatching any command, so every command sees the same registries (building the command tree, `dstf.cli.build_arg_parser()`, loads none: `--help` does not wait for a plug-in). Library users call `dstf.load_plugins()` themselves. Loading is idempotent. **A plug-in that fails to import or call is a hard error** (`ConfigError`, exit 2, naming the entry point) — a metric that quietly failed to register does not fail quietly downstream, it changes scoring semantics.
 
 ---
 
@@ -485,7 +485,9 @@ it lives in `backends/` so callers that are not a CLI can reach it. It returns
 the persistent variant when the registered class declares `PERSISTENT_WORKERS`
 and that variant's `preflight` passes, and the batch class otherwise — a
 `persistent=True` against a batch-only backend is a no-op, not an error, so one
-CLI works across a mixed-backend config.
+CLI works across a mixed-backend config. (A `--batch` WRITTEN for such a
+backend is the CLI's to refuse: `dstf run --batch` on FMPy or Python is a
+`Config error` before this function is asked.)
 
 When the backend cannot be built here it raises `BackendUnavailableError`
 (a `RuntimeError` subclass): an unregistered backend name, a constructor whose
@@ -699,7 +701,7 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    until it is filled — and the capability's `act` still refuses one when called
    directly. `columns`
    is read from `dataclasses.fields`, not through `derive_schema`, so it
-   never reaches `export-schema`. A list field without `columns` gets no
+   never reaches `spec schema`. A list field without `columns` gets no
    table; Edit criteria shows every list field read-only either way.
 10. `drawn_by_default` (default `True`) says whether the authoring tool's
     Test page draws a closed criterion of this metric on its plot before the
@@ -723,7 +725,7 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
     field `Sides` and
     `derive_schema` classifies it `"sides"`: the form draws two fields and
     a link toggle (`FieldSpec.side_labels` names them, from the field's
-    `side_labels` metadata, `−` / `+` by default), and `export-schema`
+    `side_labels` metadata, `−` / `+` by default), and `spec schema`
     writes `oneOf` a number or an object with exactly `lower` and `upper`.
     The meaning is the metric's to keep: with `d = actual − target`, pass
     iff `−lower ≤ d ≤ upper`. `VariableComparison.tolerance_used` is a
@@ -780,7 +782,7 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 ### User metrics (implemented — `dstf.comparison.registry`)
 
 A user registers a metric by describing it once; every framework surface
-(spec parsing, evaluation, `export-schema`, and the authoring tool's forms)
+(spec parsing, evaluation, `spec schema`, and the authoring tool's forms)
 derives from the descriptor:
 
 ```python
@@ -1198,7 +1200,7 @@ validate rather than clamp; `passthrough` fields are shown read-only; a
 whose state is the shape of the field's value: a number while linked, a
 `{"lower", "upper"}` pair while not; a pair with one side typed changes
 nothing until the other is. The same
-`derive_schema` feeds `dstf export-schema`'s JSON-Schema emitter.
+`derive_schema` feeds `dstf spec schema`'s JSON-Schema emitter.
 
 The six shipped capabilities live in `authoring/builtin/` and register through
 this same call — Edit criteria, Edit tree and Edit family (the folded row's

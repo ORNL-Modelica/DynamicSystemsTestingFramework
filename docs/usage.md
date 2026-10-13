@@ -41,7 +41,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `backends` | No | Map of backend names to a settings block each: `{"executables": [...]}` plus that backend's own settings (see "Backend settings" below). `executables` lists candidate paths or program names (first that exists wins). An empty block `{}` — or no block — means the backend is searched for: `PATH`, then its standard install folders. A block whose `executables` holds a full path, none of which exists, is NOT found: no other install is taken in its place. |
 | `dependencies` | No | Paths to dependency libraries loaded before simulation, relative to `testing.json` location — a library's directory, its `package.mo`, or a one-file library `Name.mo`: each is opened by its file (`<dir>/package.mo`, or the `.mo` file given) on Dymola and OpenModelica alike — or a bare library name (`"Modelica"`), which OpenModelica loads by name. |
 | `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
-| `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
+| `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `spec add` writes — and every command that discovers tests reads it. |
 | `recognizers` | No | Declarative recognizers for your library's own test convention, added to the bundled one (see "Test definitions"). |
 | `disable_bundled` | No | Names of bundled recognizers to turn off, e.g. `["modelica:bundled-unit-tests"]`. |
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
@@ -75,7 +75,7 @@ mean "tolerance"?` (exit 2) from every command that reads the file, and
 `backends.Dymola: unknown field …` for a key of a block. A value of another
 type than its key takes is the same error (`max_embedded_samples: must be a
 whole number, got "abc"`). `description` / `info` / `metadata` are for notes,
-and `$schema` may point an editor at `dstf export-schema --file testing.json`'s
+and `$schema` may point an editor at `dstf spec schema testing`'s
 output, which lists every key with its type, default and description.
 
 So the former spellings `simulator`, `simulators` and `simulator_setup` are
@@ -188,13 +188,13 @@ It used to be kept and ignored, and that leaf scored as a range with no upper bo
 
 `tolerance` is a key of every leaf and override. `quantity` is one too: on a metric other than `scalar` it is the one param that is taken and not used. For your own notes there are `description`, `info` and `metadata` (an object of any shape), on an entry and on its `comparison` block; nothing reads them.
 
-`run`, `compare`, `discover` and `dstf author` report it as a `Config error` and exit 2, as for a malformed `metrics` tree — `dstf author` before it serves anything, like any error in `testing.json`. A spec edited by hand into one while the tool is open is said in the page, with the same sentence, when the project is opened again. `spec-update` refuses a patch that would write such a key (`Patch failed: …`, exit 1, the file untouched), and the tool refuses to stage one, saying the same sentence. A criterion that could never be scored — a `range` with neither bound, a `range` or `scalar` bound that is no finite number (`"abc"`, `true`, `NaN`), a `scalar` with no `quantity` — is refused where the file is written, and only by the write that makes it: `spec-update` refuses the patch (`Patch failed: … tests[M].metrics.children[3]: range · pipe.T[1]: needs at least one of min_value / max_value`), and the tool stages it — its row says why it is not scored — and refuses the Save with one sentence until it is filled or removed. One the file already holds blocks no other edit of its entry, the edit that fills it and the edit that removes it included. Under a `metrics` tree the flat `variable_overrides` score nothing, and are not checked for this. `export-schema` publishes the same rules: its objects are closed (`additionalProperties: false`) wherever the parser is strict.
+`run`, `compare`, `discover` and `dstf author` report it as a `Config error` and exit 2, as for a malformed `metrics` tree — `dstf author` before it serves anything, like any error in `testing.json`. A spec edited by hand into one while the tool is open is said in the page, with the same sentence, when the project is opened again. `spec update` refuses a patch that would write such a key (`Patch failed: …`, exit 1, the file untouched), and the tool refuses to stage one, saying the same sentence. A criterion that could never be scored — a `range` with neither bound, a `range` or `scalar` bound that is no finite number (`"abc"`, `true`, `NaN`), a `scalar` with no `quantity` — is refused where the file is written, and only by the write that makes it: `spec update` refuses the patch (`Patch failed: … tests[M].metrics.children[3]: range · pipe.T[1]: needs at least one of min_value / max_value`), and the tool stages it — its row says why it is not scored — and refuses the Save with one sentence until it is filled or removed. One the file already holds blocks no other edit of its entry, the edit that fills it and the edit that removes it included. Under a `metrics` tree the flat `variable_overrides` score nothing, and are not checked for this. `spec schema` publishes the same rules: its objects are closed (`additionalProperties: false`) wherever the parser is strict.
 
 A block that is not an object where one is read — `"simulation": "stop_time=5"`, `"comparison": null`, `"variable_overrides": [1]`, an override written `"x": "tube"`, `"metrics": null`, a leaf's `"window": null` — is the same error, naming the block and what it holds; leave a block out to not set it. A window's `start` and `end` are numbers (`"start": null` is refused too: leave it out for a window open at that end).
 
 So is an entry that cannot be a test, and a value that is not what is read there: an entry of `tests` that is no object (`tests[3]: must be an object, got "MyLib.A"`) or has no `model`; `variables` that is not a list of strings (`"variables": "x"`, `[1]`); a `source` that is no string; and a `simulation` value of another type than its field's — `"stop_time": "abc"`, a number written as text (`"100"`), `true`, a `number_of_intervals` of `2.5`: `tests[MyLib.A].simulation.stop_time: must be a number, got "abc"`. (`null` there still means "not set".) Each used to be a warning in the log and a test skipped, or run on defaults.
 
-And so is a spec file that is no spec at all — one line, exit 2, from every command that reads it (`discover`, `run`, `compare`, `spec-update`, `add`, `dstf author`), and nothing is run or written:
+And so is a spec file that is no spec at all — one line, exit 2, from every command that reads it (`discover`, `run`, `compare`, `spec update`, `spec add`, `dstf author`), and nothing is run or written:
 
 ```
 Config error: …/test_spec.json: not JSON (Expecting value: line 1 column 12 (char 11))
@@ -219,7 +219,7 @@ Modelica simulation parameters resolve from two layers, in order:
 
 Resolution rule: **user omits the field → annotation if present, else simulator default. User provides the field → it is used.** No third layer; no per-field "force annotation" toggle (delete the override to defer to the annotation).
 
-The rule is the same for a test declared only in `test_spec.json` (`dstf add MyLib.Examples.Rod`): its model is looked up in the library by name — its own `.mo` file, or the `package.mo` or parent-class file that holds it — and what the entry does not set comes from that model's `experiment(...)`. A short class (`model A = B(...) annotation(experiment(StopTime=13));`) is looked up like any other and gives its OWN annotation — not the one of the class it is made from, which no test inherits here. A model of another library (a dependency) is not looked up. When nothing gives a stop time, the test runs to the framework's default of 1 s, and `run` says so before it starts, with the reason that is true of that test: `MyLib.Examples.Rod: neither test_spec.json nor the model's experiment annotation gives a stop time; it runs to the default, 1 s.` for a model that was found; `Modelica.Blocks.Examples.PID_Controller: not found under source_path, so its experiment annotation was not read; it runs to the default, 1 s.` for one that was not (give it a `simulation.stop_time`); and, for a source type with no annotation layer (FMU, Julia, Python), `…: test_spec.json gives no stop time; it runs to the default, 1 s.`
+The rule is the same for a test declared only in `test_spec.json` (`dstf spec add MyLib.Examples.Rod`): its model is looked up in the library by name — its own `.mo` file, or the `package.mo` or parent-class file that holds it — and what the entry does not set comes from that model's `experiment(...)`. A short class (`model A = B(...) annotation(experiment(StopTime=13));`) is looked up like any other and gives its OWN annotation — not the one of the class it is made from, which no test inherits here. A model of another library (a dependency) is not looked up. When nothing gives a stop time, the test runs to the framework's default of 1 s, and `run` says so before it starts, with the reason that is true of that test: `MyLib.Examples.Rod: neither test_spec.json nor the model's experiment annotation gives a stop time; it runs to the default, 1 s.` for a model that was found; `Modelica.Blocks.Examples.PID_Controller: not found under source_path, so its experiment annotation was not read; it runs to the default, 1 s.` for one that was not (give it a `simulation.stop_time`); and, for a source type with no annotation layer (FMU, Julia, Python), `…: test_spec.json gives no stop time; it runs to the default, 1 s.`
 
 Use case for the two layers: a model author can write `experiment(StopTime=100)` so the model demos cleanly in Dymola/OMEdit, then set `simulation.stop_time = 10` in `test_spec.json` so CI runs fast — no need to edit the source.
 
@@ -528,7 +528,7 @@ one down:
   the reason and exit 1; the interactive review does not offer `a` for it;
   the tool's Accept is grey for that test, with the reason, and stores the
   others of a selection. Nothing writes one either: an accept never stores a
-  base tolerance that is no number, and `spec-update` — the tool's Save too —
+  base tolerance that is no number, and `spec update` — the tool's Save too —
   refuses a patch that sets `comparison.tolerance` to one.
 
 A test with no `metrics` tree is scored one criterion per tracked variable
@@ -584,9 +584,9 @@ simulate-only when a recognizer marks
 it (`simulate_only`), or when it DECLARES nothing to score — no `UnitTests`
 variable, no `variables` pattern, no `metrics` tree and no
 `comparison.variable_overrides` entry. `"variables": []`
-on a model without the component is that entry, and it is what `dstf add
+on a model without the component is that entry, and it is what `dstf spec add
 <model>` writes; give it a pattern or a criterion and it is scored like any
-other test. Give it in the spec file, or add the test with `dstf add <model>
+other test. Give it in the spec file, or add the test with `dstf spec add <model>
 --variables <pattern>`: `dstf author` adds a criterion only to a test that
 tracks at least one variable, and on a test that tracks none its page says
 "nothing is scored" and has no `+` (a known limit, `docs/ideas.md`).
@@ -642,7 +642,7 @@ forms and is that test's value:
 The order is **the test's, then `testing.json`'s, then `"all"`** — so one
 long run can be thinned in a project that keeps everything, and one test can
 say `"all"` in a project that gives a number. It is written by hand:
-`spec-update` and `dstf author` do not edit it, and the tool's Save keeps it
+`spec update` and `dstf author` do not edit it, and the tool's Save keeps it
 on an entry it rewrites.
 
 Anything else — `true`, `2000.0`, `0`, `1`, a negative, `"ALL"`, `null` — is a
@@ -650,7 +650,7 @@ config error in either file: one line, `Config error: testing.json
 baseline_points is 1: the points a baseline keeps are "all" or a whole number
 of 2 or more` (for an entry, `<test_spec.json>:
 tests[MyLib.Examples.LongTransient].baseline_points is 1: …`), and exit code 2
-before anything runs. `export-schema` lists the entry's key.
+before anything runs. `spec schema` lists the entry's key.
 
 **What the stored points mean for scoring.** A baseline is its stored points
 and nothing else. `nrmse`, the default mode, compares the run **at the
@@ -728,7 +728,7 @@ A test can be scored against more than one baseline: the `primary` baseline (wha
 }
 ```
 
-Soft_checks are added from the CLI with `dstf import-baseline <model> <name> <source>`, or programmatically:
+Soft_checks are added from the CLI with `dstf soft-check add <model> <name> <source>`, or programmatically:
 
 ```python
 from dstf.config import Config
@@ -823,17 +823,38 @@ a broken one, is an answer, and guessing behind it is still guessing.
 
 ## Commands
 
-All commands accept these global options:
+The commands are `discover`, `run`, `compare`, `author` and `check`, and five
+groups whose actions are commands of their own: `spec add` / `update` /
+`schema`, `baseline export`, `soft-check add` / `list` / `remove`,
+`companion add` / `list` / `freeze` / `remove` and `manifest show` / `dump` /
+`cleanup`. `dstf --help` lists them; `dstf <command> --help` (`dstf manifest
+cleanup --help`) says what one does, what it writes and every flag it reads,
+with examples. A group with no action (`dstf spec`) prints its help and exits 2.
+
+Four flags say where the project is:
 
 ```
---config PATH          Path to testing.json (default: auto-search)
---source-path PATH     Path to library source location (Modelica package dir, FMU dir, ...)
---reference-root PATH  Path to reference results root
---test-spec PATH       Path to test_spec.json
+--config FILE          The project's testing.json (default: searched for)
+--source-path DIR      The library under test (Modelica package dir, FMU dir, ...)
+--reference-root DIR   The reference results root
+--test-spec FILE       The test_spec.json
 ```
 
-They work on **either side of the subcommand** — `dstf --config x run` and
-`dstf run --config x` are equivalent. A value given after the subcommand wins.
+They work on **either side of the command** — `dstf --config x run` and
+`dstf run --config x` are equivalent. A value given after the command wins.
+
+**A command offers the flags it reads, and a flag that does not apply is an
+error**, on either side of the command — never dropped. `author` takes
+`--config` alone of the four (it saves the spec `testing.json` names);
+`check`, `baseline export`, and the `soft-check`, `companion` and `manifest
+show` / `dump` actions take no `--test-spec`; `spec schema` reads no project
+and takes none. `--backend` is on every command that runs a simulator or reads
+a reference partition (all but `discover`, `check`, `spec add` and `spec
+schema`), `--work-dir` on those that read or write the work directory (`run`,
+`compare`, `author`, `baseline export`, `manifest dump` / `cleanup`); both go
+after the command. `--timeout`, `--parallel` and `--port` take a whole number
+of 1 or more, and `--output` beside the console report format — which writes
+no file — is an error.
 
 If `testing.json` includes `source_path`, you only need `--config` or `--reference-root`.
 
@@ -886,10 +907,11 @@ uv run dstf --config testing.json run -i
 | `--backend-path PATH` | Override the backend executable path |
 | `--tolerance FLOAT` | Override the project's comparison tolerance (`testing.json`'s `tolerance`); one finite number |
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
-| `--timeout SECS` | Per-test timeout in seconds (default: 60) |
+| `--timeout SECS` | Per-test timeout in seconds, a whole number of 1 or more (default: 60) |
+| `--batch` | Run through the backend's script mode instead of its workers that stay alive (Dymola, OpenModelica, Julia). On FMPy and Python, which have no such workers, it is a `Config error` (exit 2) before anything runs |
 | `--work-dir PATH` | Override output directory |
 | `--report` | Also write the per-test pages under `<work_dir>/reports/` (see "Live progress + final report") |
-| `--report-format` | `junit` or `html` (the dashboard page) also writes that file, to `--output` (default `test-results.xml` / `test-report.html` in the current directory); `console`, the default, writes none |
+| `--report-format` | `junit` or `html` (the dashboard page) also writes that file, to `--output` / `-o` (default `test-results.xml` / `test-report.html` in the current directory); `console`, the default, writes none, and `--output` beside it is an error |
 | `--no-browser` | Open no browser tab. `run` opens the dashboard as the run starts, `--report` (on `run` and `compare`) opens it again once the pages are written, and `p` in the interactive review opens that test's page; with this flag each only prints its `file://` link. Also on `compare`. |
 
 A run that scores (not `--accept`, not `-i`) always prints the verdict table —
@@ -985,7 +1007,7 @@ Four files say what a run decided; none needs the HTML parsed.
 | JUnit XML | `--report-format junit --output results.xml` | one testcase per test; a `<failure>` per FAIL with its failed criteria, an `<error>` per failed simulation |
 | `<work_dir>/reports/<dir>/comparison_data.json` | `--report`, one per test | that test's `summary` and its `tree_view` — the same tree as in `verdicts.json` — beside what its page draws |
 
-A node of `tree` is a group (`"kind": "combinator"`, with `combinator`, `children`, `passed`) or a criterion (`"kind": "leaf"`): `path` (the JSON pointer a `spec-update` patch names it by), `metric`, `variable`, `window`, `against` (the baseline it READ — `"primary"`, a soft check's name — and `null` for a criterion that reads none: a `range`, a `scalar` with bounds, a criterion scored from its own declared events, peaks or values), `passed`, `advisory` (true under a `warn`: it cannot fail the test), `score` and `score_display` (its measure), `tolerance` (the tolerance it was scored with — its own, else the test's — for a metric that takes one; a tube's width and a range's bounds are in `params`), `criterion` (the sentence the console prints) and `details`. `tree` is `null` for a test nothing was compared for.
+A node of `tree` is a group (`"kind": "combinator"`, with `combinator`, `children`, `passed`) or a criterion (`"kind": "leaf"`): `path` (the JSON pointer a `spec update` patch names it by), `metric`, `variable`, `window`, `against` (the baseline it READ — `"primary"`, a soft check's name — and `null` for a criterion that reads none: a `range`, a `scalar` with bounds, a criterion scored from its own declared events, peaks or values), `passed`, `advisory` (true under a `warn`: it cannot fail the test), `score` and `score_display` (its measure), `tolerance` (the tolerance it was scored with — its own, else the test's — for a metric that takes one; a tube's width and a range's bounds are in `params`), `criterion` (the sentence the console prints) and `details`. `tree` is `null` for a test nothing was compared for.
 
 ```bash
 dstf --config testing.json run --no-browser
@@ -1013,7 +1035,7 @@ A run keeps these, and its other statistics, beside each result in `test_NNNN/ru
 
 A row reads **SIMULATED** when its simulation ran and nothing has scored it: during a run, between a test finishing and the compare phase, and on a page written without scoring at all — after `run --accept` (the results were stored as baselines, not compared), or an aborted run. SIMULATED is not a status: it is in no count pill.
 
-A row reads **NOT RUN**, in grey, when its test has no result: the last run never ran it, or started it and never finished it (a run stopped by Ctrl-C or a crash leaves its unfinished tests so). That is not a failed simulation — a test whose run finished and failed, timed out or could not translate reads SIM_FAIL — and it is not a failure: `run` and `compare` exit 0 when every test that ran passed, whatever is NOT RUN beside them; the console lists it as `NOT RUN` and JUnit writes it as a skipped testcase (`<skipped message="not run"/>`). Run it again to give it a verdict. A run the tool's queue cancelled is recorded as cancelled and reads **CANCELLED**, also grey, on every dashboard written while `status.json` still lists that run — the queue's own and a later `compare`'s: it left no result either, so `compare` scores the test NOT RUN, the NOT RUN pill counts it, and the console and JUnit, which have no row to say why on, list it as NOT RUN.
+A row reads **NOT RUN**, in grey, when its test has no result: the last run never ran it, or started it and never finished it (a run stopped by Ctrl-C or a crash leaves its unfinished tests so). That is not a failed simulation — a test whose run finished and failed, timed out or could not translate reads SIM_FAIL — and it is not a failure: `run` and `compare` exit 0 when every test that ran passed, whatever is NOT RUN beside them — but when NO test ran (every test in scope is NOT RUN, or none is in scope) they exit 1 and say so on stderr (`Nothing ran: no test in scope has a result (3 NOT RUN) — exit 1.`): a run in which nothing ran is not a green one; the console lists it as `NOT RUN` and JUnit writes it as a skipped testcase (`<skipped message="not run"/>`). Run it again to give it a verdict. A run the tool's queue cancelled is recorded as cancelled and reads **CANCELLED**, also grey, on every dashboard written while `status.json` still lists that run — the queue's own and a later `compare`'s: it left no result either, so `compare` scores the test NOT RUN, the NOT RUN pill counts it, and the console and JUnit, which have no row to say why on, list it as NOT RUN.
 
 The count pills along the top are the status filter: click one to show only its rows (PASS, FAIL, SIM_FAIL, NO_REF, TIMED OUT, QUEUED, RUNNING, NOT RUN; `warnings` shows the rows with any), `Total` to show every row again.
 
@@ -1080,9 +1102,9 @@ markup the server rendered. It shows
   `comparison_data.json` beside the page.
 
 Changing a criterion is not something the page does — edit `test_spec.json`, or
-apply a patch with `spec-update`.
+apply a patch with `spec update`.
 
-`spec-update` reads a JSON-Patch envelope in either of two shapes. The
+`spec update` reads a JSON-Patch envelope in either of two shapes. The
 multi-model form carries any number of models:
 
 ```json
@@ -1143,19 +1165,22 @@ uv run dstf --config testing.json compare --default-points
 uv run dstf --config testing.json compare --report-format junit
 ```
 
-### `export` — Dump reference data
+### `baseline export` — Dump reference data
 
-Exports stored reference data to JSON or CSV for external inspection.
+Exports the stored baselines of one partition to JSON or CSV for external
+inspection: `references.json` or `references.csv` in the work directory unless
+`--output` / `-o` names a file. `--backend` picks the partition, `--work-dir`
+the directory.
 
 ```bash
 # Export all references as JSON
-uv run dstf --config testing.json export
+uv run dstf --config testing.json baseline export
 
 # Export as CSV
-uv run dstf --config testing.json export --format csv
+uv run dstf --config testing.json baseline export --format csv
 
 # Export to specific file
-uv run dstf --config testing.json export --output results.csv --format csv
+uv run dstf --config testing.json baseline export --output results.csv --format csv
 ```
 
 ### `manifest` — Manage test IDs
@@ -1172,23 +1197,31 @@ uv run dstf --config testing.json manifest show --show-obsolete
 # List reference files for obsolete tests (dry-run by default; --apply deletes)
 uv run dstf --config testing.json manifest cleanup [--apply]
 
+# The same for a work directory's leftovers of models no longer declared
+uv run dstf --config testing.json manifest cleanup --orphans [--apply]
+
 # Write the ref ID → model ID mapping to the work directory
 uv run dstf --config testing.json manifest dump
 ```
 
 (The reference index is rebuilt automatically on every command — there's
-no separate "rebuild" subcommand because there's nothing to rebuild.)
+no separate "rebuild" action because there's nothing to rebuild.) `--orphans`
+and `--apply` are `manifest cleanup`'s and `--show-obsolete` is `manifest
+show`'s: given to another action, each is an error.
 
-### `add` — Add test to spec
+### `spec add` — Add test to spec
 
-Adds a model to `test_spec.json` without manually editing the file.
+Adds a model to `test_spec.json` without manually editing the file. (The
+group's other two actions are `spec update`, which applies a JSON-Patch
+envelope — see "The authoring tool" — and `spec schema [test_spec|testing]`,
+which prints the JSON-Schema of `test_spec.json` or of `testing.json`.)
 
 ```bash
 # Add a test with specific variables
-uv run dstf --config testing.json add MyLib.Examples.NewTest --variables "pipe.T[1]" "tank.level"
+uv run dstf --config testing.json spec add MyLib.Examples.NewTest --variables "pipe.T[1]" "tank.level"
 
 # Add simulate-only (no variable tracking)
-uv run dstf --config testing.json add MyLib.Examples.NewTest
+uv run dstf --config testing.json spec add MyLib.Examples.NewTest
 ```
 
 The second form writes `{"model": …, "variables": []}`: an entry that
@@ -1280,7 +1313,7 @@ one, and the drawer stays; a second Esc, even while it is still fading out,
 closes the drawer.
 
 A Save or an Accept over a `test_spec.json` that was changed on disk since
-the tool loaded it — edited by hand, or by `spec-update` — is refused in a
+the tool loaded it — edited by hand, or by `spec update` — is refused in a
 dialog: `<path> changed on disk since it was loaded.`, then `Nothing was
 saved.` / `Nothing was accepted.`, and Reload, which reads the file again.
 With edits pending the button says what it costs, `Reload and discard 2
@@ -2239,14 +2272,14 @@ first row is `0.0` / `0.0`, literal bounds to set. Save writes
 table and drag edits like any other pending op.
 
 **Save, Discard, Export.** Save applies exactly the pending ops through the same
-read-modify-write `dstf spec-update` uses, and refuses when the file changed on
+read-modify-write `dstf spec update` uses, and refuses when the file changed on
 disk since it was loaded — offering to reload it or to keep your edits. Accept
 makes the same check and is refused in the same dialog: a baseline is written
 with the test's entry as the tool holds it (its `baseline_points`, the
 comparison settings stored beside the data), and after an edit of the file by
 hand that is no longer the entry on disk. Discard
 drops the pending ops and restores the loaded verdicts. Export writes the
-multi-model envelope to `<work_dir>/spec_patch.json`, which `dstf spec-update`
+multi-model envelope to `<work_dir>/spec_patch.json`, which `dstf spec update`
 applies unchanged.
 
 The dashboard link opens `<work_dir>/dashboard.html` served by the tool itself
@@ -2285,7 +2318,8 @@ uv run dstf --config testing.json run -i
 
 ```bash
 # JUnit output for CI systems. The exit code is 1 when a test FAILs or
-# SIM_FAILs; NO_REF and NOT RUN (skipped testcases) leave it 0.
+# SIM_FAILs, and when no test ran at all; a NO_REF test, and a NOT RUN one
+# (a skipped testcase) beside tests that ran, leave it 0.
 uv run dstf --config testing.json run --report-format junit
 
 # HTML report — the same dashboard page `run --report` produces, at a path you pick.

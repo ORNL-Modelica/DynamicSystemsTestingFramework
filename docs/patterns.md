@@ -160,7 +160,7 @@
 - `interactive.html` uses a vendored Plotly.js (cartesian bundle, one copy per report suite at reports/plotly.min.js — offline-capable) for interactive charts — zoom, pan, hover tooltips on all data points
 - One chart per plot of the test (D140: one per scored variable or array family, then the watch plots): actual vs reference, plus the overlays the picker toggles
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart — signed and absolute error on the right axis "Error [signal units]", NRMSE on its own "NRMSE [–]", each shown while a series on it is visible
-- `dstf spec-update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
+- `dstf spec update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
 
 ## Anti-Patterns
 
@@ -244,9 +244,10 @@
 - Causes false comparison errors for identical signals with events
 - Use `_dedup_time_series()` to select pre- or post-event values explicitly
 
-### Don't put `--reference-root` on both parent parser and subcommands
-- argparse subcommand defaults (`None`) override the parent parser's value
-- Top-level args that apply globally should only be on the parent parser
+### Don't give a flag a plain default on both the top-level parser and a command
+- argparse copies a sub-parser's whole namespace over the parent's, so a command's default (`None`) erases a value given before the command
+- The four project flags (`--config`, `--source-path`, `--reference-root`, `--test-spec`) are on both, the command's copy with `default=argparse.SUPPRESS` (`cli/parser.py`); a command offers only the ones it reads
+- A flag written before a command that does not read it is seen by no sub-parser: the top-level parser refuses it after parsing (`_Root.parse_known_args`)
 
 ## Forward hooks
 
