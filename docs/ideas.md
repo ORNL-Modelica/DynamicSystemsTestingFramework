@@ -1988,3 +1988,34 @@ planning.
   a report page left by an earlier `--report`; a failed run's own sentence
   ("exceeded 6.0 s") does not survive a restart, only its recorded verdict
   does — keeping it means one more stored field per run.
+
+- **Known limits the last review rounds left (2026-10-12)** — each was seen
+  by running it, none was built:
+  - A number too large for a float (hundreds of digits) inside a table row —
+    a `points` row's `time` / `value`, a `dominant-frequency` peak's `freq`,
+    a `tube_points` row, an `events` row's `time` — is still a traceback out
+    of `compare`; everywhere else in a spec entry it is the one-line config
+    error. The fix is row validation where the mode is built.
+  - A stored baseline whose `comparison` is `null`, or a soft check of the
+    wrong shape, is a traceback after the simulations ran; a baseline file
+    cut short reads as no baseline (`PASS [new]`). `run`'s check before it
+    simulates covers an override nothing reads, not these.
+  - `run --parallel N` over FMUs can fail tests with `XMLSchemaParseError`:
+    FMPy's model-description reader is not safe across threads. Sequential
+    runs are.
+  - `tests/test_baseline_points.py` and `tests/test_recognizer.py` each fail
+    five tests when run alone and pass in the whole suite (a registration
+    another test file's import makes).
+  - An interrupted `--parallel` run can leave a test that finished after the
+    interrupt as `done` in `status.json` and `NOT RUN` at the next compare.
+  - Dymola resolves a dependency given by NAME (`"Modelica"`) against the
+    working directory; give a path where the name is not one Dymola knows.
+  - `find_class` records a `redeclare model X = …` written inside a
+    modification at its bracket depth and passes it over as a class of the
+    body; the scan of a file is about three times slower for it (18 ms on a
+    650 kB file).
+  - A reference JSON's lost-variable line on accept names every variable the
+    old baseline held and the new one does not — one removed from the spec
+    on purpose too.
+  - A watch plot draws the run only: no baseline and no companion overlay
+    (the example's `analytic` companion maps `x` alone for that reason).
