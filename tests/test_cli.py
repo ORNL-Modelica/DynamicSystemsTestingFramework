@@ -1958,8 +1958,8 @@ def test_subcommand_global_flag_does_not_erase_the_pre_subcommand_value():
     parser = build_arg_parser()
     args = parser.parse_args(["--config", "X", "run", "--filter", "A"])
     assert args.config == "X"
-    # And an explicit value after the subcommand still wins.
-    assert parser.parse_args(["--config", "X", "run", "--config", "Y"]).config == "Y"
+    # (a second, different value after the command is an error: one value
+    # per flag, tests/test_cli_tree.py)
 
 
 def test_global_flags_default_to_none_when_given_nowhere():

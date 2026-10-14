@@ -844,7 +844,9 @@ Four flags say where the project is:
 ```
 
 They work on **either side of the command** — `dstf --config x run` and
-`dstf run --config x` are equivalent. A value given after the command wins.
+`dstf run --config x` are equivalent. Each is written once, on either side:
+the same flag before and after the command with two values is an error that
+names both.
 
 **A command offers the flags it reads, and a flag that does not apply is an
 error**, on either side of the command — never dropped. `author` takes

@@ -95,6 +95,9 @@ class _Root(argparse.ArgumentParser):
         leaf = self.commands.get(path)
         if leaf is None:
             return parsed, extras
+        twice = self._given_twice(args, parsed)
+        if twice:
+            leaf.error(twice)
         offered = self.reads[path]
         reads = ", ".join(PROJECT_FLAGS[d] for d in PROJECT_FLAGS if d in offered)
         # Written before the command, which does not read it: the top level
@@ -141,6 +144,31 @@ class _Root(argparse.ArgumentParser):
             path += f" {argv[j]}" if j < len(argv) else " <action>"
             self._say_misplaced(argv[i + 1 : j], path, allowed=group, at=group)
         self._say_misplaced(argv[:i], path, allowed=self, at=group or self)
+
+    def _given_twice(self, argv: list[str], parsed) -> str | None:
+        """A project flag written before the command and after it, with two
+        values: the later used to win, said only in the usage guide. Each
+        is written once, on either side (the same flag twice on one side is
+        argparse's: the last wins)."""
+        end = _find_word(self, argv, 0, _subcommands(self).choices)
+        before: dict[str, str] = {}
+        i = 0
+        while i < end:
+            name, eq, value = argv[i].partition("=")
+            dest = next((d for d, f in PROJECT_FLAGS.items() if f == name), None)
+            if dest is not None and not eq and i + 1 < end:
+                value, i = argv[i + 1], i + 1
+            if dest is not None:
+                before[dest] = value
+            i += 1
+        for dest, value in before.items():
+            after = getattr(parsed, dest, None)
+            if after != value:
+                return (
+                    f"{PROJECT_FLAGS[dest]} is given twice, {value} before the "
+                    f"command and {after} after it: write it once"
+                )
+        return None
 
     def _say_misplaced(
         self,
@@ -955,8 +983,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     where = root.add_argument_group(
         "where the project is",
         _text(
-            "These may be written here, before the command, or after it. A "
-            "command that does not read one refuses it."
+            "These may be written here, before the command, or after it. "
+            "Each is written once, on either side. A command that does not "
+            "read one refuses it."
         ),
     )
     for dest in PROJECT_FLAGS:

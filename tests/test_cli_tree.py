@@ -619,6 +619,33 @@ def test_a_command_s_flag_before_the_command_says_where_it_goes(argv, said, caps
     assert "invalid choice" not in text
 
 
+@pytest.mark.parametrize("flag", sorted(_PROJECT))
+@pytest.mark.parametrize("spelled", ["{flag} {value}", "{flag}={value}"])
+def test_a_project_flag_with_two_values_is_refused(flag, spelled, capsys):
+    """Given before and after the command, the later won, said only in the
+    usage guide."""
+
+    def given(value):
+        return spelled.format(flag=flag, value=value).split()
+
+    text = _parse([*given("a.json"), "discover", *given("b.json")], capsys)
+    assert isinstance(text, str), f"{flag} took two values"
+    assert (
+        f"dstf discover: error: {flag} is given twice, a.json before the "
+        f"command and b.json after it: write it once"
+    ) in text
+    # the same value on both sides, or one side twice (argparse's last wins)
+    args = _parse([*given("a.json"), "discover", *given("a.json")], capsys)
+    assert getattr(args, _dest(flag)) == "a.json"
+    args = _parse(["discover", *given("a.json"), *given("b.json")], capsys)
+    assert getattr(args, _dest(flag)) == "b.json"
+
+
+def test_the_top_level_help_says_a_flag_is_written_once():
+    text = " ".join(PARSER.format_help().split())
+    assert "Each is written once, on either side." in text
+
+
 def test_a_flag_no_command_has_is_still_argparse_s_to_say(capsys):
     """Where a flag of the tree goes is said; a name that is no flag
     anywhere (a removed one too) gets no hint."""
