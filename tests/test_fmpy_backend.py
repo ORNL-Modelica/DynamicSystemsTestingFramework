@@ -251,7 +251,7 @@ class TestFmpyHelpers:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 73 — the FMPy timeout result sets ``timed_out``, and the result
 # save happens inside the try so an OSError fails the one test, not the run.

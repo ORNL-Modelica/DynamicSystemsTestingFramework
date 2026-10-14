@@ -1300,8 +1300,7 @@ planning.
   - This file's older entries still describe the browser editors and the
     parity test in the present tense (the reporter-as-IDE vocabulary); they
     are history now and the entry that proposed the cut is done. A
-    docs-only sweep, together with `docs/CODE_REVIEW_2026-07-06.md`'s two
-    mentions if that dated review is ever edited.
+    docs-only sweep.
   - `figures/` is outside mypy's scoped file list and type-checks clean;
     one line in `pyproject.toml` adds it.
 

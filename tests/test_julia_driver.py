@@ -20,7 +20,7 @@ JULIA_DRIVER_DIR = PROJECT_ROOT / "src" / "dstf" / "backends" / "julia"
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Findings 4/27/75 — Julia driver scripts. The .jl changes cannot be executed
 # here (no julia binary on this machine), so the driver-content tests pin the

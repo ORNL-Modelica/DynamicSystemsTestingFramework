@@ -282,7 +282,7 @@ def test_python_simple_ramp_self_regression(tmp_path):
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 29 — non-numeric driver output, both sides: the driver rejects it
 # with a named error, and the backend turns a tampered/legacy result.json into

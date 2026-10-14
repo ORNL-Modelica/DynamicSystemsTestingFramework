@@ -1,8 +1,8 @@
 # Quality floor (D88): lint + type-check + the hardware-free test suite +
 # coverage ratchet. Runs on a clean ubuntu runner with NO simulators —
 # Dymola / Julia / OpenModelica / fmpy tests skip cleanly, Playwright is
-# deselected. Independent of the FMPy end-to-end job (docs/PHASE_2_5_CI_PLAN.md),
-# which stays deferred on its own cost trade-off.
+# deselected. There is no FMPy end-to-end job (one that fetches the Reference
+# FMUs and runs them on a clean runner): it stays deferred on its own cost.
 name: quality
 
 on:

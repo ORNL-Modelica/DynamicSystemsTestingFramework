@@ -1001,7 +1001,7 @@ def _write_stub_mat(path: Path, *, stop_time: float) -> None:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 26 — the persistent OM worker honors the configured omc path by
 # exporting OPENMODELICAHOME from it, and leaves the environment alone when

@@ -354,7 +354,7 @@ class TestEventTimingDeclaredEvents:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_verdict.py — regression tests for the
-# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, Theme 1: verdict integrity.
 #
 # Decisions encoded here:
 #

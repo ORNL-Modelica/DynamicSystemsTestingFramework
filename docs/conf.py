@@ -51,13 +51,9 @@ exclude_patterns = [
     "releasing.md",
     "usage.md",
     "extensibility.md",
-    "CODE_REVIEW_*.md",
-    "PHASE_*.md",
-    "SESSION_HANDOFF.md",
     "qa",
     "design",
     "superpowers",
-    "related_tools_research",
 ]
 
 html_theme = "furo"

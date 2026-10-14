@@ -1028,7 +1028,7 @@ class TestExperimentAnnotationField:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
-# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+# the 2026-07-06 review, Themes 2 & 6.
 #
 # Finding 50: component parameter values are extracted from the ORIGINAL text
 # span so string-valued parameters (algorithm="Dassl") are extractable.

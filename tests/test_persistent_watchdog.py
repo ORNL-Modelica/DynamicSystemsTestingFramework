@@ -1169,7 +1169,7 @@ class TestCloseHonoursTheGraceBudget:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Findings 20 + 21 + 24 — persistent dispatch loop lifecycle: a dead worker
 # fail-marks only its held item and exits (the last one drains the queue

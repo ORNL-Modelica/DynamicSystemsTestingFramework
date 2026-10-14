@@ -337,7 +337,7 @@ class TestFmuExportGate:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 28 — the capability-honesty check must compare classmethod
 # ``__func__``, otherwise a declared PERSISTENT_WORKERS backend with no

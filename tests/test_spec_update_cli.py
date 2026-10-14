@@ -160,7 +160,7 @@ class TestNonEnvelopeRejected:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
-# reporter batch (CODE_REVIEW_2026-07-06.md).
+# reporter batch.
 #
 # Finding 41 — ``cmd_spec_update`` materializes the implicit metric tree
 # before applying reporter-emitted per-leaf ops to a flat-override entry

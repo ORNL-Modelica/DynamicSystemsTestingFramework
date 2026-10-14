@@ -507,7 +507,7 @@ class TestDymolaConfig:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # * Finding 23 — shared subprocess-output decode helper;
 #   ``TimeoutExpired.stdout/.stderr`` are bytes even with ``text=True``, so

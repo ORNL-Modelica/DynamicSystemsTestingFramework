@@ -509,7 +509,7 @@ class TestAutoDetectBackend:
 # Folded in from tests/test_review_fixes_config.py — regression tests for the
 # 2026-07-06 review, Theme 2: config values silently ignored or destroyed.
 #
-# Decisions encoded here (see CODE_REVIEW_2026-07-06.md):
+# Decisions encoded here:
 #
 # * Finding 11 — a testing.json that EXISTS but fails to parse (or read)
 #   raises a clear error naming the file; it is never silently replaced by
@@ -999,7 +999,7 @@ class TestFinding18BackendPath:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Finding 67 — "Python" is a recognized simulator backend prefix, so
 # ``"backend": "Python 3.12"`` resolves.
@@ -1014,7 +1014,7 @@ def test_python_backend_name_resolves():
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
-# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+# the 2026-07-06 review, Themes 2 & 6.
 #
 # Finding 17: bare library names in testing.json `dependencies` pass through
 # Config untouched so classify_dependency routes them to loadModel().

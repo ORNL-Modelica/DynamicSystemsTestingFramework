@@ -242,7 +242,7 @@ def test_leaf_identity_rule_matches_the_parser(payload, valid):
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Finding 72 — the exported JSON-Schema wires the per-mode ``$defs`` into
 # the leaf spec via if/then. Its posture was lenient (unknown keys valid)

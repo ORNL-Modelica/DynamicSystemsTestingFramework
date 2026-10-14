@@ -713,8 +713,7 @@ class TestLineEndings:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_storage.py — regression tests for the
-# 2026-07-06 review, Theme 4: reference store integrity (findings 3, 31-36 of
-# CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, Theme 4: reference store integrity (findings 3, 31-36).
 #
 # * ``_downsample`` never drops the first index, the last index, or event
 #   boundaries. When the linspace/event union overshoots ``max_points``,
@@ -1228,7 +1227,7 @@ class TestDuplicateModelIdScan:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Decision encoded here (leftover B): ``store_reference`` rejects baselines
 # whose trajectory contains NaN/Inf (naming model + variable);

@@ -33,7 +33,7 @@ def _stamped_root_leaf(vc):
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
-# reporter batch (CODE_REVIEW_2026-07-06.md).
+# reporter batch.
 #
 # * Finding 68 — ``comparison_data.json`` and the embedded interactive.html
 #   context are strict JSON (non-finite floats sanitized to null).

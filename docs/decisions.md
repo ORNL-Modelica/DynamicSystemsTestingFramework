@@ -359,7 +359,7 @@
 ## D58: FMPy backend timeout + phase labels (Phase 4.D cleanup)
 
 - **What**: `FmpyRunner.run_single_test` now (a) honors `test.timeout` / `config.timeout` by running `fmpy.simulate_fmu` inside a single-worker `concurrent.futures.ThreadPoolExecutor` and treating `future.result(timeout=...)` as the deadline, and (b) emits backend-appropriate `on_phase` events (`"loading"` for FMU description read + variable resolution, `"simulating"` for the actual integration). Bonus: fixed a latent kwarg mismatch in the failure path — `progress.on_finish(error=msg)` was wrong (`detail=` is the parameter); call sites only worked because `self.progress` was None in tests.
-- **Why**: Closed three asymmetries flagged in `SESSION_HANDOFF.md`. (1) Per-test timeouts were Dymola-only; the docs warned FMPy "runs to completion regardless." Now both backends honor it. (2) Dashboard phase labels were Dymola-flavored — FMPy tests showed no phase at all. The phase mechanism was already generic (`on_phase(test_key, str)` accepts any label); FMPy just wasn't emitting. Now each backend declares its own phase vocabulary. (3) The bug fix was incidental but real — would have surfaced as `TypeError` the first time a real FMPy progress reporter saw a simulation failure.
+- **Why**: Closed three asymmetries flagged in the handoff notes of the time. (1) Per-test timeouts were Dymola-only; the docs warned FMPy "runs to completion regardless." Now both backends honor it. (2) Dashboard phase labels were Dymola-flavored — FMPy tests showed no phase at all. The phase mechanism was already generic (`on_phase(test_key, str)` accepts any label); FMPy just wasn't emitting. Now each backend declares its own phase vocabulary. (3) The bug fix was incidental but real — would have surfaced as `TypeError` the first time a real FMPy progress reporter saw a simulation failure.
 - **Trade-offs**: The timeout enforcement can't force-kill the C-level FMU computation — when timeout fires, the worker thread is left running until the FMU returns naturally; we just shut down the executor with `wait=False`. For Reference-FMUs (sub-second simulations) this is invisible. A genuinely runaway FMU would leak a thread per timeout — acceptable until someone has one. Subprocess-based isolation would fix it but adds startup cost on every test, defeating the in-process-FMPy advantage. No FMPy timeout test is added — would require either monkeypatching `simulate_fmu` to sleep or a long-running fixture FMU; existing happy-path tests cover that the new plumbing doesn't break normal operation.
 
 ## D59: Pluggable in-source test annotations (Phase 5 / PTA)
@@ -368,7 +368,7 @@
 - **Why**: The hardcoded UnitTests pattern was the single biggest adoption blocker — a library with its own test convention had to either rewrite every model or fork the framework. PTA addresses this without forcing Python on users (declarative JSON map). Doing PTA before 4.B (cross-backend) means the upcoming work doesn't have to retrofit a second authoring path for runtime requests (`requested_fmu_export` lives in the model where the test logic lives, via a recognizer field). The decomposition is the same shape as Phase 3 / 4.A — each sub-phase compiles and tests green independently, so regressions stay isolated.
 - **Match-type vocabulary is per-source-type**: Modelica has `component-instantiation`, `extends`, and (deferred) `class-name-glob` / `annotation`. FMU would declare its own when an FMU recognizer lands. Forcing a unified abstract vocabulary across languages would obscure rather than clarify; each source type owns its parser and its match types. The framework's frame (`name`, `applies_to`, `match`, `fields`) is universal.
 - **Additive-default rationale**: Bundled returns None on files it doesn't recognize, so adding a custom recognizer doesn't introduce false positives. Per-field merge with last-writer-wins lets users override individual fields without disabling. Replacement-as-default would silently delete bundled recognition the moment a user added any custom recognizer — a footgun. Disable mechanism handles the rare "ship-bundled-as-dep but don't discover its examples" case.
-- **What stays out**: Match composition (`all-of` / `any-of`), folder filter (`paths_include` / `paths_exclude`), additional Modelica match types (`class-name-glob`, `annotation`), additional field sources (`annotation`). All four are concrete future hooks captured inline in `discovery/json_recognizer.py` and SESSION_HANDOFF.md; defer until a concrete need pulls them.
+- **What stays out**: Match composition (`all-of` / `any-of`), folder filter (`paths_include` / `paths_exclude`), additional Modelica match types (`class-name-glob`, `annotation`), additional field sources (`annotation`). All four are concrete future hooks captured inline in `discovery/json_recognizer.py`; defer until a concrete need pulls them.
 - **Trade-offs**: The recognizer registry is module-level (auto-registers bundled on import); user recognizers are config-scoped (live on `Config.recognizers`) to prevent cross-test leakage. Two scopes is mild asymmetry but reflects the actual lifecycle (bundled is ambient; user is per-config-load). The `JsonRecognizer.recognize()` reads each `.mo` file once per recognizer invocation — slight perf regression on libraries with thousands of `.mo` files where most don't match (vs. the pre-PTA "substring-check first, parse second" pattern), but the regex used by both bundled and JSON recognizers is fast enough that this hasn't surfaced. If it does, the recognizer interface can grow a `quick_check(content) -> bool` short-circuit.
 
 ## D60: PTA follow-ups — folder filter, match composition, more match types + field sources
@@ -2390,7 +2390,7 @@ headline is deflated by un-runnable simulator code. The real shape:
    aspirational target).
 4. **CI — wire the quality floor now.** New `quality.yml` (lint + mypy
    + ~730 hardware-free tests + coverage) on push/PR; ~1–2 min/run, no
-   simulators. The **FMPy e2e** CI (`PHASE_2_5_CI_PLAN.md`) stays
+   simulators. The **FMPy e2e** CI (fetch the Reference FMUs, run them on a clean runner) stays
    deferred exactly as before — independent concern, cost-gated on
    private-repo minutes. Plus `.pre-commit-config.yaml` for local
    feedback.
@@ -2438,7 +2438,7 @@ lint → types → tests → CI). Outcomes vs spec:
   = 66` in `[tool.coverage.report]`.
 - **CI**: `.github/workflows/quality.yml` (lint + format-check + mypy +
   hardware-free pytest + coverage) on push/PR; `.pre-commit-config.yaml`
-  for local parity. FMPy e2e (`PHASE_2_5_CI_PLAN.md`) untouched.
+  for local parity. FMPy e2e still deferred.
 - **JS quality floor deferred** to its own grill (interactive.js, 4.7k LOC).
 - Follow-up noted: `html_report.py` hard-codes the title "Modelica Test
   Report" — stale post-D81 rename (fixed → "DSTF Test Report").
@@ -2458,7 +2458,7 @@ that local runs could not.
 ## D89 — Full-review fix wave (2026-07-06): 75 findings, 7 batches, verified on TRANSFORM
 
 A whole-codebase review (7 parallel subsystem reviewers + adversarial
-spot-verification; method + findings in `CODE_REVIEW_2026-07-06.md`)
+spot-verification; method and findings in a review note of that date)
 surfaced ~75 real bugs the 768-test suite didn't cover. All fixed the
 same day in 7 batches, each red-first tested:
 

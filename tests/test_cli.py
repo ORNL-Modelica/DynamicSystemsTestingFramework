@@ -668,7 +668,7 @@ def test_soft_check_add_s_source_does_not_shadow_the_source_path_flag():
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Decisions encoded here:
 #
